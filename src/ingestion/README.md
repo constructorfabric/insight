@@ -20,39 +20,43 @@ Insight Connector = Airbyte Connector + descriptor + dbt transformations + crede
 | Component | Purpose | Who manages |
 |-----------|---------|-------------|
 | `connector.yaml` | Airbyte manifest — how to extract data | Connector developer |
-| `descriptor.yaml` | Schedule, streams, dbt_select, workflow type | Connector developer |
+| `descriptor.yaml` | Schedule, streams, dbt_select, workflow type, `version` | Connector developer |
 | `credentials.yaml.example` | Template listing required credentials | Connector developer |
 | `dbt/` | Bronze → Silver transformations | Connector developer |
-| `connections/{tenant}.yaml` | Tenant identity (tenant_id only) | Platform admin |
+| `ConfigMap insight-config` (key `tenant_id`) | Tenant identity for the cluster | Platform admin |
 
-Connector developers create the package. Credentials are managed via K8s Secrets — never in tenant YAML or repo.
+Connector developers create the package. Credentials are managed via K8s Secrets — never in repo. The cluster's tenant identity is read from the `insight-config` ConfigMap in namespace `data` (or overridden with the `INSIGHT_TENANT_ID` env var).
 
 ### Credential Separation
 
-Credentials are strictly separated from connector code and tenant config:
+Credentials are strictly separated from connector code:
 
 ```
 connectors/collaboration/m365/            # In repo (shared, read-only for tenants)
   connector.yaml                          #   Airbyte manifest
-  descriptor.yaml                         #   Metadata + schedule
+  descriptor.yaml                         #   Metadata + schedule + version
   README.md                               #   K8s Secret fields documentation
   dbt/                                    #   Transformations
-
-connections/                              # Tenant identity only
-  example-tenant.yaml.example             #   Template (tracked in repo)
-  example-tenant.yaml                     #   Tenant config (gitignored)
 
 secrets/connectors/                       # K8s Secret templates
   m365.yaml.example                       #   Template (tracked in repo)
   m365.yaml                               #   Real credentials (gitignored)
 ```
 
-Tenant config contains ONLY `tenant_id` — no credentials, no connector list:
+Tenant identity lives in the cluster, not in a repo file:
 
 ```yaml
-# connections/acme-corp.yaml
-tenant_id: acme_corp
+# kubectl -n data get cm insight-config -o yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: insight-config
+  namespace: data
+data:
+  tenant_id: acme_corp
 ```
+
+The reconcile entrypoint reads `tenant_id` from this ConfigMap, or from `INSIGHT_TENANT_ID` if set (env wins).
 
 All credentials and connector parameters are in K8s Secrets. Active connectors are discovered automatically by label `app.kubernetes.io/part-of=insight`:
 
@@ -122,10 +126,10 @@ export KUBECONFIG=~/.kube/insight.kubeconfig
 
 | Command | Description |
 |---------|-------------|
-| `./dev-up.sh` | Create cluster and deploy services (idempotent, safe to re-run) |
-| `./secrets/apply.sh` | Apply K8s Secrets (infra + connectors). Run after `dev-up.sh` |
-| `./run-init.sh` | Initialize: create databases, register connectors, apply connections. Run after secrets |
-| `./dev-down.sh` | Stop all services. **Data preserved** |
+| `helm install` (umbrella chart) | Deploy services. See [umbrella chart README](../../charts/insight/) |
+| `./secrets/apply.sh` | Apply K8s Secrets (infra + connectors). Run after helm install |
+| `./run-init.sh` | Initialize: dbt databases + `reconcile-connectors.sh adopt` + `reconcile-connectors.sh`. Run after secrets |
+| `./down.sh` | Stop all services. **Data preserved** |
 | `./cleanup.sh` | Delete cluster and all data. Asks for confirmation |
 
 ### Day-to-day
@@ -133,16 +137,27 @@ export KUBECONFIG=~/.kube/insight.kubeconfig
 | Command | Description |
 |---------|-------------|
 | `./run-sync.sh <connector> <tenant>` | Run sync + dbt pipeline now |
-| `./update-connectors.sh` | Re-upload all connector manifests/images to Airbyte (auto-detects nocode vs CDK) |
-| `./update-connections.sh [tenant]` | Re-create sources, destinations, connections |
+| `./reconcile-connectors.sh` | Reconcile all Airbyte resources to descriptor-declared state (idempotent) |
+| `./reconcile-connectors.sh --dry-run` | Print diff report without applying changes |
+| `./reconcile-connectors.sh --connector <name>` | Limit reconcile to a single connector |
 | `./update-workflows.sh [tenant]` | Regenerate CronWorkflow schedules |
+
+### Reconcile
+
+`reconcile-connectors.sh` is the single declarative entrypoint that replaces the legacy fan of scripts (`connect.sh`, `register.sh`, `cleanup.sh`, `sync-state.sh`, `reset-connector.sh`, `update-connectors.sh`, `update-connections.sh`). It is driven by `descriptor.yaml.version` (the operator-facing knob, currently baseline `2026.05.04`) and Secret config hashes:
+
+| Subcommand | Description |
+|---------|-------------|
+| `reconcile` (default) | Apply descriptor-driven reconcile across all connectors. Creates / updates / GCs definitions, sources, and connections to match the descriptor + Secret state. |
+| `adopt` | One-shot annotation pass for legacy resources — tags pre-existing Airbyte definitions/connections so the version + cfg-hash invariants hold before the first reconcile. No creates, no deletes. |
+
+Common flags: `--dry-run` (preview only), `--connector <name>` (limit scope), `--no-gc` (skip orphan deletion).
 
 ### CDK Connectors
 
 | Command | Description |
 |---------|-------------|
-| `./airbyte-toolkit/build-connector.sh <path> [--push]` | Build Docker image, push to registry (or load into Kind), register Airbyte definition |
-| `./airbyte-toolkit/reset-connector.sh <name> <tenant>` | Delete connection + source + definition, drop Bronze tables, clean state |
+| `./airbyte-toolkit/cdk-build.sh <path> [--push]` | Build Docker image, push to registry (or load into Kind). Reconcile picks up the new `dockerImageTag` on the next run. |
 
 ### Examples
 
@@ -150,20 +165,28 @@ export KUBECONFIG=~/.kube/insight.kubeconfig
 # Run M365 sync for example_tenant
 ./run-sync.sh m365 example-tenant
 
-# Update after editing connector.yaml (nocode) or Python source (CDK)
-./update-connectors.sh
+# After editing connector.yaml (nocode) or descriptor.yaml — bump descriptor version,
+# then reconcile to roll the new manifest / image tag out:
+./reconcile-connectors.sh --dry-run            # preview
+./reconcile-connectors.sh                      # apply
 
-# Build/rebuild a CDK connector (Docker image + Airbyte definition)
-./airbyte-toolkit/build-connector.sh git/github
+# Build/rebuild a CDK connector image (Airbyte registration is handled by reconcile)
+./airbyte-toolkit/cdk-build.sh git/github
+./reconcile-connectors.sh --connector github
 
-# Update after changing tenant credentials
-./update-connections.sh example-tenant
+# After changing connector credentials (rotate K8s Secret), the cfg-hash tag drifts
+# and reconcile triggers a sources/update on next run — no extra command needed:
+./secrets/apply.sh --connectors-only
+./reconcile-connectors.sh --connector m365
 
 # Update after changing schedule in descriptor.yaml
 ./update-workflows.sh
 
-# Reset a connector (breaking schema change, full re-sync)
-./airbyte-toolkit/reset-connector.sh github example-tenant
+# Full re-sync from scratch for a connector (breaking schema change):
+# delete its K8s Secret, re-apply, then reconcile (this drops + recreates the source).
+kubectl delete secret insight-github-main -n data
+./secrets/apply.sh --connectors-only
+./reconcile-connectors.sh
 
 # Monitor workflows
 open http://localhost:30500
@@ -242,27 +265,26 @@ src/ingestion/
 │
 ├── up.sh / down.sh / cleanup.sh    # Cluster lifecycle
 ├── run-init.sh                      # Initialize after secrets applied
+│                                    #   (validate.sh && reconcile adopt && reconcile)
 ├── run-sync.sh                      # Manual pipeline run
-├── update-connectors.sh             # Re-upload manifests
-├── update-connections.sh            # Re-apply connections
-├── update-workflows.sh              # Regenerate schedules
+├── reconcile-connectors.sh          # Single declarative entrypoint
+│                                    #   [adopt|reconcile] [--dry-run]
+│                                    #   [--connector NAME] [--no-gc]
+├── update-workflows.sh              # Regenerate CronWorkflow schedules
 │
 ├── connectors/                      # Insight Connector packages
 │   └── collaboration/m365/
 │       ├── connector.yaml           #   Airbyte declarative manifest
-│       ├── descriptor.yaml          #   Schedule, streams, dbt_select
+│       ├── descriptor.yaml          #   Schedule, streams, dbt_select, version
 │       ├── credentials.yaml.example #   Credential template (tracked)
 │       ├── schemas/                 #   Generated JSON schemas (gitignored)
 │       └── dbt/
 │           ├── m365__collab_*.sql       # Bronze → Staging models
 │           └── schema.yml              # Source + tests
 │
-├── connections/                     # Tenant configs
-│   ├── example-tenant.yaml.example  #   Template (tracked)
-│   └── example-tenant.yaml          #   Real credentials (gitignored)
-│
 ├── secrets/                         # K8s Secrets (all gitignored, examples tracked)
 │   ├── apply.sh                     #   Apply all secrets (infra + connectors)
+│   ├── validate.sh                  #   Validate cluster Secrets vs *.yaml.example
 │   ├── clickhouse.yaml.example      #   ClickHouse password
 │   ├── airbyte.yaml.example         #   Airbyte admin credentials
 │   └── connectors/                  #   Per-connector secrets
@@ -296,77 +318,61 @@ src/ingestion/
 │   └── clickhouse/                  #   Deployment, Service, PVC, ConfigMap
 │
 ├── airbyte-toolkit/                 # Airbyte management module
-│   ├── register.sh                  #   Register connectors via API
-│   ├── connect.sh                   #   Create sources/destinations/connections
-│   ├── sync-state.sh                #   Sync state from Airbyte API
-│   ├── cleanup.sh                   #   Remove Airbyte resources
-│   ├── state.yaml                   #   Airbyte IDs registry (gitignored, auto-generated)
-│   └── lib/
-│       ├── env.sh                   #   JWT token + workspace resolution
-│       └── state.sh                 #   State library (state_get/state_set)
+│   ├── cdk-build.sh                 #   Build CDK Docker image (push or load into Kind)
+│   └── lib/                         #   Reconcile engine libraries
+│       ├── env.sh                   #     JWT token + workspace resolution
+│       ├── airbyte.sh               #     HTTP client + Airbyte API helpers
+│       ├── discover.sh              #     Read descriptors, K8s Secrets, Airbyte state
+│       ├── adopt.sh                 #     One-shot annotation pass for legacy resources
+│       └── reconcile.sh             #     Diff + apply (definitions, sources, connections)
 │
 ├── scripts/                         # Internal scripts (run inside toolbox)
-│   ├── init.sh                      #   Full initialization
-│   ├── build-connector.sh           #   Build CDK connector (Docker → registry/Kind → Airbyte)
-│   ├── reset-connector.sh           #   Reset connector (delete all + drop tables + clean state)
-│   ├── sync-flows.sh               #   Generate + apply CronWorkflows
-│   └── wait-for-services.sh        #   kubectl wait for pods
+│   ├── init.sh                      #   dbt database bootstrap
+│   ├── sync-flows.sh                #   Generate + apply CronWorkflows
+│   └── wait-for-services.sh         #   kubectl wait for pods
 │
 └── tools/
-    ├── toolbox/                     # insight-toolbox Docker image (insight-toolbox)
+    ├── toolbox/                     # insight-toolbox Docker image
     │   ├── Dockerfile               #   python + dbt + kubectl + yq
     │   └── build.sh                 #   Build + push to GHCR (or load into Kind)
     └── declarative-connector/       # Local connector debugging
-        └── source.sh               #   check / discover / read
+        ├── source.sh                #   check / discover / read
+        ├── generate-catalog.sh      #   Render Airbyte catalog from connector.yaml
+        └── generate-schema.sh       #   Generate JSON schemas from streams
 ```
 
 ## Airbyte State
 
-All Airbyte resource IDs (definitions, sources, destinations, connections) are tracked in a
-single state file: `airbyte-toolkit/state.yaml`. This file is auto-generated and gitignored —
-it's specific to the current Airbyte instance.
+State authority lives **in Airbyte itself** — there is no local `state.yaml` file and no `airbyte-state` ConfigMap. Reconcile reads/writes two fields directly on Airbyte resources:
 
-```yaml
-# airbyte-toolkit/state.yaml (auto-generated, single file for all tenants)
-workspace_id: "4f79767b-..."
+| What | Where it lives | Encoding |
+|------|----------------|----------|
+| Descriptor version (drives definition reconcile) | `definition.declarativeManifest.description` (nocode) or `definition.dockerImageTag` (CDK) | The literal `descriptor.yaml.version` string, e.g. `2026.05.04` |
+| Connection membership + config hash | `connection.tags` | Two tags: `insight` (membership marker) + `cfg-hash:<sha256-prefix>` (Secret-derived hash) |
 
-destinations:
-  clickhouse:
-    id: "731c8d42-..."
+Active definitions/sources/connections are discovered by the `insight` membership tag plus the `app.kubernetes.io/part-of=insight` label on K8s Secrets. Resource IDs are looked up at runtime via the Airbyte API — there is no local cache.
 
-definitions:
-  m365:
-    id: "046ef483-..."
-  zoom:
-    id: "a1b2c3d4-..."
+Example tag/description shapes:
 
-tenants:
-  example-tenant:
-    connectors:
-      m365:
-        m365-main:
-          source_id: "60c560e8-..."
-          connection_id: "0220d2fe-..."
-      zoom:
-        zoom-main:
-          source_id: "b2c3d4e5-..."
-          connection_id: "c3d4e5f6-..."
+```jsonc
+// nocode definition manifest description
+{
+  "description": "2026.05.04",
+  "manifest": { /* connector.yaml contents */ }
+}
+
+// connection.tags after reconcile
+[
+  { "name": "insight" },
+  { "name": "cfg-hash:f3a91c4e" }
+]
 ```
 
-Every ID is accessed via a deterministic YAML path (no string concatenation, no search):
+When reconcile runs, it diffs:
+- `descriptor.yaml.version` vs the recorded version on the definition → triggers definition update
+- `sha256(Secret stringData)` vs the `cfg-hash:` tag → triggers `sources/update`
 
-| Resource | Path |
-|----------|------|
-| Workspace | `workspace_id` |
-| Destination | `destinations.clickhouse.id` |
-| Definition | `definitions.{connector}.id` |
-| Source | `tenants.{tenant}.connectors.{connector}.{source_id}.source_id` |
-| Connection | `tenants.{tenant}.connectors.{connector}.{source_id}.connection_id` |
-
-**Storage backend**:
-- **Local (host)**: `airbyte-toolkit/state.yaml`
-- **In-cluster (K8s)**: ConfigMap `airbyte-state` in namespace `data`
-- Scripts auto-detect the backend
+Drift in either field is the **only** signal that change is needed; no other state is read.
 
 ## Adding a New Connector
 
@@ -376,7 +382,7 @@ Every ID is accessed via a deterministic YAML path (no string concatenation, no 
    ```
    connectors/{category}/{name}/
      connector.yaml            # Airbyte declarative manifest
-     descriptor.yaml           # name, schedule, dbt_select, workflow, connection namespace
+     descriptor.yaml           # name, version, schedule, dbt_select, workflow
      dbt/                      # Bronze → Silver models
    ```
 
@@ -389,9 +395,8 @@ Every ID is accessed via a deterministic YAML path (no string concatenation, no 
 
 3. Deploy:
    ```bash
-   ./update-connectors.sh          # Registers manifest in Airbyte
-   ./update-connections.sh my-tenant
-   ./update-workflows.sh my-tenant
+   ./reconcile-connectors.sh             # Registers manifest, creates source + connection
+   ./update-workflows.sh
    ```
 
 ### CDK (Python)
@@ -402,7 +407,7 @@ Every ID is accessed via a deterministic YAML path (no string concatenation, no 
      Dockerfile                # Airbyte Python CDK image
      source_{name}/            # Python source code
        source.py, spec.json, streams/
-     descriptor.yaml           # type: cdk, name, schedule, dbt_select, workflow
+     descriptor.yaml           # type: cdk, name, version, schedule, dbt_select, workflow
      dbt/                      # Bronze → Silver models
    ```
 
@@ -410,34 +415,40 @@ Every ID is accessed via a deterministic YAML path (no string concatenation, no 
 
 3. Deploy:
    ```bash
-   ./airbyte-toolkit/build-connector.sh {category}/{name}   # Build image + register definition
-   ./airbyte-toolkit/connect.sh my-tenant             # Create source + connection
-   ./update-workflows.sh my-tenant
+   ./airbyte-toolkit/cdk-build.sh {category}/{name}   # Build image + load/push
+   ./reconcile-connectors.sh                          # Register definition, create source + connection
+   ./update-workflows.sh
    ```
 
-### Reset (breaking schema change)
+### Re-sync from scratch (breaking schema change)
+
+When you need a clean slate (drop Bronze tables, rebuild source/connection from zero), drop the K8s Secret and re-apply — reconcile will recreate everything on the next pass:
 
 ```bash
-./airbyte-toolkit/reset-connector.sh <name> <tenant>   # Delete everything + drop Bronze tables
-# Then re-deploy using the steps above
+kubectl delete secret insight-{connector}-{source-id} -n data
+# Edit secrets/connectors/{connector}.yaml as needed, then:
+./secrets/apply.sh --connectors-only
+./reconcile-connectors.sh
 ```
 
 ## Adding a New Tenant
 
-1. Create tenant config:
-   ```bash
-   cat > connections/acme.yaml <<EOF
-   tenant_id: acme
-   EOF
-   ```
+A cluster has exactly one tenant identity, stored in the `insight-config` ConfigMap. To set or change it:
 
-2. Create K8s Secrets for each connector (see `secrets/connectors/*.yaml.example`)
+```bash
+kubectl -n data create configmap insight-config \
+  --from-literal=tenant_id=acme \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
 
-3. Deploy:
-   ```bash
-   ./secrets/apply.sh --connectors-only
-   ./run-init.sh
-   ```
+Then deploy:
+
+```bash
+./secrets/apply.sh --connectors-only
+./run-init.sh
+```
+
+Override at runtime with `INSIGHT_TENANT_ID=acme ./reconcile-connectors.sh` (env wins over ConfigMap).
 
 ## Production Deployment
 
@@ -489,8 +500,10 @@ Apply all secrets at once:
 ### Step 4: Initialize
 
 ```bash
-./run-init.sh   # Creates databases, registers connectors, applies connections, syncs workflows
+./run-init.sh   # Validates Secrets, adopts existing Airbyte resources, then reconciles to descriptor state
 ```
+
+`run-init.sh` chains: `secrets/validate.sh` (Secret schema check) → `reconcile-connectors.sh adopt` (one-shot annotation pass for any pre-existing legacy resources) → `reconcile-connectors.sh` (full reconcile to descriptor + Secret state). Re-run any time after Secret or descriptor changes — all three stages are idempotent.
 
 ### Required Secrets Summary
 
@@ -515,13 +528,13 @@ vim secrets/clickhouse.yaml   # set new password
 kubectl rollout restart deployment/clickhouse -n data
 kubectl rollout status deployment/clickhouse -n data
 
-# 4. Update Airbyte destination + connections with new password
-./airbyte-toolkit/connect.sh example-tenant
+# 4. Reconcile — picks up the new password and updates the Airbyte destination
+./reconcile-connectors.sh
 ```
 
 ClickHouse uses `strategy: Recreate` — the old pod is terminated before the new one starts. This avoids PVC conflicts (ReadWriteOnce) and ensures the new password takes effect immediately.
 
-`connect.sh` always updates the destination password from K8s Secret on every run. Existing connections are reused (they reference the destination by ID).
+For connector credential rotation, the same flow applies — edit `secrets/connectors/<name>.yaml`, apply, and reconcile. The Secret's contents feed into the `cfg-hash:` connection tag, so any change drifts the hash and reconcile responds with a `sources/update` API call. No explicit "rotate" command is needed.
 
 ## Environment
 

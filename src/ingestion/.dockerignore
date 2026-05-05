@@ -1,6 +1,3 @@
-airbyte-toolkit/state.yaml
-connections/*.yaml
-!connections/*.yaml.example
 secrets/
 .env.local
 *.env.local

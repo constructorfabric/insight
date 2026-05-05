@@ -14,19 +14,25 @@ CONNECTIONS_DIR="./connections"
 echo "  Applying WorkflowTemplates..."
 kubectl apply -f "${WORKFLOWS_DIR}/templates/"
 
-# --- Get connection_id from toolkit state ---
+# --- Get connection_id from Airbyte (authoritative state) ---
 export TOOLKIT_DIR="${SCRIPT_DIR}/../airbyte-toolkit"
-source "${TOOLKIT_DIR}/lib/state.sh"
+# shellcheck source=../airbyte-toolkit/lib/airbyte.sh
+source "${TOOLKIT_DIR}/lib/airbyte.sh"
+
+_AB_WS_ID="$(ab_workspace_id)"
+_AB_CONN_CACHE="$(ab_list_connections "${_AB_WS_ID}")"
 
 get_connection_id() {
   local tenant="$1" connector="$2"
-  local conn_id=""
-  for source_key in $(state_list "tenants.${tenant}.connectors.${connector}"); do
-    conn_id=$(state_get "tenants.${tenant}.connectors.${connector}.${source_key}.connection_id")
-    [[ -n "$conn_id" ]] && break
-  done
-  [[ -n "$conn_id" ]] || return 1
-  echo "$conn_id"
+  printf '%s' "${_AB_CONN_CACHE}" | python3 -c '
+import sys, json
+connector, tenant = sys.argv[1], sys.argv[2]
+for c in json.load(sys.stdin):
+    name = c.get("name", "")
+    if name.startswith(f"{connector}-") and tenant in name:
+        print(c.get("connectionId", "")); sys.exit(0)
+sys.exit(1)
+' "${connector}" "${tenant}"
 }
 
 # --- Generate and apply CronWorkflows for a tenant ---
@@ -79,11 +85,13 @@ sync_tenant() {
 }
 
 # --- Main ---
+# Tenant list comes from $INSIGHT_TENANT_ID (single tenant) or
+# `--tenant <name>` flag, since Airbyte connection.name encodes the
+# tenant suffix and we use that as the identifier going forward.
 if [[ "${1:-}" == "--all" ]]; then
-  for tenant in $(state_list "tenants"); do
-    echo "  Syncing workflows for tenant: $tenant"
-    sync_tenant "$tenant"
-  done
+  tenant="${INSIGHT_TENANT_ID:?--all requires INSIGHT_TENANT_ID env}"
+  echo "  Syncing workflows for tenant: $tenant"
+  sync_tenant "$tenant"
 else
   tenant="${1:?Usage: $0 <tenant_id> | --all}"
   echo "  Syncing workflows for tenant: $tenant"

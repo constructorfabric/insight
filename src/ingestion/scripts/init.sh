@@ -38,14 +38,13 @@ done
 
 # MariaDB migrations: each backend service now owns and applies its own
 # migrations at startup (SeaORM Migrator::up). See ADR-0006.
-
-echo "=== Registering connectors ==="
-"${TOOLKIT_DIR}/register.sh" --all
-
-echo "=== Applying connections ==="
-"${TOOLKIT_DIR}/connect.sh" --all
+#
+# NOTE: connector registration + connection apply are now handled by
+# ../reconcile-connectors.sh (called from ../run-init.sh after this script
+# finishes the migrations + dbt-database setup above). Do NOT add new
+# `register.sh`/`connect.sh`-style invocations here — they were removed
+# along with the legacy fan of scripts in the version-driven-reconcile
+# refactor.
 
 echo "=== Syncing workflows ==="
 ./scripts/sync-flows.sh --all
-
-echo "=== Init complete ==="

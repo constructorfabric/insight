@@ -7,8 +7,9 @@ cd "$SCRIPT_DIR"
 
 echo "=== Cleaning ingestion state ==="
 
-# Clean Airbyte toolkit state
-rm -f airbyte-toolkit/state.yaml 2>/dev/null || true
+# NOTE: airbyte-toolkit/state.yaml was removed in the version-driven
+# reconcile refactor (Airbyte itself is now authoritative). Only the
+# generated per-tenant workflows need cleanup here.
 
 # Clean generated tenant workflows (preserve templates/ and schedules/)
 for d in workflows/*/; do

@@ -1,5 +1,5 @@
 name: slack
-version: '1.0'
+version: "2026.05.04"
 schedule: 0 4 * * *
 dbt_select: tag:slack+
 workflow: sync

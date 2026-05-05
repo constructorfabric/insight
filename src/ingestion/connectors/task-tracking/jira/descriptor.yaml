@@ -1,6 +1,5 @@
 name: jira
-version: "1.0"
-
+version: "2026.05.04"
 schedule: "0 3 * * *"
 workflow: sync
 

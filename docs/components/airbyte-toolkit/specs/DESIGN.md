@@ -19,6 +19,10 @@
   - [3.6 Interactions & Sequences](#36-interactions--sequences)
   - [3.7 Database schemas & tables](#37-database-schemas--tables)
   - [3.8 Deployment Topology](#38-deployment-topology)
+  - [3.9 Reconciliation Model](#39-reconciliation-model)
+  - [3.10 Adoption (one-shot)](#310-adoption-one-shot)
+  - [3.11 Naming Convention](#311-naming-convention)
+  - [3.12 Secret Validation](#312-secret-validation)
 - [4. Additional context](#4-additional-context)
   - [Migration from old scripts](#migration-from-old-scripts)
   - [State library API](#state-library-api)
@@ -49,6 +53,21 @@ All operations are idempotent. Creating a resource that already exists in state 
 | `cpt-insightspec-fr-idempotent` | All commands use create-or-update pattern with state-tracked IDs |
 | `cpt-insightspec-fr-register-definitions` | `register.sh` writes to `definitions.{connector}.id` |
 | `cpt-insightspec-fr-create-connections` | `connect.sh` writes to `tenants.{tenant}.connectors.{connector}.{source_id}` |
+| `cpt-insightspec-fr-version-driven-reconcile` | `descriptor.yaml.version` ↔ `definition.declarativeManifest.description` (nocode) or `dockerImageTag` (CDK); reconcile-engine compares, republishes only on mismatch |
+| `cpt-insightspec-fr-adopt-legacy-resources` | `adopt-pass` annotates description + `connection.tags` on existing resources without recreate; ref-count-zero duplicate definitions deleted |
+| `cpt-insightspec-fr-orphan-gc` | reconcile-engine sweeps Airbyte by `insight` membership tag; deletes resources without matching K8s Secret unless `--no-gc` |
+| `cpt-insightspec-fr-state-preserved-on-breaking-change` | breaking schema change → `state_export → delete → create → state_import` via `/api/v1/state/{get,create_or_update}`; non-breaking → `connections/update` |
+| `cpt-insightspec-fr-secret-validation` | `secret-validator` (read-only) checks K8s Secret schema vs `secrets/connectors/*.yaml.example` and OnePasswordItem CR ↔ child Secret label/annotation drift |
+| `cpt-insightspec-fr-cli-surface` | single `reconcile-connectors.sh [adopt\|reconcile] [--dry-run] [--connector <name>] [--no-gc]` entrypoint; legacy scripts removed |
+
+#### ADR References
+
+| ADR | Subject | Drives |
+|-----|---------|--------|
+| `cpt-insightspec-adr-version-driven-reconcile` | descriptor.yaml.version is the single reconcile driver | §3.2 reconcile-engine, §3.9 Reconciliation Model |
+| `cpt-insightspec-adr-adoption-of-existing-resources` | tag-based adoption preserves sync state on legacy clusters | §3.2 adopt-pass, §3.10 Adoption |
+| `cpt-insightspec-adr-credential-rotation-no-env` | sources/update on cfg-hash mismatch (not env-vars / SecretPersistence) | §3.2 reconcile-engine, §3.12 Secret Validation |
+| `cpt-insightspec-adr-cluster-config-via-configmap` | tenant_id from ConfigMap `insight-config` (or env override) | §3.2 secret-discovery, §3.11 Naming Convention |
 
 #### NFR Allocation
 
@@ -238,6 +257,115 @@ Creates and updates sources, destinations, and connections for a tenant.
 - `cpt-insightspec-component-env-resolver` — depends on (API credentials)
 - `cpt-insightspec-component-registrar` — depends on (definition IDs must exist)
 
+#### Reconcile Engine
+
+- [ ] `p1` - **ID**: `cpt-insightspec-component-reconcile-engine`
+
+##### Why this component exists
+
+Drives Airbyte resources (definitions, sources, connections) into the desired state declared by `connectors/*/descriptor.yaml` + K8s Secrets, idempotently and without losing accumulated sync state. Replaces the create-or-update logic previously scattered across `register.sh` and `connect.sh`.
+
+##### Responsibility scope
+
+- Owns the diff & apply loop across three layers (definition / source / connection).
+- Decides when to republish a definition: only when `descriptor.yaml.version` ≠ `definition.declarativeManifest.description` (nocode) or `dockerImageTag` (CDK).
+- Performs idempotent `sources/update` per Secret (`sources` are append-tolerant; connection state is preserved).
+- Decides when to recreate a connection: only on breaking syncCatalog drift; uses `cpt-insightspec-seq-breaking-change-recreate-with-state` to preserve cursors via `/api/v1/state/{get,create_or_update}`.
+- Drives orphan GC by `insight` membership tag (skipped under `--no-gc`).
+- Reports per-connector outcome: `created` | `updated` | `no-op` | `recreated` | `deleted` | `skipped`.
+
+##### Responsibility boundaries
+
+- Does NOT author connector manifests (`connectors/*/connector.yaml` is owned by connector authors).
+- Does NOT manage Argo workflows.
+- Does NOT modify K8s Secrets.
+- Does NOT keep parallel local state — Airbyte is the source of truth post-refactor (no more `state.yaml` / `airbyte-state` ConfigMap).
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-secret-discovery` — depends on (input desired state)
+- `cpt-insightspec-component-env-resolver` — depends on (API credentials)
+- `cpt-insightspec-component-adopt-pass` — runs before reconcile on legacy clusters
+
+#### Secret Discovery
+
+- [ ] `p2` - **ID**: `cpt-insightspec-component-secret-discovery`
+
+##### Why this component exists
+
+Computes the desired state from K8s Secrets and `descriptor.yaml` files. The reconcile engine consumes its output.
+
+##### Responsibility scope
+
+- Lists Secrets in `data` namespace with label `app.kubernetes.io/part-of=insight`.
+- Reads annotations `insight.cyberfabric.com/connector` and `insight.cyberfabric.com/source-id`; pairs each Secret with `connectors/<connector>/descriptor.yaml`.
+- Computes `cfg_hash = sha256(canonical(secret.data))` per Secret.
+- Resolves `tenant_id` from ConfigMap `insight-config` (or env `INSIGHT_TENANT_ID`).
+- On missing/invalid metadata: WARN + skip (per connector, never abort).
+
+##### Responsibility boundaries
+
+- Does NOT decode 1Password vault items (operator's job).
+- Does NOT apply changes — pure read.
+- Does NOT validate Secret schema against `connection_specification` — that is `secret-validator`'s job.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-reconcile-engine` — consumer
+- `cpt-insightspec-component-adopt-pass` — same input source
+
+#### Adopt Pass
+
+- [ ] `p2` - **ID**: `cpt-insightspec-component-adopt-pass`
+
+##### Why this component exists
+
+Migrates legacy clusters whose Airbyte resources lack the post-refactor metadata (no description on definitions, no tags on connections), without recreating any source or connection — preserving all accumulated sync state.
+
+##### Responsibility scope
+
+- For each Secret matched to an existing source by name pattern: patch `definition.declarativeManifest.description` to descriptor version, patch `connection.tags` to `[insight, cfg-hash:<sha256(secret.data)>]`.
+- Identify duplicate definitions per connector name and delete only those with `ref_count == 0`.
+- Idempotent: running twice is a no-op on the already-annotated set.
+- Operates under `--dry-run` to preview changes before any state-changing call.
+
+##### Responsibility boundaries
+
+- Does NOT create new sources or connections (reconcile mode does that).
+- Does NOT delete resources whose Secret is missing — that is reconcile's GC sweep.
+- Does NOT push credentials via `sources/update` — only metadata patches.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-secret-discovery` — input
+- `cpt-insightspec-component-reconcile-engine` — runs after adopt on legacy clusters
+
+#### Secret Validator
+
+- [ ] `p2` - **ID**: `cpt-insightspec-component-secret-validator`
+
+##### Why this component exists
+
+Detects drift between the cluster's K8s Secrets and what `secrets/connectors/*.yaml.example` declares as the canonical schema, and surfaces label/annotation drift between OnePasswordItem CRs and their child Secrets — 1Password operator copies labels but NOT custom annotations, so misconfigured items can silently fall out of discovery.
+
+##### Responsibility scope
+
+- Reads each `secrets/connectors/*.yaml.example` to learn required `stringData` keys and required labels/annotations.
+- Reads each Secret in `data` namespace; reads OnePasswordItem CRs in `data` namespace.
+- Compares per connector: required `stringData` keys, required labels, required annotations, OnePasswordItem CR ↔ child Secret label/annotation parity.
+- Pure read — no `kubectl apply`, `kubectl patch`, or `kubectl annotate` calls.
+- Exit codes: `0` if no errors, `1` if errors, `2` reserved for environmental failures.
+
+##### Responsibility boundaries
+
+- Does NOT modify any cluster object.
+- Does NOT validate connector behavior or live API access.
+- Does NOT compare Secret values (avoids credential leakage in output).
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-secret-discovery` — same Secret enumeration; validator runs first in `run-init.sh`
+
 ### 3.3 API Contracts
 
 - [ ] `p2` - **ID**: `cpt-insightspec-interface-state-yaml`
@@ -361,6 +489,114 @@ connect.sh -> state.sh: write destinations.clickhouse.id
     connect.sh -> state.sh: write tenants.{tenant}.connectors.{connector}.{source_id}
 ```
 
+#### Default reconcile
+
+**ID**: `cpt-insightspec-seq-reconcile-default`
+
+**Actors**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-airbyte-api`, `cpt-insightspec-actor-k8s-api`
+
+Default invocation `reconcile-connectors.sh` (no subcommand). Drives Airbyte to descriptor + Secret state.
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator/CI
+    participant R as reconcile-connectors.sh
+    participant K as K8s API
+    participant D as descriptor.yaml
+    participant A as Airbyte API
+
+    Op->>R: reconcile-connectors.sh [--dry-run]
+    R->>K: list Secrets (label app.kubernetes.io/part-of=insight)
+    K-->>R: secrets[] (with annotations connector + source-id)
+    R->>D: read connectors/<name>/descriptor.yaml.version
+    R->>R: build desired set (connector_name, source_id, version, sha256(secret.data))
+    R->>A: source_definitions/list, sources/list, connections/list (filter by tag insight)
+    A-->>R: actual resources
+
+    loop per connector_name
+        R->>R: compare descriptor.version vs definition.description
+        alt mismatch
+            R->>A: connector_builder_projects/update_active_manifest (description=version)
+            R->>A: cascade: sources/update + connections/update (or recreate-with-state per seq-breaking-change)
+        else match
+            R->>R: definition no-op
+        end
+        R->>A: sources/update with secret.data (idempotent)
+        R->>R: compute cfg_hash = sha256(secret.data)
+        alt connection.tags['cfg-hash:'] != cfg_hash
+            R->>A: PATCH connections/{id} tags=[insight, cfg-hash:<hash>]
+        end
+    end
+
+    opt --no-gc absent
+        R->>A: list resources tagged insight without matching desired entry
+        R->>A: delete orphans (definitions ref_count=0, sources, connections)
+    end
+
+    R-->>Op: summary (created/updated/no-op/deleted/skipped)
+```
+
+#### Adopt one-shot
+
+**ID**: `cpt-insightspec-seq-adopt-one-shot`
+
+**Actors**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-airbyte-api`
+
+Pre-migration pass that annotates existing Airbyte resources without creating, deleting, or recreating sources/connections — preserves all sync state.
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant R as reconcile-connectors.sh
+    participant K as K8s API
+    participant A as Airbyte API
+
+    Op->>R: reconcile-connectors.sh adopt [--dry-run]
+    R->>K: list Secrets (label app.kubernetes.io/part-of=insight)
+    K-->>R: secrets[]
+    R->>A: source_definitions/list, sources/list, connections/list
+
+    loop per Secret
+        R->>R: match Secret to existing source by name pattern
+        alt source found
+            R->>A: connector_builder_projects/update_active_manifest (description=descriptor.version)
+            R->>A: PATCH connections/{id} tags=[insight, cfg-hash:<sha256(secret.data)>]
+        else source not found
+            R->>R: skip (reconcile will create later)
+        end
+    end
+
+    R->>A: list duplicate definitions per connector_name with ref_count=0
+    R->>A: delete duplicates only (ref_count>0 untouched)
+
+    R-->>Op: summary (annotated/skipped/duplicates_deleted)
+```
+
+#### Breaking-change recreate with state preservation
+
+**ID**: `cpt-insightspec-seq-breaking-change-recreate-with-state`
+
+**Actors**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-airbyte-api`
+
+When a connection's syncCatalog drift is breaking (changed PK or cursor field on a stream), recreate the connection while preserving Airbyte sync state via export/import.
+
+```mermaid
+sequenceDiagram
+    participant R as reconcile-connectors.sh
+    participant A as Airbyte API
+
+    R->>A: connections/get (current syncCatalog)
+    R->>A: sources/discover_schema (fresh)
+    R->>R: detect breaking change (PK/cursor field changed on a stream)
+    R->>A: POST /api/v1/state/get {connectionId}
+    A-->>R: state_blob (per-stream cursors)
+    R->>A: connections/delete {connectionId}
+    R->>A: connections/create (new syncCatalog) → newConnectionId
+    R->>A: POST /api/v1/state/create_or_update {newConnectionId, state_blob}
+    R->>A: PATCH connections/{newConnectionId} tags=[insight, cfg-hash:<hash>]
+    R-->>R: log: "recreated connection X→Y, state preserved"
+```
+
 ### 3.7 Database schemas & tables
 
 Not applicable. The toolkit manages Airbyte resources, not database schemas. Bronze databases are created as empty databases; table creation is handled by Airbyte sync.
@@ -374,6 +610,77 @@ The toolkit is not deployed as a service. It is a set of scripts invoked from:
 State persistence:
 - **Host**: `airbyte-toolkit/state.yaml` (local file).
 - **In-cluster**: K8s ConfigMap `airbyte-state` in namespace `data` (synced on write).
+
+> **Note (post-refactor)**: with the reconcile engine in place, both `state.yaml` and the `airbyte-state` ConfigMap are removed. Airbyte itself becomes the authoritative store via `definition.declarativeManifest.description` (version anchor) and `connection.tags` (membership + config hash). See §3.9 Reconciliation Model.
+
+### 3.9 Reconciliation Model
+
+The reconciliation model defines the relationship between desired state (on disk + K8s) and actual state (in Airbyte). It is implemented by `cpt-insightspec-component-reconcile-engine` (orchestrator) consuming desired state from `cpt-insightspec-component-secret-discovery` (input).
+
+**Three layers, three triggers**:
+
+| Layer | Desired anchor | Actual anchor | Trigger to act |
+|---|---|---|---|
+| Definition | `descriptor.yaml.version` | `definition.declarativeManifest.description` (nocode) / `dockerImageTag` (CDK) | mismatch → republish |
+| Source | K8s Secret existence + `descriptor.yaml` exists | source named `{connector}-{source_id}-{tenant}` | absent → create; present → idempotent `sources/update` |
+| Connection | source exists + (catalog from `discover_schema`) | `connection.tags['cfg-hash:']` + `connection.syncCatalog` | hash mismatch → tag patch + `sources/update`; catalog non-breaking → `connections/update`; catalog breaking → recreate-with-state |
+
+**Decision rule for "no-op"**: when all three layers' desired anchors equal their actual anchors, the engine emits `no-op` and makes no Airbyte API calls beyond list/get.
+
+Drives PRD requirements `cpt-insightspec-fr-version-driven-reconcile`, `cpt-insightspec-fr-orphan-gc`, `cpt-insightspec-fr-state-preserved-on-breaking-change`, `cpt-insightspec-fr-cli-surface`. Related ADRs are listed in §1.2 Architecture Drivers.
+
+See sequence `cpt-insightspec-seq-reconcile-default` in §3.6 for the end-to-end flow.
+
+### 3.10 Adoption (one-shot)
+
+Adoption is a **migration-only** mode for clusters that pre-date this refactor. It is implemented by `cpt-insightspec-component-adopt-pass`. The intent: bring legacy Airbyte resources into the post-refactor metadata convention (description on definitions, tags on connections) **without** recreating any source or connection — sync state is preserved by construction.
+
+**Out-of-scope for adopt**: creating new sources or connections, deleting Secret-less resources, pushing credentials via `sources/update`. Those are reconcile's responsibilities.
+
+**Idempotent and re-runnable**: running adopt twice is a no-op on the already-annotated set. Safe to re-run after partial failures.
+
+Drives PRD requirement `cpt-insightspec-fr-adopt-legacy-resources`. The related ADR is listed in §1.2 Architecture Drivers.
+
+See sequence `cpt-insightspec-seq-adopt-one-shot` in §3.6 for the flow.
+
+### 3.11 Naming Convention
+
+The reconcile engine identifies resources by deterministic conventions, not by string parsing. Three anchors carry post-refactor semantics:
+
+| Where | What | Format / Value | Purpose |
+|---|---|---|---|
+| `connectors/<name>/descriptor.yaml` | `version` field | semver-like string (baseline `2026.05.04`) | Single human-edited driver of reconcile decisions |
+| Airbyte `definition.declarativeManifest.description` (nocode) | mirrors descriptor version | string equal to descriptor `version` | Marks "what version is currently published" |
+| Airbyte `definition.dockerImageTag` (CDK) | mirrors descriptor version | tag including version | Marks current published image for CDK connectors |
+| Airbyte `connection.tags` | membership + config hash | `["insight", "cfg-hash:<sha256(secret.data)>"]` | Membership marker + per-instance config drift detector |
+| K8s Secret label | membership | `app.kubernetes.io/part-of=insight` | Discovery filter |
+| K8s Secret annotations | identity | `insight.cyberfabric.com/connector=<name>`, `insight.cyberfabric.com/source-id=<id>` | Pair Secret with `connectors/<name>/descriptor.yaml` and Airbyte source name |
+| Airbyte `source.name` | composed | `{connector_name}-{source_id}-{tenant_id}` | Stable lookup pattern (e.g., `bamboohr-bamboohr-main-virtuozzo`) |
+| Airbyte `connection.name` | composed | `{connector_name}-{source_id}-to-clickhouse-{tenant_id}` | Stable lookup pattern (e.g., `bamboohr-bamboohr-main-to-clickhouse-virtuozzo`) |
+| Airbyte `connection.namespaceFormat` | bronze database | `bronze_{connector_name_underscored}` | Per-connector ClickHouse Bronze database |
+
+> **Tenant resolution**: `tenant_id` comes from cluster-level `ConfigMap insight-config` (data field `tenant_id`) or env var `INSIGHT_TENANT_ID` as fallback. Per-tenant `connections/<tenant>.yaml` files are removed (Decision #6).
+
+### 3.12 Secret Validation
+
+The secret validator (`cpt-insightspec-component-secret-validator`) is a **read-only** check run independently of reconcile. Its job: catch the most common cluster-side configuration mistakes before they become silent runtime failures.
+
+**What it checks** (per connector that has a `secrets/connectors/*.yaml.example`):
+
+| Check | Where | Error level |
+|---|---|---|
+| Required `stringData` keys present | K8s Secret | ERROR |
+| Required labels present | K8s Secret | ERROR |
+| Required annotations present | K8s Secret | ERROR |
+| OnePasswordItem CR ↔ child Secret label/annotation parity | both | WARN (not fatal) |
+
+The annotation-parity warning exists because the 1Password operator copies labels onto child Secrets but **not** custom annotations. Without this check, a connector can drop out of `cpt-insightspec-component-secret-discovery`'s discovery query when its CR diverges from its Secret.
+
+**Exit codes**: `0` clean, `1` at least one ERROR, `2` environmental failure (kubeconfig / namespace missing).
+
+Drives PRD requirement `cpt-insightspec-fr-secret-validation`. The related ADR is listed in §1.2 Architecture Drivers.
+
+`run-init.sh` runs the validator first (before reconcile/adopt) so credential issues fail fast rather than silently disabling discovery.
 
 ## 4. Additional context
 

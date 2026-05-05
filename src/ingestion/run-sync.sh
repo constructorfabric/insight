@@ -29,18 +29,31 @@ SOURCE_ID="${3:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-source "airbyte-toolkit/lib/state.sh"
-source "airbyte-toolkit/lib/secrets.sh"
+export TOOLKIT_DIR="${SCRIPT_DIR}/airbyte-toolkit"
+# shellcheck source=airbyte-toolkit/lib/secrets.sh
+source "${TOOLKIT_DIR}/lib/secrets.sh"
+# shellcheck source=airbyte-toolkit/lib/airbyte.sh
+source "${TOOLKIT_DIR}/lib/airbyte.sh"
 
-# ─── Resolve connection_id from toolkit state ───────────────────────────
-CONNECTION_ID=""
-for source_key in $(state_list "tenants.${TENANT}.connectors.${CONNECTOR}"); do
-  CONNECTION_ID=$(state_get "tenants.${TENANT}.connectors.${CONNECTOR}.${source_key}.connection_id")
-  [[ -n "$CONNECTION_ID" ]] && break
-done
+# ─── Resolve connection_id from Airbyte ─────────────────────────────────
+# Airbyte itself is the authoritative state store post-refactor (no local
+# state.yaml). Match by connection.name pattern written by
+# reconcile-connectors.sh / register: `${CONNECTOR}-${SOURCE_ID}-${TENANT}…`.
+WORKSPACE_ID="$(ab_workspace_id)"
+CONNECTION_ID="$(ab_list_connections "${WORKSPACE_ID}" \
+  | python3 -c '
+import sys, json
+connector, tenant = sys.argv[1], sys.argv[2]
+for c in json.load(sys.stdin):
+    name = c.get("name", "")
+    if name.startswith(f"{connector}-") and name.endswith(f"-{tenant}-conn"):
+        print(c.get("connectionId", "")); break
+    if name.startswith(f"{connector}-") and tenant in name:
+        print(c.get("connectionId", "")); break
+' "${CONNECTOR}" "${TENANT}")"
 [[ -n "$CONNECTION_ID" ]] || {
   echo "ERROR: no connection_id for connector '$CONNECTOR' tenant '$TENANT'." >&2
-  echo "       Run update-connections.sh first." >&2
+  echo "       Run reconcile-connectors.sh first." >&2
   exit 1
 }
 

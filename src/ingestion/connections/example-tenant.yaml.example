@@ -1,6 +1,0 @@
-# Tenant connection config
-# Copy to {tenant-name}.yaml (e.g., acme.yaml)
-# Contains ONLY tenant_id — all credentials and connector config come from K8s Secrets.
-# Active connectors are discovered by label app.kubernetes.io/part-of=insight.
-
-tenant_id: example_tenant

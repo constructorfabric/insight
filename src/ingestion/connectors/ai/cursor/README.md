@@ -16,7 +16,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: insight-cursor-main                          # convention: insight-{connector}-{source-id}
-  namespace: insight                                    # connect.sh discovers secrets in this namespace
+  namespace: insight                                  # reconcile-connectors.sh discovers secrets here (override with K8S_NAMESPACE)
   labels:
     app.kubernetes.io/part-of: insight
   annotations:
@@ -35,14 +35,14 @@ stringData:
 
 ### Automatically injected
 
-These fields are set by `airbyte-toolkit/connect.sh` and should NOT be in the Secret:
+These fields are set by `reconcile-connectors.sh` and should NOT be in the Secret:
 
 | Field | Source |
 |-------|--------|
-| `insight_tenant_id` | `tenant_id` from tenant YAML |
+| `insight_tenant_id` | `tenant_id` from ConfigMap `insight-config` (ns `data`) or `INSIGHT_TENANT_ID` env |
 | `insight_source_id` | `insight.cyberfabric.com/source-id` annotation |
 
-Connector credentials are stored in the K8s Secret. Platform identifiers (`insight_tenant_id`, `insight_source_id`) are injected separately by `connect.sh` from the tenant YAML and Secret annotations.
+Connector credentials are stored in the K8s Secret. Platform identifiers (`insight_tenant_id`, `insight_source_id`) are injected separately by reconcile from the cluster ConfigMap and Secret annotations.
 
 ## Streams
 

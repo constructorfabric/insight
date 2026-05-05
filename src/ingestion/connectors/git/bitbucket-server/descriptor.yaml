@@ -1,5 +1,5 @@
 name: bitbucket-server
-version: '1.0'
+version: "2026.05.04"
 schedule: 0 2 * * *
 dbt_select: tag:bitbucket-server+
 workflow: sync
