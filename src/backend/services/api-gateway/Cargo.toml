@@ -37,11 +37,23 @@ oidc-authn-plugin = { path = "../../plugins/oidc-authn-plugin" }
 # Auth info + proxy modules
 modkit-macros = { workspace = true }
 modkit-security = { workspace = true }
+modkit-auth = { workspace = true }
 async-trait = { workspace = true }
 axum = "0.8"
+axum-extra = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# BFF: session store + OIDC + crypto
+redis = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+subtle = { workspace = true }
+url = "2.5"
 
 # Runtime
 tokio = { workspace = true }

@@ -72,6 +72,21 @@ reqwest = { version = "0.12", features = ["json"] }
 # Caching
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 
+# Cookie typed helpers (BFF)
+axum-extra = { version = "0.10", features = ["cookie"] }
+
+# Crypto / random (BFF: CSPRNG for session IDs, CSRF tokens)
+rand = "0.8"
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+
+# JWT (back-channel logout token validation, ID token verification fallback)
+jsonwebtoken = { version = "9.3", default-features = false, features = ["use_pem"] }
+
+# Constant-time comparison for CSRF
+subtle = "2.6"
+
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 
