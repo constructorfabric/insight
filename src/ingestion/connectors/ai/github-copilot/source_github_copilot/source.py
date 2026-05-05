@@ -42,7 +42,7 @@ class SourceGitHubCopilot(AbstractSource):
     ) -> Tuple[bool, Optional[Any]]:
         """Validate connector config end-to-end.
 
-        Three checks (in order):
+        Four checks (in order):
           1. insight_source_id is non-empty (per DESIGN §3.3 — composite unique_key
              collisions otherwise).
           2. PAT is valid against GitHub API (`/rate_limit` returns 200).
@@ -104,7 +104,7 @@ class SourceGitHubCopilot(AbstractSource):
                     f"{resp.status_code}): {resp.text[:200]}"
                 )
 
-            # 4. Metrics reports endpoint access — validates that the "Copilot usage
+            # 3. Metrics reports endpoint access — validates that the "Copilot usage
             # metrics" org policy is enabled. The endpoint rejects dates outside
             # `[today-365d, today)` with HTTP 400, so probe with yesterday UTC —
             # that's both inside the allowed window and guaranteed to be a fully

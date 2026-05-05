@@ -82,9 +82,9 @@ graph LR
 | `cpt-insightspec-fr-ghcopilot-seats-paginate` | `page` + `per_page=100` query params; advance until empty page or fewer than 100 items |
 | `cpt-insightspec-fr-ghcopilot-user-metrics-collect` | Stream `copilot_user_metrics` → `GET /orgs/{org}/copilot/metrics/reports/users-1-day?day=YYYY-MM-DD` → signed URL → NDJSON |
 | `cpt-insightspec-fr-ghcopilot-signed-url-fetch` | `_fetch_ndjson_records()` shared mixin: API call → envelope → GET each signed URL without `Authorization` → parse NDJSON line-by-line |
-| `cpt-insightspec-fr-ghcopilot-user-metrics-incremental` | `DatetimeBasedCursor` on `day`, `step: P1D`; first run starts from `github_start_date` (default 90 days ago) |
+| `cpt-insightspec-fr-ghcopilot-user-metrics-incremental` | `IncrementalMixin` + manual `_state` dict, `step: P1D`; cursor advances per-slice even on HTTP 204 days (Major #5 fix); first run starts from `github_start_date` (default 90 days ago) |
 | `cpt-insightspec-fr-ghcopilot-org-metrics-collect` | Stream `copilot_org_metrics` → `GET /orgs/{org}/copilot/metrics/reports/organization-1-day?day=YYYY-MM-DD` → signed URL → NDJSON |
-| `cpt-insightspec-fr-ghcopilot-org-metrics-incremental` | Same `DatetimeBasedCursor` pattern as user metrics |
+| `cpt-insightspec-fr-ghcopilot-org-metrics-incremental` | Same `IncrementalMixin` + manual `_state` pattern as user metrics |
 | `cpt-insightspec-fr-ghcopilot-collection-runs` | **Deferred to Phase 2** — monitoring table produced by Argo orchestrator |
 | `cpt-insightspec-fr-ghcopilot-deduplication` | Per ADR-0004: every Bronze row carries a `unique_key` String column with formula `{tenant_id}-{insight_source_id}-{natural_key}` (`-` separator). Natural key per stream: `user_login` (seats), `user_login-day` (user metrics), `day` (org metrics). |
 | `cpt-insightspec-fr-ghcopilot-tenant-tagging` | `_add_envelope()` applied in each stream's `parse_response()` — injects `tenant_id`, `insight_source_id`, `collected_at`, `data_source = 'insight_github_copilot'` |
@@ -95,7 +95,7 @@ graph LR
 
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
-| `cpt-insightspec-nfr-ghcopilot-auth` | PAT Bearer auth; no auth on download | `rest_headers()` / `download_headers()` in `auth.py` | `Authorization: Bearer {token}` for `api.github.com`; empty headers `{}` for signed-URL download | Integration test with valid/invalid PAT |
+| `cpt-insightspec-nfr-ghcopilot-auth` | PAT Bearer auth; no auth on download | `rest_headers()` / `download_headers()` in `auth.py` | `Authorization: Bearer {token}` for `api.github.com`; `download_headers()` returns `User-Agent` + `Accept` (no `Authorization`) for signed-URL download | Integration test with valid/invalid PAT |
 | `cpt-insightspec-nfr-ghcopilot-rate-limiting` | Exponential backoff on 429 | `RateLimitedSession` wrapper | Inspects `Retry-After` / `X-RateLimit-Reset`; exponential backoff with jitter | Observed behaviour during backfill |
 | `cpt-insightspec-nfr-ghcopilot-freshness` | Data for day D within 48h | Scheduler config | Daily schedule at 02:00 UTC; cursor covers D-1 at minimum | SLA monitoring |
 | `cpt-insightspec-nfr-ghcopilot-data-source` | `data_source = 'insight_github_copilot'` on all rows | `_add_envelope()` | Hard-coded constant injected in every stream's `parse_response()` | Row-level assertion in integration tests |
@@ -211,7 +211,7 @@ All three GitHub API endpoint calls use HTTP GET with query parameters. There ar
 ```mermaid
 graph TD
     subgraph Package["source_github_copilot (Python CDK)"]
-        Auth["auth.py<br/>rest_headers() — Bearer token<br/>download_headers() — empty"]
+        Auth["auth.py<br/>rest_headers() — Bearer token<br/>download_headers() — no auth (User-Agent + Accept)"]
         Inject["_add_envelope()<br/>tenant_id, insight_source_id,<br/>collected_at, data_source"]
         Source["SourceGitHubCopilot<br/>AbstractSource<br/>check_connection(), streams()"]
         S1["CopilotSeatsStream<br/>GET /copilot/billing/seats<br/>Full refresh, page + per_page=100"]
@@ -262,7 +262,7 @@ The `descriptor.yaml` at `src/ingestion/connectors/ai/github-copilot/descriptor.
 | Field | Value | Purpose |
 |-------|-------|---------|
 | `schedule` | `0 2 * * *` | Daily at 02:00 UTC |
-| `dbt_select` | `tag:github-copilot+` | Selects dbt models tagged `github-copilot` and all downstream nodes |
+| `dbt_select` | `""` (empty) | Silver dbt models deferred to Phase 2; set to `tag:github-copilot+` when staging models ship |
 | `workflow` | `sync` | Standard Airbyte sync workflow |
 | `connection.namespace` | `bronze_github_copilot` | Bronze destination namespace |
 
@@ -278,7 +278,7 @@ Entry point for the Airbyte connector. Validates credentials, returns the stream
 
 ##### Responsibility scope
 
-- `check_connection()`: (a) validates that `insight_source_id` is non-empty and returns `(False, "insight_source_id MUST be set via the insight.cyberfabric.com/source-id annotation; empty values cause silent dedup collision in copilot_org_metrics")` if it is blank; (b) fetches the first page of `GET /orgs/{org}/copilot/billing/seats` to validate the PAT and org slug. Returns `(True, None)` on 200; surfaces authentication errors on 401/403 and Copilot-not-enabled signals on 404.
+- `check_connection()`: four sequential checks — (1) `insight_source_id` is non-empty (fails fast with dedup-collision warning); (2) `GET /rate_limit` validates the PAT is valid and not expired; (3) `GET /orgs/{org}/copilot/billing/seats?per_page=1` validates org existence, `manage_billing:copilot` scope, and Copilot enablement (returns distinct error messages for 401/403/404); (4) `GET /orgs/{org}/copilot/metrics/reports/users-1-day?day={yesterday}` validates that the "Copilot usage metrics" org policy is enabled — HTTP 403 at this step means the policy is off, not a scope error (scope was already validated in step 3). Returns `(True, None)` on 200/204/404 from the metrics probe.
 - `streams()`: returns `[CopilotSeatsStream, CopilotUserMetricsStream, CopilotOrgMetricsStream]`.
 - `spec()`: reads `spec.json` and returns `ConnectorSpecification`.
 
@@ -357,7 +357,7 @@ Extracts org-level daily Copilot aggregate metrics for trend and adoption analyt
 - Step 1 endpoint: `GET https://api.github.com/orgs/{org}/copilot/metrics/reports/organization-1-day?day={YYYY-MM-DD}` with Bearer auth.
 - Same two-step signed URL + NDJSON pattern as `CopilotUserMetricsStream` via `_fetch_ndjson_records()`.
 - Sync mode: Incremental; cursor field `day`; same P1D step as user metrics.
-- Composite `unique` key: `{insight_source_id}|{day}` — `insight_source_id` discriminates between multiple org connections within the same tenant.
+- Composite `unique_key`: `{tenant_id}-{source_id}-{day}` (hyphen separator, per ADR-0004) — `tenant_id`+`source_id` prefix discriminates between tenants and multiple Copilot connections within the same tenant.
 
 ##### Responsibility boundaries
 
@@ -473,7 +473,7 @@ Config fields (defined in `spec.json`):
 | Field | Required | Secret | Description |
 |-------|----------|--------|-------------|
 | `tenant_id` | Yes | No | Tenant isolation identifier (UUID) |
-| `github_token` | Yes | Yes | PAT (classic) with `manage_billing:copilot` scope (covers all endpoints) |
+| `github_token` | Yes | Yes | PAT (classic) with `manage_billing:copilot` scope (covers all endpoints); `read:org` also accepted for metrics |
 | `github_org` | Yes | No | GitHub organization slug (e.g. `my-company`) |
 | `insight_source_id` | **Yes** | No | Connector instance identifier — **must be non-empty** (validated by `check_connection()`); injected by the platform from the `insight.cyberfabric.com/source-id` annotation on the K8s Secret |
 | `github_start_date` | No | No | Earliest date for metrics backfill (YYYY-MM-DD). Default: 90 days ago |
@@ -746,7 +746,7 @@ Package: src/ingestion/connectors/ai/github-copilot/
 Connection: github-copilot-{org_name}-daily
 ├── Schedule: daily 02:00 UTC (via orchestrator cron)
 ├── Source image: source-github-copilot (Python CDK)
-├── Source config: {tenant_id, github_token, github_org, github_start_date?, insight_source_id?}
+├── Source config: {insight_tenant_id, github_token, github_org, insight_source_id, github_start_date?}
 ├── Streams: 3 (copilot_seats, copilot_user_metrics, copilot_org_metrics)
 ├── Destination: ClickHouse Bronze (namespace: bronze_github_copilot)
 └── State: per-stream day cursors (user_metrics, org_metrics)
@@ -818,13 +818,23 @@ These four edits are bundled into the same PR that activates the Copilot staging
 | (constant) | `tool` | `'copilot'` |
 | (constant) | `source` | `'copilot'` |
 | (constant) | `data_source` | `'insight_github_copilot'` |
-| `total_active_user_count` | `total_active_users` | Rename |
-| `total_engaged_user_count` | `total_engaged_users` | Rename |
-| `total_code_acceptance_activity_count` | `total_code_acceptances` | Rename |
-| `total_loc_added_sum` | `total_lines_added` | Rename |
-| `total_used_chat_count` | `total_used_chat` | Rename |
-| `total_used_agent_count` | `total_used_agent` | Rename |
-| `total_used_cli_count` | `total_used_cli` | Rename |
+| `daily_active_users` | `daily_active_users` | Pass through |
+| `weekly_active_users` | `weekly_active_users` | Pass through |
+| `monthly_active_users` | `monthly_active_users` | Pass through |
+| `monthly_active_chat_users` | `monthly_active_chat_users` | Pass through |
+| `monthly_active_agent_users` | `monthly_active_agent_users` | Pass through |
+| `daily_active_copilot_cloud_agent_users` | `daily_active_copilot_cloud_agent_users` | Pass through |
+| `weekly_active_copilot_cloud_agent_users` | `weekly_active_copilot_cloud_agent_users` | Pass through |
+| `monthly_active_copilot_cloud_agent_users` | `monthly_active_copilot_cloud_agent_users` | Pass through |
+| `daily_active_copilot_code_review_users` | `daily_active_copilot_code_review_users` | Pass through |
+| `user_initiated_interaction_count` | `user_initiated_interaction_count` | Pass through |
+| `code_generation_activity_count` | `code_generation_activity_count` | Pass through |
+| `code_acceptance_activity_count` | `code_acceptance_activity_count` | Pass through |
+| `loc_suggested_to_add_sum` | `loc_suggested_to_add_sum` | Pass through |
+| `loc_suggested_to_delete_sum` | `loc_suggested_to_delete_sum` | Pass through |
+| `loc_added_sum` | `loc_added_sum` | Pass through |
+| `loc_deleted_sum` | `loc_deleted_sum` | Pass through |
+| `pull_requests` | `pull_requests` | Pass through (JSON object) |
 | `_airbyte_extracted_at` | `_version` | `toUnixTimestamp64Milli(_airbyte_extracted_at)` per ADR-0001 |
 | `collected_at` | `collected_at` | Parse to `DateTime64(3)` |
 
@@ -835,7 +845,7 @@ These four edits are bundled into the same PR that activates the Copilot staging
 | Bronze table | Silver target | Status |
 |-------------|--------------|--------|
 | `copilot_seats` | Identity resolution input (`user_email` join dimension) | Active |
-| `copilot_user_metrics` | `class_ai_dev_usage` via `copilot__ai_dev_usage` | Active |
+| `copilot_user_metrics` | `class_ai_dev_usage` via `copilot__ai_dev_usage` | Deferred (dbt model not yet committed; Silver schema extension required — see §4 mapping) |
 | `copilot_org_metrics` | `class_ai_org_usage` via `copilot__ai_org_usage` | Deferred (Silver view pending) |
 | `copilot_collection_runs` | Monitoring only | Deferred to Phase 2 |
 
