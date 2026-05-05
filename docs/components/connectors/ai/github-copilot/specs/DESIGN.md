@@ -685,6 +685,11 @@ Bronze tables are created by the destination (ClickHouse). In addition to connec
 | `weekly_active_copilot_cloud_agent_users` | Number (nullable) | Users active in Copilot Cloud Agent in the trailing 7 days |
 | `monthly_active_copilot_cloud_agent_users` | Number (nullable) | Users active in Copilot Cloud Agent in the trailing 30 days |
 | `daily_active_copilot_code_review_users` | Number (nullable) | Users who used Copilot Code Review in the trailing 24 h |
+| `weekly_active_copilot_code_review_users` | Number (nullable) | Users active in Copilot Code Review in the trailing 7 days |
+| `monthly_active_copilot_code_review_users` | Number (nullable) | Users active in Copilot Code Review in the trailing 30 days |
+| `daily_passive_copilot_code_review_users` | Number (nullable) | Users whose PRs were reviewed by Copilot in the trailing 24 h (passive recipients of Copilot review activity) |
+| `weekly_passive_copilot_code_review_users` | Number (nullable) | Passive Copilot Code Review recipients in the trailing 7 days |
+| `monthly_passive_copilot_code_review_users` | Number (nullable) | Passive Copilot Code Review recipients in the trailing 30 days |
 | `user_initiated_interaction_count` | Number (nullable) | Total user-initiated interactions (org-wide, on this day) |
 | `code_generation_activity_count` | Number (nullable) | Total code generation events (org-wide) |
 | `code_acceptance_activity_count` | Number (nullable) | Total accepted code suggestions (org-wide) |
@@ -701,7 +706,7 @@ Bronze tables are created by the destination (ClickHouse). In addition to connec
 | `collected_at` | String | Collection timestamp (UTC ISO 8601) — framework-injected |
 | `data_source` | String | Always `insight_github_copilot` — framework-injected |
 
-Field set confirmed against live `constructor-tech-org` API (2026-04-29). `additionalProperties: true` ensures new API fields pass through without a schema migration.
+Field set confirmed against live `constructor-tech-org` API (2026-05-05; the 6 `*_copilot_code_review_*` fields were added in this verification pass). `additionalProperties: true` ensures any further new API fields pass through without a schema migration.
 
 **PK / dedup key**: `unique_key`. Granularity: one row per `(tenant, source, day)`. Incremental, append-only.
 

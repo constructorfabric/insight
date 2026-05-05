@@ -168,6 +168,11 @@ class CopilotOrgMetricsStream(CopilotReportsStream, IncrementalMixin):
                 "weekly_active_copilot_cloud_agent_users": {"type": ["null", "number"]},
                 "monthly_active_copilot_cloud_agent_users": {"type": ["null", "number"]},
                 "daily_active_copilot_code_review_users": {"type": ["null", "number"]},
+                "weekly_active_copilot_code_review_users": {"type": ["null", "number"]},
+                "monthly_active_copilot_code_review_users": {"type": ["null", "number"]},
+                "daily_passive_copilot_code_review_users": {"type": ["null", "number"]},
+                "weekly_passive_copilot_code_review_users": {"type": ["null", "number"]},
+                "monthly_passive_copilot_code_review_users": {"type": ["null", "number"]},
                 # interaction / code metrics
                 "user_initiated_interaction_count": {"type": ["null", "number"]},
                 "code_generation_activity_count": {"type": ["null", "number"]},

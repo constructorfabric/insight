@@ -105,10 +105,18 @@ class SourceGitHubCopilot(AbstractSource):
                 )
 
             # 4. Metrics reports endpoint access — validates that the "Copilot usage
-            # metrics" org policy is enabled. Probe with a far-past date (returns HTTP
-            # 204 when auth OK but no data; HTTP 403 when the policy is disabled).
-            # Either `manage_billing:copilot` or `read:org` scope is sufficient here.
-            probe_date = "2024-01-01"  # well before the API's 2025-10-10 data start
+            # metrics" org policy is enabled. The endpoint rejects dates outside
+            # `[today-365d, today)` with HTTP 400, so probe with yesterday UTC —
+            # that's both inside the allowed window and guaranteed to be a fully
+            # closed reporting day. Possible outcomes:
+            #   200/204 — endpoint reachable and policy enabled (data may or
+            #             may not exist for the day; both are fine for a probe)
+            #   403     — Copilot usage metrics policy disabled (or token lacks
+            #             a sufficient scope; the seats probe above already
+            #             eliminates the scope path)
+            #   400     — should not happen for yesterday; treat as FAIL
+            from datetime import datetime, timedelta, timezone
+            probe_date = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
             resp = requests.get(
                 f"https://api.github.com/orgs/{org}/copilot/metrics/reports/users-1-day",
                 headers=headers,
@@ -124,7 +132,10 @@ class SourceGitHubCopilot(AbstractSource):
                     f"API response: {resp.text[:200]}"
                 )
             if resp.status_code not in (200, 204, 404):
-                # 200/204 = OK; 404 sometimes returned for very old dates; anything else is wrong
+                # 200 = data exists; 204 = no data for the day (still a valid OK);
+                # 404 occasionally surfaces for orgs without any historical data;
+                # anything else (incl. 400) means the probe parameters or the
+                # connector environment are wrong.
                 return False, (
                     f"Failed to probe metrics endpoint for org '{org}' (HTTP "
                     f"{resp.status_code}): {resp.text[:200]}"

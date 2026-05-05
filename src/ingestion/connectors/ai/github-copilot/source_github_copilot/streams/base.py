@@ -189,6 +189,16 @@ class CopilotReportsStream(CopilotRestStream, ABC):
     # bound runtime and prevent infinite loops if something else is wrong.
     _SIGNED_URL_REFETCH_LIMIT = 2
 
+    def next_page_token(self, response: requests.Response) -> Optional[Mapping[str, Any]]:
+        """The reports envelope endpoint is a single call per day — no pagination.
+
+        The envelope GET on api.github.com returns at most one JSON document with a
+        `download_links` array; iteration over that array is internal to
+        `parse_response` and is not exposed as CDK pagination. Returning None keeps
+        the CDK from issuing extra envelope calls per slice.
+        """
+        return None
+
     def parse_response(self, response: requests.Response, stream_slice=None, **kwargs) -> Iterable[Mapping[str, Any]]:
         """Step 1 envelope handler. HTTP 204 → emit nothing (data not available for day)."""
         if not self._guard_response(response):
