@@ -165,32 +165,43 @@ impl RestApiCapability for ProxyModule {
             );
         }
 
-        // Authenticated 404 fallback. Anything that doesn't match a configured
-        // proxy route, a public endpoint (e.g. /v1/auth/config), or a health
-        // probe falls through to here. The route is registered as
-        // `authenticated()` so modkit short-circuits to 401 for missing/invalid
-        // tokens before the handler runs — only authenticated callers learn
-        // that a path doesn't exist. This closes a topology-leak gap where
-        // the framework's default fallback returns 404 without auth.
-        let fallback_methods = [
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-            Method::PATCH,
-        ];
-        for method in fallback_methods {
-            let handler =
-                move |_req: Request<Body>| async move { not_found_problem().into_response() };
-            router = OperationBuilder::new(method.clone(), "/{*rest}")
-                .summary("Authenticated 404 fallback")
-                .authenticated()
-                .no_license_required()
-                .json_response(StatusCode::NOT_FOUND, "Not found")
-                .handler(handler)
-                .register(router, openapi);
-        }
-        tracing::info!("registered authenticated 404 fallback for unmatched paths");
+        // TEMPORARILY DISABLED — see https://github.com/cyberfabric/cyberfabric-core/pull/1843
+        //
+        // The wildcard `/{*rest}` registered as `authenticated()` here used to
+        // shield 404s behind a 401 for anonymous callers (so they couldn't
+        // probe path existence). But cyberfabric-core's GatewayRoutePolicy
+        // resolves auth requirements with `is_authenticated` short-circuiting
+        // before the public-route check, so this wildcard masks every
+        // explicitly `.public()` route at a more specific path — including
+        // /v1/auth/config, breaking the SPA's unauthenticated bootstrap.
+        //
+        // PR #1843 flips that precedence (public wins over wildcard
+        // authenticated). Once it lands and we bump the cf-api-gateway
+        // dependency past the fix, RE-ENABLE this block to restore the
+        // 404→401 topology shield.
+        //
+        // let fallback_methods = [
+        //     Method::GET,
+        //     Method::POST,
+        //     Method::PUT,
+        //     Method::DELETE,
+        //     Method::PATCH,
+        // ];
+        // for method in fallback_methods {
+        //     let handler =
+        //         move |_req: Request<Body>| async move { not_found_problem().into_response() };
+        //     router = OperationBuilder::new(method.clone(), "/{*rest}")
+        //         .summary("Authenticated 404 fallback")
+        //         .authenticated()
+        //         .no_license_required()
+        //         .json_response(StatusCode::NOT_FOUND, "Not found")
+        //         .handler(handler)
+        //         .register(router, openapi);
+        // }
+        tracing::warn!(
+            "authenticated 404 fallback DISABLED pending cyberfabric-core PR #1843 — \
+             unmatched paths will return Axum's default 404 without auth checking"
+        );
 
         Ok(router)
     }
@@ -199,6 +210,11 @@ impl RestApiCapability for ProxyModule {
 /// RFC 9457 Problem for unmatched paths. Returned only after auth has
 /// already validated the token; unauthenticated callers get 401 from the
 /// auth middleware before reaching this handler.
+///
+/// Currently only the test references it — the handler that calls it is
+/// commented out pending cyberfabric-core PR #1843. Drop the
+/// `#[allow(dead_code)]` once the fallback is re-enabled.
+#[allow(dead_code)]
 fn not_found_problem() -> Problem {
     Problem::new(
         StatusCode::NOT_FOUND,
