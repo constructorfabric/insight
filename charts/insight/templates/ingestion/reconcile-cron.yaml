@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/component: reconcile-loop
     {{- include "insight.labels" . | nindent 4 }}
 spec:
-  schedule: {{ .Values.ingestion.reconcile.schedule | default "*/15 * * * *" | quote }}
+  schedule: {{ required "ingestion.reconcile.schedule is required" .Values.ingestion.reconcile.schedule | quote }}
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
   workflowSpec:
@@ -39,11 +39,11 @@ spec:
               value: {{ .Release.Namespace | quote }}
           resources:
             requests:
-              cpu: {{ .Values.ingestion.reconcile.resources.requests.cpu | default "100m" | quote }}
-              memory: {{ .Values.ingestion.reconcile.resources.requests.memory | default "128Mi" | quote }}
+              cpu: {{ .Values.ingestion.reconcile.resources.requests.cpu | quote }}
+              memory: {{ .Values.ingestion.reconcile.resources.requests.memory | quote }}
             limits:
-              cpu: {{ .Values.ingestion.reconcile.resources.limits.cpu | default "500m" | quote }}
-              memory: {{ .Values.ingestion.reconcile.resources.limits.memory | default "512Mi" | quote }}
+              cpu: {{ .Values.ingestion.reconcile.resources.limits.cpu | quote }}
+              memory: {{ .Values.ingestion.reconcile.resources.limits.memory | quote }}
           volumeMounts:
             - name: insight-reconcile-logs
               mountPath: /var/log/insight

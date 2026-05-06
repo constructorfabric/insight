@@ -17,7 +17,7 @@ env_log_target_resolve() {
   if env_in_cluster_p; then
     echo "/var/log/insight/reconcile-$(date -u +%Y-%m-%d).log"
   else
-    local base="${XDG_STATE_HOME:-$HOME/.local/state}/insight"
+    local base="${XDG_STATE_HOME:-$HOME/.local/state}/insight"  # RULE-DEFAULTS-OK: XDG Base Directory Spec defines exactly this fallback
     mkdir -p "$base"
     echo "$base/reconcile-$(date -u +%Y-%m-%d).log"
   fi

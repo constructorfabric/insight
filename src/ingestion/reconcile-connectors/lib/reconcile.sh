@@ -19,6 +19,9 @@
 
 set -euo pipefail
 
+: "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
+: "${CONNECTORS_DIR:?CONNECTORS_DIR must be set, typically src/ingestion/connectors}"
+
 _RECONCILE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _RECONCILE_PY_DIR="$(cd "${_RECONCILE_LIB_DIR}/../python" && pwd)"
 
@@ -60,7 +63,7 @@ reconcile__log() {
 # ---------------------------------------------------------------------------
 reconcile_compute_connection_name() {
   local connector="$1"
-  local namespace="${K8S_NAMESPACE:-data}"
+  local namespace="${INSIGHT_NAMESPACE}"
   local secret_name
   secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
   if [[ -z "${secret_name}" ]]; then
@@ -81,7 +84,7 @@ reconcile_compute_connection_name() {
 # ---------------------------------------------------------------------------
 reconcile_compute_schedule() {
   local connector="$1"
-  local namespace="${K8S_NAMESPACE:-data}"
+  local namespace="${INSIGHT_NAMESPACE}"
   local secret_name schedule
   secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
   if [[ -n "${secret_name}" ]]; then
@@ -91,7 +94,7 @@ reconcile_compute_schedule() {
     [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
   fi
   schedule="$(python3 "${_RECONCILE_PY_DIR}/parse_descriptor.py" \
-    --descriptor "${CONNECTORS_DIR:-connectors}/${connector}/descriptor.yaml" \
+    --descriptor "${CONNECTORS_DIR}/${connector}/descriptor.yaml" \
     --field schedule 2>/dev/null || true)"
   [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
   printf '0 0 * * *'
@@ -104,7 +107,7 @@ reconcile_compute_schedule() {
 reconcile_compute_tenant() {
   local connector="$1"
   [[ -n "${INSIGHT_TENANT_ID:-}" ]] && { printf '%s' "${INSIGHT_TENANT_ID}"; return 0; }
-  local namespace="${K8S_NAMESPACE:-data}"
+  local namespace="${INSIGHT_NAMESPACE}"
   local secret_name
   secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
   if [[ -z "${secret_name}" ]]; then
@@ -214,7 +217,7 @@ for d in json.load(sys.stdin):
     _RECONCILE_NOOP=$((_RECONCILE_NOOP + 1))
   else
     action="republish"
-    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
         "would_call ${type}_set_definition_${type} ${definition_id} ${target_version}"
     else
@@ -256,7 +259,7 @@ for s in json.load(sys.stdin):
         print(s.get("sourceId", "")); break
 ' "${expected_source_name}")"
   if [[ -z "${source_id}" ]]; then
-    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
         "would_call ab_create_source ${expected_source_name}"
     else
@@ -279,7 +282,7 @@ for s in json.load(sys.stdin):
   change_class="$(reconcile_classify_change "${current_cfg_json}" "${target_cfg_json}")"
   if [[ "${change_class}" == "breaking" ]]; then
     action="recreate"
-    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
         "would_call reconcile_recreate_with_state source=${source_id} (breaking)"
     else
@@ -291,7 +294,7 @@ for s in json.load(sys.stdin):
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-if-stale-def
     # @cpt-begin:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-return-update
     action="update"
-    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
         "would_call ab_update_source ${source_id}"
     else
@@ -337,7 +340,7 @@ reconcile_connections() {
     desired_action="$(python3 "${_RECONCILE_PY_DIR}/tag_drift_check.py" \
       "${existing_tags_json}" "${secret_cfg_hash}")"
     if [[ "${desired_action}" == "patch_tags" ]]; then
-      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then
+      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
         reconcile__log CHANGE "${connector_name}" \
           "would_call adopt_tag_connection ${connection_id} cfg_hash=${secret_cfg_hash}"
       else
@@ -396,13 +399,14 @@ reconcile_recreate_with_state() {
   new_source_id="$(printf '%s' "${new_source_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceId",""))')"
 
   local destination_id
-  destination_id="${RECONCILE_DESTINATION_ID:-}"
+  destination_id="${RECONCILE_DESTINATION_ID:-}"  # RULE-DEFAULTS-OK: explicit empty check below
   if [[ -z "${destination_id}" ]]; then
     reconcile__log ERROR "${source_name}" \
       "RECONCILE_DESTINATION_ID env not set — cannot create new connection"
     return 1
   fi
-  local schedule_json="${RECONCILE_DEFAULT_SCHEDULE_JSON:-{\"scheduleType\":\"manual\"}}"
+  : "${RECONCILE_DEFAULT_SCHEDULE_JSON:?Set RECONCILE_DEFAULT_SCHEDULE_JSON (e.g. '{\"scheduleType\":\"manual\"}' or cron form)}"
+  local schedule_json="${RECONCILE_DEFAULT_SCHEDULE_JSON}"
   local tags_json
   tags_json="$(python3 -c 'import sys, json; print(json.dumps(["insight", f"cfg-hash:{sys.argv[1]}"]))' "${cfg_hash}")"
   local new_conn_json new_connection_id
@@ -440,7 +444,7 @@ reconcile_recreate_with_state() {
 # ---------------------------------------------------------------------------
 reconcile_gc_orphans() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-loop
-  if [[ "${RECONCILE_NO_GC:-0}" -eq 1 ]]; then
+  if [[ "${RECONCILE_NO_GC:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     reconcile__log INFO "_gc" "skipped (--no-gc set)"
     return 0
   fi
@@ -465,7 +469,7 @@ reconcile_gc_orphans() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-src-loop
   while IFS=$'\t' read -r conn_id src_id conn_name; do
     [[ -n "${conn_id}" ]] || continue
-    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${conn_name}" \
         "would_gc connection=${conn_id} source=${src_id}"
     else
@@ -547,7 +551,7 @@ reconcile_run() {
 
     local cfg_hash secret_data_json
     cfg_hash="$(disc_compute_cfg_hash "${secret_name}")"
-    secret_data_json="$(kubectl -n "${K8S_NAMESPACE:-data}" get secret "${secret_name}" \
+    secret_data_json="$(kubectl -n "${INSIGHT_NAMESPACE}" get secret "${secret_name}" \
       -o json 2>/dev/null \
       | python3 "${_RECONCILE_PY_DIR}/extract_secret_data.py")"
 
@@ -572,7 +576,7 @@ reconcile_run() {
     # Layer 2 — source
     local tenant_id="${INSIGHT_TENANT_ID:-}"
     local source_id_label
-    source_id_label="$(kubectl -n "${K8S_NAMESPACE:-data}" get secret "${secret_name}" \
+    source_id_label="$(kubectl -n "${INSIGHT_NAMESPACE}" get secret "${secret_name}" \
       -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/source-id}' 2>/dev/null || true)"
     [[ -n "${source_id_label}" ]] || source_id_label="main"
     local expected_source_name="${name}-${source_id_label}-${tenant_id}"

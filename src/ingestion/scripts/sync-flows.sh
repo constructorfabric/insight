@@ -16,7 +16,8 @@ CONNECTIONS_DIR="./connections"
 # ingestion/*.yaml, controlled by ingestion.templates.enabled). We skip
 # applying them here — they are already in the cluster, and re-applying
 # from a long-deleted local copy was a stale leftover from before PR #224.
-INSIGHT_NS="${INSIGHT_NAMESPACE:-insight}"
+: "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
+INSIGHT_NS="${INSIGHT_NAMESPACE}"
 if ! kubectl get workflowtemplate -n "$INSIGHT_NS" airbyte-sync >/dev/null 2>&1; then
   echo "ERROR: WorkflowTemplate airbyte-sync not found in namespace '$INSIGHT_NS'." >&2
   echo "       The umbrella chart should have installed it. Check:" >&2

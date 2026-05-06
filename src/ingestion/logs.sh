@@ -12,12 +12,12 @@ set -euo pipefail
 #   ./logs.sh airbyte <job-id|latest>      # Airbyte job logs via API
 # ---------------------------------------------------------------------------
 
-KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/insight.kubeconfig}"
+: "${KUBECONFIG:?KUBECONFIG must be set to your cluster kubeconfig path}"
+: "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
 export KUBECONFIG
 
-# All Insight components live in a single namespace (default: insight).
-# Override with INSIGHT_NAMESPACE=... for non-default installs.
-NS="${INSIGHT_NAMESPACE:-insight}"
+# All Insight components live in a single namespace.
+NS="${INSIGHT_NAMESPACE}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

@@ -29,7 +29,7 @@ def main() -> int:
         "CONNECTION_NAME": args.connection_name,
         "SCHEDULE": args.schedule,
         "TENANT": args.tenant,
-        "INSIGHT_NAMESPACE": os.environ.get("INSIGHT_NAMESPACE", "insight"),
+        "INSIGHT_NAMESPACE": os.environ["INSIGHT_NAMESPACE"],
     }
     with open(args.tpl, "r", encoding="utf-8") as f:
         tpl = f.read()

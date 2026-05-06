@@ -11,7 +11,7 @@ spec:
   accessModes: [ReadWriteOnce]
   resources:
     requests:
-      storage: {{ .Values.ingestion.reconcile.logs.size | default "5Gi" | quote }}
+      storage: {{ .Values.ingestion.reconcile.logs.size | quote }}
   {{- with .Values.ingestion.reconcile.logs.storageClass }}
   storageClassName: {{ . | quote }}
   {{- end }}

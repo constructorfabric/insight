@@ -2,6 +2,8 @@
 # valsec_* — connector secret validation (sourceable; NO top-level CLI)
 set -euo pipefail
 
+: "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
+
 VALSEC_SCRIPT_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
 VALSEC_PY_DIR="$( cd "${VALSEC_SCRIPT_DIR}/../python" && pwd )"
 
@@ -9,7 +11,7 @@ VALSEC_PY_DIR="$( cd "${VALSEC_SCRIPT_DIR}/../python" && pwd )"
 # Convention: Secret name == connector slug (per ADR-0007).
 valsec_check_secret() {
   local connector="$1"
-  local namespace="${2:-${INSIGHT_NAMESPACE:-insight}}"
+  local namespace="${2:-${INSIGHT_NAMESPACE}}"
   if ! kubectl -n "${namespace}" get secret "${connector}" >/dev/null 2>&1; then
     return 2   # whole Secret missing — caller should also use valsec_secret_missing_p
   fi
@@ -27,6 +29,6 @@ valsec_check_secret() {
 # Returns 0 if Secret entirely missing (cascade-delete trigger), 1 otherwise.
 valsec_secret_missing_p() {
   local connector="$1"
-  local namespace="${2:-${INSIGHT_NAMESPACE:-insight}}"
+  local namespace="${2:-${INSIGHT_NAMESPACE}}"
   ! kubectl -n "${namespace}" get secret "${connector}" >/dev/null 2>&1
 }

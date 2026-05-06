@@ -23,29 +23,46 @@ The point of these rules is to keep the source of truth in **one place per conce
 
 ## No default values
 
+> **THIS IS THE #1 RULE. AI agents that generate code MUST follow this without exception.**
+>
+> Every value that comes from outside the script — env var, CLI arg, K8s API response, ConfigMap, Secret annotation, file content — **MUST fail-fast on missing**. No silent fallback to a hardcoded default. **Including** "obvious" defaults like `:-insight` for namespace, `:-localhost:8001` for URL, `:-airbyte-auth-secrets` for secret name.
+>
+> **The bar is**: if I can `unset VAR && bash script.sh` and it runs to completion using a wired-in default value, the script is broken — even if the default happened to be correct.
+
 **Forbidden** in any imperative code path:
 
-- Bash: `${VAR:-default}`, `${VAR:=default}`, `${VAR:?...}` is OK only when the message documents why the variable is required (the `:?` form aborts).
-- Python (helpers, scripts): `dict.get(key, default_value)` for any non-trivial default; instead require the key explicitly and raise on missing.
-- Argo Workflow `inputs.parameters[*].default:` for runtime values that originate from a caller (connection IDs, source IDs, image tags). Defaults are allowed only when the value is genuinely a chart-rendered constant (e.g. `clickhouse_host` from Helm `include`).
-- Helm chart `default` values for required operator inputs — pair with `required` so missing config fires an explicit error.
+- Bash: `${VAR:-default}`, `${VAR:=default}`. Only `${VAR:?error message}` is permitted (the `:?` form aborts and prints the message — that IS the fail-fast pattern).
+- Python (helpers, scripts): `os.environ.get("KEY", default_value)`, `dict.get(key, default_value)` where the value is required input (config, K8s state, secret data). Use `os.environ["KEY"]` (raises `KeyError`) or explicit `if key not in d: sys.exit(...)`.
+- Argo Workflow `inputs.parameters[*].default:` for runtime values from a caller (connection IDs, source IDs, image tags). Only chart-rendered constants resolved at install time (e.g. `clickhouse_host` from Helm `include`) may use `default:`.
+- Helm chart `default` values for required operator inputs — pair with `required "msg"` so missing config fires an explicit error.
 
-**Why**: a default value moves the source of truth from one place (the caller / config) into N places (every default site). When the real value changes, you have to grep for every default — one missed site silently keeps the old value. Treat every default as a hidden second source of truth and remove it.
+**Why** (read once, then internalize): a silent default moves the source of truth from one place (the caller / config) into N places (every default site). The damage modes:
+- Operator forgets to set `INSIGHT_NAMESPACE=prod-tenant`, code falls through to `:-insight`, **writes to the wrong cluster's wrong namespace**, data lands in the wrong tenant. No error. Discovered weeks later.
+- Admin renames `airbyte-auth-secrets` to a per-tenant name, code keeps reading the old name from its default, silently uses a missing/stale secret. No error. Discovered when an audit fails.
+- "Works on dev, fails on prod" debug loops eat days because the failure mode is wrong-data, not crash.
 
-**Before each new default**, ask:
-1. What if this code runs without the value being set anywhere?
-2. Is silent fallback (running with a wrong value) better than a loud error?
+Fail-fast crashes are **loud, immediate, and tell the operator exactly what to fix in the first second**. Default values are landmines.
 
-If the answer to (2) is "no" — and it almost always is — drop the default and require the caller.
+**Before generating ANY line that touches a config input**, ask:
+1. Where does this value come from outside the script?
+2. What happens if `unset VAR && script.sh` is run? — if the answer is "uses my default", you have a bug.
+3. Is silent fallback (running with a wrong value) ever better than a loud error? — almost never.
 
-**Allowed exceptions** (must be tagged with a `# RULE-DEFAULTS-OK:` comment explaining why):
-- Constants that genuinely have no other source (e.g. `argo-workflow` ServiceAccount name baked into chart-rendered manifests).
-- Test/dev shorthand values explicitly marked as such.
+If you cannot articulate a context where the silent default is **provably correct for every operator who will ever run this code**, drop it.
+
+**Allowed exceptions** — narrowly: defaults are permitted ONLY when:
+- The value has no other source AND the developer **explicitly states in the prompt** that the default is correct for the named context, OR
+- The default is a chart-rendered constant resolved at Helm install time (operator sets it once via `values.yaml`), OR
+- The value is purely UX/cosmetic (log timestamp format, retry backoff units, output verbosity) — not a config input.
+
+**Every exception MUST be tagged with `# RULE-DEFAULTS-OK: <one-line reason>` on the line itself.** Untagged defaults block merge.
 
 **How to apply**:
-- When writing shell: `VAR=${VAR:?Set VAR — see <docs path> for what it should be}`
-- When writing Python: drop `or {}` / `or []` / `, default` style; use explicit `if key not in d: raise ...` or destructure with `KeyError`.
-- When writing Argo: omit `default:`; ingestion-pipeline must error out at submission time if a required parameter is missing.
+- Shell: `: "${VAR:?VAR must be set (e.g. <example>; see <docs path>)}"` — at the top of every script that uses `$VAR`.
+- Python: `os.environ["VAR"]` (raises `KeyError`), not `os.environ.get(...)`. For dicts, `d["k"]` not `d.get("k", default)`.
+- Argo: omit `default:` for runtime parameters. The submitter (CronWorkflow / run-sync.sh / api-gateway) must pass every value.
+- Helm: `{{ required "X is required when Y=true" .Values.x }}` — pair `required` with `default` if you also want a fallback for missing-but-Y-false case.
+- **Do NOT** write `${INSIGHT_NAMESPACE:-insight}`, `${SECRET_NAME:-airbyte-auth-secrets}`, `${AIRBYTE_URL:=http://localhost:8001}`, `os.environ.get("FOO", "bar")` without the explicit `# RULE-DEFAULTS-OK:` tag justifying the named default. **An untagged default is a bug, even if the value seems "obvious".**
 
 ## No inline scripts
 

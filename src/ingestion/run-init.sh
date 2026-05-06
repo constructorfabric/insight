@@ -11,11 +11,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 cd "${SCRIPT_DIR}"
 
-export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/insight.kubeconfig}"
+: "${KUBECONFIG:?KUBECONFIG must be set to your cluster kubeconfig path}"
+: "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
+export KUBECONFIG
 
 # Single-namespace umbrella (PR #224). All Insight components live in the
-# release namespace, default `insight`. Override via INSIGHT_NAMESPACE.
-INSIGHT_NS="${INSIGHT_NAMESPACE:-insight}"
+# release namespace.
+INSIGHT_NS="${INSIGHT_NAMESPACE}"
 
 # --- Verify the umbrella is installed ---
 echo "=== Verifying umbrella install ==="

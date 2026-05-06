@@ -106,14 +106,14 @@ print(json.dumps(out))
 # Orchestrates the full adoption pass. Idempotent: a second run on a
 # fully-adopted set issues zero state-changing API calls (
 # cpt-insightspec-dod-reconcile-adoption-idempotent). Each call site is
-# guarded by an `if [[ "${ADOPT_DRY_RUN:-0}" -eq 1 ]]` short-circuit so
+# guarded by an `if [[ "${ADOPT_DRY_RUN:-0}" -eq 1 ]]` short-circuit so  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
 # callers can pre-set the flag.
 # ---------------------------------------------------------------------------
 adopt_run() {
   _ADOPT_ADOPTED=0
   _ADOPT_SKIPPED=0
   _ADOPT_WARNINGS=0
-  local dry_run="${1:-${ADOPT_DRY_RUN:-0}}"
+  local dry_run="${1:-${ADOPT_DRY_RUN:-0}}"  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
   local opt_connector="${2:-}"
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-resolve-env

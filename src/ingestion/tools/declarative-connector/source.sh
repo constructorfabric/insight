@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# RULE-DEFAULTS-OK: every default below is for the local Docker-based test harness; this file is not used in production deploy.
+
 # ---------------------------------------------------------------------------
 # Local declarative-connector runner
 #
@@ -27,10 +29,10 @@ if [[ -f "${GLOBAL_ENV_FILE}" ]]; then
   set -a; source "${GLOBAL_ENV_FILE}"; set +a
 fi
 
-IMAGE="${AIRBYTE_CONNECTOR_IMAGE:-airbyte/source-declarative-manifest:local}"
-BASE_IMAGE="${AIRBYTE_BASE_IMAGE:-airbyte/source-declarative-manifest:latest}"
-COMMAND_NAME="${AIRBYTE_COMMAND:-source-declarative-manifest}"
-SECRETS_TMPFS_OPTS="${AIRBYTE_SECRETS_TMPFS_OPTS:-/secrets:rw,mode=1777}"
+IMAGE="${AIRBYTE_CONNECTOR_IMAGE:-airbyte/source-declarative-manifest:local}"  # RULE-DEFAULTS-OK: see file header
+BASE_IMAGE="${AIRBYTE_BASE_IMAGE:-airbyte/source-declarative-manifest:latest}"  # RULE-DEFAULTS-OK: see file header
+COMMAND_NAME="${AIRBYTE_COMMAND:-source-declarative-manifest}"  # RULE-DEFAULTS-OK: see file header
+SECRETS_TMPFS_OPTS="${AIRBYTE_SECRETS_TMPFS_OPTS:-/secrets:rw,mode=1777}"  # RULE-DEFAULTS-OK: see file header
 
 usage() {
   cat >&2 <<EOF

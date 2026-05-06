@@ -53,7 +53,7 @@ log_run_summary() {
   local changes="${1:-0}"
   local errs="${2:-0}"
   printf 'reconcile: %s changes, %s errors (target=%s)\n' \
-    "$changes" "$errs" "${LOG_TARGET:-<uninitialised>}"
+    "$changes" "$errs" "${LOG_TARGET:-<uninitialised>}"  # RULE-DEFAULTS-OK: display-only label in summary line; not a config input
   if [[ "$changes" -gt 0 || "$errs" -gt 0 ]]; then
     log_line INFO "summary: $changes changes, $errs errors" || true
   fi

@@ -131,7 +131,7 @@ cdk_build() {
   fi
 
   local image_base="source-${connector_name}-insight"
-  local image_tag="${IMAGE_TAG:-local}"
+  local image_tag="${IMAGE_TAG:-local}"  # RULE-DEFAULTS-OK: dev/local-build sentinel; CI overrides to commit SHA
   local image_registry="${IMAGE_REGISTRY:-}"
   local image
   if [[ -n "${image_registry}" ]]; then
@@ -146,7 +146,7 @@ cdk_build() {
   printf '  Building Docker image...\n'
   docker build -t "${image}" -f "${dockerfile}" "${connector_dir}"
 
-  local cluster_name="${CLUSTER_NAME:-insight}"
+  local cluster_name="${CLUSTER_NAME:-insight}"  # RULE-DEFAULTS-OK: matches umbrella release name; only used for Kind local-load
   if [[ "${push}" -eq 1 ]]; then
     printf '  Pushing to registry...\n'
     docker push "${image}"

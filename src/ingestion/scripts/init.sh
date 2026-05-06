@@ -12,9 +12,10 @@ export RECONCILE_DIR="${SCRIPT_DIR}/../reconcile-connectors"
 # bundled ClickHouse StatefulSet — live in the release namespace, default
 # `insight`. Exported so child scripts (airbyte-toolkit/*.sh, sync-flows.sh)
 # inherit the value.
-export INSIGHT_NAMESPACE="${INSIGHT_NAMESPACE:-insight}"
+: "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
+export INSIGHT_NAMESPACE
 INSIGHT_NS="$INSIGHT_NAMESPACE"
-CH_POD="${CLICKHOUSE_POD:-statefulset/insight-clickhouse}"
+CH_POD="${CLICKHOUSE_POD:-statefulset/insight-clickhouse}"  # RULE-DEFAULTS-OK: bundled umbrella deploys this exact StatefulSet name; override only for non-bundled CH
 
 # clickhouse-client inside the StatefulSet pod inherits CLICKHOUSE_USER /
 # CLICKHOUSE_PASSWORD from the container env (set by the chart from

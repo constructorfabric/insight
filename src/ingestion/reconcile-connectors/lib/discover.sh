@@ -15,13 +15,13 @@
 
 set -euo pipefail
 
-# Resolve project layout relative to this file. Callers that need different
-# roots can override these vars before sourcing.
+: "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
+: "${CONNECTORS_DIR:?CONNECTORS_DIR must be set, typically src/ingestion/connectors}"
+
+# Resolve project layout relative to this file.
 _DISC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-: "${INGESTION_DIR:=$(cd "${_DISC_LIB_DIR}/../.." && pwd)}"
-: "${CONNECTORS_DIR:=${INGESTION_DIR}/connectors}"
-: "${K8S_NAMESPACE:=data}"
-: "${SECRET_LABEL_SELECTOR:=app.kubernetes.io/part-of=insight}"
+: "${INGESTION_DIR:=$(cd "${_DISC_LIB_DIR}/../.." && pwd)}"  # RULE-DEFAULTS-OK: derived path, not a config input
+: "${SECRET_LABEL_SELECTOR:=app.kubernetes.io/part-of=insight}"  # RULE-DEFAULTS-OK: project-fixed label selector, not operator-tunable
 
 # ---------------------------------------------------------------------------
 # disc_load_descriptors
@@ -65,7 +65,7 @@ PY
 # ---------------------------------------------------------------------------
 disc_load_secrets() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-list-secrets
-  local namespace="${1:-${K8S_NAMESPACE}}"
+  local namespace="${1:-${INSIGHT_NAMESPACE}}"
   local json
   if ! json="$(kubectl -n "${namespace}" get secret \
         -l "${SECRET_LABEL_SELECTOR}" -o json 2>/dev/null)"; then
@@ -90,7 +90,7 @@ disc_load_secrets() {
 disc_compute_cfg_hash() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-compute-cfg-hash:p1:inst-cch-decode
   local secret_name="$1"
-  local namespace="${2:-${K8S_NAMESPACE}}"
+  local namespace="${2:-${INSIGHT_NAMESPACE}}"
   local data_json
   if ! data_json="$(kubectl -n "${namespace}" get secret "${secret_name}" \
         -o jsonpath='{.data}' 2>/dev/null)"; then
@@ -117,7 +117,7 @@ disc_compute_cfg_hash() {
 # ---------------------------------------------------------------------------
 disc_match_descriptor_to_secret() {
   local connector_name="$1"
-  local namespace="${2:-${K8S_NAMESPACE}}"
+  local namespace="${2:-${INSIGHT_NAMESPACE}}"
   local match
   match="$(kubectl -n "${namespace}" get secret \
             -l "${SECRET_LABEL_SELECTOR}" -o json 2>/dev/null \
@@ -144,7 +144,7 @@ sys.exit(1)
 disc_required_fields_for_connector() {
   local connector="$1"
   python3 "${_DISC_LIB_DIR}/../python/parse_descriptor.py" \
-    --descriptor "${CONNECTORS_DIR:-connectors}/${connector}/descriptor.yaml" \
+    --descriptor "${CONNECTORS_DIR}/${connector}/descriptor.yaml" \
     --field secret.required_fields
 }
 
@@ -155,7 +155,7 @@ disc_required_fields_for_connector() {
 # ---------------------------------------------------------------------------
 disc_skip_unlabelled() {
   local secret_name="$1"
-  local namespace="${2:-${K8S_NAMESPACE}}"
+  local namespace="${2:-${INSIGHT_NAMESPACE}}"
   local val
   val="$(kubectl -n "${namespace}" get secret "${secret_name}" \
           -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/connector}' \
