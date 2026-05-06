@@ -34,7 +34,11 @@ spec:
       activeDeadlineSeconds: 1800
       script:
         image: {{ `"{{inputs.parameters.toolbox_image}}"` }}
-        imagePullPolicy: Always
+        # IfNotPresent so dev clusters use the locally-built `insight-toolbox:local`
+        # loaded into Kind via `kind load docker-image` (same convention as
+        # tt-enrich-jira-run.yaml). Production overlays should set their own
+        # registry-pinned tag in `ingestion.toolboxImage` and rely on registry pulls.
+        imagePullPolicy: IfNotPresent
         command: [bash]
         env:
           - name: CLICKHOUSE_PASSWORD

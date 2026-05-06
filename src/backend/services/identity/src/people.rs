@@ -77,8 +77,16 @@ impl PeopleStore {
     /// Load all active employees from `ClickHouse`, deduplicate by id
     /// (keep latest by `_airbyte_extracted_at`), and build relationships.
     ///
+    /// **First-install resilience:** if `bronze_bamboohr.employees` does
+    /// not exist yet (`UNKNOWN_DATABASE` / `UNKNOWN_TABLE` / CH error code
+    /// 81 or 60), this function logs a warning and returns an empty
+    /// store instead of failing. The bamboohr Airbyte sync populates
+    /// the table on first run; restart this pod afterwards to reload.
+    ///
     /// # Errors
-    /// Returns an error if the `ClickHouse` query or response parsing fails.
+    /// Returns an error if the `ClickHouse` query fails for any reason
+    /// other than the source bronze table being absent, or if response
+    /// parsing fails.
     pub async fn load(ch: &insight_clickhouse::Client) -> anyhow::Result<Self> {
         tracing::info!("loading people from bronze_bamboohr.employees");
 
@@ -115,7 +123,21 @@ impl PeopleStore {
             Ok(bytes) => bytes,
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("UNKNOWN_DATABASE") || msg.contains("UNKNOWN_TABLE") {
+                // CH 25.x error codes for missing source: 81 = UNKNOWN_DATABASE,
+                // 60 = UNKNOWN_TABLE. The clickhouse v0.14 Rust client does not
+                // expose numeric codes as a typed accessor (the error enum has
+                // SchemaMismatch + Other(BoxedError); the server Code: ... line
+                // ends up in `Display`), so we string-match the canonical name
+                // AND the numeric code prefix to defend against locale changes
+                // and against future formatting tweaks dropping the symbolic
+                // name. If the upstream crate ever surfaces a typed code we
+                // should switch to that; until then this is the supported
+                // fallback per the crate's docs.
+                let missing_source = msg.contains("UNKNOWN_DATABASE")
+                    || msg.contains("UNKNOWN_TABLE")
+                    || msg.contains("Code: 81.")
+                    || msg.contains("Code: 60.");
+                if missing_source {
                     tracing::warn!(
                         error = %msg,
                         "bronze_bamboohr.employees not present yet — starting with an empty PeopleStore. \

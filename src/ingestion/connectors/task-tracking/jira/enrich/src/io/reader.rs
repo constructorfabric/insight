@@ -207,7 +207,7 @@ pub async fn fetch_all_snapshots(
                     COALESCE(toString(id_readable), '')     AS id_readable, \
                     COALESCE(toInt64(toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(created, 3))), 0) AS created_ms, \
                     reporter_id \
-             FROM bronze_jira.jira_issue FINAL ji \
+             FROM bronze_jira.jira_issue AS ji FINAL \
              WHERE source_id = ?",
         )
         .bind(insight_source_id)
@@ -308,7 +308,7 @@ pub fn open_events_cursor(
                     e.value_to              AS value_to, \
                     e.value_to_string       AS value_to_string \
              FROM staging.jira_changelog_items e \
-             LEFT JOIN bronze_jira.jira_issue FINAL i \
+             LEFT JOIN bronze_jira.jira_issue AS i FINAL \
                  ON e.insight_source_id = i.source_id \
                 AND e.id_readable        = i.id_readable \
              LEFT JOIN ( \

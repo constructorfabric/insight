@@ -51,8 +51,12 @@ Rules for the placeholder:
    for the referencing migrations to type-check the SELECT
    expressions. Full schema parity with the eventual dbt model /
    Airbyte stream is NOT required.
-2. **Engine = MergeTree** with a sensible `ORDER BY` so the table is a
-   valid drop-in.
+2. **Engine = ReplacingMergeTree** with the same version column the
+   real owner uses (`_airbyte_extracted_at` for bronze placeholders,
+   `_version` for silver placeholders) and a sensible `ORDER BY` so
+   the table is a valid drop-in. Matching the real engine keeps reads
+   against the placeholder semantically equivalent to reads against
+   the eventually-built table.
 3. **Idempotent** — guarded with `ch_table_exists` so re-runs of
    `init.sh` are safe.
 4. **Replaced on first real run.** Airbyte (for bronze) and dbt (for
