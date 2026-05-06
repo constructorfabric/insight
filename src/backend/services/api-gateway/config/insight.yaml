@@ -72,10 +72,10 @@ modules:
       issuer_url: "${OIDC_ISSUER_URL}"
       client_id: "${OIDC_CLIENT_ID}"
       redirect_uri: "${OIDC_REDIRECT_URI}"
-      scopes:
-        - openid
-        - profile
-        - email
+      # Space-separated. IdP-specific — see AuthInfoConfig.scopes docs.
+      # Without a resource scope, Entra defaults the access token audience
+      # to Microsoft Graph and the gateway rejects it.
+      scopes: "${OIDC_SCOPES}"
 
   # ─── Authorization ──────────────────────────────────────────
   authz-resolver:

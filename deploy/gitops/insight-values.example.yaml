@@ -77,6 +77,12 @@ apiGateway:
   # Use ExternalSecrets / sealed-secrets / SOPS of your choice.
   oidc:
     existingSecret: insight-oidc
+    # If you let the chart render its own Secret (existingSecret unset),
+    # set scopes here (space-separated, IdP-specific, e.g.
+    # "openid profile email api://<clientId>/Access.Default" for Entra).
+    # When using existingSecret, instead populate the secret with key
+    # APP__modules__auth-info__config__scopes alongside the issuer/clientId/redirect_uri.
+    scopes: ""
 
   ingress:
     enabled: true
@@ -95,6 +101,12 @@ frontend:
     tag: "0.1.0"                 # CHANGE on every release
   oidc:
     clientId: insight-frontend   # MUST match apiGateway.oidc.clientId
+    # Space-separated OIDC scopes. IdP-specific:
+    #   Entra v2 single-app:  "openid profile email api://<clientId>/Access.Default"
+    #   Okta:                 "openid profile email <api-name>.<scope>"
+    # Without a resource-specific scope, Entra defaults the access token to
+    # Microsoft Graph and the gateway will reject it with audience mismatch.
+    scopes: "openid profile email"  # ← REPLACE with the IdP-specific scope set
   ingress:
     enabled: true
     className: nginx

@@ -130,7 +130,7 @@ id_upserts AS (
             coalesce(entity_id, ''), '-',
             'id-',
             'UPSERT-',
-            toString(toUnixTimestamp64Milli(updated_at))
+            toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
         ) AS String) AS unique_key,
         tenant_id AS insight_tenant_id,
         source_id AS insight_source_id,
@@ -141,7 +141,7 @@ id_upserts AS (
         '{{ source_type }}.entity_id' AS value_field_name,
         'UPSERT' AS operation_type,
         updated_at AS _synced_at,
-        toUnixTimestamp64Milli(updated_at) AS _version
+        toUnixTimestamp64Milli(toDateTime64(updated_at, 3)) AS _version
     FROM history
     WHERE entity_id IS NOT NULL AND entity_id != ''
 ),
@@ -155,7 +155,7 @@ id_deletes AS (
             coalesce(d.entity_id, ''), '-',
             'id-',
             'DELETE-',
-            toString(toUnixTimestamp64Milli(d.updated_at))
+            toString(toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)))
         ) AS String) AS unique_key,
         d.tenant_id AS insight_tenant_id,
         d.source_id AS insight_source_id,
@@ -166,7 +166,7 @@ id_deletes AS (
         '{{ source_type }}.entity_id' AS value_field_name,
         'DELETE' AS operation_type,
         d.updated_at AS _synced_at,
-        toUnixTimestamp64Milli(d.updated_at) AS _version
+        toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)) AS _version
     FROM deactivation_events d
 )
 

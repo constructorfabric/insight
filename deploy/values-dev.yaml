@@ -24,6 +24,13 @@ clickhouse:
 mariadb:
   database: "insight"
   username: "insight"
+  # bitnami/mariadb creates user + database from auth.{username,database}
+  # at first pod boot. They MUST match the top-level values above (the
+  # umbrella validator enforces this). See charts/insight/values.yaml
+  # for the rationale.
+  auth:
+    username: "insight"
+    database: "insight"
 
 # Single-replica app services for dev — the canonical chart uses 2
 # replicas per service for production HA / zero-downtime rolling updates,

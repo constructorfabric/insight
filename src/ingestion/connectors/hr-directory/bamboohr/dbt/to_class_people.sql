@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('bamboohr__bronze_promoted') }}
 -- Bronze → Silver step 1: BambooHR Employees → class_people
 -- Full-refresh source. Maps employee records to unified person registry.
 -- SCD Type 2: valid_from = lastChanged, valid_to = NULL (current-state snapshot).
@@ -17,7 +18,7 @@ SELECT
     CAST(concat(coalesce(unique_key, ''), '-', toString(lastChanged)) AS String) AS unique_key,
     coalesce(tenant_id, '')                         AS workspace_id,
     -- person_id resolved in Silver Step 2 via Identity Manager
-    NULL                                            AS person_id,
+    CAST(NULL AS Nullable(UUID))                    AS person_id,
     lastChanged                                     AS valid_from,
     CAST(NULL AS Nullable(DateTime))                AS valid_to,
     'bamboohr'                                      AS source,
@@ -29,7 +30,7 @@ SELECT
     workEmail                                       AS email,
     jobTitle                                        AS job_title,
     department                                      AS department_name,
-    NULL                                            AS org_unit_id,
+    CAST(NULL AS Nullable(UUID))                    AS org_unit_id,
     supervisorEId                                   AS manager_person_id,
     CASE
         WHEN status = 'Active' THEN 'active'
@@ -41,7 +42,7 @@ SELECT
     parseDateTimeBestEffortOrNull(terminationDate)   AS termination_date,
     location                                        AS location,
     country                                         AS country,
-    NULL                                            AS fte,
+    CAST(NULL AS Nullable(Float64))                 AS fte,
     CAST(map('division', coalesce(division, '')) AS Map(String, String))
                                                     AS custom_str_attrs,
     CAST(map() AS Map(String, Float64))             AS custom_num_attrs,

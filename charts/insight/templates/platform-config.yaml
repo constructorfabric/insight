@@ -30,11 +30,13 @@ data:
   CLICKHOUSE_PORT:     {{ include "insight.clickhouse.port" .      | quote }}
   CLICKHOUSE_URL:      {{ include "insight.clickhouse.url" .       | quote }}
   CLICKHOUSE_DATABASE: {{ include "insight.clickhouse.database" .  | quote }}
+  CLICKHOUSE_USER:     {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
 
   # ─── MariaDB ───
   MARIADB_HOST:     {{ include "insight.mariadb.host" .     | quote }}
   MARIADB_PORT:     {{ include "insight.mariadb.port" .     | quote }}
   MARIADB_DATABASE: {{ include "insight.mariadb.database" . | quote }}
+  MARIADB_USERNAME: {{ required "mariadb.username is required" .Values.mariadb.username | quote }}
 
   # ─── Redis ───
   REDIS_HOST: {{ include "insight.redis.host" . | quote }}

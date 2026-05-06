@@ -83,14 +83,20 @@ models:
   - name: class_wiki_activity
     description: >
       Unified per-user per-day edit activity across wiki sources. One row per
-      (tenant, source, author, day) with counts of pages edited, total edits,
-      pages created, major edits, minor edits. Derived from page-version
+      (tenant, source, author, day) with counts of pages edited, total edits
+      (logical sessions), and pages created. Derived from page-version
       history (Confluence: wiki_page_versions).
 
       Identity: `author_id` is the source-side identifier (Atlassian accountId
       for Confluence). `author_email` is resolved via LEFT JOIN with
       bronze_jira.jira_user. Silver Step 2 (Identity Resolution) maps
       author_id → person_id.
+
+      Dropped columns (#260): `major_edits` and `minor_edits` were removed
+      because the Confluence Cloud `/pages/{id}/versions` endpoint always
+      returns `minorEdit: false` (verified 2026-05-05). The bronze field
+      `wiki_page_versions.minor_edit` is preserved upstream for forward
+      compatibility but ignored here.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -120,19 +126,16 @@ models:
         tests:
           - not_null
       - name: total_edits
-        description: "Total version rows authored on this day (multiple edits on one page count separately)"
+        description: >
+          Logical edit sessions authored on this day. Consecutive versions of
+          the same (page, author) within a 30-minute gap are collapsed into a
+          single session, so autosaves and rapid republishes do not inflate
+          the count. See `confluence__wiki_activity.sql` (issue #259) for
+          rationale and the threshold knob.
         tests:
           - not_null
       - name: pages_created
         description: "Pages created on this day (version_number = 1)"
-        tests:
-          - not_null
-      - name: major_edits
-        description: "Edits where minor_edit = false"
-        tests:
-          - not_null
-      - name: minor_edits
-        description: "Edits where minor_edit = true"
         tests:
           - not_null
       - name: source

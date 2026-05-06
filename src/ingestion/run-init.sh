@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Initialize the ingestion stack: validate Secrets, adopt any pre-existing
-# Airbyte resources, then drive the cluster to the descriptor-declared
-# state via the single reconcile entrypoint.
+# Initialize the ingestion stack: validate the umbrella install, run dbt
+# database setup + ClickHouse migrations, adopt any pre-existing Airbyte
+# resources, then drive the cluster to the descriptor-declared state via
+# the single reconcile entrypoint.
 #
 # Runs from the host machine (requires kubectl, curl, python3).
 # Run AFTER: helm install of the umbrella chart + ./secrets/apply.sh
@@ -12,11 +13,20 @@ cd "${SCRIPT_DIR}"
 
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/insight.kubeconfig}"
 
-# --- Verify infra Secrets exist ---
-echo "=== Verifying secrets ==="
-if ! kubectl get secret clickhouse-credentials -n data >/dev/null 2>&1; then
-  echo "ERROR: clickhouse-credentials Secret not found in namespace 'data'" >&2
-  echo "  Run: ./secrets/apply.sh" >&2
+# Single-namespace umbrella (PR #224). All Insight components live in the
+# release namespace, default `insight`. Override via INSIGHT_NAMESPACE.
+INSIGHT_NS="${INSIGHT_NAMESPACE:-insight}"
+
+# --- Verify the umbrella is installed ---
+echo "=== Verifying umbrella install ==="
+if ! kubectl get -n "$INSIGHT_NS" statefulset/insight-clickhouse >/dev/null 2>&1; then
+  echo "ERROR: insight-clickhouse StatefulSet not found in namespace '$INSIGHT_NS'" >&2
+  echo "  Run: ./dev-up.sh --env local  (or your environment installer)" >&2
+  exit 1
+fi
+if ! kubectl get -n "$INSIGHT_NS" secret insight-db-creds >/dev/null 2>&1; then
+  echo "ERROR: insight-db-creds Secret not found in namespace '$INSIGHT_NS'" >&2
+  echo "  The umbrella chart should have created it on install." >&2
   exit 1
 fi
 

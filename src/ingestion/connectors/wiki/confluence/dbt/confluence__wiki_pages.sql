@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('confluence__bronze_promoted') }}
 -- Bronze → Silver step 1: Confluence pages → class_wiki_pages
 --
 -- One row per (tenant, source, page). Dedupe by taking the latest extraction
@@ -70,28 +71,32 @@ spaces AS (
 )
 {%- endif %}
 
+-- Explicit `AS column_name` aliases are required: ClickHouse keeps the
+-- table-alias prefix in the projected column name otherwise (e.g. column
+-- becomes `p.tenant_id` instead of `tenant_id`), which breaks downstream
+-- consumers and `not_null`/`unique` tests.
 SELECT
-    p.tenant_id,
-    p.source_id,
-    p.unique_key,
-    p.page_id,
-    p.space_id,
-    s.space_name,
-    p.title,
-    p.status,
-    p.author_id,
+    p.tenant_id                                                             AS tenant_id,
+    p.source_id                                                             AS source_id,
+    p.unique_key                                                            AS unique_key,
+    p.page_id                                                               AS page_id,
+    p.space_id                                                              AS space_id,
+    s.space_name                                                            AS space_name,
+    p.title                                                                 AS title,
+    p.status                                                                AS status,
+    p.author_id                                                             AS author_id,
     {% if jira_user %}ua.email{% else %}CAST(NULL AS Nullable(String)){% endif %}                                                    AS author_email,
-    p.last_editor_id,
+    p.last_editor_id                                                        AS last_editor_id,
     {% if jira_user %}ue.email{% else %}CAST(NULL AS Nullable(String)){% endif %}                                                    AS last_editor_email,
-    p.parent_page_id,
-    p.version_count,
-    p.created_at,
-    p.updated_at,
+    p.parent_page_id                                                        AS parent_page_id,
+    p.version_count                                                         AS version_count,
+    p.created_at                                                            AS created_at,
+    p.updated_at                                                            AS updated_at,
     s.space_url                                                             AS space_url,
     'confluence'                                                            AS source,
     'insight_confluence'                                                    AS data_source,
-    p.collected_at,
-    p._version
+    p.collected_at                                                          AS collected_at,
+    p._version                                                              AS _version
 FROM pages p
 LEFT JOIN spaces s
     ON p.tenant_id = s.tenant_id

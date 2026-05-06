@@ -55,9 +55,11 @@ models:
   - name: confluence__wiki_activity
     description: >
       Bronze → Silver step 1: Confluence page versions → class_wiki_activity.
-      Per-user per-day edit activity with counts of pages_edited, total_edits,
-      pages_created, major_edits, minor_edits. author_email resolved via
-      bronze_jira.jira_user JOIN with NULL fallback.
+      Per-user per-day edit activity with counts of pages_edited, total_edits
+      (logical sessions per #259), pages_created. author_email resolved via
+      bronze_jira.jira_user JOIN with NULL fallback. `major_edits` and
+      `minor_edits` were dropped per #260 — the upstream `minor_edit` flag
+      is dead at the Atlassian Cloud API level.
     columns:
       - name: tenant_id
         tests:
@@ -82,12 +84,6 @@ models:
         tests:
           - not_null
       - name: pages_created
-        tests:
-          - not_null
-      - name: major_edits
-        tests:
-          - not_null
-      - name: minor_edits
         tests:
           - not_null
       - name: source

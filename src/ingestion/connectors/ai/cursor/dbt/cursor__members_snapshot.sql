@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('cursor__bronze_promoted') }}
 -- SCD2 snapshot of cursor team members
 -- Appends a new row only when name, role, or isRemoved changes
 {{ config(

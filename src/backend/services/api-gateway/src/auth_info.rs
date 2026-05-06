@@ -31,7 +31,7 @@ pub struct AuthInfoResponse {
 }
 
 /// Module configuration (from YAML).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AuthInfoConfig {
     /// OIDC issuer URL. Should match the OIDC plugin's `issuer_url`.
@@ -40,23 +40,14 @@ pub struct AuthInfoConfig {
     pub client_id: String,
     /// Frontend callback URL after OIDC login.
     pub redirect_uri: String,
-    /// Scopes to request.
-    pub scopes: Vec<String>,
-}
-
-impl Default for AuthInfoConfig {
-    fn default() -> Self {
-        Self {
-            issuer_url: String::new(),
-            client_id: String::new(),
-            redirect_uri: String::new(),
-            scopes: vec![
-                "openid".to_owned(),
-                "profile".to_owned(),
-                "email".to_owned(),
-            ],
-        }
-    }
+    /// Scopes to request, as a space-separated string (matches OAuth2's wire
+    /// format). Stored as `String` so the standard
+    /// `APP__modules__auth-info__config__scopes` env-var override works
+    /// without a custom Vec deserializer; split on whitespace when building
+    /// the response. IdP-specific:
+    ///   Entra v2 single-app: "openid profile email api://<clientId>/Access.Default"
+    ///   Okta:                "openid profile email <api-name>.<scope>"
+    pub scopes: String,
 }
 
 /// Auth info module — serves OIDC config to the frontend.
@@ -88,6 +79,14 @@ impl Module for AuthInfoModule {
                  Set modules.auth-info.config.issuer_url."
             );
         }
+        if config.scopes.split_whitespace().next().is_none() {
+            tracing::warn!(
+                "auth-info: scopes is empty. SPA will request no OIDC scopes \
+                 and IdPs will fall back to default audiences (Entra → Microsoft Graph), \
+                 producing access tokens the gateway can't validate. \
+                 Set modules.auth-info.config.scopes (space-separated)."
+            );
+        }
 
         self.config
             .set(Arc::new(config))
@@ -114,7 +113,11 @@ impl RestApiCapability for AuthInfoModule {
             issuer_url: config.issuer_url.clone(),
             client_id: config.client_id.clone(),
             redirect_uri: config.redirect_uri.clone(),
-            scopes: config.scopes.clone(),
+            scopes: config
+                .scopes
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect(),
             response_type: "code".to_owned(),
         };
 

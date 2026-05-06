@@ -218,7 +218,38 @@ mariadb:
   auth:
     # bitnami/mariadb natively reads `mariadb-password` and
     # `mariadb-root-password` keys from auth.existingSecret.
+    #
+    # `auth.username` and `auth.database` ARE WHAT bitnami uses to
+    # CREATE USER + CREATE DATABASE on first pod boot. They MUST match
+    # the umbrella's top-level `mariadb.username` / `mariadb.database`
+    # (which downstream secrets.yaml uses for ANALYTICS__database_url).
+    # values.yaml is not Helm-templated, so we cannot reference one from
+    # the other — the umbrella validator (`insight.validate`) checks the
+    # match at render time and fails with a readable error on drift.
+    username: ""                  # MUST match mariadb.username
+    database: ""                  # MUST match mariadb.database
     existingSecret: "insight-db-creds"
+  # Per-service MariaDB databases (ADR-0006 — each backend service owns
+  # its own DB). bitnami runs scripts from this ConfigMap ONCE on the
+  # first pod boot (when /bitnami/mariadb is empty), mounted at
+  # /docker-entrypoint-initdb.d. After the first boot the databases
+  # live in the PVC — restarts and helm upgrades never re-run the
+  # scripts (and don't need to: the data survives in the PVC).
+  #
+  # The ConfigMap is created from `templates/mariadb-initdb-scripts.yaml`
+  # so the SQL can interpolate `mariadb.username` via Helm templating
+  # (values.yaml itself is NOT Helm-templated, so we cannot embed
+  # `{{ .Values.mariadb.username }}` directly under `initdbScripts:`).
+  #
+  # NB: this is a TOP-LEVEL bitnami subchart key (mariadb.initdbScriptsConfigMap),
+  # NOT under `primary:`. The path matters — see the bundled chart's
+  # values.yaml line 170 (chart version 20.0.0).
+  #
+  # Replaces the previous `identity-db-init-job.yaml` Helm pre-install
+  # Job, whose `pre-install,pre-upgrade` hook ordering raced against
+  # the regular-template Secret `insight-db-creds` (chicken-and-egg).
+  initdbScriptsConfigMap: "insight-mariadb-initdb-scripts"
+
   primary:
     persistence:
       size: 5Gi
@@ -320,6 +351,9 @@ apiGateway:
     audience: ""                # MUST be set (e.g. "api://insight")
     clientId: ""
     redirectUri: ""
+    # Space-separated OIDC scopes; IdP-specific (Entra wants
+    # api://<clientId>/Access.Default; Okta uses bare names).
+    scopes: ""
 
   authDisabled: false           # true = disable auth (LOCAL DEV ONLY)
 
@@ -403,3 +437,7 @@ frontend:
   oidc:
     issuer: ""
     clientId: ""
+    # Space-separated OIDC scopes. IdP-specific (Entra wants
+    # api://<clientId>/Access.Default; Okta uses bare names).
+    # Required when issuer/clientId are set.
+    scopes: ""

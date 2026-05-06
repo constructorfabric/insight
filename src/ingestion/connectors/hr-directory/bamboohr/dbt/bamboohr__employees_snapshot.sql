@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('bamboohr__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='append',

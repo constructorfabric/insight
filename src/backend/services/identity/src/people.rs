@@ -105,10 +105,27 @@ impl PeopleStore {
             .fetch_bytes("JSONEachRow")
             .map_err(|e| anyhow::anyhow!("ClickHouse query failed: {e}"))?;
 
-        let raw_bytes = cursor
-            .collect()
-            .await
-            .map_err(|e| anyhow::anyhow!("ClickHouse fetch failed: {e}"))?;
+        // First-install resilience: bronze_bamboohr.employees is only present
+        // after the bamboohr Airbyte sync runs. On a fresh cluster it does
+        // not exist yet — start with an empty store rather than crash-looping
+        // the whole service (which would block every other helm-managed
+        // component waiting for it to become Ready). After the first sync,
+        // restart the pod to populate the in-memory store.
+        let raw_bytes = match cursor.collect().await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("UNKNOWN_DATABASE") || msg.contains("UNKNOWN_TABLE") {
+                    tracing::warn!(
+                        error = %msg,
+                        "bronze_bamboohr.employees not present yet — starting with an empty PeopleStore. \
+                         Restart this pod after the first bamboohr Airbyte sync to load people."
+                    );
+                    return Ok(Self::build(&[]));
+                }
+                return Err(anyhow::anyhow!("ClickHouse fetch failed: {e}"));
+            }
+        };
 
         let mut seen_ids: HashSet<String> = HashSet::new();
         let mut employees: Vec<RawEmployee> = Vec::new();

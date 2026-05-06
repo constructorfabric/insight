@@ -5,17 +5,24 @@ set -euo pipefail
 # into the local Kind cluster.
 #
 # Usage:
-#   ./build.sh                  # build image with tag `local`
-#   IMAGE_TAG=v0.1.0 ./build.sh # custom tag
+#   ./build.sh                                       # build insight-jira-enrich:local
+#   IMAGE_TAG=v0.1.0 ./build.sh                       # local image, custom tag
+#   JIRA_ENRICH_IMAGE=ghcr.io/myorg/jira:v1 ./build.sh  # full registry/repo:tag override
 #
-# The produced image: `insight-jira-enrich:${IMAGE_TAG}`
+# JIRA_ENRICH_IMAGE wins over IMAGE_NAME / IMAGE_TAG when set, so callers
+# (dev-up.sh) can pass a full registry/repo:tag without losing the registry
+# prefix to a tag-only override.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-IMAGE_NAME="insight-jira-enrich"
-IMAGE_TAG="${IMAGE_TAG:-local}"
-IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+if [[ -n "${JIRA_ENRICH_IMAGE:-}" ]]; then
+  IMAGE="$JIRA_ENRICH_IMAGE"
+else
+  IMAGE_NAME="insight-jira-enrich"
+  IMAGE_TAG="${IMAGE_TAG:-local}"
+  IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+fi
 
 echo "=== Building jira-enrich ==="
 echo "  Image: ${IMAGE}"

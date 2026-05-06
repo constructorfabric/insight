@@ -17,6 +17,15 @@
 --
 -- When a real source lands, just flip the column expression back to its
 -- real aggregate — the column type (Nullable) already accommodates both.
+--
+-- Fresh-cluster bring-up: this migration plus #4–#7 SELECT from silver
+-- dbt-models and bronze connector tables that don't exist on first
+-- install. Minimum-viable placeholders for every such table are
+-- created earlier in the init flow by
+-- `scripts/create-bronze-placeholders.sh` (extended to cover silver
+-- per the bring-up convention — see ADR-0007). dbt's first run
+-- replaces them with the real models / Airbyte syncs do the same for
+-- bronze. ClickHouse VIEW resolution rebinds on each SELECT.
 
 -- =====================================================================
 -- insight.ic_kpis — nullable loc/prs_merged/pr_cycle_time_h

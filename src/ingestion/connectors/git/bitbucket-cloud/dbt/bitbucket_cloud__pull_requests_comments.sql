@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('bitbucket_cloud__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',

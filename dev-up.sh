@@ -111,13 +111,28 @@ echo "  Namespace:   ${NAMESPACE}"
 echo "  Image:       ${IMAGE_REGISTRY:-<local>}/insight-*:${IMAGE_TAG}"
 echo "═══════════════════════════════════════════════════════════════"
 
+declare -A INSTALL_HINT=(
+  [kubectl]="https://kubernetes.io/docs/tasks/tools/  (Ubuntu: 'snap install kubectl --classic')"
+  [helm]="https://helm.sh/docs/intro/install/  (Ubuntu: 'snap install helm --classic')"
+  [docker]="Docker Desktop or Docker Engine — https://docs.docker.com/engine/install/"
+  [kind]="https://kind.sigs.k8s.io/docs/user/quick-start/#installation  (Linux: 'go install sigs.k8s.io/kind@latest' or curl-install)"
+)
+require_cmd() {
+  local cmd="$1" purpose="$2"
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "ERROR: '$cmd' is required ($purpose) but not found in PATH." >&2
+    echo "       Install: ${INSTALL_HINT[$cmd]:-see project README}" >&2
+    echo "       After install, re-run: $0 $*" >&2
+    exit 1
+  fi
+}
 for cmd in kubectl helm docker; do
-  command -v "$cmd" &>/dev/null || { echo "ERROR: $cmd required" >&2; exit 1; }
+  require_cmd "$cmd" "core dependency"
 done
 
 # ─── Cluster bootstrap ────────────────────────────────────────────────────
 if [[ "$CLUSTER_MODE" == "local" ]]; then
-  command -v kind &>/dev/null || { echo "ERROR: kind required for CLUSTER_MODE=local" >&2; exit 1; }
+  require_cmd kind "CLUSTER_MODE=local — Kind manages the local cluster"
   KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/insight.kubeconfig}"
   if ! kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
     echo "=== Creating Kind cluster '${CLUSTER_NAME}' ==="
@@ -288,6 +303,25 @@ if [[ "$COMPONENT" != "ingestion" ]]; then
   [[ "$LOAD_IMAGES_INTO_KIND" == "true" ]] && kind load docker-image "$FE_IMAGE" --name "${CLUSTER_NAME}"
 fi
 
+# Ingestion-template images. These run inside Argo WorkflowTemplates
+# (charts/insight/templates/ingestion/*.yaml) when
+# `ingestion.templates.enabled=true`:
+#   - insight-toolbox       — dbt + helper CLI; runs all dbt-run workflows
+#   - insight-jira-enrich   — Rust binary that augments bronze_jira between
+#                             Airbyte sync and silver-layer dbt models
+# We build them on `dev-up.sh all` and `dev-up.sh ingestion` so the local
+# stack matches production behaviour out of the box. Skip when only
+# building app/backend/frontend — those runs neither install Argo
+# templates nor need these images.
+TOOLBOX_IMAGE_REF="${INGESTION_TOOLBOX_IMAGE:-insight-toolbox:local}"
+JIRA_ENRICH_IMAGE_REF="${INGESTION_JIRA_ENRICH_IMAGE:-insight-jira-enrich:local}"
+if [[ "$COMPONENT" == "all" || "$COMPONENT" == "ingestion" ]] && [[ "$BUILD_IMAGES" == "true" ]]; then
+  echo "=== Building ingestion-template images ==="
+  TOOLBOX_IMAGE="$TOOLBOX_IMAGE_REF" "$ROOT_DIR/src/ingestion/tools/toolbox/build.sh"
+  JIRA_ENRICH_IMAGE="$JIRA_ENRICH_IMAGE_REF" KIND_CLUSTER="$CLUSTER_NAME" \
+    "$ROOT_DIR/src/ingestion/connectors/task-tracking/jira/enrich/build.sh"
+fi
+
 # ─── Generate dev overrides for umbrella ──────────────────────────────────
 # The canonical installer reads the umbrella values.yaml plus overrides.
 # We produce a single tempfile with env-derived values; the standing
@@ -340,14 +374,17 @@ identityResolution:
 frontend:
   image:
     # Frontend image is built from local source by build_and_load_frontend()
-    # below — repo + tag are computed from $(image_ref frontend), no
-    # `:latest` fallback (the chart `required`s tag).
+    # below — repo + tag are computed from \$(image_ref frontend), no
+    # \`:latest\` fallback (the chart \`required\`s tag).
     repository: "${FE_REPO}"
     tag: "${FE_TAG}"
     pullPolicy: "${IMAGE_PULL_POLICY}"
   ingress:
     enabled: ${INGRESS_ENABLED}
     className: "${INGRESS_CLASS}"
+ingestion:
+  toolboxImage:    "${TOOLBOX_IMAGE_REF}"
+  jiraEnrichImage: "${JIRA_ENRICH_IMAGE_REF}"
 EOF
 
 if [[ -n "$IMAGE_PULL_SECRET" ]]; then

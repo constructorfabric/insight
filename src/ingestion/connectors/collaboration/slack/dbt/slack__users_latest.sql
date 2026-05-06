@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('slack__bronze_promoted') }}
 {{ config(
     materialized='table',
     schema='staging',

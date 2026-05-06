@@ -38,6 +38,8 @@ spec:
             - name: OIDC_CLIENT_ID
               value: {{ .Values.oidc.clientId | quote }}
             {{- end }}
+            - name: OIDC_SCOPES
+              value: {{ required "oidc.scopes is required when oidc.issuer or oidc.clientId is set" .Values.oidc.scopes | quote }}
           {{- end }}
           ports:
             - name: http

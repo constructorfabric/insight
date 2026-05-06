@@ -11,6 +11,8 @@
 
 -- depends_on: {{ ref('bamboohr__identity_inputs') }}
 -- depends_on: {{ ref('zoom__identity_inputs') }}
+-- depends_on: {{ ref('seed_identity_inputs_from_cursor') }}
+-- depends_on: {{ ref('seed_identity_inputs_from_claude_admin') }}
 
 SELECT * FROM (
     {{ union_by_tag('silver:identity_inputs') }}

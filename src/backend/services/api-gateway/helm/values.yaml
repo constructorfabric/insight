@@ -42,6 +42,11 @@ oidc:
   audience: ""            # e.g., api://insight
   clientId: ""            # Frontend (public) OIDC client ID
   redirectUri: ""         # e.g., https://insight.example.com/callback
+  # Space-separated OIDC scopes the SPA should request. IdP-specific:
+  #   Entra v2 single-app: "openid profile email api://<clientId>/Access.Default"
+  #   Okta:                "openid profile email <api-name>.<scope>"
+  # Without a resource scope, Entra defaults the audience to Microsoft Graph.
+  scopes: ""
   # jwksUrl: ""           # Override if JWKS URL differs from {issuer}/v1/keys
 
 # Set to true to disable authentication (local development only)

@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('claude_enterprise__bronze_promoted') }}
 -- Bronze → Silver: Claude Enterprise per-user per-day Code activity.
 --
 -- Source: bronze_claude_enterprise.claude_enterprise_users — daily per-user

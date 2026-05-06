@@ -10,9 +10,22 @@ WORKFLOWS_DIR="./workflows"
 CONNECTORS_DIR="./connectors"
 CONNECTIONS_DIR="./connections"
 
-# Always apply shared WorkflowTemplates first
-echo "  Applying WorkflowTemplates..."
-kubectl apply -f "${WORKFLOWS_DIR}/templates/"
+# Shared WorkflowTemplates (airbyte-sync, dbt-run, ingestion-pipeline,
+# tt-enrich-jira-run) are owned by the umbrella chart and rendered into
+# the release namespace on `helm install` (see charts/insight/templates/
+# ingestion/*.yaml, controlled by ingestion.templates.enabled). We skip
+# applying them here — they are already in the cluster, and re-applying
+# from a long-deleted local copy was a stale leftover from before PR #224.
+INSIGHT_NS="${INSIGHT_NAMESPACE:-insight}"
+if ! kubectl get workflowtemplate -n "$INSIGHT_NS" airbyte-sync >/dev/null 2>&1; then
+  echo "ERROR: WorkflowTemplate airbyte-sync not found in namespace '$INSIGHT_NS'." >&2
+  echo "       The umbrella chart should have installed it. Check:" >&2
+  echo "         helm get values insight -n $INSIGHT_NS | grep ingestion" >&2
+  echo "       and ensure ingestion.templates.enabled=true with" >&2
+  echo "       ingestion.toolboxImage and ingestion.jiraEnrichImage set." >&2
+  exit 1
+fi
+echo "  Found shared WorkflowTemplates in $INSIGHT_NS"
 
 # --- Resolve connection_name from Secret annotations (per ADR-0005) ---
 # Per KEY DECISION #1 we now pass connection_name (not the UUID); the
@@ -34,6 +47,14 @@ sync_tenant() {
   local tenant="$1"
   local tenant_dir="${WORKFLOWS_DIR}/${tenant}"
   mkdir -p "$tenant_dir"
+
+  # Wipe stale generated workflows from prior runs — connectors may have
+  # been removed, renamed, or the namespace contract may have changed
+  # (e.g. PR #224 dropped the `argo` namespace). Without this cleanup,
+  # `kubectl apply -f $tenant_dir/` below will pick up old YAMLs and try
+  # to apply them. Path is rooted under WORKFLOWS_DIR/<tenant> so this
+  # is safe.
+  rm -f "$tenant_dir"/*.yaml
 
   # Iterate over all connectors with descriptor.yaml
   for descriptor in "${CONNECTORS_DIR}"/*/*/descriptor.yaml; do
@@ -67,6 +88,7 @@ sync_tenant() {
     CONNECTION_NAME="$connection_name" \
     SCHEDULE="$schedule" \
     DBT_SELECT="$dbt_select" \
+    NAMESPACE="$INSIGHT_NS" \
       envsubst < "$tpl" > "$output"
 
     echo "  Generated: ${output}"
