@@ -219,7 +219,16 @@ def _resolve_platform_value(env_name, configmap_key):
          "-o", f"jsonpath={{.data.{configmap_key}}}"],
         capture_output=True, text=True, timeout=10
     )
-    if result.returncode != 0 or not result.stdout.strip():
+    # Distinguish kubectl failure (RBAC, network, missing ConfigMap object,
+    # context error) from ConfigMap-present-but-key-absent. The first must
+    # surface kubectl's stderr so operators can diagnose; the second uses
+    # our fail-fast hint about env-var override.
+    if result.returncode != 0:
+        print(f"ERROR: failed to read ConfigMap insight-platform in namespace '{INSIGHT_NAMESPACE}'", file=sys.stderr)
+        if result.stderr.strip():
+            print(f"  {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(result.returncode)
+    if not result.stdout.strip():
         print(f"ERROR: {configmap_key} not found in ConfigMap insight-platform "
               f"(namespace '{INSIGHT_NAMESPACE}')", file=sys.stderr)
         print(f"  Set the {env_name} env var or ensure the umbrella chart is installed.", file=sys.stderr)
@@ -359,17 +368,24 @@ for connector_name, source_id_label, config in connector_instances:
     # Create ClickHouse database. Single-namespace model (PR #224): the
     # bundled ClickHouse runs as a StatefulSet in INSIGHT_NAMESPACE and
     # picks up CLICKHOUSE_USER/CLICKHOUSE_PASSWORD from the container env
-    # (auth.existingSecret), so we don't pass --password here. check=True
-    # surfaces kubectl/clickhouse failures instead of silently swallowing
-    # them and continuing with a missing bronze DB.
+    # (auth.existingSecret), so we don't pass --password here. Explicit
+    # returncode check + stderr print so kubectl/clickhouse failures
+    # actually reach the operator (vs `check=True` which raises a
+    # CalledProcessError that hides captured stderr in the traceback).
     db_name = descriptor.get("connection", {}).get("namespace", f"bronze_{connector_name}")
     print(f"    Creating database: {db_name}")
-    subprocess.run(
+    ch_create = subprocess.run(
         ["kubectl", "exec", "-n", INSIGHT_NAMESPACE, "statefulset/insight-clickhouse", "--",
          "clickhouse-client",
          "--query", f"CREATE DATABASE IF NOT EXISTS {db_name}"],
-        capture_output=True, text=True, timeout=30, check=True,
+        capture_output=True, text=True, timeout=30,
     )
+    if ch_create.returncode != 0:
+        detail = (ch_create.stderr or ch_create.stdout or "").strip()
+        print(f"    ERROR: failed to create database {db_name}", file=sys.stderr)
+        if detail:
+            print(f"    {detail}", file=sys.stderr)
+        sys.exit(ch_create.returncode or 1)
 
     # --- Source definition ID (from state) ---
     def_id = state_get(state, f"definitions.{connector_name}.id")
@@ -506,15 +522,23 @@ save_state(state)
 
 # Mirror to ConfigMap when running in-cluster. Use INSIGHT_NAMESPACE
 # (single-namespace model from PR #224, replacing the legacy `data` ns)
-# and surface failures via check=True instead of silencing kubectl stderr.
+# and surface kubectl/apply failures via explicit returncode check —
+# matches the rest of this script's error reporting and prints the
+# actual kubectl stderr instead of a Python traceback.
 if os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token"):
-    subprocess.run(
+    cm_apply = subprocess.run(
         f"kubectl create configmap airbyte-state "
         f"--from-file=state.yaml={shlex.quote(state_path)} "
         f"-n {shlex.quote(INSIGHT_NAMESPACE)} --dry-run=client -o yaml "
         f"| kubectl apply -f -",
-        shell=True, check=True,
+        shell=True, capture_output=True, text=True,
     )
+    if cm_apply.returncode != 0:
+        detail = (cm_apply.stderr or cm_apply.stdout or "").strip()
+        print(f"  ERROR: failed to mirror state.yaml to ConfigMap airbyte-state in namespace '{INSIGHT_NAMESPACE}'", file=sys.stderr)
+        if detail:
+            print(f"  {detail}", file=sys.stderr)
+        sys.exit(cm_apply.returncode or 1)
 
 print(f"  State saved: {state_path}")
 PYTHON
