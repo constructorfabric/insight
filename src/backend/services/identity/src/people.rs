@@ -78,8 +78,8 @@ impl PeopleStore {
     /// (keep latest by `_airbyte_extracted_at`), and build relationships.
     ///
     /// **First-install resilience:** if `bronze_bamboohr.employees` does
-    /// not exist yet (UNKNOWN_DATABASE / UNKNOWN_TABLE / CH error code
-    /// 81 or 60), this function logs a warning and returns an EMPTY
+    /// not exist yet (`UNKNOWN_DATABASE` / `UNKNOWN_TABLE` / CH error code
+    /// 81 or 60), this function logs a warning and returns an empty
     /// store instead of failing. The bamboohr Airbyte sync populates
     /// the table on first run; restart this pod afterwards to reload.
     ///
