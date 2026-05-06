@@ -138,12 +138,18 @@ elif [[ -n "${HELM_EXTRA_ARGS:-}" ]]; then
 fi
 
 log "Running helm upgrade --install"
+# `${array[@]+"${array[@]}"}` (the "expand only if set" idiom) lets us
+# pass these optional arrays under `set -u` without the macOS-default
+# bash 3.2 firing `unbound variable` on empty `"${array[@]}"`. Bash 4.4+
+# (Linux, brew bash) treats `"${empty[@]}"` as zero words and would not
+# need this dance, but the canonical installer must work on Apple
+# Silicon's stock /bin/bash (= 3.2).
 helm upgrade --install "$RELEASE" "$CHART_REF" \
   --namespace "$NAMESPACE" --create-namespace \
-  "${VERSION_ARG[@]}" \
-  "${VALUES_ARGS[@]}" \
-  "${ARGO_CRD_DISABLE_ARGS[@]}" \
-  "${EXTRA_ARGS[@]}" \
+  ${VERSION_ARG[@]+"${VERSION_ARG[@]}"} \
+  ${VALUES_ARGS[@]+"${VALUES_ARGS[@]}"} \
+  ${ARGO_CRD_DISABLE_ARGS[@]+"${ARGO_CRD_DISABLE_ARGS[@]}"} \
+  ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
   --wait --timeout 10m
 
 # ─── Summary ───────────────────────────────────────────────────────────
