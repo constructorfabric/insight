@@ -13,7 +13,8 @@
 # ab_list_connections), python/render_cronworkflow.py,
 # python/render_sync_trigger.py, python/filter_connection_by_name.py.
 
-set -euo pipefail
+# NOTE: this file is sourced; no top-level `set -euo pipefail` (leaks into
+# interactive shells and breaks PROMPT_COMMAND on unset vars).
 
 ARGO_SCRIPT_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
 ARGO_PY_DIR="$( cd "${ARGO_SCRIPT_DIR}/../python" && pwd )"

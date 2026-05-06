@@ -13,7 +13,8 @@
 # Function naming: `disc_*` prefix; lowercase.
 # ---------------------------------------------------------------------------
 
-set -euo pipefail
+# NOTE: this file is sourced; no top-level `set -euo pipefail` (leaks into
+# interactive shells and breaks PROMPT_COMMAND on unset vars).
 
 : "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
 : "${CONNECTORS_DIR:?CONNECTORS_DIR must be set, typically src/ingestion/connectors}"

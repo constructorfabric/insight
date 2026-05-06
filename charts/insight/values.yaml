@@ -136,6 +136,9 @@ ingestion:
   # cron-scheduled inside the cluster (see templates/ingestion/reconcile-cron.yaml).
   reconcile:
     schedule: "*/15 * * * *"
+    airbyteWorkspaceId: ""    # Set to the UUID of the Airbyte workspace that hosts Insight custom connectors
+    destinationId: ""         # Set to the UUID of the Airbyte destination (Insight Bronze in ClickHouse). Required to bootstrap connections on a clean cluster.
+    tenantId: ""              # Set to the Insight tenant slug (used in source/connection names per ADR-0005). No silent default.
     logs:
       size: 5Gi
       storageClass: ""

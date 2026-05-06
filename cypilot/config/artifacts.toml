@@ -431,6 +431,18 @@ name = "ADR-0008: Auto-Trigger Sync on Data-Affecting Reconcile Actions"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0009-airbyte-workspace-as-namespace.md"
+name = "ADR-0009: Insight connectors in one Airbyte workspace, identified by custom flag"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0010-nocode-via-builder-projects.md"
+name = "ADR-0010: NoCode connectors managed via connector_builder_projects"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "FEATURE"
 path = "docs/components/airbyte-toolkit/specs/feature-reconcile/FEATURE.md"
 name = "Reconcile Engine Feature"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # env_* — environment variable resolution helpers (sourceable; NO top-level CLI)
-set -euo pipefail
+# NOTE: this file is sourced; no top-level `set -euo pipefail`.
 
 env_load() {
   : "${AIRBYTE_URL:?must be set}"

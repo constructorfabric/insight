@@ -14,7 +14,7 @@
 # Function naming: `adopt_*`; lowercase.
 # ---------------------------------------------------------------------------
 
-set -euo pipefail
+# NOTE: this file is sourced; no top-level `set -euo pipefail`.
 
 _ADOPT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -31,6 +31,7 @@ source "${_ADOPT_LIB_DIR}/log.sh"
 _ADOPT_ADOPTED=0
 _ADOPT_SKIPPED=0
 _ADOPT_WARNINGS=0
+_ADOPT_FAILED=0
 
 # ---------------------------------------------------------------------------
 # adopt_warn_orphan <connector_name> <reason>
@@ -46,22 +47,42 @@ adopt_warn_orphan() {
 }
 
 # ---------------------------------------------------------------------------
-# adopt_match_definition <definition_id> <version> <type>
+# adopt_match_definition <definition_id> <version> <type> \
+#                        <connector_name> <connector_dir>
 # Idempotent: write descriptor.version to the right field per type. The
 # underlying ab_* helpers are themselves idempotent at the API level
 # (Airbyte returns 200 with no change when the value already matches).
+# nocode arm uses the builder-aware update_active_manifest path (ADR-0010).
+# Definitions without a linked builder project (orphans) are WARN+skip;
+# operators run tools/migrate-orphan-definition.sh to recover safely.
 # ---------------------------------------------------------------------------
 adopt_match_definition() {
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-anno-def
   local definition_id="$1"
   local version="$2"
   local type="$3"
+  local connector_name="${4:-?}"
+  local connector_dir="${5:-}"
   case "${type}" in
     cdk)
       ab_set_definition_image_tag "${definition_id}" "${version}" >/dev/null
       ;;
     nocode|*)
-      ab_set_definition_description "${definition_id}" "${version}" >/dev/null
+      local builder_id manifest_path
+      builder_id="$(ab_builder_find_by_definition "${INSIGHT_AIRBYTE_WORKSPACE_ID}" "${definition_id}")"
+      if [[ -z "${builder_id}" ]]; then
+        adopt_warn_orphan "${connector_name}" \
+          "ORPHAN definition ${definition_id} (no builder project) — skipping version sync"
+        return 0
+      fi
+      manifest_path="${CONNECTORS_DIR}/${connector_dir}/connector.yaml"
+      if [[ ! -f "${manifest_path}" ]]; then
+        adopt_warn_orphan "${connector_name}" \
+          "type=nocode but connector.yaml missing at ${manifest_path}"
+        return 0
+      fi
+      ab_builder_update_active_manifest "${INSIGHT_AIRBYTE_WORKSPACE_ID}" \
+        "${builder_id}" "${version}" "${manifest_path}" >/dev/null
       ;;
   esac
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-anno-def
@@ -109,16 +130,125 @@ print(json.dumps(out))
 # guarded by an `if [[ "${ADOPT_DRY_RUN:-0}" -eq 1 ]]` short-circuit so  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
 # callers can pre-set the flag.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# _adopt_one_connector <name> <connector_dir> <version> <type> \
+#                      <dry_run> <opt_connector> <workspace_id> \
+#                      <definitions_json> <sources_json> <connections_json>
+# Per-connector adopt body extracted so a single connector failure can't
+# kill the whole adopt run. `set +e` enforced; failures bubble through
+# explicit `if ! ...` branches and the function's return code.
+# ---------------------------------------------------------------------------
+_adopt_one_connector() {
+  local name="$1" connector_dir="$2" version="$3" type="$4"
+  local dry_run="$5" opt_connector="$6" workspace_id="$7"
+  local definitions_json="$8" sources_json="$9" connections_json="${10}"
+  set +e
+
+  if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
+    _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
+    return 0
+  fi
+
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-match
+  local secret_name
+  if ! secret_name="$(disc_match_descriptor_to_secret "${name}")"; then
+    # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-skip
+    adopt_warn_orphan "${name}" "no labelled secret found in K8s"
+    _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
+    # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-skip
+    return 0
+  fi
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-match
+
+  local cfg_hash
+  cfg_hash="$(disc_compute_cfg_hash "${secret_name}")"
+
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-if-matched
+  local definition_ids_json
+  definition_ids_json="$(printf '%s' "${definitions_json}" \
+    | python3 "${_ADOPT_LIB_DIR}/../python/extract_definition_ids.py" "${name}")"
+  local def_count
+  def_count="$(printf '%s' "${definition_ids_json}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')"
+  if [[ "${def_count}" -eq 0 ]]; then
+    adopt_warn_orphan "${name}" "no matching source_definition in Airbyte"
+    _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
+    return 0
+  fi
+
+  while IFS= read -r definition_id; do
+    [[ -n "${definition_id}" ]] || continue
+    if [[ "${dry_run}" -eq 1 ]]; then
+      printf 'would_call adopt_match_definition %s version=%s type=%s connector=%s\n' \
+        "${definition_id}" "${version}" "${type}" "${name}"
+    else
+      if ! adopt_match_definition "${definition_id}" "${version}" "${type}" \
+            "${name}" "${connector_dir}"; then
+        log_line ERROR "adopt: adopt_match_definition failed for ${name} def=${definition_id}"
+        return 1
+      fi
+    fi
+  done < <(printf '%s' "${definition_ids_json}" \
+    | python3 -c 'import sys,json
+for x in json.load(sys.stdin): print(x)')
+
+  local matching_connections
+  matching_connections="$(python3 \
+    "${_ADOPT_LIB_DIR}/../python/match_connections_to_definitions.py" \
+    "${sources_json}" "${connections_json}" "${definition_ids_json}")"
+  if [[ -z "${matching_connections}" ]]; then
+    adopt_warn_orphan "${name}" "no connection found for any of ${def_count} matching definition(s)"
+    _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
+    return 0
+  fi
+
+  while IFS= read -r conn_line; do
+    [[ -n "${conn_line}" ]] || continue
+    local connection_id existing_tags_json
+    connection_id="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["connectionId"])')"
+    existing_tags_json="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin).get("tags",[])))')"
+    if [[ "${dry_run}" -eq 1 ]]; then
+      printf 'would_call adopt_tag_connection %s cfg_hash=%s\n' \
+        "${connection_id}" "${cfg_hash}"
+    else
+      if ! adopt_tag_connection "${connection_id}" "${cfg_hash}" "${existing_tags_json}"; then
+        log_line ERROR "adopt: adopt_tag_connection failed for ${name} conn=${connection_id}"
+        return 1
+      fi
+    fi
+    _ADOPT_ADOPTED=$((_ADOPT_ADOPTED + 1))
+  done <<<"${matching_connections}"
+
+  # Apply (or update) the per-connector Argo CronWorkflow.
+  if [[ "${dry_run}" -eq 1 ]]; then
+    printf 'would_call argo_apply_cronworkflow %s\n' "${name}"
+  else
+    local conn_name; conn_name="$(reconcile_compute_connection_name "${name}")"
+    local schedule;  schedule="$(reconcile_compute_schedule "${name}")"
+    local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
+    if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
+      log_line INFO "first-adopt: created CronWorkflow ${name}-${tenant}-sync"
+    else
+      log_line ERROR "first-adopt: argo_apply_cronworkflow failed for ${name}"
+      return 1
+    fi
+  fi
+  # silence unused-arg shellcheck warnings
+  : "${workspace_id}" "${connector_dir}"
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-if-matched
+  return 0
+}
+
 adopt_run() {
+  : "${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (the Airbyte workspace UUID where Insight connectors are managed; see chart values ingestion.reconcile.airbyteWorkspaceId)}"
   _ADOPT_ADOPTED=0
   _ADOPT_SKIPPED=0
   _ADOPT_WARNINGS=0
+  _ADOPT_FAILED=0
   local dry_run="${1:-${ADOPT_DRY_RUN:-0}}"  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
   local opt_connector="${2:-}"
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-resolve-env
-  local workspace_id
-  workspace_id="$(ab_workspace_id)"
+  local workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID}"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-resolve-env
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-discover
@@ -136,99 +266,18 @@ adopt_run() {
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
   while IFS=$'\t' read -r name connector_dir version type; do
     [[ -n "${name}" ]] || continue
-    if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
-      _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
-      continue
+    if ! _adopt_one_connector "${name}" "${connector_dir}" "${version}" "${type}" \
+         "${dry_run}" "${opt_connector}" "${workspace_id}" \
+         "${definitions_json}" "${sources_json}" "${connections_json}"; then
+      log_line ERROR "adopt: connector ${name} failed (continuing with next)"
+      _ADOPT_FAILED=$((_ADOPT_FAILED + 1))
     fi
-
-    # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-match
-    local secret_name
-    if ! secret_name="$(disc_match_descriptor_to_secret "${name}")"; then
-      # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-skip
-      adopt_warn_orphan "${name}" "no labelled secret found in K8s"
-      _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
-      # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-skip
-      continue
-    fi
-    # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-match
-
-    local cfg_hash
-    cfg_hash="$(disc_compute_cfg_hash "${secret_name}")"
-
-    # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-if-matched
-    # Find ALL definitions with this name. Legacy clusters often have
-    # duplicates (multiple publish events left orphaned definitions
-    # alongside the active one); existing sources may reference any of
-    # them. Annotate every duplicate so the active one always carries
-    # the correct version, and search sources across the full set.
-    local definition_ids_json
-    definition_ids_json="$(printf '%s' "${definitions_json}" \
-      | python3 "${_ADOPT_LIB_DIR}/../python/extract_definition_ids.py" "${name}")"
-    local def_count
-    def_count="$(printf '%s' "${definition_ids_json}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')"
-    if [[ "${def_count}" -eq 0 ]]; then
-      adopt_warn_orphan "${name}" "no matching source_definition in Airbyte"
-      _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
-      continue
-    fi
-
-    while IFS= read -r definition_id; do
-      [[ -n "${definition_id}" ]] || continue
-      if [[ "${dry_run}" -eq 1 ]]; then
-        printf 'would_call adopt_match_definition %s version=%s type=%s\n' \
-          "${definition_id}" "${version}" "${type}"
-      else
-        adopt_match_definition "${definition_id}" "${version}" "${type}"
-      fi
-    done < <(printf '%s' "${definition_ids_json}" \
-      | python3 -c 'import sys,json
-for x in json.load(sys.stdin): print(x)')
-
-    # Find connections whose source.sourceDefinitionId is in the set.
-    local matching_connections
-    matching_connections="$(python3 \
-      "${_ADOPT_LIB_DIR}/../python/match_connections_to_definitions.py" \
-      "${sources_json}" "${connections_json}" "${definition_ids_json}")"
-    if [[ -z "${matching_connections}" ]]; then
-      adopt_warn_orphan "${name}" "no connection found for any of ${def_count} matching definition(s)"
-      _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
-      continue
-    fi
-
-    while IFS= read -r conn_line; do
-      [[ -n "${conn_line}" ]] || continue
-      local connection_id existing_tags_json
-      connection_id="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["connectionId"])')"
-      existing_tags_json="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin).get("tags",[])))')"
-      if [[ "${dry_run}" -eq 1 ]]; then
-        printf 'would_call adopt_tag_connection %s cfg_hash=%s\n' \
-          "${connection_id}" "${cfg_hash}"
-      else
-        adopt_tag_connection "${connection_id}" "${cfg_hash}" "${existing_tags_json}"
-      fi
-      _ADOPT_ADOPTED=$((_ADOPT_ADOPTED + 1))
-    done <<<"${matching_connections}"
-
-    # Apply (or update) the per-connector Argo CronWorkflow.
-    if [[ "${dry_run}" -eq 1 ]]; then
-      printf 'would_call argo_apply_cronworkflow %s\n' "${name}"
-    else
-      local conn_name; conn_name="$(reconcile_compute_connection_name "${name}")"
-      local schedule;  schedule="$(reconcile_compute_schedule "${name}")"
-      local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
-      if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
-        log_line INFO "first-adopt: created CronWorkflow ${name}-${tenant}-sync"
-      else
-        log_line ERROR "first-adopt: argo_apply_cronworkflow failed for ${name}"
-      fi
-    fi
-    # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-if-matched
   done <<<"${descriptors_tsv}"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-return
-  printf 'adopt summary: adopted=%d skipped=%d warnings=%d (dry_run=%d) — connector_dir scanned\n' \
-    "${_ADOPT_ADOPTED}" "${_ADOPT_SKIPPED}" "${_ADOPT_WARNINGS}" "${dry_run}"
+  printf 'adopt summary: adopted=%d skipped=%d warnings=%d failed=%d (dry_run=%d) — connector_dir scanned\n' \
+    "${_ADOPT_ADOPTED}" "${_ADOPT_SKIPPED}" "${_ADOPT_WARNINGS}" "${_ADOPT_FAILED}" "${dry_run}"
   : "${connector_dir:=}"  # silence unused-warning when no descriptors found
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-return
 }

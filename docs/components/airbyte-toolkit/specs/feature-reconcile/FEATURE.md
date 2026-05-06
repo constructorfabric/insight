@@ -23,6 +23,8 @@ cpt:
   - [Dry Run](#dry-run)
   - [Run Cron Loop](#run-cron-loop)
   - [Cascade Delete on Secret Missing](#cascade-delete-on-secret-missing)
+  - [Create Connection First Time](#create-connection-first-time)
+  - [Publish NoCode Definition](#publish-nocode-definition)
 - [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
   - [Discover Secrets](#discover-secrets)
   - [Compute Config Hash](#compute-config-hash)
@@ -38,6 +40,14 @@ cpt:
   - [Write Log Line on Change](#write-log-line-on-change)
   - [Cascade Delete CronWorkflow](#cascade-delete-cronworkflow)
   - [Validate Secret Required Fields from Descriptor](#validate-secret-required-fields-from-descriptor)
+  - [Builder Create With Manifest](#builder-create-with-manifest)
+  - [Builder Publish](#builder-publish)
+  - [Builder Update Active Manifest](#builder-update-active-manifest)
+  - [Orphan Definition Recovery](#orphan-definition-recovery)
+  - [Discover Schema](#discover-schema)
+  - [Normalize Catalog Append-Only](#normalize-catalog-append-only)
+  - [Create Connection With Tags](#create-connection-with-tags)
+  - [Filter Custom Definitions](#filter-custom-definitions)
 - [4. States (CDSL)](#4-states-cdsl)
   - [Connector Lifecycle State Machine](#connector-lifecycle-state-machine)
 - [5. Definitions of Done](#5-definitions-of-done)
@@ -91,6 +101,8 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 - **ADR-0006**: [Cron Self-Run with File-Persistent Logs](../ADR/0006-cron-self-run-with-file-persistent-logs.md) (registered in Phase 8)
 - **ADR-0007**: [Required Fields in Descriptor, not Example](../ADR/0007-required-fields-in-descriptor-not-example.md) (registered in Phase 8)
 - **ADR-0008**: [Auto-Trigger Sync on Data Change](../ADR/0008-auto-trigger-sync-on-data-change.md) (registered in Phase 8)
+- **ADR-0009**: [Airbyte Workspace as Namespace](../ADR/0009-airbyte-workspace-as-namespace.md)
+- **ADR-0010**: [NoCode via Builder Projects](../ADR/0010-nocode-via-builder-projects.md)
 - **Sequences**: `cpt-insightspec-seq-resolve-connection-by-name`, `cpt-insightspec-seq-render-and-apply-cronworkflow`, `cpt-insightspec-seq-sync-trigger-on-change` (DESIGN §3.6)
 - **Dependencies**: None (this feature is the new entrypoint; replaces legacy)
 
@@ -117,6 +129,8 @@ The reconcile feature explicitly does NOT cover:
 - All connectors are in sync — engine emits `no-op` per connector, exits 0.
 - One or more connectors drifted — engine applies the minimal API calls (`update_active_manifest` / `sources/update` / `PATCH connections/{id}` / state-preserved recreate) and exits 0.
 - Orphan resources detected and `--no-gc` not set — engine deletes them and exits 0.
+
+> Layer 1 (definition) calls the Airbyte Builder API for nocode connectors per ADR-0010 (`connector_builder_projects/create` + `/publish` + `/update_active_manifest`); CDK connectors retain the `source_definitions/create_custom` path. Definition iteration is scoped to `custom: true` per ADR-0009.
 
 **Error Scenarios**:
 - `tenant_id` not resolvable (no `INSIGHT_TENANT_ID`, no `ConfigMap insight-config`) — abort with clear error before any API call.
@@ -226,6 +240,41 @@ The reconcile feature explicitly does NOT cover:
 6. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow` - `inst-cd-cronworkflow`
 7. [ ] - `p1` - log_line WARN "cascade-delete ${connector}: secret missing" - `inst-cd-log`
 8. [ ] - `p1` - **RETURN** ok - `inst-cd-return`
+
+### Create Connection First Time
+
+- [ ] `p2` - **ID**: `cpt-insightspec-flow-reconcile-create-connection-first-time`
+
+**Actors**: `cpt-insightspec-actor-toolkit-cli`, `cpt-insightspec-actor-airbyte-api`
+
+Bootstrap path: source exists but has no connection yet (clean cluster / first reconcile after secret apply). Layer 3 of reconcile creates a connection with discovered schema (forced to append-only), cron schedule, and reconcile tags. Treated as data-affecting so the post-reconcile sync trigger fires.
+
+1. [ ] - `p2` - **IF** dry-run **THEN** log CHANGE "would_call ab_create_connection" and **RETURN** - `inst-cct-dry`
+2. [ ] - `p2` - **IF** `RECONCILE_DESTINATION_ID` not set **THEN** log ERROR and **RETURN** failure - `inst-cct-fail-fast`
+3. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-discover-schema` → discovered_catalog - `inst-cct-discover`
+4. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-normalize-catalog-append-only` → sync_catalog - `inst-cct-normalize`
+5. [ ] - `p2` - schedule_json = `build_schedule_json(reconcile_compute_schedule(connector))` - `inst-cct-schedule`
+6. [ ] - `p2` - tags_json = `["insight", "cfg-hash:${cfg_hash}"]` - `inst-cct-tags`
+7. [ ] - `p2` - connection_name = `reconcile_compute_connection_name(connector)` - `inst-cct-name`
+8. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-create-connection-with-tags` → new_connection_id - `inst-cct-create`
+9. [ ] - `p2` - data_changed = true (caller submits sync trigger) - `inst-cct-data-changed`
+10. [ ] - `p2` - **RETURN** new_connection_id - `inst-cct-return`
+
+### Publish NoCode Definition
+
+- [ ] `p2` - **ID**: `cpt-insightspec-flow-reconcile-publish-nocode-definition`
+
+**Actors**: `cpt-insightspec-actor-toolkit-cli`, `cpt-insightspec-actor-airbyte-api`
+
+First-time publish of a nocode connector via builder/create + builder/publish. Triggered when reconcile sees a descriptor with `type=nocode` whose definition does not exist in Airbyte (or exists as an orphan from legacy `create_custom`).
+
+1. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-filter-custom-definitions` to scope iteration to Insight definitions - `inst-pnd-filter`
+2. [ ] - `p2` - **IF** definition with name == connector_name not found - `inst-pnd-if-absent`
+   1. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-builder-create-with-manifest` → builderProjectId - `inst-pnd-create`
+   2. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-builder-publish` → sourceDefinitionId - `inst-pnd-publish`
+3. [ ] - `p2` - **ELSE IF** definition exists with `custom: true` but no linked builder project - `inst-pnd-if-orphan`
+   1. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-orphan-definition-recovery` - `inst-pnd-recover`
+4. [ ] - `p2` - **RETURN** sourceDefinitionId - `inst-pnd-return`
 
 ## 3. Processes / Business Logic (CDSL)
 
@@ -446,6 +495,104 @@ The reconcile feature explicitly does NOT cover:
 5. [ ] - `p1` - **RETURN** VALID|INVALID(missing) - `inst-vsd-return`
 
 (Replaces older inline `cpt-insightspec-algo-reconcile-validate-secrets-v2` per ADR-0007.)
+
+### Builder Create With Manifest
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-builder-create-with-manifest`
+
+**Inputs**: `connector` (slug), `area`, workspace_id
+**Outputs**: `builderProjectId` (UUID)
+
+1. [ ] - `p1` - **CALL** `python3 python/load_connector_manifest.py --path connectors/${area}/${connector}/connector.yaml` → manifest_json (compact JSON object) - `inst-bcwm-load`
+2. [ ] - `p1` - API: POST `/api/v1/connector_builder_projects/create` with body `{workspaceId, name=${connector}, manifest=manifest_json}` - `inst-bcwm-post`
+3. [ ] - `p1` - **RETURN** response.builderProjectId - `inst-bcwm-return`
+
+### Builder Publish
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-builder-publish`
+
+**Inputs**: `builderProjectId`, descriptor.version
+**Outputs**: `sourceDefinitionId` (UUID), linked to a fresh `source_definition` with `description=descriptor.version`
+
+1. [ ] - `p1` - API: POST `/api/v1/connector_builder_projects/publish` with body `{builderProjectId, name, description=descriptor.version}` - `inst-bp-post`
+2. [ ] - `p1` - **RETURN** response.sourceDefinitionId - `inst-bp-return`
+
+### Builder Update Active Manifest
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-builder-update-active-manifest`
+
+**Inputs**: `builderProjectId`, manifest_json (from connector.yaml), descriptor.version
+**Outputs**: ok (active manifest + description bumped)
+
+1. [ ] - `p1` - API: POST `/api/v1/connector_builder_projects/update_active_manifest` with body `{builderProjectId, manifest=manifest_json, description=descriptor.version}` - `inst-buam-post`
+2. [ ] - `p1` - **RETURN** ok - `inst-buam-return`
+
+### Orphan Definition Recovery
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-orphan-definition-recovery`
+
+**Inputs**: `connector` (slug), existing `definition_id` with `custom: true` and no linked builder project
+**Outputs**: WARN log line; manual recovery via `tools/migrate-orphan-definition.sh`
+
+On detecting a `custom: true` definition without a linked builder project, reconcile WARNs and skips version sync for that connector. The definition is NOT deleted (cascading would destroy linked sources + connections). Operators run the dedicated `tools/migrate-orphan-definition.sh <connector>` helper which exports per-connection state, recreates definition via builder, recreates sources + connections, and restores state. Idempotent.
+
+1. [ ] - `p1` - **CALL** `ab_builder_find_by_definition` (definition_id) - `inst-odr-find`
+2. [ ] - `p1` - **IF** builder project found **RETURN** existing sourceDefinitionId (no orphan, just `update_active_manifest`) - `inst-odr-not-orphan`
+3. [ ] - `p1` - log_line WARN "ORPHAN definition ${definition_id} has no linked builder project; run tools/migrate-orphan-definition.sh ${connector}" - `inst-odr-warn`
+4. [ ] - `p1` - **RETURN** noop (no API mutation) - `inst-odr-return`
+
+### Discover Schema
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-discover-schema`
+
+**Inputs**: `source_id` (UUID)
+**Outputs**: discovered catalog JSON (Airbyte `sources/discover_schema` response)
+
+1. [ ] - `p1` - API: POST `/api/v1/sources/discover_schema` body `{sourceId, disable_cache:false}` - `inst-dsx-post`
+2. [ ] - `p1` - **RETURN** response (catalog object preserved verbatim for caller to normalize) - `inst-dsx-return`
+
+### Normalize Catalog Append-Only
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-normalize-catalog-append-only`
+
+**Inputs**: discovered catalog (from `sources/discover_schema`)
+**Outputs**: `syncCatalog` JSON suitable for `connections/create`, with every stream forced to `destinationSyncMode=append`
+
+Per `cpt-dataflow-constraint-airbyte-append`: append at destination avoids OOMs from `append_dedup` buffering and survives mid-stream pod kills. Dedup happens in silver via `unique_key`.
+
+1. [ ] - `p1` - **FOR EACH** stream in catalog.streams - `inst-ncao-loop`
+   1. [ ] - `p1` - **IF** stream supports incremental AND has `default_cursor_field` or `source_defined_cursor` **THEN** syncMode=incremental ELSE full_refresh - `inst-ncao-syncmode`
+   2. [ ] - `p1` - destinationSyncMode = "append" (always) - `inst-ncao-dest`
+   3. [ ] - `p1` - selected = true - `inst-ncao-select`
+2. [ ] - `p1` - **RETURN** `{streams:[{stream, config}, ...]}` - `inst-ncao-return`
+
+### Create Connection With Tags
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-create-connection-with-tags`
+
+**Inputs**: `workspace_id`, `source_id`, `destination_id`, `connection_name`, `cron_expression`, `cfg_hash`, `sync_catalog`
+**Outputs**: new `connection_id`
+
+Bootstrap a connection on a clean cluster (or after orphan migration). Schedule is derived from cron via `build_schedule_json.py`; tags are seeded with `["insight", "cfg-hash:<hash>"]` so subsequent diff-connection-tags passes are noop.
+
+1. [ ] - `p1` - schedule_json = `build_schedule_json(cron_expression)` - `inst-ccwt-schedule`
+2. [ ] - `p1` - tags_json = `["insight", "cfg-hash:${cfg_hash}"]` - `inst-ccwt-tags`
+3. [ ] - `p1` - API: POST `/api/v1/connections/create` body `{workspaceId, sourceId, destinationId, name, schedule, tags, syncCatalog, status:"active"}` - `inst-ccwt-post`
+4. [ ] - `p1` - **RETURN** response.connectionId - `inst-ccwt-return`
+
+### Filter Custom Definitions
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-filter-custom-definitions`
+
+**Inputs**: `definitions` (list from `source_definitions/list_for_workspace`)
+**Outputs**: filtered list scoped to Insight namespace (`custom: true`)
+
+When iterating definitions, skip those with `custom != true`. Insight namespace separation per ADR-0009.
+
+1. [ ] - `p1` - **FOR EACH** def in definitions - `inst-fcd-loop`
+   1. [ ] - `p1` - **IF** def.custom != true CONTINUE - `inst-fcd-skip-public`
+   2. [ ] - `p1` - append def to result - `inst-fcd-keep`
+2. [ ] - `p1` - **RETURN** result - `inst-fcd-return`
 
 ## 4. States (CDSL)
 

@@ -17,7 +17,8 @@
 # Function naming: cdk_*
 # ---------------------------------------------------------------------------
 
-set -euo pipefail
+# NOTE: when sourced, do NOT enable `set -euo pipefail` (leaks into caller's
+# shell). Strict mode is enabled below in the self-run entry-point guard.
 
 _CDK_LIB_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
 _CDK_PY_DIR="$( cd "${_CDK_LIB_DIR}/../python" && pwd )"
@@ -41,7 +42,8 @@ cdk_find_definition_id() {
 import sys, json
 target = sys.argv[1]
 for d in json.load(sys.stdin):
-    if d.get("name") == target:
+    # custom is True: Insight namespace separation per ADR-0009.
+    if d.get("name") == target and d.get("custom") is True:
         print(d.get("sourceDefinitionId", "")); break
 ' "${connector_name}"
 }
@@ -169,6 +171,7 @@ cdk_build() {
 # Self-run entry point — preserves original CLI surface.
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  set -euo pipefail
   # Resolve project root: lib/ is two levels below src/ingestion/reconcile-connectors/
   cd "${_CDK_LIB_DIR}/../../.."
   cdk_build "$@"

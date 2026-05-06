@@ -32,8 +32,9 @@
 #                              airbyte-auth-secrets, the bundled-chart name)
 # ---------------------------------------------------------------------------
 
-set -euo pipefail
-
+# NOTE: this file is sourced into callers' shells; do NOT enable
+# `set -euo pipefail` at the top level (it leaks into interactive shells
+# and breaks PS1 / PROMPT_COMMAND lines that touch unset vars).
 # Only define functions; do not run anything when sourced.
 : "${AIRBYTE_URL:?AIRBYTE_URL must be set (e.g. http://airbyte-server:8001)}"
 
@@ -220,6 +221,180 @@ print(json.dumps({
 }
 
 # ---------------------------------------------------------------------------
+# ab_builder_list_projects <workspace_id>
+# Returns JSON array of all builder projects in the workspace.
+# Each entry: { builderProjectId, name, activeDeclarativeManifest{...} }
+# ---------------------------------------------------------------------------
+ab_builder_list_projects() {
+  local workspace_id="$1"
+  local body
+  body=$(printf '{"workspaceId":"%s"}' "${workspace_id}")
+  ab__curl POST /api/v1/connector_builder_projects/list "${body}" \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(json.dumps(d.get("projects",[])))'
+}
+
+# ---------------------------------------------------------------------------
+# ab_builder_find_by_name <workspace_id> <connector_name>
+# Prints builderProjectId of the project whose `name` matches; empty if none.
+# ---------------------------------------------------------------------------
+ab_builder_find_by_name() {
+  local workspace_id="$1"
+  local connector_name="$2"
+  ab_builder_list_projects "${workspace_id}" | python3 -c '
+import sys, json
+target = sys.argv[1]
+for p in json.load(sys.stdin):
+    if p.get("name") == target:
+        print(p.get("builderProjectId", "")); break
+' "${connector_name}"
+}
+
+# ---------------------------------------------------------------------------
+# ab_builder_find_by_definition <workspace_id> <definition_id>
+# Prints builderProjectId of the project whose
+# activeDeclarativeManifest.sourceDefinitionId matches; empty if none.
+# ---------------------------------------------------------------------------
+ab_builder_find_by_definition() {
+  local workspace_id="$1"
+  local definition_id="$2"
+  ab_builder_list_projects "${workspace_id}" | python3 -c '
+import sys, json
+target = sys.argv[1]
+for p in json.load(sys.stdin):
+    am = p.get("activeDeclarativeManifest") or {}
+    if am.get("sourceDefinitionId") == target:
+        print(p.get("builderProjectId", "")); break
+' "${definition_id}"
+}
+
+# ---------------------------------------------------------------------------
+# ab_builder_create_with_manifest <workspace_id> <connector_name> <manifest_yaml_path>
+# POST /api/v1/connector_builder_projects/create with the manifest as a
+# parsed object. Prints the new builderProjectId. Manifest is loaded by
+# python/load_connector_manifest.py to convert YAML -> JSON object.
+# ---------------------------------------------------------------------------
+ab_builder_create_with_manifest() {
+  local workspace_id="$1"
+  local connector_name="$2"
+  local manifest_path="$3"
+  [[ -f "${manifest_path}" ]] || {
+    printf 'ab_builder_create_with_manifest: manifest not found: %s\n' "${manifest_path}" >&2
+    return 1
+  }
+  local manifest_json
+  manifest_json="$(python3 "${_AIRBYTE_PY_DIR}/load_connector_manifest.py" "${manifest_path}")" || return 1
+  local body
+  body=$(python3 -c '
+import sys, json
+print(json.dumps({
+  "workspaceId": sys.argv[1],
+  "builderProject": {
+    "name": sys.argv[2],
+    "draftManifest": json.loads(sys.argv[3]),
+  },
+}))
+' "${workspace_id}" "${connector_name}" "${manifest_json}")
+  ab__curl POST /api/v1/connector_builder_projects/create "${body}" \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("builderProjectId",""))'
+}
+
+# ---------------------------------------------------------------------------
+# ab_builder_publish <workspace_id> <builder_project_id> <connector_name> \
+#                    <description> <manifest_yaml_path>
+# POST /api/v1/connector_builder_projects/publish — creates / updates the
+# active source_definition for the project. Prints the resulting
+# sourceDefinitionId.
+# ---------------------------------------------------------------------------
+ab_builder_publish() {
+  local workspace_id="$1"
+  local builder_project_id="$2"
+  local connector_name="$3"
+  local description="$4"
+  local manifest_path="$5"
+  [[ -f "${manifest_path}" ]] || {
+    printf 'ab_builder_publish: manifest not found: %s\n' "${manifest_path}" >&2
+    return 1
+  }
+  local manifest_json
+  manifest_json="$(python3 "${_AIRBYTE_PY_DIR}/load_connector_manifest.py" "${manifest_path}")" || return 1
+  local body
+  body=$(python3 -c '
+import sys, json
+print(json.dumps({
+  "workspaceId": sys.argv[1],
+  "builderProjectId": sys.argv[2],
+  "name": sys.argv[3],
+  "initialDeclarativeManifest": {
+    "manifest": json.loads(sys.argv[5]),
+    "version": 1,
+    "description": sys.argv[4],
+  },
+}))
+' "${workspace_id}" "${builder_project_id}" "${connector_name}" "${description}" "${manifest_json}")
+  ab__curl POST /api/v1/connector_builder_projects/publish "${body}" \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceDefinitionId",""))'
+}
+
+# ---------------------------------------------------------------------------
+# ab_builder_update_active_manifest <workspace_id> <builder_project_id> \
+#                                   <description> <manifest_yaml_path>
+# POST /api/v1/connector_builder_projects/update_active_manifest. Bumps the
+# active manifest version and updates description (semantic version label).
+# Replaces the older single-purpose ab_set_definition_description for the
+# new publish/update flow; the old function stays for backward compat.
+# ---------------------------------------------------------------------------
+ab_builder_update_active_manifest() {
+  local workspace_id="$1"
+  local builder_project_id="$2"
+  local description="$3"
+  local manifest_path="$4"
+  [[ -f "${manifest_path}" ]] || {
+    printf 'ab_builder_update_active_manifest: manifest not found: %s\n' "${manifest_path}" >&2
+    return 1
+  }
+  local manifest_json
+  manifest_json="$(python3 "${_AIRBYTE_PY_DIR}/load_connector_manifest.py" "${manifest_path}")" || return 1
+  local body
+  body=$(python3 -c '
+import sys, json
+print(json.dumps({
+  "workspaceId": sys.argv[1],
+  "builderProjectId": sys.argv[2],
+  "description": sys.argv[3],
+  "manifest": json.loads(sys.argv[4]),
+}))
+' "${workspace_id}" "${builder_project_id}" "${description}" "${manifest_json}")
+  ab__curl POST /api/v1/connector_builder_projects/update_active_manifest "${body}"
+}
+
+# ---------------------------------------------------------------------------
+# ab_get_definition_description <definition_id>
+# Returns the active declarativeManifest.description (used as semantic
+# version) of a source_definition. Empty if the definition is non-nocode.
+# ---------------------------------------------------------------------------
+ab_get_definition_description() {
+  local definition_id="$1"
+  ab_get_definition "${definition_id}" \
+    | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+dm = d.get("declarativeManifest") or {}
+print(dm.get("description", ""))
+'
+}
+
+# ---------------------------------------------------------------------------
+# ab_delete_source_definition <definition_id>
+# POST /api/v1/source_definitions/delete — used during orphan-recovery.
+# ---------------------------------------------------------------------------
+ab_delete_source_definition() {
+  local definition_id="$1"
+  local body
+  body=$(printf '{"sourceDefinitionId":"%s"}' "${definition_id}")
+  ab__curl POST /api/v1/source_definitions/delete "${body}"
+}
+
+# ---------------------------------------------------------------------------
 # ab_set_definition_image_tag <definition_id> <tag>
 # For CDK connectors: update dockerImageTag on the source definition.
 # ---------------------------------------------------------------------------
@@ -314,6 +489,21 @@ ab_list_connections() {
   body=$(printf '{"workspaceId":"%s"}' "${workspace_id}")
   ab__curl POST /api/v1/connections/list "${body}" \
     | python3 -c 'import sys,json;d=json.load(sys.stdin);print(json.dumps(d.get("connections",[])))'
+}
+
+# ---------------------------------------------------------------------------
+# ab_discover_schema <source_id>
+# POST /api/v1/sources/discover_schema — returns the discovered catalog as
+# JSON. Used by reconcile to bootstrap a connection's syncCatalog when one
+# does not exist yet. The returned object has a `catalog` key with the
+# raw streams; callers normalize it (append-only) before passing to
+# ab_create_connection.
+# ---------------------------------------------------------------------------
+ab_discover_schema() {
+  local source_id="$1"
+  local body
+  body=$(printf '{"sourceId":"%s","disable_cache":false}' "${source_id}")
+  ab__curl POST /api/v1/sources/discover_schema "${body}"
 }
 
 # ---------------------------------------------------------------------------

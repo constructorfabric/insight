@@ -216,6 +216,10 @@ The toolkit **MUST** create sources and connections for a given tenant by:
 
 **Rationale**: This is the core operation that wires a tenant's data sources to the pipeline.
 
+#### Connector lifecycle namespace and registration path
+
+Insight connectors are namespaced by Airbyte workspace + `custom: true` flag (ADR-0009). NoCode connectors are registered through Airbyte's `connector_builder_projects` API rather than the legacy `create_custom` endpoint (ADR-0010); this provides UI editability and a clean update path for the version-bump algorithm. CDK (Docker-image) connectors continue to use `create_custom` via the CDK registration path.
+
 ### 5.3 State Synchronization
 
 #### Sync from Airbyte API
@@ -375,6 +379,7 @@ The cron-driven reconcile loop **MUST** be safe to run 1000+ times with zero sta
 #### Changelog
 
 - 2026-05-05 — v1.1 — Added §5.6.7…§5.6.12 (cron-self-run, name-based-connection-resolve, auto-trigger-sync-on-data-change, file-persistent-logs, cascade-delete-cronworkflow, leak-free-loop) for Phase 2 of the reconcile refactor.
+- 2026-05-06 — v1.1 — Added §5.2 connector-lifecycle namespace + nocode registration path (per ADR-0009 / ADR-0010).
 
 ## 6. Non-Functional Requirements
 

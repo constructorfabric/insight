@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # valsec_* — connector secret validation (sourceable; NO top-level CLI)
-set -euo pipefail
+# NOTE: this file is sourced; no top-level `set -euo pipefail`.
 
 : "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
 

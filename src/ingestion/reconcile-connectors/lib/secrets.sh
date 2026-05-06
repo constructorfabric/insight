@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # secret_* — K8s Secret CRUD helpers (sourceable; NO top-level CLI)
-set -euo pipefail
+# NOTE: this file is sourced; no top-level `set -euo pipefail`.
 
 secret_list_by_label() {
   local label="$1"  # e.g. "insight.cyberfabric.com/connector"

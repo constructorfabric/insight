@@ -19,7 +19,9 @@ def main() -> int:
     ids: List[str] = [
         d.get("sourceDefinitionId")
         for d in json.load(sys.stdin)
-        if d.get("name") == target and d.get("sourceDefinitionId")
+        if d.get("name") == target
+        and d.get("sourceDefinitionId")
+        and d.get("custom") is True   # Insight namespace separation per ADR-0009
     ]
     print(json.dumps(ids))
     return 0

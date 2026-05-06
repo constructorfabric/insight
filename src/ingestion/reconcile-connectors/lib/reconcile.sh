@@ -17,7 +17,7 @@
 # Function naming: `reconcile_*`; lowercase.
 # ---------------------------------------------------------------------------
 
-set -euo pipefail
+# NOTE: this file is sourced; no top-level `set -euo pipefail`.
 
 : "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
 : "${CONNECTORS_DIR:?CONNECTORS_DIR must be set, typically src/ingestion/connectors}"
@@ -133,7 +133,7 @@ reconcile_cascade_delete() {
   local tenant
   tenant="$(reconcile_compute_tenant "${connector}")"
   local workspace_id
-  workspace_id="$(ab_workspace_id)"
+  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
 
   # Find all sources whose name starts with the connector slug and delete them.
   # ab_delete_source also cascades connections in newer Airbyte; we make it
@@ -177,60 +177,159 @@ reconcile_classify_change() {
 }
 
 # ---------------------------------------------------------------------------
-# reconcile_definitions <connector_name> <target_version> <type>
+# reconcile_definitions <connector_name> <target_version> <type> <connector_dir>
 # diff-definition-version algorithm. Idempotent.
+#
+# For nocode connectors: drives the builder_projects publish/update flow.
+#   - If no definition exists -> create builder project + publish manifest.
+#   - If definition exists but builder project doesn't (orphan) -> delete
+#     definition and recreate via builder + publish.
+#   - If definition + builder both exist and version drifts ->
+#     update_active_manifest.
+#
+# For cdk connectors: existing behaviour — image-tag drift via
+# ab_set_definition_image_tag; `cdk-build.sh` handles initial creation.
 # ---------------------------------------------------------------------------
 reconcile_definitions() {
-  local connector_name="$1" target_version="$2" type="$3"
-  local definition_id current_value action
+  local connector_name="$1" target_version="$2" type="$3" connector_dir="${4:-}"
+  local definition_id current_value action manifest_path
+  local rc=0
+
+  manifest_path="${CONNECTORS_DIR}/${connector_dir}/connector.yaml"
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-none
   local workspace_id
-  workspace_id="$(ab_workspace_id)"
+  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID}"
   local defs_json
   defs_json="$(ab_list_definitions "${workspace_id}")"
+  # custom is True: Insight namespace separation per ADR-0009.
   definition_id="$(printf '%s' "${defs_json}" | python3 -c '
 import sys, json
 target = sys.argv[1]
 for d in json.load(sys.stdin):
-    if d.get("name") == target:
+    if d.get("name") == target and d.get("custom") is True:
         print(d.get("sourceDefinitionId", "")); break
 ' "${connector_name}")"
+
   if [[ -z "${definition_id}" ]]; then
+    if [[ "${type}" == "nocode" ]]; then
+      if [[ ! -f "${manifest_path}" ]]; then
+        reconcile__log WARN "${connector_name}" \
+          "type=nocode but no connector.yaml at ${manifest_path} — skip"
+        printf '%s\n' "noop"
+        return 0
+      fi
+      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+        reconcile__log CHANGE "${connector_name}" \
+          "would_call ab_builder_create_with_manifest + ab_builder_publish (first publish)"
+        printf '%s\t%s\n' "republish" ""
+        return 0
+      fi
+      local builder_id new_def_id
+      if ! builder_id="$(ab_builder_create_with_manifest \
+            "${workspace_id}" "${connector_name}" "${manifest_path}")"; then
+        reconcile__log ERROR "${connector_name}" "ab_builder_create_with_manifest failed"
+        return 1
+      fi
+      if [[ -z "${builder_id}" ]]; then
+        reconcile__log ERROR "${connector_name}" "ab_builder_create_with_manifest: empty builderProjectId"
+        return 1
+      fi
+      if ! new_def_id="$(ab_builder_publish \
+            "${workspace_id}" "${builder_id}" "${connector_name}" \
+            "${target_version}" "${manifest_path}")"; then
+        reconcile__log ERROR "${connector_name}" "ab_builder_publish failed"
+        return 1
+      fi
+      reconcile__log CHANGE "${connector_name}" \
+        "first publish: builder=${builder_id} definition=${new_def_id}"
+      _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      printf '%s\t%s\n' "republish" "${new_def_id}"
+      return 0
+    fi
+    # cdk: definition will be created by cdk-build.sh — log + return republish.
     reconcile__log INFO "${connector_name}" \
-      "no definition present — caller should publish first (action=republish)"
+      "no definition present (type=cdk); caller should run cdk-build (action=republish)"
     printf '%s\n' "republish"
     return 0
   fi
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-none
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-mismatch
-  local def_json
-  def_json="$(ab_get_definition "${definition_id}")"
-  if [[ "${type}" == "cdk" ]]; then
-    current_value="$(printf '%s' "${def_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("dockerImageTag",""))')"
-  else
-    current_value="$(printf '%s' "${def_json}" | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("declarativeManifest") or {}).get("description",""))')"
-  fi
-  if [[ "${current_value}" == "${target_version}" ]]; then
-    action="noop"
-    _RECONCILE_NOOP=$((_RECONCILE_NOOP + 1))
-  else
-    action="republish"
-    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-      reconcile__log CHANGE "${connector_name}" \
-        "would_call ${type}_set_definition_${type} ${definition_id} ${target_version}"
+  if [[ "${type}" == "nocode" ]]; then
+    if ! current_value="$(ab_get_definition_description "${definition_id}")"; then
+      reconcile__log ERROR "${connector_name}" "ab_get_definition_description failed"
+      return 1
+    fi
+    if [[ "${current_value}" == "${target_version}" ]]; then
+      action="noop"
+      _RECONCILE_NOOP=$((_RECONCILE_NOOP + 1))
     else
-      adopt_match_definition "${definition_id}" "${target_version}" "${type}"
-      reconcile__log CHANGE "${connector_name}" \
-        "definition.${type} updated from ${current_value} to ${target_version}"
-      _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      action="republish"
+      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+        reconcile__log CHANGE "${connector_name}" \
+          "would_call ab_builder_update_active_manifest ${definition_id} ${target_version}"
+      else
+        if [[ ! -f "${manifest_path}" ]]; then
+          reconcile__log ERROR "${connector_name}" \
+            "version drift but no connector.yaml at ${manifest_path}"
+          return 1
+        fi
+        local builder_id
+        builder_id="$(ab_builder_find_by_definition "${workspace_id}" "${definition_id}")"
+        if [[ -z "${builder_id}" ]]; then
+          # Orphan: definition with no builder project (legacy / imported
+          # state). DO NOT delete — that would cascade-break linked sources
+          # and connections. Operators must run the migrate-orphan helper
+          # which preserves state. See tools/migrate-orphan-definition.sh.
+          reconcile__log WARN "${connector_name}" \
+            "ORPHAN definition ${definition_id} has no linked builder project. Version drift NOT propagated. Run \`bash src/ingestion/reconcile-connectors/tools/migrate-orphan-definition.sh ${connector_name}\` to safely recreate (state-preserving)."
+          printf 'noop\n'
+          return 0
+        else
+          if ! ab_builder_update_active_manifest \
+                "${workspace_id}" "${builder_id}" "${target_version}" "${manifest_path}" >/dev/null; then
+            reconcile__log ERROR "${connector_name}" "ab_builder_update_active_manifest failed"
+            return 1
+          fi
+          reconcile__log CHANGE "${connector_name}" \
+            "definition.nocode updated from ${current_value} to ${target_version}"
+        fi
+        _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      fi
+    fi
+  else
+    # type=cdk
+    local def_json
+    if ! def_json="$(ab_get_definition "${definition_id}")"; then
+      reconcile__log ERROR "${connector_name}" "ab_get_definition failed"
+      return 1
+    fi
+    current_value="$(printf '%s' "${def_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("dockerImageTag",""))')"
+    if [[ "${current_value}" == "${target_version}" ]]; then
+      action="noop"
+      _RECONCILE_NOOP=$((_RECONCILE_NOOP + 1))
+    else
+      action="republish"
+      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+        reconcile__log CHANGE "${connector_name}" \
+          "would_call ab_set_definition_image_tag ${definition_id} ${target_version}"
+      else
+        if ! ab_set_definition_image_tag "${definition_id}" "${target_version}" >/dev/null; then
+          reconcile__log ERROR "${connector_name}" "ab_set_definition_image_tag failed"
+          return 1
+        fi
+        reconcile__log CHANGE "${connector_name}" \
+          "definition.cdk updated from ${current_value} to ${target_version}"
+        _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      fi
     fi
   fi
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-mismatch
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-return-noop
   printf '%s\t%s\n' "${action}" "${definition_id}"
+  return "${rc}"
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-return-noop
 }
 
@@ -246,7 +345,7 @@ reconcile_sources() {
   local workspace_id sources_json source_id current_cfg_json action change_class
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-name
-  workspace_id="$(ab_workspace_id)"
+  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
   sources_json="$(ab_list_sources "${workspace_id}")"
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-name
 
@@ -319,13 +418,60 @@ reconcile_connections() {
   local workspace_id connections_json filtered
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-find-tag
-  workspace_id="$(ab_workspace_id)"
+  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
   connections_json="$(ab_list_connections "${workspace_id}")"
   filtered="$(printf '%s' "${connections_json}" \
     | python3 "${_RECONCILE_PY_DIR}/select_connections_by_source.py" "${source_id}")"
   if [[ -z "${filtered}" ]]; then
-    reconcile__log WARN "${connector_name}" \
-      "no connection on source ${source_id} (caller should create one)"
+    # Bootstrap path: source exists but has no connection yet (clean cluster
+    # / first run). Create one with discovered schema, append-only sync mode,
+    # cron schedule, and reconcile tags. Caller treats this as data-affecting.
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+      reconcile__log CHANGE "${connector_name}" \
+        "would_call ab_create_connection source=${source_id} (first-time bootstrap)"
+      printf 'created\t\n'
+      return 0
+    fi
+    local destination_id
+    destination_id="${RECONCILE_DESTINATION_ID:-}"  # RULE-DEFAULTS-OK: explicit empty check below — fail-fast
+    if [[ -z "${destination_id}" ]]; then
+      reconcile__log ERROR "${connector_name}" \
+        "RECONCILE_DESTINATION_ID env not set — cannot bootstrap connection on source ${source_id}"
+      return 1
+    fi
+    local discover_json sync_catalog
+    if ! discover_json="$(ab_discover_schema "${source_id}")"; then
+      reconcile__log ERROR "${connector_name}" \
+        "ab_discover_schema failed for source ${source_id}"
+      return 1
+    fi
+    if ! sync_catalog="$(printf '%s' "${discover_json}" \
+          | python3 "${_RECONCILE_PY_DIR}/normalize_catalog_to_append.py")"; then
+      reconcile__log ERROR "${connector_name}" \
+        "normalize_catalog_to_append failed for source ${source_id}"
+      return 1
+    fi
+    local cron_str schedule_json
+    cron_str="$(reconcile_compute_schedule "${connector_name}")"
+    schedule_json="$(python3 "${_RECONCILE_PY_DIR}/build_schedule_json.py" "${cron_str}")"
+    local tags_json
+    tags_json="$(python3 -c 'import sys, json; print(json.dumps(["insight", f"cfg-hash:{sys.argv[1]}"]))' "${secret_cfg_hash}")"
+    local conn_name
+    conn_name="$(reconcile_compute_connection_name "${connector_name}")"
+    local new_conn_json new_conn_id
+    if ! new_conn_json="$(ab_create_connection "${workspace_id}" "${source_id}" \
+              "${destination_id}" "${conn_name}" "${schedule_json}" \
+              "${tags_json}" "${sync_catalog}")"; then
+      reconcile__log ERROR "${connector_name}" \
+        "ab_create_connection failed for source ${source_id}"
+      return 1
+    fi
+    new_conn_id="$(printf '%s' "${new_conn_json}" \
+      | python3 -c 'import sys,json;print(json.load(sys.stdin).get("connectionId",""))')"
+    reconcile__log CHANGE "${connector_name}" \
+      "first-create connection: ${new_conn_id}"
+    _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+    printf 'created\t%s\n' "${new_conn_id}"
     return 0
   fi
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-find-tag
@@ -368,7 +514,7 @@ reconcile_recreate_with_state() {
   local source_name="$4" target_cfg_json="$5" cfg_hash="$6"
   local workspace_id
 
-  workspace_id="$(ab_workspace_id)"
+  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
 
   # If caller didn't supply, find the (single) connection for this source.
   if [[ -z "${connection_id}" ]]; then
@@ -451,7 +597,7 @@ reconcile_gc_orphans() {
   # @cpt-end:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-loop
 
   local workspace_id descriptors_tsv known_names
-  workspace_id="$(ab_workspace_id)"
+  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
   descriptors_tsv="$(disc_load_descriptors)"
   known_names="$(printf '%s\n' "${descriptors_tsv}" \
     | python3 "${_RECONCILE_PY_DIR}/extract_descriptor_names.py")"
@@ -499,7 +645,128 @@ reconcile_dry_run() {
 # CronWorkflow (idempotent), submits sync-trigger on data-affecting changes,
 # then runs optional GC. Returns 0 on success, 2 if any layer logged ERROR.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# _reconcile_one_connector <name> <connector_dir> <version> <type> \
+#                          <opt_dry_run> <opt_no_sync_trigger> <opt_connector>
+# Per-connector body extracted from the main loop so a single connector's
+# failure can't kill the whole reconcile run. We deliberately do NOT enable
+# `set -e` here — failures bubble up through explicit `if ! ...; then`
+# branches and are reported via return codes.
+# Returns 0 on success, non-zero on any per-layer failure.
+# ---------------------------------------------------------------------------
+_reconcile_one_connector() {
+  local name="$1" connector_dir="$2" version="$3" type="$4"
+  local opt_dry_run="$5" opt_no_sync_trigger="$6" opt_connector="$7"
+  set +e  # explicit per-call error handling below
+
+  if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
+    _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
+    return 0
+  fi
+
+  # Missing Secret -> cascade-delete chain (per ADR-0007 / KEY DECISION #7).
+  if valsec_secret_missing_p "${name}"; then
+    if ! reconcile_cascade_delete "${name}"; then
+      return 1
+    fi
+    _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+    return 0
+  fi
+
+  # Invalid Secret -> WARN + skip (per ADR-0007 / KEY DECISION #7).
+  local missing_field=""
+  if ! missing_field="$(valsec_check_secret "${name}" 2>/dev/null)"; then
+    log_line WARN "skip ${name}: missing field ${missing_field:-unknown}"
+    _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
+    return 0
+  fi
+
+  local secret_name
+  if ! secret_name="$(disc_match_descriptor_to_secret "${name}")"; then
+    reconcile__log WARN "${name}" "no labelled secret in K8s — skipping"
+    _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
+    return 0
+  fi
+
+  local cfg_hash secret_data_json
+  cfg_hash="$(disc_compute_cfg_hash "${secret_name}")"
+  secret_data_json="$(kubectl -n "${INSIGHT_NAMESPACE}" get secret "${secret_name}" \
+    -o json 2>/dev/null \
+    | python3 "${_RECONCILE_PY_DIR}/extract_secret_data.py")"
+
+  local data_changed=0
+
+  # Layer 1 — definition
+  local def_result def_id def_action
+  if ! def_result="$(reconcile_definitions "${name}" "${version}" "${type}" "${connector_dir}")"; then
+    log_line ERROR "definition layer failed for ${name}"
+    return 1
+  fi
+  def_id="$(printf '%s' "${def_result}" | tail -1 | cut -f2)"
+  if [[ -z "${def_id}" ]]; then
+    reconcile__log WARN "${name}" "definition not yet present — skipping source/connection layers this run"
+    _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
+    return 0
+  fi
+  def_action="$(printf '%s' "${def_result}" | tail -1 | cut -f1)"
+  [[ "${def_action}" == "republish" ]] && data_changed=1
+
+  # Layer 2 — source
+  local tenant_id="${INSIGHT_TENANT_ID:-}"
+  local source_id_label
+  source_id_label="$(kubectl -n "${INSIGHT_NAMESPACE}" get secret "${secret_name}" \
+    -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/source-id}' 2>/dev/null || true)"
+  [[ -n "${source_id_label}" ]] || source_id_label="main"
+  local expected_source_name="${name}-${source_id_label}-${tenant_id}"
+  local src_result src_id src_action
+  if ! src_result="$(reconcile_sources "${name}" "${secret_data_json}" "${cfg_hash}" \
+                "${def_id}" "${expected_source_name}")"; then
+    log_line ERROR "source layer failed for ${name}"
+    return 1
+  fi
+  src_id="$(printf '%s' "${src_result}" | tail -1 | cut -f2)"
+  src_action="$(printf '%s' "${src_result}" | tail -1 | cut -f1)"
+  if [[ -z "${src_id}" ]]; then
+    reconcile__log WARN "${name}" "no source_id after layer 2"
+    return 0
+  fi
+  # Source create/update/recreate is data-affecting per ADR-0008.
+  [[ "${src_action}" != "noop" ]] && data_changed=1
+
+  # Layer 3 — connection tags (tag-only: NOT data-affecting per ADR-0008).
+  # Bootstrap path (first-time create) IS data-affecting and bumps
+  # data_changed so a sync trigger fires.
+  local conn_result conn_action
+  conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}")"
+  conn_action="$(printf '%s' "${conn_result}" | tail -1 | cut -f1)"
+  [[ "${conn_action}" == "created" ]] && data_changed=1
+
+  # CronWorkflow apply (idempotent — kubectl apply no-op when YAML unchanged).
+  local conn_name schedule tenant rc=0
+  conn_name="$(reconcile_compute_connection_name "${name}")"
+  schedule="$(reconcile_compute_schedule "${name}")"
+  tenant="$(reconcile_compute_tenant "${name}")"
+  if ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
+    log_line ERROR "argo_apply_cronworkflow failed for ${name}"
+    rc=1
+  fi
+
+  # Sync-trigger only on data-affecting changes (per ADR-0008 / KEY DECISION #2).
+  if [[ "${data_changed}" -eq 1 && "${opt_no_sync_trigger}" -ne 1 ]]; then
+    if argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" >/dev/null 2>&1; then
+      log_line INFO "submitted sync trigger for ${name}"
+    else
+      log_line ERROR "argo_submit_sync_trigger failed for ${name}"
+      rc=1
+    fi
+  fi
+  # silence unused-arg shellcheck warning
+  : "${opt_dry_run}"
+  return "${rc}"
+}
+
 reconcile_run() {
+  : "${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (the Airbyte workspace UUID where Insight connectors are managed; see chart values ingestion.reconcile.airbyteWorkspaceId)}"
   local opt_dry_run="${1:-0}"
   local opt_no_sync_trigger="${2:-0}"
   local opt_no_gc="${3:-0}"
@@ -520,100 +787,10 @@ reconcile_run() {
 
   while IFS=$'\t' read -r name connector_dir version type; do
     [[ -n "${name}" ]] || continue
-    if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
-      _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
-      continue
-    fi
-
-    # Missing Secret → cascade-delete chain (per ADR-0007 / KEY DECISION #7).
-    if valsec_secret_missing_p "${name}"; then
-      if ! reconcile_cascade_delete "${name}"; then
-        _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
-      fi
-      _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
-      continue
-    fi
-
-    # Invalid Secret → WARN + skip (per ADR-0007 / KEY DECISION #7).
-    local missing_field=""
-    if ! missing_field="$(valsec_check_secret "${name}" 2>/dev/null)"; then
-      log_line WARN "skip ${name}: missing field ${missing_field:-unknown}"
-      _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
-      continue
-    fi
-
-    local secret_name
-    if ! secret_name="$(disc_match_descriptor_to_secret "${name}")"; then
-      reconcile__log WARN "${name}" "no labelled secret in K8s — skipping"
-      _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
-      continue
-    fi
-
-    local cfg_hash secret_data_json
-    cfg_hash="$(disc_compute_cfg_hash "${secret_name}")"
-    secret_data_json="$(kubectl -n "${INSIGHT_NAMESPACE}" get secret "${secret_name}" \
-      -o json 2>/dev/null \
-      | python3 "${_RECONCILE_PY_DIR}/extract_secret_data.py")"
-
-    local data_changed=0
-
-    # Layer 1 — definition
-    local def_result def_id def_action
-    if ! def_result="$(reconcile_definitions "${name}" "${version}" "${type}")"; then
-      log_line ERROR "definition layer failed for ${name}"
+    if ! _reconcile_one_connector "${name}" "${connector_dir}" "${version}" "${type}" \
+         "${opt_dry_run}" "${opt_no_sync_trigger}" "${opt_connector}"; then
+      log_line ERROR "reconcile: connector ${name} failed (continuing with next)"
       _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
-      continue
-    fi
-    def_id="$(printf '%s' "${def_result}" | tail -1 | cut -f2)"
-    if [[ -z "${def_id}" ]]; then
-      reconcile__log WARN "${name}" "definition not yet present — skipping source/connection layers this run"
-      _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
-      continue
-    fi
-    def_action="$(printf '%s' "${def_result}" | tail -1 | cut -f1)"
-    [[ "${def_action}" == "republish" ]] && data_changed=1
-
-    # Layer 2 — source
-    local tenant_id="${INSIGHT_TENANT_ID:-}"
-    local source_id_label
-    source_id_label="$(kubectl -n "${INSIGHT_NAMESPACE}" get secret "${secret_name}" \
-      -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/source-id}' 2>/dev/null || true)"
-    [[ -n "${source_id_label}" ]] || source_id_label="main"
-    local expected_source_name="${name}-${source_id_label}-${tenant_id}"
-    local src_result src_id src_action
-    if ! src_result="$(reconcile_sources "${name}" "${secret_data_json}" "${cfg_hash}" \
-                  "${def_id}" "${expected_source_name}")"; then
-      log_line ERROR "source layer failed for ${name}"
-      _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
-      continue
-    fi
-    src_id="$(printf '%s' "${src_result}" | tail -1 | cut -f2)"
-    src_action="$(printf '%s' "${src_result}" | tail -1 | cut -f1)"
-    [[ -n "${src_id}" ]] || { reconcile__log WARN "${name}" "no source_id after layer 2"; continue; }
-    # Source create/update/recreate is data-affecting per ADR-0008.
-    [[ "${src_action}" != "noop" ]] && data_changed=1
-
-    # Layer 3 — connection tags (tag-only: NOT data-affecting per ADR-0008).
-    reconcile_connections "${name}" "${src_id}" "${cfg_hash}"
-
-    # CronWorkflow apply (idempotent — kubectl apply no-op when YAML unchanged).
-    local conn_name schedule tenant
-    conn_name="$(reconcile_compute_connection_name "${name}")"
-    schedule="$(reconcile_compute_schedule "${name}")"
-    tenant="$(reconcile_compute_tenant "${name}")"
-    if ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
-      log_line ERROR "argo_apply_cronworkflow failed for ${name}"
-      _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
-    fi
-
-    # Sync-trigger only on data-affecting changes (per ADR-0008 / KEY DECISION #2).
-    if [[ "${data_changed}" -eq 1 && "${opt_no_sync_trigger}" -ne 1 ]]; then
-      if argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" >/dev/null 2>&1; then
-        log_line INFO "submitted sync trigger for ${name}"
-      else
-        log_line ERROR "argo_submit_sync_trigger failed for ${name}"
-        _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
-      fi
     fi
   done <<<"${descriptors_tsv}"
   # shellcheck disable=SC2034

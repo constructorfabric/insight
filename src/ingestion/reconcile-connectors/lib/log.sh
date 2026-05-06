@@ -14,7 +14,7 @@
 # log_line is never called for the no-op branch, AND log_run_summary writes
 # only stdout (one line). The log file size is unchanged.
 
-set -euo pipefail
+# NOTE: this file is sourced; no top-level `set -euo pipefail`.
 
 LOG_TARGET=""
 LOG_FD_OPEN=0

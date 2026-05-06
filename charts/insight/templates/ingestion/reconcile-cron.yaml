@@ -37,6 +37,12 @@ spec:
               value: {{ include "insight.airbyte.url" . | quote }}
             - name: INSIGHT_NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            - name: INSIGHT_AIRBYTE_WORKSPACE_ID
+              value: {{ required "ingestion.reconcile.airbyteWorkspaceId is required (the Airbyte workspace UUID where Insight connectors are managed)" .Values.ingestion.reconcile.airbyteWorkspaceId | quote }}
+            - name: RECONCILE_DESTINATION_ID
+              value: {{ required "ingestion.reconcile.destinationId is required (the Airbyte destination UUID for Insight Bronze; reconcile_connections needs it to bootstrap connections on a clean cluster)" .Values.ingestion.reconcile.destinationId | quote }}
+            - name: INSIGHT_TENANT_ID
+              value: {{ required "ingestion.reconcile.tenantId is required (the Insight tenant slug; used in source/connection names per ADR-0005)" .Values.ingestion.reconcile.tenantId | quote }}
           resources:
             requests:
               cpu: {{ .Values.ingestion.reconcile.resources.requests.cpu | quote }}

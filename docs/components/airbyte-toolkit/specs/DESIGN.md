@@ -85,6 +85,8 @@ All operations are idempotent. Creating a resource that already exists in state 
 | `cpt-insightspec-adr-cron-self-run-with-file-persistent-logs` | cluster-level Argo CronWorkflow drives reconcile; PVC-backed daily-rotated log file | §3.2 reconcile-cronworkflow, §3.14 Cron Self-Run, §3.15 File Log Destination |
 | `cpt-insightspec-adr-required-fields-in-descriptor-not-example` | required Secret fields declared in `descriptor.yaml.secret.required_fields`, not in example annotations | §3.12 Secret Validation |
 | `cpt-insightspec-adr-auto-trigger-sync-on-data-change` | one-shot `airbyte-sync` Workflow fires only on data-affecting reconcile actions | §3.2 argo-sync-trigger, §3.13 Argo Integration |
+| `cpt-insightspec-adr-airbyte-workspace-as-namespace` | Insight definitions live in one Airbyte workspace, identified by `custom: true` | §3.2 reconcile-engine, §3.9 Reconciliation Model, §3.11 Naming Convention |
+| `cpt-insightspec-adr-nocode-via-builder-projects` | nocode definitions registered via `connector_builder_projects` (create/publish/update_active_manifest); CDK keeps `create_custom` | §3.2 registrar, §3.2 reconcile-engine, §3.9 Reconciliation Model |
 
 #### NFR Allocation
 
@@ -842,6 +844,8 @@ The reconciliation model defines the relationship between desired state (on disk
 
 **Decision rule for "no-op"**: when all three layers' desired anchors equal their actual anchors, the engine emits `no-op` and makes no Airbyte API calls beyond list/get.
 
+**NoCode definition lifecycle** (per ADR-0010): `connectors/<area>/<name>/connector.yaml` (manifest in repo) → `connector_builder_projects/create` (builder project + draft manifest) → `connector_builder_projects/publish` (active source_definition) → on subsequent runs, `connector_builder_projects/update_active_manifest` bumps the version when descriptor.version changes. Orphan definitions (`custom: true`, no builder project) discovered during reconcile are deleted and republished — idempotent recovery from legacy `create_custom`-registered definitions. CDK definitions retain the `create_custom` registration path. All definition iteration filters on `custom: true` per ADR-0009 to scope to Insight-managed definitions inside the shared Airbyte workspace.
+
 Drives PRD requirements `cpt-insightspec-fr-version-driven-reconcile`, `cpt-insightspec-fr-orphan-gc`, `cpt-insightspec-fr-state-preserved-on-breaking-change`, `cpt-insightspec-fr-cli-surface`. Related ADRs are listed in §1.2 Architecture Drivers.
 
 See sequence `cpt-insightspec-seq-reconcile-default` in §3.6 for the end-to-end flow.
@@ -1007,3 +1011,4 @@ All write operations persist to file and (if in-cluster) to ConfigMap atomically
 ### Changelog
 
 - 2026-05-05 — v1.1 — Added §3.13 (Argo Integration), §3.14 (Cron Self-Run + Leak Guarantees), §3.15 (File Log Destination), three new sequences in §3.6 (`seq-resolve-connection-by-name`, `seq-render-and-apply-cronworkflow`, `seq-sync-trigger-on-change`), and §5 traceability rows for the six Phase 1 FRs.
+- 2026-05-06 — v1.1 — Added ADR-0009 / ADR-0010 rows in §1.2 architecture-drivers table; added NoCode definition lifecycle paragraph in §3.9.
