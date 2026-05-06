@@ -1,5 +1,39 @@
 ##
-## Insight — local development Helmfile
+## ⚠️  EXPERIMENTAL — BROKEN STANDALONE — DO NOT USE  ⚠️
+##
+## This helmfile is structurally INCOMPATIBLE with the post-#224 chart
+## architecture (umbrella chart + bitnami subcharts + Secret-emission
+## pattern). It is retained only for historical reference and may be
+## removed entirely in a follow-up cleanup PR.
+##
+## Three known issues that make `helmfile sync` either fail outright or
+## silently produce a half-broken stack — see #275 B12 for the full
+## breakdown:
+##
+##   1. The local `helmfile/charts/clickhouse` subchart `required`s
+##      `auth.existingSecret` + `auth.existingSecretPasswordKey` and
+##      reads `username` at the top level. This file passes inline
+##      `auth.{username,password}` instead, so `helmfile sync` fails on
+##      the very first release with three `required value ... is required`
+##      template errors and never reaches MariaDB / apps.
+##
+##   2. The `clickhouse:` block passed to the api-gateway chart at
+##      lines 116-118 is dead config — api-gateway is a stateless
+##      reverse proxy and has no `.Values.clickhouse.*` references in
+##      its templates. Misleading to readers, ignored by Helm.
+##
+##   3. The application charts (analytics-api, identity-resolution)
+##      consume their config from existing K8s Secrets
+##      (`insight-analytics-api-config`, `insight-identity-resolution-config`)
+##      that the UMBRELLA chart emits on install. This helmfile path
+##      therefore requires the umbrella to run FIRST, defeating the
+##      premise of an "alternative install path".
+##
+## Canonical install path: `./dev-up.sh` → `deploy/scripts/install.sh`
+## (which orchestrates `install-airbyte.sh`, `install-argo.sh`,
+## `install-insight.sh`). Use that instead.
+##
+## ── Original (now-misleading) usage notes preserved below ────────────
 ##
 ## Usage:
 ##   helmfile -e local sync                  # deploy everything
