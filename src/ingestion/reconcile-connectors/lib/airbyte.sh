@@ -21,35 +21,89 @@
 #
 # Required env (set by callers via lib/env.sh-equivalent or run-init):
 #   AIRBYTE_URL          — base URL, e.g. http://airbyte-server:8001
-#   AIRBYTE_TOKEN_FILE   — file holding bearer JWT (default
-#                          /var/run/secrets/airbyte/token)
+#   INSIGHT_NAMESPACE    — K8s namespace where airbyte-auth-secrets lives
+# Optional env (with documented defaults):
+#   AIRBYTE_TOKEN          — pre-minted JWT (skips minting; for tests/CI)
+#   AIRBYTE_TOKEN_CACHE    — path to TTL-backed cache file
+#                            (default: per-UID file under /tmp)
+#   AIRBYTE_TOKEN_TTL      — JWT lifetime in seconds (default 300)
+#   AIRBYTE_AUTH_SECRET_NAME — name of the K8s Secret holding the
+#                              jwt-signature-secret key (default
+#                              airbyte-auth-secrets, the bundled-chart name)
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
 
 # Only define functions; do not run anything when sourced.
+: "${AIRBYTE_URL:?AIRBYTE_URL must be set (e.g. http://airbyte-server:8001)}"
 
-# Absolute base URL for Airbyte API. Callers set AIRBYTE_URL.
-: "${AIRBYTE_URL:=http://localhost:8001}"
-: "${AIRBYTE_TOKEN_FILE:=/var/run/secrets/airbyte/token}"
+_AIRBYTE_LIB_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
+_AIRBYTE_PY_DIR="$( cd "${_AIRBYTE_LIB_DIR}/../python" && pwd )"
 
 # ---------------------------------------------------------------------------
 # ab_get_token — print bearer token to stdout.
-# Reads from AIRBYTE_TOKEN_FILE if it exists; otherwise echoes
-# AIRBYTE_TOKEN env var (set by env-resolver). Never logs the value.
+#
+# Resolution chain (priority order):
+#   1. AIRBYTE_TOKEN env (test/CI shortcut)
+#   2. Cached token file in ${AIRBYTE_TOKEN_CACHE} if mtime < TTL - 30s
+#   3. Mint a fresh HS256 JWT: read jwt-signature-secret from K8s Secret
+#      (kubectl, RBAC `secrets get` already granted by reconcile-rbac.yaml),
+#      sign via python/mint_airbyte_jwt.py, cache to file (mode 600).
+#
+# This is the single source of truth for "give me a valid Airbyte JWT".
+# Sensitive values are never logged or echoed in error paths.
 # ---------------------------------------------------------------------------
 ab_get_token() {
   if [[ -n "${AIRBYTE_TOKEN:-}" ]]; then
     printf '%s' "${AIRBYTE_TOKEN}"
     return 0
   fi
-  if [[ -r "${AIRBYTE_TOKEN_FILE}" ]]; then
-    # shellcheck disable=SC2002
-    cat "${AIRBYTE_TOKEN_FILE}"
-    return 0
+  : "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set (the K8s namespace where Airbyte runs)}"
+  local cache="${AIRBYTE_TOKEN_CACHE:-/tmp/insight-airbyte-token-${UID:-$(id -u)}}"  # RULE-DEFAULTS-OK: per-UID tmp cache; mode 600 set below; not a config input
+  local ttl="${AIRBYTE_TOKEN_TTL:-300}"  # RULE-DEFAULTS-OK: operational tuning; 5min < JWT exp; safe re-mint cadence
+  local secret_name="${AIRBYTE_AUTH_SECRET_NAME:-airbyte-auth-secrets}"  # RULE-DEFAULTS-OK: name fixed by Airbyte Helm chart; override only for non-bundled Airbyte
+
+  # Cache hit? mtime newer than (ttl - 30s) means JWT is still valid for
+  # at least 30s — return it. Below that, re-mint to avoid mid-call expiry.
+  if [[ -r "$cache" ]]; then
+    local mtime now age
+    if mtime="$(stat -f %m "$cache" 2>/dev/null || stat -c %Y "$cache" 2>/dev/null)"; then
+      now="$(date +%s)"
+      age=$(( now - mtime ))
+      if [[ "$age" -lt $(( ttl - 30 )) ]]; then
+        cat "$cache"
+        return 0
+      fi
+    fi
   fi
-  printf 'ab_get_token: no token (AIRBYTE_TOKEN unset and %s unreadable)\n' "${AIRBYTE_TOKEN_FILE}" >&2
-  return 1
+
+  # Cache miss / expired — mint a fresh JWT. Pull HMAC signing secret
+  # from K8s. RBAC: reconcile-rbac.yaml grants `secrets get/list/watch` on
+  # the namespace; locally the user's kubeconfig provides the same.
+  local jwt_secret_b64 token tmp
+  if ! jwt_secret_b64="$(kubectl -n "$INSIGHT_NAMESPACE" get secret "$secret_name" \
+        -o jsonpath='{.data.jwt-signature-secret}' 2>/dev/null)"; then
+    printf 'ab_get_token: kubectl failed reading secret/%s in ns %s (RBAC? wrong namespace?)\n' \
+      "$secret_name" "$INSIGHT_NAMESPACE" >&2
+    return 1
+  fi
+  if [[ -z "$jwt_secret_b64" ]]; then
+    printf 'ab_get_token: secret/%s has no jwt-signature-secret key\n' "$secret_name" >&2
+    return 1
+  fi
+  if ! token="$(printf '%s' "$jwt_secret_b64" | base64 -d \
+        | python3 "${_AIRBYTE_PY_DIR}/mint_airbyte_jwt.py" "$ttl")"; then
+    printf 'ab_get_token: mint_airbyte_jwt.py failed\n' >&2
+    return 1
+  fi
+
+  # Atomic write: tmp file in same dir, then mv. Mode 600 throughout.
+  tmp="$(mktemp "${cache}.XXXXXX")"
+  trap "rm -f '${tmp}'" RETURN
+  chmod 600 "$tmp"
+  printf '%s' "$token" > "$tmp"
+  mv "$tmp" "$cache"
+  printf '%s' "$token"
 }
 
 # ---------------------------------------------------------------------------
