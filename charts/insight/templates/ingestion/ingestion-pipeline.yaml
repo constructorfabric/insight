@@ -10,15 +10,19 @@ spec:
   entrypoint: pipeline
   templates:
     - name: pipeline
-      # Connection-specific inputs (connection_id, insight_source_id,
+      # Connection-specific inputs (connection_name, insight_source_id,
       # data_source, dbt_select, dbt_select_staging) are supplied by the
       # invoker. Image tags and infrastructure coordinates default from
       # umbrella chart values — single source of truth, baked into the
       # rendered WorkflowTemplate at `helm install` time. Submitters can
       # still override per-call (e.g. for testing a different toolbox tag).
+      #
+      # connection_name (per ADR-0005): pattern {connector}-{source_id}-{tenant}-conn.
+      # The airbyte-sync template's resolve-connection-by-name init-step
+      # resolves the UUID at submit time.
       inputs:
         parameters:
-          - name: connection_id
+          - name: connection_name
           - name: insight_source_id
           - name: data_source                # "jira" → enriched path; anything else → legacy single-dbt
           - name: dbt_select_staging         # e.g. "tag:jira"; empty for non-jira
@@ -41,11 +45,11 @@ spec:
           - name: sync
             templateRef:
               name: airbyte-sync
-              template: sync
+              template: main
             arguments:
               parameters:
-                - name: connection_id
-                  value: {{ `"{{inputs.parameters.connection_id}}"` }}
+                - name: connection_name
+                  value: {{ `"{{inputs.parameters.connection_name}}"` }}
                 - name: airbyte_url
                   value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
 

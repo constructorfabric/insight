@@ -5,3 +5,6 @@ dbt_select: tag:cursor+
 workflow: sync
 connection:
   namespace: bronze_cursor
+secret:
+  required_fields:
+    - cursor_api_key

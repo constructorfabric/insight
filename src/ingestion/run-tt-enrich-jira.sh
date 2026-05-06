@@ -31,7 +31,7 @@ SOURCE_ID="${2:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-source "airbyte-toolkit/lib/secrets.sh"
+source "reconcile-connectors/lib/secrets.sh"
 
 # ─── Resolve insight_source_id from Secret annotations ──────────────────
 if [[ -z "$SOURCE_ID" ]]; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# @cpt:cpt-insightspec-feature-reconcile — adoption pass
-# @cpt-flow:cpt-insightspec-flow-reconcile-run-adopt:p1
+# @cpt:cpt-insightspec-featstatus-reconcile — adoption pass
+# @cpt-flow:cpt-insightspec-flow-reconcile-run-adopt-v2:p1
 #
 # One-shot adoption that aligns existing Airbyte resources with the
 # declarative descriptor + K8s Secret model — annotation only, NO creates,
@@ -22,6 +22,10 @@ _ADOPT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_ADOPT_LIB_DIR}/airbyte.sh"
 # shellcheck source=./discover.sh
 source "${_ADOPT_LIB_DIR}/discover.sh"
+# shellcheck source=./argo.sh
+source "${_ADOPT_LIB_DIR}/argo.sh"
+# shellcheck source=./log.sh
+source "${_ADOPT_LIB_DIR}/log.sh"
 
 # Counters; reset on each adopt_run.
 _ADOPT_ADOPTED=0
@@ -48,7 +52,7 @@ adopt_warn_orphan() {
 # (Airbyte returns 200 with no change when the value already matches).
 # ---------------------------------------------------------------------------
 adopt_match_definition() {
-  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-anno-def
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-anno-def
   local definition_id="$1"
   local version="$2"
   local type="$3"
@@ -60,7 +64,7 @@ adopt_match_definition() {
       ab_set_definition_description "${definition_id}" "${version}" >/dev/null
       ;;
   esac
-  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-anno-def
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-anno-def
 }
 
 # ---------------------------------------------------------------------------
@@ -70,7 +74,7 @@ adopt_match_definition() {
 # then PATCH. Idempotent — second run produces an identical tag list.
 # ---------------------------------------------------------------------------
 adopt_tag_connection() {
-  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-anno-conn
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-anno-conn
   local connection_id="$1"
   local cfg_hash="$2"
   local existing_tags_json="${3:-[]}"
@@ -94,7 +98,7 @@ for n in keep:
 print(json.dumps(out))
 ' "${existing_tags_json}" "${cfg_hash}")
   ab_patch_connection_tags "${connection_id}" "${tags_json}" >/dev/null
-  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-anno-conn
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-anno-conn
 }
 
 # ---------------------------------------------------------------------------
@@ -109,63 +113,57 @@ adopt_run() {
   _ADOPT_ADOPTED=0
   _ADOPT_SKIPPED=0
   _ADOPT_WARNINGS=0
-  local dry_run="${ADOPT_DRY_RUN:-0}"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --dry-run) dry_run=1; shift ;;
-      *) printf 'adopt_run: unknown arg %s\n' "$1" >&2; return 1 ;;
-    esac
-  done
+  local dry_run="${1:-${ADOPT_DRY_RUN:-0}}"
+  local opt_connector="${2:-}"
 
-  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-resolve-env
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-resolve-env
   local workspace_id
   workspace_id="$(ab_workspace_id)"
-  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-resolve-env
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-resolve-env
 
-  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-discover
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-discover
   local descriptors_tsv
   descriptors_tsv="$(disc_load_descriptors)"
-  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-discover
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-discover
 
-  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-list-actual
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-list-actual
   local definitions_json sources_json connections_json
   definitions_json="$(ab_list_definitions "${workspace_id}")"
   sources_json="$(ab_list_sources "${workspace_id}")"
   connections_json="$(ab_list_connections "${workspace_id}")"
-  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-list-actual
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-list-actual
 
-  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-loop
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
   while IFS=$'\t' read -r name connector_dir version type; do
     [[ -n "${name}" ]] || continue
-
-    # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-match
-    local secret_name
-    if ! secret_name="$(disc_match_descriptor_to_secret "${name}")"; then
-      # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-skip
-      adopt_warn_orphan "${name}" "no labelled secret found in K8s"
+    if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
       _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
-      # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-skip
       continue
     fi
-    # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-match
+
+    # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-match
+    local secret_name
+    if ! secret_name="$(disc_match_descriptor_to_secret "${name}")"; then
+      # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-skip
+      adopt_warn_orphan "${name}" "no labelled secret found in K8s"
+      _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
+      # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-skip
+      continue
+    fi
+    # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-match
 
     local cfg_hash
     cfg_hash="$(disc_compute_cfg_hash "${secret_name}")"
 
-    # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-if-matched
+    # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-if-matched
     # Find ALL definitions with this name. Legacy clusters often have
     # duplicates (multiple publish events left orphaned definitions
     # alongside the active one); existing sources may reference any of
     # them. Annotate every duplicate so the active one always carries
     # the correct version, and search sources across the full set.
     local definition_ids_json
-    definition_ids_json="$(printf '%s' "${definitions_json}" | python3 -c '
-import sys, json
-target = sys.argv[1]
-ids = [d.get("sourceDefinitionId") for d in json.load(sys.stdin)
-       if d.get("name") == target and d.get("sourceDefinitionId")]
-print(json.dumps(ids))
-' "${name}")"
+    definition_ids_json="$(printf '%s' "${definitions_json}" \
+      | python3 "${_ADOPT_LIB_DIR}/../python/extract_definition_ids.py" "${name}")"
     local def_count
     def_count="$(printf '%s' "${definition_ids_json}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')"
     if [[ "${def_count}" -eq 0 ]]; then
@@ -182,28 +180,15 @@ print(json.dumps(ids))
       else
         adopt_match_definition "${definition_id}" "${version}" "${type}"
       fi
-    done < <(printf '%s' "${definition_ids_json}" | python3 -c '
-import sys, json
-for x in json.load(sys.stdin):
-    print(x)
-')
+    done < <(printf '%s' "${definition_ids_json}" \
+      | python3 -c 'import sys,json
+for x in json.load(sys.stdin): print(x)')
 
     # Find connections whose source.sourceDefinitionId is in the set.
     local matching_connections
-    matching_connections="$(python3 -c '
-import sys, json
-sources = json.loads(sys.argv[1])
-connections = json.loads(sys.argv[2])
-def_ids = set(json.loads(sys.argv[3]))
-matched_source_ids = {s["sourceId"] for s in sources
-                      if s.get("sourceDefinitionId") in def_ids}
-for c in connections:
-    if c.get("sourceId") in matched_source_ids:
-        print(json.dumps({
-          "connectionId": c.get("connectionId"),
-          "tags": c.get("tags", []),
-        }))
-' "${sources_json}" "${connections_json}" "${definition_ids_json}")"
+    matching_connections="$(python3 \
+      "${_ADOPT_LIB_DIR}/../python/match_connections_to_definitions.py" \
+      "${sources_json}" "${connections_json}" "${definition_ids_json}")"
     if [[ -z "${matching_connections}" ]]; then
       adopt_warn_orphan "${name}" "no connection found for any of ${def_count} matching definition(s)"
       _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
@@ -223,13 +208,27 @@ for c in connections:
       fi
       _ADOPT_ADOPTED=$((_ADOPT_ADOPTED + 1))
     done <<<"${matching_connections}"
-    # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-if-matched
-  done <<<"${descriptors_tsv}"
-  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-loop
 
-  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-return
+    # Apply (or update) the per-connector Argo CronWorkflow.
+    if [[ "${dry_run}" -eq 1 ]]; then
+      printf 'would_call argo_apply_cronworkflow %s\n' "${name}"
+    else
+      local conn_name; conn_name="$(reconcile_compute_connection_name "${name}")"
+      local schedule;  schedule="$(reconcile_compute_schedule "${name}")"
+      local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
+      if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
+        log_line INFO "first-adopt: created CronWorkflow ${name}-${tenant}-sync"
+      else
+        log_line ERROR "first-adopt: argo_apply_cronworkflow failed for ${name}"
+      fi
+    fi
+    # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-if-matched
+  done <<<"${descriptors_tsv}"
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
+
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-return
   printf 'adopt summary: adopted=%d skipped=%d warnings=%d (dry_run=%d) — connector_dir scanned\n' \
     "${_ADOPT_ADOPTED}" "${_ADOPT_SKIPPED}" "${_ADOPT_WARNINGS}" "${dry_run}"
   : "${connector_dir:=}"  # silence unused-warning when no descriptors found
-  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt:p1:inst-ad-return
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-return
 }

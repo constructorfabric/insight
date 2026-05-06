@@ -7,7 +7,7 @@ cd "$SCRIPT_DIR"
 
 echo "=== Cleaning ingestion state ==="
 
-# NOTE: airbyte-toolkit/state.yaml was removed in the version-driven
+# NOTE: local state.yaml was removed in the version-driven
 # reconcile refactor (Airbyte itself is now authoritative). Only the
 # generated per-tenant workflows need cleanup here.
 

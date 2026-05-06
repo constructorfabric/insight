@@ -12,3 +12,9 @@ dbt_select: "tag:silver,tag:jira+"
 
 connection:
   namespace: bronze_jira
+secret:
+  required_fields:
+    - jira_instance_url
+    - jira_email
+    - jira_api_token
+    - jira_project_keys

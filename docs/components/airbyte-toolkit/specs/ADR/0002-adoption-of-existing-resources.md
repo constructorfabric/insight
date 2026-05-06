@@ -106,6 +106,7 @@ Rename existing sources and connections to a name pattern that encodes the descr
 - Related decisions:
   - `cpt-insightspec-adr-version-driven-reconcile` (ADR-0001) — provides the version anchor that adoption sets.
   - `cpt-insightspec-adr-credential-rotation-no-env` (ADR-0003) — explains why `cfg-hash` is computed from K8s Secret, not from Airbyte's masked credential view.
+  - `cpt-insightspec-adr-connection-name-as-argo-identifier` (ADR-0005) — connection-name is the canonical operator-facing identifier produced by adoption and consumed by the Argo sync path.
 
 ## Traceability
 

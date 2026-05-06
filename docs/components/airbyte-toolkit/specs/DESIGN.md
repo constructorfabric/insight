@@ -1,3 +1,10 @@
+---
+cpt:
+  artifact: DESIGN
+  system: insightspec
+  version: "1.1"
+---
+
 # Technical Design — Airbyte Toolkit
 
 
@@ -23,10 +30,15 @@
   - [3.10 Adoption (one-shot)](#310-adoption-one-shot)
   - [3.11 Naming Convention](#311-naming-convention)
   - [3.12 Secret Validation](#312-secret-validation)
+  - [3.13 Argo Integration](#313-argo-integration)
+  - [3.14 Cron Self-Run + Leak Guarantees](#314-cron-self-run--leak-guarantees)
+  - [3.15 File Log Destination](#315-file-log-destination)
 - [4. Additional context](#4-additional-context)
   - [Migration from old scripts](#migration-from-old-scripts)
   - [State library API](#state-library-api)
 - [5. Traceability](#5-traceability)
+  - [PRD §5.6 (Reconcile Engine Phase 2) → DESIGN](#prd-56-reconcile-engine-phase-2--design)
+  - [Changelog](#changelog)
 
 <!-- /toc -->
 
@@ -59,6 +71,7 @@ All operations are idempotent. Creating a resource that already exists in state 
 | `cpt-insightspec-fr-state-preserved-on-breaking-change` | breaking schema change → `state_export → delete → create → state_import` via `/api/v1/state/{get,create_or_update}`; non-breaking → `connections/update` |
 | `cpt-insightspec-fr-secret-validation` | `secret-validator` (read-only) checks K8s Secret schema vs `secrets/connectors/*.yaml.example` and OnePasswordItem CR ↔ child Secret label/annotation drift |
 | `cpt-insightspec-fr-cli-surface` | single `reconcile-connectors.sh [adopt\|reconcile] [--dry-run] [--connector <name>] [--no-gc]` entrypoint; legacy scripts removed |
+| `cpt-insightspec-fr-jwt-auth` | env-resolver mints/refreshes a JWT for the Airbyte API; both host and in-cluster runtimes share the same auth path (no per-script auth code) |
 
 #### ADR References
 
@@ -68,6 +81,10 @@ All operations are idempotent. Creating a resource that already exists in state 
 | `cpt-insightspec-adr-adoption-of-existing-resources` | tag-based adoption preserves sync state on legacy clusters | §3.2 adopt-pass, §3.10 Adoption |
 | `cpt-insightspec-adr-credential-rotation-no-env` | sources/update on cfg-hash mismatch (not env-vars / SecretPersistence) | §3.2 reconcile-engine, §3.12 Secret Validation |
 | `cpt-insightspec-adr-cluster-config-via-configmap` | tenant_id from ConfigMap `insight-config` (or env override) | §3.2 secret-discovery, §3.11 Naming Convention |
+| `cpt-insightspec-adr-connection-name-as-argo-identifier` | per-connector CronWorkflow stores `connection_name`; resolver init-step maps to `connection_id` at submit time | §3.2 argo-name-resolver, §3.13 Argo Integration |
+| `cpt-insightspec-adr-cron-self-run-with-file-persistent-logs` | cluster-level Argo CronWorkflow drives reconcile; PVC-backed daily-rotated log file | §3.2 reconcile-cronworkflow, §3.14 Cron Self-Run, §3.15 File Log Destination |
+| `cpt-insightspec-adr-required-fields-in-descriptor-not-example` | required Secret fields declared in `descriptor.yaml.secret.required_fields`, not in example annotations | §3.12 Secret Validation |
+| `cpt-insightspec-adr-auto-trigger-sync-on-data-change` | one-shot `airbyte-sync` Workflow fires only on data-affecting reconcile actions | §3.2 argo-sync-trigger, §3.13 Argo Integration |
 
 #### NFR Allocation
 
@@ -366,6 +383,135 @@ Detects drift between the cluster's K8s Secrets and what `secrets/connectors/*.y
 
 - `cpt-insightspec-component-secret-discovery` — same Secret enumeration; validator runs first in `run-init.sh`
 
+#### Argo CronWorkflow Renderer
+
+- [ ] `p1` - **ID**: `cpt-insightspec-component-argo-cronworkflow-renderer`
+
+##### Why this component exists
+
+Per-connector Argo `CronWorkflow` objects must be created/updated/deleted in lockstep with the desired set of K8s Secrets, and their spec must encode `connection_name` (not `connection_id`) so they survive connection recreate-with-state. Without an explicit renderer, every reconcile would inline templated YAML in shell, which Decision #9 forbids.
+
+##### Responsibility scope
+
+- Renders `templates/cron-workflow.yaml.tpl` with `{connector, connection_name, schedule, tenant_id}`.
+- Idempotently applies the result via `kubectl apply -f -`.
+- Per-connector name pattern `${connector}-${tenant}-sync`.
+- Schedule precedence (resolved before render): Secret annotation `insight.cyberfabric.com/schedule` > `descriptor.yaml.schedule` > default `0 0 * * *`.
+
+##### Responsibility boundaries
+
+- Does NOT delete CronWorkflows on Secret-missing — that is `cpt-insightspec-component-reconcile-engine`'s cascade.
+- Does NOT submit one-shot sync Workflows — that is `cpt-insightspec-component-argo-sync-trigger`.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-reconcile-engine` — caller; passes desired set
+- `cpt-insightspec-component-argo-name-resolver` — consumed at submit time by the WorkflowTemplate the rendered CronWorkflow references
+
+#### Argo Sync Trigger
+
+- [ ] `p1` - **ID**: `cpt-insightspec-component-argo-sync-trigger`
+
+##### Why this component exists
+
+A reconcile iteration that detects a data-affecting change must not wait for the next CronWorkflow tick to re-sync. Submitting a one-shot `airbyte-sync` Workflow decouples data freshness from cron latency.
+
+##### Responsibility scope
+
+- Renders `templates/sync-trigger.yaml.tpl` with `{connector, connection_name, tenant_id}`.
+- Submits the Workflow via `kubectl create -f -` (uses `generateName`).
+- Triggered ONLY on data-affecting changes: descriptor.version bump, Secret cfg-hash mismatch, new connector/connection, recreate-with-state on breaking syncCatalog drift.
+- NOT triggered on tag-only patches or `definition.description`-only patches.
+
+##### Responsibility boundaries
+
+- Does NOT manage CronWorkflow lifecycle (renderer's job).
+- Does NOT touch Airbyte API directly — submission is via the Workflow which calls `cpt-insightspec-component-argo-name-resolver` first.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-reconcile-engine` — decides when to fire
+- `cpt-insightspec-component-argo-name-resolver` — resolves name → id at Workflow submit time
+
+#### Argo Name Resolver
+
+- [ ] `p1` - **ID**: `cpt-insightspec-component-argo-name-resolver`
+
+##### Why this component exists
+
+Recreate-with-state assigns a new connection UUID. CronWorkflow specs that hard-code UUIDs become stale after recreate. Storing `connection_name` in the spec and resolving it to `connection_id` at submit time keeps the spec valid across recreates.
+
+##### Responsibility scope
+
+- Init-step in the `airbyte-sync` WorkflowTemplate.
+- Calls `ab_list_connections` and matches `connection_name` (pattern `{connector}-{source_id}-to-clickhouse-{tenant}`) to a record.
+- Outputs `connection_id` for the next workflow step.
+- Lookup miss fails the Workflow with `ERROR: connection name not found`.
+
+##### Responsibility boundaries
+
+- Does NOT cache results across runs (the cluster has no shared state for this).
+- Does NOT mutate any Airbyte resource.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-connection-mgr` — sibling consumer of `lib/airbyte.sh` (`ab_list_connections`)
+- `cpt-insightspec-component-argo-cronworkflow-renderer` — produces the spec that triggers this resolver
+
+#### Reconcile CronWorkflow
+
+- [ ] `p1` - **ID**: `cpt-insightspec-component-reconcile-cronworkflow`
+
+##### Why this component exists
+
+The reconcile loop runs autonomously inside the cluster on a `*/15` schedule, removing the Kestra/external-orchestrator dependency. Required RBAC and PVC come with the chart so adding a new cluster does not need extra ops steps.
+
+##### Responsibility scope
+
+- Cluster-level Argo `CronWorkflow` named `insight-reconcile-loop` running `bash src/ingestion/reconcile-connectors/main.sh`.
+- Schedule: Helm value `ingestion.reconcile.schedule` (default `*/15 * * * *`).
+- Toolbox image with `kubectl`, `python3`, `pyyaml`, `node`.
+- ServiceAccount + RBAC: read `secrets`/`onepassworditems`/`configmaps`; create/get/delete `workflows.argoproj.io`/`cronworkflows.argoproj.io`; in-cluster Airbyte API access.
+- Bootstrap on a fresh cluster: creates N connectors and submits N parallel sync Workflows in one tick; Airbyte queues; no app-level rate-limiting.
+
+##### Responsibility boundaries
+
+- Does NOT include any per-connector logic — the entrypoint is `main.sh`, which fans out per-connector calls.
+- Does NOT keep state on disk between runs; the cron pod exits per run.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-reconcile-engine` — the actual loop body invoked per tick
+- `cpt-insightspec-component-reconcile-file-logger` — durable logs across pod restarts
+
+#### Reconcile File Logger
+
+- [ ] `p2` - **ID**: `cpt-insightspec-component-reconcile-file-logger`
+
+##### Why this component exists
+
+`kubectl logs` for a CronWorkflow is bounded by pod lifetime. A durable change history across pod restarts requires a file destination. Quiet-run runs must emit ZERO file lines so the log file does not grow when nothing happened.
+
+##### Responsibility scope
+
+- In-cluster destination: `/var/log/insight/reconcile-${YYYY-MM-DD}.log` on PVC `insight-reconcile-logs` (default 5Gi via `ingestion.reconcile.logs.size`; storage class via `ingestion.reconcile.logs.storageClass`).
+- Local destination: `${XDG_STATE_HOME:-$HOME/.local/state}/insight/reconcile-${YYYY-MM-DD}.log` (append).
+- Format: text. One line per change/error: `${TIMESTAMP_UTC} [LEVEL] ${MSG}`.
+- Quiet-run policy: ZERO file lines on no-op runs.
+- Every run emits ONE stdout summary line for `kubectl logs` sanity.
+- Boundary: `lib/log.sh` exposes `log_init`, `log_line`, `log_run_summary`, `log_close`.
+
+##### Responsibility boundaries
+
+- Does NOT rotate by size — only daily filename rotation.
+- Does NOT ship logs anywhere external (no Loki, no S3).
+- Does NOT log values that may contain secrets.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-reconcile-engine` — caller
+- `cpt-insightspec-component-reconcile-cronworkflow` — mounts the PVC
+
 ### 3.3 API Contracts
 
 - [ ] `p2` - **ID**: `cpt-insightspec-interface-state-yaml`
@@ -597,21 +743,90 @@ sequenceDiagram
     R-->>R: log: "recreated connection X→Y, state preserved"
 ```
 
+#### Resolve connection by name (init-step)
+
+- [ ] `p1` - **ID**: `cpt-insightspec-seq-resolve-connection-by-name`
+
+**Actors**: `cpt-insightspec-actor-toolkit-cli`, `cpt-insightspec-actor-airbyte-api`
+
+```mermaid
+sequenceDiagram
+  participant CW as CronWorkflow
+  participant Init as airbyte-sync init-step (resolver)
+  participant AB as Airbyte API
+  participant Sync as airbyte-sync sync step
+  CW->>Init: connection_name = "{connector}-{src}-to-clickhouse-{tenant}"
+  Init->>AB: ab_list_connections
+  alt name found
+    AB-->>Init: connection_id (UUID)
+    Init-->>Sync: outputs.connection_id
+    Sync->>AB: trigger sync
+  else name not found
+    Init--xCW: fail("ERROR: connection name not found")
+  end
+```
+
+#### Render and apply per-connector CronWorkflow
+
+- [ ] `p1` - **ID**: `cpt-insightspec-seq-render-and-apply-cronworkflow`
+
+**Actors**: `cpt-insightspec-actor-toolkit-cli`, `cpt-insightspec-actor-k8s-api`
+
+```mermaid
+sequenceDiagram
+  participant Recon as reconcile.sh
+  participant Argo as lib/argo.sh
+  participant Py as render_cronworkflow.py
+  participant K8s as kubectl
+  Recon->>Argo: argo_apply_cronworkflow(connector, conn_name, schedule, tenant)
+  Argo->>Py: stdin → render templates/cron-workflow.yaml.tpl
+  Py-->>Argo: rendered YAML
+  Argo->>K8s: kubectl apply -f -
+  alt no diff
+    K8s-->>Argo: unchanged
+  else diff
+    K8s-->>Argo: configured
+    Argo-->>Recon: log_line INFO "applied CronWorkflow ${connector}-${tenant}-sync"
+  end
+```
+
+#### Submit one-shot sync trigger on data-affecting change
+
+- [ ] `p1` - **ID**: `cpt-insightspec-seq-sync-trigger-on-change`
+
+**Actors**: `cpt-insightspec-actor-toolkit-cli`, `cpt-insightspec-actor-k8s-api`, `cpt-insightspec-actor-airbyte-api`
+
+```mermaid
+sequenceDiagram
+  participant Recon as reconcile.sh
+  participant Argo as lib/argo.sh
+  participant Py as render_sync_trigger.py
+  participant K8s as kubectl
+  participant AB as Airbyte API (queued by Workflow init-step)
+  Recon-->>Recon: detect data-affecting change (version|cfg_hash|new|recreate)
+  Recon->>Argo: argo_submit_sync_trigger(connector, conn_name, tenant)
+  Argo->>Py: render templates/sync-trigger.yaml.tpl
+  Py-->>Argo: rendered Workflow YAML (generateName)
+  Argo->>K8s: kubectl create -f -
+  K8s-->>AB: airbyte-sync Workflow runs immediately
+```
+
 ### 3.7 Database schemas & tables
 
 Not applicable. The toolkit manages Airbyte resources, not database schemas. Bronze databases are created as empty databases; table creation is handled by Airbyte sync.
 
 ### 3.8 Deployment Topology
 
-The toolkit is not deployed as a service. It is a set of scripts invoked from:
-- **Host**: during `init.sh`, manual operations, CI/CD.
-- **In-cluster**: K8s Job running the toolbox image (future, currently host-only after refactor).
+The Airbyte API is the authoritative state store; the legacy `state.yaml` file and the `airbyte-state` ConfigMap have been retired. Connection-name is the operator-facing handle (per ADR-0005); CronWorkflows reference it; the `resolve-connection-by-name` init-step in `airbyte-sync` resolves the UUID at submit time.
 
-State persistence:
-- **Host**: `airbyte-toolkit/state.yaml` (local file).
-- **In-cluster**: K8s ConfigMap `airbyte-state` in namespace `data` (synced on write).
+The toolkit runs in two execution modes — both read state from Airbyte directly:
+- **Host**: `init.sh`, manual operations, CI/CD invoke `reconcile-connectors.sh` against the cluster's Airbyte API.
+- **In-cluster**: cluster-level Argo CronWorkflow (per ADR-0006) and one-shot `airbyte-sync` Workflows invoke the toolbox image; auth is the same JWT path as host runs (per `cpt-insightspec-fr-jwt-auth`).
 
-> **Note (post-refactor)**: with the reconcile engine in place, both `state.yaml` and the `airbyte-state` ConfigMap are removed. Airbyte itself becomes the authoritative store via `definition.declarativeManifest.description` (version anchor) and `connection.tags` (membership + config hash). See §3.9 Reconciliation Model.
+Authoritative anchors in Airbyte:
+- `definition.declarativeManifest.description` — descriptor version anchor (per ADR-0001).
+- `connection.tags` — membership (`insight`) + config hash (`cfg-hash:<sha>`).
+- `connection.name` — the canonical operator-facing handle resolved by Argo at submit time.
 
 ### 3.9 Reconciliation Model
 
@@ -682,6 +897,50 @@ Drives PRD requirement `cpt-insightspec-fr-secret-validation`. The related ADR i
 
 `run-init.sh` runs the validator first (before reconcile/adopt) so credential issues fail fast rather than silently disabling discovery.
 
+### 3.13 Argo Integration
+
+The reconcile loop manages Argo objects per connector. Three components in §3.2 cooperate:
+
+- `cpt-insightspec-component-argo-cronworkflow-renderer` — renders `templates/cron-workflow.yaml.tpl` per connector and applies via `kubectl apply -f -`. Per-connector name pattern `${connector}-${tenant}-sync`. Schedule precedence resolved by reconcile (Secret annotation > descriptor > default `0 0 * * *`). References ADR-0005, ADR-0006.
+- `cpt-insightspec-component-argo-sync-trigger` — renders `templates/sync-trigger.yaml.tpl` and creates a one-shot `airbyte-sync` Workflow when reconcile detects a data-affecting change. References ADR-0008.
+- `cpt-insightspec-component-argo-name-resolver` — init-step inside the `airbyte-sync` WorkflowTemplate that resolves `connection_name` → `connection_id` via `ab_list_connections` at submit time; miss fails the Workflow with `ERROR: connection name not found`. References ADR-0005.
+
+The CronWorkflow lifecycle is driven by `cpt-insightspec-component-reconcile-engine`: render+apply on new/changed Secrets; cascade-delete the CronWorkflow named `${connector}-${tenant}-sync` when the Secret disappears (alongside connection, source, and definition with `ref_count=0`). Bronze ClickHouse data is preserved across cascade-delete.
+
+Sequences: `cpt-insightspec-seq-resolve-connection-by-name`, `cpt-insightspec-seq-render-and-apply-cronworkflow`, `cpt-insightspec-seq-sync-trigger-on-change` (all in §3.6).
+
+Covers: `cpt-insightspec-fr-name-based-connection-resolve`, `cpt-insightspec-fr-auto-trigger-sync-on-data-change`, `cpt-insightspec-fr-cascade-delete-cronworkflow`.
+
+### 3.14 Cron Self-Run + Leak Guarantees
+
+The toolkit self-runs via `cpt-insightspec-component-reconcile-cronworkflow` (defined in §3.2): a cluster-level Argo `CronWorkflow` named `insight-reconcile-loop` deployed by the umbrella chart at `charts/insight/templates/ingestion/reconcile-cron.yaml`. Schedule template: `{{ .Values.ingestion.reconcile.schedule | default "*/15 * * * *" }}`. References ADR-0006.
+
+**Leak invariants** (verified by the Phase 18 idempotency harness running the loop 1000+ times on a quiet cluster):
+
+- No `/tmp/airbyte-token*` or `/tmp/pf-*.log` residue across runs.
+- No orphan `kubectl port-forward` background processes.
+- No duplicate Airbyte sources/connections/definitions created on no-op runs.
+- No duplicate Argo CronWorkflows.
+- No log file growth on quiet runs (zero log lines emitted).
+- No state on disk between runs (the cron pod exits per run; the next tick starts fresh).
+
+**Bootstrap behaviour**: on a fresh cluster, the reconcile loop creates N connectors and submits N parallel sync Workflows in one tick; Airbyte itself queues these; the toolkit performs no application-level rate-limiting.
+
+Covers: `cpt-insightspec-fr-cron-self-run`, `cpt-insightspec-fr-leak-free-loop`.
+
+### 3.15 File Log Destination
+
+Durable change/error history is provided by `cpt-insightspec-component-reconcile-file-logger` (defined in §3.2). References ADR-0006.
+
+Destinations and policy (recapped here for §3.13/3.14 readers; full responsibility scope in §3.2):
+
+- In-cluster: `/var/log/insight/reconcile-${YYYY-MM-DD}.log` on PVC `insight-reconcile-logs` — default 5Gi via Helm value `ingestion.reconcile.logs.size`; storage class via `ingestion.reconcile.logs.storageClass`.
+- Local: `${XDG_STATE_HOME:-$HOME/.local/state}/insight/reconcile-${YYYY-MM-DD}.log` (append).
+- Daily filename rotation only (no size-based rotation).
+- Logs ONLY on changes/errors. Quiet runs emit ZERO log lines and exactly ONE stdout summary line for `kubectl logs` sanity.
+
+Covers: `cpt-insightspec-fr-file-persistent-logs`.
+
 ## 4. Additional context
 
 ### Migration from old scripts
@@ -733,3 +992,18 @@ All write operations persist to file and (if in-cluster) to ConfigMap atomically
 
 - **PRD**: [PRD.md](./PRD.md)
 - **ADRs**: [ADR/](./ADR/)
+
+### PRD §5.6 (Reconcile Engine Phase 2) → DESIGN
+
+| PRD FR | DESIGN element(s) |
+|---|---|
+| `cpt-insightspec-fr-cron-self-run` | `cpt-insightspec-component-reconcile-cronworkflow` (§3.14) |
+| `cpt-insightspec-fr-name-based-connection-resolve` | `cpt-insightspec-component-argo-name-resolver` (§3.13), `cpt-insightspec-seq-resolve-connection-by-name` (§3.6) |
+| `cpt-insightspec-fr-auto-trigger-sync-on-data-change` | `cpt-insightspec-component-argo-sync-trigger` (§3.13), `cpt-insightspec-seq-sync-trigger-on-change` (§3.6) |
+| `cpt-insightspec-fr-file-persistent-logs` | `cpt-insightspec-component-reconcile-file-logger` (§3.15) |
+| `cpt-insightspec-fr-cascade-delete-cronworkflow` | `cpt-insightspec-component-argo-cronworkflow-renderer` (§3.13), `cpt-insightspec-seq-render-and-apply-cronworkflow` (§3.6) |
+| `cpt-insightspec-fr-leak-free-loop` | `cpt-insightspec-component-reconcile-cronworkflow` (§3.14, leak invariants) |
+
+### Changelog
+
+- 2026-05-05 — v1.1 — Added §3.13 (Argo Integration), §3.14 (Cron Self-Run + Leak Guarantees), §3.15 (File Log Destination), three new sequences in §3.6 (`seq-resolve-connection-by-name`, `seq-render-and-apply-cronworkflow`, `seq-sync-trigger-on-change`), and §5 traceability rows for the six Phase 1 FRs.

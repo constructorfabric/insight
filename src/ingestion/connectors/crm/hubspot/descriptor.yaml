@@ -7,3 +7,6 @@ dbt_select: "tag:hubspot+"
 
 connection:
   namespace: "bronze_hubspot"
+secret:
+  required_fields:
+    - hubspot_access_token

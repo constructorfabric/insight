@@ -132,6 +132,20 @@ ingestion:
     enabled: true
   toolboxImage: ""           # e.g. "ghcr.io/cyberfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   jiraEnrichImage: ""        # e.g. "ghcr.io/cyberfabric/insight-jira-enrich:2026.04.21.09.37-ccb013f"
+  # Reconcile loop: descriptor-driven Airbyte connector reconciliation,
+  # cron-scheduled inside the cluster (see templates/ingestion/reconcile-cron.yaml).
+  reconcile:
+    schedule: "*/15 * * * *"
+    logs:
+      size: 5Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  INFRASTRUCTURE

@@ -1,3 +1,11 @@
+---
+cpt:
+  artifact: FEATURE
+  system: insightspec
+  feature: reconcile
+  version: "1.1"
+---
+
 # Feature: Reconcile
 
 
@@ -8,10 +16,13 @@
   - [1.2 Purpose](#12-purpose)
   - [1.3 Actors](#13-actors)
   - [1.4 References](#14-references)
+  - [1.5 Out of Scope](#15-out-of-scope)
 - [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
   - [Run Reconcile](#run-reconcile)
   - [Run Adopt](#run-adopt)
   - [Dry Run](#dry-run)
+  - [Run Cron Loop](#run-cron-loop)
+  - [Cascade Delete on Secret Missing](#cascade-delete-on-secret-missing)
 - [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
   - [Discover Secrets](#discover-secrets)
   - [Compute Config Hash](#compute-config-hash)
@@ -21,6 +32,12 @@
   - [Garbage Collect Orphans](#garbage-collect-orphans)
   - [Export-Import State on Recreate](#export-import-state-on-recreate)
   - [Validate Secrets](#validate-secrets)
+  - [Resolve Connection by Name](#resolve-connection-by-name)
+  - [Render Cron Workflow](#render-cron-workflow)
+  - [Render Sync Trigger](#render-sync-trigger)
+  - [Write Log Line on Change](#write-log-line-on-change)
+  - [Cascade Delete CronWorkflow](#cascade-delete-cronworkflow)
+  - [Validate Secret Required Fields from Descriptor](#validate-secret-required-fields-from-descriptor)
 - [4. States (CDSL)](#4-states-cdsl)
   - [Connector Lifecycle State Machine](#connector-lifecycle-state-machine)
 - [5. Definitions of Done](#5-definitions-of-done)
@@ -29,6 +46,11 @@
   - [Adoption Idempotent](#adoption-idempotent)
   - [GC Protected by --no-gc Flag](#gc-protected-by---no-gc-flag)
   - [State Preserved on Breaking Change](#state-preserved-on-breaking-change)
+  - [Cron Loop Runs 1000x Without Side-Effects](#cron-loop-runs-1000x-without-side-effects)
+  - [CronWorkflow Survives Recreate](#cronworkflow-survives-recreate)
+  - [Sync Triggers Only on Data Change](#sync-triggers-only-on-data-change)
+  - [Cascade Delete Removes CronWorkflow](#cascade-delete-removes-cronworkflow)
+  - [Required Fields Validated from Descriptor](#required-fields-validated-from-descriptor)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
@@ -44,7 +66,7 @@ The reconcile feature drives Airbyte resources (definitions, sources, connection
 
 This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that supersedes the legacy fan of scripts (`connect.sh`, `register.sh`, `cleanup.sh`, `sync-state.sh`, `reset-connector.sh`, `update-connectors.sh`, `update-connections.sh`). One entrypoint, deterministic outcomes, no silent state drift.
 
-**Requirements**: `cpt-insightspec-fr-version-driven-reconcile`, `cpt-insightspec-fr-adopt-legacy-resources`, `cpt-insightspec-fr-orphan-gc`, `cpt-insightspec-fr-state-preserved-on-breaking-change`, `cpt-insightspec-fr-secret-validation`, `cpt-insightspec-fr-cli-surface`
+**Requirements**: `cpt-insightspec-fr-version-driven-reconcile`, `cpt-insightspec-fr-adopt-legacy-resources`, `cpt-insightspec-fr-orphan-gc`, `cpt-insightspec-fr-state-preserved-on-breaking-change`, `cpt-insightspec-fr-secret-validation`, `cpt-insightspec-fr-cli-surface`, `cpt-insightspec-fr-cron-self-run`, `cpt-insightspec-fr-name-based-connection-resolve`, `cpt-insightspec-fr-auto-trigger-sync-on-data-change`, `cpt-insightspec-fr-file-persistent-logs`, `cpt-insightspec-fr-cascade-delete-cronworkflow`, `cpt-insightspec-fr-leak-free-loop`
 
 **Principles**: `cpt-insightspec-adr-version-driven-reconcile`, `cpt-insightspec-adr-adoption-of-existing-resources`, `cpt-insightspec-adr-credential-rotation-no-env`, `cpt-insightspec-adr-cluster-config-via-configmap`
 
@@ -65,13 +87,29 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 - **ADR-0002**: [Adoption of Existing Resources](../ADR/0002-adoption-of-existing-resources.md)
 - **ADR-0003**: [Credential Rotation No Env](../ADR/0003-credential-rotation-no-env.md)
 - **ADR-0004**: [Cluster Config via ConfigMap](../ADR/0004-cluster-config-via-configmap.md)
+- **ADR-0005**: [Connection Name as Argo Identifier](../ADR/0005-connection-name-as-argo-identifier.md) (registered in Phase 8)
+- **ADR-0006**: [Cron Self-Run with File-Persistent Logs](../ADR/0006-cron-self-run-with-file-persistent-logs.md) (registered in Phase 8)
+- **ADR-0007**: [Required Fields in Descriptor, not Example](../ADR/0007-required-fields-in-descriptor-not-example.md) (registered in Phase 8)
+- **ADR-0008**: [Auto-Trigger Sync on Data Change](../ADR/0008-auto-trigger-sync-on-data-change.md) (registered in Phase 8)
+- **Sequences**: `cpt-insightspec-seq-resolve-connection-by-name`, `cpt-insightspec-seq-render-and-apply-cronworkflow`, `cpt-insightspec-seq-sync-trigger-on-change` (DESIGN §3.6)
 - **Dependencies**: None (this feature is the new entrypoint; replaces legacy)
+
+### 1.5 Out of Scope
+
+The reconcile feature explicitly does NOT cover:
+
+- **Destination management** — the shared ClickHouse destination is provisioned out-of-band; reconcile never creates, updates, or deletes destinations.
+- **dbt orchestration** — silver/gold transformations are owned by the dbt component; reconcile only manages Airbyte connectors that feed Bronze.
+- **Secret rotation policy** — reconcile detects credential drift via `cfg-hash` and applies fresh values via `sources/update`, but the schedule, source, and approval flow for rotating secrets are owned upstream (1Password / operator).
+- **Multi-cluster federation** — reconcile operates on exactly one Airbyte instance per cluster; cross-cluster coordination, replication, or failover is out of scope.
+- **Airbyte upgrade / Helm chart lifecycle** — reconcile assumes Airbyte and Argo are already running; installing or upgrading them is owned by platform engineering.
+- **Schema evolution beyond catalog refresh** — reconcile preserves cursors via `state_export → recreate → state_import` on breaking changes, but downstream Bronze→Silver schema migrations are owned by dbt.
 
 ## 2. Actor Flows (CDSL)
 
 ### Run Reconcile
 
-- [ ] `p1` - **ID**: `cpt-insightspec-flow-reconcile-run-reconcile`
+- [ ] `p1` - **ID**: `cpt-insightspec-flow-reconcile-run-reconcile-v2`
 
 **Actor**: `cpt-insightspec-actor-platform-engineer`
 
@@ -88,7 +126,7 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 **Steps**:
 1. [ ] - `p1` - Resolve tenant_id from `INSIGHT_TENANT_ID` env or `ConfigMap insight-config` - `inst-rr-resolve-tenant`
 2. [ ] - `p1` - Resolve Airbyte API endpoint and JWT token via env-resolver lib - `inst-rr-resolve-airbyte-env`
-3. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-discover-secrets` to build desired state - `inst-rr-discover`
+3. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-discover-secrets-v2` to build desired state - `inst-rr-discover`
 4. [ ] - `p1` - API: GET source_definitions/list, sources/list, connections/list (filter `tagIds=insight`) - `inst-rr-list-actual`
 5. [ ] - `p1` - **FOR EACH** connector_name in desired_state.connectors - `inst-rr-loop`
    1. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-diff-definition-version` - `inst-rr-diff-def`
@@ -108,7 +146,7 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 
 ### Run Adopt
 
-- [ ] `p1` - **ID**: `cpt-insightspec-flow-reconcile-run-adopt`
+- [ ] `p1` - **ID**: `cpt-insightspec-flow-reconcile-run-adopt-v2`
 
 **Actor**: `cpt-insightspec-actor-platform-engineer`
 
@@ -123,7 +161,7 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 **Steps**:
 1. [ ] - `p1` - Resolve tenant_id (same as run-reconcile) - `inst-ad-resolve-tenant`
 2. [ ] - `p1` - Resolve Airbyte env (same as run-reconcile) - `inst-ad-resolve-env`
-3. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-discover-secrets` - `inst-ad-discover`
+3. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-discover-secrets-v2` - `inst-ad-discover`
 4. [ ] - `p1` - API: GET source_definitions/list, sources/list, connections/list - `inst-ad-list-actual`
 5. [ ] - `p1` - **FOR EACH** secret in desired_state.secrets - `inst-ad-loop`
    1. [ ] - `p1` - Match secret → existing source by name pattern `{connector}-{source-id}-{tenant_id}` - `inst-ad-match`
@@ -157,11 +195,43 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 4. [ ] - `p2` - Read-only API calls (list/get) execute normally - `inst-dr-readonly`
 5. [ ] - `p2` - **RETURN** diff report with planned actions per connector - `inst-dr-return`
 
+### Run Cron Loop
+
+- [ ] `p1` - **ID**: `cpt-insightspec-flow-reconcile-run-cron-loop`
+
+**Actors**: `cpt-insightspec-actor-toolkit-cli` (cluster cron pod)
+
+1. [ ] - `p1` - log_init resolves target file via env (in-cluster vs local) - `inst-rcl-log-init`
+2. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-discover-secrets-v2` to build desired state - `inst-rcl-discover`
+3. [ ] - `p1` - **FROM** desired state **WHEN** secret valid **TO** apply path - `inst-rcl-valid-branch`
+   1. [ ] - `p1` - reconcile.run-reconcile-v2 main loop body - `inst-rcl-reconcile-body`
+4. [ ] - `p1` - **FROM** desired state **WHEN** secret missing **TO** cascade-delete path - `inst-rcl-missing-branch`
+   1. [ ] - `p1` - **CALL** `cpt-insightspec-flow-reconcile-cascade-delete-on-secret-missing` - `inst-rcl-cascade`
+5. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-write-log-line-on-change` for every change/error captured - `inst-rcl-log-changes`
+6. [ ] - `p1` - log_run_summary writes ONE stdout line and (only on changes/errors) flushes log file - `inst-rcl-log-summary`
+7. [ ] - `p1` - log_close - `inst-rcl-log-close`
+8. [ ] - `p1` - **RETURN** exit 0 IF no errors, exit 2 IF any error - `inst-rcl-return`
+
+### Cascade Delete on Secret Missing
+
+- [ ] `p1` - **ID**: `cpt-insightspec-flow-reconcile-cascade-delete-on-secret-missing`
+
+**Actors**: `cpt-insightspec-actor-toolkit-cli`
+
+1. [ ] - `p1` - **CALL** `ab_list_connections` filtered by connector+tenant - `inst-cd-list-conn`
+2. [ ] - `p1` - **CALL** `ab_delete_connection` for each match - `inst-cd-delete-conn`
+3. [ ] - `p1` - **CALL** `ab_list_sources` filtered by connector+tenant - `inst-cd-list-src`
+4. [ ] - `p1` - **CALL** `ab_delete_source` for each match - `inst-cd-delete-src`
+5. [ ] - `p1` - **IF** definition.ref_count == 0 **CALL** `ab_delete_definition` - `inst-cd-delete-def`
+6. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow` - `inst-cd-cronworkflow`
+7. [ ] - `p1` - log_line WARN "cascade-delete ${connector}: secret missing" - `inst-cd-log`
+8. [ ] - `p1` - **RETURN** ok - `inst-cd-return`
+
 ## 3. Processes / Business Logic (CDSL)
 
 ### Discover Secrets
 
-- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-discover-secrets`
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-discover-secrets-v2`
 
 **Input**: kubeconfig context (current cluster), `connectors/` directory path
 **Output**: `desired_state` map keyed by `(connector_name, source_id)` with fields `{secret_data, descriptor_version, cfg_hash, tenant_id}`
@@ -278,7 +348,11 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 
 ### Validate Secrets
 
-- [ ] `p2` - **ID**: `cpt-insightspec-algo-reconcile-validate-secrets`
+- [ ] `p2` - **ID**: `cpt-insightspec-algo-reconcile-validate-secrets-v2`
+
+**status**: deprecated
+
+**Status**: SUPERSEDED by `cpt-insightspec-algo-reconcile-validate-secret-required-fields-from-descriptor` (per ADR-0007). The descriptor-driven path replaces the example-driven required-fields parser. This block is retained for traceability of the legacy validator behaviour referenced from the existing `run-init.sh` invocation; new code MUST use the descriptor-driven algorithm.
 
 **Input**: `secrets/connectors/*.yaml.example` paths, K8s Secrets in `data` ns, OnePasswordItem CRs in `data` ns
 **Output**: `{errors: [...], warnings: [...]}`
@@ -300,6 +374,78 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
    8. [ ] - `p2` - **IF** CR.labels/annotations differ from Secret.labels/annotations - `inst-vs-if-drift`
       1. [ ] - `p2` - WARN: append "OnePasswordItem CR ↔ Secret drift on <field>" - `inst-vs-warn-drift`
 2. [ ] - `p2` - **RETURN** {errors, warnings} (exit 1 if errors non-empty) - `inst-vs-return`
+
+### Resolve Connection by Name
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-resolve-connection-by-name`
+
+**Inputs**: `connection_name` (string)
+**Outputs**: `connection_id` (UUID) on success; FAIL with `ERROR: connection name not found` on miss
+
+1. [ ] - `p1` - **CALL** `ab_list_connections` - `inst-rc-list`
+2. [ ] - `p1` - filter result by exact `name == connection_name` - `inst-rc-filter`
+3. [ ] - `p1` - **IF** zero matches **RETURN** FAIL("ERROR: connection name not found") - `inst-rc-zero`
+4. [ ] - `p1` - **IF** more than one match **RETURN** FAIL("ERROR: ambiguous connection name") - `inst-rc-many`
+5. [ ] - `p1` - **RETURN** match.connection_id - `inst-rc-return`
+
+### Render Cron Workflow
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-render-cron-workflow`
+
+**Inputs**: `connector`, `connection_name`, `tenant`; resolves schedule by precedence
+**Outputs**: rendered YAML on stdout
+
+1. [ ] - `p1` - resolve schedule: Secret annotation `insight.cyberfabric.com/schedule` > `descriptor.yaml.schedule` > default `0 0 * * *` - `inst-rcw-schedule`
+2. [ ] - `p1` - **CALL** `python3 python/render_cronworkflow.py --connector ${C} --connection-name ${N} --schedule ${S} --tenant ${T} --tpl templates/cron-workflow.yaml.tpl` - `inst-rcw-render`
+3. [ ] - `p1` - emit YAML on stdout - `inst-rcw-emit`
+
+### Render Sync Trigger
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-render-sync-trigger`
+
+**Inputs**: `connector`, `connection_name`, `tenant`
+**Outputs**: rendered Workflow YAML (with `generateName`) on stdout
+
+1. [ ] - `p1` - **CALL** `python3 python/render_sync_trigger.py --connector ${C} --connection-name ${N} --tenant ${T} --tpl templates/sync-trigger.yaml.tpl` - `inst-rst-render`
+2. [ ] - `p1` - emit YAML on stdout - `inst-rst-emit`
+
+### Write Log Line on Change
+
+- [ ] `p2` - **ID**: `cpt-insightspec-algo-reconcile-write-log-line-on-change`
+
+**Inputs**: `level`, `message`
+**Outputs**: side effect — appends line to daily-rotated log file IFF message non-empty; emits NOTHING on empty message
+
+1. [ ] - `p1` - **IF** message empty **RETURN** ok (no write) - `inst-wl-empty-noop`
+2. [ ] - `p1` - format `${UTC_TIMESTAMP} [LEVEL] ${MESSAGE}` - `inst-wl-format`
+3. [ ] - `p1` - append to file fd 9 (opened by `log_init` against `/var/log/insight/reconcile-${YYYY-MM-DD}.log` in-cluster, or `${XDG_STATE_HOME:-$HOME/.local/state}/insight/reconcile-${YYYY-MM-DD}.log` locally) - `inst-wl-append`
+4. [ ] - `p1` - **RETURN** ok - `inst-wl-return`
+
+### Cascade Delete CronWorkflow
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow`
+
+**Inputs**: `connector`, `tenant`
+
+1. [ ] - `p1` - construct name `${connector}-${tenant}-sync` - `inst-cdc-name`
+2. [ ] - `p1` - **CALL** `kubectl delete cronworkflow.argoproj.io/${name} --ignore-not-found` - `inst-cdc-delete`
+3. [ ] - `p1` - log_line WARN "deleted CronWorkflow ${name}" IFF kubectl reported non-NotFound deletion - `inst-cdc-log`
+4. [ ] - `p1` - **RETURN** ok - `inst-cdc-return`
+
+### Validate Secret Required Fields from Descriptor
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-validate-secret-required-fields-from-descriptor`
+
+**Inputs**: `connector` (slug); reads `connectors/${connector}/descriptor.yaml.secret.required_fields` and the K8s Secret's `stringData`/`data`
+**Outputs**: VALID | INVALID (with missing-field name)
+
+1. [ ] - `p1` - **CALL** `python3 python/parse_descriptor.py --descriptor connectors/${connector}/descriptor.yaml --field secret.required_fields` → required_list - `inst-vsd-required`
+2. [ ] - `p1` - read K8s Secret stringData (or decoded data if stringData absent) → present_keys - `inst-vsd-present`
+3. [ ] - `p1` - **FROM** present_keys **WHEN** required_list ⊆ present_keys **TO** VALID - `inst-vsd-valid`
+4. [ ] - `p1` - **FROM** present_keys **WHEN** any required field missing **TO** INVALID(missing_field) - `inst-vsd-invalid`
+5. [ ] - `p1` - **RETURN** VALID|INVALID(missing) - `inst-vsd-return`
+
+(Replaces older inline `cpt-insightspec-algo-reconcile-validate-secrets-v2` per ADR-0007.)
 
 ## 4. States (CDSL)
 
@@ -329,7 +475,7 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 The system **MUST** propagate a `descriptor.yaml.version` change to `definition.declarativeManifest.description` (nocode) or `dockerImageTag` (CDK) in Airbyte on the next reconcile invocation, without recreating dependent sources or connections.
 
 **Implements**:
-- `cpt-insightspec-flow-reconcile-run-reconcile`
+- `cpt-insightspec-flow-reconcile-run-reconcile-v2`
 - `cpt-insightspec-algo-reconcile-diff-definition-version`
 
 **Touches**:
@@ -343,7 +489,7 @@ The system **MUST** propagate a `descriptor.yaml.version` change to `definition.
 The system **MUST** detect a change in `secret.data` via `cfg-hash` tag mismatch and apply `sources/update` + connection-tag PATCH on the next reconcile invocation, without recreating the source or connection.
 
 **Implements**:
-- `cpt-insightspec-flow-reconcile-run-reconcile`
+- `cpt-insightspec-flow-reconcile-run-reconcile-v2`
 - `cpt-insightspec-algo-reconcile-compute-cfg-hash`
 - `cpt-insightspec-algo-reconcile-diff-source-config`
 - `cpt-insightspec-algo-reconcile-diff-connection-tags`
@@ -359,7 +505,7 @@ The system **MUST** detect a change in `secret.data` via `cfg-hash` tag mismatch
 The system **MUST** allow `reconcile-connectors.sh adopt` to be re-run safely: a second invocation on a fully-adopted set issues zero state-changing API calls and exits 0 with `adopted_count: 0` and `noop_count: <total>`.
 
 **Implements**:
-- `cpt-insightspec-flow-reconcile-run-adopt`
+- `cpt-insightspec-flow-reconcile-run-adopt-v2`
 
 **Touches**:
 - API: `connector_builder_projects/get`, `connections/list`, `tags/list`
@@ -372,7 +518,7 @@ The system **MUST** allow `reconcile-connectors.sh adopt` to be re-run safely: a
 The system **MUST** skip the orphan-sweep step entirely when `--no-gc` is supplied, even if orphans are detected. The summary reports `gc: skipped (--no-gc set)`.
 
 **Implements**:
-- `cpt-insightspec-flow-reconcile-run-reconcile`
+- `cpt-insightspec-flow-reconcile-run-reconcile-v2`
 - `cpt-insightspec-algo-reconcile-gc-orphans`
 
 **Touches**:
@@ -386,12 +532,58 @@ The system **MUST** skip the orphan-sweep step entirely when `--no-gc` is suppli
 The system **MUST** preserve Airbyte sync state across a connection recreate triggered by a breaking syncCatalog change: per-stream cursors valid before the recreate are valid after, verified by a follow-up sync that does NOT reset to historical zero.
 
 **Implements**:
-- `cpt-insightspec-flow-reconcile-run-reconcile`
+- `cpt-insightspec-flow-reconcile-run-reconcile-v2`
 - `cpt-insightspec-algo-reconcile-export-import-state-on-recreate`
 
 **Touches**:
 - API: `POST /api/v1/state/get`, `POST /api/v1/state/create_or_update`, `POST /api/v1/connections/create`, `POST /api/v1/connections/delete`
 - Entities: `connection`, `connection_state`
+
+### Cron Loop Runs 1000x Without Side-Effects
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-cron-loop-runs-1000x-without-side-effects`
+
+**Verifies**: `cpt-insightspec-flow-reconcile-run-cron-loop`, `cpt-insightspec-algo-reconcile-write-log-line-on-change`
+
+**Test scenario**: Snapshot the workspace (`git status` clean). Run `bash src/ingestion/reconcile-connectors/main.sh --dry-run` 100 times. After:
+
+- `git status --porcelain` empty
+- `find /tmp -name 'airbyte-token*' -o -name 'pf-*.log'` empty
+- `pgrep -af 'kubectl port-forward' | grep -v grep` empty
+- `wc -l <log file>` unchanged from pre-run snapshot
+- 100 stdout summary lines emitted (one per run)
+
+### CronWorkflow Survives Recreate
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-cronworkflow-survives-recreate`
+
+**Verifies**: `cpt-insightspec-algo-reconcile-resolve-connection-by-name`, `cpt-insightspec-algo-reconcile-render-cron-workflow`
+
+**Test scenario**: Apply Secret → reconcile → CronWorkflow exists with stored `connection_name`. Recreate connection (new UUID). Wait for next CronWorkflow tick → Workflow init-step resolves new UUID via `ab_list_connections` and sync completes.
+
+### Sync Triggers Only on Data Change
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-sync-triggers-only-on-data-change`
+
+**Verifies**: `cpt-insightspec-algo-reconcile-render-sync-trigger`
+
+**Test scenario**: Apply tag-only patch to descriptor → reconcile → no `airbyte-sync` Workflow created (`kubectl get workflows -l insight.cyberfabric.com/trigger-reason=data-affecting-change` empty). Apply version bump → reconcile → exactly one Workflow created.
+
+### Cascade Delete Removes CronWorkflow
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-cascade-delete-removes-cronworkflow`
+
+**Verifies**: `cpt-insightspec-flow-reconcile-cascade-delete-on-secret-missing`, `cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow`
+
+**Test scenario**: Apply Secret + reconcile → CronWorkflow exists. Delete Secret + reconcile → CronWorkflow `NotFound`. ClickHouse Bronze tables retain pre-existing rows.
+
+### Required Fields Validated from Descriptor
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-required-fields-validated-from-descriptor`
+
+**Verifies**: `cpt-insightspec-algo-reconcile-validate-secret-required-fields-from-descriptor`
+
+**Test scenario**: descriptor declares `secret.required_fields: [a, b, c]`. Apply Secret missing `b` → reconcile → log line `WARN skip ${connector}: missing field b`; connection NOT touched. Add `b` → reconcile → connection updated, no warn.
 
 ## 6. Acceptance Criteria
 

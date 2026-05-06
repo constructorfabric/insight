@@ -21,8 +21,69 @@ metadata:
     {{- include "insight.labels" . | nindent 4 }}
     app.kubernetes.io/component: ingestion-template
 spec:
-  entrypoint: sync
+  arguments:
+    parameters:
+      - name: connection_name
+      - name: connector
+        value: ""
+      - name: tenant
+        value: ""
+      - name: airbyte_url
+        value: {{ include "insight.airbyte.url" . | quote }}
+  entrypoint: main
   templates:
+    - name: main
+      inputs:
+        parameters:
+          - name: connection_name
+          - name: airbyte_url
+      steps:
+        - - name: resolve-connection-by-name
+            template: resolve-connection-by-name
+            arguments:
+              parameters:
+                - name: connection_name
+                  value: {{ `"{{inputs.parameters.connection_name}}"` }}
+        - - name: sync
+            template: sync
+            arguments:
+              parameters:
+                - name: connection_id
+                  value: {{ `"{{steps.resolve-connection-by-name.outputs.parameters.connection_id}}"` }}
+                - name: airbyte_url
+                  value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+
+    - name: resolve-connection-by-name
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnError
+        backoff:
+          duration: "30s"
+          factor: 2
+          maxDuration: "5m"
+      inputs:
+        parameters:
+          - name: connection_name
+      outputs:
+        parameters:
+          - name: connection_id
+            valueFrom:
+              path: /tmp/connection_id.txt
+      script:
+        image: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+        command: [bash]
+        source: |
+          set -euo pipefail
+          source /src/ingestion/reconcile-connectors/lib/env.sh
+          source /src/ingestion/reconcile-connectors/lib/airbyte.sh
+          source /src/ingestion/reconcile-connectors/lib/argo.sh
+          name='{{ `{{inputs.parameters.connection_name}}` }}'
+          if ! id="$(argo_resolve_connection_id_by_name "$name")"; then
+            echo "ERROR: connection name not found: $name" >&2
+            exit 1
+          fi
+          printf '%s' "$id" > /tmp/connection_id.txt
+
     - name: sync
       inputs:
         parameters:
@@ -47,6 +108,13 @@ spec:
                   value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
 
     - name: trigger-sync
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnError
+        backoff:
+          duration: "30s"
+          factor: 2
+          maxDuration: "5m"
       inputs:
         parameters:
           - name: connection_id
@@ -87,6 +155,13 @@ spec:
           print(resp["job"]["id"])
 
     - name: poll-job
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnError
+        backoff:
+          duration: "30s"
+          factor: 2
+          maxDuration: "5m"
       inputs:
         parameters:
           - name: job_id

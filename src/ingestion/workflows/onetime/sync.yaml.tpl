@@ -1,8 +1,12 @@
 # One-shot Workflow that submits ingestion-pipeline for a single connector + tenant.
 #
 # Variables resolved by run-sync.sh and rendered via envsubst:
-#   NAMESPACE, CONNECTOR, TENANT, TENANT_DASHED, CONNECTION_ID, SOURCE_ID,
+#   NAMESPACE, CONNECTOR, TENANT, TENANT_DASHED, CONNECTION_NAME, SOURCE_ID,
 #   DATA_SOURCE, DBT_SELECT, DBT_SELECT_STAGING (may be empty for non-jira)
+#
+# CONNECTION_NAME pattern: {connector}-{source_id}-to-clickhouse-{tenant}.
+# The airbyte-sync WorkflowTemplate's resolve-connection-by-name init-step
+# resolves the UUID at submit time (per ADR-0005 / KEY DECISION #1).
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
@@ -29,8 +33,8 @@ spec:
               template: pipeline
             arguments:
               parameters:
-                - name: connection_id
-                  value: "${CONNECTION_ID}"
+                - name: connection_name
+                  value: "${CONNECTION_NAME}"
                 - name: insight_source_id
                   value: "${SOURCE_ID}"
                 - name: data_source

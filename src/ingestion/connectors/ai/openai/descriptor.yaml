@@ -5,3 +5,7 @@ dbt_select: tag:openai+
 workflow: sync
 connection:
   namespace: bronze_openai
+secret:
+  required_fields:
+    - openai_admin_api_key
+    - openai_start_date

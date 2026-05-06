@@ -5,3 +5,8 @@ dbt_select: tag:m365+
 workflow: sync
 connection:
   namespace: bronze_m365
+secret:
+  required_fields:
+    - azure_tenant_id
+    - azure_client_id
+    - azure_client_secret

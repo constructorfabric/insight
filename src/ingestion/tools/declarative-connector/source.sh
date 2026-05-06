@@ -216,7 +216,7 @@ case "${command}" in
 
     if [[ ! -f "${configured_catalog}" ]]; then
       echo "ERROR: Missing configured catalog: ${configured_catalog}" >&2
-      echo "  Generate with: ./airbyte-toolkit/generate-catalog.sh ${connector_name}" >&2
+      echo "  Generate with: ./tools/declarative-connector/generate-catalog.sh ${connector_name}" >&2
       exit 1
     fi
 

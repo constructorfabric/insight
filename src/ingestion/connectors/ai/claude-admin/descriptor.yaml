@@ -5,3 +5,6 @@ dbt_select: 'tag:claude-admin+'
 workflow: sync
 connection:
   namespace: bronze_claude_admin
+secret:
+  required_fields:
+    - admin_api_key

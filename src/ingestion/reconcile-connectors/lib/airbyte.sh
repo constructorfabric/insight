@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# @cpt:cpt-insightspec-feature-reconcile — airbyte API helpers
+# @cpt:cpt-insightspec-featstatus-reconcile — airbyte API helpers
 #
 # High-level helpers that wrap the Airbyte Public API (v1 under
 # /api/public/v1) plus the legacy private API (under /api/v1) for the few

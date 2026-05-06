@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# @cpt:cpt-insightspec-feature-reconcile — single declarative entrypoint
-# @cpt-flow:cpt-insightspec-flow-reconcile-run-reconcile:p1
-# @cpt-flow:cpt-insightspec-flow-reconcile-run-adopt:p1
+# @cpt:cpt-insightspec-featstatus-reconcile — single declarative entrypoint
+# @cpt-flow:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1
+# @cpt-flow:cpt-insightspec-flow-reconcile-run-adopt-v2:p1
 # @cpt-flow:cpt-insightspec-flow-reconcile-dry-run:p2
 #
 # Replaces the legacy fan of scripts (connect.sh, register.sh, cleanup.sh,
@@ -18,16 +18,26 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+SCRIPT_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
 
-# shellcheck source=airbyte-toolkit/lib/airbyte.sh
-source "${SCRIPT_DIR}/airbyte-toolkit/lib/airbyte.sh"
-# shellcheck source=airbyte-toolkit/lib/discover.sh
-source "${SCRIPT_DIR}/airbyte-toolkit/lib/discover.sh"
-# shellcheck source=airbyte-toolkit/lib/adopt.sh
-source "${SCRIPT_DIR}/airbyte-toolkit/lib/adopt.sh"
-# shellcheck source=airbyte-toolkit/lib/reconcile.sh
-source "${SCRIPT_DIR}/airbyte-toolkit/lib/reconcile.sh"
+# shellcheck source=lib/env.sh
+source "${SCRIPT_DIR}/lib/env.sh"
+# shellcheck source=lib/secrets.sh
+source "${SCRIPT_DIR}/lib/secrets.sh"
+# shellcheck source=lib/log.sh
+source "${SCRIPT_DIR}/lib/log.sh"
+# shellcheck source=lib/airbyte.sh
+source "${SCRIPT_DIR}/lib/airbyte.sh"
+# shellcheck source=lib/argo.sh
+source "${SCRIPT_DIR}/lib/argo.sh"
+# shellcheck source=lib/discover.sh
+source "${SCRIPT_DIR}/lib/discover.sh"
+# shellcheck source=lib/validate.sh
+source "${SCRIPT_DIR}/lib/validate.sh"
+# shellcheck source=lib/reconcile.sh
+source "${SCRIPT_DIR}/lib/reconcile.sh"
+# shellcheck source=lib/adopt.sh
+source "${SCRIPT_DIR}/lib/adopt.sh"
 
 # ---------------------------------------------------------------------------
 # usage — print CLI help and exit. Called for -h/--help and on bad args.
@@ -45,6 +55,7 @@ Options:
   --dry-run              Print diff report without applying changes
   --connector <name>     Limit reconcile to a single connector
   --no-gc                Skip orphan garbage collection (reconcile only)
+  --no-sync-trigger      Suppress one-shot sync-trigger after data-affecting changes
   -h, --help             Show this usage and exit 0
 
 Environment:
@@ -58,7 +69,7 @@ EOF
 
 # ---------------------------------------------------------------------------
 # resolve_tenant_id — resolve insight tenant id with env-wins policy.
-# @cpt-begin:cpt-insightspec-flow-reconcile-run-reconcile:p1:inst-rr-resolve-tenant
+# @cpt-begin:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-tenant
 # (also covers inst-ad-resolve-tenant for the adopt flow)
 # ---------------------------------------------------------------------------
 resolve_tenant_id() {
@@ -75,28 +86,30 @@ resolve_tenant_id() {
   fi
   printf '%s' "${val}"
 }
-# @cpt-end:cpt-insightspec-flow-reconcile-run-reconcile:p1:inst-rr-resolve-tenant
+# @cpt-end:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-tenant
 
 main() {
-  # @cpt-begin:cpt-insightspec-flow-reconcile-run-reconcile:p1:inst-rr-resolve-airbyte-env
+  # @cpt-begin:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-airbyte-env
   # AIRBYTE_URL / AIRBYTE_TOKEN_FILE are honored by lib/airbyte.sh; nothing
   # to do here besides asserting the URL is non-empty.
   : "${AIRBYTE_URL:?AIRBYTE_URL must be set (e.g. http://airbyte-server:8001)}"
-  # @cpt-end:cpt-insightspec-flow-reconcile-run-reconcile:p1:inst-rr-resolve-airbyte-env
+  # @cpt-end:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-airbyte-env
 
   local subcmd="reconcile"
   local dry_run=0
   local connector=""
   local no_gc=0
+  local no_sync_trigger=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      adopt|reconcile) subcmd="$1"; shift ;;
-      --dry-run)       dry_run=1; shift ;;
-      --connector)     connector="${2:?--connector requires NAME}"; shift 2 ;;
-      --no-gc)         no_gc=1; shift ;;
-      -h|--help)       usage; return 0 ;;
-      *)               printf 'unknown arg: %s\n' "$1" >&2; usage >&2; return 64 ;;
+      adopt|reconcile)   subcmd="$1"; shift ;;
+      --dry-run)         dry_run=1; shift ;;
+      --connector)       connector="${2:?--connector requires NAME}"; shift 2 ;;
+      --no-gc)           no_gc=1; shift ;;
+      --no-sync-trigger) no_sync_trigger=1; shift ;;
+      -h|--help)         usage; return 0 ;;
+      *)                 printf 'unknown arg: %s\n' "$1" >&2; usage >&2; return 64 ;;
     esac
   done
 
@@ -106,27 +119,16 @@ main() {
   fi
   export INSIGHT_TENANT_ID="${tenant_id}"
 
-  printf 'tenant=%s subcommand=%s dry-run=%d connector=%s no-gc=%d\n' \
-    "${tenant_id}" "${subcmd}" "${dry_run}" "${connector:-<all>}" "${no_gc}" >&2
+  printf 'tenant=%s subcommand=%s dry-run=%d connector=%s no-gc=%d no-sync-trigger=%d\n' \
+    "${tenant_id}" "${subcmd}" "${dry_run}" "${connector:-<all>}" "${no_gc}" "${no_sync_trigger}" >&2
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-dry-run:p2:inst-dr-call-flow
   case "${subcmd}" in
     adopt)
-      if [[ "${dry_run}" -eq 1 ]]; then
-        ADOPT_DRY_RUN=1 adopt_run --dry-run
-      else
-        adopt_run
-      fi
+      adopt_run "${dry_run}" "${connector}"
       ;;
     reconcile)
-      local args=()
-      [[ "${no_gc}" -eq 1 ]] && args+=(--no-gc)
-      [[ -n "${connector}" ]] && args+=(--connector "${connector}")
-      if [[ "${dry_run}" -eq 1 ]]; then
-        reconcile_dry_run "${args[@]}"
-      else
-        reconcile_run "${args[@]}"
-      fi
+      reconcile_run "${dry_run}" "${no_sync_trigger}" "${no_gc}" "${connector}"
       ;;
     *)
       printf 'unreachable: bad subcommand %s\n' "${subcmd}" >&2

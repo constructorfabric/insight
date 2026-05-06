@@ -24,17 +24,15 @@ fi
 source ./scripts/init.sh
 
 # --- Single declarative reconcile chain ---
-# 1. validate cluster Secrets vs *.yaml.example contracts (read-only)
-# 2. one-shot adopt: annotate any pre-existing Airbyte resources so the
+# Per ADR-0007 / KEY DECISION #13: Secret validation is now an INTERNAL pre-step
+# of reconcile-connectors/main.sh (valsec_check_secret), not a standalone script.
+# 1. one-shot adopt: annotate any pre-existing Airbyte resources so the
 #    new cfg-hash / version invariants hold before the diff pass
-# 3. reconcile: descriptor.yaml + Secret-driven, idempotent
-echo "=== Validating cluster Secrets ==="
-bash "${SCRIPT_DIR}/secrets/validate.sh"
-
+# 2. reconcile: descriptor.yaml + Secret-driven, idempotent
 echo "=== Adopting pre-existing Airbyte resources ==="
-bash "${SCRIPT_DIR}/reconcile-connectors.sh" adopt
+bash "${SCRIPT_DIR}/reconcile-connectors/main.sh" adopt
 
 echo "=== Reconciling Airbyte to descriptor state ==="
-bash "${SCRIPT_DIR}/reconcile-connectors.sh"
+bash "${SCRIPT_DIR}/reconcile-connectors/main.sh"
 
 echo "=== Init complete ==="

@@ -1,0 +1,50 @@
+{{- if .Values.ingestion.templates.enabled }}
+{{- /* Argo CronWorkflow that drives the connector reconcile loop on schedule. */}}
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ include "insight.fullname" . }}-reconcile-loop
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: reconcile-loop
+    {{- include "insight.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.ingestion.reconcile.schedule | default "*/15 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  workflowSpec:
+    serviceAccountName: {{ include "insight.fullname" . }}-reconcile
+    entrypoint: run
+    activeDeadlineSeconds: 1800
+    {{- with .Values.global.imagePullSecrets }}
+    imagePullSecrets:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    volumes:
+      - name: insight-reconcile-logs
+        persistentVolumeClaim:
+          claimName: {{ include "insight.fullname" . }}-reconcile-logs
+    templates:
+      - name: run
+        container:
+          image: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+          command: [bash]
+          args:
+            - "-c"
+            - "bash /src/ingestion/reconcile-connectors/main.sh"
+          env:
+            - name: AIRBYTE_URL
+              value: {{ include "insight.airbyte.url" . | quote }}
+            - name: INSIGHT_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+          resources:
+            requests:
+              cpu: {{ .Values.ingestion.reconcile.resources.requests.cpu | default "100m" | quote }}
+              memory: {{ .Values.ingestion.reconcile.resources.requests.memory | default "128Mi" | quote }}
+            limits:
+              cpu: {{ .Values.ingestion.reconcile.resources.limits.cpu | default "500m" | quote }}
+              memory: {{ .Values.ingestion.reconcile.resources.limits.memory | default "512Mi" | quote }}
+          volumeMounts:
+            - name: insight-reconcile-logs
+              mountPath: /var/log/insight
+{{- end }}

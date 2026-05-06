@@ -11,3 +11,6 @@ dbt_select: "tag:claude-enterprise+"
 
 connection:
   namespace: "bronze_claude_enterprise"
+secret:
+  required_fields:
+    - analytics_api_key

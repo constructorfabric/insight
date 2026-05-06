@@ -5,3 +5,7 @@ dbt_select: tag:bamboohr+
 workflow: sync
 connection:
   namespace: bronze_bamboohr
+secret:
+  required_fields:
+    - bamboohr_api_key
+    - bamboohr_domain

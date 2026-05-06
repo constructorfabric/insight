@@ -105,6 +105,7 @@ A semver-like string in `descriptor.yaml` (baseline `2026.05.04`); on publish, t
   - `cpt-insightspec-adr-adoption-of-existing-resources` (ADR-0002) — how to bring legacy clusters under this scheme without recreate.
   - `cpt-insightspec-adr-credential-rotation-no-env` (ADR-0003) — orthogonal: credentials live in K8s Secret, not in version.
   - `cpt-insightspec-adr-cluster-config-via-configmap` (ADR-0004) — cluster-level `tenant_id` configuration.
+  - `cpt-insightspec-adr-auto-trigger-sync-on-data-change` (ADR-0008) — auto-trigger is the operational consequence of this version-driven reconcile loop: data-affecting reconcile actions enqueue an immediate one-shot sync.
 - Background — original investigation against virtuozzo cluster (2026-05-04): `state.yaml` `definitions.{connector}.id` did not match any source's `sourceDefinitionId` for 8 of 9 connectors; clear evidence the parallel-store approach had failed.
 
 ## Traceability

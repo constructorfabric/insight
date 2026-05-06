@@ -1,0 +1,18 @@
+{{- if .Values.ingestion.templates.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "insight.fullname" . }}-reconcile-logs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: reconcile-loop
+    {{- include "insight.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.ingestion.reconcile.logs.size | default "5Gi" | quote }}
+  {{- with .Values.ingestion.reconcile.logs.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

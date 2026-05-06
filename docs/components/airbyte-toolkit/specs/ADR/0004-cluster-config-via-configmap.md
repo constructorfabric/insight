@@ -115,6 +115,7 @@ Cluster-level ConfigMap in namespace `insight` (default) holds `tenant_id` and o
 - Related decisions:
   - `cpt-insightspec-adr-version-driven-reconcile` (ADR-0001) — `tenant_id` is part of the source/connection naming convention used in version-driven reconcile.
   - `cpt-insightspec-adr-adoption-of-existing-resources` (ADR-0002) — adoption matches existing sources by name pattern that includes `tenant_id`.
+  - `cpt-insightspec-adr-connection-name-as-argo-identifier` (ADR-0005) — connection-name resolution depends on cluster config (`tenant_id` is one of the components of the canonical connection name).
 
 ## Traceability
 

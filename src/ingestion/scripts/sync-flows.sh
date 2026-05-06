@@ -14,25 +14,19 @@ CONNECTIONS_DIR="./connections"
 echo "  Applying WorkflowTemplates..."
 kubectl apply -f "${WORKFLOWS_DIR}/templates/"
 
-# --- Get connection_id from Airbyte (authoritative state) ---
-export TOOLKIT_DIR="${SCRIPT_DIR}/../airbyte-toolkit"
-# shellcheck source=../airbyte-toolkit/lib/airbyte.sh
-source "${TOOLKIT_DIR}/lib/airbyte.sh"
+# --- Resolve connection_name from Secret annotations (per ADR-0005) ---
+# Per KEY DECISION #1 we now pass connection_name (not the UUID); the
+# airbyte-sync init-step resolves the UUID at submit time.
+export RECONCILE_DIR="${SCRIPT_DIR}/../reconcile-connectors"
+# shellcheck source=../reconcile-connectors/lib/secrets.sh
+source "${RECONCILE_DIR}/lib/secrets.sh"
 
-_AB_WS_ID="$(ab_workspace_id)"
-_AB_CONN_CACHE="$(ab_list_connections "${_AB_WS_ID}")"
-
-get_connection_id() {
+get_connection_name() {
   local tenant="$1" connector="$2"
-  printf '%s' "${_AB_CONN_CACHE}" | python3 -c '
-import sys, json
-connector, tenant = sys.argv[1], sys.argv[2]
-for c in json.load(sys.stdin):
-    name = c.get("name", "")
-    if name.startswith(f"{connector}-") and tenant in name:
-        print(c.get("connectionId", "")); sys.exit(0)
-sys.exit(1)
-' "${connector}" "${tenant}"
+  local source_id
+  source_id="$(resolve_source_id "${connector}" "${tenant}" 2>/dev/null || true)"
+  [[ -n "${source_id}" ]] || return 1
+  printf '%s-%s-%s-conn' "${connector}" "${source_id}" "${tenant}"
 }
 
 # --- Generate and apply CronWorkflows for a tenant ---
@@ -47,9 +41,9 @@ sync_tenant() {
 
     local connector schedule dbt_select workflow
     connector=$(yq -r '.name' "$descriptor")
-    schedule=$(yq -r '.schedule' "$descriptor" 2>/dev/null | grep -v null || echo "0 2 * * *")
-    dbt_select=$(yq -r '.dbt_select' "$descriptor" 2>/dev/null | grep -v null || echo "+tag:silver")
-    workflow=$(yq -r '.workflow' "$descriptor" 2>/dev/null | grep -v null || echo "sync")
+    schedule="$(yq -r '.schedule // "0 2 * * *"' "$descriptor" 2>/dev/null || echo "0 2 * * *")"
+    dbt_select="$(yq -r '.dbt_select // "+tag:silver"' "$descriptor" 2>/dev/null || echo "+tag:silver")"
+    workflow="$(yq -r '.workflow // "sync"' "$descriptor" 2>/dev/null || echo "sync")"
 
     # Find the workflow template
     local tpl="${WORKFLOWS_DIR}/schedules/${workflow}.yaml.tpl"
@@ -58,11 +52,11 @@ sync_tenant() {
       continue
     fi
 
-    # Get connection_id from state
-    local connection_id
-    connection_id=$(get_connection_id "$tenant" "$connector") || true
-    if [[ -z "$connection_id" ]]; then
-      echo "  SKIP: no connection_id for ${connector} tenant ${tenant}"
+    # Compute connection_name from Secret annotations.
+    local connection_name
+    connection_name=$(get_connection_name "$tenant" "$connector") || true
+    if [[ -z "$connection_name" ]]; then
+      echo "  SKIP: no connection_name for ${connector} tenant ${tenant}"
       continue
     fi
 
@@ -70,7 +64,7 @@ sync_tenant() {
     local output="${tenant_dir}/${connector}-sync.yaml"
     CONNECTOR="$connector" \
     TENANT_ID="$tenant" \
-    CONNECTION_ID="$connection_id" \
+    CONNECTION_NAME="$connection_name" \
     SCHEDULE="$schedule" \
     DBT_SELECT="$dbt_select" \
       envsubst < "$tpl" > "$output"

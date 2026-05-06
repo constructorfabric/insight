@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# argo.sh — Argo CronWorkflow + Workflow CRUD helpers.
+# Sourceable; NO top-level CLI.
+#
+# Public surface:
+#   argo_render_cronworkflow CONNECTOR CONNECTION_NAME SCHEDULE TENANT
+#   argo_apply_cronworkflow  CONNECTOR CONNECTION_NAME SCHEDULE TENANT
+#   argo_delete_cronworkflow CONNECTOR TENANT
+#   argo_submit_sync_trigger CONNECTOR CONNECTION_NAME TENANT
+#   argo_resolve_connection_id_by_name CONNECTION_NAME
+#
+# Depends on: lib/env.sh (env_load), lib/airbyte.sh (ab_workspace_id,
+# ab_list_connections), python/render_cronworkflow.py,
+# python/render_sync_trigger.py, python/filter_connection_by_name.py.
+
+set -euo pipefail
+
+ARGO_SCRIPT_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
+ARGO_PY_DIR="$( cd "${ARGO_SCRIPT_DIR}/../python" && pwd )"
+ARGO_TPL_DIR="$( cd "${ARGO_SCRIPT_DIR}/../templates" && pwd )"
+
+# @cpt-begin:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
+argo_render_cronworkflow() {
+  local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
+  python3 "${ARGO_PY_DIR}/render_cronworkflow.py" \
+    --connector "$connector" \
+    --connection-name "$connection_name" \
+    --schedule "$schedule" \
+    --tenant "$tenant" \
+    --tpl "${ARGO_TPL_DIR}/cron-workflow.yaml.tpl"
+}
+# @cpt-end:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
+
+argo_apply_cronworkflow() {
+  local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
+  local rendered apply_out
+  rendered="$(argo_render_cronworkflow "$connector" "$connection_name" "$schedule" "$tenant")" || return 1
+  if ! apply_out="$(printf '%s' "$rendered" | kubectl apply -f - 2>&1)"; then
+    printf 'argo_apply_cronworkflow: kubectl apply failed for %s: %s\n' \
+      "$connector" "$apply_out" >&2
+    return 1
+  fi
+  printf '%s\n' "$apply_out"
+}
+
+argo_delete_cronworkflow() {
+  local connector="$1" tenant="$2"
+  local name="${connector}-${tenant}-sync"
+  local del_out
+  if ! del_out="$(kubectl delete cronworkflow.argoproj.io/"${name}" --ignore-not-found 2>&1)"; then
+    printf 'argo_delete_cronworkflow: kubectl delete failed for %s: %s\n' \
+      "$name" "$del_out" >&2
+    return 1
+  fi
+  printf '%s\n' "$del_out"
+}
+
+# @cpt-begin:cpt-insightspec-algo-reconcile-render-sync-trigger:p1
+argo_submit_sync_trigger() {
+  local connector="$1" connection_name="$2" tenant="$3"
+  local rendered create_out
+  rendered="$(python3 "${ARGO_PY_DIR}/render_sync_trigger.py" \
+    --connector "$connector" \
+    --connection-name "$connection_name" \
+    --tenant "$tenant" \
+    --tpl "${ARGO_TPL_DIR}/sync-trigger.yaml.tpl")" || return 1
+  if ! create_out="$(printf '%s' "$rendered" | kubectl create -f - 2>&1)"; then
+    printf 'argo_submit_sync_trigger: kubectl create failed for %s: %s\n' \
+      "$connector" "$create_out" >&2
+    return 1
+  fi
+  printf '%s\n' "$create_out"
+}
+# @cpt-end:cpt-insightspec-algo-reconcile-render-sync-trigger:p1
+
+# @cpt-begin:cpt-insightspec-algo-reconcile-resolve-connection-by-name:p1
+argo_resolve_connection_id_by_name() {
+  local connection_name="$1"
+  local workspace_id
+  workspace_id="$(ab_workspace_id)"
+  local list_json
+  list_json="$(ab_list_connections "$workspace_id")"
+  local matches
+  matches="$(printf '%s' "$list_json" \
+    | python3 "${ARGO_PY_DIR}/filter_connection_by_name.py" --name "$connection_name")"
+  local count
+  count="$(printf '%s' "$matches" | grep -c . || true)"
+  if [[ "$count" -eq 0 ]]; then
+    printf 'ERROR: connection name not found\n' >&2
+    return 1
+  fi
+  if [[ "$count" -gt 1 ]]; then
+    printf 'ERROR: ambiguous connection name (%s matches)\n' "$count" >&2
+    return 1
+  fi
+  printf '%s' "$matches"
+}
+# @cpt-end:cpt-insightspec-algo-reconcile-resolve-connection-by-name:p1

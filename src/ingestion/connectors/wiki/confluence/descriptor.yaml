@@ -10,3 +10,9 @@ dbt_select: "tag:confluence+"
 
 connection:
   namespace: bronze_confluence
+secret:
+  required_fields:
+    - confluence_instance_url
+    - confluence_email
+    - confluence_api_token
+    - confluence_start_date

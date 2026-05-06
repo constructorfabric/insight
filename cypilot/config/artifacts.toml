@@ -407,6 +407,30 @@ name = "ADR-0004: Cluster Config via Kubernetes ConfigMap"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0005-connection-name-as-argo-identifier.md"
+name = "ADR-0005: Connection Name as Argo Identifier"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0006-cron-self-run-with-file-persistent-logs.md"
+name = "ADR-0006: Cron Self-Run with File-Persistent Logs"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0007-required-fields-in-descriptor-not-example.md"
+name = "ADR-0007: Required Secret Fields Declared in descriptor.yaml"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0008-auto-trigger-sync-on-data-change.md"
+name = "ADR-0008: Auto-Trigger Sync on Data-Affecting Reconcile Actions"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "FEATURE"
 path = "docs/components/airbyte-toolkit/specs/feature-reconcile/FEATURE.md"
 name = "Reconcile Engine Feature"

@@ -8,8 +8,8 @@ set -euo pipefail
 # streams and all fields enabled by default.
 #
 # Usage:
-#   ./airbyte-toolkit/generate-catalog.sh m365 [tenant]
-#   ./airbyte-toolkit/generate-catalog.sh collaboration/m365 example-tenant
+#   ./tools/declarative-connector/generate-catalog.sh m365 [tenant]
+#   ./tools/declarative-connector/generate-catalog.sh collaboration/m365 example-tenant
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

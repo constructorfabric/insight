@@ -5,3 +5,7 @@ dbt_select: tag:slack+
 workflow: sync
 connection:
   namespace: bronze_slack
+secret:
+  required_fields:
+    - slack_bot_token
+    - slack_start_date

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# @cpt:cpt-insightspec-feature-reconcile — diff + apply engine
-# @cpt-flow:cpt-insightspec-flow-reconcile-run-reconcile:p1
+# @cpt:cpt-insightspec-featstatus-reconcile — diff + apply engine
+# @cpt-flow:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1
 # @cpt-algo:cpt-insightspec-algo-reconcile-diff-definition-version:p1
 # @cpt-algo:cpt-insightspec-algo-reconcile-diff-source-config:p1
 # @cpt-algo:cpt-insightspec-algo-reconcile-diff-connection-tags:p2
@@ -20,6 +20,7 @@
 set -euo pipefail
 
 _RECONCILE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_RECONCILE_PY_DIR="$(cd "${_RECONCILE_LIB_DIR}/../python" && pwd)"
 
 # shellcheck source=./airbyte.sh
 source "${_RECONCILE_LIB_DIR}/airbyte.sh"
@@ -27,6 +28,12 @@ source "${_RECONCILE_LIB_DIR}/airbyte.sh"
 source "${_RECONCILE_LIB_DIR}/discover.sh"
 # shellcheck source=./adopt.sh
 source "${_RECONCILE_LIB_DIR}/adopt.sh"
+# shellcheck source=./argo.sh
+source "${_RECONCILE_LIB_DIR}/argo.sh"
+# shellcheck source=./log.sh
+source "${_RECONCILE_LIB_DIR}/log.sh"
+# shellcheck source=./validate.sh
+source "${_RECONCILE_LIB_DIR}/validate.sh"
 
 # Counters reset per reconcile_run.
 _RECONCILE_CHANGED=0
@@ -46,6 +53,114 @@ reconcile__log() {
 }
 
 # ---------------------------------------------------------------------------
+# reconcile_compute_connection_name <connector_name>
+# Derives the Airbyte connection name for a connector: pattern
+#   {connector}-{source_id_label}-{tenant_id}-conn
+# matching the name used when the connection was created.
+# ---------------------------------------------------------------------------
+reconcile_compute_connection_name() {
+  local connector="$1"
+  local namespace="${K8S_NAMESPACE:-data}"
+  local secret_name
+  secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
+  if [[ -z "${secret_name}" ]]; then
+    printf '%s-main-%s-conn' "${connector}" "${INSIGHT_TENANT_ID:-}"
+    return 0
+  fi
+  local source_id_label
+  source_id_label="$(kubectl -n "${namespace}" get secret "${secret_name}" \
+    -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/source-id}' \
+    2>/dev/null || true)"
+  [[ -n "${source_id_label}" ]] || source_id_label="main"
+  printf '%s-%s-%s-conn' "${connector}" "${source_id_label}" "${INSIGHT_TENANT_ID:-}"
+}
+
+# ---------------------------------------------------------------------------
+# reconcile_compute_schedule <connector_name>
+# Schedule precedence: Secret annotation > descriptor.yaml.schedule > default.
+# ---------------------------------------------------------------------------
+reconcile_compute_schedule() {
+  local connector="$1"
+  local namespace="${K8S_NAMESPACE:-data}"
+  local secret_name schedule
+  secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
+  if [[ -n "${secret_name}" ]]; then
+    schedule="$(kubectl -n "${namespace}" get secret "${secret_name}" \
+      -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/schedule}' \
+      2>/dev/null || true)"
+    [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
+  fi
+  schedule="$(python3 "${_RECONCILE_PY_DIR}/parse_descriptor.py" \
+    --descriptor "${CONNECTORS_DIR:-connectors}/${connector}/descriptor.yaml" \
+    --field schedule 2>/dev/null || true)"
+  [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
+  printf '0 0 * * *'
+}
+
+# ---------------------------------------------------------------------------
+# reconcile_compute_tenant <connector_name>
+# Resolves tenant slug: env INSIGHT_TENANT_ID > Secret metadata > "default".
+# ---------------------------------------------------------------------------
+reconcile_compute_tenant() {
+  local connector="$1"
+  [[ -n "${INSIGHT_TENANT_ID:-}" ]] && { printf '%s' "${INSIGHT_TENANT_ID}"; return 0; }
+  local namespace="${K8S_NAMESPACE:-data}"
+  local secret_name
+  secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
+  if [[ -z "${secret_name}" ]]; then
+    printf 'default'
+    return 0
+  fi
+  local secret_file
+  secret_file="$(mktemp -t insight-reconcile.XXXXXX)"
+  trap "rm -f '${secret_file}'" RETURN
+  kubectl -n "${namespace}" get secret "${secret_name}" -o json > "${secret_file}" 2>/dev/null || true
+  python3 "${_RECONCILE_PY_DIR}/resolve_tenant.py" \
+    --secret-json "${secret_file}" 2>/dev/null || printf 'default'
+}
+
+# ---------------------------------------------------------------------------
+# reconcile_cascade_delete <connector_name>
+# Deletes all Airbyte connections + sources + definition (if orphaned) and
+# the per-connector Argo CronWorkflow. Called when the Secret is missing.
+# ---------------------------------------------------------------------------
+# @cpt-begin:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1
+reconcile_cascade_delete() {
+  local connector="$1"
+  local tenant
+  tenant="$(reconcile_compute_tenant "${connector}")"
+  local workspace_id
+  workspace_id="$(ab_workspace_id)"
+
+  # Find all sources whose name starts with the connector slug and delete them.
+  # ab_delete_source also cascades connections in newer Airbyte; we make it
+  # explicit for safety.
+  local sources_json
+  sources_json="$(ab_list_sources "${workspace_id}")"
+  local connections_json
+  connections_json="$(ab_list_connections "${workspace_id}")"
+
+  # Delete connections bound to connector's sources (by name prefix).
+  while IFS= read -r conn_id; do
+    [[ -n "${conn_id}" ]] || continue
+    ab_delete_source "${conn_id}" >/dev/null 2>&1 || true
+  done < <(printf '%s' "${sources_json}" \
+    | python3 -c '
+import json, sys
+target = sys.argv[1]
+for s in json.load(sys.stdin):
+    n = s.get("name", "")
+    if n == target or n.startswith(f"{target}-"):
+        print(s.get("sourceId", ""))
+' "${connector}" 2>/dev/null || true)
+
+  # Delete the per-connector CronWorkflow.
+  argo_delete_cronworkflow "${connector}" "${tenant}" 2>/dev/null || true
+  log_line WARN "cascade-delete ${connector}: secret missing"
+}
+# @cpt-end:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1
+
+# ---------------------------------------------------------------------------
 # reconcile_classify_change <current_cfg_json> <target_cfg_json>
 # Heuristic: any change in fields that re-tenant the source (host, db,
 # schema, account, workspace, organization, repository, stream slice) is
@@ -54,18 +169,8 @@ reconcile__log() {
 # ---------------------------------------------------------------------------
 reconcile_classify_change() {
   local current_json="$1" target_json="$2"
-  python3 -c '
-import sys, json, re
-current = json.loads(sys.argv[1] or "{}")
-target = json.loads(sys.argv[2] or "{}")
-breaking_re = re.compile(r"^(host|hostname|database|schema|catalog|account|workspace|tenant|orgId|organization|repository|stream)$", re.IGNORECASE)
-keys = set(current) | set(target)
-breaking = False
-for k in keys:
-    if current.get(k) != target.get(k) and breaking_re.match(k):
-        breaking = True; break
-print("breaking" if breaking else "non-breaking")
-' "${current_json}" "${target_json}"
+  python3 "${_RECONCILE_PY_DIR}/classify_change.py" \
+    "${current_json}" "${target_json}"
 }
 
 # ---------------------------------------------------------------------------
@@ -168,13 +273,9 @@ for s in json.load(sys.stdin):
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-if-none
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-if-stale-def
-  current_cfg_json="$(printf '%s' "${sources_json}" | python3 -c '
-import sys, json
-target = sys.argv[1]
-for s in json.load(sys.stdin):
-    if s.get("name") == target:
-        print(json.dumps(s.get("connectionConfiguration") or {})); break
-' "${expected_source_name}")"
+  current_cfg_json="$(printf '%s' "${sources_json}" \
+    | python3 "${_RECONCILE_PY_DIR}/select_source_config_by_name.py" \
+        "${expected_source_name}")"
   change_class="$(reconcile_classify_change "${current_cfg_json}" "${target_cfg_json}")"
   if [[ "${change_class}" == "breaking" ]]; then
     action="recreate"
@@ -208,6 +309,7 @@ for s in json.load(sys.stdin):
 # reconcile_connections <connector_name> <source_id> <secret_cfg_hash>
 # diff-connection-tags algorithm. PATCHes connection tags so the set
 # contains `insight` and a single `cfg-hash:<hash>` entry. Idempotent.
+# Tag-only changes do NOT set data_changed (per ADR-0008).
 # ---------------------------------------------------------------------------
 reconcile_connections() {
   local connector_name="$1" source_id="$2" secret_cfg_hash="$3"
@@ -216,13 +318,8 @@ reconcile_connections() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-find-tag
   workspace_id="$(ab_workspace_id)"
   connections_json="$(ab_list_connections "${workspace_id}")"
-  filtered="$(printf '%s' "${connections_json}" | python3 -c '
-import sys, json
-target = sys.argv[1]
-for c in json.load(sys.stdin):
-    if c.get("sourceId") == target:
-        print(json.dumps({"connectionId": c.get("connectionId"), "tags": c.get("tags", [])}))
-' "${source_id}")"
+  filtered="$(printf '%s' "${connections_json}" \
+    | python3 "${_RECONCILE_PY_DIR}/select_connections_by_source.py" "${source_id}")"
   if [[ -z "${filtered}" ]]; then
     reconcile__log WARN "${connector_name}" \
       "no connection on source ${source_id} (caller should create one)"
@@ -237,19 +334,8 @@ for c in json.load(sys.stdin):
     existing_tags_json="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin).get("tags",[])))')"
 
     # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-if-drift
-    desired_action="$(python3 -c '
-import sys, json
-existing = json.loads(sys.argv[1] or "[]")
-desired_hash = sys.argv[2]
-have_insight = False; have_hash = False
-for t in existing:
-    name = t.get("name", t) if isinstance(t, dict) else t
-    if name == "insight":
-        have_insight = True
-    elif isinstance(name, str) and name == f"cfg-hash:{desired_hash}":
-        have_hash = True
-print("noop" if (have_insight and have_hash) else "patch_tags")
-' "${existing_tags_json}" "${secret_cfg_hash}")"
+    desired_action="$(python3 "${_RECONCILE_PY_DIR}/tag_drift_check.py" \
+      "${existing_tags_json}" "${secret_cfg_hash}")"
     if [[ "${desired_action}" == "patch_tags" ]]; then
       if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then
         reconcile__log CHANGE "${connector_name}" \
@@ -285,13 +371,8 @@ reconcile_recreate_with_state() {
   if [[ -z "${connection_id}" ]]; then
     local conns
     conns="$(ab_list_connections "${workspace_id}")"
-    connection_id="$(printf '%s' "${conns}" | python3 -c '
-import sys, json
-target = sys.argv[1]
-for c in json.load(sys.stdin):
-    if c.get("sourceId") == target:
-        print(c.get("connectionId", "")); break
-' "${source_id}")"
+    connection_id="$(printf '%s' "${conns}" \
+      | python3 "${_RECONCILE_PY_DIR}/select_connection_by_source.py" "${source_id}")"
   fi
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-try
@@ -355,7 +436,7 @@ for c in json.load(sys.stdin):
 # Delete connections + sources tagged `insight` whose connector descriptor
 # no longer exists on disk. Skipped entirely when --no-gc was passed by
 # the caller (reconcile_run sets RECONCILE_NO_GC=1 in that case). DoD:
-# cpt-insightspec-dod-reconcile-gc-protected-by-no-gc-flag.
+# cpt-insightspec-dod-reconcile-gc-protected-by-no-gc-flag
 # ---------------------------------------------------------------------------
 reconcile_gc_orphans() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-loop
@@ -368,15 +449,8 @@ reconcile_gc_orphans() {
   local workspace_id descriptors_tsv known_names
   workspace_id="$(ab_workspace_id)"
   descriptors_tsv="$(disc_load_descriptors)"
-  known_names="$(printf '%s\n' "${descriptors_tsv}" | python3 -c '
-import sys
-names = []
-for line in sys.stdin:
-    parts = line.rstrip("\n").split("\t")
-    if parts and parts[0]:
-        names.append(parts[0])
-import json; print(json.dumps(names))
-')"
+  known_names="$(printf '%s\n' "${descriptors_tsv}" \
+    | python3 "${_RECONCILE_PY_DIR}/extract_descriptor_names.py")"
 
   local connections_json sources_json
   connections_json="$(ab_list_connections "${workspace_id}")"
@@ -384,27 +458,8 @@ import json; print(json.dumps(names))
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-orphan
   local orphan_lines
-  orphan_lines="$(python3 -c '
-import sys, json
-known = set(json.loads(sys.argv[1]))
-sources = {s["sourceId"]: s for s in json.loads(sys.argv[2])}
-connections = json.loads(sys.argv[3])
-for c in connections:
-    tags = c.get("tags", []) or []
-    tag_names = [t.get("name") if isinstance(t, dict) else t for t in tags]
-    if "insight" not in tag_names:
-        continue
-    src = sources.get(c.get("sourceId"))
-    if not src:
-        continue
-    # Connector name encoded as the leading dash-separated segment of the
-    # source name (matches the {connector}-{source-id}-{tenant} pattern).
-    conn_name = (src.get("name") or "").split("-")[0]
-    if conn_name and conn_name not in known:
-        cid = c.get("connectionId")
-        sid = src.get("sourceId")
-        print("\t".join([cid or "", sid or "", conn_name]))
-' "${known_names}" "${sources_json}" "${connections_json}")"
+  orphan_lines="$(python3 "${_RECONCILE_PY_DIR}/find_orphan_connections.py" \
+    "${known_names}" "${sources_json}" "${connections_json}")"
   # @cpt-end:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-orphan
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-src-loop
@@ -426,7 +481,7 @@ for c in connections:
 }
 
 # ---------------------------------------------------------------------------
-# reconcile_dry_run [--connector NAME]
+# reconcile_dry_run [args...]
 # Read-only diff: sets RECONCILE_DRY_RUN=1 and delegates to reconcile_run.
 # ---------------------------------------------------------------------------
 reconcile_dry_run() {
@@ -434,71 +489,85 @@ reconcile_dry_run() {
 }
 
 # ---------------------------------------------------------------------------
-# reconcile_run [--no-gc] [--connector NAME]
-# Top-level orchestrator. Iterates descriptors, joins to secrets, and
-# calls layered reconcilers in order: definition, source, connection,
-# then optional GC. Returns 0 on success, 2 if any layer logged ERROR.
+# reconcile_run [opt_dry_run [opt_no_sync_trigger [opt_no_gc [opt_connector]]]]
+# Top-level orchestrator. Iterates descriptors, validates secrets, calls
+# layered reconcilers (definition, source, connection), applies Argo
+# CronWorkflow (idempotent), submits sync-trigger on data-affecting changes,
+# then runs optional GC. Returns 0 on success, 2 if any layer logged ERROR.
 # ---------------------------------------------------------------------------
 reconcile_run() {
+  local opt_dry_run="${1:-0}"
+  local opt_no_sync_trigger="${2:-0}"
+  local opt_no_gc="${3:-0}"
+  local opt_connector="${4:-}"
+
+  [[ "${opt_dry_run}" -eq 1 ]] && export RECONCILE_DRY_RUN=1
+  [[ "${opt_no_gc}" -eq 1 ]]   && export RECONCILE_NO_GC=1
+
   _RECONCILE_CHANGED=0
   _RECONCILE_NOOP=0
   _RECONCILE_FAILED=0
   _RECONCILE_SKIPPED=0
-  local only_connector=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --no-gc) export RECONCILE_NO_GC=1; shift ;;
-      --connector) only_connector="$2"; shift 2 ;;
-      --dry-run) export RECONCILE_DRY_RUN=1; shift ;;
-      *) printf 'reconcile_run: unknown arg %s\n' "$1" >&2; return 1 ;;
-    esac
-  done
+
+  log_init
 
   local descriptors_tsv
   descriptors_tsv="$(disc_load_descriptors)"
 
   while IFS=$'\t' read -r name connector_dir version type; do
     [[ -n "${name}" ]] || continue
-    if [[ -n "${only_connector}" && "${name}" != "${only_connector}" ]]; then
+    if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
       _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
       continue
     fi
+
+    # Missing Secret → cascade-delete chain (per ADR-0007 / KEY DECISION #7).
+    if valsec_secret_missing_p "${name}"; then
+      if ! reconcile_cascade_delete "${name}"; then
+        _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
+      fi
+      _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      continue
+    fi
+
+    # Invalid Secret → WARN + skip (per ADR-0007 / KEY DECISION #7).
+    local missing_field=""
+    if ! missing_field="$(valsec_check_secret "${name}" 2>/dev/null)"; then
+      log_line WARN "skip ${name}: missing field ${missing_field:-unknown}"
+      _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
+      continue
+    fi
+
     local secret_name
     if ! secret_name="$(disc_match_descriptor_to_secret "${name}")"; then
       reconcile__log WARN "${name}" "no labelled secret in K8s — skipping"
       _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
       continue
     fi
+
     local cfg_hash secret_data_json
     cfg_hash="$(disc_compute_cfg_hash "${secret_name}")"
     secret_data_json="$(kubectl -n "${K8S_NAMESPACE:-data}" get secret "${secret_name}" \
       -o json 2>/dev/null \
-      | python3 -c '
-import sys, json, base64
-data = json.load(sys.stdin).get("data", {}) or {}
-out = {}
-for k, v in data.items():
-    try:
-        decoded = base64.b64decode(v).decode()
-    except Exception:
-        decoded = v
-    try:
-        parsed = json.loads(decoded)
-        out[k] = parsed if isinstance(parsed, (list, dict)) else decoded
-    except Exception:
-        out[k] = decoded
-print(json.dumps(out))
-')"
+      | python3 "${_RECONCILE_PY_DIR}/extract_secret_data.py")"
+
+    local data_changed=0
 
     # Layer 1 — definition
-    local def_result def_id
-    def_result="$(reconcile_definitions "${name}" "${version}" "${type}" || echo 'fail')"
+    local def_result def_id def_action
+    if ! def_result="$(reconcile_definitions "${name}" "${version}" "${type}")"; then
+      log_line ERROR "definition layer failed for ${name}"
+      _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
+      continue
+    fi
     def_id="$(printf '%s' "${def_result}" | tail -1 | cut -f2)"
     if [[ -z "${def_id}" ]]; then
       reconcile__log WARN "${name}" "definition not yet present — skipping source/connection layers this run"
       _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
       continue
     fi
+    def_action="$(printf '%s' "${def_result}" | tail -1 | cut -f1)"
+    [[ "${def_action}" == "republish" ]] && data_changed=1
 
     # Layer 2 — source
     local tenant_id="${INSIGHT_TENANT_ID:-}"
@@ -507,24 +576,49 @@ print(json.dumps(out))
       -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/source-id}' 2>/dev/null || true)"
     [[ -n "${source_id_label}" ]] || source_id_label="main"
     local expected_source_name="${name}-${source_id_label}-${tenant_id}"
-    local src_result src_id
-    src_result="$(reconcile_sources "${name}" "${secret_data_json}" "${cfg_hash}" \
-                  "${def_id}" "${expected_source_name}" || echo 'fail')"
+    local src_result src_id src_action
+    if ! src_result="$(reconcile_sources "${name}" "${secret_data_json}" "${cfg_hash}" \
+                  "${def_id}" "${expected_source_name}")"; then
+      log_line ERROR "source layer failed for ${name}"
+      _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
+      continue
+    fi
     src_id="$(printf '%s' "${src_result}" | tail -1 | cut -f2)"
+    src_action="$(printf '%s' "${src_result}" | tail -1 | cut -f1)"
     [[ -n "${src_id}" ]] || { reconcile__log WARN "${name}" "no source_id after layer 2"; continue; }
+    # Source create/update/recreate is data-affecting per ADR-0008.
+    [[ "${src_action}" != "noop" ]] && data_changed=1
 
-    # Layer 3 — connection
+    # Layer 3 — connection tags (tag-only: NOT data-affecting per ADR-0008).
     reconcile_connections "${name}" "${src_id}" "${cfg_hash}"
-  done <<<"${descriptors_tsv}"
 
-  # Layer 4 — GC (skipped when --no-gc)
+    # CronWorkflow apply (idempotent — kubectl apply no-op when YAML unchanged).
+    local conn_name schedule tenant
+    conn_name="$(reconcile_compute_connection_name "${name}")"
+    schedule="$(reconcile_compute_schedule "${name}")"
+    tenant="$(reconcile_compute_tenant "${name}")"
+    if ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
+      log_line ERROR "argo_apply_cronworkflow failed for ${name}"
+      _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
+    fi
+
+    # Sync-trigger only on data-affecting changes (per ADR-0008 / KEY DECISION #2).
+    if [[ "${data_changed}" -eq 1 && "${opt_no_sync_trigger}" -ne 1 ]]; then
+      if argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" >/dev/null 2>&1; then
+        log_line INFO "submitted sync trigger for ${name}"
+      else
+        log_line ERROR "argo_submit_sync_trigger failed for ${name}"
+        _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
+      fi
+    fi
+  done <<<"${descriptors_tsv}"
+  # shellcheck disable=SC2034
+  : "${connector_dir:=}"  # silence unused-variable warning when no descriptors
+
+  # Layer 4 — GC (skipped when --no-gc).
   reconcile_gc_orphans
 
-  printf 'reconcile summary: changed=%d noop=%d skipped=%d failed=%d (dry_run=%d, no_gc=%d)\n' \
-    "${_RECONCILE_CHANGED}" "${_RECONCILE_NOOP}" "${_RECONCILE_SKIPPED}" \
-    "${_RECONCILE_FAILED}" "${RECONCILE_DRY_RUN:-0}" "${RECONCILE_NO_GC:-0}" >&2
-  if (( _RECONCILE_FAILED > 0 )); then
-    return 2
-  fi
-  return 0
+  log_run_summary "${_RECONCILE_CHANGED}" "${_RECONCILE_FAILED}"
+  log_close
+  return $(( _RECONCILE_FAILED > 0 ? 2 : 0 ))
 }

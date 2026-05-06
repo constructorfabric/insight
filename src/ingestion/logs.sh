@@ -45,7 +45,7 @@ fi
 # Airbyte mode: fetch logs via API (survives pod deletion)
 # ---------------------------------------------------------------------------
 if [[ "$cmd" == "airbyte" ]]; then
-  source "${SCRIPT_DIR}/airbyte-toolkit/lib/env.sh" 2>/dev/null
+  source "${SCRIPT_DIR}/reconcile-connectors/lib/env.sh" 2>/dev/null
 
   job_id="${arg2:-}"
 
@@ -191,7 +191,7 @@ if [[ -z "$FOLLOW" ]]; then
       if [[ -n "$job_id" ]]; then
         echo "" >&2
         echo "--- Airbyte Job $job_id (via API) ---" >&2
-        source "${SCRIPT_DIR}/airbyte-toolkit/lib/env.sh" 2>/dev/null
+        source "${SCRIPT_DIR}/reconcile-connectors/lib/env.sh" 2>/dev/null
         curl -sf -H "Authorization: Bearer $AIRBYTE_TOKEN" \
           "${AIRBYTE_API}/api/v1/jobs/get" -X POST \
           -H "Content-Type: application/json" \

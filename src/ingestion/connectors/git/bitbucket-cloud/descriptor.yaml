@@ -7,3 +7,7 @@ dbt_select: "tag:bitbucket-cloud+"
 
 connection:
   namespace: "bronze_bitbucket_cloud"
+secret:
+  required_fields:
+    - bitbucket_token
+    - bitbucket_workspaces

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# @cpt:cpt-insightspec-feature-reconcile — desired-state discovery
-# @cpt-algo:cpt-insightspec-algo-reconcile-discover-secrets:p1
+# @cpt:cpt-insightspec-featstatus-reconcile — desired-state discovery
+# @cpt-algo:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1
 # @cpt-algo:cpt-insightspec-algo-reconcile-compute-cfg-hash:p1
 #
 # Reads connectors/*/descriptor.yaml and K8s Secrets in namespace `data`
@@ -30,7 +30,7 @@ _DISC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Skips files missing `name` or `version`; logs a WARN to stderr per skip.
 # ---------------------------------------------------------------------------
 disc_load_descriptors() {
-  # @cpt-begin:cpt-insightspec-algo-reconcile-discover-secrets:p1:inst-ds-descriptor
+  # @cpt-begin:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-descriptor
   local desc
   while IFS= read -r -d '' desc; do
     local connector_dir
@@ -53,7 +53,7 @@ if version is None:
 print(f"{name}\t{connector_dir}\t{version}\t{ctype}")
 PY
   done < <(find "${CONNECTORS_DIR}" -name 'descriptor.yaml' -print0 2>/dev/null)
-  # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets:p1:inst-ds-descriptor
+  # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-descriptor
 }
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ PY
 # skipped with a WARN to stderr (Decision #8: bad/unlabelled → WARN+skip).
 # ---------------------------------------------------------------------------
 disc_load_secrets() {
-  # @cpt-begin:cpt-insightspec-algo-reconcile-discover-secrets:p1:inst-ds-list-secrets
+  # @cpt-begin:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-list-secrets
   local namespace="${1:-${K8S_NAMESPACE}}"
   local json
   if ! json="$(kubectl -n "${namespace}" get secret \
@@ -72,28 +72,12 @@ disc_load_secrets() {
     printf 'disc_load_secrets: kubectl get secret failed in ns %s\n' "${namespace}" >&2
     return 1
   fi
-  # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets:p1:inst-ds-list-secrets
-  # @cpt-begin:cpt-insightspec-algo-reconcile-discover-secrets:p1:inst-ds-loop
-  printf '%s' "${json}" | python3 -c '
-import sys, json, hashlib, base64
-data = json.load(sys.stdin)
-for item in data.get("items", []):
-    md = item.get("metadata", {})
-    name = md.get("name", "")
-    annotations = md.get("annotations", {}) or {}
-    connector = annotations.get("insight.cyberfabric.com/connector")
-    source_id = annotations.get("insight.cyberfabric.com/source-id")
-    if not connector or not source_id:
-        sys.stderr.write(f"WARN: secret {name} missing connector/source-id annotation, skip\n")
-        continue
-    # Canonical hash: keys sorted, base64 values verbatim. Inline impl
-    # mirrors disc_compute_cfg_hash so we avoid a kubectl roundtrip per item.
-    secret_data = item.get("data", {}) or {}
-    canonical = json.dumps(secret_data, sort_keys=True, separators=(",", ":"))
-    cfg_hash = hashlib.sha256(canonical.encode()).hexdigest()
-    print(f"{connector}\t{source_id}\t{name}\t{cfg_hash}")
-'
-  # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets:p1:inst-ds-loop
+  # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-list-secrets
+  # @cpt-begin:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-loop
+  # Canonical hash routine lives in python/extract_secret_loop.py and reuses
+  # the same SHA-256 policy as compute_cfg_hash.py — keep them in lockstep.
+  printf '%s' "${json}" | python3 "${_DISC_LIB_DIR}/../python/extract_secret_loop.py"
+  # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-loop
 }
 
 # ---------------------------------------------------------------------------
@@ -107,8 +91,9 @@ disc_compute_cfg_hash() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-compute-cfg-hash:p1:inst-cch-decode
   local secret_name="$1"
   local namespace="${2:-${K8S_NAMESPACE}}"
-  local json
-  if ! json="$(kubectl -n "${namespace}" get secret "${secret_name}" -o json 2>/dev/null)"; then
+  local data_json
+  if ! data_json="$(kubectl -n "${namespace}" get secret "${secret_name}" \
+        -o jsonpath='{.data}' 2>/dev/null)"; then
     printf 'disc_compute_cfg_hash: kubectl get secret %s failed in ns %s\n' \
       "${secret_name}" "${namespace}" >&2
     return 1
@@ -117,12 +102,8 @@ disc_compute_cfg_hash() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-compute-cfg-hash:p1:inst-cch-canonical
   # @cpt-begin:cpt-insightspec-algo-reconcile-compute-cfg-hash:p1:inst-cch-sha256
   # @cpt-begin:cpt-insightspec-algo-reconcile-compute-cfg-hash:p1:inst-cch-return
-  printf '%s' "${json}" | python3 -c '
-import sys, json, hashlib
-data = json.load(sys.stdin).get("data", {}) or {}
-canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-print(hashlib.sha256(canonical.encode()).hexdigest())
-'
+  [[ -n "${data_json}" && "${data_json}" != "null" ]] || data_json='{}'
+  printf '%s' "${data_json}" | python3 "${_DISC_LIB_DIR}/../python/compute_cfg_hash.py"
   # @cpt-end:cpt-insightspec-algo-reconcile-compute-cfg-hash:p1:inst-cch-return
   # @cpt-end:cpt-insightspec-algo-reconcile-compute-cfg-hash:p1:inst-cch-sha256
   # @cpt-end:cpt-insightspec-algo-reconcile-compute-cfg-hash:p1:inst-cch-canonical
@@ -152,6 +133,19 @@ for it in data.get("items", []):
 sys.exit(1)
 ' "${connector_name}")" || { printf '' ; return 1; }
   printf '%s' "${match}"
+}
+
+# ---------------------------------------------------------------------------
+# disc_required_fields_for_connector <connector_name>
+# Reads `secret.required_fields` from the connector's descriptor.yaml via
+# python/parse_descriptor.py. Prints one field name per line on stdout.
+# Exit: 0 found, 1 not found (field absent in descriptor).
+# ---------------------------------------------------------------------------
+disc_required_fields_for_connector() {
+  local connector="$1"
+  python3 "${_DISC_LIB_DIR}/../python/parse_descriptor.py" \
+    --descriptor "${CONNECTORS_DIR:-connectors}/${connector}/descriptor.yaml" \
+    --field secret.required_fields
 }
 
 # ---------------------------------------------------------------------------

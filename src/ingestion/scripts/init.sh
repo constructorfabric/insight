@@ -6,7 +6,7 @@ cd "$SCRIPT_DIR/.."
 
 # KUBECONFIG can be empty when running in-cluster
 
-export TOOLKIT_DIR="${SCRIPT_DIR}/../airbyte-toolkit"
+export RECONCILE_DIR="${SCRIPT_DIR}/../reconcile-connectors"
 
 echo "=== Resolving ClickHouse credentials ==="
 CH_PASS="${CLICKHOUSE_PASSWORD:-$(kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' | base64 -d)}"
@@ -17,18 +17,19 @@ if [[ -z "$CH_PASS" ]]; then
 fi
 export CLICKHOUSE_PASSWORD="$CH_PASS"
 
-echo "=== Creating dbt databases ==="
-kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" \
-  --query "CREATE DATABASE IF NOT EXISTS staging" 2>/dev/null
-kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" \
-  --query "CREATE DATABASE IF NOT EXISTS silver" 2>/dev/null
-kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" \
-  --query "CREATE DATABASE IF NOT EXISTS insight" 2>/dev/null
+echo "=== Creating dbt databases (namespace=data) ==="
+for db in staging silver insight; do
+  if ! kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" \
+      --query "CREATE DATABASE IF NOT EXISTS ${db}" 2>&1 >/dev/null; then
+    echo "ERROR: failed to create ${db} database (namespace=data)" >&2
+    exit 1
+  fi
+done
 
-echo "=== Creating bronze placeholders for missing connectors ==="
+echo "=== Creating bronze placeholders for missing connectors (namespace=data) ==="
 "$SCRIPT_DIR/create-bronze-placeholders.sh"
 
-echo "=== Running ClickHouse migrations ==="
+echo "=== Running ClickHouse migrations (namespace=data) ==="
 for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   [ -f "$migration" ] || continue
   echo "  $(basename "$migration")"

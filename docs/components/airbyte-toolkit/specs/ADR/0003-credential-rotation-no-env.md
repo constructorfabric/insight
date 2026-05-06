@@ -105,6 +105,7 @@ Compute `cfg-hash:<sha256(secret.data)>` per Secret. The reconcile engine compar
 - Related decisions:
   - `cpt-insightspec-adr-version-driven-reconcile` (ADR-0001) — defines version anchor; cfg-hash is the per-instance complement.
   - `cpt-insightspec-adr-adoption-of-existing-resources` (ADR-0002) — adoption uses the same `cfg-hash` tag scheme.
+  - `cpt-insightspec-adr-cron-self-run-with-file-persistent-logs` (ADR-0006) — cron self-run is the operational vehicle that periodically detects and applies credential rotation via reconcile.
 
 ## Traceability
 

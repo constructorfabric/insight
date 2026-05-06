@@ -22,7 +22,55 @@
           }
         },
         "toolboxImage":    { "type": "string" },
-        "jiraEnrichImage": { "type": "string" }
+        "jiraEnrichImage": { "type": "string" },
+        "reconcile": {
+          "type": "object",
+          "properties": {
+            "schedule": { "type": "string", "default": "*/15 * * * *" },
+            "logs": {
+              "type": "object",
+              "properties": {
+                "size":         { "type": "string", "default": "5Gi" },
+                "storageClass": { "type": "string" }
+              }
+            },
+            "resources": {
+              "type": "object",
+              "properties": {
+                "requests": {
+                  "type": "object",
+                  "properties": {
+                    "cpu":    { "type": "string", "default": "100m" },
+                    "memory": { "type": "string", "default": "128Mi" }
+                  }
+                },
+                "limits": {
+                  "type": "object",
+                  "properties": {
+                    "cpu":    { "type": "string", "default": "500m" },
+                    "memory": { "type": "string", "default": "512Mi" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "airbyte": {
+      "type": "object",
+      "properties": {
+        "releaseName": { "type": "string", "default": "airbyte" },
+        "apiUrl": { "type": "string" },
+        "jwtSecret": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "key":  { "type": "string" }
+          },
+          "required": ["name", "key"]
+        }
       }
     },
 

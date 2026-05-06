@@ -7,3 +7,10 @@ dbt_select: "tag:github+"
 
 connection:
   namespace: "bronze_github"
+secret:
+  required_fields:
+    - github_token
+    - github_organizations
+    - github_start_date
+    - github_skip_archived
+    - github_skip_forks
