@@ -443,6 +443,12 @@ name = "ADR-0010: NoCode connectors managed via connector_builder_projects"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0011-cdk-prebuilt-images.md"
+name = "ADR-0011: CDK connectors use pre-built ghcr.io images, reconcile never builds at runtime"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "FEATURE"
 path = "docs/components/airbyte-toolkit/specs/feature-reconcile/FEATURE.md"
 name = "Reconcile Engine Feature"

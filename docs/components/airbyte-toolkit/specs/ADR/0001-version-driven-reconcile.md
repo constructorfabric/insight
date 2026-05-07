@@ -102,6 +102,9 @@ A semver-like string in `descriptor.yaml` (baseline `2026.05.04`); on publish, t
 
 - Sequence: see `cpt-insightspec-seq-reconcile-default` in `DESIGN.md` §3.6 for end-to-end reconcile flow.
 - **Update (ADR-0010):** For `type=nocode` connectors, registration and version bumps now go through `connector_builder_projects/create` + `/publish` + `/update_active_manifest`. Direct `source_definitions/create_custom` is reserved for `type=cdk` connectors only. The version-bump algorithm itself (descriptor.version → declarativeManifest.description) is unchanged; only the API endpoint behind it differs.
+- **Update (ADR-0011):** Version semantics: descriptor.yaml.version is the **single source of truth** for connector version, but propagation differs by type:
+  - `type=nocode`: version → `declarativeManifest.description` via `connector_builder_projects/update_active_manifest` (ADR-0010).
+  - `type=cdk`: version → `dockerImageTag` via `source_definitions/update`. Repository path derives from `${IMAGE_REGISTRY}/source-${connector}-insight` (ADR-0011).
 - Related decisions:
   - `cpt-insightspec-adr-adoption-of-existing-resources` (ADR-0002) — how to bring legacy clusters under this scheme without recreate.
   - `cpt-insightspec-adr-credential-rotation-no-env` (ADR-0003) — orthogonal: credentials live in K8s Secret, not in version.
@@ -109,6 +112,7 @@ A semver-like string in `descriptor.yaml` (baseline `2026.05.04`); on publish, t
   - `cpt-insightspec-adr-auto-trigger-sync-on-data-change` (ADR-0008) — auto-trigger is the operational consequence of this version-driven reconcile loop: data-affecting reconcile actions enqueue an immediate one-shot sync.
   - `cpt-insightspec-adr-airbyte-workspace-as-namespace` (ADR-0009) — Insight-namespace identification (`custom: true`) within a single workspace; reconcile filters on this when iterating definitions.
   - `cpt-insightspec-adr-nocode-via-builder-projects` (ADR-0010) — nocode registration and version-bump path moved to `connector_builder_projects`; the version-bump algorithm here is unchanged, only the API endpoint differs.
+  - `cpt-insightspec-adr-cdk-prebuilt-images` (ADR-0011) — CDK version → `dockerImageTag`; repository derives from `${IMAGE_REGISTRY}/source-${connector}-insight`; reconcile never builds at runtime.
 - Background — original investigation against virtuozzo cluster (2026-05-04): `state.yaml` `definitions.{connector}.id` did not match any source's `sourceDefinitionId` for 8 of 9 connectors; clear evidence the parallel-store approach had failed.
 
 ## Traceability

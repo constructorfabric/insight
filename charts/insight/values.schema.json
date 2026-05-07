@@ -30,6 +30,7 @@
             "airbyteWorkspaceId": { "type": "string" },
             "destinationId": { "type": "string" },
             "tenantId": { "type": "string" },
+            "imageRegistry": { "type": "string" },
             "logs": {
               "type": "object",
               "properties": {

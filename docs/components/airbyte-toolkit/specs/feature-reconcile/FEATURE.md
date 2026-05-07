@@ -17,6 +17,7 @@ cpt:
   - [1.3 Actors](#13-actors)
   - [1.4 References](#14-references)
   - [1.5 Out of Scope](#15-out-of-scope)
+  - [1.6 Quality Constraints](#16-quality-constraints)
 - [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
   - [Run Reconcile](#run-reconcile)
   - [Run Adopt](#run-adopt)
@@ -25,6 +26,7 @@ cpt:
   - [Cascade Delete on Secret Missing](#cascade-delete-on-secret-missing)
   - [Create Connection First Time](#create-connection-first-time)
   - [Publish NoCode Definition](#publish-nocode-definition)
+  - [Publish CDK Definition](#publish-cdk-definition)
 - [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
   - [Discover Secrets](#discover-secrets)
   - [Compute Config Hash](#compute-config-hash)
@@ -48,6 +50,7 @@ cpt:
   - [Normalize Catalog Append-Only](#normalize-catalog-append-only)
   - [Create Connection With Tags](#create-connection-with-tags)
   - [Filter Custom Definitions](#filter-custom-definitions)
+  - [Create CDK Definition](#create-cdk-definition)
 - [4. States (CDSL)](#4-states-cdsl)
   - [Connector Lifecycle State Machine](#connector-lifecycle-state-machine)
 - [5. Definitions of Done](#5-definitions-of-done)
@@ -61,6 +64,7 @@ cpt:
   - [Sync Triggers Only on Data Change](#sync-triggers-only-on-data-change)
   - [Cascade Delete Removes CronWorkflow](#cascade-delete-removes-cronworkflow)
   - [Required Fields Validated from Descriptor](#required-fields-validated-from-descriptor)
+  - [Dry-Run Is Non-Destructive](#dry-run-is-non-destructive)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
@@ -103,6 +107,7 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 - **ADR-0008**: [Auto-Trigger Sync on Data Change](../ADR/0008-auto-trigger-sync-on-data-change.md) (registered in Phase 8)
 - **ADR-0009**: [Airbyte Workspace as Namespace](../ADR/0009-airbyte-workspace-as-namespace.md)
 - **ADR-0010**: [NoCode via Builder Projects](../ADR/0010-nocode-via-builder-projects.md)
+- **ADR-0011**: [CDK Pre-built Images](../ADR/0011-cdk-prebuilt-images.md)
 - **Sequences**: `cpt-insightspec-seq-resolve-connection-by-name`, `cpt-insightspec-seq-render-and-apply-cronworkflow`, `cpt-insightspec-seq-sync-trigger-on-change` (DESIGN §3.6)
 - **Dependencies**: None (this feature is the new entrypoint; replaces legacy)
 
@@ -116,6 +121,10 @@ The reconcile feature explicitly does NOT cover:
 - **Multi-cluster federation** — reconcile operates on exactly one Airbyte instance per cluster; cross-cluster coordination, replication, or failover is out of scope.
 - **Airbyte upgrade / Helm chart lifecycle** — reconcile assumes Airbyte and Argo are already running; installing or upgrading them is owned by platform engineering.
 - **Schema evolution beyond catalog refresh** — reconcile preserves cursors via `state_export → recreate → state_import` on breaking changes, but downstream Bronze→Silver schema migrations are owned by dbt.
+
+### 1.6 Quality Constraints
+
+> Quality constraints in this FEATURE are encoded as DoDs (FEATURE artifact ID-kind whitelist is `algo|dod|featstatus|flow|state`); see also DoD `cpt-insightspec-dod-reconcile-dry-run-non-destructive` in §5.
 
 ## 2. Actor Flows (CDSL)
 
@@ -232,14 +241,15 @@ The reconcile feature explicitly does NOT cover:
 
 **Actors**: `cpt-insightspec-actor-toolkit-cli`
 
-1. [ ] - `p1` - **CALL** `ab_list_connections` filtered by connector+tenant - `inst-cd-list-conn`
-2. [ ] - `p1` - **CALL** `ab_delete_connection` for each match - `inst-cd-delete-conn`
-3. [ ] - `p1` - **CALL** `ab_list_sources` filtered by connector+tenant - `inst-cd-list-src`
-4. [ ] - `p1` - **CALL** `ab_delete_source` for each match - `inst-cd-delete-src`
-5. [ ] - `p1` - **IF** definition.ref_count == 0 **CALL** `ab_delete_definition` - `inst-cd-delete-def`
-6. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow` - `inst-cd-cronworkflow`
-7. [ ] - `p1` - log_line WARN "cascade-delete ${connector}: secret missing" - `inst-cd-log`
-8. [ ] - `p1` - **RETURN** ok - `inst-cd-return`
+1. [ ] - `p1` - **IF** `RECONCILE_DRY_RUN == 1` log `would cascade-delete ${connector}: secret missing` and **RETURN noop** - `inst-cd-dry-run-guard`
+2. [ ] - `p1` - **CALL** `ab_list_connections` filtered by connector+tenant - `inst-cd-list-conn`
+3. [ ] - `p1` - **CALL** `ab_delete_connection` for each match - `inst-cd-delete-conn`
+4. [ ] - `p1` - **CALL** `ab_list_sources` filtered by connector+tenant - `inst-cd-list-src`
+5. [ ] - `p1` - **CALL** `ab_delete_source` for each match - `inst-cd-delete-src`
+6. [ ] - `p1` - **IF** definition.ref_count == 0 **CALL** `ab_delete_definition` - `inst-cd-delete-def`
+7. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow` - `inst-cd-cronworkflow`
+8. [ ] - `p1` - log_line WARN "cascade-delete ${connector}: secret missing" - `inst-cd-log`
+9. [ ] - `p1` - **RETURN** ok - `inst-cd-return`
 
 ### Create Connection First Time
 
@@ -275,6 +285,19 @@ First-time publish of a nocode connector via builder/create + builder/publish. T
 3. [ ] - `p2` - **ELSE IF** definition exists with `custom: true` but no linked builder project - `inst-pnd-if-orphan`
    1. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-orphan-definition-recovery` - `inst-pnd-recover`
 4. [ ] - `p2` - **RETURN** sourceDefinitionId - `inst-pnd-return`
+
+### Publish CDK Definition
+
+- [ ] `p2` - **ID**: `cpt-insightspec-flow-reconcile-publish-cdk-definition`
+
+**Actors**: `cpt-insightspec-actor-toolkit-cli`, `cpt-insightspec-actor-airbyte-api`
+
+**Trigger**: reconcile sees a descriptor with `type=cdk` whose definition does not exist in Airbyte (custom:true filter applied per ADR-0009).
+
+**Steps**:
+1. [ ] - `p2` - Resolve `dockerRepository = ${IMAGE_REGISTRY}/source-${connector}-insight` from required env - `inst-pcd-repo`
+2. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-create-cdk-definition` → sourceDefinitionId - `inst-pcd-create`
+3. [ ] - `p2` - **RETURN** sourceDefinitionId - `inst-pcd-return`
 
 ## 3. Processes / Business Logic (CDSL)
 
@@ -488,11 +511,14 @@ First-time publish of a nocode connector via builder/create + builder/publish. T
 **Inputs**: `connector` (slug); reads `connectors/${connector}/descriptor.yaml.secret.required_fields` and the K8s Secret's `stringData`/`data`
 **Outputs**: VALID | INVALID (with missing-field name)
 
+> **Secret resolution**: Resolve K8s Secret name via `disc_match_descriptor_to_secret(connector_name)` (annotation lookup `insight.cyberfabric.com/connector`); a missing secret returns FAIL with clear message naming the connector and the lookup mechanism. NEVER use `kubectl get secret ${connector_slug}` directly — secret name pattern is `insight-${connector}-${source_id}`, not the slug.
+
 1. [ ] - `p1` - **CALL** `python3 python/parse_descriptor.py --descriptor connectors/${connector}/descriptor.yaml --field secret.required_fields` → required_list - `inst-vsd-required`
-2. [ ] - `p1` - read K8s Secret stringData (or decoded data if stringData absent) → present_keys - `inst-vsd-present`
-3. [ ] - `p1` - **FROM** present_keys **WHEN** required_list ⊆ present_keys **TO** VALID - `inst-vsd-valid`
-4. [ ] - `p1` - **FROM** present_keys **WHEN** any required field missing **TO** INVALID(missing_field) - `inst-vsd-invalid`
-5. [ ] - `p1` - **RETURN** VALID|INVALID(missing) - `inst-vsd-return`
+2. [ ] - `p1` - **CALL** `disc_match_descriptor_to_secret(connector)` → secret_resource (annotation `insight.cyberfabric.com/connector` lookup); FAIL fast on miss - `inst-vsd-resolve`
+3. [ ] - `p1` - read K8s Secret stringData (or decoded data if stringData absent) → present_keys - `inst-vsd-present`
+4. [ ] - `p1` - **FROM** present_keys **WHEN** required_list ⊆ present_keys **TO** VALID - `inst-vsd-valid`
+5. [ ] - `p1` - **FROM** present_keys **WHEN** any required field missing **TO** INVALID(missing_field) - `inst-vsd-invalid`
+6. [ ] - `p1` - **RETURN** VALID|INVALID(missing) - `inst-vsd-return`
 
 (Replaces older inline `cpt-insightspec-algo-reconcile-validate-secrets-v2` per ADR-0007.)
 
@@ -593,6 +619,17 @@ When iterating definitions, skip those with `custom != true`. Insight namespace 
    1. [ ] - `p1` - **IF** def.custom != true CONTINUE - `inst-fcd-skip-public`
    2. [ ] - `p1` - append def to result - `inst-fcd-keep`
 2. [ ] - `p1` - **RETURN** result - `inst-fcd-return`
+
+### Create CDK Definition
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-create-cdk-definition`
+
+**Inputs**: `workspace_id`, `connector` (slug), `docker_repo` (full registry path), `image_tag` (= descriptor.version)
+**Outputs**: `sourceDefinitionId` (UUID)
+
+**Steps**:
+1. [ ] - `p1` - API: POST `/api/v1/source_definitions/create_custom` with `{workspaceId, sourceDefinition: {name, dockerRepository, dockerImageTag, documentationUrl}}` - `inst-ccd-post`
+2. [ ] - `p1` - **RETURN** response.sourceDefinitionId - `inst-ccd-return`
 
 ## 4. States (CDSL)
 
@@ -731,6 +768,18 @@ The system **MUST** preserve Airbyte sync state across a connection recreate tri
 **Verifies**: `cpt-insightspec-algo-reconcile-validate-secret-required-fields-from-descriptor`
 
 **Test scenario**: descriptor declares `secret.required_fields: [a, b, c]`. Apply Secret missing `b` → reconcile → log line `WARN skip ${connector}: missing field b`; connection NOT touched. Add `b` → reconcile → connection updated, no warn.
+
+### Dry-Run Is Non-Destructive
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-dry-run-non-destructive`
+
+**Statement**: When `RECONCILE_DRY_RUN=1` (or `--dry-run` CLI flag), reconcile MUST NOT make any state-changing API call to Airbyte (`ab_delete_*`, `ab_update_*`, `ab_create_*`, `ab_patch_*`) or to Kubernetes (`kubectl apply`, `kubectl delete`, `argo_delete_*`). Every destructive code path MUST be guarded by `if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then log "would_call ..."; return 0; fi`. The grep `grep -nE 'ab_(delete|update|create|patch)_' lib/reconcile.sh lib/adopt.sh` MUST show every match either inside such a guard or directly preceded by one.
+
+**Rationale**: One missed guard turned a routine `--dry-run` invocation on dev-vhc into a destructive operation that wiped 4 Airbyte sources + connections. Cost ≈ 30 minutes to recreate; could be hours on prod.
+
+**Verifies**: `cpt-insightspec-flow-reconcile-dry-run`, `cpt-insightspec-flow-reconcile-cascade-delete-on-secret-missing`
+
+**Test scenario**: A property test (or static grep audit script `tools/audit-dry-run-coverage.sh`) verifies on every PR that no destructive call is unguarded. Run `RECONCILE_DRY_RUN=1 reconcile-connectors.sh` against a populated cluster → diff report emitted, but `kubectl get sources,connections,definitions -A` snapshot identical before/after; `git status` clean; no `would_call` line corresponds to an actual API mutation.
 
 ## 6. Acceptance Criteria
 

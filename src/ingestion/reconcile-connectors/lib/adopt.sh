@@ -118,6 +118,7 @@ for n in keep:
         seen.add(n); out.append(n)
 print(json.dumps(out))
 ' "${existing_tags_json}" "${cfg_hash}")
+  # ADOPT_DRY_RUN guarded by callers (_adopt_one_connector + reconcile_connections).
   ab_patch_connection_tags "${connection_id}" "${tags_json}" >/dev/null
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-anno-conn
 }
@@ -225,9 +226,11 @@ for x in json.load(sys.stdin): print(x)')
     local conn_name; conn_name="$(reconcile_compute_connection_name "${name}")"
     local schedule;  schedule="$(reconcile_compute_schedule "${name}")"
     local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
+    # ADOPT_DRY_RUN guarded above (would_call branch).
     if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
       log_line INFO "first-adopt: created CronWorkflow ${name}-${tenant}-sync"
     else
+      # ADOPT_DRY_RUN guarded above (would_call branch).
       log_line ERROR "first-adopt: argo_apply_cronworkflow failed for ${name}"
       return 1
     fi

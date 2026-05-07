@@ -166,6 +166,32 @@ ab_list_definitions() {
 }
 
 # ---------------------------------------------------------------------------
+# ab_create_custom_cdk_definition <workspace_id> <connector_name> \
+#                                 <docker_repo> <image_tag>
+# Per ADR-0011: registers a pre-built CDK image as a custom source_definition.
+# Image lives in ${IMAGE_REGISTRY}/source-${connector}-insight; tag matches
+# descriptor.yaml.version. Prints the new sourceDefinitionId on stdout.
+# Returns 1 if the API responds without a sourceDefinitionId.
+# ---------------------------------------------------------------------------
+ab_create_custom_cdk_definition() {
+  local workspace_id="$1"
+  local connector_name="$2"
+  local docker_repo="$3"
+  local image_tag="$4"
+  local body def_id
+  body="$(python3 "${_AIRBYTE_PY_DIR}/create_cdk_definition_payload.py" \
+    "${workspace_id}" "${connector_name}" "${docker_repo}" "${image_tag}")"
+  def_id="$(ab__curl POST /api/v1/source_definitions/create_custom "${body}" \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceDefinitionId",""))')"
+  if [[ -z "${def_id}" ]]; then
+    printf 'ab_create_custom_cdk_definition: API returned no sourceDefinitionId for %s\n' \
+      "${connector_name}" >&2
+    return 1
+  fi
+  printf '%s' "${def_id}"
+}
+
+# ---------------------------------------------------------------------------
 # ab_get_definition <definition_id>
 # Returns single source_definition JSON.
 # ---------------------------------------------------------------------------

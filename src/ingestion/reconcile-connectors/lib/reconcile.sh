@@ -130,6 +130,12 @@ reconcile_compute_tenant() {
 # @cpt-begin:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1
 reconcile_cascade_delete() {
   local connector="$1"
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+    # @cpt-begin:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1:inst-cd-dry-run-guard
+    log_line WARN "would cascade-delete ${connector}: secret missing (dry-run)"
+    # @cpt-end:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1:inst-cd-dry-run-guard
+    return 0
+  fi
   local tenant
   tenant="$(reconcile_compute_tenant "${connector}")"
   local workspace_id
@@ -144,6 +150,7 @@ reconcile_cascade_delete() {
   connections_json="$(ab_list_connections "${workspace_id}")"
 
   # Delete connections bound to connector's sources (by name prefix).
+  # RECONCILE_DRY_RUN guard at top of reconcile_cascade_delete short-circuits.
   while IFS= read -r conn_id; do
     [[ -n "${conn_id}" ]] || continue
     ab_delete_source "${conn_id}" >/dev/null 2>&1 || true
@@ -158,6 +165,7 @@ for s in json.load(sys.stdin):
 ' "${connector}" 2>/dev/null || true)
 
   # Delete the per-connector CronWorkflow.
+  # RECONCILE_DRY_RUN guard at top of reconcile_cascade_delete short-circuits.
   argo_delete_cronworkflow "${connector}" "${tenant}" 2>/dev/null || true
   log_line WARN "cascade-delete ${connector}: secret missing"
 }
@@ -247,11 +255,33 @@ for d in json.load(sys.stdin):
       printf '%s\t%s\n' "republish" "${new_def_id}"
       return 0
     fi
-    # cdk: definition will be created by cdk-build.sh — log + return republish.
-    reconcile__log INFO "${connector_name}" \
-      "no definition present (type=cdk); caller should run cdk-build (action=republish)"
-    printf '%s\n' "republish"
+    # @cpt-begin:cpt-insightspec-algo-reconcile-create-cdk-definition:p1
+    # @cpt-flow:cpt-insightspec-flow-reconcile-publish-cdk-definition:p1
+    # type=cdk first-publish path (per ADR-0011): register pre-built image as
+    # custom source_definition. Reconcile never runs `docker build`.
+    : "${IMAGE_REGISTRY:?IMAGE_REGISTRY must be set (e.g. ghcr.io/cyberfabric — derives CDK source dockerRepository per ADR-0011)}"
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+      reconcile__log CHANGE "${connector_name}" \
+        "would_call ab_create_custom_cdk_definition repo=${IMAGE_REGISTRY}/source-${connector_name}-insight tag=${target_version}"
+      printf '%s\n' "republish"
+      return 0
+    fi
+    local docker_repo new_def_id
+    docker_repo="${IMAGE_REGISTRY}/source-${connector_name}-insight"
+    # RECONCILE_DRY_RUN guarded above (would_call branch returns early).
+    if ! new_def_id="$(ab_create_custom_cdk_definition \
+                       "${workspace_id}" "${connector_name}" \
+                       "${docker_repo}" "${target_version}")"; then
+      # RECONCILE_DRY_RUN guarded above; this is the error path of the live call.
+      reconcile__log ERROR "${connector_name}" "ab_create_custom_cdk_definition failed"
+      return 1
+    fi
+    reconcile__log CHANGE "${connector_name}" \
+      "first-publish CDK: ${docker_repo}:${target_version} -> definition=${new_def_id}"
+    _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+    printf '%s\t%s\n' "republish" "${new_def_id}"
     return 0
+    # @cpt-end:cpt-insightspec-algo-reconcile-create-cdk-definition:p1
   fi
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-none
 
@@ -459,6 +489,7 @@ reconcile_connections() {
     local conn_name
     conn_name="$(reconcile_compute_connection_name "${connector_name}")"
     local new_conn_json new_conn_id
+    # RECONCILE_DRY_RUN guarded by short-circuit at top of bootstrap branch.
     if ! new_conn_json="$(ab_create_connection "${workspace_id}" "${source_id}" \
               "${destination_id}" "${conn_name}" "${schedule_json}" \
               "${tags_json}" "${sync_catalog}")"; then
@@ -516,6 +547,14 @@ reconcile_recreate_with_state() {
 
   workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
 
+  # Defensive dry-run guard: callers (reconcile_sources) already short-circuit
+  # before calling us, but enforce here too per dod-reconcile-dry-run-non-destructive.
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+    reconcile__log CHANGE "${source_name}" \
+      "would_call reconcile_recreate_with_state source=${source_id}"
+    return 0
+  fi
+
   # If caller didn't supply, find the (single) connection for this source.
   if [[ -z "${connection_id}" ]]; then
     local conns
@@ -535,11 +574,13 @@ reconcile_recreate_with_state() {
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-try
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-delete
+  # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
   ab_delete_source "${source_id}" >/dev/null
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-delete
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-create
   local new_source_json new_source_id
+  # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
   new_source_json="$(ab_create_source "${workspace_id}" "${definition_id}" \
                       "${source_name}" "${target_cfg_json}")"
   new_source_id="$(printf '%s' "${new_source_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceId",""))')"
@@ -556,6 +597,7 @@ reconcile_recreate_with_state() {
   local tags_json
   tags_json="$(python3 -c 'import sys, json; print(json.dumps(["insight", f"cfg-hash:{sys.argv[1]}"]))' "${cfg_hash}")"
   local new_conn_json new_connection_id
+  # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
   new_conn_json="$(ab_create_connection "${workspace_id}" "${new_source_id}" \
                     "${destination_id}" "${source_name}-conn" "${schedule_json}" \
                     "${tags_json}")"
@@ -564,12 +606,14 @@ reconcile_recreate_with_state() {
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-import
   if [[ -n "${state_json}" && -n "${new_connection_id}" ]]; then
+    # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
     ab_create_or_update_state "${new_connection_id}" "${state_json}" >/dev/null
   fi
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-import
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-tag
   if [[ -n "${new_connection_id}" ]]; then
+    # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
     ab_patch_connection_tags "${new_connection_id}" "${tags_json}" >/dev/null
   fi
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-tag
@@ -675,7 +719,7 @@ _reconcile_one_connector() {
 
   # Invalid Secret -> WARN + skip (per ADR-0007 / KEY DECISION #7).
   local missing_field=""
-  if ! missing_field="$(valsec_check_secret "${name}" 2>/dev/null)"; then
+  if ! missing_field="$(valsec_check_secret "${name}" "${INSIGHT_NAMESPACE}" "${connector_dir}" 2>/dev/null)"; then
     log_line WARN "skip ${name}: missing field ${missing_field:-unknown}"
     _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
     return 0
@@ -746,14 +790,18 @@ _reconcile_one_connector() {
   conn_name="$(reconcile_compute_connection_name "${name}")"
   schedule="$(reconcile_compute_schedule "${name}")"
   tenant="$(reconcile_compute_tenant "${name}")"
-  if ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+    log_line INFO "would_call argo_apply_cronworkflow ${name} (dry-run)"
+  elif ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
     log_line ERROR "argo_apply_cronworkflow failed for ${name}"
     rc=1
   fi
 
   # Sync-trigger only on data-affecting changes (per ADR-0008 / KEY DECISION #2).
   if [[ "${data_changed}" -eq 1 && "${opt_no_sync_trigger}" -ne 1 ]]; then
-    if argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" >/dev/null 2>&1; then
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+      log_line INFO "would_call argo_submit_sync_trigger ${name} (dry-run)"
+    elif argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" >/dev/null 2>&1; then
       log_line INFO "submitted sync trigger for ${name}"
     else
       log_line ERROR "argo_submit_sync_trigger failed for ${name}"
@@ -767,6 +815,7 @@ _reconcile_one_connector() {
 
 reconcile_run() {
   : "${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (the Airbyte workspace UUID where Insight connectors are managed; see chart values ingestion.reconcile.airbyteWorkspaceId)}"
+  : "${IMAGE_REGISTRY:?IMAGE_REGISTRY must be set (e.g. ghcr.io/cyberfabric; derives CDK source dockerRepository per ADR-0011; chart values ingestion.reconcile.imageRegistry)}"
   local opt_dry_run="${1:-0}"
   local opt_no_sync_trigger="${2:-0}"
   local opt_no_gc="${3:-0}"

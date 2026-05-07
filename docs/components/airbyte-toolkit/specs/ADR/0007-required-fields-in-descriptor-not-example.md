@@ -85,6 +85,12 @@ Validation rules (frozen by this ADR):
 - Static check in CI: every `secrets/connectors/*.yaml.example` MUST `kubectl apply --dry-run=server -f -` cleanly (no annotation rejection by admission webhooks).
 - Static check in CI: every `connectors/*/descriptor.yaml` MUST contain a non-empty `secret.required_fields` list.
 
+#### Correction (2026-05-07): Secret name is NOT the connector slug
+
+An earlier draft of this ADR stated "Secret name == connector slug". This was inconsistent with the deployed convention. The authoritative naming pattern in the cluster is `insight-${connector}-${source-id}` (e.g. `insight-m365-main` for connector `m365`, source-id `main`). The canonical lookup is via the K8s Secret **annotation** `insight.cyberfabric.com/connector` whose value equals the connector slug — never by Secret name match. The matcher is `disc_match_descriptor_to_secret(connector_name)` in `lib/discover.sh`; every consumer (`valsec_*`, `reconcile_*`, `adopt_*`) MUST use it rather than `kubectl get secret ${connector_slug}` directly.
+
+This correction was prompted by a manual cluster smoke (Phase 18 Step J was skipped) discovering that `valsec_secret_missing_p` falsely reported all 16 connectors as missing because it searched by `kubectl get secret <connector_slug>`, triggering a spurious cascade-delete cascade.
+
 ## Pros and Cons of the Options
 
 ### Option A — Keep annotations on `*.yaml.example`
