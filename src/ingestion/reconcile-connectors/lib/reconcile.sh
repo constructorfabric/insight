@@ -51,7 +51,7 @@ _RECONCILE_SKIPPED=0
 # ---------------------------------------------------------------------------
 reconcile__log() {
   local level="$1" connector="$2" message="$3"
-  printf '%-6s [reconcile] connector=%s %s\n' \
+  printf '%-7s %s: %s\n' \
     "${level}" "${connector}" "${message}" >&2
 }
 
@@ -132,7 +132,7 @@ reconcile_cascade_delete() {
   local connector="$1"
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     # @cpt-begin:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1:inst-cd-dry-run-guard
-    log_line WARN "would cascade-delete ${connector}: secret missing (dry-run)"
+    log_line WARN "would remove ${connector} from Airbyte — its Secret was deleted in Kubernetes"
     # @cpt-end:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1:inst-cd-dry-run-guard
     return 0
   fi
@@ -167,7 +167,7 @@ for s in json.load(sys.stdin):
   # Delete the per-connector CronWorkflow.
   # RECONCILE_DRY_RUN guard at top of reconcile_cascade_delete short-circuits.
   argo_delete_cronworkflow "${connector}" "${tenant}" 2>/dev/null || true
-  log_line WARN "cascade-delete ${connector}: secret missing"
+  log_line WARN "${connector}: Secret was deleted in Kubernetes — removed connector from Airbyte"
 }
 # @cpt-end:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1
 
@@ -185,7 +185,7 @@ reconcile_classify_change() {
 }
 
 # ---------------------------------------------------------------------------
-# reconcile_definitions <connector_name> <target_version> <type> <connector_dir>
+# reconcile_definitions <connector_name> <target_version> <type> <connector_dir> [<cdk_image>]
 # diff-definition-version algorithm. Idempotent.
 #
 # For nocode connectors: drives the builder_projects publish/update flow.
@@ -195,15 +195,28 @@ reconcile_classify_change() {
 #   - If definition + builder both exist and version drifts ->
 #     update_active_manifest.
 #
-# For cdk connectors: existing behaviour — image-tag drift via
-# ab_set_definition_image_tag; `cdk-build.sh` handles initial creation.
+# For cdk connectors: image drift via ab_set_definition_image_tag, driven by
+# descriptor.cdk_image (a full Docker image reference; NOT descriptor.version).
+# The reference is split via python/split_docker_image_ref.py into
+# dockerRepository + dockerImageTag (digest or tag). When cdk_image is empty
+# for type=cdk, WARN+skip until the image is published.
 # ---------------------------------------------------------------------------
 reconcile_definitions() {
-  local connector_name="$1" target_version="$2" type="$3" connector_dir="${4:-}"
+  local connector_name="$1" target_version="$2" type="$3" connector_dir="${4:-}" cdk_image="${5:-}"
   local definition_id current_value action manifest_path
   local rc=0
 
   manifest_path="${CONNECTORS_DIR}/${connector_dir}/connector.yaml"
+
+  # Type=cdk requires cdk_image (full Docker reference). When absent,
+  # WARN+skip — image not yet published. See FEATURE DoD
+  # cpt-insightspec-dod-reconcile-cdk-image-required.
+  if [[ "${type}" == "cdk" && -z "${cdk_image}" ]]; then
+    reconcile__log WARN "${connector_name}" \
+      "connector is cdk type but no image set in descriptor — skipping until image is published"
+    printf 'noop\n'
+    return 0
+  fi
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-none
   local workspace_id
@@ -223,34 +236,36 @@ for d in json.load(sys.stdin):
     if [[ "${type}" == "nocode" ]]; then
       if [[ ! -f "${manifest_path}" ]]; then
         reconcile__log WARN "${connector_name}" \
-          "type=nocode but no connector.yaml at ${manifest_path} — skip"
+          "connector is nocode type but no manifest file at ${manifest_path} — skipping"
         printf '%s\n' "noop"
         return 0
       fi
       if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
         reconcile__log CHANGE "${connector_name}" \
-          "would_call ab_builder_create_with_manifest + ab_builder_publish (first publish)"
-        printf '%s\t%s\n' "republish" ""
+          "would publish connector for the first time (no definition exists yet)"
+        # Pseudo def_id so downstream layers stay informative in dry-run.
+        # Real run reaches the live calls below and returns the real UUID.
+        printf '%s\t%s\n' "republish" "DRY-RUN-PENDING-NOCODE"
         return 0
       fi
       local builder_id new_def_id
       if ! builder_id="$(ab_builder_create_with_manifest \
             "${workspace_id}" "${connector_name}" "${manifest_path}")"; then
-        reconcile__log ERROR "${connector_name}" "ab_builder_create_with_manifest failed"
+        reconcile__log ERROR "${connector_name}" "failed to create connector builder project"
         return 1
       fi
       if [[ -z "${builder_id}" ]]; then
-        reconcile__log ERROR "${connector_name}" "ab_builder_create_with_manifest: empty builderProjectId"
+        reconcile__log ERROR "${connector_name}" "Airbyte returned empty builder project id"
         return 1
       fi
       if ! new_def_id="$(ab_builder_publish \
             "${workspace_id}" "${builder_id}" "${connector_name}" \
             "${target_version}" "${manifest_path}")"; then
-        reconcile__log ERROR "${connector_name}" "ab_builder_publish failed"
+        reconcile__log ERROR "${connector_name}" "failed to publish connector definition"
         return 1
       fi
       reconcile__log CHANGE "${connector_name}" \
-        "first publish: builder=${builder_id} definition=${new_def_id}"
+        "published for the first time: builder project ${builder_id}, definition ${new_def_id}"
       _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
       printf '%s\t%s\n' "republish" "${new_def_id}"
       return 0
@@ -258,26 +273,30 @@ for d in json.load(sys.stdin):
     # @cpt-begin:cpt-insightspec-algo-reconcile-create-cdk-definition:p1
     # @cpt-flow:cpt-insightspec-flow-reconcile-publish-cdk-definition:p1
     # type=cdk first-publish path (per ADR-0011): register pre-built image as
-    # custom source_definition. Reconcile never runs `docker build`.
-    : "${IMAGE_REGISTRY:?IMAGE_REGISTRY must be set (e.g. ghcr.io/cyberfabric — derives CDK source dockerRepository per ADR-0011)}"
+    # custom source_definition. Reconcile never runs `docker build`. The full
+    # image reference comes verbatim from descriptor.cdk_image and is split
+    # into dockerRepository + dockerImageTag via split_docker_image_ref.py.
+    local docker_repo docker_tag
+    IFS=$'\t' read -r docker_repo docker_tag \
+      < <(python3 "${_RECONCILE_PY_DIR}/split_docker_image_ref.py" "${cdk_image}")
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
-        "would_call ab_create_custom_cdk_definition repo=${IMAGE_REGISTRY}/source-${connector_name}-insight tag=${target_version}"
-      printf '%s\n' "republish"
+        "would register cdk image ${docker_repo}:${docker_tag} as new definition"
+      # Pseudo def_id so downstream layers stay informative in dry-run.
+      printf '%s\t%s\n' "republish" "DRY-RUN-PENDING-CDK"
       return 0
     fi
-    local docker_repo new_def_id
-    docker_repo="${IMAGE_REGISTRY}/source-${connector_name}-insight"
+    local new_def_id
     # RECONCILE_DRY_RUN guarded above (would_call branch returns early).
     if ! new_def_id="$(ab_create_custom_cdk_definition \
                        "${workspace_id}" "${connector_name}" \
-                       "${docker_repo}" "${target_version}")"; then
+                       "${docker_repo}" "${docker_tag}")"; then
       # RECONCILE_DRY_RUN guarded above; this is the error path of the live call.
-      reconcile__log ERROR "${connector_name}" "ab_create_custom_cdk_definition failed"
+      reconcile__log ERROR "${connector_name}" "failed to register cdk image as new definition"
       return 1
     fi
     reconcile__log CHANGE "${connector_name}" \
-      "first-publish CDK: ${docker_repo}:${target_version} -> definition=${new_def_id}"
+      "registered cdk image ${docker_repo}:${docker_tag} as definition ${new_def_id}"
     _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
     printf '%s\t%s\n' "republish" "${new_def_id}"
     return 0
@@ -288,7 +307,7 @@ for d in json.load(sys.stdin):
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-mismatch
   if [[ "${type}" == "nocode" ]]; then
     if ! current_value="$(ab_get_definition_description "${definition_id}")"; then
-      reconcile__log ERROR "${connector_name}" "ab_get_definition_description failed"
+      reconcile__log ERROR "${connector_name}" "failed to read current connector version from Airbyte"
       return 1
     fi
     if [[ "${current_value}" == "${target_version}" ]]; then
@@ -298,7 +317,7 @@ for d in json.load(sys.stdin):
       action="republish"
       if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
         reconcile__log CHANGE "${connector_name}" \
-          "would_call ab_builder_update_active_manifest ${definition_id} ${target_version}"
+          "would update connector definition to version ${target_version}"
       else
         if [[ ! -f "${manifest_path}" ]]; then
           reconcile__log ERROR "${connector_name}" \
@@ -319,11 +338,11 @@ for d in json.load(sys.stdin):
         else
           if ! ab_builder_update_active_manifest \
                 "${workspace_id}" "${builder_id}" "${target_version}" "${manifest_path}" >/dev/null; then
-            reconcile__log ERROR "${connector_name}" "ab_builder_update_active_manifest failed"
+            reconcile__log ERROR "${connector_name}" "failed to publish connector definition"
             return 1
           fi
           reconcile__log CHANGE "${connector_name}" \
-            "definition.nocode updated from ${current_value} to ${target_version}"
+            "connector definition version: ${current_value} → ${target_version}"
         fi
         _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
       fi
@@ -332,25 +351,38 @@ for d in json.load(sys.stdin):
     # type=cdk
     local def_json
     if ! def_json="$(ab_get_definition "${definition_id}")"; then
-      reconcile__log ERROR "${connector_name}" "ab_get_definition failed"
+      reconcile__log ERROR "${connector_name}" "failed to read current connector definition from Airbyte"
       return 1
     fi
-    current_value="$(printf '%s' "${def_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("dockerImageTag",""))')"
-    if [[ "${current_value}" == "${target_version}" ]]; then
+    local current_repo current_tag
+    current_repo="$(printf '%s' "${def_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("dockerRepository",""))')"
+    current_tag="$(printf '%s' "${def_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("dockerImageTag",""))')"
+    local desc_repo desc_tag
+    IFS=$'\t' read -r desc_repo desc_tag \
+      < <(python3 "${_RECONCILE_PY_DIR}/split_docker_image_ref.py" "${cdk_image}")
+
+    if [[ "${current_repo}" != "${desc_repo}" ]]; then
+      reconcile__log WARN "${connector_name}" \
+        "cdk image repository changed (${current_repo} → ${desc_repo}); manual recreate-with-state needed — skipping for now"
+      printf 'noop\n'
+      return 0
+    fi
+    current_value="${current_tag}"
+    if [[ "${current_tag}" == "${desc_tag}" ]]; then
       action="noop"
       _RECONCILE_NOOP=$((_RECONCILE_NOOP + 1))
     else
       action="republish"
       if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
         reconcile__log CHANGE "${connector_name}" \
-          "would_call ab_set_definition_image_tag ${definition_id} ${target_version}"
+          "would update connector definition to version ${desc_tag}"
       else
-        if ! ab_set_definition_image_tag "${definition_id}" "${target_version}" >/dev/null; then
-          reconcile__log ERROR "${connector_name}" "ab_set_definition_image_tag failed"
+        if ! ab_set_definition_image_tag "${definition_id}" "${desc_tag}" >/dev/null; then
+          reconcile__log ERROR "${connector_name}" "failed to update cdk image tag in Airbyte"
           return 1
         fi
         reconcile__log CHANGE "${connector_name}" \
-          "definition.cdk updated from ${current_value} to ${target_version}"
+          "cdk image tag: ${current_tag} → ${desc_tag}"
         _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
       fi
     fi
@@ -390,13 +422,13 @@ for s in json.load(sys.stdin):
   if [[ -z "${source_id}" ]]; then
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
-        "would_call ab_create_source ${expected_source_name}"
+        "would create source ${expected_source_name}"
     else
       local created
       created="$(ab_create_source "${workspace_id}" "${definition_id}" \
                   "${expected_source_name}" "${target_cfg_json}")"
       source_id="$(printf '%s' "${created}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceId",""))')"
-      reconcile__log CHANGE "${connector_name}" "source created: ${source_id}"
+      reconcile__log CHANGE "${connector_name}" "source ${source_id} created"
       _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
     fi
     printf 'create\t%s\n' "${source_id}"
@@ -413,7 +445,7 @@ for s in json.load(sys.stdin):
     action="recreate"
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
-        "would_call reconcile_recreate_with_state source=${source_id} (breaking)"
+        "would recreate source ${source_id} (config change is breaking — state preserved across recreate)"
     else
       reconcile_recreate_with_state "" "${source_id}" "${definition_id}" \
         "${expected_source_name}" "${target_cfg_json}" "${secret_cfg_hash}"
@@ -425,11 +457,11 @@ for s in json.load(sys.stdin):
     action="update"
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
-        "would_call ab_update_source ${source_id}"
+        "would update source ${source_id} with new credentials"
     else
       ab_update_source "${source_id}" "${target_cfg_json}" \
         "${expected_source_name}" >/dev/null
-      reconcile__log INFO "${connector_name}" "source updated: ${source_id}"
+      reconcile__log INFO "${connector_name}" "source ${source_id} updated"
       _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
     fi
     # @cpt-end:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-return-update
@@ -458,7 +490,7 @@ reconcile_connections() {
     # cron schedule, and reconcile tags. Caller treats this as data-affecting.
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
-        "would_call ab_create_connection source=${source_id} (first-time bootstrap)"
+        "source ${source_id} has no connection yet — will create one"
       printf 'created\t\n'
       return 0
     fi
@@ -500,7 +532,7 @@ reconcile_connections() {
     new_conn_id="$(printf '%s' "${new_conn_json}" \
       | python3 -c 'import sys,json;print(json.load(sys.stdin).get("connectionId",""))')"
     reconcile__log CHANGE "${connector_name}" \
-      "first-create connection: ${new_conn_id}"
+      "connection ${new_conn_id} created"
     _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
     printf 'created\t%s\n' "${new_conn_id}"
     return 0
@@ -519,11 +551,11 @@ reconcile_connections() {
     if [[ "${desired_action}" == "patch_tags" ]]; then
       if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
         reconcile__log CHANGE "${connector_name}" \
-          "would_call adopt_tag_connection ${connection_id} cfg_hash=${secret_cfg_hash}"
+          "would tag connection ${connection_id} as managed by Insight (cfg-hash ${secret_cfg_hash})"
       else
         adopt_tag_connection "${connection_id}" "${secret_cfg_hash}" "${existing_tags_json}"
         reconcile__log CHANGE "${connector_name}" \
-          "connection ${connection_id} tags patched"
+          "connection ${connection_id} tags updated"
         _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
       fi
     else
@@ -551,7 +583,7 @@ reconcile_recreate_with_state() {
   # before calling us, but enforce here too per dod-reconcile-dry-run-non-destructive.
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     reconcile__log CHANGE "${source_name}" \
-      "would_call reconcile_recreate_with_state source=${source_id}"
+      "would recreate source ${source_id} (config change is breaking — state preserved across recreate)"
     return 0
   fi
 
@@ -620,7 +652,7 @@ reconcile_recreate_with_state() {
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-return
   reconcile__log CHANGE "${source_name}" \
-    "recreate complete: new_source=${new_source_id} new_connection=${new_connection_id}"
+    "recreated: new source ${new_source_id}, new connection ${new_connection_id} (state preserved)"
   printf '%s\t%s\n' "${new_source_id}" "${new_connection_id}"
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-return
 }
@@ -635,7 +667,7 @@ reconcile_recreate_with_state() {
 reconcile_gc_orphans() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-loop
   if [[ "${RECONCILE_NO_GC:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-    reconcile__log INFO "_gc" "skipped (--no-gc set)"
+    reconcile__log INFO "gc" "skipped (--no-gc set)"
     return 0
   fi
   # @cpt-end:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-loop
@@ -661,13 +693,13 @@ reconcile_gc_orphans() {
     [[ -n "${conn_id}" ]] || continue
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${conn_name}" \
-        "would_gc connection=${conn_id} source=${src_id}"
+        "would garbage-collect orphan connection ${conn_id} and source ${src_id}"
     else
       # connection deletes cascade in newer Airbyte but we delete source
       # explicitly to be safe (Airbyte private API).
       ab_delete_source "${src_id}" >/dev/null
       reconcile__log CHANGE "${conn_name}" \
-        "gc deleted connection=${conn_id} source=${src_id}"
+        "garbage-collected orphan connection ${conn_id} and source ${src_id}"
       _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
     fi
   done <<<"${orphan_lines}"
@@ -690,7 +722,7 @@ reconcile_dry_run() {
 # then runs optional GC. Returns 0 on success, 2 if any layer logged ERROR.
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# _reconcile_one_connector <name> <connector_dir> <version> <type> \
+# _reconcile_one_connector <name> <connector_dir> <version> <type> <cdk_image> \
 #                          <opt_dry_run> <opt_no_sync_trigger> <opt_connector>
 # Per-connector body extracted from the main loop so a single connector's
 # failure can't kill the whole reconcile run. We deliberately do NOT enable
@@ -699,8 +731,8 @@ reconcile_dry_run() {
 # Returns 0 on success, non-zero on any per-layer failure.
 # ---------------------------------------------------------------------------
 _reconcile_one_connector() {
-  local name="$1" connector_dir="$2" version="$3" type="$4"
-  local opt_dry_run="$5" opt_no_sync_trigger="$6" opt_connector="$7"
+  local name="$1" connector_dir="$2" version="$3" type="$4" cdk_image="$5"
+  local opt_dry_run="$6" opt_no_sync_trigger="$7" opt_connector="$8"
   set +e  # explicit per-call error handling below
 
   if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
@@ -720,14 +752,14 @@ _reconcile_one_connector() {
   # Invalid Secret -> WARN + skip (per ADR-0007 / KEY DECISION #7).
   local missing_field=""
   if ! missing_field="$(valsec_check_secret "${name}" "${INSIGHT_NAMESPACE}" "${connector_dir}" 2>/dev/null)"; then
-    log_line WARN "skip ${name}: missing field ${missing_field:-unknown}"
+    log_line WARN "${name}: required field \"${missing_field:-unknown}\" missing in Secret — skipping"
     _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
     return 0
   fi
 
   local secret_name
   if ! secret_name="$(disc_match_descriptor_to_secret "${name}")"; then
-    reconcile__log WARN "${name}" "no labelled secret in K8s — skipping"
+    reconcile__log WARN "${name}" "no Secret found in Kubernetes for this connector — skipping"
     _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
     return 0
   fi
@@ -742,17 +774,20 @@ _reconcile_one_connector() {
 
   # Layer 1 — definition
   local def_result def_id def_action
-  if ! def_result="$(reconcile_definitions "${name}" "${version}" "${type}" "${connector_dir}")"; then
-    log_line ERROR "definition layer failed for ${name}"
+  if ! def_result="$(reconcile_definitions "${name}" "${version}" "${type}" "${connector_dir}" "${cdk_image}")"; then
+    log_line ERROR "${name}: failed to reconcile connector definition"
     return 1
   fi
-  def_id="$(printf '%s' "${def_result}" | tail -1 | cut -f2)"
+  # `awk -F'\t'` (not `cut -f2`) — with cut, a missing TAB makes the whole
+  # line collapse into f1 AND f2 (e.g. `noop\n` returns "noop" for both
+  # fields), defeating the empty-def_id guard below. awk emits empty.
+  def_action="$(printf '%s' "${def_result}" | tail -1 | awk -F'\t' '{print $1}')"
+  def_id="$(printf '%s' "${def_result}" | tail -1 | awk -F'\t' '{print $2}')"
   if [[ -z "${def_id}" ]]; then
-    reconcile__log WARN "${name}" "definition not yet present — skipping source/connection layers this run"
+    reconcile__log WARN "${name}" "definition not ready — skipping source and connection setup"
     _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
     return 0
   fi
-  def_action="$(printf '%s' "${def_result}" | tail -1 | cut -f1)"
   [[ "${def_action}" == "republish" ]] && data_changed=1
 
   # Layer 2 — source
@@ -765,13 +800,13 @@ _reconcile_one_connector() {
   local src_result src_id src_action
   if ! src_result="$(reconcile_sources "${name}" "${secret_data_json}" "${cfg_hash}" \
                 "${def_id}" "${expected_source_name}")"; then
-    log_line ERROR "source layer failed for ${name}"
+    log_line ERROR "${name}: failed to reconcile source"
     return 1
   fi
   src_id="$(printf '%s' "${src_result}" | tail -1 | cut -f2)"
   src_action="$(printf '%s' "${src_result}" | tail -1 | cut -f1)"
   if [[ -z "${src_id}" ]]; then
-    reconcile__log WARN "${name}" "no source_id after layer 2"
+    reconcile__log WARN "${name}" "source not yet created (will be on real run) — skipping connection setup"
     return 0
   fi
   # Source create/update/recreate is data-affecting per ADR-0008.
@@ -791,20 +826,20 @@ _reconcile_one_connector() {
   schedule="$(reconcile_compute_schedule "${name}")"
   tenant="$(reconcile_compute_tenant "${name}")"
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-    log_line INFO "would_call argo_apply_cronworkflow ${name} (dry-run)"
+    log_line INFO "${name}: would create/update Argo CronWorkflow"
   elif ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
-    log_line ERROR "argo_apply_cronworkflow failed for ${name}"
+    log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
     rc=1
   fi
 
   # Sync-trigger only on data-affecting changes (per ADR-0008 / KEY DECISION #2).
   if [[ "${data_changed}" -eq 1 && "${opt_no_sync_trigger}" -ne 1 ]]; then
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-      log_line INFO "would_call argo_submit_sync_trigger ${name} (dry-run)"
+      log_line INFO "${name}: would trigger a one-shot sync"
     elif argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" >/dev/null 2>&1; then
-      log_line INFO "submitted sync trigger for ${name}"
+      log_line INFO "${name}: triggered a one-shot sync"
     else
-      log_line ERROR "argo_submit_sync_trigger failed for ${name}"
+      log_line ERROR "${name}: failed to trigger sync"
       rc=1
     fi
   fi
@@ -815,7 +850,6 @@ _reconcile_one_connector() {
 
 reconcile_run() {
   : "${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (the Airbyte workspace UUID where Insight connectors are managed; see chart values ingestion.reconcile.airbyteWorkspaceId)}"
-  : "${IMAGE_REGISTRY:?IMAGE_REGISTRY must be set (e.g. ghcr.io/cyberfabric; derives CDK source dockerRepository per ADR-0011; chart values ingestion.reconcile.imageRegistry)}"
   local opt_dry_run="${1:-0}"
   local opt_no_sync_trigger="${2:-0}"
   local opt_no_gc="${3:-0}"
@@ -834,11 +868,11 @@ reconcile_run() {
   local descriptors_tsv
   descriptors_tsv="$(disc_load_descriptors)"
 
-  while IFS=$'\t' read -r name connector_dir version type; do
+  while IFS=$'\t' read -r name connector_dir version type cdk_image; do
     [[ -n "${name}" ]] || continue
-    if ! _reconcile_one_connector "${name}" "${connector_dir}" "${version}" "${type}" \
+    if ! _reconcile_one_connector "${name}" "${connector_dir}" "${version}" "${type}" "${cdk_image}" \
          "${opt_dry_run}" "${opt_no_sync_trigger}" "${opt_connector}"; then
-      log_line ERROR "reconcile: connector ${name} failed (continuing with next)"
+      log_line ERROR "${name}: reconcile failed (continuing with next)"
       _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
     fi
   done <<<"${descriptors_tsv}"

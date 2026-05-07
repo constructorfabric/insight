@@ -41,18 +41,22 @@ _ADOPT_FAILED=0
 adopt_warn_orphan() {
   local connector_name="$1"
   local reason="$2"
-  printf 'WARN [adopt] connector=%s reason=%s\n' \
+  printf 'WARN    %s: %s\n' \
     "${connector_name}" "${reason}" >&2
   _ADOPT_WARNINGS=$((_ADOPT_WARNINGS + 1))
 }
 
 # ---------------------------------------------------------------------------
 # adopt_match_definition <definition_id> <version> <type> \
-#                        <connector_name> <connector_dir>
-# Idempotent: write descriptor.version to the right field per type. The
-# underlying ab_* helpers are themselves idempotent at the API level
+#                        <connector_name> <connector_dir> [<cdk_image>]
+# Idempotent: align the right Airbyte field per type:
+#   - cdk: dockerImageTag <- tag/digest portion of descriptor.cdk_image
+#     (NOT descriptor.version). When cdk_image is empty -> WARN+skip
+#     (image not yet published).
+#   - nocode: builder.active_manifest.description <- descriptor.version
+#     via update_active_manifest (ADR-0010).
+# The underlying ab_* helpers are themselves idempotent at the API level
 # (Airbyte returns 200 with no change when the value already matches).
-# nocode arm uses the builder-aware update_active_manifest path (ADR-0010).
 # Definitions without a linked builder project (orphans) are WARN+skip;
 # operators run tools/migrate-orphan-definition.sh to recover safely.
 # ---------------------------------------------------------------------------
@@ -63,9 +67,18 @@ adopt_match_definition() {
   local type="$3"
   local connector_name="${4:-?}"
   local connector_dir="${5:-}"
+  local cdk_image="${6:-}"
   case "${type}" in
     cdk)
-      ab_set_definition_image_tag "${definition_id}" "${version}" >/dev/null
+      if [[ -z "${cdk_image}" ]]; then
+        adopt_warn_orphan "${connector_name}" \
+          "connector is cdk type but no image set in descriptor — skipping until image is published"
+        return 0
+      fi
+      local _adopt_repo _adopt_tag
+      IFS=$'\t' read -r _adopt_repo _adopt_tag \
+        < <(python3 "${_ADOPT_LIB_DIR}/../python/split_docker_image_ref.py" "${cdk_image}")
+      ab_set_definition_image_tag "${definition_id}" "${_adopt_tag}" >/dev/null
       ;;
     nocode|*)
       local builder_id manifest_path
@@ -78,7 +91,7 @@ adopt_match_definition() {
       manifest_path="${CONNECTORS_DIR}/${connector_dir}/connector.yaml"
       if [[ ! -f "${manifest_path}" ]]; then
         adopt_warn_orphan "${connector_name}" \
-          "type=nocode but connector.yaml missing at ${manifest_path}"
+          "connector is nocode type but no manifest file at ${manifest_path} — skipping"
         return 0
       fi
       ab_builder_update_active_manifest "${INSIGHT_AIRBYTE_WORKSPACE_ID}" \
@@ -132,7 +145,7 @@ print(json.dumps(out))
 # callers can pre-set the flag.
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# _adopt_one_connector <name> <connector_dir> <version> <type> \
+# _adopt_one_connector <name> <connector_dir> <version> <type> <cdk_image> \
 #                      <dry_run> <opt_connector> <workspace_id> \
 #                      <definitions_json> <sources_json> <connections_json>
 # Per-connector adopt body extracted so a single connector failure can't
@@ -140,9 +153,9 @@ print(json.dumps(out))
 # explicit `if ! ...` branches and the function's return code.
 # ---------------------------------------------------------------------------
 _adopt_one_connector() {
-  local name="$1" connector_dir="$2" version="$3" type="$4"
-  local dry_run="$5" opt_connector="$6" workspace_id="$7"
-  local definitions_json="$8" sources_json="$9" connections_json="${10}"
+  local name="$1" connector_dir="$2" version="$3" type="$4" cdk_image="$5"
+  local dry_run="$6" opt_connector="$7" workspace_id="$8"
+  local definitions_json="$9" sources_json="${10}" connections_json="${11}"
   set +e
 
   if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
@@ -154,7 +167,7 @@ _adopt_one_connector() {
   local secret_name
   if ! secret_name="$(disc_match_descriptor_to_secret "${name}")"; then
     # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-skip
-    adopt_warn_orphan "${name}" "no labelled secret found in K8s"
+    adopt_warn_orphan "${name}" "no Secret found in Kubernetes for this connector — skipping"
     _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
     # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-skip
     return 0
@@ -171,7 +184,7 @@ _adopt_one_connector() {
   local def_count
   def_count="$(printf '%s' "${definition_ids_json}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')"
   if [[ "${def_count}" -eq 0 ]]; then
-    adopt_warn_orphan "${name}" "no matching source_definition in Airbyte"
+    adopt_warn_orphan "${name}" "no matching connector definition found in Airbyte"
     _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
     return 0
   fi
@@ -179,12 +192,13 @@ _adopt_one_connector() {
   while IFS= read -r definition_id; do
     [[ -n "${definition_id}" ]] || continue
     if [[ "${dry_run}" -eq 1 ]]; then
-      printf 'would_call adopt_match_definition %s version=%s type=%s connector=%s\n' \
-        "${definition_id}" "${version}" "${type}" "${name}"
+      printf 'CHANGE  %s: would update connector definition %s to version %s\n' \
+        "${name}" "${definition_id}" "${version}"
+      : "${type}" "${cdk_image}"
     else
       if ! adopt_match_definition "${definition_id}" "${version}" "${type}" \
-            "${name}" "${connector_dir}"; then
-        log_line ERROR "adopt: adopt_match_definition failed for ${name} def=${definition_id}"
+            "${name}" "${connector_dir}" "${cdk_image}"; then
+        log_line ERROR "${name}: failed to update connector definition ${definition_id}"
         return 1
       fi
     fi
@@ -197,7 +211,7 @@ for x in json.load(sys.stdin): print(x)')
     "${_ADOPT_LIB_DIR}/../python/match_connections_to_definitions.py" \
     "${sources_json}" "${connections_json}" "${definition_ids_json}")"
   if [[ -z "${matching_connections}" ]]; then
-    adopt_warn_orphan "${name}" "no connection found for any of ${def_count} matching definition(s)"
+    adopt_warn_orphan "${name}" "no connection found for any of ${def_count} matching definition(s) — skipping"
     _ADOPT_SKIPPED=$((_ADOPT_SKIPPED + 1))
     return 0
   fi
@@ -208,11 +222,11 @@ for x in json.load(sys.stdin): print(x)')
     connection_id="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["connectionId"])')"
     existing_tags_json="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin).get("tags",[])))')"
     if [[ "${dry_run}" -eq 1 ]]; then
-      printf 'would_call adopt_tag_connection %s cfg_hash=%s\n' \
-        "${connection_id}" "${cfg_hash}"
+      printf 'CHANGE  %s: would tag connection %s as managed (cfg-hash %s)\n' \
+        "${name}" "${connection_id}" "${cfg_hash}"
     else
       if ! adopt_tag_connection "${connection_id}" "${cfg_hash}" "${existing_tags_json}"; then
-        log_line ERROR "adopt: adopt_tag_connection failed for ${name} conn=${connection_id}"
+        log_line ERROR "${name}: failed to tag connection ${connection_id}"
         return 1
       fi
     fi
@@ -221,17 +235,17 @@ for x in json.load(sys.stdin): print(x)')
 
   # Apply (or update) the per-connector Argo CronWorkflow.
   if [[ "${dry_run}" -eq 1 ]]; then
-    printf 'would_call argo_apply_cronworkflow %s\n' "${name}"
+    printf 'CHANGE  %s: would create/update Argo CronWorkflow\n' "${name}"
   else
     local conn_name; conn_name="$(reconcile_compute_connection_name "${name}")"
     local schedule;  schedule="$(reconcile_compute_schedule "${name}")"
     local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
     # ADOPT_DRY_RUN guarded above (would_call branch).
     if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
-      log_line INFO "first-adopt: created CronWorkflow ${name}-${tenant}-sync"
+      log_line INFO "${name}: created Argo CronWorkflow ${name}-${tenant}-sync"
     else
       # ADOPT_DRY_RUN guarded above (would_call branch).
-      log_line ERROR "first-adopt: argo_apply_cronworkflow failed for ${name}"
+      log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
       return 1
     fi
   fi
@@ -267,20 +281,21 @@ adopt_run() {
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-list-actual
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
-  while IFS=$'\t' read -r name connector_dir version type; do
+  while IFS=$'\t' read -r name connector_dir version type cdk_image; do
     [[ -n "${name}" ]] || continue
-    if ! _adopt_one_connector "${name}" "${connector_dir}" "${version}" "${type}" \
+    if ! _adopt_one_connector "${name}" "${connector_dir}" "${version}" "${type}" "${cdk_image}" \
          "${dry_run}" "${opt_connector}" "${workspace_id}" \
          "${definitions_json}" "${sources_json}" "${connections_json}"; then
-      log_line ERROR "adopt: connector ${name} failed (continuing with next)"
+      log_line ERROR "${name}: adopt failed (continuing with next)"
       _ADOPT_FAILED=$((_ADOPT_FAILED + 1))
     fi
   done <<<"${descriptors_tsv}"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-return
-  printf 'adopt summary: adopted=%d skipped=%d warnings=%d failed=%d (dry_run=%d) — connector_dir scanned\n' \
-    "${_ADOPT_ADOPTED}" "${_ADOPT_SKIPPED}" "${_ADOPT_WARNINGS}" "${_ADOPT_FAILED}" "${dry_run}"
+  printf 'adopt finished: %d adopted, %d skipped, %d warning(s), %d failed\n' \
+    "${_ADOPT_ADOPTED}" "${_ADOPT_SKIPPED}" "${_ADOPT_WARNINGS}" "${_ADOPT_FAILED}"
+  : "${dry_run}"
   : "${connector_dir:=}"  # silence unused-warning when no descriptors found
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-return
 }

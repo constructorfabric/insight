@@ -27,7 +27,9 @@ _DISC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 # disc_load_descriptors
 # Walks ${CONNECTORS_DIR}/*/*/descriptor.yaml and emits TSV per descriptor:
-#   name<TAB>connector_dir<TAB>version<TAB>type   (type = nocode|cdk)
+#   name<TAB>connector_dir<TAB>version<TAB>type<TAB>cdk_image
+#     (type = nocode|cdk; cdk_image is the full Docker image reference for
+#      type=cdk, empty for nocode or absent)
 # Skips files missing `name` or `version`; logs a WARN to stderr per skip.
 # ---------------------------------------------------------------------------
 disc_load_descriptors() {
@@ -47,11 +49,12 @@ except Exception as exc:  # noqa: BLE001
 name = d.get("name")
 version = d.get("version")
 ctype = d.get("type", "nocode")
+cdk_image = d.get("cdk_image", "") or ""
 if not name:
     sys.stderr.write(f"WARN: descriptor missing name, skip: {path}\n"); sys.exit(0)
 if version is None:
     sys.stderr.write(f"WARN: descriptor missing version, skip: {path}\n"); sys.exit(0)
-print(f"{name}\t{connector_dir}\t{version}\t{ctype}")
+print(f"{name}\t{connector_dir}\t{version}\t{ctype}\t{cdk_image}")
 PY
   done < <(find "${CONNECTORS_DIR}" -name 'descriptor.yaml' -print0 2>/dev/null)
   # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-descriptor

@@ -1,5 +1,6 @@
 name: bitbucket-cloud
 version: "2026.05.04"
+cdk_image: "ghcr.io/cyberfabric/source-bitbucket-cloud-insight:2026.04.21.16.10-b36cf42"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync

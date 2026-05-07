@@ -10,9 +10,12 @@
 # As a script:  ./lib/cdk-build.sh <connector_path> [--push]
 #
 # Env:
-#   IMAGE_TAG        image tag (default: local)
-#   IMAGE_REGISTRY   registry prefix (e.g. ghcr.io/cyberfabric); empty = local-only
 #   CLUSTER_NAME     Kind cluster name for local-dev load (default: insight)
+#
+# Image reference:
+#   The full Docker image reference is read verbatim from descriptor.cdk_image
+#   (e.g. `ghcr.io/cyberfabric/source-foo-insight:v1.2.3` for push, or
+#   `source-foo-insight:dev` for local-only). No registry derivation.
 #
 # Function naming: cdk_*
 # ---------------------------------------------------------------------------
@@ -132,15 +135,17 @@ cdk_build() {
     return 1
   fi
 
-  local image_base="source-${connector_name}-insight"
-  local image_tag="${IMAGE_TAG:-local}"  # RULE-DEFAULTS-OK: dev/local-build sentinel; CI overrides to commit SHA
-  local image_registry="${IMAGE_REGISTRY:-}"
   local image
-  if [[ -n "${image_registry}" ]]; then
-    image="${image_registry}/${image_base}:${image_tag}"
-  else
-    image="${image_base}:${image_tag}"
+  image="$(python3 "${_CDK_PY_DIR}/parse_descriptor.py" \
+    --descriptor "${descriptor}" --field cdk_image 2>/dev/null || true)"
+  if [[ -z "${image}" ]]; then
+    printf 'ERROR: descriptor.cdk_image is required for type=cdk (got empty) at %s\n' \
+      "${descriptor}" >&2
+    return 1
   fi
+  local docker_repo docker_tag
+  IFS=$'\t' read -r docker_repo docker_tag \
+    < <(python3 "${_CDK_PY_DIR}/split_docker_image_ref.py" "${image}")
 
   printf '=== Building CDK connector: %s ===\n' "${connector_name}"
   printf '  Image: %s\n' "${image}"
@@ -157,9 +162,8 @@ cdk_build() {
     kind load docker-image "${image}" --name "${cluster_name}"
   fi
 
-  local docker_repo="${image_registry:+${image_registry}/}${image_base}"
   local def_id
-  def_id="$(cdk_register_definition "${connector_name}" "${docker_repo}" "${image_tag}")"
+  def_id="$(cdk_register_definition "${connector_name}" "${docker_repo}" "${docker_tag}")"
 
   printf '\n=== Done: %s ===\n' "${connector_name}"
   printf '  Image:      %s\n' "${image}"

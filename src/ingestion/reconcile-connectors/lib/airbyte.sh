@@ -169,8 +169,8 @@ ab_list_definitions() {
 # ab_create_custom_cdk_definition <workspace_id> <connector_name> \
 #                                 <docker_repo> <image_tag>
 # Per ADR-0011: registers a pre-built CDK image as a custom source_definition.
-# Image lives in ${IMAGE_REGISTRY}/source-${connector}-insight; tag matches
-# descriptor.yaml.version. Prints the new sourceDefinitionId on stdout.
+# docker_repo + image_tag come verbatim from descriptor.cdk_image (split via
+# split_docker_image_ref.py). Prints the new sourceDefinitionId on stdout.
 # Returns 1 if the API responds without a sourceDefinitionId.
 # ---------------------------------------------------------------------------
 ab_create_custom_cdk_definition() {

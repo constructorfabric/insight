@@ -64,6 +64,7 @@ cpt:
   - [Sync Triggers Only on Data Change](#sync-triggers-only-on-data-change)
   - [Cascade Delete Removes CronWorkflow](#cascade-delete-removes-cronworkflow)
   - [Required Fields Validated from Descriptor](#required-fields-validated-from-descriptor)
+  - [CDK Image Required](#cdk-image-required)
   - [Dry-Run Is Non-Destructive](#dry-run-is-non-destructive)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
@@ -295,7 +296,7 @@ First-time publish of a nocode connector via builder/create + builder/publish. T
 **Trigger**: reconcile sees a descriptor with `type=cdk` whose definition does not exist in Airbyte (custom:true filter applied per ADR-0009).
 
 **Steps**:
-1. [ ] - `p2` - Resolve `dockerRepository = ${IMAGE_REGISTRY}/source-${connector}-insight` from required env - `inst-pcd-repo`
+1. [ ] - `p2` - Read `descriptor.cdk_image` (full image reference; e.g. `ghcr.io/cyberfabric/source-bitbucket-cloud-insight:2026.04.21.16.10-b36cf42`) - `inst-pcd-read-image`
 2. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-create-cdk-definition` → sourceDefinitionId - `inst-pcd-create`
 3. [ ] - `p2` - **RETURN** sourceDefinitionId - `inst-pcd-return`
 
@@ -341,8 +342,12 @@ First-time publish of a nocode connector via builder/create + builder/publish. T
 
 - [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-diff-definition-version`
 
-**Input**: connector_name, descriptor_version, list of Airbyte source_definitions (filtered by name)
+**Input**: connector_name, descriptor_version, descriptor_cdk_image (cdk only), descriptor_type, list of Airbyte source_definitions (filtered by name)
 **Output**: `{action: republish|noop, definition_id?}`
+
+> **Type-specific comparison anchors**:
+> - For `type=nocode`: compare `descriptor.version` vs `definition.declarativeManifest.description`.
+> - For `type=cdk`: compare `descriptor.cdk_image` vs the recomposed `${definition.dockerRepository}:${definition.dockerImageTag}` from the Airbyte API response (NOT `descriptor.version` — version is metadata-only for cdk). If equal → noop. If only the tag differs → call `ab_set_definition_image_tag`. If `dockerRepository` itself drifted, that path requires a recreate-with-state — out of scope here; document as operator-invoked manual recreate.
 
 **Steps**:
 1. [ ] - `p1` - **IF** no definition with name == connector_name - `inst-ddv-if-none`
@@ -624,12 +629,14 @@ When iterating definitions, skip those with `custom != true`. Insight namespace 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-create-cdk-definition`
 
-**Inputs**: `workspace_id`, `connector` (slug), `docker_repo` (full registry path), `image_tag` (= descriptor.version)
-**Outputs**: `sourceDefinitionId` (UUID)
+**Inputs**: `workspace_id`, `connector` (slug), `cdk_image` (full image reference from `descriptor.cdk_image`, e.g. `ghcr.io/cyberfabric/source-bitbucket-cloud-insight:2026.04.21.16.10-b36cf42`)
+**Outputs**: `sourceDefinitionId` (UUID), or WARN+skip if `cdk_image` missing
 
 **Steps**:
-1. [ ] - `p1` - API: POST `/api/v1/source_definitions/create_custom` with `{workspaceId, sourceDefinition: {name, dockerRepository, dockerImageTag, documentationUrl}}` - `inst-ccd-post`
-2. [ ] - `p1` - **RETURN** response.sourceDefinitionId - `inst-ccd-return`
+1. [ ] - `p1` - **IF** `descriptor.cdk_image` is empty **RETURN** WARN+skip (image not declared) - `inst-ccd-skip-if-no-image`
+2. [ ] - `p1` - Split `cdk_image` into `(docker_repo, docker_tag)` per Docker reference grammar: if `@sha256:` present split on `@` first; else the last `:` AFTER the last `/` separates repo from tag; if no such `:` treat as `:latest` - `inst-ccd-split-image`
+3. [ ] - `p1` - API: POST `/api/v1/source_definitions/create_custom` with `{workspaceId, sourceDefinition: {name, dockerRepository: docker_repo, dockerImageTag: docker_tag, documentationUrl}}` - `inst-ccd-post`
+4. [ ] - `p1` - **RETURN** response.sourceDefinitionId - `inst-ccd-return`
 
 ## 4. States (CDSL)
 
@@ -768,6 +775,14 @@ The system **MUST** preserve Airbyte sync state across a connection recreate tri
 **Verifies**: `cpt-insightspec-algo-reconcile-validate-secret-required-fields-from-descriptor`
 
 **Test scenario**: descriptor declares `secret.required_fields: [a, b, c]`. Apply Secret missing `b` → reconcile → log line `WARN skip ${connector}: missing field b`; connection NOT touched. Add `b` → reconcile → connection updated, no warn.
+
+### CDK Image Required
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-cdk-image-required`
+
+**Statement**: Every `connectors/*/*/descriptor.yaml` with `type: cdk` MUST declare a non-empty top-level field `cdk_image` carrying the full Docker image reference (registry + repository + tag). The matcher is `python3 python/parse_descriptor.py --descriptor <path> --field cdk_image` returning a non-empty string. Missing field → reconcile logs WARN ("type=cdk but cdk_image missing — skip") and skips that connector for the run; reconcile exit code is unaffected (per `cpt-insightspec-dod-reconcile-dry-run-non-destructive`'s "isolated failure" pattern).
+
+**DoD test**: `tools/audit-cdk-image.sh` is **advisory** — it greps `connectors/*/*/descriptor.yaml`, exits **0** unconditionally, and prints the list of `type=cdk` descriptors lacking `cdk_image` for review awareness. CI does NOT fail on missing `cdk_image`.
 
 ### Dry-Run Is Non-Destructive
 

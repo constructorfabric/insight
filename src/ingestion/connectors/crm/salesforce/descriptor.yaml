@@ -1,5 +1,6 @@
 name: salesforce
 version: "2.0.0"
+# cdk_image: <not yet published — add full ghcr.io reference when image is built>
 type: cdk
 schedule: "0 5 * * *"
 workflow: sync

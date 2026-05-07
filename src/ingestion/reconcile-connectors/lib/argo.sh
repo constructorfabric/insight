@@ -37,7 +37,7 @@ argo_apply_cronworkflow() {
   local rendered apply_out
   rendered="$(argo_render_cronworkflow "$connector" "$connection_name" "$schedule" "$tenant")" || return 1
   if ! apply_out="$(printf '%s' "$rendered" | kubectl apply -f - 2>&1)"; then
-    printf 'argo_apply_cronworkflow: kubectl apply failed for %s: %s\n' \
+    printf '%s: kubectl apply failed: %s\n' \
       "$connector" "$apply_out" >&2
     return 1
   fi
@@ -49,7 +49,7 @@ argo_delete_cronworkflow() {
   local name="${connector}-${tenant}-sync"
   local del_out
   if ! del_out="$(kubectl delete cronworkflow.argoproj.io/"${name}" --ignore-not-found 2>&1)"; then
-    printf 'argo_delete_cronworkflow: kubectl delete failed for %s: %s\n' \
+    printf '%s: kubectl delete failed: %s\n' \
       "$name" "$del_out" >&2
     return 1
   fi
@@ -66,7 +66,7 @@ argo_submit_sync_trigger() {
     --tenant "$tenant" \
     --tpl "${ARGO_TPL_DIR}/sync-trigger.yaml.tpl")" || return 1
   if ! create_out="$(printf '%s' "$rendered" | kubectl create -f - 2>&1)"; then
-    printf 'argo_submit_sync_trigger: kubectl create failed for %s: %s\n' \
+    printf '%s: kubectl create failed: %s\n' \
       "$connector" "$create_out" >&2
     return 1
   fi

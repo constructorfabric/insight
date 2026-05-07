@@ -1,5 +1,6 @@
 name: github
 version: "2026.05.04"
+# cdk_image: <not yet published — add full ghcr.io reference when image is built>
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
