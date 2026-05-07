@@ -5,7 +5,7 @@ Each file returns rows **that represent a violation** — a test passes
 when zero rows are returned.
 
 Run:
-```
+```bash
 dbt test --select assert_comment_replies_parent_resolves --profiles-dir .
 ```
 

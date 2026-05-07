@@ -224,20 +224,13 @@ The connector **MUST** only fetch versions created after the last successful cur
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-conf-comment-extraction`
 
-The connector **MUST** extract footer and inline comments for every collected page. Footer comments are page-bottom comments not anchored to specific text. Inline comments are anchored to a highlighted text fragment in the page body.
+The connector **MUST** capture page comments — both kinds Confluence exposes (footer comments at the page bottom and inline comments anchored to a highlighted text fragment) — and **MUST** capture replies to those comments, attributed to the comment author and to the parent page.
 
-Both kinds support replies. The Confluence Cloud v2 page-level listing endpoints return only top-level comments — replies **MUST** be retrieved via separate `/{kind}-comments/{id}/children` calls per top-level comment. The connector therefore implements four streams in a 2-level parent-child chain:
-
-1. `wiki_footer_comments` — substream of `wiki_pages` via `GET /pages/{page_id}/footer-comments`
-2. `wiki_footer_comment_replies` — substream of `wiki_footer_comments` via `GET /footer-comments/{comment_id}/children`
-3. `wiki_inline_comments` — substream of `wiki_pages` via `GET /pages/{page_id}/inline-comments`
-4. `wiki_inline_comment_replies` — substream of `wiki_inline_comments` via `GET /inline-comments/{comment_id}/children`
-
-Each comment **MUST** produce one Bronze row with: `comment_id`, `page_id`, `author_id` (Atlassian `accountId`), `created_at` (from `version.createdAt`), and `body_storage` (raw HTML from `body.storage.value`). Top-level rows additionally carry `resolution_status` (`open` / `resolved` / null). Inline top-level rows additionally carry `inline_marker_ref` (UUID anchor inside the page body) and `inline_original_selection` (the highlighted text fragment captured at comment-creation time). Reply rows additionally carry `parent_comment_id` (always populated for replies).
-
-Sync mode is **full refresh** for all four streams: the v2 endpoints don't accept an `updated-after` filter, and comment volumes per page are typically small (tens, not thousands).
+Each captured comment **MUST** carry, at minimum, enough information for downstream Silver to compute per-page-day engagement (commenter identity, parent page, creation date, comment kind, top-level vs reply distinction).
 
 **Rationale**: Comments are how reviewers, doc owners, and stakeholders engage with a page after publish. Today's per-edit `wiki_page_activity` undercounts collaboration because someone who comments on others' pages but rarely authors is invisible. Comment data feeds engagement KPIs like "this RFC got 12 comments from 5 reviewers" vs "this RFC was published and ignored". Issue #285.
+
+**Stream wiring, endpoint choreography, and Bronze field definitions** are specified in [DESIGN §1.2 / §3.7](./DESIGN.md) — the v2 page-level listing endpoints don't return replies (verified empirically), so the implementation needs a 2-level parent-child substream chain.
 
 **Actors**: `cpt-insightspec-actor-conf-api`, `cpt-insightspec-actor-conf-analyst`
 

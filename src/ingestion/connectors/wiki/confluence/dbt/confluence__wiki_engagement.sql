@@ -111,7 +111,7 @@ SELECT
     CAST(MD5(concat(
         coalesce(tenant_id, ''), '-',
         coalesce(source_id, ''), '-',
-        page_id, '-',
+        coalesce(page_id, ''), '-',
         toString(toDate(created_ts))
     )) AS FixedString(16))                                  AS unique_key,
     page_id,
@@ -131,4 +131,10 @@ SELECT
     toUnixTimestamp64Milli(max(extracted_at))               AS _version
 FROM comments
 WHERE created_ts IS NOT NULL
+  -- Defensive: drop rows where page_id failed to populate from the API
+  -- response. The v2 listing and /children endpoints always return pageId
+  -- in our integration tests, so this filter is expected to be a no-op,
+  -- but without it a malformed bronze row would group into a fake
+  -- (tenant, source, '', day) engagement bucket.
+  AND page_id IS NOT NULL AND page_id != ''
 GROUP BY tenant_id, source_id, page_id, toDate(created_ts)
