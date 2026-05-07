@@ -124,6 +124,16 @@ name = "LDAP Connector Specification"
 
 [[systems.artifacts]]
 kind = "PRD"
+path = "docs/components/connectors/hr-directory/ms-entra/specs/PRD.md"
+name = "MS Entra Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/hr-directory/ms-entra/specs/DESIGN.md"
+name = "MS Entra Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
 path = "docs/components/connectors/task-tracking/silver/specs/PRD.md"
 name = "Task Tracking Silver Layer PRD"
 
