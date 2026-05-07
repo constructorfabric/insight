@@ -194,6 +194,32 @@ _PROMOTE_RE = re.compile(
 )
 # captures `table='bronze_X.Y'` from `{% do promote_bronze_to_rmt(table='bronze_X.Y', ...) %}`
 
+_PROMOTE_CALL_RE = re.compile(
+    r"""promote_bronze_to_rmt\s*\((.*?)\)""",
+    re.DOTALL,
+)
+# captures the entire argument blob of one `promote_bronze_to_rmt(...)` call —
+# used by BP-8 to verify order_by appears on EVERY call site, not just somewhere
+# in the file. Non-greedy: stops at the first `)`, which is fine for the
+# established `order_by='unique_key'` convention (no nested parens in args).
+# IMPORTANT: run on comment-stripped text — see _strip_dbt_comments — otherwise
+# the regex matches the macro name when it's mentioned in a {# ... #} doc block.
+
+_DBT_BLOCK_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
+_SQL_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+
+
+def _strip_dbt_comments(text: str) -> str:
+    """Remove Jinja {# ... #} blocks and SQL `-- ...` line comments.
+
+    Used to keep BP-5/6/7/8 regexes from matching `promote_bronze_to_rmt(...)`
+    occurrences that exist only as documentation/examples inside comments
+    (e.g. jira's docstring lists "Append a promote_bronze_to_rmt(...) call below").
+    """
+    text = _DBT_BLOCK_COMMENT_RE.sub("", text)
+    text = _SQL_LINE_COMMENT_RE.sub("", text)
+    return text
+
 _DEPENDS_ON_RE = re.compile(
     r"""depends_on:\s*\{\{\s*ref\(\s*['"]([a-zA-Z0-9_]+__bronze_promoted)['"]\s*\)"""
 )
@@ -262,17 +288,20 @@ def check_connector(rel: str) -> Result:
             f"expected at {bp_path.relative_to(INGESTION_DIR.parent)}"))
         return res  # downstream rules can't run without the file
 
-    bp_text = bp_path.read_text()
+    bp_text_raw = bp_path.read_text()
+    bp_text = _strip_dbt_comments(bp_text_raw)
 
     # ----- BP-2/3/4: config sanity -----
-    if "materialized='view'" not in bp_text and 'materialized="view"' not in bp_text:
+    # config-block invariants — read against the ORIGINAL text so we don't
+    # accidentally accept a config'd inside a comment (commented-out config)
+    if "materialized='view'" not in bp_text_raw and 'materialized="view"' not in bp_text_raw:
         res.issues.append(Issue("BP-2", "FAIL",
                                 f"{bp_filename} must be materialized='view'",
                                 "see existing examples e.g. m365__bronze_promoted.sql"))
-    if "schema='staging'" not in bp_text and 'schema="staging"' not in bp_text:
+    if "schema='staging'" not in bp_text_raw and 'schema="staging"' not in bp_text_raw:
         res.issues.append(Issue("BP-3", "FAIL",
                                 f"{bp_filename} must use schema='staging'"))
-    if name not in bp_text:
+    if name not in bp_text_raw:
         res.issues.append(Issue("BP-4", "FAIL",
                                 f"{bp_filename} must include connector tag '{name}'",
                                 "expected tags=['<name>'] block"))
@@ -311,31 +340,74 @@ def check_connector(rel: str) -> Result:
                 "BP-5", "FAIL",
                 f"{bp_filename} contains no promote_bronze_to_rmt calls"))
 
-    # ----- BP-8: order_by present -----
-    if "order_by" not in bp_text and promoted:
-        res.issues.append(Issue("BP-8", "FAIL",
-                                "promote_bronze_to_rmt calls must include order_by argument",
-                                "convention: order_by='unique_key' (the natural-key composite injected by AddFields)"))
+    # ----- BP-8: order_by argument present on EVERY promote_bronze_to_rmt call -----
+    # Walks each call site individually rather than checking the file as a whole —
+    # a single missing order_by anywhere in the file is still a violation.
+    for m in _PROMOTE_CALL_RE.finditer(bp_text):
+        args = m.group(1)
+        if "order_by" not in args:
+            line_no = bp_text.count("\n", 0, m.start()) + 1
+            # truncate long arg blob for the evidence line
+            preview = args.strip().replace("\n", " ")[:80]
+            res.issues.append(Issue(
+                "BP-8", "FAIL",
+                f"promote_bronze_to_rmt call at {bp_filename}:{line_no} is missing order_by",
+                f"convention: order_by='unique_key' (the natural-key composite injected by AddFields). args=`{preview}`"))
 
     # ----- BP-9: every other staging model that reads bronze declares depends_on -----
+    # The depends_on header MUST be the first non-blank line above the {{ config(...) }}
+    # block — that's the dbt mechanism that guarantees the bootstrap view runs first.
+    # A loose "bp_model_name appears anywhere" check would false-pass models that
+    # mention the bootstrap only in a comment far from the dependency contract.
     other_sql = sorted(p for p in dbt_dir.glob("*.sql") if p.name != bp_filename)
+    expected_header = f"-- depends_on: {{{{ ref('{bp_model_name}') }}}}"
     for sql in other_sql:
         text = sql.read_text()
-        reads_bronze = bool(_SOURCE_BRONZE_RE.search(text))
-        if not reads_bronze:
-            continue
-        declares = (
-            bool(_DEPENDS_ON_RE.search(text) and bp_model_name in (_DEPENDS_ON_RE.search(text).group(1),))
-            or bool(_REF_BRONZE_PROMOTED_RE.search(text) and bp_model_name in (_REF_BRONZE_PROMOTED_RE.search(text).group(1),))
+        if not _SOURCE_BRONZE_RE.search(text):
+            continue  # model doesn't read bronze; depends_on not required
+
+        # Find the {{ config( ... block — that's the anchor
+        lines = text.splitlines()
+        config_idx = next(
+            (i for i, ln in enumerate(lines) if "{{ config(" in ln),
+            None,
         )
-        # Stricter: any depends_on/ref pointing at this connector's bronze_promoted
-        if not declares:
-            # check more permissively — any header/ref to this connector's bp model
-            if bp_model_name not in text:
-                res.issues.append(Issue(
-                    "BP-9", "FAIL",
-                    f"{sql.name} reads bronze but doesn't depend on {bp_model_name}",
-                    f"add `-- depends_on: {{{{ ref('{bp_model_name}') }}}}` as the first non-blank line above the config block"))
+
+        # First non-blank line above the config block (or above EOF if no config)
+        first_above: str | None = None
+        upper_bound = config_idx if config_idx is not None else len(lines)
+        for i in range(upper_bound - 1, -1, -1):
+            ln = lines[i].strip()
+            if ln:
+                first_above = ln
+                break
+
+        # Accept either the canonical depends_on comment OR a real ref(...) call
+        # to bronze_promoted somewhere among the first few non-blank lines (some
+        # models put `-- Bronze → Silver step 1` first then depends_on second).
+        # We allow the depends_on line in the first 5 non-blank lines for tolerance,
+        # but flag anything looser.
+        head_lines: list[str] = []
+        for ln in lines[:upper_bound]:
+            s = ln.strip()
+            if s:
+                head_lines.append(s)
+            if len(head_lines) >= 5:
+                break
+
+        ok = False
+        for hl in head_lines:
+            dep_match = _DEPENDS_ON_RE.search(hl)
+            if dep_match and dep_match.group(1) == bp_model_name:
+                ok = True
+                break
+
+        if not ok:
+            res.issues.append(Issue(
+                "BP-9", "FAIL",
+                f"{sql.name} reads bronze but lacks the depends_on header for {bp_model_name}",
+                f"add `{expected_header}` as a comment in the first 5 lines, ideally directly above the `{{{{ config(... }}}}` block. "
+                f"first non-blank line currently above config: {first_above!r}"))
 
     return res
 

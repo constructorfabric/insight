@@ -126,10 +126,10 @@ Receives extracted records and writes them to Bronze tables.
 
 ### 3.1 Module-Specific Environment Constraints
 
-- The connector requires a dedicated Entra App Registration with the `User.Read.All` permission of type **Application** (not Delegated) and tenant admin consent granted.
-- Authentication is OAuth2 client credentials (app-only flow). Delegated user auth is not supported.
-- All Microsoft Graph requests are over HTTPS to `https://graph.microsoft.com/v1.0/`. The token endpoint is `https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token`.
-- Microsoft Graph rate limits are bucketed per tenant, per app, per service. The connector must respect `Retry-After` headers and back off on 429/503 responses.
+- The connector requires a dedicated Entra App Registration with an Application-type permission scoped to read all users, and tenant admin consent granted. The exact Graph permission name and consent procedure live in [DESIGN §3.3](./DESIGN.md#33-api-contracts).
+- Authentication is app-only (no signed-in user). Delegated user auth is out of scope.
+- All traffic is HTTPS to Microsoft Graph and the Microsoft identity platform. Endpoint URLs and the OAuth flow are specified in [DESIGN §3.3](./DESIGN.md#33-api-contracts).
+- The source API rate-limits requests per tenant / per app / per service. The connector must respect server-supplied retry hints and back off on transient overload responses.
 
 ---
 
@@ -137,11 +137,11 @@ Receives extracted records and writes them to Bronze tables.
 
 ### 4.1 In Scope
 
-- Extraction of the user directory via `GET /v1.0/users` with an explicit `$select` allowlist limited to identity-resolution fields.
-- OAuth2 client credentials authentication with token caching (1-hour TTL).
-- Pagination via `@odata.nextLink` cursor.
-- Full-refresh sync for the `users` stream.
-- Error handling with retry on transient failures (429, 503, 5xx) honouring `Retry-After`.
+- Extraction of the user directory limited to an explicit allowlist of identity-resolution fields (the technical allowlist lives in [DESIGN §3.3](./DESIGN.md#33-api-contracts) and is mirrored by the manifest).
+- OAuth2 client-credentials authentication with token caching.
+- Cursor-based pagination so that tenants of any practical size are extracted in a single sync.
+- Full-refresh sync mode.
+- Retry on transient API failures with backoff and respect for server-supplied retry hints.
 - `tenant_id`, `source_id`, and composite `unique_key` injection on every record (platform invariant for tenant isolation and idempotent writes).
 - Multi-instance support — multiple Entra tenants synced in parallel via separate K8s Secrets, each with its own `source-id` annotation.
 
@@ -149,17 +149,19 @@ Receives extracted records and writes them to Bronze tables.
 
 - Silver/Gold layer transformations (handled by the dbt pipeline).
 - Identity resolution logic (handled by the Identity Manager).
-- Group memberships and manager relationships — deferred to a follow-up iteration (`/v1.0/groups`, `/v1.0/users/{id}/manager`, `$expand=manager`).
-- Delta-token incremental sync (`/users/delta`) — the declarative Airbyte runtime cannot drive opaque-token cursors without a custom component.
-- Personal-life and biographic fields (`birthday`, `aboutMe`, `interests`, `pastProjects`, `schools`, `mySite`, `mobilePhone`, `streetAddress`, `imAddresses`, `hireDate`, `ageGroup`, `legalAgeGroupClassification`, `consentProvidedForMinor`, `identities`) — explicitly excluded from the `$select` allowlist for privacy.
-- Mailbox content, calendar events, OneDrive files, Teams messages — those require separate Graph permissions (`Mail.Read`, `Calendars.Read`, `Files.Read.All`, `Chat.Read.All`) and are not granted to this App Registration.
-- `signInActivity` (last sign-in timestamp) — requires the additional `AuditLog.Read.All` permission and an Entra ID P1/P2 licence.
-- Delegated user authentication (interactive sign-in flow) — only client credentials is supported.
+- Group memberships and manager relationships — deferred to a follow-up iteration.
+- Delta / change-tracking incremental sync — deferred (rationale and constraint in [DESIGN §2.2](./DESIGN.md#22-constraints)).
+- Personal-life and biographic profile attributes (date of birth, free-form biography, hobbies, schools, phone numbers, physical addresses, social-identity providers, age-group / consent metadata, etc.) — explicitly excluded for privacy. The full exclusion list and the audit-point mechanism live in [DESIGN §4 Source-Specific Considerations](./DESIGN.md#source-specific-considerations).
+- Mailbox content, calendar events, file content, chat / channel messages — require separate, distinct API permissions that are not granted to this App Registration.
+- Last-sign-in telemetry — requires an additional permission and licence tier; deferred.
+- Delegated user authentication (interactive sign-in flow) — out of scope.
 - Write operations (user creation, update, deletion).
 
 ---
 
 ## 5. Functional Requirements
+
+> Technical contract for every requirement below — endpoint URLs, exact response shapes, query parameters, and error codes — lives in [DESIGN §3.3 API Contracts](./DESIGN.md#33-api-contracts) and [DESIGN §3.7 Database schemas & tables](./DESIGN.md#37-database-schemas--tables). The PRD captures **what** must hold; the DESIGN document captures **how**.
 
 ### 5.1 Data Collection
 
@@ -167,9 +169,9 @@ Receives extracted records and writes them to Bronze tables.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-msentra-collect-users`
 
-The system **MUST** extract user records from Microsoft Entra ID via the Microsoft Graph `GET /v1.0/users` endpoint, collecting only fields with clear identity-resolution value: stable identity (`id`, `userPrincipalName`, `mail`, `proxyAddresses`, `otherMails`, `onPremisesSamAccountName`), display attributes (`displayName`, `givenName`, `surname`), org context (`employeeId`, `department`, `jobTitle`), account state (`accountEnabled`, `userType`), and provenance (`createdDateTime`).
+The system **MUST** extract every user record from Microsoft Entra ID, capturing only the categories of attributes with clear identity-resolution value: stable identifier, principal name and email aliases, display attributes, org context (employee number, department, job title), account state, and account-creation provenance.
 
-**Rationale**: User directory data is the foundation for resolving the JWT `oid` to a canonical person and for joining Entra-authenticated users to records in GitHub, Slack, Jira, BambooHR.
+**Rationale**: User directory data is the foundation for resolving the SSO subject (the Entra Object ID carried in the JWT `oid` claim) to a canonical person and for joining Entra-authenticated users to records in other source systems (GitHub, Slack, Jira, BambooHR).
 
 **Actors**: `cpt-insightspec-actor-msentra-orchestrator`, `cpt-insightspec-actor-msentra-destination`
 
@@ -177,9 +179,9 @@ The system **MUST** extract user records from Microsoft Entra ID via the Microso
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-msentra-pagination`
 
-The system **MUST** follow the `@odata.nextLink` cursor returned by Microsoft Graph until exhausted, so that tenants with more users than the per-page maximum (999) are fully extracted in a single sync.
+The system **MUST** follow the source API's pagination cursor until exhausted, so that tenants larger than the per-page maximum are fully extracted in a single sync.
 
-**Rationale**: Real tenants commonly exceed 1000 users; without pagination only the first page would be collected.
+**Rationale**: Real tenants commonly exceed the per-page cap. Without correct cursor following, only the first page would be collected.
 
 **Actors**: `cpt-insightspec-actor-msentra-orchestrator`, `cpt-insightspec-actor-msentra-destination`
 
@@ -189,7 +191,7 @@ The system **MUST** follow the `@odata.nextLink` cursor returned by Microsoft Gr
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-msentra-deduplication`
 
-The system **MUST** define a primary key on the `users` stream as the composite `unique_key = {tenant_id}-{source_id}-{id}`, where `id` is the Entra Object ID. The destination uses this key to deduplicate across collection runs.
+The system **MUST** define a primary key on every emitted record as the composite `unique_key = {tenant_id}-{source_id}-{natural_key}`, where the natural key is the Entra Object ID. The destination uses this key to deduplicate across collection runs.
 
 **Rationale**: Composite keys with `tenant_id` and `source_id` prevent collisions between Insight tenants and between multiple Entra tenants synced into the same workspace.
 
@@ -199,9 +201,9 @@ The system **MUST** define a primary key on the `users` stream as the composite 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-msentra-identity-key`
 
-The system **MUST** collect the `id` field for every user. The Entra Object ID (`id`, equal to the JWT `oid` claim) serves as the cross-service identity anchor. The connector **MUST NOT** use the JWT `sub` claim for identity — it is pairwise per application and is not exposed by Microsoft Graph.
+The system **MUST** collect the Entra Object ID for every user — the immutable, application-independent identifier that equals the JWT `oid` claim issued by the Microsoft identity platform. The connector **MUST NOT** use the JWT `sub` claim as a cross-service identity key — `sub` is pairwise pseudonymous per application and is not exposed by the directory API.
 
-**Rationale**: `oid` is immutable and identical across all applications in the tenant. Using it as the canonical key lets the Identity Manager resolve any Entra-authenticated user to a single `person_id`.
+**Rationale**: A single canonical key for every Entra-authenticated person is the precondition for joining Insight identities across services. The choice of `oid` over `sub` follows Microsoft's own guidance and prevents cross-app identity fragmentation.
 
 **Actors**: `cpt-insightspec-actor-msentra-identity-manager`
 
@@ -209,9 +211,9 @@ The system **MUST** collect the `id` field for every user. The Entra Object ID (
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-msentra-sync-mode`
 
-The `users` stream **MUST** use full-refresh sync. Microsoft Graph supports a delta-query mechanism (`/users/delta` with an opaque `$deltatoken`), but the declarative Airbyte runtime cannot drive an opaque-token cursor without a custom Python component. The destination uses `ReplacingMergeTree` with `unique_key`, so re-emitting the same records is idempotent.
+The connector **MUST** produce idempotent output across runs: re-running against the same source state yields the same Bronze rows after destination-side deduplication. Full-refresh is the operational sync mode for v1; change-tracking incremental sync is deferred (constraint and rationale in [DESIGN §2.2](./DESIGN.md#22-constraints)).
 
-**Rationale**: Directory sizes are typically 1k–50k users; a daily full pull is acceptable. Delta-token support is a future iteration that requires either a CDK connector or a manifest-side custom component.
+**Rationale**: Directory sizes are typically 1k–50k users; a daily full pull is operationally acceptable. Idempotency is a platform invariant; the destination engine and `unique_key` PK enforce it.
 
 **Actors**: `cpt-insightspec-actor-msentra-orchestrator`
 
@@ -219,9 +221,9 @@ The `users` stream **MUST** use full-refresh sync. Microsoft Graph supports a de
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-msentra-fault-tolerance`
 
-The system **MUST** retry on transient API failures (429, 503, 5xx) with exponential backoff and **MUST** honour `Retry-After` headers when present. Authentication errors (401, `invalid_client`, `Authorization_RequestDenied`) **MUST** fail fast without retry, with a clear error message naming the missing permission or the invalid credential.
+The system **MUST** retry on transient API failures with exponential backoff and **MUST** honour server-supplied retry hints. Authentication errors **MUST** fail fast without retry, with an operator-facing message that names either the missing permission or the credential issue.
 
-**Rationale**: Microsoft Graph throttles unpredictably, but credential errors are deterministic — retrying them only wastes time and burns rate budget.
+**Rationale**: The source API throttles unpredictably, but credential errors are deterministic — retrying them only wastes time and burns rate budget. Clear error messages cut diagnosis time when admin consent is missing or a secret has rotated.
 
 **Actors**: `cpt-insightspec-actor-msentra-orchestrator`
 
@@ -241,9 +243,11 @@ The system **MUST** emit collection-run metadata (start time, end time, status, 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-msentra-field-allowlist`
 
-The system **MUST** restrict the data collected from Microsoft Graph to an explicit allowlist of identity-resolution fields, supplied via the `$select` query parameter on every request. The system **MUST NOT** collect, even though `User.Read.All` permits them: `birthday`, `aboutMe`, `interests`, `skills`, `pastProjects`, `responsibilities`, `schools`, `mySite`, `mobilePhone`, `businessPhones`, `streetAddress`, `imAddresses`, `hireDate`, `ageGroup`, `legalAgeGroupClassification`, `consentProvidedForMinor`, `identities`.
+The system **MUST** restrict the data extracted from the source directory to an explicit allowlist of identity-resolution attributes, applied at extraction time. The system **MUST NOT** collect personal-life or biographic profile attributes — date of birth, free-form biography, interests, hobbies, skills, past projects, schools, personal site, phone numbers, physical addresses, instant-messaging addresses, hire/leave dates, age-group and consent metadata, or external social-identity providers — even when the granted API permission would allow them.
 
-**Rationale**: Identity resolution does not require personal-life or biographic fields. Collecting them creates privacy and compliance exposure with no analytics benefit. Restricting the allowlist at extraction time keeps Bronze free of fields that would otherwise need scrubbing downstream.
+The allowlist **MUST** be expressed as a single declarative configuration point that a reviewer can audit in one place. The exact field list, the request parameter, and the design rationale are in [DESIGN §3.3](./DESIGN.md#33-api-contracts) and [DESIGN §4 Source-Specific Considerations](./DESIGN.md#source-specific-considerations).
+
+**Rationale**: Identity resolution does not require personal-life or biographic attributes. Collecting them creates privacy and compliance exposure with no analytics benefit. Restricting the allowlist at extraction time keeps Bronze free of fields that would otherwise need scrubbing downstream, and enforcing the allowlist in a single declarative location makes scope changes review-visible.
 
 **Actors**: `cpt-insightspec-actor-msentra-platform-engineer`, `cpt-insightspec-actor-msentra-destination`
 

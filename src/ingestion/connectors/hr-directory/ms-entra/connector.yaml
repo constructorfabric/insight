@@ -33,7 +33,7 @@ definitions:
           url: >-
             https://login.microsoftonline.com/{{ config['azure_tenant_id']
             }}/oauth2/v2.0/token
-          http_method: GET
+          http_method: POST
           request_body:
             type: RequestBodyUrlEncodedForm
             value:
@@ -81,7 +81,7 @@ streams:
             url: >-
               https://login.microsoftonline.com/{{ config['azure_tenant_id']
               }}/oauth2/v2.0/token
-            http_method: GET
+            http_method: POST
             request_body:
               $ref: "#/definitions/linked/HttpRequester/request_body"
           session_token_path:

@@ -72,7 +72,7 @@ Airbyte writes bronze tables as plain `MergeTree`, so full-refresh streams accum
 - [ ] For every Airbyte stream the connector emits, there is a `{% do promote_bronze_to_rmt(table='bronze_<name_snake>.<stream>', order_by='unique_key') %}` line
 - [ ] No spurious `promote_bronze_to_rmt` calls reference streams that don't exist in the manifest / source
 - [ ] Every other dbt model in `dbt/` that reads from `source('bronze_<name_snake>', '...')` declares the bronze_promoted dependency as the FIRST non-blank line above the `config` block:
-  ```
+  ```jinja
   -- depends_on: {{ ref('<connector_snake>__bronze_promoted') }}
   ```
   This makes dbt's DAG materialise the bootstrap view before any model that reads bronze.

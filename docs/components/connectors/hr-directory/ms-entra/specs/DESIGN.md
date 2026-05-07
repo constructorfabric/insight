@@ -83,7 +83,7 @@ This table maps non-functional requirements from PRD to specific design/architec
 
 - [ ] `p3` - **ID**: `cpt-insightspec-tech-msentra-layers`
 
-```
+```text
 Microsoft Entra ID
         │  (HTTPS, OAuth2 client_credentials)
         ▼
@@ -246,7 +246,7 @@ Does not handle orchestration, scheduling, or state storage (managed by Airbyte 
 
 **`$select` allowlist** (all v1 fields collected):
 
-```
+```text
 id,userPrincipalName,mail,proxyAddresses,otherMails,displayName,
 givenName,surname,employeeId,department,jobTitle,accountEnabled,
 onPremisesSamAccountName,createdDateTime,userType
@@ -456,7 +456,7 @@ Monitoring table — not an analytics source. Not used by Silver / Gold.
 
 - [ ] `p2` - **ID**: `cpt-insightspec-topology-msentra-deployment`
 
-```
+```text
 Connection: ms-entra-{source-id}
 ├── Source image:  airbyte/source-declarative-manifest
 ├── Manifest:      src/ingestion/connectors/hr-directory/ms-entra/connector.yaml
@@ -513,6 +513,8 @@ The connector intentionally does **not** use the JWT `sub` claim as an identity 
 4. **Per-page maximum is 999** — Microsoft Graph caps `$top` at 999 for `/users`. Tenants with > 999 users require pagination; the connector follows `@odata.nextLink` automatically. A tenant with 50k users completes in ≈ 50 paginated calls, well within a typical run window.
 
 5. **Group memberships and manager are deferred** — `/v1.0/groups`, `/v1.0/groups/{id}/transitiveMembers`, and `$expand=manager` provide org-graph data not in v1. Identity resolution is functional with `users` alone; group/manager are roadmap items.
+
+6. **`userType` is part of the allowlist by design** — `userType` distinguishes `Member` (internal employee) from `Guest` (external collaborator invited via B2B). It is an identity-resolution signal, not a personal-life attribute: the Identity Manager and downstream org-aware aggregations need to differentiate internal headcount from external vendors / partners / customers (e.g. Slack channels often include guest accounts that should not be folded into internal team metrics). The field is enumerated, low-cardinality, and carries no PII beyond the binary internal/external classification — collecting it does not change the privacy posture established by the allowlist.
 
 ---
 

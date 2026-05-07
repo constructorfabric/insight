@@ -14,7 +14,7 @@ Distinct from the `collaboration/m365` connector. m365 fetches **activity report
 
 > **Why a separate App Registration?**
 > A single App Registration accumulating `Reports.Read.All` + `User.Read.All` is a wide blast radius. Splitting per-purpose apps keeps audit trails clean (Entra sign-in logs show which app touched which API), simplifies rotation, and reduces what's at risk if a secret leaks.
-
+>
 > **Why `User.Read.All` and not `User.ReadBasic.All`?**
 > Identity resolution needs `proxyAddresses[]` (alternate emails — main signal for matching) and `employeeId` (cross-check with HR). Both are excluded from `User.ReadBasic.All`. The connector compensates with an explicit `$select` allowlist (see below) so the *actual* data volume collected stays small.
 
