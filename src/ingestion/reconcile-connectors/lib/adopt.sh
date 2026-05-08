@@ -252,8 +252,16 @@ for x in json.load(sys.stdin): print(x)')
     local conn_name; conn_name="$(reconcile_compute_connection_name "${name}")"
     local schedule;  schedule="$(reconcile_compute_schedule "${name}")"
     local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
+    # source_id_label is needed by the rendered CronWorkflow as
+    # `insight_source_id` for ingestion-pipeline. Pull from the
+    # connector's Secret annotation (set by apply.sh).
+    local source_id_label
+    source_id_label="$(kubectl -n "${INSIGHT_NAMESPACE}" get secret "${secret_name}" \
+      -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/source-id}' 2>/dev/null || true)"
+    [[ -n "${source_id_label}" ]] || source_id_label="main"
     # ADOPT_DRY_RUN guarded above (would_call branch).
-    if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
+    if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
+                                "${connector_dir}" "${source_id_label}" >/dev/null 2>&1; then
       log_line INFO "${name}: created Argo CronWorkflow ${name}-${tenant}-sync"
     else
       # ADOPT_DRY_RUN guarded above (would_call branch).
@@ -261,8 +269,10 @@ for x in json.load(sys.stdin): print(x)')
       return 1
     fi
   fi
-  # silence unused-arg shellcheck warnings
-  : "${workspace_id}" "${connector_dir}"
+  # silence unused-arg shellcheck warning (workspace_id is plumbed
+  # for symmetry with reconcile.sh; connector_dir is now consumed
+  # by the CronWorkflow render step above).
+  : "${workspace_id}"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-if-matched
   return 0
 }

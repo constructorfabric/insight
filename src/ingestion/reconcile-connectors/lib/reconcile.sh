@@ -1011,7 +1011,8 @@ print(json.dumps(d))
   tenant="$(reconcile_compute_tenant "${name}")"
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     log_line INFO "${name}: would create/update Argo CronWorkflow"
-  elif ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" >/dev/null 2>&1; then
+  elif ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
+                                  "${connector_dir}" "${source_id_label}" >/dev/null 2>&1; then
     log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
     rc=1
   fi
@@ -1020,7 +1021,8 @@ print(json.dumps(d))
   if [[ "${data_changed}" -eq 1 && "${opt_no_sync_trigger}" -ne 1 ]]; then
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       log_line INFO "${name}: would trigger a one-shot sync"
-    elif argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" >/dev/null 2>&1; then
+    elif argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" \
+                                   "${connector_dir}" "${source_id_label}" >/dev/null 2>&1; then
       log_line INFO "${name}: triggered a one-shot sync"
     else
       log_line ERROR "${name}: failed to trigger sync"
