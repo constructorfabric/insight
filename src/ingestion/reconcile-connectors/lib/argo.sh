@@ -48,7 +48,13 @@ argo_delete_cronworkflow() {
   local connector="$1" tenant="$2"
   local name="${connector}-${tenant}-sync"
   local del_out
-  if ! del_out="$(kubectl delete cronworkflow.argoproj.io/"${name}" --ignore-not-found 2>&1)"; then
+  # Pin the namespace explicitly. The rendered CronWorkflow lives in
+  # `metadata.namespace: ${INSIGHT_NAMESPACE}`; kubectl without `-n`
+  # falls back to the current context's default, and `--ignore-not-found`
+  # then silently no-ops when contexts disagree — leaving the orphan in
+  # place while the reconcile cascade believes it cleaned up.
+  if ! del_out="$(kubectl -n "${INSIGHT_NAMESPACE}" \
+        delete cronworkflow.argoproj.io/"${name}" --ignore-not-found 2>&1)"; then
     printf '%s: kubectl delete failed: %s\n' \
       "$name" "$del_out" >&2
     return 1

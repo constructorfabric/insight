@@ -31,7 +31,10 @@ def main() -> int:
         sys.stderr.write("split_docker_image_ref: expected 1 non-empty arg\n")
         return 2
     repo, tag = split_ref(sys.argv[1])
-    sys.stdout.write(f"{repo}\t{tag}")
+    # Trailing newline so bash `read repo tag` returns 0; without it the
+    # caller's `set -o pipefail` aborts cdk-build.sh after consuming the
+    # output but before the variables are used.
+    sys.stdout.write(f"{repo}\t{tag}\n")
     return 0
 
 

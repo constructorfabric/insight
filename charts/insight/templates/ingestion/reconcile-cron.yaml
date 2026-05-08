@@ -12,10 +12,25 @@ spec:
   schedule: {{ required "ingestion.reconcile.schedule is required" .Values.ingestion.reconcile.schedule | quote }}
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
+  # Bound history at the CronWorkflow level so the per-tick Workflows
+  # don't accumulate forever in etcd (per cpt-insightspec-fr-leak-free-loop;
+  # 96 ticks/day at the */15 default would otherwise pile up).
+  successfulJobsHistoryLimit: {{ default 3 .Values.ingestion.reconcile.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit:     {{ default 3 .Values.ingestion.reconcile.failedJobsHistoryLimit }}
   workflowSpec:
     serviceAccountName: {{ include "insight.fullname" . }}-reconcile
     entrypoint: run
     activeDeadlineSeconds: 1800
+    # Garbage-collect both Workflow CRs and their pods after completion.
+    # Without ttlStrategy + podGC, completed Workflows linger in etcd and
+    # the pods stay Completed in the namespace, defeating the leak-free
+    # loop guarantee in PRD §5.6.
+    ttlStrategy:
+      secondsAfterCompletion: {{ default 1800 .Values.ingestion.reconcile.ttlSecondsAfterCompletion }}
+      secondsAfterSuccess:    {{ default 600  .Values.ingestion.reconcile.ttlSecondsAfterSuccess }}
+      secondsAfterFailure:    {{ default 3600 .Values.ingestion.reconcile.ttlSecondsAfterFailure }}
+    podGC:
+      strategy: OnPodCompletion
     {{- with .Values.global.imagePullSecrets }}
     imagePullSecrets:
       {{- toYaml . | nindent 6 }}

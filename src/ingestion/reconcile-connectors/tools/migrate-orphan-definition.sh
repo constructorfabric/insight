@@ -121,7 +121,14 @@ for c in json.load(sys.stdin):
   while IFS= read -r conn_line; do
     [[ -n "${conn_line}" ]] || continue
     conn_id="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["connectionId"])')"
-    state_blob="$(ab_get_state "${conn_id}" || printf '{}')"
+    # Fail fast on state export errors — silently substituting `{}` would
+    # let the migration recreate connections without their cursors and
+    # silently restart streams from scratch (data loss / duplicates).
+    if ! state_blob="$(ab_get_state "${conn_id}")"; then
+      printf 'ab_get_state failed for connection %s — aborting migration to preserve cursors\n' \
+        "${conn_id}" >&2
+      exit 1
+    fi
     python3 -c '
 import sys, json
 src_name = sys.argv[1]
@@ -145,21 +152,40 @@ NEW_DEF_ID="$(ab_builder_publish \
 [[ -n "${NEW_DEF_ID}" ]] || { printf 'builder publish failed\n' >&2; exit 1; }
 printf 'created new builder=%s new_def=%s\n' "${NEW_BUILDER_ID}" "${NEW_DEF_ID}" >&2
 
-# 4. Per source: delete (cascades conns) + recreate against new_def_id.
+# 4. Per source: CREATE the replacement first under a temporary name
+#    (Airbyte forbids two sources with the same name in one workspace),
+#    then we'll rename + delete the old one only after the new resource
+#    is fully provisioned. Old source is kept until the very last step
+#    (#6) so a mid-flow failure leaves the cluster in a recoverable
+#    state instead of losing connections + cursors.
 declare -A NEW_SOURCE_BY_NAME=()
+declare -A OLD_SOURCE_ID_BY_NAME=()
+declare -A NEW_SOURCE_TMP_NAME_BY_NAME=()
 SRC_MIGRATED=0
 while IFS= read -r src_line; do
   [[ -n "${src_line}" ]] || continue
   old_src_id="$(printf '%s' "${src_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["sourceId"])')"
   src_name="$(printf '%s' "${src_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["name"])')"
   cfg_json="$(printf '%s' "${src_line}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin).get("connectionConfiguration",{})))')"
-  ab_delete_source "${old_src_id}" >/dev/null
-  new_src_json="$(ab_create_source "${WORKSPACE_ID}" "${NEW_DEF_ID}" \
-    "${src_name}" "${cfg_json}")"
+  tmp_name="${src_name}-migrating-$$"
+  if ! new_src_json="$(ab_create_source "${WORKSPACE_ID}" "${NEW_DEF_ID}" \
+        "${tmp_name}" "${cfg_json}")"; then
+    printf '  ERROR: ab_create_source failed for %s; old source %s NOT touched, aborting\n' \
+      "${src_name}" "${old_src_id}" >&2
+    exit 1
+  fi
   new_src_id="$(printf '%s' "${new_src_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceId",""))')"
+  if [[ -z "${new_src_id}" ]]; then
+    printf '  ERROR: empty sourceId from ab_create_source for %s; old source %s NOT touched, aborting\n' \
+      "${src_name}" "${old_src_id}" >&2
+    exit 1
+  fi
   NEW_SOURCE_BY_NAME["${src_name}"]="${new_src_id}"
+  OLD_SOURCE_ID_BY_NAME["${src_name}"]="${old_src_id}"
+  NEW_SOURCE_TMP_NAME_BY_NAME["${src_name}"]="${tmp_name}"
   SRC_MIGRATED=$((SRC_MIGRATED + 1))
-  printf '  source migrated: %s old=%s new=%s\n' "${src_name}" "${old_src_id}" "${new_src_id}" >&2
+  printf '  source replacement created (under tmp name): %s old=%s new=%s\n' \
+    "${src_name}" "${old_src_id}" "${new_src_id}" >&2
 done < "${WORKDIR}/old_sources.ndjson"
 
 # 5. Per preserved connection: recreate on matching new source + restore state.
@@ -212,10 +238,29 @@ for t in c.get("tags") or []:
   printf '  connection migrated: %s new=%s\n' "${conn_name}" "${new_conn_id}" >&2
 done < "${WORKDIR}/conn_states.ndjson"
 
-# 6. Drop the old orphan definition.
+# 6. Cut over: delete old sources (cascades the now-orphan old
+#    connections), then rename the temp-named replacements to their
+#    canonical names. This is the only destructive step; everything
+#    above creates new resources without touching the originals.
+for src_name in "${!OLD_SOURCE_ID_BY_NAME[@]}"; do
+  old_src_id="${OLD_SOURCE_ID_BY_NAME[${src_name}]}"
+  new_src_id="${NEW_SOURCE_BY_NAME[${src_name}]}"
+  ab_delete_source "${old_src_id}" >/dev/null
+  # `ab_update_source` requires a connectionConfiguration; for a rename
+  # we want to PATCH only `name`. Use partial_update endpoint directly.
+  ab__curl POST /api/v1/sources/partial_update \
+    "$(python3 -c '
+import sys, json
+print(json.dumps({"sourceId": sys.argv[1], "name": sys.argv[2]}))
+' "${new_src_id}" "${src_name}")" >/dev/null
+  printf '  cutover: deleted old %s (%s), renamed new %s -> %s\n' \
+    "${src_name}" "${old_src_id}" "${new_src_id}" "${src_name}" >&2
+done
+
+# 7. Drop the old orphan definition (no sources reference it now).
 ab_delete_source_definition "${OLD_DEF_ID}" >/dev/null
 printf 'deleted old orphan definition: %s\n' "${OLD_DEF_ID}" >&2
 
-# 7. Summary.
+# 8. Summary.
 printf 'migration done: connector=%s sources_migrated=%s connections_migrated=%s state_restored=yes\n' \
   "${CONNECTOR_NAME}" "${SRC_MIGRATED}" "${CONN_MIGRATED}"

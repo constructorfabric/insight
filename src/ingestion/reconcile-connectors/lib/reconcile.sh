@@ -128,11 +128,11 @@ reconcile_compute_tenant() {
     return 0
   fi
   local secret_file
-  secret_file="$(mktemp -t insight-reconcile.XXXXXX)"
-  trap "rm -f '${secret_file}'" RETURN
+  secret_file="$(mktemp -t insight-reconcile.XXXXXX)" || { printf 'default'; return 0; }
   kubectl -n "${namespace}" get secret "${secret_name}" -o json > "${secret_file}" 2>/dev/null || true
   python3 "${_RECONCILE_PY_DIR}/resolve_tenant.py" \
     --secret-json "${secret_file}" 2>/dev/null || printf 'default'
+  rm -f "${secret_file}"   # explicit cleanup; sourced libs MUST NOT install RETURN traps
 }
 
 # ---------------------------------------------------------------------------
@@ -531,9 +531,21 @@ for s in json.load(sys.stdin):
         reconcile__log CHANGE "${connector_name}" \
           "would recreate source ${source_id} (config change is breaking — state preserved across recreate)"
       else
-        reconcile_recreate_with_state "" "${source_id}" "${definition_id}" \
-          "${expected_source_name}" "${target_cfg_json}" "${secret_cfg_hash}" \
-          "${connector_name}"
+        local recreate_result new_src_id
+        if ! recreate_result="$(reconcile_recreate_with_state "" "${source_id}" "${definition_id}" \
+              "${expected_source_name}" "${target_cfg_json}" "${secret_cfg_hash}" \
+              "${connector_name}")"; then
+          reconcile__log ERROR "${connector_name}" \
+            "reconcile_recreate_with_state failed for source ${source_id}"
+          return 1
+        fi
+        # recreate_result last line is `<new_source_id>\t<new_connection_id>`.
+        new_src_id="$(printf '%s' "${recreate_result}" | tail -1 | awk -F'\t' '{print $1}')"
+        if [[ -n "${new_src_id}" ]]; then
+          # Use the NEW source id for the rest of the layer; the old one
+          # was deleted inside reconcile_recreate_with_state.
+          source_id="${new_src_id}"
+        fi
         _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
       fi
       ;;
@@ -850,13 +862,27 @@ _reconcile_one_connector() {
   fi
 
   # Missing Secret -> cascade-delete chain (per ADR-0007 / KEY DECISION #7).
-  if valsec_secret_missing_p "${name}"; then
-    if ! reconcile_cascade_delete "${name}"; then
-      return 1
-    fi
-    _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
-    return 0
-  fi
+  # Distinguish exit codes: 0=missing, 1=exists, 2=transient API failure.
+  # Only act on 0 — treating 2 as "missing" would cascade-delete prod
+  # sources on a flaky kubectl/RBAC blip.
+  local _missing_rc
+  valsec_secret_missing_p "${name}"
+  _missing_rc=$?
+  case ${_missing_rc} in
+    0)
+      if ! reconcile_cascade_delete "${name}"; then
+        return 1
+      fi
+      _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      return 0
+      ;;
+    2)
+      log_line WARN "${name}: secret lookup failed (transient API error) — skipping this run, will retry next tick"
+      _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
+      return 0
+      ;;
+  esac
+  # rc=1 → secret exists, fall through to layer reconciliation.
 
   # Invalid Secret -> WARN + skip (per ADR-0007 / KEY DECISION #7).
   local missing_field=""
@@ -949,7 +975,11 @@ print(json.dumps(d))
   #      genuine reason to re-sync (the new credentials may scope to a
   #      different account / dataset).
   local conn_result conn_action
-  conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}")"
+  if ! conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}")"; then
+    log_line ERROR "${name}: failed to reconcile connection"
+    _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
+    return 1
+  fi
   conn_action="$(printf '%s' "${conn_result}" | tail -1 | cut -f1)"
   case "${conn_action}" in
     created)

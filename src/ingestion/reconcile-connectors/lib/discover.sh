@@ -116,16 +116,30 @@ disc_compute_cfg_hash() {
 # ---------------------------------------------------------------------------
 # disc_match_descriptor_to_secret <connector_name> [namespace]
 # Echoes the K8s Secret name whose annotation
-# `insight.cyberfabric.com/connector` == <connector_name>. Empty string
-# + non-zero exit if no match.
+# `insight.cyberfabric.com/connector` == <connector_name>.
+# Exit:
+#   0  match found; name on stdout.
+#   1  no Secret matches (genuine "missing"; safe for cascade-delete).
+#   2  kubectl/API failure (transient). Caller MUST NOT treat as
+#      "missing" — destructive cascade-delete callers gate on this.
 # ---------------------------------------------------------------------------
 disc_match_descriptor_to_secret() {
   local connector_name="$1"
   local namespace="${2:-${INSIGHT_NAMESPACE}}"
+  # Run kubectl out-of-pipe so its rc is observable. Otherwise a
+  # transient API failure ($? from inside `cmd | python`) gets masked
+  # and the caller's cascade-delete fires on a healthy secret.
+  local list_json kubectl_rc
+  list_json="$(kubectl -n "${namespace}" get secret \
+                -l "${SECRET_LABEL_SELECTOR}" -o json 2>/dev/null)"
+  kubectl_rc=$?
+  if [[ ${kubectl_rc} -ne 0 ]]; then
+    printf 'disc_match_descriptor_to_secret: kubectl failed listing secrets in ns %s (rc=%d)\n' \
+      "${namespace}" "${kubectl_rc}" >&2
+    return 2
+  fi
   local match
-  match="$(kubectl -n "${namespace}" get secret \
-            -l "${SECRET_LABEL_SELECTOR}" -o json 2>/dev/null \
-          | python3 -c '
+  match="$(printf '%s' "${list_json}" | python3 -c '
 import sys, json
 target = sys.argv[1]
 data = json.load(sys.stdin)

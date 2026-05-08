@@ -117,11 +117,13 @@ ab_get_token() {
   fi
 
   # Atomic write: tmp file in same dir, then mv. Mode 600 throughout.
-  tmp="$(mktemp "${cache}.XXXXXX")"
-  trap "rm -f '${tmp}'" RETURN
-  chmod 600 "$tmp"
-  printf '%s' "$token" > "$tmp"
-  mv "$tmp" "$cache"
+  # NOTE: a `trap RETURN` from a sourced library would clobber the
+  # caller's RETURN trap and keep firing on every later function return.
+  # Use explicit cleanup at every return path instead.
+  tmp="$(mktemp "${cache}.XXXXXX")" || return 1
+  if ! chmod 600 "$tmp"; then rm -f "$tmp"; return 1; fi
+  if ! printf '%s' "$token" > "$tmp"; then rm -f "$tmp"; return 1; fi
+  if ! mv "$tmp" "$cache"; then rm -f "$tmp"; return 1; fi
   printf '%s' "$token"
 }
 

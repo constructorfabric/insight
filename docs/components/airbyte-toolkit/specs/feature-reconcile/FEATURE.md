@@ -663,14 +663,17 @@ When iterating definitions, skip those with `custom != true`. Insight namespace 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-version-bump-applied`
 
-The system **MUST** propagate a `descriptor.yaml.version` change to `definition.declarativeManifest.description` (nocode) or `dockerImageTag` (CDK) in Airbyte on the next reconcile invocation, without recreating dependent sources or connections.
+The system **MUST** propagate a definition drift to Airbyte on the next reconcile invocation, without recreating dependent sources or connections. The trigger differs by connector type:
+
+- **NoCode** — `descriptor.yaml.version` change → `definition.declarativeManifest.description` updated via `declarative_source_definitions/create_manifest` (with `setAsActiveManifest: true`). The legacy `connector_builder_projects/update_active_manifest` endpoint was retired in Airbyte 1.7+.
+- **CDK** — `descriptor.yaml.cdk_image` change (the full image reference, per ADR-0011) → `definition.dockerRepository` + `definition.dockerImageTag` updated via `source_definitions/update`. `descriptor.yaml.version` is the Insight semantic-version label and does NOT drive the CDK image; it stays for audit / Argo labels.
 
 **Implements**:
 - `cpt-insightspec-flow-reconcile-run-reconcile-v2`
 - `cpt-insightspec-algo-reconcile-diff-definition-version`
 
 **Touches**:
-- API: `POST /api/v1/connector_builder_projects/update_active_manifest`
+- API: `POST /api/v1/declarative_source_definitions/create_manifest` (nocode), `POST /api/v1/source_definitions/update` (CDK)
 - Entities: `definition`
 
 ### Config Drift Detected and Applied

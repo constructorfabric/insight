@@ -27,9 +27,8 @@ valsec_check_secret() {
   if [[ -z "${secret_name}" ]]; then
     return 2
   fi
-  local stringdata_file
-  stringdata_file="$(mktemp -t insight-reconcile.XXXXXX)"
-  trap "rm -f '${stringdata_file}'" RETURN
+  local stringdata_file rc
+  stringdata_file="$(mktemp -t insight-reconcile.XXXXXX)" || return 2
   kubectl -n "${namespace}" get secret "${secret_name}" -o json \
     | python3 "${VALSEC_PY_DIR}/extract_secret_data.py" \
     > "${stringdata_file}"
@@ -39,18 +38,41 @@ valsec_check_secret() {
   python3 "${VALSEC_PY_DIR}/validate_secret.py" \
     --descriptor "${connector_dir}/descriptor.yaml" \
     --secret-stringdata "${stringdata_file}"
+  rc=$?
+  # Sourced libraries MUST NOT install `trap … RETURN` (it would
+  # clobber the caller's traps and fire on every later function return).
+  # Clean up explicitly here.
+  rm -f "${stringdata_file}"
+  return ${rc}
 }
 
 # valsec_secret_missing_p <connector_name> [namespace]
-# Returns 0 if Secret entirely missing (cascade-delete trigger), 1 otherwise.
+# Returns:
+#   0  Secret entirely missing → caller may cascade-delete.
+#   1  Secret exists.
+#   2  kubectl/API failure (transient). Caller MUST NOT treat as
+#      "missing" — destructive cascade-delete must skip this iteration.
 # Per ADR-0007: lookup by annotation insight.cyberfabric.com/connector;
 # never by `kubectl get secret ${connector_slug}` directly.
 valsec_secret_missing_p() {
   local connector="$1"
   local namespace="${2:-${INSIGHT_NAMESPACE}}"
-  local secret_name
-  if ! secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null)"; then
-    return 0
-  fi
-  [[ -z "${secret_name}" ]]
+  local secret_name rc
+  secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null)"
+  rc=$?
+  case ${rc} in
+    0)
+      # match returned; consider the Secret missing only if name is empty.
+      [[ -z "${secret_name}" ]]
+      ;;
+    1)
+      # genuine "no match" from disc_match — Secret is really missing.
+      return 0
+      ;;
+    *)
+      # 2 (kubectl/API transient) or anything unexpected: do NOT report
+      # missing; let the caller skip the cascade-delete branch.
+      return 2
+      ;;
+  esac
 }
