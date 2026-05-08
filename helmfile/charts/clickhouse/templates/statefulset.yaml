@@ -61,18 +61,31 @@ spec:
             - name: init
               mountPath: /docker-entrypoint-initdb.d
               readOnly: true
+          # CH `/ping` can exceed the k8s default `timeoutSeconds: 1` under
+          # sustained bulk-insert load (initial Airbyte backfill, large
+          # connector syncs, dbt full-refresh). Defaults here give CH
+          # 5s × 30s × 6 = ~3 min of slow `/ping` before kubelet kills the
+          # pod (liveness) and a tighter 3s × 10s for readiness so Service
+          # traffic reflects pod capacity quickly without flapping. See
+          # #275 B10. Operators can override the timings via
+          # `clickhouse.livenessProbe.*` / `readinessProbe.*` in the
+          # umbrella values.
           livenessProbe:
             httpGet:
               path: /ping
               port: http
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds  | default 10 }}
+            periodSeconds:       {{ .Values.livenessProbe.periodSeconds        | default 30 }}
+            timeoutSeconds:      {{ .Values.livenessProbe.timeoutSeconds       | default 5  }}
+            failureThreshold:    {{ .Values.livenessProbe.failureThreshold     | default 6  }}
           readinessProbe:
             httpGet:
               path: /ping
               port: http
-            initialDelaySeconds: 5
-            periodSeconds: 5
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds | default 5  }}
+            periodSeconds:       {{ .Values.readinessProbe.periodSeconds       | default 10 }}
+            timeoutSeconds:      {{ .Values.readinessProbe.timeoutSeconds      | default 3  }}
+            failureThreshold:    {{ .Values.readinessProbe.failureThreshold    | default 3  }}
       volumes:
         - name: init
           configMap:

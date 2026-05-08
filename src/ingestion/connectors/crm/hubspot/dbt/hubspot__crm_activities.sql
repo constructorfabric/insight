@@ -8,7 +8,13 @@
     tags=['hubspot', 'silver:class_crm_activities']
 ) }}
 
+-- Live + archived sibling Bronze tables UNION ALL'd per engagement type;
+-- meetings has no archived sibling because HubSpot returns 400 on
+-- /crm/v3/objects/meetings?archived=true ("Paging through deleted objects
+-- is not yet supported"). `_version = greatest(updatedAt, archivedAt)` so
+-- an archive event outranks the prior live update under ReplacingMergeTree.
 WITH calls AS (
+    {% for tbl in ['engagements_calls', 'engagements_calls_archived'] %}
     SELECT
         tenant_id,
         source_id,
@@ -22,7 +28,7 @@ WITH calls AS (
         -- Deterministic fallback so timestamp never NULLs: try hs_timestamp,
         -- then createdAt, finally epoch 0 so Silver schema `not_null` holds.
         coalesce(
-            properties_hs_timestamp,
+            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
             createdAt,
             toDateTime64(0, 3)
         )                                               AS timestamp,
@@ -38,16 +44,18 @@ WITH calls AS (
             'direction',      coalesce(toString(properties_hs_call_direction), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        custom_fields,
         createdAt                                       AS created_at,
         data_source,
-        coalesce(
-            toUnixTimestamp64Milli(updatedAt),
-            0
+        greatest(
+            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
+            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
         ) AS _version
-    FROM {{ source('bronze_hubspot', 'engagements_calls') }}
+    FROM {{ source('bronze_hubspot', tbl) }}
+    {% if not loop.last %}UNION ALL{% endif %}
+    {% endfor %}
 ),
 emails AS (
+    {% for tbl in ['engagements_emails', 'engagements_emails_archived'] %}
     SELECT
         tenant_id,
         source_id,
@@ -61,7 +69,7 @@ emails AS (
         -- Deterministic fallback so timestamp never NULLs: try hs_timestamp,
         -- then createdAt, finally epoch 0 so Silver schema `not_null` holds.
         coalesce(
-            properties_hs_timestamp,
+            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
             createdAt,
             toDateTime64(0, 3)
         )                                               AS timestamp,
@@ -72,16 +80,19 @@ emails AS (
             'direction',      coalesce(toString(properties_hs_email_direction), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        custom_fields,
         createdAt                                       AS created_at,
         data_source,
-        coalesce(
-            toUnixTimestamp64Milli(updatedAt),
-            0
+        greatest(
+            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
+            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
         ) AS _version
-    FROM {{ source('bronze_hubspot', 'engagements_emails') }}
+    FROM {{ source('bronze_hubspot', tbl) }}
+    {% if not loop.last %}UNION ALL{% endif %}
+    {% endfor %}
 ),
 meetings AS (
+    -- engagements_meetings_archived intentionally absent: HubSpot returns
+    -- HTTP 400 on /crm/v3/objects/meetings?archived=true.
     SELECT
         tenant_id,
         source_id,
@@ -93,9 +104,10 @@ meetings AS (
         nullIf(arrayElement(JSONExtract(coalesce(associations_deals, '[]'), 'Array(String)'), 1), '')     AS deal_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1), '') AS account_id,
         -- Deterministic fallback: meeting_start → hs_timestamp → createdAt → epoch 0.
+        -- Properties come as Nullable(String); parse before use.
         coalesce(
-            properties_hs_meeting_start_time,
-            properties_hs_timestamp,
+            parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_start_time), 3),
+            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
             createdAt,
             toDateTime64(0, 3)
         )                                               AS timestamp,
@@ -105,8 +117,8 @@ meetings AS (
             WHEN properties_hs_meeting_end_time IS NOT NULL
              AND properties_hs_meeting_start_time IS NOT NULL
             THEN intDiv(
-                toUnixTimestamp64Milli(properties_hs_meeting_end_time)
-                  - toUnixTimestamp64Milli(properties_hs_meeting_start_time),
+                toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_end_time), 3))
+                  - toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_start_time), 3)),
                 1000
             )
             ELSE NULL
@@ -117,7 +129,6 @@ meetings AS (
             'location',       coalesce(toString(properties_hs_meeting_location), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        custom_fields,
         createdAt                                       AS created_at,
         data_source,
         coalesce(
@@ -127,6 +138,7 @@ meetings AS (
     FROM {{ source('bronze_hubspot', 'engagements_meetings') }}
 ),
 tasks AS (
+    {% for tbl in ['engagements_tasks', 'engagements_tasks_archived'] %}
     SELECT
         tenant_id,
         source_id,
@@ -140,7 +152,7 @@ tasks AS (
         -- Deterministic fallback so timestamp never NULLs: try hs_timestamp,
         -- then createdAt, finally epoch 0 so Silver schema `not_null` holds.
         coalesce(
-            properties_hs_timestamp,
+            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
             createdAt,
             toDateTime64(0, 3)
         )                                               AS timestamp,
@@ -152,14 +164,15 @@ tasks AS (
             'type',           coalesce(toString(properties_hs_task_type), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        custom_fields,
         createdAt                                       AS created_at,
         data_source,
-        coalesce(
-            toUnixTimestamp64Milli(updatedAt),
-            0
+        greatest(
+            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
+            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
         ) AS _version
-    FROM {{ source('bronze_hubspot', 'engagements_tasks') }}
+    FROM {{ source('bronze_hubspot', tbl) }}
+    {% if not loop.last %}UNION ALL{% endif %}
+    {% endfor %}
 ),
 combined AS (
     SELECT * FROM calls

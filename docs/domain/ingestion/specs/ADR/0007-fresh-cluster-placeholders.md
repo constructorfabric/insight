@@ -59,14 +59,43 @@ Rules for the placeholder:
    the eventually-built table.
 3. **Idempotent** — guarded with `ch_table_exists` so re-runs of
    `init.sh` are safe.
-4. **Replaced on first real run.** Airbyte (for bronze) and dbt (for
-   silver) drop the placeholder and recreate with the real schema.
-   ClickHouse rebinds VIEW resolution on each SELECT, so the table
-   replacement is invisible to consumers.
+4. **Replaced on first real run.**
+   - **Bronze placeholders** are dropped and recreated by Airbyte's
+     destination on the first sync — Airbyte's connector contract owns
+     the bronze schema and overwrites whatever the placeholder shipped.
+   - **Silver placeholders** are *not* automatically replaced by dbt's
+     incremental materialization (which `INSERT INTO`s an existing
+     relation). To force replacement on the first real dbt run when
+     staging has been materialised, every silver placeholder is
+     created with the table comment `INSIGHT_PLACEHOLDER_v1`, and the
+     project-level `on-run-start` hook
+     `drop_silver_placeholders_at_start` (in
+     `src/ingestion/dbt/macros/drop_silver_placeholders_at_start.sql`)
+     drops any silver target that matches a **three-factor**
+     signature: marker + zero rows + at least one staging model with
+     tag `silver:<identifier>` materialised. The third factor is
+     required because `union_by_tag`'s no-source-tables fallback
+     emits `SELECT * FROM {{ this }} WHERE 1 = 0` to preserve schema
+     — dropping the target before staging exists would break that
+     fallback (`Code: 60 UNKNOWN_TABLE`). When the third factor
+     fails, the placeholder is preserved and the silver materialise
+     becomes a no-op (incremental INSERT of zero rows). The hook
+     runs in `on-run-start` (not a per-model `pre-hook`) because
+     dbt-clickhouse captures the target's existence at the start of
+     materialization for `is_incremental()` — dropping inside a
+     pre_hook leaves `is_incremental` as `True` and the compiled
+     SQL still references the now-dropped target, producing a
+     `SYNTAX_ERROR`. dbt's
+     incremental materialization then sees no existing relation and
+     creates the table with the model's full schema, engine, and
+     ORDER BY.
+   - ClickHouse rebinds VIEW resolution on each SELECT, so the
+     replacement is invisible to gold-view consumers.
 
 When adding a NEW migration that references a NEW silver / bronze
 table, the migration author MUST also extend `create-bronze-placeholders.sh`
-with a placeholder for that table.
+with a placeholder for that table. Silver placeholders MUST end with
+`COMMENT 'INSIGHT_PLACEHOLDER_v1'` so the drop hook can pick them up.
 
 ## Consequences
 
@@ -82,7 +111,13 @@ with a placeholder for that table.
 - The placeholder schema **drifts** from the dbt-model / Airbyte
   schema between PRs. If a placeholder is missing a column the new
   migration references, the install fails until someone extends the
-  placeholder. Detection is live-test: there is no static check.
+  placeholder. Detection is live-test: there is no static check. The
+  silver `drop_silver_placeholders_at_start` on-run-start hook mitigates one branch
+  of this — schema mismatch between placeholder and dbt staging output
+  no longer corrupts silver writes, because the placeholder is dropped
+  before the first real INSERT — but it does not detect a placeholder
+  missing a column the migration's gold-view SELECT references at
+  init.sh time.
 - The placeholder list **grows monotonically**. As migrations
   accumulate, so does the list. There is no automatic cleanup when a
   migration is removed.
@@ -104,6 +139,12 @@ follow-ups are possible:
 Either follow-up is significantly larger than the placeholder
 convention and was deliberately deferred so the bring-up path could
 be unblocked without committing to an architectural redesign.
+
+When the first follow-up lands, the silver placeholder blocks in
+`scripts/create-bronze-placeholders.sh` AND the
+`drop_silver_placeholders_at_start` macro + project-level on-run-start hook MUST be
+removed in the same PR — the comment markers and the dbt-side drop
+become dead code once silver tables are no longer pre-stubbed.
 
 ## References
 

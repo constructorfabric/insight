@@ -7,6 +7,26 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+/// Walk an error and its `source()` chain looking for a missing-source
+/// signature in any layer's `Display` output. Defends against the case
+/// where `clickhouse` v0.14 wraps the server-side `Code: 81./60.` line
+/// inside a higher-level variant whose own `Display` text drops it.
+fn error_chain_contains_missing_source(e: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    while let Some(layer) = cur {
+        let s = layer.to_string();
+        if s.contains("UNKNOWN_DATABASE")
+            || s.contains("UNKNOWN_TABLE")
+            || s.contains("Code: 81.")
+            || s.contains("Code: 60.")
+        {
+            return true;
+        }
+        cur = layer.source();
+    }
+    false
+}
+
 /// Raw row from `bronze_bamboohr.employees`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,7 +142,6 @@ impl PeopleStore {
         let raw_bytes = match cursor.collect().await {
             Ok(bytes) => bytes,
             Err(e) => {
-                let msg = e.to_string();
                 // CH 25.x error codes for missing source: 81 = UNKNOWN_DATABASE,
                 // 60 = UNKNOWN_TABLE. The clickhouse v0.14 Rust client does not
                 // expose numeric codes as a typed accessor (the error enum has
@@ -130,16 +149,19 @@ impl PeopleStore {
                 // ends up in `Display`), so we string-match the canonical name
                 // AND the numeric code prefix to defend against locale changes
                 // and against future formatting tweaks dropping the symbolic
-                // name. If the upstream crate ever surfaces a typed code we
-                // should switch to that; until then this is the supported
-                // fallback per the crate's docs.
-                let missing_source = msg.contains("UNKNOWN_DATABASE")
-                    || msg.contains("UNKNOWN_TABLE")
-                    || msg.contains("Code: 81.")
-                    || msg.contains("Code: 60.");
+                // name.
+                //
+                // Walk the full source-chain: clickhouse v0.14 may wrap a
+                // server error inside a higher-level variant whose own
+                // `Display` only prints the wrapper text (no Code: line) —
+                // checking each layer catches the inner-source case. If the
+                // upstream crate ever surfaces a typed code we should switch
+                // to that; until then this is the supported fallback per the
+                // crate's docs.
+                let missing_source = error_chain_contains_missing_source(&e);
                 if missing_source {
                     tracing::warn!(
-                        error = %msg,
+                        error = %e,
                         "bronze_bamboohr.employees not present yet — starting with an empty PeopleStore. \
                          Restart this pod after the first bamboohr Airbyte sync to load people."
                     );

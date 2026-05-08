@@ -8,7 +8,11 @@
     tags=['hubspot', 'silver:class_crm_accounts']
 ) }}
 
+-- Live (`companies`) and archived (`companies_archived`) are sibling Bronze tables;
+-- ReplacingMergeTree on `unique_key` dedups, with `_version = greatest(updatedAt, archivedAt)`
+-- so an archive event always outranks the prior live update.
 WITH src AS (
+    {% for tbl in ['companies', 'companies_archived'] %}
     SELECT
         tenant_id,
         source_id,
@@ -18,8 +22,7 @@ WITH src AS (
         properties_domain                               AS domain,
         properties_industry                             AS industry,
         properties_hubspot_owner_id                     AS owner_id,
-        -- HubSpot has no native parent-account hierarchy in v3;
-        -- parent_account_id stays NULL so Silver schema fit matches Salesforce.
+        -- HubSpot has no native parent-account hierarchy in v3.
         CAST(NULL AS Nullable(String))                  AS parent_account_id,
         toJSONString(map(
             'city',              coalesce(toString(properties_city), ''),
@@ -29,12 +32,16 @@ WITH src AS (
             'annualrevenue',     coalesce(toString(properties_annualrevenue), ''),
             'archived',          toString(coalesce(archived, false))
         ))                                              AS metadata,
-        custom_fields,
         createdAt                                       AS created_at,
         updatedAt                                       AS updated_at,
         data_source,
-        coalesce(toUnixTimestamp64Milli(updatedAt), 0)  AS _version
-    FROM {{ source('bronze_hubspot', 'companies') }}
+        greatest(
+            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
+            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
+        )                                               AS _version
+    FROM {{ source('bronze_hubspot', tbl) }}
+    {% if not loop.last %}UNION ALL{% endif %}
+    {% endfor %}
 )
 {% if is_incremental() %}
 SELECT src.*

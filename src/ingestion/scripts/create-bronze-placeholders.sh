@@ -63,7 +63,20 @@ SQL
 # ---------------------------------------------------------------------------
 # silver.* dbt-model placeholders
 # ---------------------------------------------------------------------------
-
+#
+# Each silver placeholder carries `COMMENT 'INSIGHT_PLACEHOLDER_v1'` so the
+# dbt `drop_silver_placeholders_at_start` macro (see
+# src/ingestion/dbt/macros/drop_silver_placeholders_at_start.sql) can detect
+# and drop it on the first real dbt run via the project-level
+# `on-run-start` hook, before the silver model rebuilds the table with its
+# full schema. This is the bridge that keeps placeholder schema drift from
+# corrupting silver writes.
+#
+# The marker + the macro can be retired once gold-view migrations are
+# split into a post-dbt phase (Variant A in ADR-0007's "Better fixes"
+# section) — at that point silver tables will be created exclusively by
+# dbt, never as init.sh stubs.
+#
 # silver.class_comms_events — gold-views (gold-views.sql) references this
 if ! ch_table_exists silver class_comms_events; then
   echo "  Creating placeholder: silver.class_comms_events"
@@ -74,7 +87,7 @@ CREATE TABLE IF NOT EXISTS silver.class_comms_events (
     emails_sent   Float64,
     source        String,
     _version      UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (user_email, activity_date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (user_email, activity_date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -94,7 +107,7 @@ CREATE TABLE IF NOT EXISTS silver.class_focus_metrics (
     focus_time_pct        Float64,
     dev_time_h            Float64,
     _version              UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -112,7 +125,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_email_activity (
     received_count    Float64,
     read_count        Float64,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -133,7 +146,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_meeting_activity (
     video_duration_seconds         Float64,
     screen_share_duration_seconds  Float64,
     _version                       UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -151,7 +164,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_chat_activity (
     channel_messages_posted_count Float64,
     channel_posts                 Float64,
     _version                      UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -169,7 +182,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_document_activity (
     shared_externally_count  Float64,
     viewed_or_edited_count   Float64,
     _version                 UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -196,7 +209,79 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     session_count        Nullable(Float64),
     total_chat_messages  Nullable(Float64),
     _version             UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_ai_api_usage — programmatic AI API token usage (Claude Admin
+# messages_usage; future OpenAI). Schema mirrors `silver/ai/class_ai_api_usage`
+# dbt model order_by=['unique_key'] config — email is always NULL by design
+# (API keys can't be attributed to users at request time; resolution happens
+# in Silver Step 2 via api_key_id → person_id). dbt drops & replaces this
+# placeholder on first run.
+if ! ch_table_exists silver class_ai_api_usage; then
+  echo "  Creating placeholder: silver.class_ai_api_usage"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_ai_api_usage (
+    insight_tenant_id     Nullable(String),
+    source_id             Nullable(String),
+    unique_key            String,
+    email                 Nullable(String),
+    api_key_id            Nullable(String),
+    workspace_id          Nullable(String),
+    day                   Nullable(Date),
+    provider              String,
+    channel               String,
+    input_tokens          Nullable(UInt64),
+    output_tokens         Nullable(UInt64),
+    cache_read_tokens     Nullable(UInt64),
+    cache_creation_tokens Nullable(UInt64),
+    cost_amount           Nullable(Decimal(18, 4)),
+    cost_currency         Nullable(String),
+    source                String,
+    data_source           String,
+    collected_at          Nullable(DateTime64(3)),
+    _version              UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_ai_assistant_usage — per-person per-day AI assistant surface
+# usage (Claude Enterprise chat / cowork / office / cross). One row per
+# (tenant, email, day, surface). Schema mirrors `silver/ai/class_ai_assistant_usage`
+# dbt model order_by=['unique_key'] config. dbt drops & replaces this
+# placeholder on first run.
+if ! ch_table_exists silver class_ai_assistant_usage; then
+  echo "  Creating placeholder: silver.class_ai_assistant_usage"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_ai_assistant_usage (
+    insight_tenant_id        String,
+    source_id                String,
+    unique_key               String,
+    email                    String,
+    day                      Date,
+    tool                     String,
+    surface                  String,
+    session_count            Nullable(UInt32),
+    conversation_count       Nullable(UInt32),
+    message_count            Nullable(UInt32),
+    action_count             Nullable(UInt32),
+    files_uploaded_count     Nullable(UInt32),
+    artifacts_created_count  Nullable(UInt32),
+    projects_created_count   Nullable(UInt32),
+    projects_used_count      Nullable(UInt32),
+    skills_used_count        Nullable(UInt32),
+    connectors_used_count    Nullable(UInt32),
+    thinking_message_count   Nullable(UInt32),
+    dispatch_turn_count      Nullable(UInt32),
+    search_count             Nullable(UInt32),
+    cost_cents               Nullable(UInt32),
+    surface_metrics_json     Nullable(String),
+    source                   String,
+    data_source              String,
+    collected_at             Nullable(DateTime64(3)),
+    _version                 UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -213,7 +298,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits (
     date              Date,
     is_merge_commit   UInt8,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -230,7 +315,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     created_on        DateTime,
     merged_on         Nullable(DateTime),
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (pr_id);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (pr_id) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -247,7 +332,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes (
     lines_added       Int64,
     lines_removed     Int64,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash, file_path);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash, file_path) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -262,23 +347,109 @@ CREATE TABLE IF NOT EXISTS silver.class_task_daily (
     tasks_closed      Float64,
     bugs_fixed        Float64,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_id, metric_date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_id, metric_date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
-# silver.class_task_field_history — task-tracking dbt model.
+# silver.class_task_field_history — task-tracking event-sourced field history
+# (per ADR-005). Schema mirrors the canonical staging table built by the
+# `create_task_field_history_staging` macro (see src/ingestion/dbt/macros/) —
+# silver is a thin SELECT * from staging via union_by_tag so the target
+# columns match. Migrations like 20260427120000_views-from-silver.sql and
+# 20260429000000_task-delivery-silver-rewrite.sql aggregate over
+# (insight_source_id, data_source, issue_id, event_at, _version, field_id,
+# value_displays, value_ids, delta_action, event_kind) so all of these
+# need to exist in the placeholder for CREATE VIEW to type-check.
 if ! ch_table_exists silver class_task_field_history; then
   echo "  Creating placeholder: silver.class_task_field_history"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_task_field_history (
+    unique_key          String,
+    insight_source_id   String,
+    data_source         String,
+    issue_id            String,
+    id_readable         String,
+    event_id            String,
+    event_at            DateTime64(3),
+    event_kind          Enum8('changelog' = 1, 'synthetic_initial' = 2),
+    _seq                UInt32,
+    author_id           Nullable(String),
+    author_display      Nullable(String),
+    field_id            String,
+    field_name          String,
+    field_cardinality   Enum8('single' = 1, 'multi' = 2),
+    delta_action        Enum8('set' = 1, 'add' = 2, 'remove' = 3),
+    delta_value_id      Nullable(String),
+    delta_value_display Nullable(String),
+    value_ids           Array(String),
+    value_displays      Array(String),
+    value_id_type       Enum8('opaque_id' = 1, 'account_id' = 2, 'string_literal' = 3, 'path' = 4, 'none' = 5),
+    collected_at        DateTime64(3),
+    _version            UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_task_users — task-tracking user directory (anchor for identity
+# resolution). Referenced by `views-from-silver.sql` LEFT JOIN to look up
+# `email` by `(insight_source_id, user_id)` for the assignee_email column.
+if ! ch_table_exists silver class_task_users; then
+  echo "  Creating placeholder: silver.class_task_users"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_task_users (
     insight_tenant_id String,
-    issue_id          String,
-    field_name        String,
-    old_value         String,
-    new_value         String,
-    changed_at        DateTime,
+    insight_source_id String,
+    user_id           String,
+    email             Nullable(String),
+    unique_key        String,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (issue_id, changed_at);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_task_worklogs — task-tracking worklog rows. Referenced by
+# `views-from-silver.sql` for time-spent aggregations
+# (author_email/author_id, work_date, duration_seconds/worklog_seconds).
+if ! ch_table_exists silver class_task_worklogs; then
+  echo "  Creating placeholder: silver.class_task_worklogs"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_task_worklogs (
+    insight_tenant_id String,
+    insight_source_id String,
+    worklog_id        String,
+    issue_id          Nullable(String),
+    author_id         Nullable(String),
+    author_email      Nullable(String),
+    work_date         Nullable(Date),
+    duration_seconds  Nullable(Float64),
+    worklog_seconds   Nullable(Float64),
+    unique_key        String,
+    _version          UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_wiki_activity — per-user per-day wiki edit activity. Referenced
+# by 20260505000000_drop-confluence-minor-edits.sql (ALTER TABLE DROP COLUMN
+# IF EXISTS) — ALTER fails with UNKNOWN_TABLE if the silver target itself
+# does not exist on a fresh cluster.
+if ! ch_table_exists silver class_wiki_activity; then
+  echo "  Creating placeholder: silver.class_wiki_activity"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_wiki_activity (
+    tenant_id     String,
+    source_id     String,
+    unique_key    String,
+    author_id     String,
+    author_email  Nullable(String),
+    day           Date,
+    pages_edited  Nullable(UInt32),
+    total_edits   Nullable(UInt32),
+    pages_created Nullable(UInt32),
+    major_edits   Nullable(UInt32),
+    minor_edits   Nullable(UInt32),
+    _version      UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -296,7 +467,7 @@ CREATE TABLE IF NOT EXISTS silver.mtr_git_person_totals (
     prs_merged           Float64,
     avg_pr_cycle_time_h  Nullable(Float64),
     _version             UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -313,7 +484,7 @@ CREATE TABLE IF NOT EXISTS silver.mtr_git_person_weekly (
     lines_removed     Int64,
     prs_merged        Float64,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, week);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, week) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 

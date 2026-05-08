@@ -8,7 +8,11 @@
     tags=['hubspot', 'silver:class_crm_users']
 ) }}
 
+-- Live (`owners`) and archived (`owners_archived`) are sibling Bronze tables;
+-- ReplacingMergeTree on `unique_key` dedups, with `_version = greatest(updatedAt, archivedAt)`
+-- so an archive event always outranks the prior live update.
 WITH src AS (
+    {% for tbl in ['owners', 'owners_archived'] %}
     SELECT
         tenant_id,
         source_id,
@@ -17,9 +21,8 @@ WITH src AS (
         email                                           AS email,
         firstName                                       AS first_name,
         lastName                                        AS last_name,
-        -- HubSpot Owners API exposes no title/department. Matching the
-        -- Salesforce silver schema requires these columns to exist with
-        -- compatible types, so emit explicit NULLs.
+        -- HubSpot Owners API exposes no title/department; Silver requires
+        -- the columns to exist so emit explicit NULLs.
         CAST(NULL AS Nullable(String))                  AS title,
         CAST(NULL AS Nullable(String))                  AS department,
         toInt64(NOT coalesce(archived, false))          AS is_active,
@@ -27,14 +30,18 @@ WITH src AS (
             'userId',   coalesce(toString(userId), ''),
             'archived', toString(coalesce(archived, false))
         ))                                              AS metadata,
-        custom_fields,
         collected_at,
         data_source,
-        coalesce(toUnixTimestamp64Milli(updatedAt), 0)  AS _version
-    FROM {{ source('bronze_hubspot', 'owners') }}
+        greatest(
+            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
+            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
+        )                                               AS _version
+    FROM {{ source('bronze_hubspot', tbl) }}
     -- Silver class_crm_users requires email NOT NULL for identity resolution.
     -- HubSpot Owners for deactivated internal users can lack an email.
     WHERE email IS NOT NULL AND email != ''
+    {% if not loop.last %}UNION ALL{% endif %}
+    {% endfor %}
 )
 {% if is_incremental() %}
 SELECT src.*

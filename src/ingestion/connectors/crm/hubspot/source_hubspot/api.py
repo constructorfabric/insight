@@ -21,14 +21,30 @@ from airbyte_cdk.sources.streams.http import HttpClient
 from airbyte_cdk.utils import AirbyteTracedException
 
 from source_hubspot.constants import (
+    ALLOWED_PROPERTIES_BY_OBJECT,
     BASE_URL,
     HUBSPOT_TYPE_TO_JSON_SCHEMA,
-    ALLOWED_PROPERTIES_BY_OBJECT,
 )
 from source_hubspot.rate_limiting import HubspotErrorHandler
 
 
 logger = logging.getLogger("airbyte")
+
+
+class _TimeoutSession(requests.Session):
+    """requests.Session that injects a connect/read timeout on every call.
+
+    Neither requests nor the CDK HttpClient sets a default timeout, which means
+    a TCP connection that's accepted but never sends data can block the sync
+    thread indefinitely. Setting it here covers all traffic (property discovery,
+    stream fetches, association batch reads) via a single definition.
+    """
+
+    _TIMEOUT = (10, 120)  # (connect s, read s)
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", self._TIMEOUT)
+        return super().request(method, url, **kwargs)
 
 
 class Hubspot:
@@ -38,18 +54,15 @@ class Hubspot:
     the appropriate stream name for error handler attribution.
     """
 
-    # HTTP connection pool size. Parallel describes + parallel slice fetches.
-    POOL_SIZE = 50
-
     def __init__(self, access_token: str) -> None:
         if not access_token:
             raise ValueError("access_token is required")
         self.access_token = access_token
 
-        self.session = requests.Session()
+        self.session = _TimeoutSession()
         adapter = request_adapters.HTTPAdapter(
-            pool_connections=self.POOL_SIZE,
-            pool_maxsize=self.POOL_SIZE,
+            pool_connections=2,
+            pool_maxsize=4,
         )
         self.session.mount("https://", adapter)
         self.session.headers.update({"Authorization": f"Bearer {self.access_token}"})
@@ -155,15 +168,7 @@ class Hubspot:
         )
 
     def property_names(self, object_type: str) -> Tuple[str, ...]:
-        """Curated standard properties + all custom (tenant-defined) properties.
-
-        Standard props outside ``ALLOWED_PROPERTIES_BY_OBJECT[object_type]``
-        are skipped — Silver dbt models only consume a small subset, and a
-        wide search request blows up Bronze schema width and the destination
-        binary-insert buffer (CH OOM). Custom (``hubspotDefined=False``)
-        props pass through untouched and the envelope bundles them into the
-        ``custom_fields`` JSON column.
-        """
+        """Curated standard properties + all custom (tenant-defined) properties."""
         props = self.properties_for(object_type)
         curated = ALLOWED_PROPERTIES_BY_OBJECT.get(object_type, frozenset())
         selected = []
@@ -176,13 +181,37 @@ class Hubspot:
             selected.append(name)
         return tuple(selected)
 
-    def generate_schema(self, object_type: str) -> Mapping[str, Any]:
-        """Build a JSON schema from the property descriptors.
+    def probe_association_scope(self) -> Optional[str]:
+        """Verify the token has association read scope.
 
-        Standard properties land as ``properties_{name}`` top-level fields.
-        Custom properties are NOT advertised per-column — they're packed into
-        the ``custom_fields`` JSON blob by the envelope.
+        Sends a minimal POST to the v4 batch/read endpoint with a dummy id.
+        Returns None on success, a human-readable error message if the token
+        lacks the required scope. Transient errors are swallowed so a network
+        blip doesn't block check_connection.
         """
+        url = f"{BASE_URL}/crm/v4/associations/contacts/companies/batch/read"
+        try:
+            self._http_client.send_request(
+                "POST",
+                url,
+                headers={"Content-Type": "application/json"},
+                json={"inputs": [{"id": "1"}]},
+                request_kwargs={},
+            )
+        except AirbyteTracedException as exc:
+            if exc.failure_type == FailureType.config_error:
+                return exc.message or str(exc)
+            logger.warning(
+                "Association scope probe: transient error during check — %s", exc
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Association scope probe: unexpected error during check — %r", exc
+            )
+        return None
+
+    def generate_schema(self, object_type: str) -> Mapping[str, Any]:
+        """Build a JSON schema from the curated property descriptors."""
         props = self.properties_for(object_type)
         schema: Dict[str, Any] = {
             "$schema": "http://json-schema.org/draft-07/schema#",
@@ -193,6 +222,7 @@ class Hubspot:
                 "createdAt": {"type": ["string", "null"], "format": "date-time"},
                 "updatedAt": {"type": ["string", "null"], "format": "date-time"},
                 "archived": {"type": ["boolean", "null"]},
+                "archivedAt": {"type": ["string", "null"], "format": "date-time"},
             },
         }
         curated = ALLOWED_PROPERTIES_BY_OBJECT.get(object_type, frozenset())
@@ -202,8 +232,6 @@ class Hubspot:
             if not name or not prop.get("hubspotDefined"):
                 continue
             if name not in curated:
-                # Standard property outside the allowlist — not fetched by
-                # property_names(), so don't advertise its column either.
                 continue
             schema["properties"][f"properties_{name}"] = _prop_to_json_schema(
                 prop, warned_unknown

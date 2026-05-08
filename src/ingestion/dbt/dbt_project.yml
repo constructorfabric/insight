@@ -27,3 +27,15 @@ clean-targets:
 # keeps connector-specific table lists co-located with the connector code.
 on-run-start:
   - "{{ create_task_field_history_staging() }}"
+  # Drop init.sh-created silver placeholders BEFORE any model
+  # materialization starts. Three-factor detection (placeholder marker +
+  # 0 rows + at least one staging model materialised for the matching
+  # `silver:<id>` tag) — see drop_silver_placeholders_at_start macro for
+  # rationale. Lives in on-run-start, NOT a per-model pre-hook, because
+  # dbt-clickhouse captures the target's existence at materialization
+  # start (before pre_hooks run) for `is_incremental()`. A pre-hook drop
+  # leaves is_incremental=True so the compiled SQL still references the
+  # (now-dropped) target → ClickHouse SYNTAX_ERROR. on-run-start runs
+  # before the materialization framework, so existing_relation is
+  # captured as nil and the model takes the create-from-scratch branch.
+  - "{{ drop_silver_placeholders_at_start() }}"

@@ -9,6 +9,7 @@
 ) }}
 
 -- depends_on: {{ ref('salesforce__crm_deals') }}
+-- depends_on: {{ ref('hubspot__crm_deals') }}
 
 SELECT * FROM (
     {{ union_by_tag('silver:class_crm_deals') }}

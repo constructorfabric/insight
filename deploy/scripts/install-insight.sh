@@ -95,14 +95,19 @@ for dep in "$RELEASE-clickhouse" "$RELEASE-mariadb" "$RELEASE-redis-master"; do
 done
 
 # Argo CRD guard. The umbrella's `ingestion.templates.enabled: true`
-# default emits `WorkflowTemplate` resources. On a cluster without
-# Argo Workflows CRDs (e.g. SKIP_ARGO=1, or this installer run without
-# `install-argo.sh` first) `helm install` would fail with
-# `no matches for kind "WorkflowTemplate"`. dev-up.sh handles this via
-# its own guard — replicate the auto-disable here so the canonical
-# installer is equally robust.
+# default emits `WorkflowTemplate` resources. Disable that emission when
+# either:
+#   • SKIP_ARGO=1 (operator declared intent — even if CRDs persist from
+#     a prior partial install, we honour the skip instead of silently
+#     emitting WorkflowTemplates that no controller is going to
+#     reconcile — issue #275 B6); OR
+#   • the `workflowtemplates.argoproj.io` CRD is absent (helm render
+#     would fail with `no matches for kind "WorkflowTemplate"`).
 ARGO_CRD_DISABLE_ARGS=()
-if ! kubectl get crd workflowtemplates.argoproj.io >/dev/null 2>&1; then
+if [[ "${SKIP_ARGO:-0}" == "1" ]]; then
+  log "SKIP_ARGO=1 → auto-disabling ingestion.templates.enabled"
+  ARGO_CRD_DISABLE_ARGS=(--set ingestion.templates.enabled=false)
+elif ! kubectl get crd workflowtemplates.argoproj.io >/dev/null 2>&1; then
   log "WARNING: workflowtemplates.argoproj.io CRD missing — auto-disabling ingestion.templates.enabled"
   log "         Run install-argo.sh to register CRDs, then re-run install-insight.sh to enable templates."
   ARGO_CRD_DISABLE_ARGS=(--set ingestion.templates.enabled=false)
@@ -138,12 +143,18 @@ elif [[ -n "${HELM_EXTRA_ARGS:-}" ]]; then
 fi
 
 log "Running helm upgrade --install"
+# `${array[@]+"${array[@]}"}` (the "expand only if set" idiom) lets us
+# pass these optional arrays under `set -u` without the macOS-default
+# bash 3.2 firing `unbound variable` on empty `"${array[@]}"`. Bash 4.4+
+# (Linux, brew bash) treats `"${empty[@]}"` as zero words and would not
+# need this dance, but the canonical installer must work on Apple
+# Silicon's stock /bin/bash (= 3.2).
 helm upgrade --install "$RELEASE" "$CHART_REF" \
   --namespace "$NAMESPACE" --create-namespace \
-  "${VERSION_ARG[@]}" \
-  "${VALUES_ARGS[@]}" \
-  "${ARGO_CRD_DISABLE_ARGS[@]}" \
-  "${EXTRA_ARGS[@]}" \
+  ${VERSION_ARG[@]+"${VERSION_ARG[@]}"} \
+  ${VALUES_ARGS[@]+"${VALUES_ARGS[@]}"} \
+  ${ARGO_CRD_DISABLE_ARGS[@]+"${ARGO_CRD_DISABLE_ARGS[@]}"} \
+  ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
   --wait --timeout 10m
 
 # ─── Summary ───────────────────────────────────────────────────────────

@@ -11,19 +11,31 @@ sources:
   - name: bronze_hubspot
     schema: bronze_hubspot
     tables:
-      # Core CRM entities feeding Silver
+      # Core CRM entities feeding Silver — live (search) + archived (list)
+      # are sibling streams writing separate tables; Silver UNIONs them.
       - name: contacts
+      - name: contacts_archived
       - name: companies
+      - name: companies_archived
       - name: deals
+      - name: deals_archived
       - name: owners
-      # Engagements (activities)
+      - name: owners_archived
+      # Engagements (activities) — meetings has no archived sibling because
+      # HubSpot returns 400 "Paging through deleted objects is not yet
+      # supported" on /crm/v3/objects/meetings?archived=true.
       - name: engagements_calls
+      - name: engagements_calls_archived
       - name: engagements_emails
+      - name: engagements_emails_archived
       - name: engagements_meetings
       - name: engagements_tasks
+      - name: engagements_tasks_archived
       # Bronze-only for v1 (no Silver staging model yet)
       - name: leads
+      - name: leads_archived
       - name: tickets
+      - name: tickets_archived
 
 models:
   - name: hubspot__crm_contacts

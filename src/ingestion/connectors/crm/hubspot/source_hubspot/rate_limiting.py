@@ -16,10 +16,9 @@ HubSpot quirks covered here:
 from __future__ import annotations
 
 import logging
-import sys
-from typing import Any, Optional, Union
+import time
+from typing import Optional, Union
 
-import backoff
 import requests
 from requests import codes, exceptions  # type: ignore[import]
 
@@ -138,15 +137,19 @@ class HubspotErrorHandler(ErrorHandler):
             if status == codes.too_many_requests:
                 delay = _parse_retry_after(response)
                 logger.info(
-                    "HubSpot 429 rate-limit on '%s'; backing off %.1fs before retry (search=%s)",
+                    "HubSpot 429 rate-limit on '%s'; sleeping %.1fs before retry (search=%s)",
                     self._stream_name,
                     delay,
                     _is_search_request(response),
                 )
+                # Sleep HERE so Retry-After is actually honoured.
+                # ErrorResolution carries no delay slot — the CDK uses its own
+                # backoff on top of ours, but that's acceptable.
+                time.sleep(delay)
                 return ErrorResolution(
                     ResponseAction.RATE_LIMITED,
                     FailureType.transient_error,
-                    f"HubSpot rate limit reached (HTTP 429); retrying after {delay:.1f}s.",
+                    f"HubSpot rate limit reached (HTTP 429); slept {delay:.1f}s.",
                 )
 
             if status == CLOUDFLARE_ORIGIN_DNS_ERROR:
@@ -230,50 +233,3 @@ def _extract_missing_scopes(response: requests.Response) -> list[str]:
     return []
 
 
-def default_backoff_handler(max_tries: int, retry_on=None):
-    """Standalone backoff decorator for requests outside the CDK retry loop.
-
-    Used by the direct property-discovery and owner-list paths inside
-    ``api.py`` before stream-level retries kick in.
-    """
-    if not retry_on:
-        retry_on = TRANSIENT_EXCEPTIONS
-
-    def log_retry_attempt(details):
-        _, exc, _ = sys.exc_info()
-        logger.info(str(exc))
-        logger.info(
-            f"Caught retryable error after {details['tries']} tries. "
-            f"Waiting {details['wait']} seconds then retrying..."
-        )
-
-    def should_give_up(exc: Any) -> bool:
-        response = getattr(exc, "response", None)
-        resolution = (
-            HubspotErrorHandler()
-            .interpret_response(response if response is not None else exc)
-        )
-        give_up = resolution.response_action not in (
-            ResponseAction.RETRY,
-            ResponseAction.RATE_LIMITED,
-        )
-        if give_up and response is not None:
-            logger.info(
-                "Giving up for HTTP %s, body: %s",
-                getattr(response, "status_code", "?"),
-                getattr(response, "text", "")[:500],
-            )
-        return give_up
-
-    return backoff.on_exception(
-        backoff.expo,
-        retry_on,
-        # full_jitter randomizes the wait across [0, delay] so concurrent
-        # workers don't retry in lockstep — avoids a thundering herd on 429s.
-        jitter=backoff.full_jitter,
-        on_backoff=log_retry_attempt,
-        giveup=should_give_up,
-        max_tries=max_tries,
-        factor=2,
-        max_value=60,
-    )

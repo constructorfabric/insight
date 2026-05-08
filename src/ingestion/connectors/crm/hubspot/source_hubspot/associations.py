@@ -88,19 +88,6 @@ class AssociationFetcher:
             json=body,
             request_kwargs={},
         )
-        if not resp.ok:
-            # The error handler raised already if this was a retryable/fatal
-            # class; anything that reaches here is unexpected. Return empty
-            # so we don't block the sync on associations — Silver can treat
-            # missing associations as null rather than failing.
-            logger.warning(
-                "Association batch %s -> %s failed: HTTP %s %s",
-                self._from,
-                to_type,
-                resp.status_code,
-                resp.text[:300],
-            )
-            return {}
         try:
             payload = resp.json()
         except ValueError:

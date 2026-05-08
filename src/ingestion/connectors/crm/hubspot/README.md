@@ -1,8 +1,8 @@
 # HubSpot Connector
 
-CDK-based Python connector for HubSpot CRM. Pulls data via CRM v3 Search API with v4 associations; property-discovery driven so custom HubSpot properties on any portal are captured without connector changes; properties where `hubspotDefined=false` are folded into a single `custom_fields` JSON column so Bronze stays stable across portals.
+CDK-based Python connector for HubSpot CRM. Pulls live data via CRM v3 Search API with v4 associations and archived data via list + batch_read; only an allowlisted subset of `hubspotDefined` standard properties (the curated `ALLOWED_PROPERTIES_BY_OBJECT`) surfaces as typed Bronze columns. Tenant-defined (`hubspotDefined=false`) properties are folded into a single `custom_fields` JSON column so Bronze stays stable across portals and bounded in width regardless of customization depth.
 
-Architecture mirrors `crm/salesforce/` — envelope shape, concurrent cursor slicing, error-handler contract, dbt staging tags — so HubSpot and Salesforce unify cleanly in Silver.
+Streams sync sequentially. HubSpot's search endpoint is rate-limited to 4 rps portal-wide so a single thread saturates the cap; concurrency would only redistribute the same 4 rps across more 429 retries.
 
 ## Prerequisites
 
@@ -29,7 +29,6 @@ type: Opaque
 stringData:
   hubspot_access_token: ""                           # Private App token (pat-...)
   hubspot_start_date: "2024-01-01T00:00:00Z"         # Optional
-  hubspot_num_workers: "20"                          # Optional (1–50)
 ```
 
 ### Fields
@@ -38,11 +37,6 @@ stringData:
 |-------|----------|-------------|
 | `hubspot_access_token` | Yes | Private App access token (sensitive) |
 | `hubspot_start_date` | No | Incremental sync start (ISO 8601). Defaults to two years before current date |
-| `hubspot_streams` | No | JSON array of stream names (e.g. `["contacts", "deals"]`). Overrides curated default |
-| `hubspot_stream_slice_step` | No | Concurrent cursor window. Default `P30D`. Shrink to `PT1H` on very active portals to stay under the 10k search-result cap per slice |
-| `hubspot_lookback_window` | No | Re-read window for `hs_lastmodifieddate` eventual consistency. Default `PT10M` |
-| `hubspot_num_workers` | No | Max concurrent slice fetches (1–50). Default `20` |
-| `hubspot_include_archived` | No | Fetch archived records alongside active. Default `true` |
 
 ### Automatically injected
 
@@ -57,13 +51,13 @@ Deploy additional Secrets with distinct `source-id` annotations to ingest multip
 
 ## Streams
 
-Active by default: **10 streams** — 8 feed Silver (`class_crm_*`), 2 are bronze-only for parity with the Salesforce `Lead`/`Case` setup.
+**19 streams** — 10 live + 9 archived siblings (one per live object whose archived listing HubSpot supports). Live streams feed Silver via search on `hs_lastmodifieddate`; archived siblings full-sweep `/crm/v3/objects/{type}?archived=true` and are merged into Silver with `_version = greatest(updatedAt, archivedAt)` so an archive event outranks the prior live update.
 
-### Feeding Silver
+### Live (search)
 
 | Stream | Silver target | Cursor | PK |
 |---|---|---|---|
-| `contacts` | `class_crm_contacts` | full_refresh | `id` |
+| `contacts` | `class_crm_contacts` | `updatedAt` | `id` |
 | `companies` | `class_crm_accounts` | `updatedAt` | `id` |
 | `deals` | `class_crm_deals` | `updatedAt` | `id` |
 | `engagements_calls` | `class_crm_activities` | `updatedAt` | `id` |
@@ -71,22 +65,46 @@ Active by default: **10 streams** — 8 feed Silver (`class_crm_*`), 2 are bronz
 | `engagements_meetings` | `class_crm_activities` | `updatedAt` | `id` |
 | `engagements_tasks` | `class_crm_activities` | `updatedAt` | `id` |
 | `owners` | `class_crm_users` | `updatedAt` | `id` |
+| `leads` | bronze-only | `updatedAt` | `id` |
+| `tickets` | bronze-only | `updatedAt` | `id` |
 
-### Bronze-only (v1)
+Every stream is incremental. `hubspot_start_date` controls the initial backfill window; subsequent syncs only fetch records modified after the cursor's high-water mark.
 
-| Stream | Notes |
-|---|---|
-| `leads` | HubSpot Leads object. No Silver staging model in v1 — awaiting a `class_crm_leads` Silver class |
-| `tickets` | HubSpot service tickets. No Silver staging model in v1 — awaiting a `class_crm_tickets` Silver class |
+CRM streams use the search endpoint (`POST /crm/v3/objects/{type}/search`) for live records — single window per sync filtered on `hs_lastmodifieddate`, sorted by `hs_object_id ASC`, paged via `after`; when HubSpot's hard cap of 10,000 results per query is hit, the loop restarts the same window with `hs_object_id > last_seen_id` keyset.
+
+`owners` has no search endpoint and the list endpoint has no `updatedAt` filter, so the stream pages the full owner list every sync but filters records client-side on `updatedAt > state`; only changed owners are written to Bronze after the first sync.
+
+### Archived (list + batch_read)
+
+| Stream | Silver target | Cursor | PK |
+|---|---|---|---|
+| `contacts_archived` | `class_crm_contacts` | `archivedAt` | `id` |
+| `companies_archived` | `class_crm_accounts` | `archivedAt` | `id` |
+| `deals_archived` | `class_crm_deals` | `archivedAt` | `id` |
+| `engagements_calls_archived` | `class_crm_activities` | `archivedAt` | `id` |
+| `engagements_emails_archived` | `class_crm_activities` | `archivedAt` | `id` |
+| `engagements_tasks_archived` | `class_crm_activities` | `archivedAt` | `id` |
+| `owners_archived` | `class_crm_users` | `archivedAt` | `id` |
+| `leads_archived` | bronze-only | `archivedAt` | `id` |
+| `tickets_archived` | bronze-only | `archivedAt` | `id` |
+
+Archived streams are **client-side incremental on `archivedAt`**: HubSpot has no server-side `archivedAt` filter, so the stream pages the entire archived set every sync but drops records whose `archivedAt` precedes the prior cursor state and only emits newly-archived rows downstream. First sync lands all archives; subsequent syncs typically write 0 records.
+
+CRM-object archived streams (everything except owners) use a **two-pass list + batch_read** to fetch the full property set without HTTP 414:
+
+1. `GET /crm/v3/objects/{type}?archived=true` — collect ids + `archivedAt` for archives newer than the cursor (no `properties=` query param so the URL stays short).
+2. `POST /crm/v3/objects/{type}/batch/read?archived=true` — fetch full properties (standard + custom) for ≤100 ids per call; the property list rides in the JSON body, no URL cap.
+
+`engagements_meetings_archived` is **deliberately absent**: HubSpot returns 400 *"Paging through deleted objects is not yet supported"* on `/crm/v3/objects/meetings?archived=true`. The runtime keeps a defensive 400 swallow on the Pass 1 list path so a future regression on any other object type degrades to an empty stream + warning rather than a sync failure.
 
 ## Robustness
 
 ### 10,000-result search cap
-HubSpot's CRM Search endpoint caps at `after = 10,000`. The connector paginates by time slice first, then — if a slice still overflows — falls through to keyset pagination on `hs_object_id` within the same window. Logs show `switching to keyset pagination from id>...` when this kicks in.
+HubSpot's CRM Search endpoint caps at `after = 10,000`. The connector sorts every search by `hs_object_id ASC`; when a window crosses the cap, the loop restarts the same window with `hs_object_id > last_seen_id` keyset. Logs show `restarting from hs_object_id>...` when this kicks in.
 
 ### Rate limits
-- Burst: 10 rps (standard portals), 100 rps (Enterprise). Controlled by `hubspot_num_workers`.
-- Search endpoint: 4 rps portal-wide, no `Retry-After` header. Connector uses a 1.2s fallback on 429 for search requests, 3s elsewhere.
+- Burst: 10 rps (standard portals), 100 rps (Enterprise).
+- Search endpoint: 4 rps portal-wide, no `Retry-After` header. Connector uses a 1.2s fallback on 429 for search requests, 3s elsewhere. Streams sync sequentially; concurrency wouldn't lift throughput because a single thread already saturates 4 rps at typical search latency.
 - Daily request limit: fails fast with a `transient_error` after 5 retries so orchestration can alert.
 
 ### Error surfacing
@@ -95,10 +113,12 @@ HubSpot's CRM Search endpoint caps at `after = 10,000`. The connector paginates 
 - `530` — Cloudflare origin-DNS; indicates a malformed token. Fail fast with token-format hint.
 - `5xx`, chunked-encoding, connection resets — retried with exponential backoff.
 
-### Deleted / archived records
-`hubspot_include_archived=true` (default) runs a second pass per object with `archived=true` so soft-deleted records land in Bronze carrying `archived: true`. Silver models expose this through the `metadata` JSON column.
+### Property scope
+Bronze advertises **only the curated `ALLOWED_PROPERTIES_BY_OBJECT` allowlist** of `hubspotDefined` standard properties as typed `properties_*` columns; standard properties outside the allowlist are skipped. Tenant-defined (`hubspotDefined=False`) properties land in the `custom_fields` JSON column with null/empty values dropped and per-value byte cap applied (see envelope). This keeps Bronze width bounded regardless of portal customization depth — typical width is 5–15 typed columns per object plus `custom_fields`, instead of the 50–250+ you'd get from projecting every standard property. To project a new standard column, add it to `ALLOWED_PROPERTIES_BY_OBJECT[object_type]` in `constants.py`.
 
-The archived pass uses GET `/crm/v3/objects/{type}?properties=...` and only requests the curated standard properties (`ALLOWED_PROPERTIES_BY_OBJECT`) to keep the URL short — passing every custom property in the query string overflows HTTP 414 on portals with hundreds of custom contact/deal properties. Custom fields are not populated for archived records as a result; that's acceptable since archived = soft-deleted.
+### Deleted / archived records
+Each archived stream runs as **client-side incremental on `archivedAt`** — page the full archived set, drop records at-or-below the prior cursor state, batch_read full properties for the survivors. After the first sync, only newly-archived rows write to Bronze. Silver UNIONs the live and archived sources and ranks rows by `greatest(updatedAt, archivedAt)` so an archive event outranks the prior live update. The `archived: true` flag is still surfaced on Silver rows via the `metadata` JSON column.
+
 
 ## Local development
 
@@ -124,8 +144,6 @@ Run a sync:
 ```
 
 ## Troubleshooting
-
-**Sync succeeds but Bronze counts are lower than expected on a busy portal.** Your slice step is too large and a time window crosses the 10k search cap. Shrink `hubspot_stream_slice_step` from `P30D` to `P7D` or `PT1H`. Logs show keyset-fallback activations.
 
 **401 immediately after token rotation.** Private App tokens propagate eventually but HubSpot can cache the previous value at the edge for a minute or two. Wait and retry; if it persists, regenerate.
 

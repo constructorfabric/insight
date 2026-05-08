@@ -5,10 +5,6 @@ deterministic ``unique_key`` so downstream dbt models can key off a single
 stable identifier. HubSpot custom properties (``hubspotDefined=false``) are
 pulled out into a single JSON blob so the Bronze schema stays stable across
 portals with different customizations.
-
-Mirrors ``crm/salesforce/source_salesforce/envelope.py`` — kept as a sibling
-copy on purpose. Once a third connector needs this, promote to a shared
-module informed by all three call sites.
 """
 
 import hashlib
@@ -27,6 +23,31 @@ DATA_SOURCE = "hubspot"
 _RESERVED_FIELD_NAMES = frozenset(
     {"tenant_id", "source_id", "unique_key", "data_source", "collected_at", "custom_fields"}
 )
+
+# Per-property string truncation cap. Bounds the worst-case row width
+# regardless of how a portal customizes its CRM (some custom properties hold
+# multi-KB blobs of free-text or URL lists). Truncated suffix preserves the
+# signal that a value was clipped so downstream isn't fooled into thinking
+# it's the full content.
+_VALUE_MAX_BYTES = 2048
+_TRUNCATED_SUFFIX = "…[truncated]"
+
+
+_TRUNCATED_SUFFIX_BYTES = _TRUNCATED_SUFFIX.encode("utf-8")
+
+
+def _truncate(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    encoded = value.encode("utf-8")
+    if len(encoded) <= _VALUE_MAX_BYTES:
+        return value
+    allowed = _VALUE_MAX_BYTES - len(_TRUNCATED_SUFFIX_BYTES)
+    if allowed <= 0:
+        return _TRUNCATED_SUFFIX
+    # Slice on bytes; ``errors="ignore"`` drops a partial multi-byte char at
+    # the boundary so the result remains valid UTF-8.
+    return encoded[:allowed].decode("utf-8", errors="ignore") + _TRUNCATED_SUFFIX
 
 
 def _now_iso() -> str:
@@ -77,9 +98,15 @@ def envelope(
         # they can't collide with the unprefixed envelope reserved names; no
         # collision check needed here.
         if prop_name in custom_property_names:
-            customs[prop_name] = prop_value
+            # Drop null/empty values — HubSpot returns every defined custom
+            # property on every record, so a portal with hundreds of custom
+            # fields (mostly empty per row) would otherwise bloat the JSON
+            # blob 10–20× with dead keys.
+            if prop_value is None or prop_value == "":
+                continue
+            customs[prop_name] = _truncate(prop_value)
         else:
-            out[f"properties_{prop_name}"] = prop_value
+            out[f"properties_{prop_name}"] = _truncate(prop_value)
 
     # ClickHouse stores JSON blobs as strings; serialize once.
     out["custom_fields"] = (

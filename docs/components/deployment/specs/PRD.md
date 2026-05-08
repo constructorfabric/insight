@@ -186,7 +186,7 @@ The third driver is reproducibility for the development team itself: a developer
 
 - Release automation (tag → build images → package chart → push OCI): versions are pinned in chart metadata but there is no CI pipeline that publishes the chart yet. Flagged under Risks.
 - Multi-architecture (linux/arm64) frontend image publication.
-- Bidirectional sync between the umbrella-managed `insight-db-creds` Secret and a customer-supplied secret-management system (Vault, AWS Secrets Manager, External Secrets Operator). Customers integrating with such systems either pre-create `insight-db-creds` themselves and set `credentials.autoGenerate: false`, or they accept the auto-generated values and mirror them outwards by their own means.
+- Bidirectional sync between the umbrella-managed `insight-db-creds` Secret and a customer-supplied secret-management system (Vault, AWS Secrets Manager, External Secrets Operator). Customers integrating with such systems pre-create `insight-db-creds` themselves (the chart auto-detects BYO via absence of the `app.kubernetes.io/managed-by=Helm` label and skips its own Secret-template emission, so the customer's labeling-or-no-labeling on the Secret is preserved as-is); or they accept the auto-generated values and mirror them outwards by their own means.
 - Cluster provisioning (creating the customer's Kubernetes cluster, setting up a StorageClass, installing ingress-nginx on a production cluster). The dev wrapper bootstraps Kind for local work; production installs assume a working cluster with a default StorageClass and an ingress controller already in place.
 - Backup, restore, and disaster-recovery workflows for the bundled stateful services (ClickHouse, MariaDB). Mentioned in the Backend PRD; not owned by Deployment.
 - Identity Provider (OIDC) provisioning. The deployment contract requires OIDC credentials as input; standing up an IdP is the customer's responsibility.
@@ -286,7 +286,9 @@ The umbrella chart **MUST** resolve every infra host, port, FQDN and URL through
 
 The system **MUST** ship a single entry-point installer `deploy/scripts/install.sh` that installs Airbyte, Argo Workflows and the Insight umbrella in that order against the same Kubernetes namespace, and **MUST** honour `SKIP_AIRBYTE=1`, `SKIP_ARGO=1`, `SKIP_INSIGHT=1` environment flags so that each step can be skipped independently when an upstream platform already provides it.
 
-**Rationale**: "One command" is the expected customer experience for an enterprise product; skip flags are mandatory for Constructor Platform tenants where Airbyte or Argo may already exist.
+When `SKIP_ARGO=1` is in effect, `install-insight.sh` **MUST** auto-disable umbrella `WorkflowTemplate` emission (`--set ingestion.templates.enabled=false`) regardless of whether Argo CRDs are present in the cluster. This prevents the umbrella from rendering `WorkflowTemplate` resources that no controller will reconcile when Argo Workflows is intentionally absent — even when CRDs persist from a prior partial install.
+
+**Rationale**: "One command" is the expected customer experience for an enterprise product; skip flags are mandatory for Constructor Platform tenants where Airbyte or Argo may already exist. The CRD-based auto-disable was insufficient because CRDs survive `helm uninstall` and partial-install retries — explicit `SKIP_ARGO=1` honour at the step-script layer keeps step behaviour aligned with orchestrator intent.
 
 **Actors**: `cpt-insightspec-actor-customer-sre`, `cpt-insightspec-actor-platform-operator`
 

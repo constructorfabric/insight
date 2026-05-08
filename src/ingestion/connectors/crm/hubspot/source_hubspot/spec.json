@@ -38,48 +38,6 @@
         "format": "date",
         "examples": ["2024-01-01"],
         "order": 3
-      },
-      "hubspot_streams": {
-        "type": "array",
-        "items": { "type": "string" },
-        "title": "Streams Override",
-        "description": "Optional list of stream names to sync (e.g. contacts, companies, deals). Overrides the curated default. Use for per-tenant customization.",
-        "default": [],
-        "order": 4
-      },
-      "hubspot_stream_slice_step": {
-        "type": "string",
-        "title": "Stream Slice Step",
-        "description": "ISO-8601 duration for concurrent cursor slice width. Smaller = more parallelism, more API calls. Default P30D (30 days). Shrink toward P7D or PT1H if a single time slice exceeds the 10k search-result cap (logs flag 'switching to keyset pagination').",
-        "pattern": "^P(?:\\d+[YMWD])+(?:T(?:\\d+[HMS])+)?$|^PT(?:\\d+[HMS])+$",
-        "default": "P30D",
-        "examples": ["P30D", "P7D", "P1D", "PT1H"],
-        "order": 5
-      },
-      "hubspot_lookback_window": {
-        "type": "string",
-        "title": "Lookback Window",
-        "description": "ISO-8601 duration to re-read before the cursor position each sync (accounts for hs_lastmodifieddate eventual consistency on HubSpot Search). Default PT10M is sufficient for most portals; bump to PT30M if you observe missed updates on busy portals.",
-        "pattern": "^P(?:\\d+[YMWD])+(?:T(?:\\d+[HMS])+)?$|^PT(?:\\d+[HMS])+$",
-        "default": "PT10M",
-        "examples": ["PT10M", "PT30M", "PT1H"],
-        "order": 6
-      },
-      "hubspot_num_workers": {
-        "type": "integer",
-        "title": "Concurrent Workers",
-        "description": "Max concurrent stream slice fetches. Clamped to [1, 50]. Default 4 — matches HubSpot's portal-wide search-endpoint cap (4 rps), which is the binding limit for most CRM streams. Bump to 10 (standard portal app limit) or up to 50 (Enterprise, 100 rps app limit) if you observe sustained throughput well below the cap without 429s.",
-        "default": 4,
-        "minimum": 1,
-        "maximum": 50,
-        "order": 7
-      },
-      "hubspot_include_archived": {
-        "type": "boolean",
-        "title": "Include Archived",
-        "description": "Include archived (soft-deleted) records in Bronze. Adds a second pass per object with archived=true. Default true for completeness.",
-        "default": true,
-        "order": 8
       }
     }
   }

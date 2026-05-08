@@ -286,19 +286,29 @@ if [[ "$COMPONENT" != "ingestion" ]]; then
     done
   fi
 
-  if [[ -n "$FE_SRC" && -d "$FE_SRC" && -f "$FE_SRC/Dockerfile" ]]; then
-    echo "=== Building Frontend image from $FE_SRC ==="
-    docker build -t "$FE_IMAGE" -f "$FE_SRC/Dockerfile" "$FE_SRC"
-  else
-    echo "=== Pulling Frontend image ==="
-    case "$(uname -m)" in
-      arm64|aarch64) FE_PLATFORM="linux/arm64" ;;
-      *)             FE_PLATFORM="linux/amd64" ;;
-    esac
-    if ! docker pull --platform "$FE_PLATFORM" "$FE_IMAGE" 2>/dev/null; then
-      echo "  (no $FE_PLATFORM manifest, falling back to linux/amd64 via emulation)"
-      docker pull --platform linux/amd64 "$FE_IMAGE"
+  # Honour BUILD_IMAGES=false: the caller has the FE image already (e.g.
+  # local registry warm-cache, manual pre-pull) and does not want
+  # `dev-up.sh` to rebuild from the neighbouring insight-front checkout
+  # OR to re-pull from ghcr — issue #275 B8. Skip the build/pull here;
+  # the kind-load step below still tries to load the existing local
+  # image into the cluster, which is cheap and idempotent.
+  if [[ "$BUILD_IMAGES" == "true" ]]; then
+    if [[ -n "$FE_SRC" && -d "$FE_SRC" && -f "$FE_SRC/Dockerfile" ]]; then
+      echo "=== Building Frontend image from $FE_SRC ==="
+      docker build -t "$FE_IMAGE" -f "$FE_SRC/Dockerfile" "$FE_SRC"
+    else
+      echo "=== Pulling Frontend image ==="
+      case "$(uname -m)" in
+        arm64|aarch64) FE_PLATFORM="linux/arm64" ;;
+        *)             FE_PLATFORM="linux/amd64" ;;
+      esac
+      if ! docker pull --platform "$FE_PLATFORM" "$FE_IMAGE" 2>/dev/null; then
+        echo "  (no $FE_PLATFORM manifest, falling back to linux/amd64 via emulation)"
+        docker pull --platform linux/amd64 "$FE_IMAGE"
+      fi
     fi
+  else
+    echo "=== Skipping Frontend build/pull (BUILD_IMAGES=false) ==="
   fi
   [[ "$LOAD_IMAGES_INTO_KIND" == "true" ]] && kind load docker-image "$FE_IMAGE" --name "${CLUSTER_NAME}"
 fi
@@ -406,8 +416,13 @@ if ! kubectl get crd workflowtemplates.argoproj.io >/dev/null 2>&1; then
 fi
 
 # Ordered list of values files passed to the umbrella. dev overlay first
-# (base eval credentials), env-derived override file second (wins).
-INSIGHT_VALUES_FILES="$ROOT_DIR/deploy/values-dev.yaml:$DEV_VALUES"
+# (base eval credentials), env-derived override file second, then anything
+# the caller pre-set in INSIGHT_VALUES_FILES last so it wins on conflicts.
+# Without the trailing append, exporting INSIGHT_VALUES_FILES before
+# `dev-up.sh` had no effect — the script overwrote it unconditionally
+# (issue #275 B7).
+_BASE_VALUES_FILES="$ROOT_DIR/deploy/values-dev.yaml:$DEV_VALUES"
+INSIGHT_VALUES_FILES="${_BASE_VALUES_FILES}${INSIGHT_VALUES_FILES:+:$INSIGHT_VALUES_FILES}"
 
 # ─── Delegate to canonical installers ─────────────────────────────────────
 case "$COMPONENT" in

@@ -29,3 +29,9 @@ resources:
   limits:
     cpu: "1"
     memory: 1Gi
+
+# Probe overrides. Defaults soften k8s' implicit `timeoutSeconds: 1` so
+# CH `/ping` doesn't get killed under bulk-insert load — see template
+# comment for rationale. Empty {} means "use template defaults".
+livenessProbe: {}
+readinessProbe: {}

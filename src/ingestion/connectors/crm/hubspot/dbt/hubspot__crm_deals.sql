@@ -8,16 +8,18 @@
     tags=['hubspot', 'silver:class_crm_deals']
 ) }}
 
+-- Live (`deals`) and archived (`deals_archived`) are sibling Bronze tables;
+-- ReplacingMergeTree on `unique_key` dedups, with `_version = greatest(updatedAt, archivedAt)`
+-- so an archive event always outranks the prior live update.
 WITH src AS (
+    {% for tbl in ['deals', 'deals_archived'] %}
     SELECT
         tenant_id,
         source_id,
         unique_key,
         id                                              AS deal_id,
         properties_dealname                             AS name,
-        -- HubSpot has its own forecast category on hs_forecast_category —
-        -- mirrors the Salesforce Opportunity.ForecastCategory column.
-        properties_hs_forecast_category                 AS forecast_category,
+        properties_hs_manual_forecast_category          AS forecast_category,
         properties_dealstage                            AS stage,
         toFloat64OrNull(properties_amount)              AS amount,
         toDateOrNull(properties_closedate)              AS close_date,
@@ -34,12 +36,16 @@ WITH src AS (
             'deal_type',      coalesce(toString(properties_dealtype), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        custom_fields,
         createdAt                                       AS created_at,
         updatedAt                                       AS updated_at,
         data_source,
-        coalesce(toUnixTimestamp64Milli(updatedAt), 0)  AS _version
-    FROM {{ source('bronze_hubspot', 'deals') }}
+        greatest(
+            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
+            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
+        )                                               AS _version
+    FROM {{ source('bronze_hubspot', tbl) }}
+    {% if not loop.last %}UNION ALL{% endif %}
+    {% endfor %}
 )
 {% if is_incremental() %}
 SELECT src.*

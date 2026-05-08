@@ -8,7 +8,11 @@
     tags=['hubspot', 'silver:class_crm_contacts']
 ) }}
 
+-- Live (`contacts`) and archived (`contacts_archived`) are sibling Bronze tables;
+-- ReplacingMergeTree on `unique_key` dedups, with `_version = greatest(updatedAt, archivedAt)`
+-- so an archive event always outranks the prior live update.
 WITH src AS (
+    {% for tbl in ['contacts', 'contacts_archived'] %}
     SELECT
         tenant_id,
         source_id,
@@ -32,13 +36,16 @@ WITH src AS (
             'hs_analytics_source', coalesce(toString(properties_hs_analytics_source), ''),
             'archived',         toString(coalesce(archived, false))
         ))                                              AS metadata,
-        CAST(map() AS Map(String, String))              AS custom_str_attrs,
-        CAST(map() AS Map(String, Float64))             AS custom_num_attrs,
         createdAt                                       AS created_at,
         updatedAt                                       AS updated_at,
         data_source,
-        coalesce(toUnixTimestamp64Milli(updatedAt), 0)  AS _version
-    FROM {{ source('bronze_hubspot', 'contacts') }}
+        greatest(
+            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
+            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
+        )                                               AS _version
+    FROM {{ source('bronze_hubspot', tbl) }}
+    {% if not loop.last %}UNION ALL{% endif %}
+    {% endfor %}
 )
 {% if is_incremental() %}
 SELECT src.*

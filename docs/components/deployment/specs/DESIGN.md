@@ -62,7 +62,7 @@ The subsystem is designed around a single-namespace deployment model: Airbyte, A
 | `cpt-insightspec-fr-dep-dev-wrapper` | `dev-up.sh` scripts the Kind bootstrap, backend image builds + `kind load`, frontend build from `insight-front_symlink` with arch-aware fallback, applies `deploy/values-dev.yaml` via `INSIGHT_VALUES_FILES`, and opens the documented port-forwards. |
 | `cpt-insightspec-fr-dep-dev-namespace-param` | `dev-up.sh`, `dev-down.sh` and `init.sh` read `INSIGHT_NAMESPACE` (default `insight`). |
 | `cpt-insightspec-fr-dep-single-namespace-model` | `install-airbyte.sh`, `install-argo.sh` and `install-insight.sh` all target `INSIGHT_NAMESPACE`; GitOps manifests hard-code `namespace: insight` (forkable). No cross-namespace RBAC is created. |
-| `cpt-insightspec-fr-dep-empty-credentials-default` | `charts/insight/values.yaml` ships no inline passwords. With `credentials.autoGenerate=true` (default) the umbrella creates `insight-db-creds` on first install via `lookup` + `randAlphaNum 24` and reuses it on every upgrade; with `autoGenerate=false` the operator must pre-create the Secret. OIDC fields are empty and the validator refuses any render that doesn't either set `apiGateway.oidc.existingSecret` or all three of `issuer`/`clientId`/`redirectUri`. |
+| `cpt-insightspec-fr-dep-empty-credentials-default` | `charts/insight/values.yaml` ships no inline passwords. With `credentials.autoGenerate=true` (default) the umbrella creates `insight-db-creds` on first install via `lookup` + `randAlphaNum 24` and reuses it on every upgrade. BYO mode: an operator-supplied `insight-db-creds` is auto-detected via absence of the `app.kubernetes.io/managed-by=Helm` label, in which case the chart skips its own Secret-template emission so Helm does not attempt ownership transfer (works under both `autoGenerate=true` and `autoGenerate=false`). With `autoGenerate=false` and no pre-existing Secret the install fails fast. OIDC fields are empty and the validator refuses any render that doesn't either set `apiGateway.oidc.existingSecret` or all three of `issuer`/`clientId`/`redirectUri`. |
 | `cpt-insightspec-fr-dep-dev-overlay-isolation` | Eval credentials live only in `deploy/values-dev.yaml`; applied via `INSIGHT_VALUES_FILES` by `dev-up.sh` exclusively. |
 
 #### NFR Allocation
@@ -453,7 +453,7 @@ Developers iterate faster when the platform bring-up is one command. The wrapper
 
 ##### Responsibility scope
 
-- Bootstraps a Kind cluster named `insight` if absent.
+- Bootstraps a Kind cluster named `insight` if absent. The cluster config (`k8s/kind-config.yaml`) pins a specific `kindest/node` image (currently `v1.29.2`) so the dev path is independent of the host's installed `kind` binary version. Recent kind defaults (`v1.32+`) require cgroup v2, which Docker Desktop on Windows and several Linux distros do not provide; pinning to a cgroup-v1-compatible image keeps the bring-up working on stock developer hosts. Bumping the pin requires validating Argo / Airbyte / bitnami subchart compatibility against the new node image.
 - Builds backend images and loads them with `kind load docker-image`.
 - Builds the frontend image from the sibling `insight-front` checkout with native-arch try + `linux/amd64` fallback; on pull-only paths uses `docker pull --platform`.
 - Sets `INSIGHT_VALUES_FILES` to include `deploy/values-dev.yaml`.
@@ -527,6 +527,7 @@ Developers iterate faster when the platform bring-up is one command. The wrapper
 | `src/frontend/helm` | Helm subchart | Mandatory SPA shipped under `frontend` alias. |
 | `helmfile/charts/clickhouse` | Helm subchart (local wrapper) | ClickHouse OLAP store. |
 | `charts/insight/templates/ingestion/*.yaml` | First-class Helm templates | Ingestion WorkflowTemplate sources, gated by `ingestion.templates.enabled`; consume umbrella helpers directly via `include`. |
+| `helmfile.yaml.gotmpl` | Repo-root helmfile (legacy, EXPERIMENTAL) | Pre-#224 alternative install path. Structurally incompatible with the post-#224 umbrella + bitnami-subcharts + Secret-emission pattern (`helmfile sync` fails on the local clickhouse subchart's `required` checks; api-gateway gets dead `clickhouse:` config; analytics-api/identity-resolution depend on Secrets the umbrella emits). Header warning in the file documents the three issues; retained for reference only and may be removed entirely in a follow-up cleanup. **Not on any canonical install path.** |
 | `src/ingestion/airbyte-toolkit/lib/env.sh` | Read `AIRBYTE_API_URL` from the platform ConfigMap | Ingestion scripts consume Airbyte coordinates from the ConfigMap rather than hard-coding. |
 
 **Dependency Rules**:
