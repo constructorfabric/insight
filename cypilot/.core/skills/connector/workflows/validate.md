@@ -63,6 +63,42 @@ Read connector package files and verify each item:
 - [ ] Model has `source_id` with not_null test
 - [ ] Model has `unique_key` with not_null and unique tests
 
+### Bronze Promotion (`promote_bronze_to_rmt`)
+
+Airbyte writes bronze tables as plain `MergeTree`, so full-refresh streams accumulate duplicates across syncs. Every connector with a `dbt/` directory MUST migrate its bronze tables to `ReplacingMergeTree` via the `promote_bronze_to_rmt` macro (see `dbt/macros/promote_bronze_to_rmt.sql`). The bootstrap view MUST run BEFORE all other transformations.
+
+- [ ] `dbt/<connector_snake>__bronze_promoted.sql` exists (where `<connector_snake>` is the connector name with hyphens converted to underscores, e.g. `bitbucket_cloud`, `ms_entra`, `claude_enterprise`)
+- [ ] The bootstrap model is `materialized='view'`, uses `schema='staging'`, and tags the connector name (`tags=['<name>']`)
+- [ ] For every Airbyte stream the connector emits, there is a `{% do promote_bronze_to_rmt(table='bronze_<name_snake>.<stream>', order_by='unique_key') %}` line
+- [ ] No spurious `promote_bronze_to_rmt` calls reference streams that don't exist in the manifest / source
+- [ ] Every other dbt model in `dbt/` that reads from `source('bronze_<name_snake>', '...')` declares the bronze_promoted dependency as the FIRST non-blank line above the `config` block:
+  ```jinja
+  -- depends_on: {{ ref('<connector_snake>__bronze_promoted') }}
+  ```
+  This makes dbt's DAG materialise the bootstrap view before any model that reads bronze.
+
+Run the deterministic checker:
+
+```bash
+./airbyte-toolkit/validate-bronze-promoted.py <category>/<connector>
+# or for a CI-friendly summary across the whole repo:
+./airbyte-toolkit/validate-bronze-promoted.py --all --json
+```
+
+Exit 0 = PASS for the targeted connector(s); exit 2 = at least one FAIL. Rule IDs:
+
+| Rule | What it checks |
+|------|----------------|
+| `BP-1` | `<name>__bronze_promoted.sql` file exists |
+| `BP-2` | bootstrap is `materialized='view'` |
+| `BP-3` | bootstrap uses `schema='staging'` |
+| `BP-4` | bootstrap tags include connector name |
+| `BP-5` | every stream has a `promote_bronze_to_rmt(table='bronze_<name>.<stream>')` call |
+| `BP-6` | no `promote_bronze_to_rmt` call references an unknown stream (WARN) |
+| `BP-7` | `promote_bronze_to_rmt` calls target the connector's own bronze namespace |
+| `BP-8` | every `promote_bronze_to_rmt` call passes `order_by` |
+| `BP-9` | every other model that reads bronze depends on `<name>__bronze_promoted` |
+
 ### Credentials Template
 - [ ] `credentials.yaml.example` lists all required fields
 - [ ] `insight_source_id` is included
