@@ -216,6 +216,15 @@ _PROMOTE_CALL_RE = re.compile(
 _DBT_BLOCK_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
 _SQL_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
 
+_CONFIG_BLOCK_RE = re.compile(r"\{\{\s*config\((.*?)\)\s*\}\}", re.DOTALL)
+# Captures the argument blob of `{{ config(materialized='view', schema='staging', tags=[...]) }}`
+
+_MATERIALIZED_RE = re.compile(r"materialized\s*=\s*['\"]([^'\"]+)['\"]")
+_SCHEMA_KW_RE = re.compile(r"schema\s*=\s*['\"]([^'\"]+)['\"]")
+_TAGS_RE = re.compile(r"tags\s*=\s*\[([^\]]*)\]", re.DOTALL)
+# Whitespace-tolerant matchers for the three keyword arguments validated by
+# BP-2/3/4. Operate on the args blob captured by _CONFIG_BLOCK_RE.
+
 
 def _strip_dbt_comments(text: str) -> str:
     """Remove Jinja {# ... #} blocks and SQL `-- ...` line comments.
@@ -262,14 +271,15 @@ def check_connector(rel: str) -> Result:
             res.issues.append(Issue("BP-PARSE", "FAIL",
                                     f"could not parse connector.yaml: {e}"))
             return res
-        stream_source = "connector.yaml"
         if not res.streams:
             res.issues.append(Issue(
                 "BP-PARSE", "WARN",
                 "no streams discovered in connector.yaml — only existence of bronze_promoted will be checked",
                 "expected: streams[].name or streams[].$ref pointing at definitions.streams.<name>"))
     elif res.kind == "cdk":
-        res.streams, stream_source = streams_from_cdk(connector_dir, name)
+        # streams_from_cdk also returns a label of where it found the streams
+        # (catalog vs source-code regex); we don't surface it today, drop it.
+        res.streams, _ = streams_from_cdk(connector_dir, name)
         if not res.streams:
             res.issues.append(Issue("BP-PARSE", "WARN",
                                     "could not enumerate CDK streams; only existence of bronze_promoted will be checked",
@@ -296,23 +306,53 @@ def check_connector(rel: str) -> Result:
             f"expected at {bp_path.relative_to(INGESTION_DIR.parent)}"))
         return res  # downstream rules can't run without the file
 
-    bp_text_raw = bp_path.read_text()
-    bp_text = _strip_dbt_comments(bp_text_raw)
+    # Strip dbt block comments and SQL line comments before pattern matching:
+    # the {# ... #} doc blocks at the top of bronze_promoted.sql often mention
+    # `promote_bronze_to_rmt(...)` and example `{{ config(...) }}` snippets
+    # that would otherwise satisfy the rules without effective code.
+    bp_text = _strip_dbt_comments(bp_path.read_text())
 
     # ----- BP-2/3/4: config sanity -----
-    # config-block invariants — read against the ORIGINAL text so we don't
-    # accidentally accept a config'd inside a comment (commented-out config)
-    if "materialized='view'" not in bp_text_raw and 'materialized="view"' not in bp_text_raw:
-        res.issues.append(Issue("BP-2", "FAIL",
-                                f"{bp_filename} must be materialized='view'",
-                                "see existing examples e.g. m365__bronze_promoted.sql"))
-    if "schema='staging'" not in bp_text_raw and 'schema="staging"' not in bp_text_raw:
-        res.issues.append(Issue("BP-3", "FAIL",
-                                f"{bp_filename} must use schema='staging'"))
-    if name not in bp_text_raw:
-        res.issues.append(Issue("BP-4", "FAIL",
-                                f"{bp_filename} must include connector tag '{name}'",
-                                "expected tags=['<name>'] block"))
+    # Locate the {{ config(...) }} block in the comment-stripped text and parse
+    # its argument string. Each invariant is checked *inside* the block so that:
+    #   - whitespace variants (`materialized = 'view'`) are accepted;
+    #   - the connector-name check (BP-4) is scoped to `tags=[...]` rather than
+    #     accidentally satisfied by an unrelated mention elsewhere in the file;
+    #   - a commented-out config block fails BP-2 (the strip removes it).
+    config_match = _CONFIG_BLOCK_RE.search(bp_text)
+    if not config_match:
+        res.issues.append(Issue(
+            "BP-2", "FAIL",
+            f"{bp_filename} has no {{{{ config(...) }}}} block",
+            "see existing examples e.g. m365__bronze_promoted.sql"))
+    else:
+        config_args = config_match.group(1)
+
+        # BP-2: materialized='view'
+        mat = _MATERIALIZED_RE.search(config_args)
+        if not mat or mat.group(1) != "view":
+            actual = mat.group(1) if mat else "<absent>"
+            res.issues.append(Issue(
+                "BP-2", "FAIL",
+                f"{bp_filename} must declare materialized='view' (found: {actual!r})",
+                "see existing examples e.g. m365__bronze_promoted.sql"))
+
+        # BP-3: schema='staging'
+        sch = _SCHEMA_KW_RE.search(config_args)
+        if not sch or sch.group(1) != "staging":
+            actual = sch.group(1) if sch else "<absent>"
+            res.issues.append(Issue(
+                "BP-3", "FAIL",
+                f"{bp_filename} must use schema='staging' (found: {actual!r})"))
+
+        # BP-4: connector name appears inside tags=[...]
+        tags = _TAGS_RE.search(config_args)
+        tags_inner = tags.group(1) if tags else ""
+        if f"'{name}'" not in tags_inner and f'"{name}"' not in tags_inner:
+            res.issues.append(Issue(
+                "BP-4", "FAIL",
+                f"{bp_filename} tags=[...] must include the connector name '{name}'",
+                f"current tags=[{tags_inner.strip()}]" if tags else "no tags=[...] argument"))
 
     # ----- BP-5: every stream is promoted -----
     promoted = {(db, tbl) for db, tbl in _PROMOTE_RE.findall(bp_text)}
@@ -480,21 +520,7 @@ def render_json(results: list[Result]) -> str:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Validator entry point.
-
-    Parameters
-    ----------
-    argv :
-        Argument list to parse. Follows the standard ``argparse`` convention:
-        when ``None`` (the default and the path used by the ``__main__`` guard
-        below), :py:meth:`argparse.ArgumentParser.parse_args` reads from
-        :py:data:`sys.argv` automatically. Accepting it as a parameter keeps
-        ``main`` callable from unit tests via e.g.
-        ``main(["hr-directory/ms-entra"])`` without monkey-patching
-        ``sys.argv`` and matches the convention used by ``console_scripts``
-        entry-points.
-    """
+def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0].strip())
     p.add_argument("targets", nargs="*",
                    help="<category>/<connector> paths; default: all under connectors/")
@@ -509,9 +535,11 @@ def main(argv: list[str] | None = None) -> int:
         print("No connectors found", file=sys.stderr)
         return 1
 
-    results = []
+    results: list[Result] = []
+    had_invalid_target = False
     for t in targets:
         if "/" not in t or not (CONNECTORS_DIR / t).is_dir():
+            had_invalid_target = True
             results.append(Result(connector=t, kind="unknown",
                                   skipped_reason=f"directory not found under {CONNECTORS_DIR}"))
             continue
@@ -522,9 +550,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sys.stdout.write(render_text(results) + "\n")
 
+    # Exit-code contract: 0=PASS, 1=usage/filesystem error, 2=at least one FAIL.
+    # Invalid target paths are usage errors, not validation failures — even if
+    # all *valid* targets PASS, return 1 so typos don't masquerade as success.
+    if had_invalid_target:
+        return 1
     fails = sum(1 for r in results if r.status == "FAIL")
     return 2 if fails else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
