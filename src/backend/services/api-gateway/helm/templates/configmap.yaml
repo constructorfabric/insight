@@ -80,7 +80,18 @@ data:
           client_id:    {{ required "oidc.clientId is required when authDisabled=false and oidc.existingSecret is not set"    .Values.oidc.clientId    | quote }}
           redirect_uri: {{ required "oidc.redirectUri is required when authDisabled=false and oidc.existingSecret is not set" .Values.oidc.redirectUri | quote }}
           {{- end }}
-          scopes: [openid, profile, email]
+          # OIDC scopes as space-separated string. The auth-info module's
+          # config struct has `scopes: String` (split into Vec<String> at
+          # runtime via .split_whitespace()) — emitting a YAML sequence
+          # here would cause `serde::de::Error: invalid type: sequence,
+          # expected a string` on api-gateway init when running with
+          # authDisabled=true (no Secret mounted) or with a BYO
+          # `oidc.existingSecret` that does NOT include the
+          # `APP__modules__auth-info__config__scopes` env-var override.
+          # In Secret-injected paths the env-var still wins (envFrom
+          # overrides envFrom-loaded YAML); this fallback covers the
+          # configmap-only paths.
+          scopes: {{ .Values.oidc.scopes | default "openid profile email" | quote }}
 
       authz-resolver:
         config:

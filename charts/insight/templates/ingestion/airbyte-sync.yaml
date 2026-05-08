@@ -21,6 +21,11 @@ metadata:
     {{- include "insight.labels" . | nindent 4 }}
     app.kubernetes.io/component: ingestion-template
 spec:
+  # Without this, manual `kubectl create -f` triggers fall back to the
+  # namespace default SA and fail on `workflowtaskresults.argoproj.io`
+  # RBAC (exit code 64). CronWorkflow callers also pin the same SA via
+  # render templates.
+  serviceAccountName: argo-workflow
   arguments:
     parameters:
       - name: connection_name

@@ -7,6 +7,7 @@ metadata:
     {{- include "insight.labels" . | nindent 4 }}
     app.kubernetes.io/component: ingestion-template
 spec:
+  serviceAccountName: argo-workflow
   entrypoint: run
   templates:
     - name: run
@@ -84,5 +85,8 @@ spec:
           with open("profiles.yml", "w") as f:
               yaml.safe_dump(profile, f)
           PY
-          dbt run --profiles-dir . --select "$DBT_SELECT"
+          # `dbt run --select ""` matches NOTHING (not "all models") —
+          # ${VAR:+...} drops the flag entirely when DBT_SELECT is empty
+          # so manual triggers without the parameter run all models.
+          dbt run --profiles-dir . ${DBT_SELECT:+--select "$DBT_SELECT"}
 {{- end }}

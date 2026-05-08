@@ -57,12 +57,55 @@ Rules for the placeholder:
    the table is a valid drop-in. Matching the real engine keeps reads
    against the placeholder semantically equivalent to reads against
    the eventually-built table.
-3. **Idempotent** — guarded with `ch_table_exists` so re-runs of
+3. **Bronze placeholders MUST include all four Airbyte CDK v2
+   internal columns** in the exact order/types the destination
+   emits:
+
+   ```sql
+   _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+   _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+   _airbyte_meta          String        DEFAULT '{}',
+   _airbyte_generation_id UInt32        DEFAULT 0
+   ```
+
+   The four types must match what the Airbyte CH destination v2 emits
+   when it creates the table itself, and that contract has shifted
+   between minor versions:
+
+   - **`destination-clickhouse:2.0.x`** (our currently-pinned image,
+     released 2025-07) emits `_airbyte_generation_id` as `UInt32`.
+     Verified by inspecting tables Airbyte creates from scratch (e.g.
+     `bronze_cursor.cursor_daily_usage` after dropping any placeholder,
+     letting Airbyte create from scratch).
+   - **`destination-clickhouse:2.1.0+`** (released 2025-09 via PR
+     #65144 "Migrate to dataflow model") refactored schema generation
+     through `ClickhouseTableSchemaMapper`, which maps the CDK
+     `IntegerType` to `Int64`. So 2.1+ emits `_airbyte_generation_id`
+     as `Int64`.
+
+   The placeholder MUST track the destination's emit type. When
+   bumping the Airbyte chart past 2.1.0, this placeholder column type
+   must change to `Int64` in the same PR — otherwise
+   `ensureSchemaMatches` will reject the placeholder on first sync.
+
+   The Airbyte ClickHouse destination v2 calls
+   `ensureSchemaMatches` at the start of every sync and refuses to
+   write to a table whose schema is missing those four columns
+   ("target table already exists in the destination, but does not
+   contain Airbyte's internal columns"). Including them up-front
+   makes the placeholder a valid Airbyte-managed table from day
+   zero — Airbyte just writes to it. Silver placeholders do NOT
+   need these columns; silver replacement is handled separately
+   via the `on-run-start` drop hook described in rule 5.
+4. **Idempotent** — guarded with `ch_table_exists` so re-runs of
    `init.sh` are safe.
-4. **Replaced on first real run.**
-   - **Bronze placeholders** are dropped and recreated by Airbyte's
-     destination on the first sync — Airbyte's connector contract owns
-     the bronze schema and overwrites whatever the placeholder shipped.
+5. **Replaced on first real run.**
+   - **Bronze placeholders** are written to in place by Airbyte's
+     destination on the first sync. Because rule 3 ships the four
+     Airbyte CDK v2 internal columns up-front, the destination's
+     `ensureSchemaMatches` check accepts the placeholder as a valid
+     Airbyte-managed table and proceeds with normal schema evolution
+     (adding stream columns as needed) instead of refusing to write.
    - **Silver placeholders** are *not* automatically replaced by dbt's
      incremental materialization (which `INSERT INTO`s an existing
      relation). To force replacement on the first real dbt run when
@@ -85,10 +128,9 @@ Rules for the placeholder:
      materialization for `is_incremental()` — dropping inside a
      pre_hook leaves `is_incremental` as `True` and the compiled
      SQL still references the now-dropped target, producing a
-     `SYNTAX_ERROR`. dbt's
-     incremental materialization then sees no existing relation and
-     creates the table with the model's full schema, engine, and
-     ORDER BY.
+     `SYNTAX_ERROR`. dbt's incremental materialization then sees no
+     existing relation and creates the table with the model's full
+     schema, engine, and ORDER BY.
    - ClickHouse rebinds VIEW resolution on each SELECT, so the
      replacement is invisible to gold-view consumers.
 

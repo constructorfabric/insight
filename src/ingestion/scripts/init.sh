@@ -4,9 +4,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-# KUBECONFIG can be empty when running in-cluster
+# KUBECONFIG can be empty when running in-cluster.
 
 export RECONCILE_DIR="${SCRIPT_DIR}/../reconcile-connectors"
+
+# Host preflight (yq / jq / kubectl / port-forward to airbyte-server) is
+# no longer triggered from init.sh: connector registration / connection
+# apply moved to the in-cluster reconcile loop (per ADR-0001), and the
+# legacy fan of host scripts (register.sh, connect.sh, sync-state.sh,
+# upload-manifests.sh) was removed along with airbyte-toolkit/. Operators
+# running `reconcile-connectors/main.sh` from the host install yq / jq
+# themselves; the toolbox image ships them pre-installed for cron pods.
 
 # Single-namespace umbrella (PR #224). All Insight components — including the
 # bundled ClickHouse StatefulSet — live in the release namespace, default
@@ -78,11 +86,11 @@ done
 # migrations at startup (SeaORM Migrator::up). See ADR-0006.
 #
 # NOTE: connector registration + connection apply are now handled by
-# ../reconcile-connectors.sh (called from ../run-init.sh after this script
-# finishes the migrations + dbt-database setup above). Do NOT add new
-# `register.sh`/`connect.sh`-style invocations here — they were removed
-# along with the legacy fan of scripts in the version-driven-reconcile
-# refactor.
+# ../reconcile-connectors/main.sh (called from ../run-init.sh after this
+# script finishes the migrations + dbt-database setup above). Do NOT add
+# new `register.sh`/`connect.sh`-style invocations here — they were
+# removed along with the legacy fan of scripts in the version-driven-
+# reconcile refactor (ADR-0001).
 
 echo "=== Syncing workflows ==="
 ./scripts/sync-flows.sh --all

@@ -102,7 +102,10 @@ src/ingestion/airbyte-toolkit/
 ├── state.yaml          ← single state file (gitignored)
 ├── lib/
 │   ├── state.sh        ← state read/write library
-│   └── env.sh          ← environment resolution (API URL, JWT, workspace)
+│   ├── env.sh                          ← environment resolution (API URL, JWT, workspace)
+│   └── host-side-prerequisites.sh      ← yq/jq/PyYAML auto-install +
+│                                         airbyte-server port-forward
+│                                         (no-op in-cluster)
 ├── register.sh         ← register source definitions
 ├── connect.sh          ← create sources + connections per tenant
 ├── sync-state.sh       ← rebuild state from Airbyte API

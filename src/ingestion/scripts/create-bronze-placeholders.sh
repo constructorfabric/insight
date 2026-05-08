@@ -5,14 +5,21 @@
 # UNKNOWN_TABLE / UNKNOWN_DATABASE and init.sh aborts.
 #
 # Two classes of placeholders:
-#   1. bronze_<source>.<stream>  — populated by Airbyte connectors. Missing
-#                                  on first install; Airbyte drops the
-#                                  placeholder and recreates with its own
-#                                  schema on the first sync.
+#   1. bronze_<source>.<stream>  — populated by Airbyte connectors. The
+#                                  placeholder ships the four CDK v2
+#                                  internal columns (see ADR-0007 rule 3),
+#                                  so Airbyte's destination v2 accepts it
+#                                  via `ensureSchemaMatches` and writes to
+#                                  it in place on the first sync (rule 5).
 #   2. silver.<dbt_model>        — built by `dbt run` (Argo workflow,
 #                                  invoked AFTER init.sh registers it).
-#                                  dbt drops the placeholder and creates a
-#                                  ReplacingMergeTree on its first run.
+#                                  Each silver placeholder carries the
+#                                  marker comment INSIGHT_PLACEHOLDER_v1;
+#                                  the dbt on-run-start hook
+#                                  `drop_silver_placeholders_at_start`
+#                                  drops it on the first eligible run so
+#                                  the model materialises with its real
+#                                  schema (ADR-0007 rule 5).
 #
 # This is THE EXISTING WORKAROUND for an architectural issue: gold-view
 # migrations run before dbt builds silver. The proper fix is either to
@@ -24,6 +31,13 @@
 # Schemas are minimum-viable: enough columns + reasonable types for the
 # referenced migrations to type-check the SELECT. The real owner (Airbyte
 # or dbt) overwrites with its full schema on first run.
+#
+# Bronze placeholders include the four Airbyte CDK v2 internal columns
+# (_airbyte_raw_id, _airbyte_extracted_at, _airbyte_meta,
+# _airbyte_generation_id). Airbyte's ClickHouse destination v2 calls
+# `ensureSchemaMatches` on every sync and refuses to write to a table
+# missing them; including them here makes the placeholder a valid drop-in
+# from day zero. See ADR-0007 §Decision rule 3.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -501,7 +515,10 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue (
     updated String,
     due_date String,
     custom_fields_json String,
-    _airbyte_extracted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY id;
 SQL
 fi
@@ -523,7 +540,10 @@ CREATE TABLE IF NOT EXISTS bronze_m365.teams_activity (
     privateChatMessageCount Nullable(Float64),
     meetingsAttendedCount Nullable(Float64),
     callCount Nullable(Float64),
-    _airbyte_extracted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY userPrincipalName;
 SQL
 fi
@@ -535,7 +555,10 @@ CREATE TABLE IF NOT EXISTS bronze_m365.onedrive_activity (
     lastActivityDate String,
     sharedInternallyFileCount Nullable(Float64),
     sharedExternallyFileCount Nullable(Float64),
-    _airbyte_extracted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY userPrincipalName;
 SQL
 fi
@@ -547,7 +570,10 @@ CREATE TABLE IF NOT EXISTS bronze_m365.sharepoint_activity (
     lastActivityDate String,
     sharedInternallyFileCount Nullable(Float64),
     sharedExternallyFileCount Nullable(Float64),
-    _airbyte_extracted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY userPrincipalName;
 SQL
 fi
@@ -561,7 +587,10 @@ CREATE TABLE IF NOT EXISTS bronze_zoom.participants (
     meeting_uuid String,
     join_time String,
     leave_time String,
-    _airbyte_extracted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY email;
 SQL
 fi
@@ -583,7 +612,10 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_daily_usage (
     agentRequests         Nullable(Float64),
     chatRequests          Nullable(Float64),
     composerRequests      Nullable(Float64),
-    _airbyte_extracted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY (email, day);
 SQL
 fi
@@ -606,7 +638,10 @@ CREATE TABLE IF NOT EXISTS bronze_bamboohr.employees (
     jobTitle              Nullable(String),
     supervisorEmail       Nullable(String),
     supervisor            Nullable(String),
-    _airbyte_extracted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY id;
 SQL
 fi
@@ -625,7 +660,10 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commits (
     project_key           Nullable(String),
     repository            Nullable(String),
     message               Nullable(String),
-    _airbyte_extracted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY hash;
 SQL
 fi
@@ -643,7 +681,10 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_requests (
     updated_on            Nullable(String),
     merged_on             Nullable(String),
     repository            Nullable(String),
-    _airbyte_extracted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY id;
 SQL
 fi
@@ -659,7 +700,10 @@ CREATE TABLE IF NOT EXISTS bronze_slack.users_details (
     date                          String,
     messages_posted_count         Nullable(Float64),
     channel_messages_posted_count Nullable(Float64),
-    _airbyte_extracted_at         DateTime64(3, 'UTC') DEFAULT now64(3)
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY (email_address, date);
 SQL
 fi

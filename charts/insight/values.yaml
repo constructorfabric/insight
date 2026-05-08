@@ -132,6 +132,16 @@ airbyte:
 # refuses to render when `templates.enabled=true` and these fields are
 # empty (single source of truth: the umbrella values overlay).
 ingestion:
+  # PREREQUISITE: when `templates.enabled=true`, the rendered Argo
+  # `WorkflowTemplate` objects pin `serviceAccountName: argo-workflow`.
+  # The `argo-workflow` ServiceAccount + supplemental RBAC (Role
+  # `argo-workflow-executor` granting create/patch on
+  # `workflowtaskresults.argoproj.io`) are NOT shipped by this chart —
+  # they come from `deploy/scripts/install-argo.sh` and
+  # `deploy/argo/rbac.yaml`. Run them before `helm install`, or use
+  # `deploy/scripts/install-insight.sh` which orders them for you.
+  # Otherwise workflow submission fails with
+  # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
   toolboxImage: ""           # e.g. "ghcr.io/cyberfabric/insight-toolbox:2026.04.28.10.34-b08b460"
