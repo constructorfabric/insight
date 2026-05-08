@@ -111,6 +111,10 @@ airbyte:
   jwtSecret:
     name: airbyte-auth-secrets   # created by the Airbyte chart itself
     key:  jwt-signature-secret
+  authSecret:
+    name: airbyte-auth-secrets   # same K8s Secret as jwtSecret; carries OAuth client credentials
+    clientIdKey:     instance-admin-client-id      # key under .data
+    clientSecretKey: instance-admin-client-secret  # key under .data
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  INGESTION — WorkflowTemplates (content for Argo)
@@ -136,8 +140,10 @@ ingestion:
   # cron-scheduled inside the cluster (see templates/ingestion/reconcile-cron.yaml).
   reconcile:
     schedule: "*/15 * * * *"
-    airbyteWorkspaceId: ""    # Set to the UUID of the Airbyte workspace that hosts Insight custom connectors
-    destinationId: ""         # Set to the UUID of the Airbyte destination (Insight Bronze in ClickHouse). Required to bootstrap connections on a clean cluster.
+    # Airbyte workspace UUID is auto-discovered at runtime via ab_workspace_id (ADR-0009) — no value to set.
+    destinationId: ""         # Optional override: explicit Airbyte destination UUID. Leave empty for fresh installs — reconcile auto-creates the Bronze ClickHouse destination by name (ADR-0012).
+    destinationName: ""       # Optional: name of the Bronze destination managed by reconcile. Default `clickhouse-bronze`.
+    argoInstanceId: ""        # Optional. Set only if the cluster's Argo workflow controller runs with `instanceID:` configured (e.g. "argo-workflows-insight" on dev-vhc). Empty leaves the controller-instanceid label off — controllers without instanceID accept that.
     tenantId: ""              # Set to the Insight tenant slug (used in source/connection names per ADR-0005). No silent default.
     logs:
       size: 5Gi

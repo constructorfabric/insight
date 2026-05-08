@@ -27,8 +27,9 @@
           "type": "object",
           "properties": {
             "schedule": { "type": "string", "default": "*/15 * * * *" },
-            "airbyteWorkspaceId": { "type": "string" },
             "destinationId": { "type": "string" },
+            "destinationName": { "type": "string" },
+            "argoInstanceId": { "type": "string" },
             "tenantId": { "type": "string" },
             "logs": {
               "type": "object",
@@ -73,6 +74,15 @@
             "key":  { "type": "string" }
           },
           "required": ["name", "key"]
+        },
+        "authSecret": {
+          "type": "object",
+          "properties": {
+            "name":            { "type": "string" },
+            "clientIdKey":     { "type": "string" },
+            "clientSecretKey": { "type": "string" }
+          },
+          "required": ["name"]
         }
       }
     },

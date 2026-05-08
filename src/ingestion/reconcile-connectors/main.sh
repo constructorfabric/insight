@@ -93,6 +93,13 @@ main() {
   # AIRBYTE_URL / AIRBYTE_TOKEN_FILE are honored by lib/airbyte.sh; nothing
   # to do here besides asserting the URL is non-empty.
   : "${AIRBYTE_URL:?AIRBYTE_URL must be set (e.g. http://airbyte-server:8001)}"
+  # ARGO_INSTANCE_ID is optional. When the cluster's Argo workflow controller
+  # runs with `instanceID:` set, every Workflow / CronWorkflow must carry a
+  # matching `workflows.argoproj.io/controller-instanceid` label or the
+  # controller ignores it. When the controller has no instanceID, leave
+  # ARGO_INSTANCE_ID empty and the label is omitted.
+  export ARGO_INSTANCE_ID="${ARGO_INSTANCE_ID:-}"  # RULE-DEFAULTS-OK: optional gating label, empty == no filter
+  : "${ARGO_SERVICE_ACCOUNT:?ARGO_SERVICE_ACCOUNT must be set -- the K8s ServiceAccount Argo workflow pods run under, needs read access to airbyte auth secrets and create/patch workflowtaskresults. The standard chart provides RELEASE-reconcile.}"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-airbyte-env
 
   local subcmd="reconcile"

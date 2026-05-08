@@ -25,14 +25,22 @@ def main() -> int:
         "CONNECTION_NAME": args.connection_name,
         "TENANT": args.tenant,
         "INSIGHT_NAMESPACE": os.environ["INSIGHT_NAMESPACE"],
+        "ARGO_INSTANCE_ID": os.environ.get("ARGO_INSTANCE_ID", ""),
+        "ARGO_SERVICE_ACCOUNT": os.environ["ARGO_SERVICE_ACCOUNT"],
     }
     with open(args.tpl, "r", encoding="utf-8") as f:
         tpl = f.read()
     try:
-        sys.stdout.write(string.Template(tpl).substitute(env))
+        rendered = string.Template(tpl).substitute(env)
     except KeyError as e:
         print(f"render_sync_trigger: missing variable {e}", file=sys.stderr)
         return 2
+    if not env["ARGO_INSTANCE_ID"]:
+        rendered = "\n".join(
+            line for line in rendered.splitlines()
+            if "workflows.argoproj.io/controller-instanceid" not in line
+        ) + "\n"
+    sys.stdout.write(rendered)
     return 0
 
 if __name__ == "__main__":

@@ -53,6 +53,10 @@ reconcile__log() {
   local level="$1" connector="$2" message="$3"
   printf '%-7s %s: %s\n' \
     "${level}" "${connector}" "${message}" >&2
+  # Mirror to the audit file-log so per-connector CHANGE/INFO/WARN events
+  # are not stderr-only. log_line is a noop on empty msg and on level
+  # filtering; safe to call unconditionally.
+  log_line "${level}" "${connector}: ${message}"
 }
 
 # ---------------------------------------------------------------------------
@@ -93,10 +97,19 @@ reconcile_compute_schedule() {
       2>/dev/null || true)"
     [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
   fi
-  schedule="$(python3 "${_RECONCILE_PY_DIR}/parse_descriptor.py" \
-    --descriptor "${CONNECTORS_DIR}/${connector}/descriptor.yaml" \
-    --field schedule 2>/dev/null || true)"
-  [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
+  # Resolve descriptor path by glob — connectors are nested under an area
+  # directory (e.g. ${CONNECTORS_DIR}/collaboration/m365/), so the slug
+  # alone doesn't give us a deterministic path.
+  local desc_glob desc_path
+  # shellcheck disable=SC2206
+  desc_glob=("${CONNECTORS_DIR}"/*/"${connector}"/descriptor.yaml)
+  desc_path="${desc_glob[0]}"
+  if [[ -f "${desc_path}" ]]; then
+    schedule="$(python3 "${_RECONCILE_PY_DIR}/parse_descriptor.py" \
+      --descriptor "${desc_path}" \
+      --field schedule 2>/dev/null || true)"
+    [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
+  fi
   printf '0 0 * * *'
 }
 
@@ -123,6 +136,73 @@ reconcile_compute_tenant() {
 }
 
 # ---------------------------------------------------------------------------
+# reconcile_resolve_destination_id <log_subject>
+# Resolves (or creates) the Airbyte destination Bronze sink owned by
+# reconcile. Strategy:
+#   1. If RECONCILE_DESTINATION_ID env is set (legacy / explicit override),
+#      use it verbatim.
+#   2. Otherwise, look up an existing destination by name
+#      RECONCILE_DESTINATION_NAME (default `clickhouse-bronze`); if absent,
+#      create one with definition Clickhouse and config from
+#      RECONCILE_DEST_CLICKHOUSE_* env (host/port/db/user/password).
+# Caches the resolved id in _RECONCILE_DESTINATION_ID for the run.
+# Echoes the destinationId on stdout; returns non-zero on failure.
+# ---------------------------------------------------------------------------
+reconcile_resolve_destination_id() {
+  local subject="$1"
+  if [[ -n "${_RECONCILE_DESTINATION_ID:-}" ]]; then
+    printf '%s' "${_RECONCILE_DESTINATION_ID}"
+    return 0
+  fi
+  if [[ -n "${RECONCILE_DESTINATION_ID:-}" ]]; then
+    _RECONCILE_DESTINATION_ID="${RECONCILE_DESTINATION_ID}"
+    printf '%s' "${_RECONCILE_DESTINATION_ID}"
+    return 0
+  fi
+  local dest_name="${RECONCILE_DESTINATION_NAME:-clickhouse-bronze}"  # RULE-DEFAULTS-OK: project-fixed name, not operator-tunable
+  local def_id
+  if ! def_id="$(ab_destination_definition_id_by_name Clickhouse 2>/dev/null)"; then
+    reconcile__log ERROR "${subject}" \
+      "Airbyte does not register a Clickhouse destination definition in this workspace — cannot bootstrap Bronze sink"
+    return 1
+  fi
+
+  # Build connection config from env. Required for fresh-cluster bootstrap;
+  # caller (Helm chart reconcile-cron.yaml) injects them from chart values
+  # + insight-db-creds secret.
+  : "${RECONCILE_DEST_CLICKHOUSE_HOST:?RECONCILE_DEST_CLICKHOUSE_HOST must be set (the in-cluster ClickHouse host for the Bronze destination)}"
+  : "${RECONCILE_DEST_CLICKHOUSE_PORT:?RECONCILE_DEST_CLICKHOUSE_PORT must be set}"
+  : "${RECONCILE_DEST_CLICKHOUSE_DATABASE:?RECONCILE_DEST_CLICKHOUSE_DATABASE must be set}"
+  : "${RECONCILE_DEST_CLICKHOUSE_USERNAME:?RECONCILE_DEST_CLICKHOUSE_USERNAME must be set}"
+  : "${RECONCILE_DEST_CLICKHOUSE_PASSWORD:?RECONCILE_DEST_CLICKHOUSE_PASSWORD must be set}"
+  local config_json
+  config_json="$(python3 -c '
+import os, json
+print(json.dumps({
+  "host":     os.environ["RECONCILE_DEST_CLICKHOUSE_HOST"],
+  "port":     int(os.environ["RECONCILE_DEST_CLICKHOUSE_PORT"]),
+  "database": os.environ["RECONCILE_DEST_CLICKHOUSE_DATABASE"],
+  "username": os.environ["RECONCILE_DEST_CLICKHOUSE_USERNAME"],
+  "password": os.environ["RECONCILE_DEST_CLICKHOUSE_PASSWORD"],
+  "ssl":      False,
+  "schema":   "default",
+}))
+')"
+
+  local dest_id
+  if ! dest_id="$(ab_ensure_destination "${dest_name}" "${def_id}" "${config_json}")"; then
+    reconcile__log ERROR "${subject}" "ab_ensure_destination failed for ${dest_name}"
+    return 1
+  fi
+  if [[ -z "${dest_id}" ]]; then
+    reconcile__log ERROR "${subject}" "ab_ensure_destination returned empty id for ${dest_name}"
+    return 1
+  fi
+  _RECONCILE_DESTINATION_ID="${dest_id}"
+  printf '%s' "${dest_id}"
+}
+
+# ---------------------------------------------------------------------------
 # reconcile_cascade_delete <connector_name>
 # Deletes all Airbyte connections + sources + definition (if orphaned) and
 # the per-connector Argo CronWorkflow. Called when the Secret is missing.
@@ -139,7 +219,7 @@ reconcile_cascade_delete() {
   local tenant
   tenant="$(reconcile_compute_tenant "${connector}")"
   local workspace_id
-  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
+  workspace_id="$(ab_workspace_id)"
 
   # Find all sources whose name starts with the connector slug and delete them.
   # ab_delete_source also cascades connections in newer Airbyte; we make it
@@ -206,7 +286,10 @@ reconcile_definitions() {
   local definition_id current_value action manifest_path
   local rc=0
 
-  manifest_path="${CONNECTORS_DIR}/${connector_dir}/connector.yaml"
+  # connector_dir is already a full path emitted by disc_load_descriptors
+  # (e.g. "src/ingestion/connectors/collaboration/m365") — do NOT prepend
+  # CONNECTORS_DIR or the path doubles up.
+  manifest_path="${connector_dir}/connector.yaml"
 
   # Type=cdk requires cdk_image (full Docker reference). When absent,
   # WARN+skip — image not yet published. See FEATURE DoD
@@ -220,7 +303,7 @@ reconcile_definitions() {
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-none
   local workspace_id
-  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID}"
+  workspace_id="$(ab_workspace_id)"
   local defs_json
   defs_json="$(ab_list_definitions "${workspace_id}")"
   # custom is True: Insight namespace separation per ADR-0009.
@@ -337,7 +420,7 @@ for d in json.load(sys.stdin):
           return 0
         else
           if ! ab_builder_update_active_manifest \
-                "${workspace_id}" "${builder_id}" "${target_version}" "${manifest_path}" >/dev/null; then
+                "${workspace_id}" "${definition_id}" "${target_version}" "${manifest_path}" >/dev/null; then
             reconcile__log ERROR "${connector_name}" "failed to publish connector definition"
             return 1
           fi
@@ -407,7 +490,7 @@ reconcile_sources() {
   local workspace_id sources_json source_id current_cfg_json action change_class
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-name
-  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
+  workspace_id="$(ab_workspace_id)"
   sources_json="$(ab_list_sources "${workspace_id}")"
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-name
 
@@ -441,31 +524,39 @@ for s in json.load(sys.stdin):
     | python3 "${_RECONCILE_PY_DIR}/select_source_config_by_name.py" \
         "${expected_source_name}")"
   change_class="$(reconcile_classify_change "${current_cfg_json}" "${target_cfg_json}")"
-  if [[ "${change_class}" == "breaking" ]]; then
-    action="recreate"
-    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-      reconcile__log CHANGE "${connector_name}" \
-        "would recreate source ${source_id} (config change is breaking — state preserved across recreate)"
-    else
-      reconcile_recreate_with_state "" "${source_id}" "${definition_id}" \
-        "${expected_source_name}" "${target_cfg_json}" "${secret_cfg_hash}"
-      _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
-    fi
-  else
+  case "${change_class}" in
+    breaking)
+      action="recreate"
+      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+        reconcile__log CHANGE "${connector_name}" \
+          "would recreate source ${source_id} (config change is breaking — state preserved across recreate)"
+      else
+        reconcile_recreate_with_state "" "${source_id}" "${definition_id}" \
+          "${expected_source_name}" "${target_cfg_json}" "${secret_cfg_hash}" \
+          "${connector_name}"
+        _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      fi
+      ;;
+    non-breaking)
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-if-stale-def
-    # @cpt-begin:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-return-update
-    action="update"
-    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-      reconcile__log CHANGE "${connector_name}" \
-        "would update source ${source_id} with new credentials"
-    else
-      ab_update_source "${source_id}" "${target_cfg_json}" \
-        "${expected_source_name}" >/dev/null
-      reconcile__log INFO "${connector_name}" "source ${source_id} updated"
-      _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
-    fi
-    # @cpt-end:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-return-update
-  fi
+      # @cpt-begin:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-return-update
+      action="update"
+      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+        reconcile__log CHANGE "${connector_name}" \
+          "would update source ${source_id} with new credentials"
+      else
+        ab_update_source "${source_id}" "${target_cfg_json}" \
+          "${expected_source_name}" >/dev/null
+        reconcile__log INFO "${connector_name}" "source ${source_id} updated"
+        _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      fi
+      # @cpt-end:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-return-update
+      ;;
+    noop|*)
+      action="noop"
+      _RECONCILE_NOOP=$((_RECONCILE_NOOP + 1))
+      ;;
+  esac
   printf '%s\t%s\n' "${action}" "${source_id}"
 }
 
@@ -480,7 +571,7 @@ reconcile_connections() {
   local workspace_id connections_json filtered
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-find-tag
-  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
+  workspace_id="$(ab_workspace_id)"
   connections_json="$(ab_list_connections "${workspace_id}")"
   filtered="$(printf '%s' "${connections_json}" \
     | python3 "${_RECONCILE_PY_DIR}/select_connections_by_source.py" "${source_id}")"
@@ -495,10 +586,7 @@ reconcile_connections() {
       return 0
     fi
     local destination_id
-    destination_id="${RECONCILE_DESTINATION_ID:-}"  # RULE-DEFAULTS-OK: explicit empty check below — fail-fast
-    if [[ -z "${destination_id}" ]]; then
-      reconcile__log ERROR "${connector_name}" \
-        "RECONCILE_DESTINATION_ID env not set — cannot bootstrap connection on source ${source_id}"
+    if ! destination_id="$(reconcile_resolve_destination_id "${connector_name}")"; then
       return 1
     fi
     local discover_json sync_catalog
@@ -516,15 +604,26 @@ reconcile_connections() {
     local cron_str schedule_json
     cron_str="$(reconcile_compute_schedule "${connector_name}")"
     schedule_json="$(python3 "${_RECONCILE_PY_DIR}/build_schedule_json.py" "${cron_str}")"
-    local tags_json
-    tags_json="$(python3 -c 'import sys, json; print(json.dumps(["insight", f"cfg-hash:{sys.argv[1]}"]))' "${secret_cfg_hash}")"
+    local tag_names_json tags_json
+    # cfg-hash truncated to first 12 hex chars: Airbyte caps tag name at 30,
+    # the prefix `cfg-hash:` is 9, full sha256 (64) blows the limit. 12 chars
+    # = 48 bits of entropy — plenty to detect drift on this small key set.
+    tag_names_json="$(python3 -c 'import sys, json; print(json.dumps(["insight", f"cfg-hash:{sys.argv[1][:12]}"]))' "${secret_cfg_hash}")"
+    # Airbyte v1 schemas require Tag objects (tagId/workspaceId/name/color);
+    # ab_resolve_tags creates any missing tags in the workspace and echoes
+    # the resolved Tag-object array.
+    tags_json="$(ab_resolve_tags "${workspace_id}" "${tag_names_json}")"
     local conn_name
     conn_name="$(reconcile_compute_connection_name "${connector_name}")"
     local new_conn_json new_conn_id
     # RECONCILE_DRY_RUN guarded by short-circuit at top of bootstrap branch.
+    # Per-connector ClickHouse schema: bronze_<connector>. Reconcile owns
+    # this convention so dbt downstream can target predictable schemas;
+    # without it, all connectors' streams collide in destination.database.
+    local namespace_format="bronze_${connector_name}"
     if ! new_conn_json="$(ab_create_connection "${workspace_id}" "${source_id}" \
               "${destination_id}" "${conn_name}" "${schedule_json}" \
-              "${tags_json}" "${sync_catalog}")"; then
+              "${tags_json}" "${sync_catalog}" "${namespace_format}")"; then
       reconcile__log ERROR "${connector_name}" \
         "ab_create_connection failed for source ${source_id}"
       return 1
@@ -558,8 +657,12 @@ reconcile_connections() {
           "connection ${connection_id} tags updated"
         _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
       fi
+      # Caller's `tail -1 | cut -f1` reads this to decide whether to fire
+      # a sync trigger. Emit the action so cfg-hash rotations are seen.
+      printf 'patch_tags\t%s\n' "${connection_id}"
     else
       _RECONCILE_NOOP=$((_RECONCILE_NOOP + 1))
+      printf 'noop\t%s\n' "${connection_id}"
     fi
     # @cpt-end:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-if-drift
   done <<<"${filtered}"
@@ -567,17 +670,22 @@ reconcile_connections() {
 
 # ---------------------------------------------------------------------------
 # reconcile_recreate_with_state <connection_id> <source_id> <definition_id> \
-#                               <source_name> <target_cfg_json> <cfg_hash>
+#                               <source_name> <target_cfg_json> <cfg_hash> \
+#                               <connector_name>
 # Decision #5: state_export → delete → create_source → create_connection
 # → state_import. If <connection_id> empty, the function looks up the
-# connection bound to <source_id> first.
+# connection bound to <source_id> first. <connector_name> is the
+# descriptor slug (e.g. `github-v2`) and drives the connection's
+# bronze_<connector> namespace; passed explicitly because parsing it
+# out of source_name breaks for slugs containing `-`.
 # ---------------------------------------------------------------------------
 reconcile_recreate_with_state() {
   local connection_id="$1" source_id="$2" definition_id="$3"
   local source_name="$4" target_cfg_json="$5" cfg_hash="$6"
+  local connector_name="${7:?reconcile_recreate_with_state: connector_name (arg 7) is required for bronze_<connector> namespace}"
   local workspace_id
 
-  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
+  workspace_id="$(ab_workspace_id)"
 
   # Defensive dry-run guard: callers (reconcile_sources) already short-circuit
   # before calling us, but enforce here too per dod-reconcile-dry-run-non-destructive.
@@ -618,21 +726,22 @@ reconcile_recreate_with_state() {
   new_source_id="$(printf '%s' "${new_source_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceId",""))')"
 
   local destination_id
-  destination_id="${RECONCILE_DESTINATION_ID:-}"  # RULE-DEFAULTS-OK: explicit empty check below
-  if [[ -z "${destination_id}" ]]; then
-    reconcile__log ERROR "${source_name}" \
-      "RECONCILE_DESTINATION_ID env not set — cannot create new connection"
+  if ! destination_id="$(reconcile_resolve_destination_id "${source_name}")"; then
     return 1
   fi
-  : "${RECONCILE_DEFAULT_SCHEDULE_JSON:?Set RECONCILE_DEFAULT_SCHEDULE_JSON (e.g. '{\"scheduleType\":\"manual\"}' or cron form)}"
+  : "${RECONCILE_DEFAULT_SCHEDULE_JSON:?Set RECONCILE_DEFAULT_SCHEDULE_JSON to the JSON for an Airbyte connection schedule (manual or cron); the chart supplies a sensible default}"
   local schedule_json="${RECONCILE_DEFAULT_SCHEDULE_JSON}"
-  local tags_json
-  tags_json="$(python3 -c 'import sys, json; print(json.dumps(["insight", f"cfg-hash:{sys.argv[1]}"]))' "${cfg_hash}")"
+  local tag_names_json tags_json
+  # cfg-hash truncated to 12 hex (Airbyte tag-name max is 30; 'cfg-hash:'+12 = 21).
+  tag_names_json="$(python3 -c 'import sys, json; print(json.dumps(["insight", f"cfg-hash:{sys.argv[1][:12]}"]))' "${cfg_hash}")"
+  # Airbyte v1 schemas require Tag objects on connection create/patch.
+  tags_json="$(ab_resolve_tags "${workspace_id}" "${tag_names_json}")"
   local new_conn_json new_connection_id
+  local namespace_format="bronze_${connector_name}"
   # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
   new_conn_json="$(ab_create_connection "${workspace_id}" "${new_source_id}" \
                     "${destination_id}" "${source_name}-conn" "${schedule_json}" \
-                    "${tags_json}")"
+                    "${tags_json}" "" "${namespace_format}")"
   new_connection_id="$(printf '%s' "${new_conn_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("connectionId",""))')"
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-create
 
@@ -673,7 +782,7 @@ reconcile_gc_orphans() {
   # @cpt-end:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-loop
 
   local workspace_id descriptors_tsv known_names
-  workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (Airbyte workspace UUID for Insight connectors)}"
+  workspace_id="$(ab_workspace_id)"
   descriptors_tsv="$(disc_load_descriptors)"
   known_names="$(printf '%s\n' "${descriptors_tsv}" \
     | python3 "${_RECONCILE_PY_DIR}/extract_descriptor_names.py")"
@@ -771,6 +880,7 @@ _reconcile_one_connector() {
     | python3 "${_RECONCILE_PY_DIR}/extract_secret_data.py")"
 
   local data_changed=0
+  local rc=0
 
   # Layer 1 — definition
   local def_result def_id def_action
@@ -797,8 +907,26 @@ _reconcile_one_connector() {
     -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/source-id}' 2>/dev/null || true)"
   [[ -n "${source_id_label}" ]] || source_id_label="main"
   local expected_source_name="${name}-${source_id_label}-${tenant_id}"
+
+  # Inject Insight platform identity fields into the source config the
+  # K8s Secret only carries connector-specific credentials; the manifest
+  # spec also requires `insight_tenant_id` (from reconcile's tenant
+  # config) and `insight_source_id` (from the secret's
+  # `insight.cyberfabric.com/source-id` annotation). We add them here so
+  # the operator never has to duplicate identity into the secret payload.
+  local source_cfg_json
+  source_cfg_json="$(INSIGHT_TENANT_ID_VAL="${tenant_id}" \
+                     INSIGHT_SOURCE_ID_VAL="${source_id_label}" \
+    python3 -c '
+import sys, os, json
+d = json.loads(sys.stdin.read() or "{}") or {}
+d["insight_tenant_id"] = os.environ["INSIGHT_TENANT_ID_VAL"]
+d["insight_source_id"] = os.environ["INSIGHT_SOURCE_ID_VAL"]
+print(json.dumps(d))
+' <<<"${secret_data_json}")"
+
   local src_result src_id src_action
-  if ! src_result="$(reconcile_sources "${name}" "${secret_data_json}" "${cfg_hash}" \
+  if ! src_result="$(reconcile_sources "${name}" "${source_cfg_json}" "${cfg_hash}" \
                 "${def_id}" "${expected_source_name}")"; then
     log_line ERROR "${name}: failed to reconcile source"
     return 1
@@ -812,16 +940,42 @@ _reconcile_one_connector() {
   # Source create/update/recreate is data-affecting per ADR-0008.
   [[ "${src_action}" != "noop" ]] && data_changed=1
 
-  # Layer 3 — connection tags (tag-only: NOT data-affecting per ADR-0008).
-  # Bootstrap path (first-time create) IS data-affecting and bumps
-  # data_changed so a sync trigger fires.
+  # Layer 3 — connection tags. Two outcomes are data-affecting and trigger
+  # a sync afterwards:
+  #   1. `created` — first-time bootstrap of the connection.
+  #   2. `patch_tags` — cfg-hash drift detected, i.e. the K8s Secret rotated.
+  #      Per ADR-0008 the layer is "tag-only" in the sense that we do not
+  #      recreate the connection, but a credential rotation is still a
+  #      genuine reason to re-sync (the new credentials may scope to a
+  #      different account / dataset).
   local conn_result conn_action
   conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}")"
   conn_action="$(printf '%s' "${conn_result}" | tail -1 | cut -f1)"
-  [[ "${conn_action}" == "created" ]] && data_changed=1
+  case "${conn_action}" in
+    created)
+      data_changed=1
+      ;;
+    patch_tags)
+      # cfg-hash drift = K8s Secret rotated. classify_change cannot tell
+      # because Airbyte returns secrets masked (`********`) on /sources/list,
+      # so the source diff was a false-noop. The cfg-hash tag is the
+      # canonical rotation signal; push the new config now so the sync we
+      # are about to trigger uses fresh credentials.
+      if ab_update_source "${src_id}" "${source_cfg_json}" \
+            "${expected_source_name}" >/dev/null; then
+        reconcile__log INFO "${name}" \
+          "rotated source ${src_id} credentials (cfg-hash drift)"
+      else
+        reconcile__log ERROR "${name}" \
+          "ab_update_source failed during rotation for ${src_id}"
+        rc=1
+      fi
+      data_changed=1
+      ;;
+  esac
 
   # CronWorkflow apply (idempotent — kubectl apply no-op when YAML unchanged).
-  local conn_name schedule tenant rc=0
+  local conn_name schedule tenant
   conn_name="$(reconcile_compute_connection_name "${name}")"
   schedule="$(reconcile_compute_schedule "${name}")"
   tenant="$(reconcile_compute_tenant "${name}")"
@@ -849,7 +1003,6 @@ _reconcile_one_connector() {
 }
 
 reconcile_run() {
-  : "${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (the Airbyte workspace UUID where Insight connectors are managed; see chart values ingestion.reconcile.airbyteWorkspaceId)}"
   local opt_dry_run="${1:-0}"
   local opt_no_sync_trigger="${2:-0}"
   local opt_no_gc="${3:-0}"

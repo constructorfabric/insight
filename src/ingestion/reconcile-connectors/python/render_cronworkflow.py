@@ -30,14 +30,26 @@ def main() -> int:
         "SCHEDULE": args.schedule,
         "TENANT": args.tenant,
         "INSIGHT_NAMESPACE": os.environ["INSIGHT_NAMESPACE"],
+        "ARGO_INSTANCE_ID": os.environ.get("ARGO_INSTANCE_ID", ""),
+        "ARGO_SERVICE_ACCOUNT": os.environ["ARGO_SERVICE_ACCOUNT"],
     }
     with open(args.tpl, "r", encoding="utf-8") as f:
         tpl = f.read()
     try:
-        sys.stdout.write(string.Template(tpl).substitute(env))
+        rendered = string.Template(tpl).substitute(env)
     except KeyError as e:
         print(f"render_cronworkflow: missing variable {e}", file=sys.stderr)
         return 2
+    # Drop the controller-instanceid label when the env var is empty —
+    # otherwise we'd emit an empty label value, which Argo accepts but
+    # loses meaning. The label line is a single-line marker so simple
+    # string filtering is safe.
+    if not env["ARGO_INSTANCE_ID"]:
+        rendered = "\n".join(
+            line for line in rendered.splitlines()
+            if "workflows.argoproj.io/controller-instanceid" not in line
+        ) + "\n"
+    sys.stdout.write(rendered)
     return 0
 
 if __name__ == "__main__":

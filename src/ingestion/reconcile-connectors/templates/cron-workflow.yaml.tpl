@@ -8,6 +8,9 @@
 #                           (Secret annotation > descriptor.schedule > default)
 #   ${TENANT}            — tenant slug
 #   ${INSIGHT_NAMESPACE} — defaults to "insight" (resolved by env.sh / Helm)
+#   ${ARGO_INSTANCE_ID}  — required: must match the Argo controller's
+#                          `instanceID:` config, otherwise the controller
+#                          ignores the workflow.
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:
@@ -18,11 +21,13 @@ metadata:
     app.kubernetes.io/component: connector-sync
     insight.cyberfabric.com/connector: ${CONNECTOR}
     insight.cyberfabric.com/tenant: ${TENANT}
+    workflows.argoproj.io/controller-instanceid: ${ARGO_INSTANCE_ID}
 spec:
   schedule: "${SCHEDULE}"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
   workflowSpec:
+    serviceAccountName: ${ARGO_SERVICE_ACCOUNT}
     workflowTemplateRef:
       name: airbyte-sync
     arguments:

@@ -37,12 +37,39 @@ spec:
               value: {{ include "insight.airbyte.url" . | quote }}
             - name: INSIGHT_NAMESPACE
               value: {{ .Release.Namespace | quote }}
-            - name: INSIGHT_AIRBYTE_WORKSPACE_ID
-              value: {{ required "ingestion.reconcile.airbyteWorkspaceId is required (the Airbyte workspace UUID where Insight connectors are managed)" .Values.ingestion.reconcile.airbyteWorkspaceId | quote }}
+            # Airbyte workspace UUID is auto-discovered at runtime via ab_workspace_id (ADR-0009).
+            # Bronze destination is auto-resolved-or-created by reconcile from
+            # the Clickhouse connection details below (ADR-0012). The legacy
+            # destinationId override is honoured if set on the env.
+            {{- with .Values.ingestion.reconcile.destinationId }}
             - name: RECONCILE_DESTINATION_ID
-              value: {{ required "ingestion.reconcile.destinationId is required (the Airbyte destination UUID for Insight Bronze; reconcile_connections needs it to bootstrap connections on a clean cluster)" .Values.ingestion.reconcile.destinationId | quote }}
+              value: {{ . | quote }}
+            {{- end }}
+            - name: RECONCILE_DESTINATION_NAME
+              value: {{ default "clickhouse-bronze" .Values.ingestion.reconcile.destinationName | quote }}
+            - name: RECONCILE_DEST_CLICKHOUSE_HOST
+              value: {{ include "insight.clickhouse.fqdn" . | quote }}
+            - name: RECONCILE_DEST_CLICKHOUSE_PORT
+              value: {{ include "insight.clickhouse.port" . | quote }}
+            - name: RECONCILE_DEST_CLICKHOUSE_DATABASE
+              value: {{ include "insight.clickhouse.database" . | quote }}
+            - name: RECONCILE_DEST_CLICKHOUSE_USERNAME
+              value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+            - name: RECONCILE_DEST_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                  key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
             - name: INSIGHT_TENANT_ID
               value: {{ required "ingestion.reconcile.tenantId is required (the Insight tenant slug; used in source/connection names per ADR-0005)" .Values.ingestion.reconcile.tenantId | quote }}
+            # ARGO_INSTANCE_ID — set only when the cluster's Argo workflow
+            # controller runs with `instanceID:` configured. Empty value
+            # leaves the controller-instanceid label off the rendered
+            # workflows; controllers without instanceID accept them.
+            - name: ARGO_INSTANCE_ID
+              value: {{ default "" .Values.ingestion.reconcile.argoInstanceId | quote }}
+            - name: ARGO_SERVICE_ACCOUNT
+              value: {{ printf "%s-reconcile" (include "insight.fullname" .) | quote }}
           resources:
             requests:
               cpu: {{ .Values.ingestion.reconcile.resources.requests.cpu | quote }}

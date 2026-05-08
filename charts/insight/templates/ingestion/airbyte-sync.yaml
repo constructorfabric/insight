@@ -44,6 +44,8 @@ spec:
               parameters:
                 - name: connection_name
                   value: {{ `"{{inputs.parameters.connection_name}}"` }}
+                - name: airbyte_url
+                  value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
         - - name: sync
             template: sync
             arguments:
@@ -64,6 +66,7 @@ spec:
       inputs:
         parameters:
           - name: connection_name
+          - name: airbyte_url
       outputs:
         parameters:
           - name: connection_id
@@ -72,11 +75,17 @@ spec:
       script:
         image: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
         command: [bash]
+        env:
+          - name: AIRBYTE_URL
+            value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+          - name: INSIGHT_NAMESPACE
+            value: {{ .Release.Namespace | quote }}
+          - name: CONNECTORS_DIR
+            value: "/ingestion/connectors"
         source: |
           set -euo pipefail
-          source /src/ingestion/reconcile-connectors/lib/env.sh
-          source /src/ingestion/reconcile-connectors/lib/airbyte.sh
-          source /src/ingestion/reconcile-connectors/lib/argo.sh
+          source /ingestion/reconcile-connectors/lib/airbyte.sh
+          source /ingestion/reconcile-connectors/lib/argo.sh
           name='{{ `{{inputs.parameters.connection_name}}` }}'
           if ! id="$(argo_resolve_connection_id_by_name "$name")"; then
             echo "ERROR: connection name not found: $name" >&2
@@ -123,31 +132,43 @@ spec:
         image: python:3.12-alpine
         command: [python3]
         env:
-          - name: JWT_SECRET
+          # OAuth client_credentials against /api/v1/applications/token. The
+          # legacy self-minted HMAC JWT is rejected by Airbyte 1.7+ (the
+          # request hangs ~5 min then RST). Per ADR-0013, every workflow
+          # API call goes through the same instance-admin OAuth flow that
+          # reconcile uses.
+          - name: AIRBYTE_CLIENT_ID
             valueFrom:
               secretKeyRef:
-                name: {{ required "airbyte.jwtSecret.name is required" .Values.airbyte.jwtSecret.name | quote }}
-                key:  {{ required "airbyte.jwtSecret.key is required"  .Values.airbyte.jwtSecret.key  | quote }}
+                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+                key:  {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
+          - name: AIRBYTE_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+                key:  {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
           - name: CONNECTION_ID
             value: {{ `"{{inputs.parameters.connection_id}}"` }}
           - name: AIRBYTE_URL
             value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
         source: |
-          import urllib.request, urllib.error, json, sys, hmac, hashlib, base64, time, os
-          def b64url(data):
-              return base64.urlsafe_b64encode(json.dumps(data).encode()).rstrip(b"=").decode()
-          def mint_token():
-              header = b64url({"alg": "HS256", "typ": "JWT"})
-              now = int(time.time())
-              payload = b64url({"iss": "airbyte-server", "sub": "00000000-0000-0000-0000-000000000000", "iat": now, "exp": now + 300})
-              sig = base64.urlsafe_b64encode(hmac.new(os.environ["JWT_SECRET"].encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
-              return f"{header}.{payload}.{sig}"
-          token = mint_token()
+          import urllib.request, urllib.error, json, sys, os
+          def oauth_token():
+              body = json.dumps({
+                  "client_id":     os.environ["AIRBYTE_CLIENT_ID"],
+                  "client_secret": os.environ["AIRBYTE_CLIENT_SECRET"],
+                  "grant_type":    "client_credentials",
+              }).encode()
+              req = urllib.request.Request(
+                  f"{os.environ['AIRBYTE_URL']}/api/v1/applications/token",
+                  data=body, headers={"Content-Type": "application/json"})
+              return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
+          token = oauth_token()
           headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
           data = json.dumps({"connectionId": os.environ["CONNECTION_ID"]}).encode()
           req = urllib.request.Request(f"{os.environ['AIRBYTE_URL']}/api/v1/connections/sync", data=data, headers=headers)
           try:
-              resp = json.load(urllib.request.urlopen(req))
+              resp = json.load(urllib.request.urlopen(req, timeout=120))
           except urllib.error.HTTPError as e:
               body = e.read().decode()
               print(f"Airbyte API error {e.code}: {body}", file=sys.stderr)
@@ -171,35 +192,43 @@ spec:
         image: python:3.12-alpine
         command: [python3]
         env:
-          - name: JWT_SECRET
+          - name: AIRBYTE_CLIENT_ID
             valueFrom:
               secretKeyRef:
-                name: {{ required "airbyte.jwtSecret.name is required" .Values.airbyte.jwtSecret.name | quote }}
-                key:  {{ required "airbyte.jwtSecret.key is required"  .Values.airbyte.jwtSecret.key  | quote }}
+                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+                key:  {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
+          - name: AIRBYTE_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+                key:  {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
           - name: JOB_ID
             value: {{ `"{{inputs.parameters.job_id}}"` }}
           - name: AIRBYTE_URL
             value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
         source: |
-          import urllib.request, urllib.error, json, time, sys, hmac, hashlib, base64, os
-          def b64url(data):
-              return base64.urlsafe_b64encode(json.dumps(data).encode()).rstrip(b"=").decode()
-          def mint_token():
-              header = b64url({"alg": "HS256", "typ": "JWT"})
-              now = int(time.time())
-              payload = b64url({"iss": "airbyte-server", "sub": "00000000-0000-0000-0000-000000000000", "iat": now, "exp": now + 300})
-              sig = base64.urlsafe_b64encode(hmac.new(os.environ["JWT_SECRET"].encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
-              return f"{header}.{payload}.{sig}"
+          import urllib.request, urllib.error, json, time, sys, os
+          def oauth_token():
+              body = json.dumps({
+                  "client_id":     os.environ["AIRBYTE_CLIENT_ID"],
+                  "client_secret": os.environ["AIRBYTE_CLIENT_SECRET"],
+                  "grant_type":    "client_credentials",
+              }).encode()
+              req = urllib.request.Request(
+                  f"{os.environ['AIRBYTE_URL']}/api/v1/applications/token",
+                  data=body, headers={"Content-Type": "application/json"})
+              return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
           job_id = int(os.environ["JOB_ID"])
           airbyte_url = os.environ["AIRBYTE_URL"]
           while True:
-              token = mint_token()
+              # Token TTL is short (~minutes); re-mint per loop iteration.
+              token = oauth_token()
               headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
               req = urllib.request.Request(
                   f"{airbyte_url}/api/v1/jobs/get",
                   data=json.dumps({"id": job_id}).encode(),
                   headers=headers)
-              resp = json.load(urllib.request.urlopen(req))
+              resp = json.load(urllib.request.urlopen(req, timeout=30))
               status = resp["job"]["status"]
               print(f"Job {job_id} status: {status}", flush=True)
               if status == "succeeded":

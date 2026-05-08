@@ -34,8 +34,8 @@ Airbyte stores `source_definitions` globally per-instance, keyed by name. Public
 
 - **Deterministic namespace** that survives Airbyte version upgrades and registry refreshes.
 - **Zero rename cost** — the 16 existing connector descriptors and secret examples must not be touched.
-- **Operator simplicity** — no extra workspace UUID management for multi-tenant clusters.
-- **Fail-fast configuration** — workspace identity must be explicit in Helm values, not auto-picked.
+- **Operator simplicity** — no extra workspace UUID management; consumers should not have to know the UUID.
+- **Fail-fast on ambiguity** — if the Airbyte instance ever holds more than one workspace, reconcile must refuse to run rather than guess.
 - **Compatibility with reconcile** — filter MUST be expressible as a single attribute check inside ID-iteration code.
 
 ## Considered Options
@@ -48,12 +48,16 @@ Airbyte stores `source_definitions` globally per-instance, keyed by name. Public
 
 Chosen option: **Option B — single dedicated workspace + `custom: true` filter**.
 
-**Justification**: every custom-built Airbyte definition has `custom: true`; built-in registry definitions are `custom: false`. The filter is a one-line check (`if def.custom != true: skip`), no rename is required, and no extra workspace lifecycle is introduced. Workspace UUID is supplied via required env `INSIGHT_AIRBYTE_WORKSPACE_ID` (Helm value `ingestion.reconcile.airbyteWorkspaceId`) — no auto-pick, no silent default. Multi-tenant isolation continues to be expressed at the descriptor / connection-name level, not workspace level.
+**Justification**: every custom-built Airbyte definition has `custom: true`; built-in registry definitions are `custom: false`. The filter is a one-line check (`if def.custom != true: skip`), no rename is required, and no extra workspace lifecycle is introduced.
+
+The workspace UUID itself is **discovered at runtime**, not configured. Reconcile calls `POST /api/v1/workspaces/list_by_organization_id` with the Airbyte built-in default organization id (`00000000-0000-0000-0000-000000000000`) and asserts exactly one workspace. This is implemented in `ab_workspace_id` ([airbyte.sh](../../src/ingestion/reconcile-connectors/lib/airbyte.sh)) and is the **only** path used by reconcile, adoption, GC, and the migrate-orphan tool. Rationale: every supported deploy of Insight runs against a single-workspace Airbyte instance (DESIGN §2.2); the operator already provisions the instance — making them re-type its workspace UUID into Helm values is needless ceremony, prone to drift (the value can be wrong even when Airbyte is healthy, leading to silent "0 connectors" runs), and gives no additional safety the `custom: true` filter does not already provide. Fail-fast is preserved: if `len(workspaces) != 1`, `ab_workspace_id` exits non-zero and reconcile aborts with a clear stderr message.
+
+Multi-tenant isolation continues to be expressed at the descriptor / connection-name level, not workspace level.
 
 ### Consequences
 
 - **Good**, because all ID-iteration code (`extract_definition_ids.py` + inline filters) reduces to `def.custom == true`.
-- **Good**, because `INSIGHT_AIRBYTE_WORKSPACE_ID` becomes a required Helm value with `{{ required }}` — no silent default per project rules.
+- **Good**, because the workspace UUID is auto-discovered — no Helm value, no env var, no operator typo surface.
 - **Good**, because public registry connectors with the same name as ours never collide.
 - **Good**, because zero descriptor / example rename cost (16 connectors untouched).
 - **Bad**, because a second Insight installation in the same Airbyte instance would share the same `custom: true` namespace; multi-tenant isolation must therefore be handled at descriptor / connection-name level (this matches the existing single-workspace constraint in DESIGN §2.2).
@@ -61,7 +65,7 @@ Chosen option: **Option B — single dedicated workspace + `custom: true` filter
 ### Confirmation
 
 - `reconcile-connectors.sh --dry-run` against a workspace containing both a public `m365` (custom=false) and an Insight `m365` (custom=true) reports exactly one definition under management.
-- Helm template fails with explicit error when `ingestion.reconcile.airbyteWorkspaceId` is unset.
+- `ab_workspace_id` exits non-zero with a clear stderr message when the Airbyte instance has zero or more than one workspace; reconcile aborts.
 - CI smoke check: `extract_definition_ids.py` returns only `custom: true` IDs.
 
 ## Pros and Cons of the Options
@@ -97,7 +101,7 @@ Provision a dedicated Airbyte workspace for Insight, filter by `workspace_id == 
 ## More Information
 
 - The `custom: true` flag is a stable attribute of `source_definitions` across Airbyte 0.50+ versions in our deployment matrix.
-- `INSIGHT_AIRBYTE_WORKSPACE_ID` is a required Helm value; `{{ required "ingestion.reconcile.airbyteWorkspaceId is required" .Values.ingestion.reconcile.airbyteWorkspaceId }}` enforces fail-fast.
+- Workspace identity is auto-discovered via `ab_workspace_id` ([airbyte.sh](../../src/ingestion/reconcile-connectors/lib/airbyte.sh)) — no env var, no Helm value, no CLI flag.
 - Related decisions:
   - `cpt-insightspec-adr-version-driven-reconcile` (ADR-0001) — overall reconcile flow that consumes the filter.
   - `cpt-insightspec-adr-nocode-via-builder-projects` (ADR-0010) — nocode publish flow that depends on this namespace.

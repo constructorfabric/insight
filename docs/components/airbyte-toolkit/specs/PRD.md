@@ -220,7 +220,7 @@ The toolkit **MUST** create sources and connections for a given tenant by:
 
 Insight connectors are namespaced by Airbyte workspace + `custom: true` flag (ADR-0009). NoCode connectors are registered through Airbyte's `connector_builder_projects` API rather than the legacy `create_custom` endpoint (ADR-0010); this provides UI editability and a clean update path for the version-bump algorithm. CDK (Docker-image) connectors continue to use `create_custom` via the CDK registration path.
 
-CDK connectors carry their full Docker image reference in `descriptor.yaml.cdk_image` (e.g. `ghcr.io/cyberfabric/source-...:tag`). Reconcile uses this verbatim — no derivation, no convention, no `IMAGE_REGISTRY` env. See ADR-0011. NoCode connectors register via builder_projects (ADR-0010). Both paths converge on `custom: true` definitions inside the workspace named by `INSIGHT_AIRBYTE_WORKSPACE_ID` (ADR-0009).
+CDK connectors carry their full Docker image reference in `descriptor.yaml.cdk_image` (e.g. `ghcr.io/cyberfabric/source-...:tag`). Reconcile uses this verbatim — no derivation, no convention, no `IMAGE_REGISTRY` env. See ADR-0011. NoCode connectors register via builder_projects (ADR-0010). Both paths converge on `custom: true` definitions inside the single Airbyte workspace, which is auto-discovered at runtime via `ab_workspace_id` (ADR-0009).
 
 ### 5.3 State Synchronization
 

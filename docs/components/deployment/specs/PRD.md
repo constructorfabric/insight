@@ -489,7 +489,7 @@ An install that is missing any of the following **MUST** abort during `helm temp
 
 **Direction**: required from client (Insight consumes Airbyte's API and shares its namespace).
 
-**Protocol/Format**: HTTP/JSON on the Airbyte REST API; server-signed JWT obtained from the `airbyte-auth-secrets` Secret (`jwt-signature-secret` key) created in the shared namespace by the Airbyte chart.
+**Protocol/Format**: HTTP/JSON on the Airbyte REST API; bearer token obtained via OAuth2 client_credentials at `/api/v1/applications/token` using `instance-admin-client-id` / `instance-admin-client-secret` from the `airbyte-auth-secrets` Secret created in the shared namespace by the Airbyte chart. No JWT signing on our side.
 
 **Compatibility**: pinned to Airbyte chart 1.8.5 / app 1.8.5. Chart 1.9.x intentionally skipped because its bundled app is 2.0.x-alpha. Upgrades happen in dedicated PRs with regression tests.
 

@@ -147,8 +147,16 @@ sys.exit(1)
 # ---------------------------------------------------------------------------
 disc_required_fields_for_connector() {
   local connector="$1"
+  # Resolve descriptor by glob — connectors live under an area directory
+  # (e.g. ${CONNECTORS_DIR}/collaboration/m365/), so the slug alone doesn't
+  # uniquely locate the descriptor.
+  local desc_glob desc_path
+  # shellcheck disable=SC2206
+  desc_glob=("${CONNECTORS_DIR}"/*/"${connector}"/descriptor.yaml)
+  desc_path="${desc_glob[0]}"
+  [[ -f "${desc_path}" ]] || return 1
   python3 "${_DISC_LIB_DIR}/../python/parse_descriptor.py" \
-    --descriptor "${CONNECTORS_DIR}/${connector}/descriptor.yaml" \
+    --descriptor "${desc_path}" \
     --field secret.required_fields
 }
 

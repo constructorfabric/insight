@@ -1,6 +1,6 @@
 name: hubspot
 version: "1.0.0"
-# cdk_image: <not yet published — add full ghcr.io reference when image is built>
+cdk_image: "ghcr.io/cyberfabric/source-hubspot-insight:2026.05.08.17.25-82fe1ad"
 type: cdk
 schedule: "0 6 * * *"
 workflow: sync

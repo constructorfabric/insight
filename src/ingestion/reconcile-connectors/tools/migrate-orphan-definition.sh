@@ -18,17 +18,18 @@
 #   6. Delete the old orphan source_definition.
 #
 # Required env: KUBECONFIG, INSIGHT_NAMESPACE, AIRBYTE_URL,
-#               INSIGHT_AIRBYTE_WORKSPACE_ID, INSIGHT_TENANT_ID,
-#               RECONCILE_DESTINATION_ID, CONNECTORS_DIR
+#               INSIGHT_TENANT_ID, CONNECTORS_DIR.
+# Workspace UUID is auto-discovered via ab_workspace_id (ADR-0009).
+# Destination is resolved via reconcile_resolve_destination_id (ADR-0012):
+# either RECONCILE_DESTINATION_ID is set (legacy override) or the
+# RECONCILE_DEST_CLICKHOUSE_* env triplet must be present.
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
 
 : "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set}"
 : "${AIRBYTE_URL:?AIRBYTE_URL must be set}"
-: "${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set}"
 : "${INSIGHT_TENANT_ID:?INSIGHT_TENANT_ID must be set}"
-: "${RECONCILE_DESTINATION_ID:?RECONCILE_DESTINATION_ID must be set}"
 : "${CONNECTORS_DIR:?CONNECTORS_DIR must be set (e.g. src/ingestion/connectors)}"
 
 if [[ $# -ne 1 || -z "${1:-}" ]]; then
@@ -41,10 +42,20 @@ SCRIPT_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
 LIB_DIR="$( cd "${SCRIPT_DIR}/../lib" && pwd )"
 PY_DIR="$( cd "${SCRIPT_DIR}/../python" && pwd )"
 
+# shellcheck source=../lib/log.sh
+source "${LIB_DIR}/log.sh"
 # shellcheck source=../lib/airbyte.sh
 source "${LIB_DIR}/airbyte.sh"
+# shellcheck source=../lib/discover.sh
+source "${LIB_DIR}/discover.sh"
+# reconcile.sh provides reconcile_resolve_destination_id (and the helpers
+# it calls); pulling it in here keeps migrate-orphan in lockstep with the
+# main loop's resolution policy.
+# shellcheck source=../lib/reconcile.sh
+source "${LIB_DIR}/reconcile.sh"
 
-WORKSPACE_ID="${INSIGHT_AIRBYTE_WORKSPACE_ID}"
+WORKSPACE_ID="$(ab_workspace_id)"
+RECONCILE_DESTINATION_ID="$(reconcile_resolve_destination_id "${CONNECTOR_NAME}")"
 
 # 1. Resolve orphan definition by name + custom:true.
 DEFS_JSON="$(ab_list_definitions "${WORKSPACE_ID}")"

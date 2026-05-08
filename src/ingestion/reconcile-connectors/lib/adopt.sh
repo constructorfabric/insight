@@ -81,21 +81,27 @@ adopt_match_definition() {
       ab_set_definition_image_tag "${definition_id}" "${_adopt_tag}" >/dev/null
       ;;
     nocode|*)
-      local builder_id manifest_path
-      builder_id="$(ab_builder_find_by_definition "${INSIGHT_AIRBYTE_WORKSPACE_ID}" "${definition_id}")"
+      local builder_id manifest_path workspace_id
+      workspace_id="$(ab_workspace_id)"
+      builder_id="$(ab_builder_find_by_definition "${workspace_id}" "${definition_id}")"
       if [[ -z "${builder_id}" ]]; then
         adopt_warn_orphan "${connector_name}" \
           "ORPHAN definition ${definition_id} (no builder project) — skipping version sync"
         return 0
       fi
-      manifest_path="${CONNECTORS_DIR}/${connector_dir}/connector.yaml"
+      # connector_dir is already a full path from disc_load_descriptors —
+      # do not prepend CONNECTORS_DIR (would double up).
+      manifest_path="${connector_dir}/connector.yaml"
       if [[ ! -f "${manifest_path}" ]]; then
         adopt_warn_orphan "${connector_name}" \
           "connector is nocode type but no manifest file at ${manifest_path} — skipping"
         return 0
       fi
-      ab_builder_update_active_manifest "${INSIGHT_AIRBYTE_WORKSPACE_ID}" \
-        "${builder_id}" "${version}" "${manifest_path}" >/dev/null
+      # ab_builder_update_active_manifest takes source_definition_id (not
+      # builder_project_id). builder_id was checked above only to gate
+      # orphan detection.
+      ab_builder_update_active_manifest "${workspace_id}" \
+        "${definition_id}" "${version}" "${manifest_path}" >/dev/null
       ;;
   esac
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-anno-def
@@ -112,11 +118,12 @@ adopt_tag_connection() {
   local connection_id="$1"
   local cfg_hash="$2"
   local existing_tags_json="${3:-[]}"
-  local tags_json
-  tags_json=$(python3 -c '
+  local tag_names_json
+  # cfg-hash truncated to 12 hex (Airbyte tag-name max is 30 chars).
+  tag_names_json=$(python3 -c '
 import sys, json
 existing = json.loads(sys.argv[1] or "[]")
-cfg_hash = sys.argv[2]
+cfg_hash = sys.argv[2][:12]
 keep = []
 for t in existing:
     name = t.get("name", t) if isinstance(t, dict) else t
@@ -131,6 +138,11 @@ for n in keep:
         seen.add(n); out.append(n)
 print(json.dumps(out))
 ' "${existing_tags_json}" "${cfg_hash}")
+  # Convert string-name array to Tag objects (Airbyte v1 schema requires
+  # tagId/workspaceId/name/color even on PATCH).
+  local workspace_id tags_json
+  workspace_id="$(ab_workspace_id)"
+  tags_json="$(ab_resolve_tags "${workspace_id}" "${tag_names_json}")"
   # ADOPT_DRY_RUN guarded by callers (_adopt_one_connector + reconcile_connections).
   ab_patch_connection_tags "${connection_id}" "${tags_json}" >/dev/null
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-anno-conn
@@ -256,7 +268,6 @@ for x in json.load(sys.stdin): print(x)')
 }
 
 adopt_run() {
-  : "${INSIGHT_AIRBYTE_WORKSPACE_ID:?INSIGHT_AIRBYTE_WORKSPACE_ID must be set (the Airbyte workspace UUID where Insight connectors are managed; see chart values ingestion.reconcile.airbyteWorkspaceId)}"
   _ADOPT_ADOPTED=0
   _ADOPT_SKIPPED=0
   _ADOPT_WARNINGS=0
@@ -265,7 +276,8 @@ adopt_run() {
   local opt_connector="${2:-}"
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-resolve-env
-  local workspace_id="${INSIGHT_AIRBYTE_WORKSPACE_ID}"
+  local workspace_id
+  workspace_id="$(ab_workspace_id)"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-resolve-env
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-discover
