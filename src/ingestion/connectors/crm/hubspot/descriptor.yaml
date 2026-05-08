@@ -1,6 +1,6 @@
 name: hubspot
 version: "1.0.0"
-cdk_image: "ghcr.io/cyberfabric/source-hubspot-insight:2026.05.08.17.25-82fe1ad"
+cdk_image: "ghcr.io/cyberfabric/source-hubspot-insight:2026.05.08.18.01-d035edb"
 type: cdk
 schedule: "0 6 * * *"
 workflow: sync
