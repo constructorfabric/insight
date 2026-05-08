@@ -100,6 +100,20 @@ main() {
   # ARGO_INSTANCE_ID empty and the label is omitted.
   export ARGO_INSTANCE_ID="${ARGO_INSTANCE_ID:-}"  # RULE-DEFAULTS-OK: optional gating label, empty == no filter
   : "${ARGO_SERVICE_ACCOUNT:?ARGO_SERVICE_ACCOUNT must be set -- the K8s ServiceAccount Argo workflow pods run under, needs read access to airbyte auth secrets and create/patch workflowtaskresults. The standard chart provides RELEASE-reconcile.}"
+
+  # Preflight: probe Airbyte before touching any layer. Without this, a
+  # dead port-forward / unreachable service cascades into a python
+  # stacktrace per layer (every json.load on empty curl output crashes).
+  # One clean error here — and a non-zero exit — is much friendlier.
+  local _health_code
+  _health_code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' \
+    "${AIRBYTE_URL%/}/api/v1/health" 2>/dev/null || true)"
+  if [[ "${_health_code}" != "200" ]]; then
+    printf 'ERROR: Airbyte API unreachable at %s (health probe returned %s).\n' \
+      "${AIRBYTE_URL}" "${_health_code:-no-response}" >&2
+    printf '  Check that the server pod is running and the port-forward / Service is alive.\n' >&2
+    return 2
+  fi
   # @cpt-end:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-airbyte-env
 
   local subcmd="reconcile"

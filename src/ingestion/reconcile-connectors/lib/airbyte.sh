@@ -137,7 +137,20 @@ ab__curl() {
   local path="$2"
   local body="${3:-}"
   local token
-  token="$(ab_get_token)"
+  # Bail out cleanly when the auth flow can't reach Airbyte. Without
+  # this guard every downstream parser (json.load, jq) chokes on an
+  # empty curl reply and dumps a Python stacktrace, masking the real
+  # cause (port-forward died, server unreachable, expired creds, …).
+  if ! token="$(ab_get_token)"; then
+    printf 'ab__curl: Airbyte API unavailable (token mint failed). Check AIRBYTE_URL=%s and connectivity.\n' \
+      "${AIRBYTE_URL:-<unset>}" >&2
+    return 1
+  fi
+  if [[ -z "${token}" ]]; then
+    printf 'ab__curl: Airbyte API unavailable (empty token). Check AIRBYTE_URL=%s and credentials.\n' \
+      "${AIRBYTE_URL:-<unset>}" >&2
+    return 1
+  fi
   local url="${AIRBYTE_URL%/}${path}"
   if [[ -n "${body}" ]]; then
     printf '%s' "${body}" \
