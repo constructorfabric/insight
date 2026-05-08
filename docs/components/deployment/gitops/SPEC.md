@@ -278,7 +278,7 @@ There are three distinct states for any piece of secret material:
 | State | Where it lives | How to read |
 |-------|----------------|-------------|
 | Raw secret | Passbolt resource named `insight-<env>-<base>` (password field carries the full cleartext Kubernetes Secret YAML) | `passbolt resource get --name "insight-<env>-<base>" --jsonPassword \| jq -r .password` |
-| Sealed manifest | `infra/insight-gitops/environments/<env>/sealed-secrets/<name>-sealedsecret.yaml` (committed) | Anyone with repo read access; opaque to humans |
+| Sealed manifest | `infra/insight-gitops/environments/<env>/sealed-secrets/<namespace>/<name>-sealedsecret.yaml` (committed) | Anyone with repo read access; opaque to humans |
 | In-cluster Secret | Kubernetes API, decrypted by `sealed-secrets-controller` | `kubectl get secret <name> -o yaml` (RBAC-gated) |
 
 The flow between states is one-way at write-time:
