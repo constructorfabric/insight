@@ -472,14 +472,20 @@ ab_delete_source_definition() {
 ab_set_definition_image_tag() {
   local definition_id="$1"
   local tag="$2"
+  # source_definitions/update requires workspaceId in the body — Airbyte
+  # 1.7+ returns a 500 NPE ("getWorkspaceId(...) must not be null")
+  # without it. Resolve the single workspace once.
+  local workspace_id
+  workspace_id="$(ab_workspace_id)" || return 1
   local body
   body=$(python3 -c '
 import sys, json
 print(json.dumps({
-  "sourceDefinitionId": sys.argv[1],
-  "dockerImageTag": sys.argv[2],
+  "workspaceId":        sys.argv[1],
+  "sourceDefinitionId": sys.argv[2],
+  "dockerImageTag":     sys.argv[3],
 }))
-' "${definition_id}" "${tag}")
+' "${workspace_id}" "${definition_id}" "${tag}")
   ab__curl POST /api/v1/source_definitions/update "${body}"
 }
 

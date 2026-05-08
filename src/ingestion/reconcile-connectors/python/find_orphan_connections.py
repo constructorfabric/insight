@@ -2,15 +2,27 @@
 """Find connections tagged `insight` whose connector is no longer known.
 
 CLI: find_orphan_connections.py <known_names_json> <sources_json> <connections_json>
-Stdout: TSV `connection_id\tsource_id\tconn_name` per orphan.
+Stdout: TSV `connection_id\tsource_id\tconnector_slug` per orphan.
 Exit:   0 always; 2 on bad arg count.
 
-The connector name is encoded as the leading dash-separated segment of the
-source name (matches the `{connector}-{source-id}-{tenant}` pattern).
+Source names follow `{connector}-{source-id}-{tenant}`. Connector slugs
+themselves can contain dashes (e.g. `ms-entra`, `bitbucket-cloud`,
+`github-v2`), so a naive `split("-")[0]` would mis-identify
+`ms-entra-main-default` as connector `ms` and incorrectly cascade-delete
+a healthy connection. We resolve the connector by **longest-prefix
+match** against the `known` set: the connector slug is the longest
+known name for which `<slug>-` is a prefix of the source name. Only
+when nothing matches do we treat the connection as a real orphan.
 """
 import json
 import sys
-from typing import Any, Dict, Set
+from typing import Any, Dict, Optional, Set
+
+
+def _resolve_connector(source_name: str, known: Set[str]) -> Optional[str]:
+    """Longest known slug for which `<slug>-` is a prefix of source_name."""
+    candidates = [k for k in known if source_name.startswith(f"{k}-")]
+    return max(candidates, key=len) if candidates else None
 
 
 def main() -> int:
@@ -34,11 +46,15 @@ def main() -> int:
         src = sources.get(c.get("sourceId"))
         if not src:
             continue
-        conn_name = (src.get("name") or "").split("-")[0]
-        if conn_name and conn_name not in known:
+        source_name = src.get("name") or ""
+        slug = _resolve_connector(source_name, known)
+        if slug is None:
             cid = c.get("connectionId")
             sid = src.get("sourceId")
-            print("\t".join([cid or "", sid or "", conn_name]))
+            # `<unknown>` in the third column makes the diagnostic
+            # explicit; the previous `split("-")[0]` value falsely
+            # implied the connector slug had been parsed correctly.
+            print("\t".join([cid or "", sid or "", "<unknown>"]))
     return 0
 
 
