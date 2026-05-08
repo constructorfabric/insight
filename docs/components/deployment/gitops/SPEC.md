@@ -14,6 +14,7 @@ This document is the technical source of truth for the hybrid GitOps deployment 
    - [1.2 Data Flow](#12-data-flow)
    - [1.3 Repositories](#13-repositories)
    - [1.4 Trust Boundaries](#14-trust-boundaries)
+   - [1.5 Layer Model](#15-layer-model)
 2. [2. Tagging & Versioning](#2-tagging--versioning)
    - [2.1 Image Tag Format](#21-image-tag-format)
    - [2.2 Why Date-Time-ShortSHA](#22-why-date-time-shortsha)
@@ -23,7 +24,9 @@ This document is the technical source of truth for the hybrid GitOps deployment 
    - [3.1 Code Push to GitHub](#31-code-push-to-github)
    - [3.2 Image Build and Push to GHCR](#32-image-build-and-push-to-ghcr)
    - [3.3 GitLab Poller Updates Manifests](#33-gitlab-poller-updates-manifests)
-   - [3.4 Engineer Pulls and Deploys](#34-engineer-pulls-and-deploys)
+   - [3.4 Engineer Bootstraps a Cluster (L0)](#34-engineer-bootstraps-a-cluster-l0)
+   - [3.5 Engineer Provisions the System Layer (L2)](#35-engineer-provisions-the-system-layer-l2)
+   - [3.6 Engineer Deploys the App (L3)](#36-engineer-deploys-the-app-l3)
 4. [4. Security Implementation](#4-security-implementation)
    - [4.1 Secret Lifecycle](#41-secret-lifecycle)
    - [4.2 Passbolt Integration](#42-passbolt-integration)
@@ -47,11 +50,12 @@ This document is the technical source of truth for the hybrid GitOps deployment 
 
 ### 1.1 Goals
 
-The deployment system has four explicit goals:
+The deployment system has five explicit goals:
 
 - Keep the application source code in public GitHub while keeping every byte of cluster-shaped infrastructure (Helm values, sealed secrets, environment overlays, RBAC) in the corporate GitLab behind the VPN.
 - Build images in public CI and publish them to a public registry (GHCR), so external contributors can reproduce a build, but never expose cluster credentials, host names, or internal topology in any public artifact.
 - Decouple "image is available" from "image is deployed" — image promotion is a routine, hands-off event; deployment is a deliberate human action with an audit trail.
+- **Separate stateful infrastructure from the application.** Shared services (databases, object stores, message buses, workflow engines, data-integration platforms) live in their own namespace and have their own lifecycle, so that an app upgrade never re-rolls a database and a database upgrade never accidentally restarts the app. Each system service can also be replaced by a managed external endpoint without changing the app values surface — see [§1.5](#15-layer-model).
 - Match the MVP team size: one engineer, one VPN, no shared CI runner inside the trust boundary. The Makefile-driven manual deploy is intentional for this stage and is replaceable with an in-cluster ArgoCD instance later without changing the manifests repository contract.
 
 ### 1.2 Data Flow
@@ -118,6 +122,39 @@ Customers and external evaluators never see `infra/insight-gitops`. The public `
 - **In-cluster**: the cluster reads sealed secrets from its own etcd (after the controller decrypts) and never reaches out to either Git host.
 
 The objects that cross from public to corporate are two read-only artifacts: **container images** (pulled by the cluster's image-pull credentials at pod-scheduling time) and the **umbrella Helm chart** at `$CHART` (pulled by the engineer's workstation at `make deploy` time per [ADR-0001](../specs/ADR/0001-chart-publishing-on-merge.md)). Both share the same supply-chain risk surface; signing/verification controls for both are a tracked follow-up — see [§8](#8-open-items). Manifests and secrets never cross outward.
+
+### 1.5 Layer Model
+
+Insight on Kubernetes is split into three deploy layers. Each layer has its own lifecycle, its own namespace conventions, and its own slot in the gitops repo. An upgrade of one layer never re-rolls the others.
+
+| Layer | Purpose | Namespace | How installed | Where it lives in `infra/insight-gitops` |
+|------|---------|-----------|---------------|-------------------------------------------|
+| **L0 — Bootstrap** | Cluster prerequisites. Installs sealed-secrets-controller, ingress-nginx, cert-manager (and any cluster-scoped issuers/CRDs); creates `insight-infra` and `insight-<env>` namespaces. | cluster-scoped | `make bootstrap ENV=<env>` (idempotent) | `bootstrap/<env>/` |
+| **L2 — System** | Shared stateful infrastructure: MariaDB, ClickHouse, Redis, Redpanda + Redpanda Console, Airbyte, Argo Workflows. **One Helm release per service.** Each service can also be replaced by a managed external endpoint (RDS, MSK, etc.) — in which case its `system/<service>/` is simply not installed and the app values point at the external host. | `insight-infra` (one per cluster, shared by every app deploy on that cluster) | manually, deliberately. Either `cd system/<service> && helm upgrade --install …` for a values-only release, or `make system-<service> ENV=<env>` when a sealed-secret needs to be created/refreshed in the same step. | `system/<service>/` (base) + `environments/<env>/<service>-values.yaml` (per-env overlay) + `environments/<env>/sealed-secrets/insight-infra/` |
+| **L3 — App** | The Insight platform itself: api-gateway, analytics-api, identity-resolution, frontend. The umbrella chart, app services only — no infra subcharts. | `insight-<env>` (one per env, e.g. `insight-dev`, `insight-virtuozzo`) | `make deploy-app ENV=<env>` (alias `make deploy`); pulls the umbrella chart from `oci://ghcr.io/cyberfabric/charts/insight` pinned to `.insight-version`. | `environments/<env>/values.yaml` + `environments/<env>/sealed-secrets/insight-<env>/` |
+
+There is no L1. The numbering is reserved: cluster + node provisioning (k3s install, kubelet config, OS) sit conceptually below L0 and are out of scope for this SPEC.
+
+#### Layer separation rules
+
+- **L2 and L3 are independent Helm releases.** A `helm upgrade` on the umbrella chart never touches MariaDB; a MariaDB version bump never re-rolls api-gateway. Each release has its own version, its own rollback timeline, and its own engineer-approved deploy moment.
+- **Cross-layer wiring uses Kubernetes DNS.** L3 app values reference L2 services by `<release>.insight-infra.svc.cluster.local`. The app's connection helpers fall back to that name when no explicit host is set in env values.
+- **Managed services are first-class.** When a cluster uses RDS for MariaDB, Confluent Cloud for Redpanda, or S3 for Airbyte storage, the corresponding `system/<service>/` is simply skipped at deploy time. The app values point at the external endpoint (host + port + Secret reference). The same gitops repo describes both modes; the difference is which `make system-*` targets get run.
+- **Bootstrap is the only thing that touches cluster-scoped resources.** Once L0 is in place, L2 and L3 confine themselves to their own namespaces. This makes a customer install reproducible on a managed cluster where the platform team owns L0 but Cyberfabric owns L2/L3.
+
+#### Namespace map
+
+For one cluster carrying environment `<env>`:
+
+| Namespace | Owner layer | Contents |
+|-----------|-------------|----------|
+| `kube-system` | k8s + L0 | sealed-secrets-controller, k3s defaults |
+| `ingress-nginx` | L0 | ingress-nginx controller |
+| `cert-manager` | L0 | cert-manager + webhook + cainjector |
+| `insight-infra` | L2 | mariadb, clickhouse, redis, redpanda, redpanda-console, airbyte, argo-workflows (each as its own Helm release) |
+| `insight-<env>` | L3 | the umbrella chart (api-gateway, analytics-api, identity-resolution, frontend) |
+
+`insight-infra` is shared by every app namespace on that cluster. In practice clusters carry one app namespace today (one env per cluster), but the model is built so a future "two apps on one cluster" topology is just a second `insight-<env>` namespace consuming the same `insight-infra`.
 
 ## 2. Tagging & Versioning
 
@@ -253,16 +290,59 @@ Behaviour:
 
 The poller does **not** trigger a deploy. It does **not** call ArgoCD. It does **not** notify the cluster. It is a one-way reflector from GHCR to GitLab.
 
-### 3.4 Engineer Pulls and Deploys
+### 3.4 Engineer Bootstraps a Cluster (L0)
 
-A deploy is always initiated by a human at a workstation. Steps:
+Run **once per cluster**, before any system or app deploy can proceed. Idempotent — re-running on an already-bootstrapped cluster is a no-op apart from `helm upgrade` noise.
+
+1. **Tooling check** — `make doctor` verifies helm, kubectl, kubeseal, passbolt, skopeo, yq, gpg are present (see [§5.1](#51-required-tools)).
+2. **Cluster reach** — `make doctor` also runs the equivalent of `kubectl --context insight-<env> cluster-info` so a missing VPN or wrong kubeconfig fails before anything is changed.
+3. **`make bootstrap ENV=<env>`** — installs the controllers and creates the namespaces this layer is responsible for:
+   - `kube-system/sealed-secrets-controller` (named so `kubeseal` finds it without flags)
+   - `ingress-nginx/ingress-nginx-controller` (claims the `nginx` IngressClass)
+   - `cert-manager/cert-manager` plus the per-env ClusterIssuers (`selfsigned-cluster-issuer` and `local-ca` for non-public envs; Let's Encrypt for customer-facing envs — committed under `bootstrap/<env>/issuer.yaml`)
+   - the `insight-infra` namespace (shared by L2)
+   - the `insight-<env>` namespace (the L3 target for this env)
+4. **Capture the sealed-secrets pub cert** — `make fetch-cert ENV=<env>` writes `environments/<env>/pub-cert.pem`, commit it. `kubeseal` uses it to encrypt secrets in subsequent steps.
+
+After Step 4 the cluster is ready to receive L2 and L3 deploys. The layer-0 footprint is minimal (three controllers + two namespaces) and is the only part that needs cluster-admin RBAC.
+
+### 3.5 Engineer Provisions the System Layer (L2)
+
+Run **once per service per cluster**, then re-run only when bumping a service version or rotating its credentials. **Manual and deliberate** — there is no top-level `make deploy-system` that chains every service, because (a) most clusters do not run every service self-hosted (some swap MariaDB for RDS, some swap Redpanda for MSK), and (b) infra deploys benefit from per-service consideration in a way app deploys do not.
+
+For each system service the engineer wants self-hosted on this cluster:
+
+1. **(Optional) Seal the service's secrets** — for services that need a credential before the first start (e.g. MariaDB root password, Redpanda admin TLS, Airbyte object-store creds), seal them first:
+   ```bash
+   make seal-secret ENV=<env> NAMESPACE=insight-infra NAME=<service>-creds
+   ```
+   The Makefile pulls the cleartext from Passbolt resource `insight-<env>-<name>` and writes `environments/<env>/sealed-secrets/insight-infra/<service>-creds-sealedsecret.yaml`. The controller decrypts on apply.
+2. **Apply the service** — two paths, depending on whether the deploy needs Makefile glue:
+   - **Pure helm** — when no extra glue is required (most services), the engineer runs `helm` directly so the layer is reproducible without this repo's Makefile:
+     ```bash
+     helm upgrade --install <release> <chart-ref> --version <X.Y.Z> \
+       --namespace insight-infra \
+       -f system/<service>/values.yaml \
+       -f environments/<env>/<service>-values.yaml \
+       --wait --timeout 10m
+     ```
+   - **Makefile target** — when the deploy needs post-install glue (e.g. Airbyte's setup-wizard API call, Argo Workflows' supplemental RBAC apply), use `make system-<service> ENV=<env>` which wraps the helm step with the necessary scripting.
+3. **Re-seal sealed secrets if the controller's keypair rotated** — see [§4.3](#43-sealed-secrets-sealing-flow).
+
+The set of L2 services tracked in this repo: `mariadb`, `clickhouse`, `redis`, `redpanda`, `redpanda-console`, `airbyte`, `argo-workflows`. Each has a directory under `system/<service>/` with chart pin and base values; per-env overlays live at `environments/<env>/<service>-values.yaml`.
+
+### 3.6 Engineer Deploys the App (L3)
+
+The app deploy is the routine hands-off step — a deploy is always initiated by a human at a workstation, but only the app layer is auto-bumped by the poller. Steps:
 
 1. **Sync** — `cd ~/work/insight-gitops && git pull --ff-only origin main`. The pre-flight check in [§6.3](#63-pre-flight-safety-checks) refuses to deploy if `HEAD` is not equal to `origin/main`.
 2. **Inspect** — `git log --oneline origin/main ^HEAD@{upstream}` (run by `make diff`) shows the poller commits since the last deploy.
-3. **VPN check** — `make deploy ENV=dev` runs the cluster reachability probe before doing any work.
-4. **Diff** — the Makefile renders the chart with the current values (`helm template …`) and stores the rendered manifest under `.deploy/last-render-${ENV}.yaml`. The engineer can `diff` against the previous render to see what is changing on the cluster.
-5. **Apply** — `helm upgrade --install insight $CHART --version $(cat .insight-version) -n insight -f environments/${ENV}/values.yaml`, where `$CHART = oci://ghcr.io/cyberfabric/charts/insight`. The chart is pulled from GHCR at deploy time; the gitops repo does **not** vendor it — see [§7](#7-repository-layout-target). The Makefile passes `--atomic --timeout 10m` so a failed deploy is rolled back automatically.
-6. **Verify** — `make status ENV=dev` runs `kubectl rollout status` for each deployment + `helm test` for smoke tests.
+3. **VPN + context check** — `make deploy ENV=<env>` runs the cluster reachability probe and confirms the active kube-context is `insight-<env>` before doing any work.
+4. **Diff** — the Makefile renders the chart with the current values (`helm template …`) and stores the rendered manifest under `.deploy/last-render-<env>.yaml`. The engineer can `diff` against the previous render to see what is changing on the cluster.
+5. **Apply** — `helm upgrade --install insight $CHART --version $(cat .insight-version) -n insight-<env> -f environments/<env>/values.yaml`, where `$CHART = oci://ghcr.io/cyberfabric/charts/insight`. The chart is pulled from GHCR at deploy time; the gitops repo does **not** vendor it — see [§7](#7-repository-layout-target). The Makefile passes `--atomic --timeout 10m` so a failed deploy is rolled back automatically.
+6. **Verify** — `make status ENV=<env>` runs `kubectl rollout status` for each deployment + `helm test` for smoke tests.
+
+`make deploy` is an alias for `make deploy-app` and only touches the L3 layer. The L0 bootstrap and L2 system services are not chained — they are explicit prior steps with their own engineer-approved moments. This is by design: an app upgrade should never be able to migrate a database.
 
 For every non-`dev` environment — both the internal `test` and `stage` clusters and every customer-named production cluster (`virtuozzo`, `constructor`, `acronis`, …; one entry per customer install, no generic "prod"):
 
@@ -321,6 +401,21 @@ Properties:
 - The Passbolt resource holds the **whole** Kubernetes Secret manifest (including `apiVersion`, `metadata.name`, `metadata.namespace`, `type`, and every key under `stringData`). `kubeseal` reads it as one object, so no `kubectl create` step is needed. Multi-key secrets (an OIDC client with seven fields) cost no more than single-key secrets.
 - `pub-cert.pem` is the cluster controller's public certificate, fetched once per environment and committed to the repo at `environments/<env>/pub-cert.pem`. Renewal procedure is in §8 Open Items.
 - The output file is committed. The plaintext input is not, because it never existed as a file.
+- **The `${NAMESPACE}` segment in the output path is always the target namespace of the Secret manifest stored in Passbolt.** Per [§1.5](#15-layer-model) that is `insight-infra` for L2 service credentials (e.g. `mariadb-creds`, `redpanda-tls`, `airbyte-s3`) and `insight-<env>` for L3 app credentials (e.g. `insight-oidc`, `insight-db-creds`). One env directory therefore carries two namespace subdirs:
+
+```
+environments/<env>/sealed-secrets/
+├── insight-infra/                      # L2 — system-layer secrets
+│   ├── mariadb-creds-sealedsecret.yaml
+│   ├── clickhouse-creds-sealedsecret.yaml
+│   ├── redpanda-tls-sealedsecret.yaml
+│   └── airbyte-s3-sealedsecret.yaml
+└── insight-<env>/                      # L3 — app-layer secrets
+    ├── insight-oidc-sealedsecret.yaml
+    └── insight-db-creds-sealedsecret.yaml
+```
+
+  The Makefile's `seal-secret` target writes whichever namespace is passed via `NAMESPACE=`; the `*-secret-template.yaml` files committed alongside each sealed manifest carry the same namespace value so `kubeseal` and the controller agree on where the decrypted Secret lands.
 
 ### 4.4 In-Repo Rules
 
@@ -372,8 +467,9 @@ A `Brewfile` at the repo root captures these dependencies; `make doctor` runs `b
 ```make
 # infra/insight-gitops/Makefile
 
+# ── L3 (App) — driven by `make deploy` / `make deploy-app` ──
 ENV              ?= dev
-NAMESPACE        ?= insight
+NS_APP           ?= insight-$(ENV)
 RELEASE          ?= insight
 CHART            ?= oci://ghcr.io/cyberfabric/charts/insight
 INSIGHT_VERSION  ?= $(shell cat .insight-version)
@@ -381,26 +477,104 @@ VALUES           ?= environments/$(ENV)/values.yaml
 KUBE_CTX         ?= insight-$(ENV)
 TIMEOUT          ?= 10m
 RENDER_DIR       := .deploy
+
+# ── L2 (System) — shared by every `make system-*` target ──
+NS_INFRA         ?= insight-infra
+
+# Each system service has chart-ref + version pinned; values live at
+# system/<service>/values.yaml with per-env overlays at
+# environments/$(ENV)/<service>-values.yaml.
+MARIADB_RELEASE          ?= mariadb
+MARIADB_CHART            ?= oci://registry-1.docker.io/bitnamicharts/mariadb
+MARIADB_VERSION          ?= 21.0.x   # pin to a specific patch in system/mariadb/
+
+CLICKHOUSE_RELEASE       ?= clickhouse
+CLICKHOUSE_CHART         ?= oci://ghcr.io/cyberfabric/charts/clickhouse
+CLICKHOUSE_VERSION       ?= 0.x.y
+
+REDIS_RELEASE            ?= redis
+REDIS_CHART              ?= oci://registry-1.docker.io/bitnamicharts/redis
+REDIS_VERSION            ?= 21.0.x
+
+REDPANDA_RELEASE         ?= redpanda
+REDPANDA_CHART           ?= redpanda/redpanda            # repo-style; helm repo add in target
+REDPANDA_VERSION         ?= 5.x.y
+
+REDPANDA_CONSOLE_RELEASE ?= redpanda-console
+REDPANDA_CONSOLE_CHART   ?= redpanda/console
+REDPANDA_CONSOLE_VERSION ?= 1.x.y
+
+AIRBYTE_RELEASE          ?= airbyte
+AIRBYTE_CHART            ?= airbyte/airbyte
+AIRBYTE_VERSION          ?= 1.8.5
+
+ARGO_RELEASE             ?= argo-workflows
+ARGO_CHART               ?= argo/argo-workflows
+ARGO_VERSION             ?= 0.45.16
+
+# ── L0 (Bootstrap) — see §3.4 ──
+INGRESS_NGINX_VERSION    ?= 4.13.0
+CERT_MANAGER_VERSION     ?= v1.18.0
+SEALED_SECRETS_VERSION   ?= 2.17.4
 ```
 
-- All variables are overridable on the command line (`make deploy ENV=stage`).
-- `ENV` controls which values file, which kube-context, which sealed-secrets directory.
+- All variables are overridable on the command line (`make deploy ENV=stage`, `make system-airbyte ENV=virtuozzo AIRBYTE_VERSION=1.9.0`).
+- `ENV` selects which values file, which kube-context, which sealed-secrets directory, and which app namespace.
+- `NS_APP` (= `insight-$(ENV)`) is the L3 target namespace; `NS_INFRA` (= `insight-infra`, cluster-shared) is the L2 target namespace. Both are created by `make bootstrap` (see [§3.4](#34-engineer-bootstraps-a-cluster-l0)).
 - `INSIGHT_VERSION` defaults to the contents of `.insight-version` at the repo root — the umbrella semver currently pinned for this repo. Override only for ad-hoc one-off renders (`make diff INSIGHT_VERSION=0.1.42`).
+- System service versions are pinned per service; bumping any of them is an explicit edit, never automatic.
 - The `.deploy/` directory is `.gitignore`d and stores the last rendered manifest plus a per-deploy log file.
 
 ### 6.2 Public Targets
 
+Targets are grouped by the layer they affect (see [§1.5](#15-layer-model)). L0 and L2 are deliberate, hands-on; L3 is the routine deploy.
+
+**Layer-agnostic**
+
 | Target | Purpose | Pre-flight | Effect |
 |--------|---------|------------|--------|
-| `make doctor` | Verify required tooling and auth. | none | Read-only checks; prints status. |
+| `make doctor` | Verify required tooling, auth, and cluster reach. | none | Read-only checks; prints status. |
 | `make sync` | `git fetch && git pull --ff-only origin main`. | none | Updates local repo to match `origin/main`. |
-| `make diff` | Show poller commits since last deploy and rendered-manifest diff. | `sync-clean` | Read-only. Prints commit list and `helm template` diff. |
-| `make deploy` | Apply the chart to the cluster. | `sync-clean`, `vpn-up`, `kube-ctx`, `confirm` (only fires for envs in `PROTECTED_ENVS`) | `helm upgrade --install --atomic`. |
-| `make rollback` | Roll back to the previous Helm revision. | `vpn-up`, `kube-ctx` | `helm rollback`. |
-| `make status` | Show release status and rollout health. | `vpn-up`, `kube-ctx` | Read-only. |
 | `make tag` | Tag the deploy commit as `deploy-…`. | `sync-clean` | Local + remote git tag. Optional. |
-| `make seal-secret NAME=… NAMESPACE=… [PASSBOLT_NAME=…]` | Seal the cleartext Secret YAML stored in Passbolt into a sealed-secret manifest. `PASSBOLT_NAME` defaults to `insight-$(ENV)-$(NAME)`. | `passbolt-configured` | Writes one `*-sealedsecret.yaml`. |
-| `make clear-seal-template NAME=…` | Reset a template file to empty values. | none | Edits the template in place. |
+
+**L0 — Bootstrap (cluster prereqs + namespaces)**
+
+| Target | Purpose | Pre-flight | Effect |
+|--------|---------|------------|--------|
+| `make bootstrap ENV=<env>` | Install ingress-nginx + cert-manager + sealed-secrets-controller; create `insight-infra` and `insight-<env>` namespaces; apply per-env ClusterIssuers from `bootstrap/<env>/`. | `kube-ctx` | Three Helm releases + namespace creation + ClusterIssuer apply. Idempotent. |
+| `make bootstrap-status ENV=<env>` | Show what L0 has installed on this cluster. | `kube-ctx` | Read-only. |
+| `make fetch-cert ENV=<env>` | `kubeseal --fetch-cert > environments/<env>/pub-cert.pem`. | `kube-ctx` | Writes one file. |
+
+**L2 — System (shared infrastructure)**
+
+| Target | Purpose | Pre-flight | Effect |
+|--------|---------|------------|--------|
+| `make system-mariadb ENV=<env>` | `helm upgrade --install` MariaDB into `insight-infra`. | `vpn-up`, `kube-ctx` | One Helm release in `insight-infra`. |
+| `make system-clickhouse ENV=<env>` | Same for ClickHouse. | `vpn-up`, `kube-ctx` | … |
+| `make system-redis ENV=<env>` | Same for Redis. | `vpn-up`, `kube-ctx` | … |
+| `make system-redpanda ENV=<env>` | Same for Redpanda (broker). | `vpn-up`, `kube-ctx` | … |
+| `make system-redpanda-console ENV=<env>` | Redpanda Console UI as a separate release. | `vpn-up`, `kube-ctx` | … |
+| `make system-airbyte ENV=<env>` | Helm-install Airbyte and run the post-install setup-wizard via `scripts/airbyte-setup.sh`. | `vpn-up`, `kube-ctx` | One Helm release + one API call. |
+| `make system-argo ENV=<env>` | Helm-install Argo Workflows + apply the supplemental RBAC template (`bootstrap/argo-rbac.yaml.tmpl` substituted via `envsubst`). | `vpn-up`, `kube-ctx` | One Helm release + one Role+RoleBinding. |
+| `make system-status ENV=<env>` | List Helm releases in `insight-infra` and pod readiness. | `vpn-up`, `kube-ctx` | Read-only. |
+
+There is **no top-level `make system`** that chains every L2 target. Each cluster picks which services it self-hosts vs. swaps for managed external endpoints; chaining everything would force a self-hosted choice on operators who wanted RDS or MSK. Engineers run the subset they need.
+
+**L3 — App (the Insight umbrella chart)**
+
+| Target | Purpose | Pre-flight | Effect |
+|--------|---------|------------|--------|
+| `make diff ENV=<env>` | Show poller commits since last deploy and rendered-manifest diff. | `sync-clean` | Read-only. |
+| `make deploy ENV=<env>` (alias for `deploy-app`) | Apply the umbrella chart to `insight-<env>`. | `sync-clean`, `vpn-up`, `kube-ctx`, `confirm` (only fires for envs in `PROTECTED_ENVS`), `chart-present` | `helm upgrade --install --atomic`. |
+| `make rollback ENV=<env>` | Roll back the umbrella to the previous Helm revision. | `vpn-up`, `kube-ctx` | `helm rollback`. |
+| `make status ENV=<env>` | Show app release status and rollout health. | `vpn-up`, `kube-ctx` | Read-only. |
+
+**Sealed secrets** (used by L2 and L3 alike — see [§4.3](#43-sealed-secrets-sealing-flow))
+
+| Target | Purpose | Pre-flight | Effect |
+|--------|---------|------------|--------|
+| `make seal-secret ENV=<env> NAMESPACE=<ns> NAME=<name> [PASSBOLT_NAME=…]` | Seal the cleartext Secret YAML stored in Passbolt into a sealed-secret manifest. `NAMESPACE` is `insight-infra` for L2 secrets and `insight-<env>` for L3. `PASSBOLT_NAME` defaults to `insight-$(ENV)-$(NAME)`. | `passbolt-configured` | Writes one `*-sealedsecret.yaml`. |
+| `make clear-seal-template NAME=… NAMESPACE=…` | Reset a template file to empty values. | none | Edits the template in place. |
 
 ### 6.3 Pre-flight Safety Checks
 
@@ -459,17 +633,22 @@ Rationale, one line per check:
 
 ### 6.4 Deploy Logic
 
+#### L3 — App deploy
+
 ```make
-.PHONY: deploy-insight
-deploy-insight: sync-clean vpn-up kube-ctx confirm chart-present
+.PHONY: deploy
+deploy: deploy-app
+
+.PHONY: deploy-app
+deploy-app: sync-clean vpn-up kube-ctx confirm chart-present
 	@mkdir -p $(RENDER_DIR)
 	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) \
-		-n $(NAMESPACE) -f $(VALUES) \
+		-n $(NS_APP) -f $(VALUES) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
 	@echo "Rendered $(CHART):$(INSIGHT_VERSION) to $(RENDER_DIR)/last-render-$(ENV).yaml"
 	helm upgrade --install $(RELEASE) $(CHART) \
 		--version $(INSIGHT_VERSION) \
-		--namespace $(NAMESPACE) --create-namespace \
+		--namespace $(NS_APP) --create-namespace \
 		-f $(VALUES) \
 		--atomic --timeout $(TIMEOUT) \
 		--history-max 10 \
@@ -484,11 +663,45 @@ chart-present:
 Notes:
 
 - `$(CHART)` resolves to `oci://ghcr.io/cyberfabric/charts/insight`; `$(INSIGHT_VERSION)` resolves to the contents of `.insight-version`. Together they uniquely identify the published artifact.
+- `$(NS_APP)` is `insight-$(ENV)` per [§1.5](#15-layer-model). `--create-namespace` makes `make deploy` runnable on a freshly bootstrapped cluster even before the engineer has explicitly created the namespace.
 - `chart-present` fails fast if the OCI tag does not exist — saves the engineer a confusing `helm upgrade` error.
-- `helm template` first lets the engineer abort if the rendered diff looks wrong (a follow-up `make plan` target compares against `kubectl get` to surface the actual cluster diff; out of scope for v0).
+- `helm template` first lets the engineer abort if the rendered diff looks wrong.
 - `--atomic` rolls back on failure; combined with `--timeout 10m` it bounds blast radius.
 - `--history-max 10` keeps Helm's internal release history bounded so `make rollback` always has a target.
-- The top-level `deploy` target orchestrates the per-cluster prerequisites (Airbyte, Argo Workflows) and then calls `deploy-insight`. See the gitops repo's Makefile for the orchestration; only the `deploy-insight` step interacts with the OCI-pinned umbrella chart.
+- `make deploy` does **not** chain L2 system deploys. Each `system-*` target is a deliberate, separate engineer action — see §6.4's L2 block below and the rationale in [§3.5](#35-engineer-provisions-the-system-layer-l2).
+
+#### L2 — System service deploys
+
+Every system service follows the same shape, parameterised by service name. The skeleton (one example shown; the rest are mechanically identical):
+
+```make
+# system-airbyte: Helm-install Airbyte into insight-infra and run the
+# post-install setup-wizard via scripts/airbyte-setup.sh.
+.PHONY: system-airbyte
+system-airbyte: vpn-up kube-ctx
+	@helm repo add airbyte https://airbytehq.github.io/helm-charts >/dev/null 2>&1 || true
+	@helm repo update airbyte >/dev/null
+	@VALUES_ARGS="-f system/airbyte/values.yaml"; \
+	if [ -s environments/$(ENV)/airbyte-values.yaml ]; then \
+		VALUES_ARGS="$$VALUES_ARGS -f environments/$(ENV)/airbyte-values.yaml"; \
+	fi; \
+	helm upgrade --install $(AIRBYTE_RELEASE) $(AIRBYTE_CHART) \
+		--namespace $(NS_INFRA) --create-namespace \
+		--version $(AIRBYTE_VERSION) \
+		$$VALUES_ARGS \
+		--wait --timeout 15m
+	@NAMESPACE=$(NS_INFRA) AIRBYTE_RELEASE=$(AIRBYTE_RELEASE) \
+		bash scripts/airbyte-setup.sh
+```
+
+The MariaDB / ClickHouse / Redis / Redpanda / Redpanda-Console targets are the same shape minus the post-install setup script. The Argo Workflows target additionally applies the templated RBAC at `bootstrap/argo-rbac.yaml.tmpl` via `envsubst`.
+
+Notes:
+
+- Each `system-*` target is **idempotent**: re-running on an unchanged cluster is a no-op apart from helm-upgrade noise.
+- Per-env overlays (`environments/$(ENV)/<service>-values.yaml`) are conditionally loaded — empty/missing overlay falls back to `system/<service>/values.yaml` defaults.
+- For services that need a sealed secret in place before the first start (e.g. MariaDB root password), engineers run `make seal-secret NAMESPACE=insight-infra NAME=<service>-creds ENV=<env>` first; the resulting `*-sealedsecret.yaml` is committed and applied alongside the Helm release.
+- A service that's swapped for a managed external endpoint is simply not invoked: the engineer skips the `system-<service>` step on that cluster, and the L3 app values point at the external host instead.
 
 ### 6.5 Sealed Secret Targets
 
@@ -523,54 +736,90 @@ seal-secret: passbolt-configured
 
 ## 7. Repository Layout (Target)
 
-The implementation phase materialises this layout in `infra/insight-gitops`:
+The implementation phase materialises this layout in `infra/insight-gitops`. Three top-level directories carry the three deploy layers:
+
+- `bootstrap/` — L0 prereqs and per-env ClusterIssuers (cluster-scoped, runs once per cluster)
+- `system/` — L2 base values + chart pins for self-hosted infrastructure (per-service directories)
+- `environments/` — L3 app overlays + per-env L2 overlays + per-env sealed secrets (one directory per env)
 
 ```
 infra/insight-gitops/
 ├── Brewfile
 ├── Makefile
 ├── README.md
-├── .insight-version            # one line: the umbrella semver pin (e.g. 0.1.47)
+├── .insight-version            # L3 — one-line umbrella semver pin (e.g. 0.1.47)
 ├── .poller.yaml                # chart_repository + version_pin_file + auto_envs
-├── .gitlab-ci.yml              # defines the chart-poller scheduled job
+├── .gitlab-ci.yml              # the hourly chart-poller scheduled job
 ├── .gitleaks.toml              # secret-scanning rules
-├── base-values/
-│   ├── airbyte-values.yaml     # vendored from cyberfabric/insight at a known SHA
-│   └── argo-values.yaml
-├── bootstrap/
-│   └── argo-rbac.yaml.tmpl     # templated; substituted at apply time
-├── environments/
+│
+├── bootstrap/                  # ── L0 — cluster prereqs + namespaces ──
+│   ├── argo-rbac.yaml.tmpl     # supplemental Argo RBAC, applied by `make system-argo`
+│   └── <env>/
+│       ├── ingress-nginx-values.yaml
+│       ├── cert-manager-values.yaml
+│       ├── sealed-secrets-values.yaml
+│       └── issuer.yaml         # ClusterIssuers — selfsigned + local-ca for non-public
+│                               # envs; Let's Encrypt for customer-facing envs.
+│
+├── system/                     # ── L2 — shared infrastructure (cluster-shared base) ──
+│   ├── mariadb/
+│   │   └── values.yaml
+│   ├── clickhouse/
+│   │   └── values.yaml
+│   ├── redis/
+│   │   └── values.yaml
+│   ├── redpanda/
+│   │   └── values.yaml
+│   ├── redpanda-console/
+│   │   └── values.yaml
+│   ├── airbyte/
+│   │   └── values.yaml
+│   └── argo-workflows/
+│       └── values.yaml
+│
+├── environments/               # ── L3 + per-env L2 overlays + per-env secrets ──
 │   ├── dev/                       # internal — auto-bumped by the poller
-│   │   ├── values.yaml
+│   │   ├── values.yaml            # umbrella app overlay (L3)
+│   │   ├── mariadb-values.yaml    # per-env L2 overlay (optional; layered on system/mariadb/values.yaml)
+│   │   ├── clickhouse-values.yaml # …
+│   │   ├── redis-values.yaml
+│   │   ├── redpanda-values.yaml
+│   │   ├── redpanda-console-values.yaml
 │   │   ├── airbyte-values.yaml
-│   │   ├── argo-values.yaml
-│   │   ├── pub-cert.pem
+│   │   ├── argo-workflows-values.yaml
+│   │   ├── pub-cert.pem           # sealed-secrets-controller public cert for THIS cluster
 │   │   └── sealed-secrets/
-│   │       └── insight/
-│   │           ├── oidc-client-sealedsecret.yaml
-│   │           └── db-creds-sealedsecret.yaml
+│   │       ├── insight-infra/     # L2 secrets (target namespace = insight-infra)
+│   │       │   ├── mariadb-creds-sealedsecret.yaml
+│   │       │   ├── clickhouse-creds-sealedsecret.yaml
+│   │       │   ├── redpanda-tls-sealedsecret.yaml
+│   │       │   └── airbyte-s3-sealedsecret.yaml
+│   │       └── insight-dev/       # L3 secrets (target namespace = insight-<env>)
+│   │           ├── insight-oidc-sealedsecret.yaml
+│   │           └── insight-db-creds-sealedsecret.yaml
 │   ├── stage/                     # internal — promote-by-MR (optional)
 │   │   └── …                      # same shape as dev/
 │   ├── virtuozzo/                 # customer prod — promote-by-MR + confirm token
-│   │   ├── values.yaml
-│   │   ├── airbyte-values.yaml
-│   │   ├── argo-values.yaml
-│   │   ├── pub-cert.pem
-│   │   └── sealed-secrets/...
+│   │   └── …                      # same shape; sealed-secrets/insight-virtuozzo/ for L3
 │   └── <other-customer>/          # one dir per customer install (constructor, acronis, …)
 │       └── …                      # same shape
+│
 └── scripts/
-    ├── poller.sh               # invoked by .gitlab-ci.yml on cron
-    ├── doctor.sh               # invoked by `make doctor`
-    ├── render-diff.sh          # invoked by `make diff`
-    └── airbyte-setup.sh        # post-install Airbyte setup-wizard automation
+    ├── poller.sh                  # invoked by .gitlab-ci.yml on cron (bumps .insight-version only)
+    ├── doctor.sh                  # invoked by `make doctor`
+    ├── render-diff.sh             # invoked by `make diff`
+    ├── passbolt-fetch.sh          # streams cleartext Secret YAML from Passbolt
+    └── airbyte-setup.sh           # post-install Airbyte setup-wizard automation
 ```
 
 Conventions:
 
-- One `values.yaml` per environment for the umbrella chart, plus one `airbyte-values.yaml` and one `argo-values.yaml` per environment as overlays on top of `base-values/`. The umbrella chart already exposes one flat values surface; per-engine files exist only because Airbyte and Argo Workflows are separate Helm releases.
-- One `pub-cert.pem` per environment because each cluster runs its own sealed-secrets-controller with its own keypair.
+- **L0 files** in `bootstrap/<env>/`. Per-env because cert-manager issuers (Let's Encrypt prod vs. selfsigned local) genuinely differ by env. Cluster-scoped resources (ingress-nginx, sealed-secrets-controller) reuse the same values across envs by referring to chart defaults; per-env overrides are an as-needed addition.
+- **L2 files** are split by service (`system/<service>/values.yaml`) to keep each release independently readable. Per-env tuning lives in `environments/<env>/<service>-values.yaml` and is layered on top at deploy time. A self-hosted cluster carries the values; a managed-external cluster simply does not run that `make system-<service>` target.
+- **L3 files** stay where they were: one `values.yaml` per env for the umbrella chart, plus one `pub-cert.pem` per cluster.
+- **Sealed secrets** are split by **target namespace** under `environments/<env>/sealed-secrets/<namespace>/`. `insight-infra` for L2, `insight-<env>` for L3. The `*-secret-template.yaml` template files live next to their sealed counterparts and carry the same target namespace.
 - **The umbrella chart lives in `cyberfabric/insight` and is published per merge to `oci://ghcr.io/cyberfabric/charts/insight`.** The gitops repo is settings-only — values, sealed secrets, the Makefile, the poller. It does **not** vendor the chart and does **not** require a local checkout of `cyberfabric/insight`. The Makefile pulls the chart from OCI at deploy time, pinned to the version in `.insight-version`.
+- **System chart pins** live in the Makefile as variables (`MARIADB_VERSION`, `CLICKHOUSE_VERSION`, …) so a bump is a single deliberate edit.
 
 ## 8. Open Items
 
@@ -582,3 +831,6 @@ These are accepted gaps that do not block the MVP but must be tracked.
 - **Artifact signing (images + chart).** Neither GHCR images nor the umbrella Helm chart at `oci://ghcr.io/cyberfabric/charts/insight` are signed today. The deploy admits any image tag the poller resolves and any chart version `.insight-version` pins. Follow-up: cosign-sign both at publish time, have `make chart-present` verify the chart signature before allowing deploy, and add `cosign verify` to the cluster admission policy for images.
 - **Audit log of deploys.** `make deploy` writes a local log file; there is no central audit. A trivial follow-up posts the log to a `#deploys` Slack channel via the poller's bot token; deferred until the team needs it.
 - **Rollback-by-tag.** `make rollback` calls `helm rollback` to the previous revision. Rolling back to an arbitrary historical state is `git checkout <deploy-tag> && make deploy`, which works but has not been rehearsed.
+- **Umbrella chart drops infra subcharts.** The umbrella in `cyberfabric/insight` currently bundles `clickhouse`, `mariadb`, `redis`, `redpanda` as subcharts with `<service>.deploy: true|false` toggles. Per the L2/L3 split in [§1.5](#15-layer-model), those infra subcharts move out to standalone Helm releases under `system/<service>/` in this repo. Follow-up on the chart side: drop the subcharts, expose only host/port/credentials values for the app to wire to either a self-hosted L2 service in `insight-infra` or a managed external endpoint, and remove the `<service>.deploy` toggle. Cross-namespace DNS lookups in app templates use `<release>.insight-infra.svc.cluster.local`. Tracked as a separate phase in the deploy-consolidation plan.
+- **L2 chart-pin policy.** System service chart versions (`MARIADB_VERSION`, `CLICKHOUSE_VERSION`, etc.) are Makefile constants today; bumping is a deliberate PR. A future enhancement: split each service's pin into its own `system/<service>/.version` file (mirroring `.insight-version`) so a poller could pre-flight version compatibility against published Bitnami / Redpanda / Airbyte releases. Out of scope for v0.
+- **Per-cluster L2 inventory.** When a cluster swaps a self-hosted service for a managed endpoint (e.g. virtuozzo uses RDS instead of `system/mariadb`), the gitops repo currently has no machine-readable record of "this cluster runs MariaDB on-cluster vs. external." A small `environments/<env>/inventory.yaml` listing which `system-*` targets to run on this cluster would make `make doctor` able to validate that the cluster matches the expected inventory, and would make it possible to render a per-customer install runbook from the repo. Captured.
