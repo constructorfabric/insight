@@ -294,6 +294,7 @@ Drives Airbyte resources (definitions, sources, connections) into the desired st
 - Decides when to republish a definition: only when `descriptor.yaml.version` ≠ `definition.declarativeManifest.description` (nocode) or `dockerImageTag` (CDK).
 - Performs idempotent `sources/update` per Secret (`sources` are append-tolerant; connection state is preserved).
 - Decides when to recreate a connection: only on breaking syncCatalog drift; uses `cpt-insightspec-seq-breaking-change-recreate-with-state` to preserve cursors via `/api/v1/state/{get,create_or_update}`.
+- Creates/recreates Airbyte connections with `scheduleType=manual`; the per-connector Argo CronWorkflow (rendered by `cpt-insightspec-component-argo-cronworkflow-renderer`) is the sole sync scheduler. Airbyte's own Temporal scheduler must not fire syncs in parallel with Argo, or Bronze rows land without dbt → Silver.
 - Drives orphan GC by `insight` membership tag (skipped under `--no-gc`).
 - Reports per-connector outcome: `created` | `updated` | `no-op` | `recreated` | `deleted` | `skipped`.
 

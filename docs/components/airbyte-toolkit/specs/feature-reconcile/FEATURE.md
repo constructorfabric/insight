@@ -258,13 +258,13 @@ The reconcile feature explicitly does NOT cover:
 
 **Actors**: `cpt-insightspec-actor-toolkit-cli`, `cpt-insightspec-actor-airbyte-api`
 
-Bootstrap path: source exists but has no connection yet (clean cluster / first reconcile after secret apply). Layer 3 of reconcile creates a connection with discovered schema (forced to append-only), cron schedule, and reconcile tags. Treated as data-affecting so the post-reconcile sync trigger fires.
+Bootstrap path: source exists but has no connection yet (clean cluster / first reconcile after secret apply). Layer 3 of reconcile creates a connection with discovered schema (forced to append-only), `scheduleType=manual`, and reconcile tags. Sync timing is owned by the per-connector Argo CronWorkflow (see `cpt-insightspec-algo-reconcile-render-cron-workflow` and ADR-0008) — Airbyte's own Temporal scheduler must NOT fire syncs in parallel with Argo. Treated as data-affecting so the post-reconcile sync trigger fires.
 
 1. [ ] - `p2` - **IF** dry-run **THEN** log CHANGE "would_call ab_create_connection" and **RETURN** - `inst-cct-dry`
 2. [ ] - `p2` - **IF** `RECONCILE_DESTINATION_ID` not set **THEN** log ERROR and **RETURN** failure - `inst-cct-fail-fast`
 3. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-discover-schema` → discovered_catalog - `inst-cct-discover`
 4. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-normalize-catalog-append-only` → sync_catalog - `inst-cct-normalize`
-5. [ ] - `p2` - schedule_json = `build_schedule_json(reconcile_compute_schedule(connector))` - `inst-cct-schedule`
+5. [ ] - `p2` - schedule_json = `{"scheduleType":"manual"}` (literal; Argo CronWorkflow is the sole scheduler) - `inst-cct-schedule`
 6. [ ] - `p2` - tags_json = `["insight", "cfg-hash:${cfg_hash}"]` - `inst-cct-tags`
 7. [ ] - `p2` - connection_name = `reconcile_compute_connection_name(connector)` - `inst-cct-name`
 8. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-create-connection-with-tags` → new_connection_id - `inst-cct-create`
@@ -418,7 +418,7 @@ First-time publish of a nocode connector via builder/create + builder/publish. T
 2. [ ] - `p1` - **CATCH** `ApiError` - `inst-eisor-catch-get`
    1. [ ] - `p1` - WARN: state export failed; ABORT (do not delete without state safely captured) - `inst-eisor-abort`
 3. [ ] - `p1` - API: DELETE /api/v1/connections/delete (old connection_id) - `inst-eisor-delete`
-4. [ ] - `p1` - API: POST /api/v1/connections/create (new syncCatalog) → new_connection_id - `inst-eisor-create`
+4. [ ] - `p1` - API: POST /api/v1/connections/create (new syncCatalog, `scheduleType:"manual"`) → new_connection_id - `inst-eisor-create`
 5. [ ] - `p1` - API: POST /api/v1/state/create_or_update {connectionId: new_connection_id, state: state_blob} - `inst-eisor-import`
 6. [ ] - `p1` - API: PATCH /api/public/v1/connections/{new_connection_id} (tags=[insight, cfg-hash:&lt;hash&gt;]) - `inst-eisor-tag`
 7. [ ] - `p1` - **RETURN** new_connection_id - `inst-eisor-return`
@@ -601,14 +601,14 @@ Per `cpt-dataflow-constraint-airbyte-append`: append at destination avoids OOMs 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-create-connection-with-tags`
 
-**Inputs**: `workspace_id`, `source_id`, `destination_id`, `connection_name`, `cron_expression`, `cfg_hash`, `sync_catalog`
+**Inputs**: `workspace_id`, `source_id`, `destination_id`, `connection_name`, `cfg_hash`, `sync_catalog`
 **Outputs**: new `connection_id`
 
-Bootstrap a connection on a clean cluster (or after orphan migration). Schedule is derived from cron via `build_schedule_json.py`; tags are seeded with `["insight", "cfg-hash:<hash>"]` so subsequent diff-connection-tags passes are noop.
+Bootstrap a connection on a clean cluster (or after orphan migration). The Airbyte connection is created with `scheduleType=manual`; sync timing is driven exclusively by the per-connector Argo CronWorkflow (see `cpt-insightspec-algo-reconcile-render-cron-workflow`). Tags are seeded with `["insight", "cfg-hash:<hash>"]` so subsequent diff-connection-tags passes are noop.
 
-1. [ ] - `p1` - schedule_json = `build_schedule_json(cron_expression)` - `inst-ccwt-schedule`
+1. [ ] - `p1` - schedule_json = `{"scheduleType":"manual"}` (literal; Argo CronWorkflow is the sole scheduler) - `inst-ccwt-schedule`
 2. [ ] - `p1` - tags_json = `["insight", "cfg-hash:${cfg_hash}"]` - `inst-ccwt-tags`
-3. [ ] - `p1` - API: POST `/api/v1/connections/create` body `{workspaceId, sourceId, destinationId, name, schedule, tags, syncCatalog, status:"active"}` - `inst-ccwt-post`
+3. [ ] - `p1` - API: POST `/api/v1/connections/create` body `{workspaceId, sourceId, destinationId, name, scheduleType:"manual", tags, syncCatalog, status:"active"}` - `inst-ccwt-post`
 4. [ ] - `p1` - **RETURN** response.connectionId - `inst-ccwt-return`
 
 ### Filter Custom Definitions

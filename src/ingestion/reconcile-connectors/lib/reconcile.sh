@@ -523,7 +523,9 @@ reconcile_connections() {
   if [[ -z "${filtered}" ]]; then
     # Bootstrap path: source exists but has no connection yet (clean cluster
     # / first run). Create one with discovered schema, append-only sync mode,
-    # cron schedule, and reconcile tags. Caller treats this as data-affecting.
+    # manual schedule (Argo CronWorkflow is the sole scheduler — see
+    # templates/cron-workflow.yaml.tpl), and reconcile tags. Caller treats
+    # this as data-affecting.
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
         "source ${source_id} has no connection yet — will create one"
@@ -546,9 +548,12 @@ reconcile_connections() {
         "normalize_catalog_to_append failed for source ${source_id}"
       return 1
     fi
-    local cron_str schedule_json
-    cron_str="$(reconcile_compute_schedule "${connector_name}")"
-    schedule_json="$(python3 "${_RECONCILE_PY_DIR}/build_schedule_json.py" "${cron_str}")"
+    # Airbyte connection is created with scheduleType=manual; Argo
+    # CronWorkflow drives sync timing (reconcile_compute_schedule feeds the
+    # CronWorkflow render in _reconcile_one_connector). Without this,
+    # Airbyte's Temporal scheduler would fire syncs on its own cron in
+    # parallel with Argo, landing Bronze rows without running dbt.
+    local schedule_json='{"scheduleType":"manual"}'
     local tag_names_json tags_json
     # cfg-hash truncated to first 12 hex chars: Airbyte caps tag name at 30,
     # the prefix `cfg-hash:` is 9, full sha256 (64) blows the limit. 12 chars
@@ -683,8 +688,10 @@ reconcile_recreate_with_state() {
   if ! destination_id="$(reconcile_resolve_destination_id "${source_name}")"; then
     return 1
   fi
-  : "${RECONCILE_DEFAULT_SCHEDULE_JSON:?Set RECONCILE_DEFAULT_SCHEDULE_JSON to the JSON for an Airbyte connection schedule (manual or cron); the chart supplies a sensible default}"
-  local schedule_json="${RECONCILE_DEFAULT_SCHEDULE_JSON}"
+  # Airbyte connection re-created with scheduleType=manual; Argo
+  # CronWorkflow is the sole scheduler (see bootstrap branch of
+  # reconcile_connections for rationale).
+  local schedule_json='{"scheduleType":"manual"}'
   local tag_names_json tags_json
   # cfg-hash truncated to 12 hex (Airbyte tag-name max is 30; 'cfg-hash:'+12 = 21).
   tag_names_json="$(python3 -c 'import sys, json; print(json.dumps(["insight", f"cfg-hash:{sys.argv[1][:12]}"]))' "${cfg_hash}")"

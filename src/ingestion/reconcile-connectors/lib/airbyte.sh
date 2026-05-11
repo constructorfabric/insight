@@ -741,14 +741,11 @@ ab_create_connection() {
   local namespace_format="${8:-}"
   [[ -n "${sync_catalog_json}" ]] || sync_catalog_json='{"streams":[]}'
   [[ -n "${tags_json}" && "${tags_json}" != "null" ]] || tags_json='[]'
-  # schedule_json is produced by build_schedule_json.py and emits the
-  # 1.7+ shape: flat object with `scheduleType` (always) and
-  # `scheduleData` (for cron). We splice it onto the top of the payload
-  # so the keys land where ConnectionCreate expects them. Sending the
-  # legacy `schedule` field instead leaves Airbyte to fall back to an
-  # empty `scheduleData.basicSchedule`, which then crashes the
-  # connection_manager Temporal workflow with a NotNull `timeUnit`
-  # exception — every sync signal silently dies in the worker.
+  # schedule_json is the Airbyte 1.7+ schedule shape: flat object with
+  # `scheduleType` (always) and `scheduleData` (for cron). Reconcile
+  # passes `{"scheduleType":"manual"}` because Argo CronWorkflow is the
+  # sole sync scheduler; the JSON is spliced onto the top of the payload
+  # so the keys land where ConnectionCreate expects them.
   #
   # namespace_format is the literal `namespaceFormat` value (e.g.
   # `bronze_m365`); when non-empty we set namespaceDefinition=customformat

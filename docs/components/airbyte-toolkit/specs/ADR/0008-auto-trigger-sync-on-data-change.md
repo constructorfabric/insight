@@ -28,7 +28,7 @@ decision-makers: platform-engineering
 
 ## Context and Problem Statement
 
-The cron-driven reconcile loop (ADR-0006) applies state on every `*/15` tick, but the per-connector sync schedule is decoupled (default daily 00:00 UTC, overridable). A real operational pattern is: an operator rotates a credential at 14:00; without an immediate sync the next data refresh waits until 00:00 UTC, ~10h later. We need a deterministic "fire one sync Workflow now" path on changes that meaningfully affect produced data, while keeping idle ticks free of spurious Workflows.
+The cron-driven reconcile loop (ADR-0006) applies state on every `*/15` tick, but the per-connector sync schedule is decoupled (default daily 00:00 UTC, overridable). The schedule lives in the per-connector Argo `CronWorkflow` rendered by `cpt-insightspec-algo-reconcile-render-cron-workflow` — Airbyte connections themselves are created with `scheduleType=manual` so the Temporal scheduler does not fire syncs in parallel with Argo (a parallel fire would land Bronze rows without running dbt → Silver). A real operational pattern is: an operator rotates a credential at 14:00; without an immediate sync the next data refresh waits until 00:00 UTC, ~10h later. We need a deterministic "fire one sync Workflow now" path on changes that meaningfully affect produced data, while keeping idle ticks free of spurious Workflows.
 
 What counts as "meaningful"? The reconcile loop performs many actions:
 
