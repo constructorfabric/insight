@@ -29,6 +29,11 @@ _RECONCILE_PY_DIR="$(cd "${_RECONCILE_LIB_DIR}/../python" && pwd)"
 source "${_RECONCILE_LIB_DIR}/airbyte.sh"
 # shellcheck source=./discover.sh
 source "${_RECONCILE_LIB_DIR}/discover.sh"
+# shellcheck source=./connector-naming.sh
+# Provides reconcile_compute_{connection_name,schedule,tenant} used by
+# both reconcile.sh and adopt.sh. Sourced before adopt.sh so the helpers
+# are resolvable regardless of which entry point loads which file first.
+source "${_RECONCILE_LIB_DIR}/connector-naming.sh"
 # shellcheck source=./adopt.sh
 source "${_RECONCILE_LIB_DIR}/adopt.sh"
 # shellcheck source=./argo.sh
@@ -59,81 +64,9 @@ reconcile__log() {
   log_line "${level}" "${connector}: ${message}"
 }
 
-# ---------------------------------------------------------------------------
-# reconcile_compute_connection_name <connector_name>
-# Derives the Airbyte connection name for a connector: pattern
-#   {connector}-{source_id_label}-{tenant_id}-conn
-# matching the name used when the connection was created.
-# ---------------------------------------------------------------------------
-reconcile_compute_connection_name() {
-  local connector="$1"
-  local namespace="${INSIGHT_NAMESPACE}"
-  local secret_name
-  secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
-  if [[ -z "${secret_name}" ]]; then
-    printf '%s-main-%s-conn' "${connector}" "${INSIGHT_TENANT_ID:-}"
-    return 0
-  fi
-  local source_id_label
-  source_id_label="$(kubectl -n "${namespace}" get secret "${secret_name}" \
-    -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/source-id}' \
-    2>/dev/null || true)"
-  [[ -n "${source_id_label}" ]] || source_id_label="main"
-  printf '%s-%s-%s-conn' "${connector}" "${source_id_label}" "${INSIGHT_TENANT_ID:-}"
-}
-
-# ---------------------------------------------------------------------------
-# reconcile_compute_schedule <connector_name>
-# Schedule precedence: Secret annotation > descriptor.yaml.schedule > default.
-# ---------------------------------------------------------------------------
-reconcile_compute_schedule() {
-  local connector="$1"
-  local namespace="${INSIGHT_NAMESPACE}"
-  local secret_name schedule
-  secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
-  if [[ -n "${secret_name}" ]]; then
-    schedule="$(kubectl -n "${namespace}" get secret "${secret_name}" \
-      -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/schedule}' \
-      2>/dev/null || true)"
-    [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
-  fi
-  # Resolve descriptor path by glob — connectors are nested under an area
-  # directory (e.g. ${CONNECTORS_DIR}/collaboration/m365/), so the slug
-  # alone doesn't give us a deterministic path.
-  local desc_glob desc_path
-  # shellcheck disable=SC2206
-  desc_glob=("${CONNECTORS_DIR}"/*/"${connector}"/descriptor.yaml)
-  desc_path="${desc_glob[0]}"
-  if [[ -f "${desc_path}" ]]; then
-    schedule="$(python3 "${_RECONCILE_PY_DIR}/parse_descriptor.py" \
-      --descriptor "${desc_path}" \
-      --field schedule 2>/dev/null || true)"
-    [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
-  fi
-  printf '0 0 * * *'
-}
-
-# ---------------------------------------------------------------------------
-# reconcile_compute_tenant <connector_name>
-# Resolves tenant slug: env INSIGHT_TENANT_ID > Secret metadata > "default".
-# ---------------------------------------------------------------------------
-reconcile_compute_tenant() {
-  local connector="$1"
-  [[ -n "${INSIGHT_TENANT_ID:-}" ]] && { printf '%s' "${INSIGHT_TENANT_ID}"; return 0; }
-  local namespace="${INSIGHT_NAMESPACE}"
-  local secret_name
-  secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
-  if [[ -z "${secret_name}" ]]; then
-    printf 'default'
-    return 0
-  fi
-  local secret_file
-  secret_file="$(mktemp -t insight-reconcile.XXXXXX)" || { printf 'default'; return 0; }
-  kubectl -n "${namespace}" get secret "${secret_name}" -o json > "${secret_file}" 2>/dev/null || true
-  python3 "${_RECONCILE_PY_DIR}/resolve_tenant.py" \
-    --secret-json "${secret_file}" 2>/dev/null || printf 'default'
-  rm -f "${secret_file}"   # explicit cleanup; sourced libs MUST NOT install RETURN traps
-}
+# reconcile_compute_{connection_name,schedule,tenant} have moved to
+# lib/connector-naming.sh so adopt.sh can call them without depending on
+# the order in which reconcile.sh and adopt.sh source each other.
 
 # ---------------------------------------------------------------------------
 # reconcile_resolve_destination_id <log_subject>

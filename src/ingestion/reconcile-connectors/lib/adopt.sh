@@ -22,6 +22,12 @@ _ADOPT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_ADOPT_LIB_DIR}/airbyte.sh"
 # shellcheck source=./discover.sh
 source "${_ADOPT_LIB_DIR}/discover.sh"
+# shellcheck source=./connector-naming.sh
+# Provides reconcile_compute_{connection_name,schedule,tenant}. Sourcing
+# here (instead of relying on reconcile.sh having loaded it first) is
+# what eliminates the previous circular dependency between adopt.sh
+# and reconcile.sh.
+source "${_ADOPT_LIB_DIR}/connector-naming.sh"
 # shellcheck source=./argo.sh
 source "${_ADOPT_LIB_DIR}/argo.sh"
 # shellcheck source=./log.sh
