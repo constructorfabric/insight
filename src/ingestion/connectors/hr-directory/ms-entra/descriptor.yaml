@@ -5,3 +5,8 @@ dbt_select: tag:ms-entra+
 workflow: sync
 connection:
   namespace: bronze_ms_entra
+secret:
+  required_fields:
+    - azure_tenant_id
+    - azure_client_id
+    - azure_client_secret
