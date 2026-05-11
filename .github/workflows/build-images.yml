@@ -83,7 +83,7 @@ jobs:
       # PRs (including forks) build only — verifies the Dockerfile and the
       # build still works without polluting GHCR. Pushes happen only on
       # merges to main and on manual dispatches from main.
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/backend
           file: src/backend/${{ matrix.dockerfile }}
@@ -124,11 +124,12 @@ jobs:
       # broken `ref()`, jinja error, schema.yml mismatch) only manifests
       # at first CronWorkflow run in the cluster.
       - name: Build toolbox image (load locally)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
           load: true
+          push: false
           tags: insight-toolbox:ci-validate
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -163,7 +164,7 @@ jobs:
 
       - name: Push toolbox image
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
@@ -196,7 +197,7 @@ jobs:
             type=raw,value={{date 'YYYY.MM.DD.HH.mm'}}-{{sha}},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/ingestion/connectors/task-tracking/jira/enrich
           file: src/ingestion/connectors/task-tracking/jira/enrich/Dockerfile
