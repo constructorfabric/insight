@@ -86,7 +86,7 @@ models:
               arguments:
                 values: ['UPSERT', 'DELETE']
 
-  - name: to_class_people
+  - name: ms_entra__to_class_people
     description: >
       MS Entra users → class_people (Silver Step 1).
       Identity key: `email` (mail with UPN fallback). `source_person_id`

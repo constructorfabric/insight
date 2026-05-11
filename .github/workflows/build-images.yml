@@ -83,7 +83,7 @@ jobs:
       # PRs (including forks) build only — verifies the Dockerfile and the
       # build still works without polluting GHCR. Pushes happen only on
       # merges to main and on manual dispatches from main.
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/backend
           file: src/backend/${{ matrix.dockerfile }}
@@ -117,15 +117,61 @@ jobs:
             type=raw,value={{date 'YYYY.MM.DD.HH.mm'}}-{{sha}},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - uses: docker/build-push-action@v6
+      # Build → validate → push. The build step loads the image into the
+      # local Docker daemon so the validate step can `docker run` against it;
+      # the push step reuses the buildx cache (essentially free). Without
+      # the validate step a broken dbt project (duplicate model name,
+      # broken `ref()`, jinja error, schema.yml mismatch) only manifests
+      # at first CronWorkflow run in the cluster.
+      - name: Build toolbox image (load locally)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
-          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          load: true
+          push: false
+          tags: insight-toolbox:ci-validate
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Validate dbt project (dbt parse)
+        # `dbt parse` exercises the dbt manifest: duplicate model/test
+        # names, broken `ref()`/`source()`, jinja syntax errors,
+        # schema.yml model patches that don't match a model — all error
+        # here. It does NOT execute any SQL against the warehouse: the
+        # dummy profile below is never connected, the adapter just
+        # needs to be loadable.
+        run: |
+          mkdir -p /tmp/dbt-ci-profiles
+          cat > /tmp/dbt-ci-profiles/profiles.yml <<'YAML'
+          ingestion:
+            target: ci-parse
+            outputs:
+              ci-parse:
+                type: clickhouse
+                host: dummy.local
+                port: 8123
+                schema: dbt_parse_ci
+                user: ci
+                password: ci
+                secure: false
+          YAML
+          docker run --rm \
+            -v /tmp/dbt-ci-profiles:/profiles:ro \
+            -w /ingestion/dbt \
+            insight-toolbox:ci-validate \
+            dbt parse --profiles-dir /profiles
+
+      - name: Push toolbox image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: src/ingestion
+          file: src/ingestion/tools/toolbox/Dockerfile
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   jira-enrich:
     needs: changes
@@ -151,7 +197,7 @@ jobs:
             type=raw,value={{date 'YYYY.MM.DD.HH.mm'}}-{{sha}},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/ingestion/connectors/task-tracking/jira/enrich
           file: src/ingestion/connectors/task-tracking/jira/enrich/Dockerfile

@@ -9,7 +9,7 @@ sources:
       - name: meta_fields
 
 models:
-  - name: to_class_people
+  - name: bamboohr__to_class_people
     description: >
       BambooHR Employees -> class_people (Silver Step 1).
       Full-refresh source. Identity key: email (workEmail).

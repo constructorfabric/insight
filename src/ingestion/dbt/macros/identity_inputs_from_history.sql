@@ -39,6 +39,18 @@
     source_account_id, value_type, value, value_field_name, operation_type,
     _synced_at, _version
 
+  Types:
+    `insight_tenant_id` and `insight_source_id` are emitted as UUID, derived
+    from the source's raw `tenant_id` / `source_id` strings via sipHash128.
+    `_synced_at` is emitted as DateTime64(3). All three match what the seed-
+    style identity inputs (seed_identity_inputs_from_cursor /
+    _from_claude_admin) emit so the `silver/_shared/identity_inputs.sql`
+    UNION ALL type-checks — ClickHouse 25.3 rejects UNION across UUID and
+    String with error code 386 NO_COMMON_TYPE. The hashing-to-UUID approach
+    is TEMPORARY pending a real tenants registry; the same hash applied to
+    the same raw tenant_id maps to the same UUID across all sources, so
+    downstream joins on `insight_tenant_id` stay consistent.
+
   unique_key is `{tenant}-{source_type}-{source_account_id}-{value_type}-{operation}-{updated_at_ms}`
   — uniquely identifies one observation event. RMT(_version) deduplicates true
   duplicates (same observation re-emitted) on background merge.
@@ -64,15 +76,15 @@ upserts AS (
             'UPSERT-',
             toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
         ) AS String) AS unique_key,
-        tenant_id AS insight_tenant_id,
-        source_id AS insight_source_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         entity_id AS source_account_id,
         '{{ f.value_type }}' AS value_type,
         new_value AS value,
         '{{ f.value_field_name }}' AS value_field_name,
         'UPSERT' AS operation_type,
-        updated_at AS _synced_at,
+        toDateTime64(updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(updated_at, 3)) AS _version
     FROM history
     WHERE field_name = '{{ f.field }}'
@@ -103,15 +115,15 @@ deletes AS (
             'DELETE-',
             toString(toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)))
         ) AS String) AS unique_key,
-        d.tenant_id AS insight_tenant_id,
-        d.source_id AS insight_source_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         d.entity_id AS source_account_id,
         '{{ f.value_type }}' AS value_type,
         '' AS value,
         '{{ f.value_field_name }}' AS value_field_name,
         'DELETE' AS operation_type,
-        d.updated_at AS _synced_at,
+        toDateTime64(d.updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)) AS _version
     FROM deactivation_events d
     {{ 'UNION ALL' if not loop.last }}
@@ -132,15 +144,15 @@ id_upserts AS (
             'UPSERT-',
             toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
         ) AS String) AS unique_key,
-        tenant_id AS insight_tenant_id,
-        source_id AS insight_source_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         entity_id AS source_account_id,
         'id' AS value_type,
         entity_id AS value,
         '{{ source_type }}.entity_id' AS value_field_name,
         'UPSERT' AS operation_type,
-        updated_at AS _synced_at,
+        toDateTime64(updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(updated_at, 3)) AS _version
     FROM history
     WHERE entity_id IS NOT NULL AND entity_id != ''
@@ -157,15 +169,15 @@ id_deletes AS (
             'DELETE-',
             toString(toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)))
         ) AS String) AS unique_key,
-        d.tenant_id AS insight_tenant_id,
-        d.source_id AS insight_source_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         d.entity_id AS source_account_id,
         'id' AS value_type,
         '' AS value,
         '{{ source_type }}.entity_id' AS value_field_name,
         'DELETE' AS operation_type,
-        d.updated_at AS _synced_at,
+        toDateTime64(d.updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)) AS _version
     FROM deactivation_events d
 )
