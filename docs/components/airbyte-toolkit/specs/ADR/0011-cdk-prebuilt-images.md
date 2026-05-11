@@ -84,8 +84,8 @@ Chosen option: **Option B — Pre-built images, descriptor carries the full imag
 
 ### Confirmation
 
-- `reconcile-connectors.sh` against a clean cluster with at least one `type=cdk` descriptor publishes a definition whose `${dockerRepository}:${dockerImageTag}` recomposes to exactly the descriptor's `cdk_image` value.
-- Bumping `cdk_image` (tag-only change) for a CDK connector triggers exactly one `source_definitions/update` (image-tag-only); subsequent runs report `noop`. `descriptor.yaml.version` for cdk does NOT trigger any `source_definitions/update` call (metadata-only).
+- `reconcile-connectors.sh` against a clean cluster with at least one `type=cdk` descriptor publishes a definition whose `${dockerRepository}` + `${dockerImageTag}` recompose to exactly the descriptor's `cdk_image` value — `${dockerRepository}:${dockerImageTag}` for tag-pinned refs, `${dockerRepository}@${dockerImageTag}` when `dockerImageTag` is a `sha256:…` digest (digest discriminated by the `sha256:` prefix; the splitter at `python/split_docker_image_ref.py` preserves the separator information).
+- Bumping `cdk_image` (tag-only or digest-only change) for a CDK connector triggers exactly one `source_definitions/update` (image-tag-only); subsequent runs report `noop`. `descriptor.yaml.version` for cdk does NOT trigger any `source_definitions/update` call (metadata-only).
 - Reconcile pod runs without Docker socket mount; `kubectl get pod insight-reconcile-loop-* -o yaml | grep -i docker.sock` returns empty.
 
 ## Pros and Cons of the Options

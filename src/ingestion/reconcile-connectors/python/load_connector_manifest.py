@@ -21,6 +21,14 @@ def main() -> int:
     except FileNotFoundError:
         sys.stderr.write(f"load_connector_manifest: not found: {path}\n")
         return 2
+    except OSError as e:
+        # PermissionError, IsADirectoryError, and other I/O failures
+        # are indistinguishable from "missing" for the caller (a
+        # downstream pod cannot recover without operator intervention
+        # either way), so map them to the same exit code instead of
+        # letting Python emit a traceback.
+        sys.stderr.write(f"load_connector_manifest: cannot read {path}: {e}\n")
+        return 2
     except yaml.YAMLError as e:
         sys.stderr.write(f"load_connector_manifest: YAML parse error in {path}: {e}\n")
         return 2

@@ -901,7 +901,12 @@ The secret validator (`cpt-insightspec-component-secret-validator`) is a **read-
 
 The annotation-parity warning exists because the 1Password operator copies labels onto child Secrets but **not** custom annotations. Without this check, a connector can drop out of `cpt-insightspec-component-secret-discovery`'s discovery query when its CR diverges from its Secret.
 
-**Exit codes**: `0` clean, `1` at least one ERROR, `2` environmental failure (kubeconfig / namespace missing).
+**Integration**: validation is no longer a standalone CLI with top-level exit codes — `lib/validate.sh` is sourced by `reconcile-connectors/main.sh` and exposes two per-connector helpers consumed by the reconcile loop:
+
+- `valsec_check_secret <connector> [namespace] [connector_dir]` — returns `0` when the Secret satisfies the descriptor's `secret.required_fields`, `2` when a required field is missing (the field name is printed on stdout so the caller can log it).
+- `valsec_secret_missing_p <connector> [namespace]` — returns `0` when the Secret is genuinely missing (caller may cascade-delete), `1` when present, `2` on kubectl/API failure (caller MUST treat as "skip this iteration", never cascade-delete; see `cpt-insightspec-adr-credential-rotation-no-env`).
+
+Reconcile aggregates per-connector outcomes into the loop-wide counters (`_RECONCILE_FAILED`, `_RECONCILE_SKIPPED`, `_RECONCILE_NOOP`) and surfaces them as `reconcile_run`'s exit code per DoD `cpt-insightspec-dod-reconcile-exit-code-reflects-failures`.
 
 Drives PRD requirement `cpt-insightspec-fr-secret-validation`. The related ADR is listed in §1.2 Architecture Drivers.
 

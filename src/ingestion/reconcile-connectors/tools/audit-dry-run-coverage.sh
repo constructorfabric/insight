@@ -19,8 +19,12 @@ for f in "${LIB_DIR}/reconcile.sh" "${LIB_DIR}/adopt.sh"; do
         "$f" "$local_line" "$local_text" >&2
       violations=$((violations + 1))
     fi
+  # The exclusion pattern must match COMMENT-ONLY lines (whitespace then
+  # `#`), not lines with an inline trailing `#`. The old `:.*#` form
+  # silently dropped real destructive calls annotated with a trailing
+  # comment such as `ab_delete_source "$id"  # gc orphan`.
   done < <(grep -nE 'ab_(delete|create|update|patch)_|argo_(delete|apply|submit)_' "$f" \
-           | grep -v '^[^:]*:.*#')
+           | grep -vE '^[^:]*:[[:space:]]*#')
 done
 
 if [[ $violations -gt 0 ]]; then

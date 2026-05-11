@@ -812,8 +812,11 @@ ab_get_state() {
 # ---------------------------------------------------------------------------
 # ab_create_or_update_state <connection_id> <state_json>
 # POST /api/v1/state/create_or_update — restores a state blob.
-# state_json: the FULL state object as returned by ab_get_state, with the
-# connectionId rewritten to the new connection (caller's responsibility).
+# state_json: the FULL state object as returned by ab_get_state. The
+# endpoint requires a top-level envelope `{connectionId, connectionState}`
+# — injecting connectionId *inside* the state object instead leaves the
+# wrapper missing and the API either rejects the body or silently
+# restores empty state, breaking cursor preservation across recreate.
 # ---------------------------------------------------------------------------
 ab_create_or_update_state() {
   local connection_id="$1"
@@ -821,9 +824,11 @@ ab_create_or_update_state() {
   local body
   body=$(python3 -c '
 import sys, json
-state = json.loads(sys.argv[2])
-state["connectionId"] = sys.argv[1]
-print(json.dumps(state))
+payload = {
+    "connectionId": sys.argv[1],
+    "connectionState": json.loads(sys.argv[2]),
+}
+print(json.dumps(payload))
 ' "${connection_id}" "${state_json}")
   ab__curl POST /api/v1/state/create_or_update "${body}"
 }

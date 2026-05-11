@@ -126,8 +126,14 @@ existing = json.loads(sys.argv[1] or "[]")
 cfg_hash = sys.argv[2][:12]
 keep = []
 for t in existing:
-    name = t.get("name", t) if isinstance(t, dict) else t
-    if name == "insight" or (isinstance(name, str) and name.startswith("cfg-hash:")):
+    # Airbyte tags are dicts with a "name" key; normalize to a bare
+    # string and drop anything that does not yield one (e.g. a
+    # malformed tag dict without "name") so the set() dedup below
+    # never sees an unhashable dict.
+    name = t.get("name") if isinstance(t, dict) else t
+    if not isinstance(name, str):
+        continue
+    if name == "insight" or name.startswith("cfg-hash:"):
         continue
     keep.append(name)
 keep.extend(["insight", f"cfg-hash:{cfg_hash}"])

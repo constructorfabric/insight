@@ -19,7 +19,13 @@ source "${VALSEC_SCRIPT_DIR}/discover.sh"
 valsec_check_secret() {
   local connector="$1"
   local namespace="${2:-${INSIGHT_NAMESPACE}}"
-  local connector_dir="${3:-${connector}}"
+  # connector_dir is the FULL path emitted by disc_load_descriptors
+  # (e.g. "src/ingestion/connectors/collaboration/m365"); the bare
+  # connector slug as a fallback would silently look up
+  # `${connector}/descriptor.yaml` relative to the cron pod's cwd and
+  # always miss. Require the caller to pass the resolved path.
+  local connector_dir="${3:-}"
+  : "${connector_dir:?valsec_check_secret: connector_dir (arg 3) is required — pass the full path from disc_load_descriptors}"
   local secret_name
   if ! secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null)"; then
     return 2

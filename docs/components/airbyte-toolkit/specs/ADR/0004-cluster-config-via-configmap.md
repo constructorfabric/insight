@@ -43,7 +43,7 @@ The new reconcile engine needs `tenant_id` in exactly one place: when composing 
 
 - **Option A** — Resurrect `connections/<tenant>.yaml` files in the repo. The toolkit reads `tenant_id` from a default-named file or a flag.
 - **Option B** — Read `tenant_id` from `kubectl config current-context` (cluster name) on the host machine.
-- **Option C** — Cluster-level `ConfigMap insight-config` in namespace `insight` (or `data`), with `tenant_id` as a key. The toolkit reads via `kubectl get configmap insight-config -o jsonpath='{.data.tenant_id}'`. Operator can override at run-time via env `INSIGHT_TENANT_ID`.
+- **Option C** — Cluster-level `ConfigMap insight-config` in the Insight Helm release namespace (resolved via `INSIGHT_NAMESPACE` env in the runtime, projected from `Release.Namespace` in the chart), with `tenant_id` as a key. The toolkit reads via `kubectl -n "${INSIGHT_NAMESPACE}" get configmap insight-config -o jsonpath='{.data.tenant_id}'`. Operator can override at run-time via env `INSIGHT_TENANT_ID`.
 
 ## Decision Outcome
 
@@ -63,7 +63,7 @@ Chosen option: **Option C — `ConfigMap insight-config` with env override**.
 
 ### Confirmation
 
-- `kubectl get configmap insight-config -n insight -o jsonpath='{.data.tenant_id}'` returns the cluster's tenant ID; reconcile uses the value without falling back.
+- `kubectl -n "${INSIGHT_NAMESPACE}" get configmap insight-config -o jsonpath='{.data.tenant_id}'` returns the cluster's tenant ID; reconcile uses the value without falling back. `INSIGHT_NAMESPACE` matches the Helm release namespace (e.g. `data` on virtuozzo, `insight` on dev) and is supplied to the runtime by the chart via the pod env; no namespace literal is hard-coded by reconcile.
 - Setting `INSIGHT_TENANT_ID=test-tenant` and invoking `reconcile-connectors.sh --dry-run` resolves the env value, ignoring any ConfigMap content (precedence test).
 - Removing the ConfigMap and unsetting the env var causes `reconcile-connectors.sh` to abort with a clear message ("`tenant_id` not configured: set `INSIGHT_TENANT_ID` or create `ConfigMap insight-config`").
 
@@ -91,7 +91,7 @@ The toolkit derives `tenant_id` from the kubeconfig context name (e.g., `cyber-i
 
 ### Option C — `ConfigMap insight-config` + env override
 
-Cluster-level ConfigMap in namespace `insight` (default) holds `tenant_id` and other cluster identity fields. Env var `INSIGHT_TENANT_ID` overrides at run-time.
+Cluster-level ConfigMap in the Insight Helm release namespace (resolved at runtime via `INSIGHT_NAMESPACE`, projected from `Release.Namespace` by the chart) holds `tenant_id` and other cluster identity fields. Env var `INSIGHT_TENANT_ID` overrides at run-time.
 
 - Good, because cluster-native: `kubectl get configmap` is universal.
 - Good, because read path identical for in-cluster and host invocations (kubeconfig points to the cluster either way).
@@ -101,17 +101,20 @@ Cluster-level ConfigMap in namespace `insight` (default) holds `tenant_id` and o
 
 ## More Information
 
-- Recommended ConfigMap shape:
+- Recommended ConfigMap shape (replace `<insight-namespace>` with the
+  Insight Helm release namespace — typically `data` in production
+  clusters, `insight` on dev; the chart projects `Release.Namespace`
+  into the pod env as `INSIGHT_NAMESPACE`, no hard-coded literal):
   ```yaml
   apiVersion: v1
   kind: ConfigMap
   metadata:
     name: insight-config
-    namespace: insight
+    namespace: <insight-namespace>
   data:
     tenant_id: virtuozzo
   ```
-- Resolution precedence (toolkit): `INSIGHT_TENANT_ID` env var (if set and non-empty) → `ConfigMap insight-config.data.tenant_id` → abort.
+- Resolution precedence (toolkit): `INSIGHT_TENANT_ID` env var (if set and non-empty) → `ConfigMap insight-config.data.tenant_id` (looked up in `${INSIGHT_NAMESPACE}`) → abort.
 - Related decisions:
   - `cpt-insightspec-adr-version-driven-reconcile` (ADR-0001) — `tenant_id` is part of the source/connection naming convention used in version-driven reconcile.
   - `cpt-insightspec-adr-adoption-of-existing-resources` (ADR-0002) — adoption matches existing sources by name pattern that includes `tenant_id`.

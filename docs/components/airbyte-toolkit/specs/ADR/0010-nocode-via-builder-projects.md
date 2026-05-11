@@ -16,8 +16,8 @@ decision-makers: platform-engineering
   - [Consequences](#consequences)
   - [Confirmation](#confirmation)
 - [Pros and Cons of the Options](#pros-and-cons-of-the-options)
-  - [Option A — Continue with `create_custom` + parallel update endpoint](#option-a--continue-with-createcustom--parallel-update-endpoint)
-  - [Option B — Migrate fully to `connector_builder_projects`](#option-b--migrate-fully-to-connectorbuilderprojects)
+  - [Option A — Continue with `create_custom` + parallel update endpoint](#option-a--continue-with-create_custom--parallel-update-endpoint)
+  - [Option B — Migrate fully to `connector_builder_projects`](#option-b--migrate-fully-to-connector_builder_projects)
 - [More Information](#more-information)
 - [Traceability](#traceability)
 

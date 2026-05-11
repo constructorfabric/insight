@@ -87,11 +87,11 @@ spec:
               value: {{ printf "%s-reconcile" (include "insight.fullname" .) | quote }}
           resources:
             requests:
-              cpu: {{ .Values.ingestion.reconcile.resources.requests.cpu | quote }}
-              memory: {{ .Values.ingestion.reconcile.resources.requests.memory | quote }}
+              cpu: {{ required "ingestion.reconcile.resources.requests.cpu is required" .Values.ingestion.reconcile.resources.requests.cpu | quote }}
+              memory: {{ required "ingestion.reconcile.resources.requests.memory is required" .Values.ingestion.reconcile.resources.requests.memory | quote }}
             limits:
-              cpu: {{ .Values.ingestion.reconcile.resources.limits.cpu | quote }}
-              memory: {{ .Values.ingestion.reconcile.resources.limits.memory | quote }}
+              cpu: {{ required "ingestion.reconcile.resources.limits.cpu is required" .Values.ingestion.reconcile.resources.limits.cpu | quote }}
+              memory: {{ required "ingestion.reconcile.resources.limits.memory is required" .Values.ingestion.reconcile.resources.limits.memory | quote }}
           volumeMounts:
             - name: insight-reconcile-logs
               mountPath: /var/log/insight

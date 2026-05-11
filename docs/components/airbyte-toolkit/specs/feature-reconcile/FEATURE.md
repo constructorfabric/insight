@@ -739,13 +739,13 @@ The system **MUST** preserve Airbyte sync state across a connection recreate tri
 
 **Verifies**: `cpt-insightspec-flow-reconcile-run-cron-loop`, `cpt-insightspec-algo-reconcile-write-log-line-on-change`
 
-**Test scenario**: Snapshot the workspace (`git status` clean). Run `bash src/ingestion/reconcile-connectors/main.sh --dry-run` 100 times. After:
+**Test scenario**: Snapshot the workspace (`git status` clean). Run `bash src/ingestion/reconcile-connectors/main.sh --dry-run` 1000 times (matches DESIGN.md §3.14 Phase 18 idempotency harness and the `1000x` claim in the DoD ID). After:
 
 - `git status --porcelain` empty
 - `find /tmp -name 'airbyte-token*' -o -name 'pf-*.log'` empty
 - `pgrep -af 'kubectl port-forward' | grep -v grep` empty
 - `wc -l <log file>` unchanged from pre-run snapshot
-- 100 stdout summary lines emitted (one per run)
+- 1000 stdout summary lines emitted (one per run)
 
 ### CronWorkflow Survives Recreate
 

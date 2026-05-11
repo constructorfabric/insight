@@ -716,12 +716,21 @@ reconcile_recreate_with_state() {
   fi
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-try
-  local state_json=""
+  local state_json="" state_backup=""
   if [[ -n "${connection_id}" ]]; then
     if ! state_json="$(ab_get_state "${connection_id}")"; then
       reconcile__log ERROR "${source_name}" "state export failed — aborting recreate"
       return 1
     fi
+    # Persist the exported state to a 0600 tempfile *before* destructive
+    # ab_delete_source so an operator can re-import via the legacy
+    # /api/v1/state/create_or_update endpoint if a later step in this
+    # function fails and the in-memory state_json is lost.
+    state_backup="$(mktemp -t insight-state.XXXXXX)" \
+      && chmod 600 "${state_backup}" \
+      && printf '%s' "${state_json}" > "${state_backup}" \
+      || { reconcile__log ERROR "${source_name}" "state backup tempfile failed — aborting"; return 1; }
+    reconcile__log INFO "${source_name}" "state backup: ${state_backup}"
   fi
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-try
 
@@ -760,7 +769,15 @@ reconcile_recreate_with_state() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-import
   if [[ -n "${state_json}" && -n "${new_connection_id}" ]]; then
     # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
-    ab_create_or_update_state "${new_connection_id}" "${state_json}" >/dev/null
+    # state restore failure on a fresh recreate means the new connection
+    # will resync from cursor zero; surface the error so an operator can
+    # re-import from the state_backup tempfile instead of silently
+    # losing cursors.
+    if ! ab_create_or_update_state "${new_connection_id}" "${state_json}" >/dev/null; then
+      reconcile__log ERROR "${source_name}" \
+        "state restore failed for new connection ${new_connection_id} — recover from ${state_backup}"
+      return 1
+    fi
   fi
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-import
 
@@ -957,8 +974,12 @@ print(json.dumps(d))
     log_line ERROR "${name}: failed to reconcile source"
     return 1
   fi
-  src_id="$(printf '%s' "${src_result}" | tail -1 | cut -f2)"
-  src_action="$(printf '%s' "${src_result}" | tail -1 | cut -f1)"
+  # `awk -F'\t'` (not `cut -f2`) for the same reason as the def_* parsing
+  # above — a single-field fallback line (e.g. `fail\n` from a missing
+  # TSV row) would otherwise propagate as both src_action AND src_id and
+  # bypass the emptiness guard below.
+  src_action="$(printf '%s' "${src_result}" | tail -1 | awk -F'\t' '{print $1}')"
+  src_id="$(printf '%s' "${src_result}" | tail -1 | awk -F'\t' '{print $2}')"
   if [[ -z "${src_id}" ]]; then
     reconcile__log WARN "${name}" "source not yet created (will be on real run) — skipping connection setup"
     return 0
@@ -980,7 +1001,7 @@ print(json.dumps(d))
     _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
     return 1
   fi
-  conn_action="$(printf '%s' "${conn_result}" | tail -1 | cut -f1)"
+  conn_action="$(printf '%s' "${conn_result}" | tail -1 | awk -F'\t' '{print $1}')"
   case "${conn_action}" in
     created)
       data_changed=1
