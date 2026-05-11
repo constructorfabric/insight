@@ -56,7 +56,11 @@ LEFT JOIN insight.people AS p ON lower(c.email) = p.person_id
 WHERE c.tool = 'cursor'
 UNION ALL
 SELECT lower(c.email), p.org_unit_id, c.day, 'cursor_completions',
-    toFloat64(coalesce(c.completions_count, 0))
+    -- #262: was c.completions_count, dropped from class_ai_dev_usage because
+    -- it was numerically identical to tool_use_accepted (both = totalTabsAccepted
+    -- for Cursor). Re-sourced from tool_use_accepted — same value, no
+    -- behavioural change for the cursor_completions bullet.
+    toFloat64(coalesce(c.tool_use_accepted, 0))
 FROM silver.class_ai_dev_usage AS c
 LEFT JOIN insight.people AS p ON lower(c.email) = p.person_id
 WHERE c.tool = 'cursor'
