@@ -129,9 +129,9 @@ Insight on Kubernetes is split into three deploy layers. Each layer has its own 
 
 | Layer | Purpose | Namespace | How installed | Where it lives in `infra/insight-gitops` |
 |------|---------|-----------|---------------|-------------------------------------------|
-| **L0 — Bootstrap** | Cluster prerequisites. Installs sealed-secrets-controller, ingress-nginx, cert-manager (and any cluster-scoped issuers/CRDs); creates `insight-infra` and `insight-<env>` namespaces. | cluster-scoped | `make bootstrap ENV=<env>` (idempotent) | `bootstrap/<env>/` |
+| **L0 — Bootstrap** | Cluster prerequisites. Installs sealed-secrets-controller, ingress-nginx, cert-manager (and any cluster-scoped issuers/CRDs); creates the `insight-infra` and `insight` namespaces. | cluster-scoped | `make bootstrap ENV=<env>` (idempotent) | `bootstrap/<env>/` |
 | **L2 — System** | Shared stateful infrastructure: MariaDB, ClickHouse, Redis, Redpanda + Redpanda Console, Airbyte, Argo Workflows. **One Helm release per service.** Each service can also be replaced by a managed external endpoint (RDS, MSK, etc.) — in which case its `system/<service>/` is simply not installed and the app values point at the external host. | `insight-infra` (one per cluster, shared by every app deploy on that cluster) | manually, deliberately. Either `cd system/<service> && helm upgrade --install …` for a values-only release, or `make system-<service> ENV=<env>` when a sealed-secret needs to be created/refreshed in the same step. | `system/<service>/` (base) + `environments/<env>/<service>-values.yaml` (per-env overlay) + `environments/<env>/sealed-secrets/insight-infra/` |
-| **L3 — App** | The Insight platform itself: api-gateway, analytics-api, identity-resolution, frontend. The umbrella chart, app services only — no infra subcharts. | `insight-<env>` (one per env, e.g. `insight-dev`, `insight-virtuozzo`) | `make deploy-app ENV=<env>` (alias `make deploy`); pulls the umbrella chart from `oci://ghcr.io/cyberfabric/charts/insight` pinned to `.insight-version`. | `environments/<env>/values.yaml` + `environments/<env>/sealed-secrets/insight-<env>/` |
+| **L3 — App** | The Insight platform itself: api-gateway, analytics-api, identity-resolution, frontend. The umbrella chart, app services only — no infra subcharts. | `insight` (one Insight install per cluster; ENV selects the **cluster**, not the namespace) | `make deploy-app ENV=<env>` (alias `make deploy`); pulls the umbrella chart from `oci://ghcr.io/cyberfabric/charts/insight` pinned to `.insight-version`. | `environments/<env>/values.yaml` + `environments/<env>/sealed-secrets/insight/` |
 
 There is no L1. The numbering is reserved: cluster + node provisioning (k3s install, kubelet config, OS) sit conceptually below L0 and are out of scope for this SPEC.
 
@@ -152,9 +152,9 @@ For one cluster carrying environment `<env>`:
 | `ingress-nginx` | L0 | ingress-nginx controller |
 | `cert-manager` | L0 | cert-manager + webhook + cainjector |
 | `insight-infra` | L2 | mariadb, clickhouse, redis, redpanda, redpanda-console, airbyte, argo-workflows (each as its own Helm release) |
-| `insight-<env>` | L3 | the umbrella chart (api-gateway, analytics-api, identity-resolution, frontend) |
+| `insight` | L3 | the umbrella chart (api-gateway, analytics-api, identity-resolution, frontend) |
 
-`insight-infra` is shared by every app namespace on that cluster. In practice clusters carry one app namespace today (one env per cluster), but the model is built so a future "two apps on one cluster" topology is just a second `insight-<env>` namespace consuming the same `insight-infra`.
+Each cluster hosts exactly one Insight install. The cluster's identity (which env it represents) lives in the kube-context name (`insight-<env>`) and the gitops repo's `environments/<env>/` directory — not in the namespace. Operationally this keeps the two well-known namespace names (`insight`, `insight-infra`) the same across every install, matching the `dev-up.sh` local-Kind convention and any external chart consumer's expectation of a single `insight` release.
 
 #### Dual-purpose umbrella: `<service>.deploy` toggles
 
@@ -163,7 +163,7 @@ The umbrella chart in `cyberfabric/insight` keeps its infrastructure subcharts (
 | Caller | `<svc>.deploy` | Result |
 |--------|----------------|--------|
 | `dev-up.sh` (Kind / OrbStack local) | `true` for all infra subcharts | Single fat Helm release in the `insight` namespace; the umbrella renders MariaDB, ClickHouse, Redis, Redpanda **and** the app services together. Convenient for one-command local bring-up. |
-| Gitops production (any cluster managed by this repo) | `false` for every infra subchart | Umbrella renders the app services only, into `insight-<env>`. L2 services come from one of: (a) `make system-<service>` Helm releases in `insight-infra` per [§3.5](#35-engineer-provisions-the-system-layer-l2); (b) managed external endpoints (RDS, MSK, …); (c) a separate team's infra namespace. App values point at the actual host. |
+| Gitops production (any cluster managed by this repo) | `false` for every infra subchart | Umbrella renders the app services only, into the `insight` namespace. L2 services come from one of: (a) `make system-<service>` Helm releases in `insight-infra` per [§3.5](#35-engineer-provisions-the-system-layer-l2); (b) managed external endpoints (RDS, MSK, …); (c) a separate team's infra namespace. App values point at the actual host. |
 
 Why dual-purpose instead of two charts:
 
@@ -318,7 +318,7 @@ Run **once per cluster**, before any system or app deploy can proceed. Idempoten
    - `ingress-nginx/ingress-nginx-controller` (claims the `nginx` IngressClass)
    - `cert-manager/cert-manager` plus the per-env ClusterIssuers (`selfsigned-cluster-issuer` and `local-ca` for non-public envs; Let's Encrypt for customer-facing envs — committed under `bootstrap/<env>/issuer.yaml`)
    - the `insight-infra` namespace (shared by L2)
-   - the `insight-<env>` namespace (the L3 target for this env)
+   - the `insight` namespace (the L3 target)
 4. **Capture the sealed-secrets pub cert** — `make fetch-cert ENV=<env>` writes `environments/<env>/pub-cert.pem`, commit it. `kubeseal` uses it to encrypt secrets in subsequent steps.
 
 After Step 4 the cluster is ready to receive L2 and L3 deploys. The layer-0 footprint is minimal (three controllers + two namespaces) and is the only part that needs cluster-admin RBAC.
@@ -356,7 +356,7 @@ The app deploy is the routine hands-off step — a deploy is always initiated by
 2. **Inspect** — `git log --oneline origin/main ^HEAD@{upstream}` (run by `make diff`) shows the poller commits since the last deploy.
 3. **VPN + context check** — `make deploy ENV=<env>` runs the cluster reachability probe and confirms the active kube-context is `insight-<env>` before doing any work.
 4. **Diff** — the Makefile renders the chart with the current values (`helm template …`) and stores the rendered manifest under `.deploy/last-render-<env>.yaml`. The engineer can `diff` against the previous render to see what is changing on the cluster.
-5. **Apply** — `helm upgrade --install insight $CHART --version $(cat .insight-version) -n insight-<env> -f environments/<env>/values.yaml`, where `$CHART = oci://ghcr.io/cyberfabric/charts/insight`. The chart is pulled from GHCR at deploy time; the gitops repo does **not** vendor it — see [§7](#7-repository-layout-target). The Makefile passes `--atomic --timeout 10m` so a failed deploy is rolled back automatically.
+5. **Apply** — `helm upgrade --install insight $CHART --version $(cat .insight-version) -n insight -f environments/<env>/values.yaml`, where `$CHART = oci://ghcr.io/cyberfabric/charts/insight`. The chart is pulled from GHCR at deploy time; the gitops repo does **not** vendor it — see [§7](#7-repository-layout-target). The Makefile passes `--atomic --timeout 10m` so a failed deploy is rolled back automatically.
 6. **Verify** — `make status ENV=<env>` runs `kubectl rollout status` for each deployment + `helm test` for smoke tests.
 
 `make deploy` is an alias for `make deploy-app` and only touches the L3 layer. The L0 bootstrap and L2 system services are not chained — they are explicit prior steps with their own engineer-approved moments. This is by design: an app upgrade should never be able to migrate a database.
@@ -424,7 +424,7 @@ Properties:
 - The Passbolt resource holds the **whole** Kubernetes Secret manifest (including `apiVersion`, `metadata.name`, `metadata.namespace`, `type`, and every key under `stringData`). `kubeseal` reads it as one object, so no `kubectl create` step is needed. Multi-key secrets (an OIDC client with seven fields) cost no more than single-key secrets.
 - `pub-cert.pem` is the cluster controller's public certificate, fetched once per environment and committed to the repo at `environments/<env>/pub-cert.pem`. Renewal procedure is in §8 Open Items.
 - The output file is committed. The plaintext input is not, because it never existed as a file.
-- **The `${NAMESPACE}` segment in the output path is always the target namespace of the Secret manifest stored in Passbolt.** Per [§1.5](#15-layer-model) that is `insight-infra` for L2 service credentials (e.g. `mariadb-creds`, `redpanda-tls`, `airbyte-s3`) and `insight-<env>` for L3 app credentials (e.g. `insight-oidc`, `insight-db-creds`). One env directory therefore carries two namespace subdirs:
+- **The `${NAMESPACE}` segment in the output path is always the target namespace of the Secret manifest stored in Passbolt.** Per [§1.5](#15-layer-model) that is `insight-infra` for L2 service credentials (e.g. `mariadb-creds`, `redpanda-tls`, `airbyte-s3`) and `insight` for L3 app credentials (e.g. `insight-oidc`, `insight-db-creds`). One env directory therefore carries two namespace subdirs:
 
 ```
 environments/<env>/sealed-secrets/
@@ -433,7 +433,7 @@ environments/<env>/sealed-secrets/
 │   ├── clickhouse-creds-sealedsecret.yaml
 │   ├── redpanda-tls-sealedsecret.yaml
 │   └── airbyte-s3-sealedsecret.yaml
-└── insight-<env>/                      # L3 — app-layer secrets
+└── insight/                            # L3 — app-layer secrets (always `insight`)
     ├── insight-oidc-sealedsecret.yaml
     └── insight-db-creds-sealedsecret.yaml
 ```
@@ -564,7 +564,7 @@ Targets are grouped by the layer they affect (see [§1.5](#15-layer-model)). L0 
 
 | Target | Purpose | Pre-flight | Effect |
 |--------|---------|------------|--------|
-| `make bootstrap ENV=<env>` | Install ingress-nginx + cert-manager + sealed-secrets-controller; create `insight-infra` and `insight-<env>` namespaces; apply per-env ClusterIssuers from `bootstrap/<env>/`. | `kube-ctx` | Three Helm releases + namespace creation + ClusterIssuer apply. Idempotent. |
+| `make bootstrap ENV=<env>` | Install ingress-nginx + cert-manager + sealed-secrets-controller; create `insight-infra` + `insight` namespaces; apply per-env ClusterIssuers from `bootstrap/<env>/`. | `kube-ctx` | Three Helm releases + namespace creation + ClusterIssuer apply. Idempotent. |
 | `make bootstrap-status ENV=<env>` | Show what L0 has installed on this cluster. | `kube-ctx` | Read-only. |
 | `make fetch-cert ENV=<env>` | `kubeseal --fetch-cert > environments/<env>/pub-cert.pem`. | `kube-ctx` | Writes one file. |
 
@@ -588,7 +588,7 @@ There is **no top-level `make system`** that chains every L2 target. Each cluste
 | Target | Purpose | Pre-flight | Effect |
 |--------|---------|------------|--------|
 | `make diff ENV=<env>` | Show poller commits since last deploy and rendered-manifest diff. | `sync-clean` | Read-only. |
-| `make deploy ENV=<env>` (alias for `deploy-app`) | Apply the umbrella chart to `insight-<env>`. | `sync-clean`, `vpn-up`, `kube-ctx`, `confirm` (only fires for envs in `PROTECTED_ENVS`), `chart-present` | `helm upgrade --install --atomic`. |
+| `make deploy ENV=<env>` (alias for `deploy-app`) | Apply the umbrella chart to the `insight` namespace on this env's cluster. | `sync-clean`, `vpn-up`, `kube-ctx`, `confirm` (only fires for envs in `PROTECTED_ENVS`), `chart-present` | `helm upgrade --install --atomic`. |
 | `make rollback ENV=<env>` | Roll back the umbrella to the previous Helm revision. | `vpn-up`, `kube-ctx` | `helm rollback`. |
 | `make status ENV=<env>` | Show app release status and rollout health. | `vpn-up`, `kube-ctx` | Read-only. |
 
@@ -596,7 +596,7 @@ There is **no top-level `make system`** that chains every L2 target. Each cluste
 
 | Target | Purpose | Pre-flight | Effect |
 |--------|---------|------------|--------|
-| `make seal-secret ENV=<env> NAMESPACE=<ns> NAME=<name> [PASSBOLT_NAME=…]` | Seal the cleartext Secret YAML stored in Passbolt into a sealed-secret manifest. `NAMESPACE` is `insight-infra` for L2 secrets and `insight-<env>` for L3. `PASSBOLT_NAME` defaults to `insight-$(ENV)-$(NAME)`. | `passbolt-configured` | Writes one `*-sealedsecret.yaml`. |
+| `make seal-secret ENV=<env> NAMESPACE=<ns> NAME=<name> [PASSBOLT_NAME=…]` | Seal the cleartext Secret YAML stored in Passbolt into a sealed-secret manifest. `NAMESPACE` is `insight-infra` for L2 secrets and `insight` for L3. `PASSBOLT_NAME` defaults to `insight-$(ENV)-$(NAME)`. | `passbolt-configured` | Writes one `*-sealedsecret.yaml`. |
 | `make clear-seal-template NAME=… NAMESPACE=…` | Reset a template file to empty values. | none | Edits the template in place. |
 
 ### 6.3 Pre-flight Safety Checks
@@ -817,13 +817,13 @@ infra/insight-gitops/
 │   │       │   ├── clickhouse-creds-sealedsecret.yaml
 │   │       │   ├── redpanda-tls-sealedsecret.yaml
 │   │       │   └── airbyte-s3-sealedsecret.yaml
-│   │       └── insight-dev/       # L3 secrets (target namespace = insight-<env>)
+│   │       └── insight/           # L3 secrets (target namespace = insight, always)
 │   │           ├── insight-oidc-sealedsecret.yaml
 │   │           └── insight-db-creds-sealedsecret.yaml
 │   ├── stage/                     # internal — promote-by-MR (optional)
 │   │   └── …                      # same shape as dev/
 │   ├── virtuozzo/                 # customer prod — promote-by-MR + confirm token
-│   │   └── …                      # same shape; sealed-secrets/insight-virtuozzo/ for L3
+│   │   └── …                      # same shape; sealed-secrets/insight/ for L3
 │   └── <other-customer>/          # one dir per customer install (constructor, acronis, …)
 │       └── …                      # same shape
 │
@@ -840,7 +840,7 @@ Conventions:
 - **L0 files** in `bootstrap/<env>/`. Per-env because cert-manager issuers (Let's Encrypt prod vs. selfsigned local) genuinely differ by env. Cluster-scoped resources (ingress-nginx, sealed-secrets-controller) reuse the same values across envs by referring to chart defaults; per-env overrides are an as-needed addition.
 - **L2 files** are split by service (`system/<service>/values.yaml`) to keep each release independently readable. Per-env tuning lives in `environments/<env>/<service>-values.yaml` and is layered on top at deploy time. A self-hosted cluster carries the values; a managed-external cluster simply does not run that `make system-<service>` target.
 - **L3 files** stay where they were: one `values.yaml` per env for the umbrella chart, plus one `pub-cert.pem` per cluster.
-- **Sealed secrets** are split by **target namespace** under `environments/<env>/sealed-secrets/<namespace>/`. `insight-infra` for L2, `insight-<env>` for L3. The `*-secret-template.yaml` template files live next to their sealed counterparts and carry the same target namespace.
+- **Sealed secrets** are split by **target namespace** under `environments/<env>/sealed-secrets/<namespace>/`. `insight-infra` for L2, `insight` for L3 — the two well-known namespaces every cluster has. The `*-secret-template.yaml` template files live next to their sealed counterparts and carry the same target namespace.
 - **The umbrella chart lives in `cyberfabric/insight` and is published per merge to `oci://ghcr.io/cyberfabric/charts/insight`.** The gitops repo is settings-only — values, sealed secrets, the Makefile, the poller. It does **not** vendor the chart and does **not** require a local checkout of `cyberfabric/insight`. The Makefile pulls the chart from OCI at deploy time, pinned to the version in `.insight-version`.
 - **System chart pins** live in the Makefile as variables (`MARIADB_VERSION`, `CLICKHOUSE_VERSION`, …) so a bump is a single deliberate edit.
 
