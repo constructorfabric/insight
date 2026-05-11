@@ -375,7 +375,7 @@ There are three distinct states for any piece of secret material:
 
 | State | Where it lives | How to read |
 |-------|----------------|-------------|
-| Raw secret | Passbolt resource named `insight-<env>-<base>` (password field carries the full cleartext Kubernetes Secret YAML) | `scripts/passbolt-fetch.sh "insight-<env>-<base>"` — resolves the human name to the resource UUID via `passbolt list resource --json --filter 'Name == "…"'`, then fetches by UUID via `passbolt get resource --json --id <uuid>`. |
+| Raw secret | Passbolt resource named `insight-<env>-<base>` (password field carries the full cleartext Kubernetes Secret manifest **as single-line JSON** — see §4.2) | `scripts/passbolt-fetch.sh "insight-<env>-<base>"` — resolves the human name to the resource UUID via `passbolt list resource --json --filter 'Name == "…"'`, then fetches by UUID via `passbolt get resource --json --id <uuid>`. |
 | Sealed manifest | `infra/insight-gitops/environments/<env>/sealed-secrets/<namespace>/<name>-sealedsecret.yaml` (committed) | Anyone with repo read access; opaque to humans |
 | In-cluster Secret | Kubernetes API, decrypted by `sealed-secrets-controller` | `kubectl get secret <name> -o yaml` (RBAC-gated) |
 
@@ -390,7 +390,7 @@ There is no path that puts a raw secret on disk in cleartext between Passbolt an
 ### 4.2 Passbolt Integration
 
 - Authoritative store for raw passwords, OIDC client secrets, database passwords, GHCR pull secrets, TLS keys.
-- **Storage convention**: one Passbolt resource per Kubernetes Secret per environment. The resource's **password field carries the entire cleartext Kubernetes Secret YAML**, ready to be piped to `kubeseal` without further composition. The resource's URI/username/description fields are documentation only (e.g. `kubectl-namespace=insight`, `kubectl-name=insight-oidc`).
+- **Storage convention**: one Passbolt resource per Kubernetes Secret per environment. The resource's **password field carries the entire cleartext Kubernetes Secret manifest as a single-line JSON object**, ready to be piped to `kubeseal` without further composition. JSON (not YAML) because Passbolt's password field is single-line in the UI and silently strips newlines on save; `kubeseal` accepts JSON and YAML interchangeably. The resource's URI/username/description fields are documentation only (e.g. `kubectl-namespace=insight`, `kubectl-name=insight-oidc`). Example payload (paste verbatim, with the password substituted): `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"<name>","namespace":"<ns>"},"type":"Opaque","stringData":{"<key>":"<value>"}}`.
 - **Naming**: `insight-<env>-<base>` (e.g. `insight-dev-oidc`, `insight-virtuozzo-db-creds`). The Makefile defaults `PASSBOLT_NAME` to this expression so the engineer rarely passes it explicitly.
 - **Authentication**: each engineer's Passbolt account is bound to their personal GPG keypair. `passbolt configure` is run once per workstation to register the server URL, the user, and the private key; subsequent `passbolt get resource --json --id <uuid>` decrypts the resource via the local GPG agent (passphrase cached in the OS keychain). CI never authenticates to Passbolt — the sealing step is a human action.
 - The `passbolt` CLI (community: [`go-passbolt-cli`](https://github.com/passbolt/go-passbolt-cli)) is the only sanctioned way to read a secret. Browser-extension copy/paste, screenshots, or pasting into chat are explicitly not.
@@ -403,8 +403,10 @@ The Makefile target `seal-secret` (see [§6.5](#65-sealed-secret-targets)) imple
 
 ```bash
 # Convention: the Passbolt resource named "insight-${ENV}-${NAME}" has,
-# in its password field, the complete cleartext Kubernetes Secret YAML
-# for ${NAME} on ${ENV}. The pipe below never materialises it on disk.
+# in its password field, the complete cleartext Kubernetes Secret
+# manifest **as single-line JSON** (Passbolt strips newlines from
+# multi-line text; kubeseal reads JSON too). The pipe below never
+# materialises it on disk.
 #
 # go-passbolt-cli identifies resources by UUID, not name. The wrapper
 # script `scripts/passbolt-fetch.sh` does the name → UUID resolution
