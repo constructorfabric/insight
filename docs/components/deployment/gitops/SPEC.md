@@ -375,7 +375,7 @@ There are three distinct states for any piece of secret material:
 
 | State | Where it lives | How to read |
 |-------|----------------|-------------|
-| Raw secret | Passbolt resource named `insight-<env>-<base>` (password field carries the full cleartext Kubernetes Secret YAML) | `scripts/passbolt-fetch.sh "insight-<env>-<base>"` — resolves the human name to the resource UUID via `passbolt resource list --json`, then fetches by UUID. |
+| Raw secret | Passbolt resource named `insight-<env>-<base>` (password field carries the full cleartext Kubernetes Secret YAML) | `scripts/passbolt-fetch.sh "insight-<env>-<base>"` — resolves the human name to the resource UUID via `passbolt list resource --json --filter 'Name == "…"'`, then fetches by UUID via `passbolt get resource --json --id <uuid>`. |
 | Sealed manifest | `infra/insight-gitops/environments/<env>/sealed-secrets/<namespace>/<name>-sealedsecret.yaml` (committed) | Anyone with repo read access; opaque to humans |
 | In-cluster Secret | Kubernetes API, decrypted by `sealed-secrets-controller` | `kubectl get secret <name> -o yaml` (RBAC-gated) |
 
@@ -385,14 +385,14 @@ The flow between states is one-way at write-time:
 Passbolt ─(engineer + kubeseal)─▶ Sealed manifest ─(controller)─▶ In-cluster Secret
 ```
 
-There is no path that puts a raw secret on disk in cleartext between Passbolt and the sealed manifest. The Makefile streams `passbolt resource get` straight into `kubeseal` (see [§4.3](#43-sealed-secrets-sealing-flow)).
+There is no path that puts a raw secret on disk in cleartext between Passbolt and the sealed manifest. The Makefile streams `scripts/passbolt-fetch.sh` (which wraps `passbolt list resource` + `passbolt get resource`) straight into `kubeseal` (see [§4.3](#43-sealed-secrets-sealing-flow)).
 
 ### 4.2 Passbolt Integration
 
 - Authoritative store for raw passwords, OIDC client secrets, database passwords, GHCR pull secrets, TLS keys.
 - **Storage convention**: one Passbolt resource per Kubernetes Secret per environment. The resource's **password field carries the entire cleartext Kubernetes Secret YAML**, ready to be piped to `kubeseal` without further composition. The resource's URI/username/description fields are documentation only (e.g. `kubectl-namespace=insight`, `kubectl-name=insight-oidc`).
 - **Naming**: `insight-<env>-<base>` (e.g. `insight-dev-oidc`, `insight-virtuozzo-db-creds`). The Makefile defaults `PASSBOLT_NAME` to this expression so the engineer rarely passes it explicitly.
-- **Authentication**: each engineer's Passbolt account is bound to their personal GPG keypair. `passbolt configure` is run once per workstation to register the server URL, the user, and the private key; subsequent `passbolt resource get` decrypts via the local GPG agent (passphrase cached in the OS keychain). CI never authenticates to Passbolt — the sealing step is a human action.
+- **Authentication**: each engineer's Passbolt account is bound to their personal GPG keypair. `passbolt configure` is run once per workstation to register the server URL, the user, and the private key; subsequent `passbolt get resource --json --id <uuid>` decrypts the resource via the local GPG agent (passphrase cached in the OS keychain). CI never authenticates to Passbolt — the sealing step is a human action.
 - The `passbolt` CLI (community: [`go-passbolt-cli`](https://github.com/passbolt/go-passbolt-cli)) is the only sanctioned way to read a secret. Browser-extension copy/paste, screenshots, or pasting into chat are explicitly not.
 
 ### 4.3 Sealed Secrets Sealing Flow
@@ -408,7 +408,8 @@ The Makefile target `seal-secret` (see [§6.5](#65-sealed-secret-targets)) imple
 #
 # go-passbolt-cli identifies resources by UUID, not name. The wrapper
 # script `scripts/passbolt-fetch.sh` does the name → UUID resolution
-# via `passbolt resource list --json` and then fetches by UUID.
+# via `passbolt list resource --json --filter 'Name == "…"'` and then
+# fetches by UUID via `passbolt get resource --json --id <uuid>`.
 # Override the lookup with PASSBOLT_RESOURCE_ID=<uuid> when names
 # collide (e.g. shared resources across folders).
 scripts/passbolt-fetch.sh "insight-${ENV}-${NAME}" \
@@ -446,7 +447,7 @@ These are non-negotiable rules enforced by review and by a pre-commit hook in `i
 1. **No plain secrets in Git.** A pre-commit hook runs `gitleaks` against the staged diff and refuses commits that match its rule set.
 2. **Sealed manifests only as `*-sealedsecret.yaml`.** Templates (which contain example/empty values) live alongside as `*-secret-template.yaml` and are explicitly listed in the hook's allowlist.
 3. **Public certificate is the only key material in Git.** Private keys and Bitnami sealed-secrets-controller's master key live in the cluster only.
-4. **No `.env` files.** Local development reads from `passbolt` directly (`passbolt resource get … | jq -r .password`), keeping the cleartext in process memory.
+4. **No `.env` files.** Local development reads from `passbolt` directly (`passbolt get resource --json --id <uuid> | jq -r .Password`, or the `scripts/passbolt-fetch.sh "<name>"` wrapper), keeping the cleartext in process memory.
 
 ## 5. Local Environment Setup
 
@@ -474,7 +475,7 @@ A `Brewfile` at the repo root captures these dependencies; `make doctor` runs `b
 - **GitLab** — engineer authenticates with SSH key (`gitlab.cyberfabric.internal`); the deploy-key for the poller is separate and lives only in the GitLab CI variables store.
 - **GHCR** — pulls are public; the cluster's image-pull secret is only needed if the team flips an image to private later. The pull secret itself is a sealed secret in the repo.
 - **Kubernetes** — engineer's kubeconfig is generated by the corporate IdP; per-cluster contexts follow `insight-<env>` (e.g. `insight-dev`, `insight-stage`, `insight-virtuozzo`, `insight-constructor`). The Makefile checks `kubectl config current-context` against the requested `ENV` before any apply.
-- **Passbolt** — `passbolt configure` is run once per workstation: it asks for the server URL, the user's private GPG key file, and the key passphrase. Subsequent `passbolt resource get` invocations decrypt via the local GPG agent; the passphrase is cached in the OS keychain for the agent's TTL.
+- **Passbolt** — `passbolt configure` is run once per workstation: it asks for the server URL, the user's private GPG key file, and the key passphrase. Subsequent `passbolt get resource` invocations decrypt via the local GPG agent; the passphrase is cached in the OS keychain for the agent's TTL.
 
 ### 5.3 VPN and Cluster Access
 
