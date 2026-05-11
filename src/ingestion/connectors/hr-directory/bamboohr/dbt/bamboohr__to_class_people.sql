@@ -3,6 +3,7 @@
 -- Full-refresh source. Maps employee records to unified person registry.
 -- SCD Type 2: valid_from = lastChanged, valid_to = NULL (current-state snapshot).
 -- Full SCD history tracking is handled downstream.
+-- @cpt-constraint:cpt-dataflow-constraint-staging-class-column-types-match:p1
 {{ config(
     materialized='view',
     schema='staging',
@@ -19,7 +20,7 @@ SELECT
     coalesce(tenant_id, '')                         AS workspace_id,
     -- person_id resolved in Silver Step 2 via Identity Manager
     CAST(NULL AS Nullable(UUID))                    AS person_id,
-    lastChanged                                     AS valid_from,
+    parseDateTimeBestEffortOrNull(lastChanged)      AS valid_from,
     CAST(NULL AS Nullable(DateTime))                AS valid_to,
     'bamboohr'                                      AS source,
     id                                              AS source_person_id,

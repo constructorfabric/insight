@@ -145,7 +145,7 @@ A connector MUST NOT write directly to silver schema. Instead it writes to `stag
 This pattern guarantees:
 - Adding a new connector = adding new staging models with the right tag (no silver edit)
 - Silver schema is uniform regardless of source set
-- Per-source cleanup / type coercion stays local to its connector
+- Per-source cleanup / type coercion stays local to its connector — see `cpt-dataflow-constraint-staging-class-column-types-match` for the cross-source type-alignment rule UNION ALL imposes on every column.
 
 **ADRs**: `cpt-dataflow-adr-rmt-with-version-and-unique-key`
 
@@ -212,6 +212,23 @@ The cost of `append`-only is that full-refresh streams accumulate N copies per e
 Configuration is enforced in `src/ingestion/airbyte-toolkit/connect.sh` — every Airbyte connection is created with `dest_sync_mode = "append"`, no exceptions.
 
 **ADRs**: `cpt-dataflow-adr-promote-bronze-to-rmt`
+
+#### Per-source `__to_class_*` views MUST emit identical column types
+
+- [x] `p1` - **ID**: `cpt-dataflow-constraint-staging-class-column-types-match`
+
+Per-source staging views feeding the same `silver:<class>` tag (e.g. `bamboohr__to_class_people`, `ms_entra__to_class_people` → `silver.class_people`) MUST project every column with the same ClickHouse type across all sources. `union_by_tag` concatenates them via UNION ALL and ClickHouse rejects the merge with `Code: 386 NO_COMMON_TYPE` when two branches expose incompatible types (e.g. `String` vs `DateTime`) for the same column position.
+
+Concrete rules connectors MUST follow:
+
+- **Timestamps** (`valid_from`, `valid_to`, `hire_date`, `ingested_at`, …): always emit `Nullable(DateTime)`. Airbyte stores timestamps in bronze as `Nullable(String)`; per-source views MUST coerce via `parseDateTimeBestEffortOrNull(<bronze_column>)` before projecting. Raw `<bronze_column> AS <ts_field>` is forbidden in `__to_class_*` views.
+- **UUID / nullable identifiers** (`person_id`, `org_unit_id`, …): always emit `Nullable(UUID)` (via `CAST(NULL AS Nullable(UUID))` when the source has no value).
+- **Optional strings** (`manager_person_id`, `location`, `country`, …): always emit `Nullable(String)` (via `CAST(NULL AS Nullable(String))` when the source has no value).
+- **Maps**: always emit `Map(String, String)` / `Map(String, Float64)` via `CAST(map(...) AS Map(...))`.
+
+The canonical reference implementation for `silver:class_people` is `src/ingestion/connectors/hr-directory/ms-entra/dbt/ms_entra__to_class_people.sql`. New `__to_class_people` views MUST mirror its `SELECT` projection types column-by-column.
+
+**Verification**: `dbt run --select tag:silver` after adding/changing a `__to_class_*` view; a type mismatch surfaces as `Code: 386` against the corresponding `silver.class_<X>` model.
 
 ## 3. Technical Architecture
 

@@ -3,6 +3,8 @@
 -- Full-refresh source. Maps directory records to the unified person registry.
 -- SCD Type 2: valid_from = createdDateTime, valid_to = NULL (current-state snapshot).
 -- Full SCD history is handled downstream via ms_entra__users_fields_history.
+-- Canonical reference implementation for cpt-dataflow-constraint-staging-class-column-types-match.
+-- @cpt-constraint:cpt-dataflow-constraint-staging-class-column-types-match:p1
 {{ config(
     materialized='view',
     schema='staging',
