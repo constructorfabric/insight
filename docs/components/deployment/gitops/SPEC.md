@@ -375,7 +375,7 @@ There are three distinct states for any piece of secret material:
 
 | State | Where it lives | How to read |
 |-------|----------------|-------------|
-| Raw secret | Passbolt resource named `insight-<env>-<base>` (password field carries the full cleartext Kubernetes Secret YAML) | `passbolt resource get --name "insight-<env>-<base>" --jsonPassword \| jq -r .password` |
+| Raw secret | Passbolt resource named `insight-<env>-<base>` (password field carries the full cleartext Kubernetes Secret YAML) | `scripts/passbolt-fetch.sh "insight-<env>-<base>"` — resolves the human name to the resource UUID via `passbolt resource list --json`, then fetches by UUID. |
 | Sealed manifest | `infra/insight-gitops/environments/<env>/sealed-secrets/<namespace>/<name>-sealedsecret.yaml` (committed) | Anyone with repo read access; opaque to humans |
 | In-cluster Secret | Kubernetes API, decrypted by `sealed-secrets-controller` | `kubectl get secret <name> -o yaml` (RBAC-gated) |
 
@@ -405,8 +405,13 @@ The Makefile target `seal-secret` (see [§6.5](#65-sealed-secret-targets)) imple
 # Convention: the Passbolt resource named "insight-${ENV}-${NAME}" has,
 # in its password field, the complete cleartext Kubernetes Secret YAML
 # for ${NAME} on ${ENV}. The pipe below never materialises it on disk.
-passbolt resource get --name "insight-${ENV}-${NAME}" --jsonPassword \
-  | jq -r .password \
+#
+# go-passbolt-cli identifies resources by UUID, not name. The wrapper
+# script `scripts/passbolt-fetch.sh` does the name → UUID resolution
+# via `passbolt resource list --json` and then fetches by UUID.
+# Override the lookup with PASSBOLT_RESOURCE_ID=<uuid> when names
+# collide (e.g. shared resources across folders).
+scripts/passbolt-fetch.sh "insight-${ENV}-${NAME}" \
   | kubeseal --format yaml \
       --cert "environments/${ENV}/pub-cert.pem" \
   > "environments/${ENV}/sealed-secrets/${NAMESPACE}/${NAME}-sealedsecret.yaml"
@@ -414,7 +419,7 @@ passbolt resource get --name "insight-${ENV}-${NAME}" --jsonPassword \
 
 Properties:
 
-- The raw secret lives in the pipe only; never on disk, never in shell history. `passbolt resource get | jq -r .password | kubeseal …` is the canonical form.
+- The raw secret lives in the pipe only; never on disk, never in shell history. `passbolt-fetch.sh … | kubeseal …` is the canonical form.
 - The Passbolt resource holds the **whole** Kubernetes Secret manifest (including `apiVersion`, `metadata.name`, `metadata.namespace`, `type`, and every key under `stringData`). `kubeseal` reads it as one object, so no `kubectl create` step is needed. Multi-key secrets (an OIDC client with seven fields) cost no more than single-key secrets.
 - `pub-cert.pem` is the cluster controller's public certificate, fetched once per environment and committed to the repo at `environments/<env>/pub-cert.pem`. Renewal procedure is in §8 Open Items.
 - The output file is committed. The plaintext input is not, because it never existed as a file.
