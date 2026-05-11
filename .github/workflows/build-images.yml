@@ -247,7 +247,7 @@ jobs:
     needs: [changes, backend, toolbox, jira-enrich]
     if: |
       always()
-      && github.event_name == 'push'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && github.ref == 'refs/heads/main'
       && (needs.backend.result == 'success' || needs.backend.result == 'skipped')
       && (needs.toolbox.result == 'success' || needs.toolbox.result == 'skipped')
