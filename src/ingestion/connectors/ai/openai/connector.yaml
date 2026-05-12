@@ -1,0 +1,1311 @@
+version: 7.0.4
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - users
+
+definitions:
+  linked:
+    HttpRequester:
+      url_base: https://api.openai.com/v1
+      authenticator:
+        type: BearerAuthenticator
+        api_token: "{{ config['openai_admin_api_key'] }}"
+      request_headers:
+        Content-Type: application/json
+    UsagePaginator:
+      type: DefaultPaginator
+      page_token_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: page
+      pagination_strategy:
+        type: CursorPagination
+        cursor_value: "{{ response.get('next_page', '') }}"
+        stop_condition: "{{ not response.get('has_more', false) }}"
+    UsersPaginator:
+      type: DefaultPaginator
+      page_token_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: after
+      pagination_strategy:
+        type: CursorPagination
+        cursor_value: "{{ response.get('last_id', '') }}"
+        stop_condition: "{{ not response.get('has_more', false) }}"
+
+streams:
+  # ── Stream 1: users (full refresh) ──
+  - type: DeclarativeStream
+    name: users
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/users
+        request_parameters:
+          limit: "100"
+      paginator:
+        $ref: "#/definitions/linked/UsersPaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          id:
+            type:
+              - string
+              - "null"
+          object:
+            type:
+              - string
+              - "null"
+          email:
+            type:
+              - string
+              - "null"
+          name:
+            type:
+              - string
+              - "null"
+          role:
+            type:
+              - string
+              - "null"
+          added_at:
+            type:
+              - number
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  # ── Stream 2: usage_completions (incremental) ──
+  - type: DeclarativeStream
+    name: usage_completions
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/usage/completions?group_by=project_id&group_by=model&group_by=user_id
+        request_parameters:
+          bucket_width: 1d
+          limit: "31"
+          start_time: "{{ stream_slice['start_time'] }}"
+          end_time: "{{ stream_slice['start_time'] | int + 86400 }}"
+      paginator:
+        $ref: "#/definitions/linked/UsagePaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "*"
+            - results
+            - "*"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: bucket_start_time
+      cursor_datetime_formats:
+        - "%s"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('openai_start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          bucket_start_time:
+            type:
+              - number
+              - "null"
+          bucket_end_time:
+            type:
+              - number
+              - "null"
+          input_tokens:
+            type:
+              - number
+              - "null"
+          output_tokens:
+            type:
+              - number
+              - "null"
+          input_cached_tokens:
+            type:
+              - number
+              - "null"
+          input_audio_tokens:
+            type:
+              - number
+              - "null"
+          output_audio_tokens:
+            type:
+              - number
+              - "null"
+          num_model_requests:
+            type:
+              - number
+              - "null"
+          project_id:
+            type:
+              - string
+              - "null"
+          user_id:
+            type:
+              - string
+              - "null"
+          model:
+            type:
+              - string
+              - "null"
+          batch:
+            type:
+              - boolean
+              - "null"
+          service_tier:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_start_time
+            value: "{{ stream_slice['start_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_end_time
+            value: "{{ stream_slice['end_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_slice['start_time'] }}-{{ record.get('project_id',
+              '') }}-{{ record.get('model', '') }}-{{ record.get('user_id', '') }}
+
+  # ── Stream 3: usage_embeddings (incremental) ──
+  - type: DeclarativeStream
+    name: usage_embeddings
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/usage/embeddings?group_by=project_id&group_by=model&group_by=user_id
+        request_parameters:
+          bucket_width: 1d
+          limit: "31"
+          start_time: "{{ stream_slice['start_time'] }}"
+          end_time: "{{ stream_slice['start_time'] | int + 86400 }}"
+      paginator:
+        $ref: "#/definitions/linked/UsagePaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "*"
+            - results
+            - "*"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: bucket_start_time
+      cursor_datetime_formats:
+        - "%s"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('openai_start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          bucket_start_time:
+            type:
+              - number
+              - "null"
+          bucket_end_time:
+            type:
+              - number
+              - "null"
+          input_tokens:
+            type:
+              - number
+              - "null"
+          num_model_requests:
+            type:
+              - number
+              - "null"
+          project_id:
+            type:
+              - string
+              - "null"
+          user_id:
+            type:
+              - string
+              - "null"
+          model:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_start_time
+            value: "{{ stream_slice['start_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_end_time
+            value: "{{ stream_slice['end_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_slice['start_time'] }}-{{ record.get('project_id',
+              '') }}-{{ record.get('model', '') }}-{{ record.get('user_id', '') }}
+
+  # ── Stream 4: usage_moderations (incremental) ──
+  - type: DeclarativeStream
+    name: usage_moderations
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/usage/moderations?group_by=project_id&group_by=model&group_by=user_id
+        request_parameters:
+          bucket_width: 1d
+          limit: "31"
+          start_time: "{{ stream_slice['start_time'] }}"
+          end_time: "{{ stream_slice['start_time'] | int + 86400 }}"
+      paginator:
+        $ref: "#/definitions/linked/UsagePaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "*"
+            - results
+            - "*"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: bucket_start_time
+      cursor_datetime_formats:
+        - "%s"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('openai_start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          bucket_start_time:
+            type:
+              - number
+              - "null"
+          bucket_end_time:
+            type:
+              - number
+              - "null"
+          input_tokens:
+            type:
+              - number
+              - "null"
+          num_model_requests:
+            type:
+              - number
+              - "null"
+          project_id:
+            type:
+              - string
+              - "null"
+          user_id:
+            type:
+              - string
+              - "null"
+          model:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_start_time
+            value: "{{ stream_slice['start_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_end_time
+            value: "{{ stream_slice['end_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_slice['start_time'] }}-{{ record.get('project_id',
+              '') }}-{{ record.get('model', '') }}-{{ record.get('user_id', '') }}
+
+  # ── Stream 5: usage_images (incremental) ──
+  - type: DeclarativeStream
+    name: usage_images
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/usage/images?group_by=project_id&group_by=model&group_by=user_id
+        request_parameters:
+          bucket_width: 1d
+          limit: "31"
+          start_time: "{{ stream_slice['start_time'] }}"
+          end_time: "{{ stream_slice['start_time'] | int + 86400 }}"
+      paginator:
+        $ref: "#/definitions/linked/UsagePaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "*"
+            - results
+            - "*"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: bucket_start_time
+      cursor_datetime_formats:
+        - "%s"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('openai_start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          bucket_start_time:
+            type:
+              - number
+              - "null"
+          bucket_end_time:
+            type:
+              - number
+              - "null"
+          images:
+            type:
+              - number
+              - "null"
+          num_model_requests:
+            type:
+              - number
+              - "null"
+          project_id:
+            type:
+              - string
+              - "null"
+          user_id:
+            type:
+              - string
+              - "null"
+          model:
+            type:
+              - string
+              - "null"
+          size:
+            type:
+              - string
+              - "null"
+          source:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_start_time
+            value: "{{ stream_slice['start_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_end_time
+            value: "{{ stream_slice['end_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_slice['start_time'] }}-{{ record.get('project_id',
+              '') }}-{{ record.get('model', '') }}-{{ record.get('user_id', '') }}
+
+  # ── Stream 6: usage_audio_speeches (incremental) ──
+  - type: DeclarativeStream
+    name: usage_audio_speeches
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/usage/audio_speeches?group_by=project_id&group_by=model&group_by=user_id
+        request_parameters:
+          bucket_width: 1d
+          limit: "31"
+          start_time: "{{ stream_slice['start_time'] }}"
+          end_time: "{{ stream_slice['start_time'] | int + 86400 }}"
+      paginator:
+        $ref: "#/definitions/linked/UsagePaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "*"
+            - results
+            - "*"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: bucket_start_time
+      cursor_datetime_formats:
+        - "%s"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('openai_start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          bucket_start_time:
+            type:
+              - number
+              - "null"
+          bucket_end_time:
+            type:
+              - number
+              - "null"
+          characters:
+            type:
+              - number
+              - "null"
+          num_model_requests:
+            type:
+              - number
+              - "null"
+          project_id:
+            type:
+              - string
+              - "null"
+          user_id:
+            type:
+              - string
+              - "null"
+          model:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_start_time
+            value: "{{ stream_slice['start_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_end_time
+            value: "{{ stream_slice['end_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_slice['start_time'] }}-{{ record.get('project_id',
+              '') }}-{{ record.get('model', '') }}-{{ record.get('user_id', '') }}
+
+  # ── Stream 7: usage_audio_transcriptions (incremental) ──
+  - type: DeclarativeStream
+    name: usage_audio_transcriptions
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/usage/audio_transcriptions?group_by=project_id&group_by=model&group_by=user_id
+        request_parameters:
+          bucket_width: 1d
+          limit: "31"
+          start_time: "{{ stream_slice['start_time'] }}"
+          end_time: "{{ stream_slice['start_time'] | int + 86400 }}"
+      paginator:
+        $ref: "#/definitions/linked/UsagePaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "*"
+            - results
+            - "*"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: bucket_start_time
+      cursor_datetime_formats:
+        - "%s"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('openai_start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          bucket_start_time:
+            type:
+              - number
+              - "null"
+          bucket_end_time:
+            type:
+              - number
+              - "null"
+          seconds:
+            type:
+              - number
+              - "null"
+          num_model_requests:
+            type:
+              - number
+              - "null"
+          project_id:
+            type:
+              - string
+              - "null"
+          user_id:
+            type:
+              - string
+              - "null"
+          model:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_start_time
+            value: "{{ stream_slice['start_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_end_time
+            value: "{{ stream_slice['end_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_slice['start_time'] }}-{{ record.get('project_id',
+              '') }}-{{ record.get('model', '') }}-{{ record.get('user_id', '') }}
+
+  # ── Stream 8: usage_vector_stores (incremental) ──
+  - type: DeclarativeStream
+    name: usage_vector_stores
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/usage/vector_stores?group_by=project_id
+        request_parameters:
+          bucket_width: 1d
+          limit: "31"
+          start_time: "{{ stream_slice['start_time'] }}"
+          end_time: "{{ stream_slice['start_time'] | int + 86400 }}"
+      paginator:
+        $ref: "#/definitions/linked/UsagePaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "*"
+            - results
+            - "*"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: bucket_start_time
+      cursor_datetime_formats:
+        - "%s"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('openai_start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          bucket_start_time:
+            type:
+              - number
+              - "null"
+          bucket_end_time:
+            type:
+              - number
+              - "null"
+          usage_bytes:
+            type:
+              - number
+              - "null"
+          project_id:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_start_time
+            value: "{{ stream_slice['start_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_end_time
+            value: "{{ stream_slice['end_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_slice['start_time'] }}-{{ record.get('project_id',
+              '') }}
+
+  # ── Stream 9: usage_code_interpreter (incremental) ──
+  - type: DeclarativeStream
+    name: usage_code_interpreter
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/usage/code_interpreter_sessions?group_by=project_id
+        request_parameters:
+          bucket_width: 1d
+          limit: "31"
+          start_time: "{{ stream_slice['start_time'] }}"
+          end_time: "{{ stream_slice['start_time'] | int + 86400 }}"
+      paginator:
+        $ref: "#/definitions/linked/UsagePaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "*"
+            - results
+            - "*"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: bucket_start_time
+      cursor_datetime_formats:
+        - "%s"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('openai_start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          bucket_start_time:
+            type:
+              - number
+              - "null"
+          bucket_end_time:
+            type:
+              - number
+              - "null"
+          num_sessions:
+            type:
+              - number
+              - "null"
+          project_id:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_start_time
+            value: "{{ stream_slice['start_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_end_time
+            value: "{{ stream_slice['end_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_slice['start_time'] }}-{{ record.get('project_id',
+              '') }}
+
+  # ── Stream 10: costs (incremental) ──
+  - type: DeclarativeStream
+    name: costs
+    primary_key: unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url_base:
+          $ref: "#/definitions/linked/HttpRequester/url_base"
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        http_method: GET
+        path: organization/costs?group_by=line_item&group_by=project_id
+        request_parameters:
+          bucket_width: 1d
+          limit: "31"
+          start_time: "{{ stream_slice['start_time'] }}"
+          end_time: "{{ stream_slice['start_time'] | int + 86400 }}"
+      paginator:
+        $ref: "#/definitions/linked/UsagePaginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "*"
+            - results
+            - "*"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: bucket_start_time
+      cursor_datetime_formats:
+        - "%s"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('openai_start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          bucket_start_time:
+            type:
+              - number
+              - "null"
+          bucket_end_time:
+            type:
+              - number
+              - "null"
+          amount_value:
+            type:
+              - number
+              - "null"
+          amount_currency:
+            type:
+              - string
+              - "null"
+          line_item:
+            type:
+              - string
+              - "null"
+          project_id:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_start_time
+            value: "{{ stream_slice['start_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - bucket_end_time
+            value: "{{ stream_slice['end_time'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - amount_value
+            value: "{{ record.get('amount', {}).get('value', '') }}"
+          - type: AddedFieldDefinition
+            path:
+              - amount_currency
+            value: "{{ record.get('amount', {}).get('currency', '') }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_slice['start_time'] }}-{{ record.get('line_item',
+              '') }}-{{ record.get('project_id', '') }}
+
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 1
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - openai_admin_api_key
+    properties:
+      insight_tenant_id:
+        type: string
+        description: Insight tenant identifier stamped onto every emitted record.
+        title: Insight Tenant ID
+        order: 0
+      insight_source_id:
+        type: string
+        description: Connector instance identifier for multi-instance deployments.
+        title: Insight Source ID
+        order: 1
+      openai_admin_api_key:
+        type: string
+        description: >-
+          OpenAI Admin API key. Create at
+          https://platform.openai.com/settings/organization/admin-keys
+          (Organization Owner only). Regular API keys will not work.
+        title: OpenAI Admin API Key
+        airbyte_secret: true
+        order: 2
+      openai_start_date:
+        type: string
+        description: >-
+          Earliest date to collect usage from (YYYY-MM-DD). Defaults to 90 days
+          ago.
+        title: Start Date
+        format: date
+        order: 3
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    users: true
+    usage_completions: true
+    usage_embeddings: true
+    usage_moderations: true
+    usage_images: true
+    usage_audio_speeches: true
+    usage_audio_transcriptions: true
+    usage_vector_stores: true
+    usage_code_interpreter: true
+    costs: true

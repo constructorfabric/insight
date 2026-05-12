@@ -40,7 +40,7 @@
 
 ### 1.1 Architectural Vision
 
-The Claude Enterprise connector extracts per-user daily activity, organization-wide summaries, chat project usage, and skill/connector adoption from five Anthropic Enterprise Analytics API endpoints and delivers them to the Bronze layer of the Insight platform. The connector is implemented as an Airbyte declarative manifest — a YAML file that defines all streams, authentication, pagination, incremental sync, and schemas without code. Silver and Gold transformations are out of scope for this connector iteration.
+The Claude Enterprise connector extracts per-user daily activity, organization-wide summaries, chat project usage, and skill/connector adoption from five Anthropic Enterprise Analytics API endpoints and delivers them to the Bronze layer of the Insight platform. The connector is implemented as an Airbyte declarative manifest — a YAML file that defines all streams, authentication, pagination, incremental sync, and schemas without code. Silver staging is in scope: two dbt models (`claude_enterprise__ai_dev_usage`, `claude_enterprise__ai_assistant_usage`) transform Bronze into `class_ai_dev_usage` and `class_ai_assistant_usage`. Gold transformations are out of scope for this connector iteration.
 
 The connector defines five data streams:
 
@@ -63,14 +63,14 @@ graph LR
     Airbyte["Airbyte Platform<br/>orchestration, state, scheduling"]
     Dest["Destination Connector<br/>ClickHouse / PostgreSQL"]
     Bronze["Bronze Layer<br/>6 tables: users, summaries,<br/>chat_projects, skills,<br/>connectors, collection_runs"]
-    Silver["Silver Layer (out of scope)<br/>Identity Manager → person_id"]
+    Silver["Silver Layer<br/>class_ai_dev_usage<br/>class_ai_assistant_usage"]
 
     AnthropicAPI -->|"REST/JSON<br/>x-api-key auth<br/>read:analytics scope"| SrcContainer
     SrcContainer -->|"RECORD messages"| Dest
     SrcContainer -->|"STATE messages"| Airbyte
     Airbyte -->|"triggers sync"| SrcContainer
     Dest -->|"writes"| Bronze
-    Bronze -.->|"future"| Silver
+    Bronze -->|"dbt staging models"| Silver
 ```
 
 ### 1.2 Architecture Drivers
@@ -145,11 +145,11 @@ Bronze tables preserve the original Enterprise Analytics API field names where p
 
 `user_email` (from `/users`) and `created_by_email` (from chat projects) are the only fields treated as cross-system identity keys. Anthropic's `user.id` / `created_by.id` are retained in Bronze for debugging but are not consumed downstream for person resolution.
 
-#### Bronze-Only Scope
+#### Bronze + Silver Staging Scope
 
-- [ ] `p2` - **ID**: `cpt-insightspec-principle-claude-enterprise-bronze-only`
+- [ ] `p2` - **ID**: `cpt-insightspec-principle-claude-enterprise-bronze-silver-staging`
 
-This connector iteration delivers Bronze tables and tenant tagging. Silver routing (to `class_ai_*` streams) and Gold aggregations are explicitly out of scope and are covered by later work. The `descriptor.yaml` declares `dbt_select: ""` (no Silver models in scope). `silver_targets` is prohibited per Connector Spec §4.10.
+This connector delivers Bronze tables, tenant tagging, and two Silver staging models that route Bronze → `class_ai_dev_usage` (Claude Code activity) and Bronze → `class_ai_assistant_usage` (chat / cowork / office / cross). The `descriptor.yaml` uses `dbt_select: "tag:claude-enterprise+"` to pick up both staging models via their `silver:class_*` tags. `silver_targets` is prohibited per Connector Spec §4.10 — Silver routing is determined by the dbt tag selector, not declared inline. Gold aggregations remain out of scope.
 
 ### 2.2 Constraints
 
@@ -258,25 +258,29 @@ The Claude Enterprise connector is packaged as a self-contained unit following t
 ```text
 src/ingestion/connectors/ai/claude-enterprise/
 +-- connector.yaml          # Airbyte declarative manifest (nocode)
-+-- descriptor.yaml         # Package metadata: streams, Silver targets
++-- descriptor.yaml         # Package metadata: schedule, dbt_select
++-- dbt/
+    +-- claude_enterprise__ai_dev_usage.sql        # Bronze → class_ai_dev_usage
+    +-- claude_enterprise__ai_assistant_usage.sql  # Bronze → class_ai_assistant_usage
+    +-- schema.yml
 ```
-
-`dbt/` is **intentionally absent** for this connector iteration: Silver/Gold mapping is out of scope. The directory will be added when Silver routing is designed.
 
 #### Connector Package Descriptor
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-claude-enterprise-descriptor`
 
-The `descriptor.yaml` registers the connector package with the platform. For this Bronze-only iteration, `dbt_select` is empty and `silver_targets` is omitted (prohibited per Connector Spec §4.10):
+The `descriptor.yaml` registers the connector package with the platform. `silver_targets` is prohibited per Connector Spec §4.10 — Silver routing is determined by the dbt tag selector:
 
 ```yaml
 name: claude-enterprise
 version: "1.0"
-type: nocode
 
-# silver_targets is prohibited per Connector Spec §4.10 — Silver determined by dbt_select tags.
-# streams is prohibited per Connector Spec §4.10 — stream definitions owned by Airbyte connector.
-dbt_select: ""
+schedule: "0 11 * * *"   # daily at 11:00 UTC
+
+# Silver routing: tag:claude-enterprise+ picks up both staging models:
+#   claude_enterprise__ai_dev_usage   (tag: silver:class_ai_dev_usage)
+#   claude_enterprise__ai_assistant_usage (tag: silver:class_ai_assistant_usage)
+dbt_select: "tag:claude-enterprise+"
 ```
 
 #### Claude Enterprise Connector Manifest
@@ -306,7 +310,7 @@ The manifest uses Airbyte declarative framework v7.0.4. Key structural patterns 
 
 ##### Responsibility boundaries
 
-Orchestration, scheduling, and state storage are handled by the Airbyte platform. Silver/Gold transformations, destination-specific configuration, and mock/stub services are out of scope.
+Orchestration, scheduling, and state storage are handled by the Airbyte platform. Silver staging (two dbt models in `dbt/`) is in scope; Gold transformations, destination-specific configuration, and mock/stub services are out of scope.
 
 ##### Related components (by ID)
 
@@ -665,7 +669,7 @@ The Claude Enterprise connector uses one manifest and one Airbyte connection (da
 ```text
 Package: src/ingestion/connectors/ai/claude-enterprise/
 +-- connector.yaml (declarative manifest — 6 streams)
-+-- descriptor.yaml (package metadata — dbt_select: "", Bronze-only)
++-- descriptor.yaml (package metadata — dbt_select: "tag:claude-enterprise+")
 
 Connection: claude-enterprise-{org_name}-daily
 +-- Schedule: daily (via orchestrator cron)
@@ -712,17 +716,54 @@ Every Bronze row carries `collected_at` (timestamp of extraction) and `insight_s
 
 ### Silver / Gold Mappings
 
-Silver routing is **explicitly out of scope** for this connector iteration. The `descriptor.yaml` sets `dbt_select: ""` to make this explicit (`silver_targets` is prohibited per §4.10). When Silver routing is designed (future work), candidate mappings are:
+This connector ships two Silver staging models. Both read from `bronze_claude_enterprise.claude_enterprise_users` and are picked up by `dbt_select: "tag:claude-enterprise+"` via their `silver:class_*` tags.
 
-| Bronze table | Candidate Silver target | Notes |
-|--------------|-------------------------|-------|
-| `claude_enterprise_users` | Identity Manager + (new or extended) engagement stream | Per-user-per-day across all surfaces; mapping to `class_ai_dev_usage` (Claude Code fields only) and to a new engagement stream is an open question |
-| `claude_enterprise_summaries` | Organization-level engagement stream (new) | No existing Silver target fits — new stream expected |
-| `claude_enterprise_chat_projects` | Project engagement stream (new) | No existing Silver target |
-| `claude_enterprise_skills` | Adoption stream (new) | No existing Silver target |
-| `claude_enterprise_connectors` | Adoption stream (new) | No existing Silver target |
+#### `claude_enterprise__ai_dev_usage` → `class_ai_dev_usage` (`tool='claude_code'`)
 
-These mappings will be designed in a follow-up DESIGN iteration after Bronze is validated.
+Per the cross-vendor source-resolution rule, Enterprise is the canonical Code feed for orgs on the Enterprise subscription. Claude Admin's `claude_admin__ai_dev_usage` is left untagged for `class_ai_dev_usage` to avoid double-counting (Admin still feeds `class_ai_api_usage` for token-level metering, which Enterprise does not expose).
+
+| Bronze field | Silver column | Notes |
+|---|---|---|
+| `code_session_count` | `session_count` | |
+| `code_lines_added` | `lines_added` | AI-accepted lines only |
+| `code_lines_removed` | `lines_removed` | |
+| — | `total_lines_added` / `total_lines_removed` | NULL — Enterprise does not expose total keystrokes; only Cursor does |
+| `code_tool_accepted_count + code_tool_rejected_count` | `tool_use_offered` | |
+| `code_tool_accepted_count` | `tool_use_accepted` / `completions_count` | Edit / Write / MultiEdit / NotebookEdit invocations |
+| `code_commit_count` | `commits_count` | Git commits attributed to Claude Code sessions |
+| `code_pull_request_count` | `pull_requests_count` | |
+| `claude_code_metrics_json` | `tool_action_breakdown_json` | Full per-tool breakdown stored as-is for downstream analytics |
+| — | `agent_sessions`, `chat_requests`, `cost_cents` | NULL — Enterprise has no Code-specific agent / chat counters; cost is org-level, not per-user |
+
+Filter: emit row only when any of the five Code-activity counters is positive — `code_session_count`, `code_lines_added`, `code_tool_accepted_count`, `code_commit_count`, `code_pull_request_count`. The commit/PR conditions catch days where Anthropic registers a git event without an attributed session counter.
+
+#### `claude_enterprise__ai_assistant_usage` → `class_ai_assistant_usage` (`tool='claude'`, `surface ∈ {chat, excel, powerpoint, cowork, cross}`)
+
+All rows carry `tool='claude'` (vendor discriminator on the Silver class). Future providers — OpenAI Compliance API for ChatGPT, Google for Gemini — will write to the same Silver class with `tool='chatgpt'` / `'gemini'`.
+
+One Bronze row per `(date, user_email)` produces up to five staging rows — one per non-empty surface.
+
+| Surface | Filter (any > 0 emits a row) | Primary fields populated |
+|---|---|---|
+| `chat` | `chat_conversation_count`, `chat_message_count`, `chat_files_uploaded_count`, `chat_artifacts_created_count`, `chat_projects_created_count`, `chat_projects_used_count`, `chat_skills_used_count`, `chat_connectors_used_count`, `chat_thinking_message_count` | `conversation_count`, `message_count`, `files_uploaded_count`, `artifacts_created_count`, `projects_*`, `skills_used_count`, `connectors_used_count`, `thinking_message_count`, `surface_metrics_json` |
+| `excel` | `excel_session_count`, `excel_message_count` | `session_count`, `message_count`, `surface_metrics_json` (full office_metrics_json) |
+| `powerpoint` | `powerpoint_session_count`, `powerpoint_message_count` | `session_count`, `message_count`, `surface_metrics_json` (full office_metrics_json) |
+| `cowork` | `cowork_session_count`, `cowork_message_count`, `cowork_action_count`, `cowork_dispatch_turn_count`, `cowork_skills_used_count` | `session_count`, `message_count`, `action_count`, `dispatch_turn_count`, `skills_used_count`, `surface_metrics_json` |
+| `cross` | `web_search_count` | `search_count` only (all other counters NULL, `surface_metrics_json` NULL) |
+
+`cost_cents` is always NULL for Enterprise — cost is org-level subscription, not per-user / per-surface. Column is reserved on the Silver schema for future providers that surface assistant cost per user.
+
+`web_search_count` is routed to a dedicated `surface='cross'` row rather than attached to `chat`. Web search is not session-bound to any single surface; emitting it standalone keeps surface-specific schemas clean and lets gold consumers attribute search activity without picking arbitrary buckets.
+
+#### Other Bronze tables — not yet routed to Silver
+
+| Bronze table | Status |
+|---|---|
+| `claude_enterprise_summaries` | Org-level rollup; consumer not yet defined |
+| `claude_enterprise_chat_projects` | Catalog metadata; future `class_ai_directories` candidate |
+| `claude_enterprise_skills` | Catalog metadata; future `class_ai_directories` candidate |
+| `claude_enterprise_connectors` | Catalog metadata; future `class_ai_directories` candidate |
+| `claude_enterprise_collection_runs` | Operational monitoring only — not analytics |
 
 ### Incremental Sync Strategy
 
@@ -741,7 +782,7 @@ All five data streams use incremental sync on `date`:
 
 **Why `P1D` for summaries (not `P31D`)**: The summaries endpoint supports multi-day ranges via `starting_date` + `ending_date`, but `ending_date` is **exclusive**. Airbyte's `DatetimeBasedCursor` computes inclusive-inclusive intervals (window_end = start + step - granularity), so using P31D causes the last day of each window to be silently skipped. P1D with `starting_date` only (no `ending_date`) avoids this boundary bug. Performance impact is minimal: one extra HTTP call per day for a tiny payload.
 
-**Default start**: `day_delta(-14)` (14 days ago), not 90 as in claude-team. Rationale: the minimum queryable date is 2026-01-01, the lag is 3 days, and per-user records are the largest stream — a shorter default keeps the first run fast.
+**Default start**: `day_delta(-14)` (14 days ago), not 90 as in the Admin API connector (`claude-admin`). Rationale: the minimum queryable date is 2026-01-01, the lag is 3 days, and per-user records are the largest stream — a shorter default keeps the first run fast.
 
 ### Reporting Lag & Minimum Date Handling
 
@@ -849,7 +890,7 @@ No ADRs have been authored yet for this connector. Architectural decisions are c
 - **3-day reporting lag upper bound**: SS2.2 `cpt-insightspec-constraint-claude-enterprise-reporting-lag`
 - **2026-01-01 minimum date enforcement**: SS2.2 `cpt-insightspec-constraint-claude-enterprise-min-date`
 - **Configurable base URL for dev**: SS2.2 `cpt-insightspec-constraint-claude-enterprise-base-url-override`
-- **Bronze-only scope (no Silver)**: SS2.1 `cpt-insightspec-principle-claude-enterprise-bronze-only`
+- **Bronze + Silver staging scope (Gold deferred)**: SS2.1 `cpt-insightspec-principle-claude-enterprise-bronze-silver-staging`
 
 Decisions crossing into ADR territory (e.g., a volume-sharding strategy from `OQ-CE-5`) will be captured under `specs/ADR/` when made.
 

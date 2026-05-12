@@ -1,0 +1,39 @@
+{{/*
+ConfigMap referenced by `mariadb.primary.initdbScriptsConfigMap`.
+bitnami/mariadb mounts every key here at /docker-entrypoint-initdb.d/
+and runs them on the FIRST pod boot only. After that, the databases
+live in the PVC and survive restart / helm upgrade.
+
+This file owns the per-service database provisioning that ADR-0006
+mandates (each backend service owns its own MariaDB database). When
+adding a future service that needs its own DB, append a new key
+(e.g. `<service>-db.sql`) here — bitnami runs them in lexicographic
+order on first boot.
+
+Replaces the pre-existing `identity-db-init-job.yaml` Helm pre-install
+hook, which had a chicken-and-egg with the regular-template Secret
+`insight-db-creds`.
+*/}}
+{{- if .Values.mariadb.deploy }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: insight-mariadb-initdb-scripts
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+data:
+  {{- /* Identity service owns its own MariaDB database (ADR-0006). The
+         init-db SQL is gated on identityResolution.deploy so installs
+         that disable identityResolution don't trigger required() on
+         identityResolution.databaseName and don't emit dead SQL. The
+         outer `if .Values.mariadb.deploy` keeps the whole ConfigMap
+         conditional on the bundled subchart being active. */}}
+  {{- if .Values.identityResolution.deploy }}
+  identity-db.sql: |
+    CREATE DATABASE IF NOT EXISTS `{{ required "identityResolution.databaseName is required" .Values.identityResolution.databaseName }}`
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    GRANT ALL PRIVILEGES ON `{{ .Values.identityResolution.databaseName }}`.*
+      TO '{{ required "mariadb.username is required" .Values.mariadb.username }}'@'%';
+    FLUSH PRIVILEGES;
+  {{- end }}
+{{- end }}

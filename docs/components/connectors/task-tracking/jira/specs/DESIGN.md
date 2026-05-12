@@ -40,7 +40,7 @@
 
 ### 1.1 Architectural Vision
 
-The Jira connector is an Airbyte declarative (nocode) YAML manifest that extracts issue data, field change history, worklogs, comments, sprint metadata, project directory, issue links, custom fields, and user directory from the Jira REST API. It writes all data to per-source Bronze tables in the shared analytical store (ClickHouse), following the `jira_*` Bronze schema defined in [`jira.md`](../jira.md). The declarative approach is consistent with all other connectors in the project (m365, bamboohr, claude-api).
+The Jira connector is an Airbyte declarative (nocode) YAML manifest that extracts issue data, field change history, worklogs, comments, sprint metadata, project directory, issue links, custom fields, and user directory from the Jira REST API. It writes all data to per-source Bronze tables in the shared analytical store (ClickHouse), following the `jira_*` Bronze schema defined in [`jira.md`](../jira.md). The declarative approach is consistent with all other connectors in the project (m365, bamboohr, claude-admin).
 
 Phase 1 targets Jira Cloud only (REST API v3). Server/Data Center support is deferred to a future iteration (separate manifest or CDK migration).
 
@@ -153,7 +153,7 @@ Phase 1 targets Jira Cloud only (REST API v3). Server/Data Center support (REST 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-jira-declarative-first`
 
-Consistent with project convention, the Jira connector uses a nocode YAML manifest (Airbyte DeclarativeSource). All other connectors in the project (m365, bamboohr, claude-api) follow this pattern. Features that cannot be expressed declaratively are deferred to future iterations or downstream layers rather than falling back to CDK Python in Phase 1.
+Consistent with project convention, the Jira connector uses a nocode YAML manifest (Airbyte DeclarativeSource). All other connectors in the project (m365, bamboohr, claude-admin) follow this pattern. Features that cannot be expressed declaratively are deferred to future iterations or downstream layers rather than falling back to CDK Python in Phase 1.
 
 ### 2.2 Constraints
 

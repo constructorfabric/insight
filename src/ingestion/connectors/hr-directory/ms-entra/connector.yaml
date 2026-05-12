@@ -1,0 +1,251 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - users
+
+definitions:
+  linked:
+    SimpleRetriever:
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestPath
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('@odata.nextLink', '') }}"
+          stop_condition: "{{ not response.get('@odata.nextLink') }}"
+    HttpRequester:
+      request_body:
+        type: RequestBodyUrlEncodedForm
+        value:
+          scope: https://graph.microsoft.com/.default
+          client_id: "{{ config['azure_client_id'] }}"
+          grant_type: client_credentials
+          client_secret: "{{ config['azure_client_secret'] }}"
+      authenticator:
+        type: SessionTokenAuthenticator
+        login_requester:
+          type: HttpRequester
+          url: >-
+            https://login.microsoftonline.com/{{ config['azure_tenant_id']
+            }}/oauth2/v2.0/token
+          http_method: POST
+          request_body:
+            type: RequestBodyUrlEncodedForm
+            value:
+              scope: https://graph.microsoft.com/.default
+              client_id: "{{ config['azure_client_id'] }}"
+              grant_type: client_credentials
+              client_secret: "{{ config['azure_client_secret'] }}"
+        session_token_path:
+          - access_token
+        expiration_duration: PT1H
+        request_authentication:
+          type: Bearer
+      request_parameters:
+        $format: application/json
+        $top: "999"
+        # Explicit allowlist — fetch ONLY identity-resolution fields.
+        # Privacy by default (DESIGN nfr-privacy): never collect birthday,
+        # aboutMe, mobilePhone, streetAddress, schools, interests, etc.,
+        # even though User.Read.All would allow it.
+        $select: id,userPrincipalName,mail,proxyAddresses,otherMails,displayName,givenName,surname,employeeId,department,jobTitle,accountEnabled,onPremisesSamAccountName,createdDateTime,userType
+
+streams:
+  - type: DeclarativeStream
+    name: users
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - value
+      requester:
+        type: HttpRequester
+        url: https://graph.microsoft.com/v1.0/users
+        http_method: GET
+        authenticator:
+          type: SessionTokenAuthenticator
+          login_requester:
+            type: HttpRequester
+            url: >-
+              https://login.microsoftonline.com/{{ config['azure_tenant_id']
+              }}/oauth2/v2.0/token
+            http_method: POST
+            request_body:
+              $ref: "#/definitions/linked/HttpRequester/request_body"
+          session_token_path:
+            - access_token
+          expiration_duration: PT1H
+          request_authentication:
+            type: Bearer
+        request_parameters:
+          $ref: "#/definitions/linked/HttpRequester/request_parameters"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type: string
+            description: >-
+              Stable Entra Object ID (oid). Equals the JWT 'oid' claim that
+              auth-tokens carry on user sign-in — this is the join key for
+              identity resolution.
+          userPrincipalName:
+            type:
+              - string
+              - "null"
+          mail:
+            type:
+              - string
+              - "null"
+          proxyAddresses:
+            type:
+              - array
+              - "null"
+            items:
+              type:
+                - string
+                - "null"
+          otherMails:
+            type:
+              - array
+              - "null"
+            items:
+              type:
+                - string
+                - "null"
+          displayName:
+            type:
+              - string
+              - "null"
+          givenName:
+            type:
+              - string
+              - "null"
+          surname:
+            type:
+              - string
+              - "null"
+          employeeId:
+            type:
+              - string
+              - "null"
+          department:
+            type:
+              - string
+              - "null"
+          jobTitle:
+            type:
+              - string
+              - "null"
+          accountEnabled:
+            type:
+              - boolean
+              - "null"
+          onPremisesSamAccountName:
+            type:
+              - string
+              - "null"
+          createdDateTime:
+            type:
+              - string
+              - "null"
+          userType:
+            type:
+              - string
+              - "null"
+          tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
+            type: string
+        required:
+          - unique_key
+          - id
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+spec:
+  type: Spec
+  documentation_url: https://learn.microsoft.com/en-us/graph/api/user-list
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - azure_client_id
+      - azure_client_secret
+      - azure_tenant_id
+    properties:
+      insight_tenant_id:
+        type: string
+        description: Insight platform tenant ID.
+        order: 0
+        title: Insight Tenant ID
+      insight_source_id:
+        type: string
+        description: Insight source instance ID (e.g. ms-entra-main).
+        order: 1
+        title: Insight Source ID
+      azure_client_id:
+        type: string
+        order: 2
+        title: Azure Client ID
+        description: >-
+          Application (client) ID of the Entra App Registration. The app must
+          have Microsoft Graph 'User.Read.All' as an APPLICATION permission
+          with admin consent granted.
+      azure_tenant_id:
+        type: string
+        order: 3
+        title: Azure Tenant ID
+        description: Microsoft Entra tenant (directory) ID.
+      azure_client_secret:
+        type: string
+        order: 4
+        title: Azure Client Secret
+        airbyte_secret: true
+        description: Client secret for the App Registration.
+    additionalProperties: true
+
+metadata:
+  # Schema verified against real Microsoft Graph /v1.0/users responses
+  # — `discover` returns this inline schema unmodified, and 1.5k real
+  # records read locally match the declared field set and nullability.
+  autoImportSchema:
+    users: true
+
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 1

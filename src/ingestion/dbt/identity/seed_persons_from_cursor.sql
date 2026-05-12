@@ -9,6 +9,8 @@
 {{ config(
     materialized='incremental',
     unique_key='id',
+    order_by=['id'],
+    settings={'allow_nullable_key': 1},
     schema='person',
     tags=['identity:seed', 'person']
 ) }}
@@ -45,7 +47,8 @@ SELECT
     'clean'                                                 AS conflict_status,
     now64(3)                                                AS created_at,
     now64(3)                                                AS updated_at,
-    0                                                       AS is_deleted
+    0                                                       AS is_deleted,
+    toUnixTimestamp64Milli(now64())                          AS _version
 FROM {{ source('bronze_cursor', 'cursor_members') }} cm
 WHERE cm.email IS NOT NULL AND trim(cm.email) != ''
 QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, '') ORDER BY _airbyte_extracted_at DESC) = 1

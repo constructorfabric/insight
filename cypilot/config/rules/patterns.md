@@ -19,6 +19,7 @@ Recurring implementation patterns for documenting connectors and defining data s
 - [Incremental Sync Cursor Fields](#incremental-sync-cursor-fields)
 - [Cross-Source Comparison Tables](#cross-source-comparison-tables)
 - [Monitoring Table Note](#monitoring-table-note)
+- [Connector Descriptor Schema](#connector-descriptor-schema)
 
 <!-- /toc -->
 
@@ -82,3 +83,32 @@ End every `{source}_collection_runs` table definition with a standalone paragrap
 `Monitoring table — not an analytics source.`
 
 Evidence: `docs/CONNECTORS_REFERENCE.md:347`
+
+## Connector Descriptor Schema
+
+Every connector at `connectors/<area>/<name>/descriptor.yaml` must follow the formal schema below. `version` and `cdk_image` are independent fields (see ADR-0011): `version` is the Insight semantic version (manifest config / dbt contract / audit); `cdk_image` carries the full Docker image reference for `type=cdk` and is absent for `type=nocode`.
+
+```yaml
+name: <slug>                           # required, must equal directory name
+type: nocode | cdk                     # required
+version: "<semver-or-date>"            # required, Insight semantic version
+                                       # for nocode: → declarativeManifest.description
+                                       # for cdk:    metadata-only (audit, Argo labels)
+cdk_image: "<registry>/<path>:<tag>"   # required for type=cdk; ABSENT for type=nocode
+                                       # full Docker image reference, no derivation
+                                       # examples:
+                                       #   ghcr.io/cyberfabric/source-foo-insight:2026.04.21.16.10-b36cf42
+                                       #   registry.internal.example.com:5000/team-a/conn-007:v1.2.3
+                                       # missing → reconcile WARN+skip (advisory audit only)
+schedule: "<cron>"                     # required
+dbt_select: "<dbt selector>"           # required
+workflow: "<sync|...>"                 # required
+connection:
+  namespace: "<bronze_xxx>"            # required
+secret:
+  required_fields:                     # required (may be empty list)
+    - <key1>
+    - <key2>
+```
+
+References: `docs/components/airbyte-toolkit/specs/ADR/0011-cdk-prebuilt-images.md`, `docs/components/airbyte-toolkit/specs/feature-reconcile/FEATURE.md` (DoD `cpt-insightspec-dod-reconcile-cdk-image-required`).

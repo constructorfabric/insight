@@ -87,8 +87,7 @@ mod tests {
 
     #[test]
     fn with_auth_sets_credentials() {
-        let cfg = Config::new("http://ch:8123", "insight")
-            .with_auth("admin", "secret");
+        let cfg = Config::new("http://ch:8123", "insight").with_auth("admin", "secret");
 
         assert_eq!(cfg.user.as_deref(), Some("admin"));
         assert_eq!(cfg.password.as_deref(), Some("secret"));
@@ -96,16 +95,15 @@ mod tests {
 
     #[test]
     fn custom_timeout() {
-        let cfg = Config::new("http://ch:8123", "insight")
-            .with_query_timeout(Duration::from_secs(60));
+        let cfg =
+            Config::new("http://ch:8123", "insight").with_query_timeout(Duration::from_secs(60));
 
         assert_eq!(cfg.query_timeout, Some(Duration::from_secs(60)));
     }
 
     #[test]
     fn disable_timeout() {
-        let cfg = Config::new("http://ch:8123", "insight")
-            .without_query_timeout();
+        let cfg = Config::new("http://ch:8123", "insight").without_query_timeout();
 
         assert!(cfg.query_timeout.is_none());
     }

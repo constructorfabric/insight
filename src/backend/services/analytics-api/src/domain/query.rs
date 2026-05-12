@@ -1,18 +1,18 @@
-//! Query request/response models — OData-style per DNA REST conventions.
+//! Query request/response models — `OData`-style per DNA REST conventions.
 
 use serde::{Deserialize, Serialize};
 
 /// Query request body for `POST /v1/metrics/{id}/query`.
 ///
-/// Uses OData-style parameters: `$filter`, `$orderby`, `$select`, `$top`, `$skip`.
+/// Uses `OData`-style parameters: `$filter`, `$orderby`, `$select`, `$top`, `$skip`.
 #[derive(Debug, Deserialize)]
 pub struct QueryRequest {
-    /// OData filter expression.
+    /// `OData` filter expression.
     /// e.g. `"metric_date ge '2026-03-01' and metric_date lt '2026-04-01'"`.
     #[serde(rename = "$filter", default)]
     pub filter: Option<String>,
 
-    /// OData ordering expression.
+    /// `OData` ordering expression.
     /// e.g. `"metric_date desc"`.
     #[serde(rename = "$orderby", default)]
     pub orderby: Option<String>,
@@ -28,6 +28,7 @@ pub struct QueryRequest {
 
     /// Opaque cursor for keyset pagination (from previous `page_info.cursor`).
     #[serde(rename = "$skip", default)]
+    #[allow(dead_code)] // will be consumed by query engine for cursor-based pagination
     pub skip: Option<String>,
 }
 

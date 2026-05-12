@@ -1,0 +1,136 @@
+{{- if .Values.ingestion.templates.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: ingestion-pipeline
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  serviceAccountName: argo-workflow
+  entrypoint: pipeline
+  templates:
+    - name: pipeline
+      # Connection-specific inputs (connection_name, insight_source_id,
+      # data_source, dbt_select, dbt_select_staging) are supplied by the
+      # invoker. Image tags and infrastructure coordinates default from
+      # umbrella chart values — single source of truth, baked into the
+      # rendered WorkflowTemplate at `helm install` time. Submitters can
+      # still override per-call (e.g. for testing a different toolbox tag).
+      #
+      # connection_name (per ADR-0005): pattern {connector}-{source_id}-{tenant}-conn.
+      # The airbyte-sync template's resolve-connection-by-name init-step
+      # resolves the UUID at submit time.
+      inputs:
+        parameters:
+          - name: connection_name
+          - name: insight_source_id
+          - name: data_source                # "jira" → enriched path; anything else → legacy single-dbt
+          - name: dbt_select_staging         # e.g. "tag:jira"; empty for non-jira
+            default: ""  # RULE-DEFAULTS-OK: empty-string sentinel — non-jira callers send "" so the `data_source == 'jira'` predicate is the only dispatch.
+          - name: dbt_select                 # e.g. "tag:silver"
+          - name: toolbox_image
+            default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+          - name: jira_enrich_image
+            default: {{ required "ingestion.jiraEnrichImage is required when ingestion.templates.enabled=true" .Values.ingestion.jiraEnrichImage | quote }}
+          - name: airbyte_url
+            default: {{ include "insight.airbyte.url" . | quote }}
+          - name: clickhouse_host
+            default: {{ include "insight.clickhouse.fqdn" . | quote }}
+          - name: clickhouse_port
+            default: {{ include "insight.clickhouse.port" . | quote }}
+          - name: clickhouse_user
+            default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+      dag:
+        tasks:
+          - name: sync
+            templateRef:
+              name: airbyte-sync
+              template: main
+            arguments:
+              parameters:
+                - name: connection_name
+                  value: {{ `"{{inputs.parameters.connection_name}}"` }}
+                - name: airbyte_url
+                  value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+
+          # ------ Jira: sync → dbt(tag:jira) → jira-enrich → dbt(tag:silver) ------
+          - name: transform-jira-staging
+            depends: sync
+            when: {{ `"'{{inputs.parameters.data_source}}' == 'jira'"` }}
+            templateRef:
+              name: dbt-run
+              template: run
+            arguments:
+              parameters:
+                - name: dbt_select
+                  value: {{ `"{{inputs.parameters.dbt_select_staging}}"` }}
+                - name: toolbox_image
+                  value: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+                - name: clickhouse_host
+                  value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+                - name: clickhouse_port
+                  value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+                - name: clickhouse_user
+                  value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+
+          - name: enrich
+            depends: transform-jira-staging
+            when: {{ `"'{{inputs.parameters.data_source}}' == 'jira'"` }}
+            templateRef:
+              name: tt-enrich-jira-run
+              template: run
+            arguments:
+              parameters:
+                - name: insight_source_id
+                  value: {{ `"{{inputs.parameters.insight_source_id}}"` }}
+                - name: jira_enrich_image
+                  value: {{ `"{{inputs.parameters.jira_enrich_image}}"` }}
+                - name: clickhouse_host
+                  value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+                - name: clickhouse_port
+                  value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+                - name: clickhouse_user
+                  value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+                - name: batch_size
+                  value: "10000"
+
+          - name: transform-jira-silver
+            depends: enrich
+            when: {{ `"'{{inputs.parameters.data_source}}' == 'jira'"` }}
+            templateRef:
+              name: dbt-run
+              template: run
+            arguments:
+              parameters:
+                - name: dbt_select
+                  value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+                - name: toolbox_image
+                  value: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+                - name: clickhouse_host
+                  value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+                - name: clickhouse_port
+                  value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+                - name: clickhouse_user
+                  value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+
+          # ------ Non-Jira: legacy single-dbt path ------
+          - name: transform-legacy
+            depends: sync
+            when: {{ `"'{{inputs.parameters.data_source}}' != 'jira'"` }}
+            templateRef:
+              name: dbt-run
+              template: run
+            arguments:
+              parameters:
+                - name: dbt_select
+                  value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+                - name: toolbox_image
+                  value: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+                - name: clickhouse_host
+                  value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+                - name: clickhouse_port
+                  value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+                - name: clickhouse_user
+                  value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+{{- end }}

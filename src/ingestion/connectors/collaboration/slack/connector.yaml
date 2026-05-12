@@ -5,47 +5,13 @@ type: DeclarativeSource
 check:
   type: CheckStream
   stream_names:
-    - users
+    - users_details
 
 concurrency_level:
   type: ConcurrencyLevel
   default_concurrency: 1
 
 definitions:
-  base_error_handler:
-    type: CompositeErrorHandler
-    error_handlers:
-      - type: DefaultErrorHandler
-        response_filters:
-          - type: HttpResponseFilter
-            action: RATE_LIMITED
-            http_codes:
-              - 429
-        backoff_strategies:
-          - type: WaitTimeFromHeader
-            header: Retry-After
-      - type: DefaultErrorHandler
-        response_filters:
-          - type: HttpResponseFilter
-            action: RATE_LIMITED
-            http_codes:
-              - 503
-        backoff_strategies:
-          - type: WaitTimeFromHeader
-            header: Retry-After
-      - type: DefaultErrorHandler
-        max_retries: 5
-        response_filters:
-          - type: HttpResponseFilter
-            action: RETRY
-            http_codes:
-              - 500
-              - 502
-              - 504
-        backoff_strategies:
-          - type: ExponentialBackoffStrategy
-            factor: 5
-
   base_requester:
     type: HttpRequester
     url_base: https://slack.com/api/
@@ -55,234 +21,58 @@ definitions:
     request_headers:
       Accept: application/json
 
-  slack_paginator:
-    type: DefaultPaginator
-    page_token_option:
-      type: RequestOption
-      inject_into: request_parameter
-      field_name: cursor
-    pagination_strategy:
-      type: CursorPagination
-      cursor_value: "{{ response.get('response_metadata', {}).get('next_cursor', '') }}"
-    stop_condition:
-      type: StopCondition
-      condition: "{{ not response.get('response_metadata', {}).get('next_cursor') }}"
-
   streams:
-    # -- users ---------------------------------------------------------------
-    # Root stream: Slack user directory from users.list
-    # Full refresh -- small dataset, no incremental sync needed
-    users:
+    # -- users_details -------------------------------------------------------
+    # Single stream sourced from admin.analytics.getFile (type=member).
+    # Requires only the admin.analytics:read scope.
+    # One HTTP call per day; response is gzip-wrapped JSON Lines.
+    users_details:
       type: DeclarativeStream
-      name: users
+      name: users_details
       retriever:
         type: SimpleRetriever
-        decoder:
-          type: JsonDecoder
         requester:
           $ref: "#/definitions/base_requester"
-          path: users.list
+          path: admin.analytics.getFile
           http_method: GET
-          error_handler:
-            $ref: "#/definitions/base_error_handler"
           request_parameters:
-            limit: "{{ config.get('slack_page_size', 200) }}"
-        paginator:
-          $ref: "#/definitions/slack_paginator"
+            type: member
+        decoder:
+          type: GzipDecoder
+          decoder:
+            type: JsonlDecoder
         record_selector:
           type: RecordSelector
           extractor:
             type: DpathExtractor
-            field_path:
-              - members
-      primary_key:
-        - unique_key
-      schema_loader:
-        type: InlineSchemaLoader
-        schema:
-          $ref: "#/schemas/users"
-      transformations:
-        - type: AddFields
-          fields:
-            - type: AddedFieldDefinition
-              path:
-                - slack_user_id
-              value: "{{ record['id'] }}"
-            - type: AddedFieldDefinition
-              path:
-                - email
-              value: "{{ record.get('profile', {}).get('email') }}"
-            - type: AddedFieldDefinition
-              path:
-                - display_name
-              value: >-
-                {{ record.get('profile', {}).get('display_name')
-                or record.get('profile', {}).get('real_name')
-                or record.get('name') }}
-            - type: AddedFieldDefinition
-              path:
-                - real_name
-              value: "{{ record.get('profile', {}).get('real_name') or record.get('real_name') }}"
-        - type: AddFields
-          fields:
-            - type: AddedFieldDefinition
-              path:
-                - tenant_id
-              value: "{{ config['insight_tenant_id'] }}"
-            - type: AddedFieldDefinition
-              path:
-                - source_id
-              value: "{{ config['insight_source_id'] }}"
-            - type: AddedFieldDefinition
-              path:
-                - unique_key
-              value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
-
-    # -- channels ------------------------------------------------------------
-    # Root stream: Slack channel directory from conversations.list
-    # Full refresh -- provides authoritative channel_type for message attribution
-    channels:
-      type: DeclarativeStream
-      name: channels
-      retriever:
-        type: SimpleRetriever
-        decoder:
-          type: JsonDecoder
-        requester:
-          $ref: "#/definitions/base_requester"
-          path: conversations.list
-          http_method: GET
-          error_handler:
-            $ref: "#/definitions/base_error_handler"
-          request_parameters:
-            types: "{{ config.get('slack_channel_types', 'public_channel,private_channel,mpim,im') }}"
-            limit: "{{ config.get('slack_page_size', 200) }}"
-            exclude_archived: "false"
-        paginator:
-          $ref: "#/definitions/slack_paginator"
-        record_selector:
-          type: RecordSelector
-          extractor:
-            type: DpathExtractor
-            field_path:
-              - channels
-      primary_key:
-        - unique_key
-      schema_loader:
-        type: InlineSchemaLoader
-        schema:
-          $ref: "#/schemas/channels"
-      transformations:
-        - type: AddFields
-          fields:
-            - type: AddedFieldDefinition
-              path:
-                - channel_id
-              value: "{{ record['id'] }}"
-            - type: AddedFieldDefinition
-              path:
-                - channel_type
-              value: >-
-                {{ 'im' if record.get('is_im') else
-                ('mpim' if record.get('is_mpim') else
-                ('private_channel' if record.get('is_private') else
-                'public_channel')) }}
-        - type: AddFields
-          fields:
-            - type: AddedFieldDefinition
-              path:
-                - tenant_id
-              value: "{{ config['insight_tenant_id'] }}"
-            - type: AddedFieldDefinition
-              path:
-                - source_id
-              value: "{{ config['insight_source_id'] }}"
-            - type: AddedFieldDefinition
-              path:
-                - unique_key
-              value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
-
-    # -- messages ------------------------------------------------------------
-    # Child stream of channels: raw messages from conversations.history
-    # Partitioned by channel_id; incremental via DatetimeBasedCursor on ts
-    messages:
-      type: DeclarativeStream
-      name: messages
-      retriever:
-        type: SimpleRetriever
-        partition_router:
-          type: SubstreamPartitionRouter
-          parent_stream_configs:
-            - type: ParentStreamConfig
-              parent_key: channel_id
-              partition_field: channel_id
-              stream:
-                $ref: "#/definitions/streams/channels"
-        decoder:
-          type: JsonDecoder
-        requester:
-          $ref: "#/definitions/base_requester"
-          path: conversations.history
-          http_method: GET
-          error_handler:
-            $ref: "#/definitions/base_error_handler"
-          request_parameters:
-            channel: "{{ stream_partition.channel_id }}"
-            limit: "{{ config.get('slack_page_size', 200) }}"
-        paginator:
-          $ref: "#/definitions/slack_paginator"
-        record_selector:
-          type: RecordSelector
-          extractor:
-            type: DpathExtractor
-            field_path:
-              - messages
+            field_path: []
       incremental_sync:
         type: DatetimeBasedCursor
-        cursor_field: ts
+        cursor_field: date
         cursor_datetime_formats:
-          - "%s"
-        datetime_format: "%s"
+          - "%Y-%m-%d"
+        datetime_format: "%Y-%m-%d"
         start_datetime:
           type: MinMaxDatetime
           datetime: "{{ config['slack_start_date'] }}"
           datetime_format: "%Y-%m-%d"
         end_datetime:
           type: MinMaxDatetime
-          datetime: "{{ (now_utc() + duration('P1D')).strftime('%Y-%m-%d') }}"
+          datetime: "{{ (now_utc() - duration('P2D')).strftime('%Y-%m-%d') }}"
           datetime_format: "%Y-%m-%d"
         start_time_option:
           type: RequestOption
-          field_name: oldest
+          field_name: date
           inject_into: request_parameter
-        end_time_option:
-          type: RequestOption
-          field_name: latest
-          inject_into: request_parameter
-        lookback_window: "P{{ config.get('slack_lookback_days', 7) }}D"
-        step: "P1D"
-        cursor_granularity: "PT1S"
+        step: P1D
+        cursor_granularity: P1D
       primary_key:
         - unique_key
       schema_loader:
         type: InlineSchemaLoader
         schema:
-          $ref: "#/schemas/messages"
+          $ref: "#/schemas/users_details"
       transformations:
-        - type: AddFields
-          fields:
-            - type: AddedFieldDefinition
-              path:
-                - ts_raw
-              value: "{{ record['ts'] }}"
-            - type: AddedFieldDefinition
-              path:
-                - ts
-              value: "{{ record['ts'].split('.')[0] }}"
-            - type: AddedFieldDefinition
-              path:
-                - channel_id
-              value: "{{ stream_partition.channel_id }}"
         - type: AddFields
           fields:
             - type: AddedFieldDefinition
@@ -296,12 +86,10 @@ definitions:
             - type: AddedFieldDefinition
               path:
                 - unique_key
-              value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.channel_id }}-{{ record['ts_raw'] }}"
+              value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['user_id'] }}-{{ record['date'] }}"
 
 streams:
-  - $ref: "#/definitions/streams/users"
-  - $ref: "#/definitions/streams/channels"
-  - $ref: "#/definitions/streams/messages"
+  - $ref: "#/definitions/streams/users_details"
 
 spec:
   type: Spec
@@ -323,63 +111,38 @@ spec:
         type: string
         title: Insight Source ID
         description: >-
-          Unique identifier for this connector instance (e.g., slack-acme).
+          Unique identifier for this connector instance (e.g., slack-main).
           Disambiguates workspaces in multi-workspace setups.
         order: 1
       slack_bot_token:
         type: string
-        title: Slack Bot Token
+        title: Slack User OAuth Token
         description: >-
-          Slack Bot Token (xoxb-*). Required scopes: channels:history,
-          channels:read, groups:history, groups:read, im:history,
-          im:read, mpim:history, mpim:read, users:read, users:read.email.
+          Slack user OAuth token (xoxp-*) with admin.analytics:read scope.
+          Slack's admin.analytics.getFile requires a user token — bot tokens
+          (xoxb-*) are not supported. Token must be installed by an Org
+          Owner/Admin. Plan must support Analytics API (Business+ or
+          Enterprise Grid).
         airbyte_secret: true
         order: 2
       slack_start_date:
         type: string
         title: Start Date
         description: >-
-          Earliest date to collect messages from on the initial sync.
-          Subsequent syncs use the incremental cursor with a 7-day lookback window.
+          Earliest analytics date to fetch (YYYY-MM-DD). Slack publishes snapshots
+          with a ~2-day delay, so end of range is pinned to today - 2 days.
+          Recommended: 14 days ago.
         format: date
         order: 3
-      slack_page_size:
-        type: integer
-        title: Page Size
-        description: Records per API page for paginated Slack endpoints.
-        default: 200
-        minimum: 1
-        maximum: 999
-        order: 4
-      slack_lookback_days:
-        type: integer
-        title: Lookback Days
-        description: >-
-          Number of days to look back on each incremental sync run.
-          Recommended: 7 for daily runs.
-        default: 7
-        minimum: 1
-        maximum: 30
-        order: 5
-      slack_channel_types:
-        type: string
-        title: Channel Types
-        description: >-
-          Comma-separated channel types to scan.
-          Options: public_channel, private_channel, mpim, im.
-        default: "public_channel,private_channel,mpim,im"
-        order: 6
     additionalProperties: true
 
 metadata:
   assist: {}
   autoImportSchema:
-    users: false
-    channels: false
-    messages: false
+    users_details: false
 
 schemas:
-  users:
+  users_details:
     type: object
     $schema: http://json-schema.org/draft-07/schema#
     properties:
@@ -389,49 +152,87 @@ schemas:
         type: string
       source_id:
         type: string
-      slack_user_id:
+      date:
         type: string
-      email:
+      team_id:
         type:
           - string
           - "null"
-      display_name:
+      user_id:
+        type: string
+      email_address:
         type:
           - string
           - "null"
-      real_name:
-        type:
-          - string
-          - "null"
-      is_admin:
+      is_guest:
         type:
           - boolean
           - "null"
-      is_owner:
+      is_billable_seat:
         type:
           - boolean
           - "null"
-      is_restricted:
+      is_active:
         type:
           - boolean
           - "null"
-      is_ultra_restricted:
+      is_active_ios:
         type:
           - boolean
           - "null"
-      is_bot:
+      is_active_android:
         type:
           - boolean
           - "null"
-      deleted:
+      is_active_desktop:
         type:
           - boolean
           - "null"
-      tz:
+      is_active_apps:
         type:
-          - string
+          - boolean
           - "null"
-      updated:
+      is_active_workflows:
+        type:
+          - boolean
+          - "null"
+      is_active_slack_connect:
+        type:
+          - boolean
+          - "null"
+      reactions_added_count:
+        type:
+          - integer
+          - "null"
+      messages_posted_count:
+        type:
+          - integer
+          - "null"
+      channel_messages_posted_count:
+        type:
+          - integer
+          - "null"
+      files_added_count:
+        type:
+          - integer
+          - "null"
+      total_calls_count:
+        type:
+          - integer
+          - "null"
+      slack_calls_count:
+        type:
+          - integer
+          - "null"
+      slack_huddles_count:
+        type:
+          - integer
+          - "null"
+      search_count:
+        type:
+          - integer
+          - "null"
+      date_claimed:
         type:
           - integer
           - "null"
@@ -439,118 +240,6 @@ schemas:
       - unique_key
       - tenant_id
       - source_id
-      - slack_user_id
-    additionalProperties: true
-  channels:
-    type: object
-    $schema: http://json-schema.org/draft-07/schema#
-    properties:
-      unique_key:
-        type: string
-      tenant_id:
-        type: string
-      source_id:
-        type: string
-      channel_id:
-        type: string
-      name:
-        type:
-          - string
-          - "null"
-      is_channel:
-        type:
-          - boolean
-          - "null"
-      is_group:
-        type:
-          - boolean
-          - "null"
-      is_im:
-        type:
-          - boolean
-          - "null"
-      is_mpim:
-        type:
-          - boolean
-          - "null"
-      is_private:
-        type:
-          - boolean
-          - "null"
-      is_archived:
-        type:
-          - boolean
-          - "null"
-      num_members:
-        type:
-          - integer
-          - "null"
-      created:
-        type:
-          - integer
-          - "null"
-      creator:
-        type:
-          - string
-          - "null"
-      channel_type:
-        type:
-          - string
-          - "null"
-    required:
-      - unique_key
-      - tenant_id
-      - source_id
-      - channel_id
-    additionalProperties: true
-  messages:
-    type: object
-    $schema: http://json-schema.org/draft-07/schema#
-    properties:
-      unique_key:
-        type: string
-      tenant_id:
-        type: string
-      source_id:
-        type: string
-      channel_id:
-        type:
-          - string
-          - "null"
-      ts:
-        type:
-          - string
-          - "null"
-      ts_raw:
-        type:
-          - string
-          - "null"
-      user:
-        type:
-          - string
-          - "null"
-      type:
-        type:
-          - string
-          - "null"
-      subtype:
-        type:
-          - string
-          - "null"
-      thread_ts:
-        type:
-          - string
-          - "null"
-      reply_count:
-        type:
-          - integer
-          - "null"
-      reply_users_count:
-        type:
-          - integer
-          - "null"
-    required:
-      - unique_key
-      - tenant_id
-      - source_id
+      - user_id
+      - date
     additionalProperties: true

@@ -4,8 +4,8 @@ podAnnotations: {}
 
 image:
   repository: ghcr.io/cyberfabric/insight-front
-  tag: "latest"
-  pullPolicy: Always
+  tag: ""                # MUST be set by the operator. No `:latest` default.
+  pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
@@ -20,6 +20,12 @@ ingress:
 oidc:
   issuer: ""
   clientId: ""
+  # Space-separated OIDC scopes. IdP-specific:
+  #   Entra v2 single-app: "openid profile email api://<clientId>/Access.Default"
+  #   Okta:                "openid profile email <api-name>.<scope>"
+  # REQUIRED when oidc.issuer and oidc.clientId are set; entrypoint refuses
+  # to start otherwise.
+  scopes: ""
 
 resources:
   requests:

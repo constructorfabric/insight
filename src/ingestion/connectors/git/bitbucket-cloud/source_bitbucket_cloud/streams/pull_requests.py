@@ -1,176 +1,182 @@
-"""Bitbucket Cloud pull requests stream (REST, incremental, child of repos)."""
+"""Bitbucket Cloud pull_requests stream (incremental, per-repo cursor)."""
 
 import logging
 from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
+from airbyte_cdk.models import SyncMode
+from airbyte_cdk.sources.streams.http import HttpSubStream
+
 from source_bitbucket_cloud.streams.base import (
-    BitbucketAuthError,
-    BitbucketCloudRestStream,
+    BitbucketCloudStream,
     _make_unique_key,
+    _normalize_start_date,
+    _truncate,
 )
-from source_bitbucket_cloud.streams.repositories import RepositoriesStream
+
 
 logger = logging.getLogger("airbyte")
 
 
-class PullRequestsStream(BitbucketCloudRestStream):
-    """Fetches PRs via REST API, incremental by updated_on.
+class PullRequestsStream(HttpSubStream, BitbucketCloudStream):
+    """PRs for each repo; incremental by `updated_on`.
 
-    Comments and PR commits are fetched by separate child streams
-    that consume get_child_slices() for slice construction.
+    Child streams (pr_comments, pr_commits) use this stream as their parent
+    and re-iterate via HttpSubStream; the PRs HTTP responses are served from
+    requests-cache (``use_cache=True``) on the re-iteration.
     """
 
     name = "pull_requests"
     cursor_field = "updated_on"
+    use_cache = True
+    # Descending API sort (sort=-updated_on): mid-slice checkpointing would
+    # persist the NEWEST cursor after record #1 and a crash before slice
+    # completion would cause the next run to skip all remaining (older)
+    # records. State persists only at slice (per-repo) boundaries.
+    state_checkpoint_interval = None
+
+    # PRs API doesn't accept a generic ``pagelen`` for big pages — keep 50.
+    page_size = 50
 
     def __init__(
         self,
-        parent: RepositoriesStream,
+        parent,  # RepositoriesStream
         start_date: Optional[str] = None,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        self._parent = parent
-        self._start_date = start_date
-        self._partitions_with_errors: set = set()
-        self._child_slice_cache: dict[tuple, dict] = {}
-        self._child_cache_built: bool = False
-        self._current_cursor_value: Optional[str] = None
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent=parent, **kwargs)
+        self._start_date = _normalize_start_date(start_date)
+        self._stop_pagination: bool = False
 
-    def _path(self, stream_slice: Optional[Mapping[str, Any]] = None, **kwargs) -> str:
-        s = stream_slice or {}
-        workspace = s.get("workspace", "")
-        slug = s.get("slug", "")
+    # ------------------------------------------------------------------
+    # Path / params
+    # ------------------------------------------------------------------
+
+    def _path(self, stream_slice: Optional[Mapping[str, Any]] = None) -> str:
+        repo = (stream_slice or {}).get("parent") or {}
+        workspace = repo.get("workspace")
+        slug = repo.get("slug")
         if not workspace or not slug:
-            raise ValueError(
-                f"PullRequestsStream._path() called with incomplete slice: "
-                f"workspace={workspace}, slug={slug}"
-            )
+            raise ValueError("pull_requests stream_slice requires parent.workspace and parent.slug")
         return f"repositories/{workspace}/{slug}/pullrequests"
 
-    def request_params(self, **kwargs) -> dict:
+    def request_params(
+        self,
+        stream_state: Optional[Mapping[str, Any]] = None,
+        stream_slice: Optional[Mapping[str, Any]] = None,
+        next_page_token: Optional[Mapping[str, Any]] = None,
+    ) -> Mapping[str, Any]:
+        if next_page_token:
+            return {}
         return {
-            "pagelen": "50",
+            "pagelen": str(self.page_size),
             "state": ["OPEN", "MERGED", "DECLINED", "SUPERSEDED"],
             "sort": "-updated_on",
         }
 
-    # ------------------------------------------------------------------
-    # read_records: delegate to slices when called without a slice
-    # ------------------------------------------------------------------
-
-    def read_records(self, sync_mode=None, stream_slice=None, stream_state=None, **kwargs):
-        # Self-iterates slices to support per-partition error handling (freeze cursor
-        # on failure, continue sync). Bypasses CDK slice iteration intentionally.
-        if stream_slice is None:
-            for repo_slice in self.stream_slices(stream_state=stream_state):
-                self._current_cursor_value = None  # reset between slices
-                try:
-                    yield from super().read_records(
-                        sync_mode=sync_mode, stream_slice=repo_slice,
-                        stream_state=stream_state, **kwargs,
-                    )
-                except BitbucketAuthError:
-                    raise
-                except Exception as exc:
-                    pk = repo_slice.get("partition_key", "?")
-                    self._partitions_with_errors.add(pk)
-                    logger.error(f"Failed pull_requests slice {pk}, cursor frozen: {exc}")
-            self._child_cache_built = True
-        else:
-            yield from super().read_records(
-                sync_mode=sync_mode, stream_slice=stream_slice,
-                stream_state=stream_state, **kwargs,
-            )
+    def next_page_token(self, response):
+        if self._stop_pagination:
+            self._stop_pagination = False
+            return None
+        return super().next_page_token(response)
 
     # ------------------------------------------------------------------
-    # stream_slices
+    # Slices — attach cursor_value
     # ------------------------------------------------------------------
 
     def stream_slices(
         self,
+        sync_mode: SyncMode,
+        cursor_field: Optional[list] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
-        **kwargs,
     ) -> Iterable[Optional[Mapping[str, Any]]]:
+        # Iterate parent via stream_slices + read_records directly (not via
+        # HttpSubStream/read_only_records) — Stream.read() in CDK 7.x overrides
+        # the incoming stream_state with self.state (parent's persistent cursor),
+        # which skips slices that the child still needs to process after a
+        # mid-stream crash. read_records() honours the passed stream_state.
         state = stream_state or {}
-        for record in self._parent.get_child_records():
-            workspace = record.get("workspace", "")
-            slug = record.get("slug", "")
-            if not (workspace and slug):
-                continue
-            partition_key = f"{workspace}/{slug}"
-            cursor_value = state.get(partition_key, {}).get(self.cursor_field)
-            yield {
-                "workspace": workspace,
-                "slug": slug,
-                "partition_key": partition_key,
-                "cursor_value": cursor_value,
-            }
+        slice_count = 0
+        for repo_slice in self.parent.stream_slices(
+            sync_mode=SyncMode.full_refresh, cursor_field=None, stream_state={},
+        ):
+            for repo_record in self.parent.read_records(
+                sync_mode=SyncMode.full_refresh,
+                stream_slice=repo_slice,
+                stream_state={},
+            ):
+                if not isinstance(repo_record, Mapping):
+                    continue
+                workspace = repo_record.get("workspace")
+                slug = repo_record.get("slug")
+                if not workspace or not slug:
+                    logger.warning(
+                        f"pull_requests: skipping repo missing workspace/slug: {repo_record!r}"
+                    )
+                    continue
+                partition_key = f"{workspace}/{slug}"
+                cursor = (state.get(partition_key, {}) or {}).get(self.cursor_field, "") or ""
+                # Reset per-slice so a prior early-exit doesn't leak into this repo.
+                self._stop_pagination = False
+                slice_count += 1
+                logger.info(
+                    f"pull_requests: slice={partition_key} cursor={cursor or '<none>'} "
+                    f"start_date={self._start_date or '<none>'}"
+                )
+                yield {
+                    "parent": repo_record,
+                    "cursor_value": cursor,
+                    "partition_key": partition_key,
+                }
+        logger.info(f"pull_requests: iterated {slice_count} repo slices")
 
     # ------------------------------------------------------------------
-    # next_page_token: early exit on incremental cursor
+    # Parse
     # ------------------------------------------------------------------
 
-    def next_page_token(self, response, **kwargs):
-        """Override to implement early exit on incremental cursor."""
-        try:
-            data = response.json()
-        except ValueError:
-            return None
-
-        values = data.get("values", [])
-        if values:
-            last_updated = values[-1].get("updated_on", "")
-            if last_updated:
-                if self._current_cursor_value and last_updated < self._current_cursor_value:
-                    return None
-                if self._start_date and last_updated[:10] < self._start_date:
-                    return None
-
-        next_url = data.get("next")
-        if next_url:
-            return {"next_url": next_url}
-        return None
-
-    # ------------------------------------------------------------------
-    # parse_response
-    # ------------------------------------------------------------------
-
-    def parse_response(self, response, stream_slice=None, **kwargs):
-        if not self._guard_response(response):
-            return
-
-        data = response.json()
-        values = data.get("values", [])
+    def parse_response(
+        self,
+        response,
+        stream_slice: Optional[Mapping[str, Any]] = None,
+        **kwargs: Any,
+    ):
         s = stream_slice or {}
-        workspace = s.get("workspace", "")
-        slug = s.get("slug", "")
-        cursor_value = s.get("cursor_value")
-        self._current_cursor_value = cursor_value
+        repo = s.get("parent") or {}
+        workspace = repo.get("workspace", "")
+        slug = repo.get("slug", "")
+        cursor_value = s.get("cursor_value", "") or ""
 
-        for pr in values:
+        emitted = 0
+        for pr in self._iter_values(response):
             pr_id = pr.get("id")
-            updated_on = pr.get("updated_on", "")
+            updated_on = pr.get("updated_on", "") or ""
 
-            # Skip records older than cursor for incremental
+            # Incremental early exit (PRs are sorted -updated_on).
             if cursor_value and updated_on and updated_on <= cursor_value:
-                continue
-            # Skip records older than start_date on first sync
+                self._stop_pagination = True
+                logger.info(
+                    f"pull_requests: {workspace}/{slug} cursor early-exit "
+                    f"at pr={pr_id} updated_on={updated_on} cursor={cursor_value} "
+                    f"(emitted {emitted} this page)"
+                )
+                return
             if self._start_date and updated_on and updated_on[:10] < self._start_date:
-                continue
+                self._stop_pagination = True
+                logger.info(
+                    f"pull_requests: {workspace}/{slug} start_date cutoff "
+                    f"at pr={pr_id} updated_on={updated_on} (emitted {emitted} this page)"
+                )
+                return
+            emitted += 1
 
             author = pr.get("author") or {}
-            source_branch = (pr.get("source") or {}).get("branch") or {}
-            dest_branch = (pr.get("destination") or {}).get("branch") or {}
+            src_branch = (pr.get("source") or {}).get("branch") or {}
+            dst_branch = (pr.get("destination") or {}).get("branch") or {}
             merge_commit = pr.get("merge_commit") or {}
-            closed_by = pr.get("closed_by") or {}
 
-            # Extract approvals from participants
-            participants = pr.get("participants") or []
-            reviewers = []
-            for p in participants:
+            participants = []
+            for p in pr.get("participants") or []:
                 user = p.get("user") or {}
-                reviewers.append({
+                participants.append({
                     "display_name": user.get("display_name"),
                     "uuid": user.get("uuid"),
                     "nickname": user.get("nickname"),
@@ -179,71 +185,34 @@ class PullRequestsStream(BitbucketCloudRestStream):
                     "state": p.get("state"),
                 })
 
-            # Requested reviewers (users explicitly asked to review)
-            requested_reviewers = []
-            for r in (pr.get("reviewers") or []):
-                requested_reviewers.append({
-                    "display_name": r.get("display_name"),
-                    "uuid": r.get("uuid"),
-                    "nickname": r.get("nickname"),
-                })
-
-            comment_count = pr.get("comment_count", 0)
-            task_count = pr.get("task_count", 0)
-
             record = {
                 "unique_key": _make_unique_key(
                     self._tenant_id, self._source_id, workspace, slug, str(pr_id),
                 ),
                 "id": pr_id,
                 "title": pr.get("title"),
-                "description": pr.get("description"),
+                "description": _truncate(pr.get("description")),
                 "state": pr.get("state"),
                 "created_on": pr.get("created_on"),
                 "updated_on": updated_on,
                 "author_display_name": author.get("display_name"),
                 "author_uuid": author.get("uuid"),
-                "author_nickname": author.get("nickname"),
-                "source_branch": source_branch.get("name"),
-                "destination_branch": dest_branch.get("name"),
+                "source_branch": src_branch.get("name"),
+                "destination_branch": dst_branch.get("name"),
                 "merge_commit_hash": merge_commit.get("hash"),
-                "close_source_branch": pr.get("close_source_branch"),
-                "closed_by_display_name": closed_by.get("display_name"),
-                "closed_by_uuid": closed_by.get("uuid"),
-                "comment_count": comment_count,
-                "task_count": task_count,
-                "participants": reviewers,
-                "requested_reviewers": requested_reviewers,
+                # comment_count retained: read by pr_comments.stream_slices
+                # to skip zero-comment PRs without an API call.
+                "comment_count": pr.get("comment_count", 0),
+                "participants": participants,
                 "workspace": workspace,
                 "repo_slug": slug,
             }
-            yield self._add_envelope(record)
+            yield self._envelope(record)
 
-            # Build child slice cache incrementally
-            cache_key = (workspace, slug, pr_id)
-            self._child_slice_cache[cache_key] = {
-                "pr_id": pr_id,
-                "updated_on": updated_on,
-                "comment_count": comment_count,
-                "workspace": workspace,
-                "repo_slug": slug,
-            }
+        logger.debug(f"pull_requests: {workspace}/{slug} page emitted={emitted}")
 
     # ------------------------------------------------------------------
-    # get_child_slices: minimal PR metadata for child streams
-    # ------------------------------------------------------------------
-
-    def get_child_slices(self) -> list:
-        """Return minimal PR metadata for child streams to build slices from."""
-        if self._child_cache_built:
-            return list(self._child_slice_cache.values())
-        # Fallback: trigger read if not yet populated
-        list(self.read_records(sync_mode=None))
-        logger.info(f"PR child-slice cache: {len(self._child_slice_cache)} PRs")
-        return list(self._child_slice_cache.values())
-
-    # ------------------------------------------------------------------
-    # get_updated_state: per-repo cursor
+    # State — per-repo cursor
     # ------------------------------------------------------------------
 
     def get_updated_state(
@@ -252,21 +221,23 @@ class PullRequestsStream(BitbucketCloudRestStream):
         latest_record: Mapping[str, Any],
     ) -> MutableMapping[str, Any]:
         partition_key = f"{latest_record.get('workspace', '')}/{latest_record.get('repo_slug', '')}"
-        if partition_key in self._partitions_with_errors:
-            return current_stream_state
-
-        record_cursor = latest_record.get(self.cursor_field, "")
-        current_cursor = current_stream_state.get(partition_key, {}).get(self.cursor_field, "")
-        if record_cursor > current_cursor:
-            current_stream_state[partition_key] = {self.cursor_field: record_cursor}
-
+        record_cursor = latest_record.get(self.cursor_field, "") or ""
+        entry = dict(current_stream_state.get(partition_key, {}) or {})
+        prev = entry.get(self.cursor_field, "") or ""
+        if record_cursor and record_cursor > prev:
+            entry[self.cursor_field] = record_cursor
+            current_stream_state[partition_key] = entry
         return current_stream_state
+
+    # ------------------------------------------------------------------
+    # Schema
+    # ------------------------------------------------------------------
 
     def get_json_schema(self) -> Mapping[str, Any]:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "additionalProperties": True,
+            "additionalProperties": False,
             "properties": {
                 "tenant_id": {"type": "string"},
                 "source_id": {"type": "string"},
@@ -281,17 +252,11 @@ class PullRequestsStream(BitbucketCloudRestStream):
                 "updated_on": {"type": ["null", "string"]},
                 "author_display_name": {"type": ["null", "string"]},
                 "author_uuid": {"type": ["null", "string"]},
-                "author_nickname": {"type": ["null", "string"]},
                 "source_branch": {"type": ["null", "string"]},
                 "destination_branch": {"type": ["null", "string"]},
                 "merge_commit_hash": {"type": ["null", "string"]},
-                "close_source_branch": {"type": ["null", "boolean"]},
-                "closed_by_display_name": {"type": ["null", "string"]},
-                "closed_by_uuid": {"type": ["null", "string"]},
                 "comment_count": {"type": ["null", "integer"]},
-                "task_count": {"type": ["null", "integer"]},
                 "participants": {"type": ["null", "array"]},
-                "requested_reviewers": {"type": ["null", "array"]},
                 "workspace": {"type": "string"},
                 "repo_slug": {"type": "string"},
             },

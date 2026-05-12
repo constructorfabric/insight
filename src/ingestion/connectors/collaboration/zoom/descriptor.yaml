@@ -1,7 +1,13 @@
 name: zoom
-version: '1.0'
+version: "2026.05.04"
 schedule: 0 3 * * *
 dbt_select: tag:zoom+
 workflow: sync
 connection:
   namespace: bronze_zoom
+secret:
+  required_fields:
+    - zoom_account_id
+    - zoom_client_id
+    - zoom_client_secret
+    - zoom_start_date

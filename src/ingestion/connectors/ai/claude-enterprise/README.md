@@ -23,7 +23,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: insight-claude-enterprise-main
-  namespace: data
+  namespace: insight
   labels:
     app.kubernetes.io/part-of: insight
   annotations:
@@ -89,7 +89,12 @@ The other streams (`summaries`, `skills`, `connectors`) are pre-aggregated by th
 
 ## Silver Targets
 
-**None for this iteration.** Bronze only. `descriptor.yaml` sets `dbt_select: ""` to make this explicit (`silver_targets` is prohibited per Connector Spec §4.10). Silver routing (to `class_ai_*` streams) is future work — see [DESIGN §4 Silver / Gold Mappings](../../../../../docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md#silver--gold-mappings).
+Routing is tag-driven via `dbt_select: "tag:claude-enterprise+"` in `descriptor.yaml`.
+
+| Staging model | Silver class | Tag |
+|---|---|---|
+| `claude_enterprise__ai_dev_usage` | `class_ai_dev_usage` | `silver:class_ai_dev_usage` |
+| `claude_enterprise__ai_assistant_usage` | `class_ai_assistant_usage` | `silver:class_ai_assistant_usage` |
 
 ## Operational Constraints
 
@@ -109,6 +114,4 @@ cypilot validate --artifact docs/components/connectors/ai/claude-enterprise/spec
 
 ## Related
 
-- Sibling connector (different API): `claude-team` — Anthropic Admin API for token usage, costs, workspaces, code usage
-- Sibling connector (different API): `claude-api` — Anthropic Admin API for programmatic API consumers
-- These two connectors are scheduled to be merged into a single `claude-admin` connector in a separate workstream (see [cyberfabric/insight#141](https://github.com/cyberfabric/insight/issues/141))
+- Sibling connector (different API): `claude-admin` — Anthropic Admin API for organization metadata, token usage, cost reports, Claude Code usage, API keys, workspaces, and invites (merged from the former `claude-api` and `claude-team` connectors per [cyberfabric/insight#141](https://github.com/cyberfabric/insight/issues/141))

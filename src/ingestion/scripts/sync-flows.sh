@@ -6,27 +6,49 @@ cd "$SCRIPT_DIR/.."
 
 # KUBECONFIG can be empty when running in-cluster
 
+# Host-side prerequisites — `yq` (and `jq`/PyYAML, transitively) for the
+# descriptor read loop below. `envsubst` (gettext) is also used by the
+# template render but is assumed present on the host; no auto-install.
+# No port-forward needed — this script doesn't hit the Airbyte API.
+# See airbyte-toolkit/lib/host-side-prerequisites.sh.
+source "./airbyte-toolkit/lib/host-side-prerequisites.sh"
+ensure_tooling
+
 WORKFLOWS_DIR="./workflows"
 CONNECTORS_DIR="./connectors"
 CONNECTIONS_DIR="./connections"
 
-# Always apply shared WorkflowTemplates first
-echo "  Applying WorkflowTemplates..."
-kubectl apply -f "${WORKFLOWS_DIR}/templates/"
+# Shared WorkflowTemplates (airbyte-sync, dbt-run, ingestion-pipeline,
+# tt-enrich-jira-run) are owned by the umbrella chart and rendered into
+# the release namespace on `helm install` (see charts/insight/templates/
+# ingestion/*.yaml, controlled by ingestion.templates.enabled). We skip
+# applying them here — they are already in the cluster, and re-applying
+# from a long-deleted local copy was a stale leftover from before PR #224.
+: "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set, e.g. insight}"
+INSIGHT_NS="${INSIGHT_NAMESPACE}"
+if ! kubectl get workflowtemplate -n "$INSIGHT_NS" airbyte-sync >/dev/null 2>&1; then
+  echo "ERROR: WorkflowTemplate airbyte-sync not found in namespace '$INSIGHT_NS'." >&2
+  echo "       The umbrella chart should have installed it. Check:" >&2
+  echo "         helm get values insight -n $INSIGHT_NS | grep ingestion" >&2
+  echo "       and ensure ingestion.templates.enabled=true with" >&2
+  echo "       ingestion.toolboxImage and ingestion.jiraEnrichImage set." >&2
+  exit 1
+fi
+echo "  Found shared WorkflowTemplates in $INSIGHT_NS"
 
-# --- Get connection_id from toolkit state ---
-export TOOLKIT_DIR="${SCRIPT_DIR}/../airbyte-toolkit"
-source "${TOOLKIT_DIR}/lib/state.sh"
+# --- Resolve connection_name from Secret annotations (per ADR-0005) ---
+# Per KEY DECISION #1 we now pass connection_name (not the UUID); the
+# airbyte-sync init-step resolves the UUID at submit time.
+export RECONCILE_DIR="${SCRIPT_DIR}/../reconcile-connectors"
+# shellcheck source=../reconcile-connectors/lib/secrets.sh
+source "${RECONCILE_DIR}/lib/secrets.sh"
 
-get_connection_id() {
+get_connection_name() {
   local tenant="$1" connector="$2"
-  local conn_id=""
-  for source_key in $(state_list "tenants.${tenant}.connectors.${connector}"); do
-    conn_id=$(state_get "tenants.${tenant}.connectors.${connector}.${source_key}.connection_id")
-    [[ -n "$conn_id" ]] && break
-  done
-  [[ -n "$conn_id" ]] || return 1
-  echo "$conn_id"
+  local source_id
+  source_id="$(resolve_source_id "${connector}" "${tenant}" 2>/dev/null || true)"
+  [[ -n "${source_id}" ]] || return 1
+  printf '%s-%s-%s-conn' "${connector}" "${source_id}" "${tenant}"
 }
 
 # --- Generate and apply CronWorkflows for a tenant ---
@@ -35,15 +57,23 @@ sync_tenant() {
   local tenant_dir="${WORKFLOWS_DIR}/${tenant}"
   mkdir -p "$tenant_dir"
 
+  # Wipe stale generated workflows from prior runs — connectors may have
+  # been removed, renamed, or the namespace contract may have changed
+  # (e.g. PR #224 dropped the `argo` namespace). Without this cleanup,
+  # `kubectl apply -f $tenant_dir/` below will pick up old YAMLs and try
+  # to apply them. Path is rooted under WORKFLOWS_DIR/<tenant> so this
+  # is safe.
+  rm -f "$tenant_dir"/*.yaml
+
   # Iterate over all connectors with descriptor.yaml
   for descriptor in "${CONNECTORS_DIR}"/*/*/descriptor.yaml; do
     [[ -f "$descriptor" ]] || continue
 
     local connector schedule dbt_select workflow
     connector=$(yq -r '.name' "$descriptor")
-    schedule=$(yq -r '.schedule' "$descriptor" 2>/dev/null | grep -v null || echo "0 2 * * *")
-    dbt_select=$(yq -r '.dbt_select' "$descriptor" 2>/dev/null | grep -v null || echo "+tag:silver")
-    workflow=$(yq -r '.workflow' "$descriptor" 2>/dev/null | grep -v null || echo "sync")
+    schedule="$(yq -r '.schedule // "0 2 * * *"' "$descriptor" 2>/dev/null || echo "0 2 * * *")"
+    dbt_select="$(yq -r '.dbt_select // "+tag:silver"' "$descriptor" 2>/dev/null || echo "+tag:silver")"
+    workflow="$(yq -r '.workflow // "sync"' "$descriptor" 2>/dev/null || echo "sync")"
 
     # Find the workflow template
     local tpl="${WORKFLOWS_DIR}/schedules/${workflow}.yaml.tpl"
@@ -52,11 +82,11 @@ sync_tenant() {
       continue
     fi
 
-    # Get connection_id from state
-    local connection_id
-    connection_id=$(get_connection_id "$tenant" "$connector") || true
-    if [[ -z "$connection_id" ]]; then
-      echo "  SKIP: no connection_id for ${connector} tenant ${tenant}"
+    # Compute connection_name from Secret annotations.
+    local connection_name
+    connection_name=$(get_connection_name "$tenant" "$connector") || true
+    if [[ -z "$connection_name" ]]; then
+      echo "  SKIP: no connection_name for ${connector} tenant ${tenant}"
       continue
     fi
 
@@ -64,9 +94,10 @@ sync_tenant() {
     local output="${tenant_dir}/${connector}-sync.yaml"
     CONNECTOR="$connector" \
     TENANT_ID="$tenant" \
-    CONNECTION_ID="$connection_id" \
+    CONNECTION_NAME="$connection_name" \
     SCHEDULE="$schedule" \
     DBT_SELECT="$dbt_select" \
+    NAMESPACE="$INSIGHT_NS" \
       envsubst < "$tpl" > "$output"
 
     echo "  Generated: ${output}"
@@ -79,11 +110,13 @@ sync_tenant() {
 }
 
 # --- Main ---
+# Tenant list comes from $INSIGHT_TENANT_ID (single tenant) or
+# `--tenant <name>` flag, since Airbyte connection.name encodes the
+# tenant suffix and we use that as the identifier going forward.
 if [[ "${1:-}" == "--all" ]]; then
-  for tenant in $(state_list "tenants"); do
-    echo "  Syncing workflows for tenant: $tenant"
-    sync_tenant "$tenant"
-  done
+  tenant="${INSIGHT_TENANT_ID:?--all requires INSIGHT_TENANT_ID env}"
+  echo "  Syncing workflows for tenant: $tenant"
+  sync_tenant "$tenant"
 else
   tenant="${1:?Usage: $0 <tenant_id> | --all}"
   echo "  Syncing workflows for tenant: $tenant"

@@ -6,11 +6,11 @@
 ) }}
 
 {{ snapshot(
-    source_ref=source('bronze_slack', 'users'),
+    source_ref=ref('slack__users_latest'),
     unique_key_col='unique_key',
     check_cols=[
-        'email', 'display_name', 'real_name',
-        'is_admin', 'is_owner', 'is_restricted', 'is_ultra_restricted',
-        'is_bot', 'deleted', 'tz'
+        'email',
+        'is_guest',
+        'is_billable_seat'
     ]
 ) }}

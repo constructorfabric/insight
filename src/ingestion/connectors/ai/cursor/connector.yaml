@@ -1,0 +1,542 @@
+version: "7.0.4"
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - cursor_members
+
+definitions:
+  basic_authenticator:
+    type: BasicHttpAuthenticator
+    username: "{{ config['cursor_api_key'] }}"
+
+  mandatory_fields:
+    type: AddFields
+    fields:
+      - path: [tenant_id]
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [source_id]
+        value: "{{ config['insight_source_id'] }}"
+
+  post_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: PageIncrement
+      page_size: 500
+      start_from_page: 1
+    page_token_option:
+      type: RequestOption
+      inject_into: body_json
+      field_path:
+        - page
+    page_size_option:
+      type: RequestOption
+      inject_into: body_json
+      field_path:
+        - pageSize
+
+  get_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: PageIncrement
+      page_size: 500
+      start_from_page: 1
+    page_token_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: page
+    page_size_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: pageSize
+
+streams:
+  # ── Stream 1: cursor_members (full refresh) ──
+  - type: DeclarativeStream
+    name: cursor_members
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
+            type: string
+          id:
+            type: string
+          name:
+            type: string
+          email:
+            type: string
+          role:
+            type: string
+          isRemoved:
+            type: boolean
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.cursor.com
+        path: /teams/members
+        http_method: GET
+        request_headers:
+          Content-Type: application/json
+        authenticator:
+          $ref: "#/definitions/basic_authenticator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - teamMembers
+      paginator:
+        type: NoPagination
+    transformations:
+      - $ref: "#/definitions/mandatory_fields"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+
+  # ── Stream 2: cursor_audit_logs (incremental, GET) ──
+  - type: DeclarativeStream
+    name: cursor_audit_logs
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
+            type: string
+          event_id:
+            type: string
+          timestamp:
+            type: string
+          user_email:
+            type: string
+          event_type:
+            type: string
+          event_data:
+            type:
+              - string
+              - "null"
+          ip_address:
+            type:
+              - string
+              - "null"
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.cursor.com
+        path: /teams/audit-logs
+        http_method: GET
+        request_headers:
+          Content-Type: application/json
+        authenticator:
+          $ref: "#/definitions/basic_authenticator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - events
+      paginator:
+        $ref: "#/definitions/get_paginator"
+    transformations:
+      - $ref: "#/definitions/mandatory_fields"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['event_id'] }}"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: timestamp
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-30, format='%Y-%m-%dT00:00:00Z') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_time_option:
+        type: RequestOption
+        field_name: startTime
+        inject_into: request_parameter
+      end_time_option:
+        type: RequestOption
+        field_name: endTime
+        inject_into: request_parameter
+
+  # ── Stream 3: cursor_usage_events (hourly incremental, POST) ──
+  - type: DeclarativeStream
+    name: cursor_usage_events
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
+            type: string
+          userEmail:
+            type: string
+          timestamp:
+            type: string
+          kind:
+            type: string
+          model:
+            type: string
+          maxMode:
+            type: boolean
+          requestsCosts:
+            type: number
+          isTokenBasedCall:
+            type: boolean
+          isFreeBugbot:
+            type: boolean
+          cursorTokenFee:
+            type: number
+          isChargeable:
+            type: boolean
+          isHeadless:
+            type: boolean
+          chargedCents:
+            type: number
+          tokenUsage:
+            type:
+              - object
+              - "null"
+            properties:
+              inputTokens:
+                type: number
+              outputTokens:
+                type: number
+              cacheReadTokens:
+                type: number
+              cacheWriteTokens:
+                type: number
+              totalCents:
+                type: number
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.cursor.com
+        path: /teams/filtered-usage-events
+        http_method: POST
+        request_headers:
+          Content-Type: application/json
+        authenticator:
+          $ref: "#/definitions/basic_authenticator"
+        request_body_json:
+          startDate: "{{ stream_interval.start_time | int }}"
+          endDate: "{{ stream_interval.end_time | int }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - usageEvents
+      paginator:
+        $ref: "#/definitions/post_paginator"
+    transformations:
+      - $ref: "#/definitions/mandatory_fields"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}-{{ record['timestamp'] }}"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: timestamp
+      cursor_datetime_formats:
+        - "%ms"
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-30, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+
+  # ── Stream 4: cursor_usage_events_daily_resync (daily, POST, fixed window) ──
+  - type: DeclarativeStream
+    name: cursor_usage_events_daily_resync
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
+            type: string
+          userEmail:
+            type: string
+          timestamp:
+            type: string
+          kind:
+            type: string
+          model:
+            type: string
+          maxMode:
+            type: boolean
+          requestsCosts:
+            type: number
+          isTokenBasedCall:
+            type: boolean
+          isFreeBugbot:
+            type: boolean
+          cursorTokenFee:
+            type: number
+          isChargeable:
+            type: boolean
+          isHeadless:
+            type: boolean
+          chargedCents:
+            type: number
+          tokenUsage:
+            type:
+              - object
+              - "null"
+            properties:
+              inputTokens:
+                type: number
+              outputTokens:
+                type: number
+              cacheReadTokens:
+                type: number
+              cacheWriteTokens:
+                type: number
+              totalCents:
+                type: number
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.cursor.com
+        path: /teams/filtered-usage-events
+        http_method: POST
+        request_headers:
+          Content-Type: application/json
+        authenticator:
+          $ref: "#/definitions/basic_authenticator"
+        request_body_json:
+          startDate: "{{ stream_interval.start_time | int }}"
+          endDate: "{{ stream_interval.end_time | int }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - usageEvents
+      paginator:
+        $ref: "#/definitions/post_paginator"
+    transformations:
+      - $ref: "#/definitions/mandatory_fields"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}-{{ record['timestamp'] }}"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: timestamp
+      cursor_datetime_formats:
+        - "%ms"
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-1, format='%Y-%m-%dT12:08:04Z') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(0, format='%Y-%m-%dT12:08:04Z') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+
+  # ── Stream 5: cursor_daily_usage (incremental, POST) ──
+  - type: DeclarativeStream
+    name: cursor_daily_usage
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
+            type: string
+          userId:
+            type: string
+          email:
+            type: string
+          day:
+            type: string
+          date:
+            type: number
+          isActive:
+            type: boolean
+          chatRequests:
+            type: number
+          cmdkUsages:
+            type: number
+          composerRequests:
+            type: number
+          agentRequests:
+            type: number
+          bugbotUsages:
+            type: number
+          totalTabsShown:
+            type: number
+          totalTabsAccepted:
+            type: number
+          totalAccepts:
+            type: number
+          totalApplies:
+            type: number
+          totalRejects:
+            type: number
+          totalLinesAdded:
+            type: number
+          totalLinesDeleted:
+            type: number
+          acceptedLinesAdded:
+            type: number
+          acceptedLinesDeleted:
+            type: number
+          mostUsedModel:
+            type:
+              - string
+              - "null"
+          tabMostUsedExtension:
+            type:
+              - string
+              - "null"
+          applyMostUsedExtension:
+            type:
+              - string
+              - "null"
+          clientVersion:
+            type:
+              - string
+              - "null"
+          subscriptionIncludedReqs:
+            type: number
+          usageBasedReqs:
+            type: number
+          apiKeyReqs:
+            type: number
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.cursor.com
+        path: /teams/daily-usage-data
+        http_method: POST
+        request_headers:
+          Content-Type: application/json
+        authenticator:
+          $ref: "#/definitions/basic_authenticator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+      paginator:
+        $ref: "#/definitions/post_paginator"
+    transformations:
+      - $ref: "#/definitions/mandatory_fields"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userId'] }}-{{ record['date'] }}"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: date
+      cursor_datetime_formats:
+        - "%ms"
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-30, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        inject_into: body_json
+        field_path:
+          - startDate
+      end_time_option:
+        type: RequestOption
+        inject_into: body_json
+        field_path:
+          - endDate
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - cursor_api_key
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Tenant isolation identifier
+        order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        description: Unique identifier for this connector instance
+        order: 1
+      cursor_api_key:
+        type: string
+        title: Cursor API Key
+        description: Cursor team API key
+        airbyte_secret: true
+        order: 2
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    cursor_members: true
+    cursor_audit_logs: true
+    cursor_usage_events: true
+    cursor_usage_events_daily_resync: true
+    cursor_daily_usage: true

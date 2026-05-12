@@ -1,4 +1,4 @@
-//! SeaORM entity definitions for MariaDB tables.
+//! `SeaORM` entity definitions for `MariaDB` tables.
 
 pub mod metrics {
     use sea_orm::entity::prelude::*;

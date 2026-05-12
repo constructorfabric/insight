@@ -1,0 +1,122 @@
+version: 2
+
+sources:
+  - name: bronze_ms_entra
+    schema: bronze_ms_entra
+    tables:
+      - name: users
+
+models:
+  - name: ms_entra__bronze_promoted
+    description: >
+      Bootstrap model that promotes raw `bronze_ms_entra.users` to a
+      ReplacingMergeTree table (idempotent). Run before downstream models
+      that depend on RMT semantics.
+
+  - name: ms_entra__users_snapshot
+    description: >
+      SCD2 append-only snapshot of MS Entra users. Captures changes in
+      tracked fields (UPN, mail, displayName, employeeId, accountEnabled,
+      onPremisesSamAccountName, etc.) so the Identity Manager can observe
+      identity changes over time.
+    columns:
+      - name: unique_key
+        description: Composite (tenant, source, oid, _row_hash) snapshot key.
+        tests:
+          - not_null
+
+  - name: ms_entra__users_fields_history
+    description: >
+      Field-level change log for MS Entra users. One row per (entity,
+      field, change). Drives `ms_entra__identity_inputs`.
+    columns:
+      - name: entity_id
+        description: Entra Object ID (oid). Equals JWT `oid` claim.
+        tests:
+          - not_null
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: field_name
+        tests:
+          - not_null
+      - name: updated_at
+        tests:
+          - not_null
+
+  - name: ms_entra__identity_inputs
+    description: >
+      Identity signals emitted to Identity Manager. Each row is one
+      observation (UPSERT or DELETE) of an identity field for a user.
+      Identity Manager consumes these to resolve `oid → person_id`.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: insight_source_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ms-entra']
+      - name: source_account_id
+        description: Entra Object ID (oid).
+        tests:
+          - not_null
+      - name: value_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['id', 'email', 'employee_id', 'display_name', 'sam_account']
+      - name: operation_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['UPSERT', 'DELETE']
+
+  - name: ms_entra__to_class_people
+    description: >
+      MS Entra users → class_people (Silver Step 1).
+      Identity key: `email` (mail with UPN fallback). `source_person_id`
+      is the Entra Object ID (oid) — stable, reusable across services
+      via JWT `oid` claim.
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+      - name: source_person_id
+        description: Entra Object ID (oid).
+        tests:
+          - not_null
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ms-entra']
+      - name: workspace_id
+        tests:
+          - not_null
+      - name: status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['active', 'on_leave', 'terminated']

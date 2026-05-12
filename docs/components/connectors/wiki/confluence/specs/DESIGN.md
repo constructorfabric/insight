@@ -40,7 +40,7 @@
 
 ### 1.1 Architectural Vision
 
-The Confluence connector is an Airbyte declarative (no-code) YAML manifest that extracts space directory, page metadata, and version history from the Atlassian Confluence REST API (Cloud) and writes all data to per-source Bronze tables in the shared analytical store (ClickHouse), following the unified `wiki_*` Bronze schema defined in [`confluence.md`](../confluence.md) and [`README.md`](../../README.md). The declarative approach is consistent with all other connectors in the project (m365, bamboohr, claude-api, jira).
+The Confluence connector is an Airbyte declarative (no-code) YAML manifest that extracts space directory, page metadata, and version history from the Atlassian Confluence REST API (Cloud) and writes all data to per-source Bronze tables in the shared analytical store (ClickHouse), following the unified `wiki_*` Bronze schema defined in [`confluence.md`](../confluence.md) and [`README.md`](../../README.md). The declarative approach is consistent with all other connectors in the project (m365, bamboohr, claude-admin, jira).
 
 Phase 1 targets Confluence Cloud only. The connector uses REST API v2 for spaces, pages, and page versions. Server/Data Center support is deferred to a future iteration.
 
@@ -144,7 +144,7 @@ Phase 1 targets Confluence Cloud only (REST API v2 for spaces/pages/versions, v1
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-conf-declarative-first`
 
-Consistent with project convention, the Confluence connector uses a no-code YAML manifest (Airbyte DeclarativeSource). All other connectors in the project (m365, bamboohr, claude-api, jira) follow this pattern. Features that cannot be expressed declaratively (email resolution via batch User API lookup, version-to-activity row expansion) are deferred to downstream dbt layers rather than falling back to CDK Python in Phase 1.
+Consistent with project convention, the Confluence connector uses a no-code YAML manifest (Airbyte DeclarativeSource). All other connectors in the project (m365, bamboohr, claude-admin, jira) follow this pattern. Features that cannot be expressed declaratively (email resolution via batch User API lookup, version-to-activity row expansion) are deferred to downstream dbt layers rather than falling back to CDK Python in Phase 1.
 
 ### 2.2 Constraints
 
@@ -349,7 +349,11 @@ Extracts user identity attributes from Confluence Cloud API page and version obj
 | Airbyte declarative manifest runtime | `DeclarativeSource`, stream definitions, `AirbyteMessage` | Connector framework |
 | `descriptor.yaml` | Connector descriptor: `schedule`, `workflow`, `dbt_select`, `connection.namespace` | Package registration per Connector Framework §4.10 |
 
-> **Phase 1 dbt scope**: `descriptor.yaml` ships with `dbt_select: ""` and `silver_targets: []`. Silver models for `class_wiki_pages` and `class_wiki_activity` are deferred to Phase 2 (see §3.7 note on `wiki_page_activity`). `dbt/schema.yml` contains Bronze source declarations only — no staging or Silver models. The Argo `dbt` step is therefore a deliberate no-op until Phase 2 lands Silver routing.
+> **dbt scope**: `descriptor.yaml` ships with `dbt_select: "tag:confluence+"`. Staging models `confluence__wiki_pages` and `confluence__wiki_activity` live in `connectors/wiki/confluence/dbt/` and feed the Silver classes `class_wiki_pages` and `class_wiki_activity` via `union_by_tag('silver:class_wiki_*')`. `silver_targets` is omitted per Connector Spec §4.10 — Silver routing is determined entirely by dbt tags on the staging models.
+>
+> **Edit-session collapse in `confluence__wiki_activity`** (issue #259): Confluence creates a new `wiki_page_versions` row on every save (autosaves, rapid republishes, plugin-driven saves). A naive `count()` over versions therefore systematically overstates editing activity — a single 8-hour editing session of one page can produce 27 version rows. The staging model collapses consecutive versions of the same `(tenant, source, page, author)` whose inter-version gap is ≤ 30 minutes into a single logical edit session and counts those instead: `total_edits = uniqExact((page_id, session_id))`. The 30-minute threshold is a conservative compromise — long enough to absorb autosave bursts and short coffee breaks, short enough to keep morning-vs-evening edits separate. The threshold is a top-of-file Jinja constant (`session_gap_seconds`) and easy to tune. `pages_edited` and `pages_created` are not affected (they already count distinct pages / `version_number = 1`, neither of which is inflated by burst saves).
+>
+> **`minor_edit` deprecated** (issue #260): the upstream `wiki_page_versions.minor_edit` column is preserved for forward compatibility but is a known dead signal at the Atlassian Cloud API level — `/pages/{id}/versions` always returns `minorEdit: false` regardless of how the flag was set on PUT (verified empirically against both v2 and v1 listing endpoints, 2026-05-05). The Silver columns `class_wiki_activity.major_edits` / `class_wiki_activity.minor_edits` and the `confluence__wiki_activity` staging emissions for them were therefore dropped. The bronze field is left in place so that, if Atlassian fixes the API in the future, re-introducing the silver columns is a non-breaking additive change.
 
 **Dependency Rules**:
 - No circular dependencies between streams.
@@ -620,7 +624,7 @@ The following corrections to the PRD assumptions were identified during API vali
 | `author_id` | `authorId` | `accountId` of version author |
 | `created_at` | `createdAt` | ISO 8601; UTC |
 | `message` | `message` | Version message / commit note |
-| `minor_edit` | `minorEdit` | Boolean indicating minor edit |
+| `minor_edit` | `minorEdit` | **DEPRECATED (#260).** Boolean indicating minor edit. Read from the API and persisted to Bronze for forward compatibility, but the Confluence Cloud `/pages/{id}/versions` endpoint always returns `minorEdit: false` regardless of how the flag was set on PUT (verified empirically 2026-05-05 on `darthvolt.atlassian.net` against both v2 and v1 listing endpoints). Silver staging ignores this column; the dependent `class_wiki_activity.major_edits` and `class_wiki_activity.minor_edits` were removed in #260. |
 | `collected_at` | emission time | `now()` at record emission |
 | `data_source` | `insight_confluence` | Injected via `AddFields` |
 | `tenant_id` | config | Injected via `AddFields` |

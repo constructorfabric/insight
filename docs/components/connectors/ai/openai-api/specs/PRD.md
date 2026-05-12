@@ -185,7 +185,7 @@ The Identity Manager configuration **MUST** support per-application mapping conv
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-openai-api-silver-api-usage`
 
-Both daily usage aggregates and per-request events **MUST** feed the `class_ai_api_usage` Silver stream. Rows with `person_id = NULL` are valid and **MUST NOT** be filtered out. The Silver schema **MUST** be shared with Claude API, with a `source` field distinguishing `openai_api` from `claude_api`.
+Both daily usage aggregates and per-request events **MUST** feed the `class_ai_api_usage` Silver stream. Rows with `person_id = NULL` are valid and **MUST NOT** be filtered out. The Silver schema **MUST** be shared with the Anthropic Admin API connector (`claude-admin`), with a `data_source` field distinguishing `insight_openai_api` from `insight_claude_admin`.
 
 **Rationale**: A unified `class_ai_api_usage` stream enables cross-provider API cost comparison (OpenAI vs Anthropic) using a single analytics query.
 **Actors**: `cpt-insightspec-actor-openai-api-analytics-eng`
@@ -233,11 +233,11 @@ The connector **MUST** preserve `reasoning_tokens` as a separate field and **MUS
 - Or should `reasoning_tokens` be a separate metric tracked distinctly?
 - `cached_tokens` in OpenAI differs from Anthropic's `cache_read_tokens` + `cache_write_tokens` — how are these harmonized in `class_ai_api_usage`?
 
-### OQ-OAPI-2: Unified Silver schema with Claude API
+### OQ-OAPI-2: Unified Silver schema with Claude Admin (Anthropic)
 
-OpenAI API and Claude API have nearly identical Bronze schemas. `class_ai_api_usage` would unify both:
+OpenAI API and the Anthropic Admin API (via `claude-admin`) have nearly identical Bronze schemas for programmatic token usage. `class_ai_api_usage` would unify both:
 
-- `source`: `claude_api` / `openai_api`
+- `data_source`: `insight_claude_admin` / `insight_openai_api`
 - Shared fields: `date`, `api_key_id`, `model`, token counts, `cost_cents`
 - OpenAI-specific: `reasoning_tokens`, `cached_tokens`
 - Anthropic-specific: `cache_read_tokens`, `cache_write_tokens`

@@ -1,0 +1,141 @@
+version: 2
+
+# Bronze sources for the Salesforce CDK connector.
+# Table names match the SF sobject name (PascalCase) as emitted by the Airbyte
+# ClickHouse destination. Every table has the Insight envelope columns:
+# tenant_id, source_id, unique_key, data_source, collected_at, custom_fields
+# (JSON blob of all __c fields).
+
+sources:
+  - name: bronze_salesforce
+    schema: bronze_salesforce
+    tables:
+      # Core deal lifecycle
+      - name: Account
+      - name: Contact
+      - name: Opportunity
+      - name: OpportunityHistory
+      - name: Task
+      - name: Event
+      - name: User
+      # HubSpot-parity + analytics extensions
+      - name: Lead
+      - name: Case
+      - name: OpportunityContactRole
+      - name: OpportunityLineItem
+      - name: CampaignMember
+      - name: Campaign
+      - name: Product2
+      - name: Pricebook2
+      - name: PricebookEntry
+
+models:
+  - name: salesforce__crm_accounts
+    description: "Salesforce Account → staging, feeds class_crm_accounts"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        # Uniqueness is enforced by ReplacingMergeTree(_version) at merge
+        # time. A plain dbt `unique` test reads unmerged parts and produces
+        # false-positive duplicates. Relying on engine-level dedup; run
+        # ``OPTIMIZE TABLE ... FINAL`` before auditing.
+        tests: [not_null]
+      - name: account_id
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['salesforce'] }
+
+  - name: salesforce__crm_contacts
+    description: "Salesforce Contact → staging, feeds class_crm_contacts"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        # Uniqueness is enforced by ReplacingMergeTree(_version) at merge
+        # time. A plain dbt `unique` test reads unmerged parts and produces
+        # false-positive duplicates. Relying on engine-level dedup; run
+        # ``OPTIMIZE TABLE ... FINAL`` before auditing.
+        tests: [not_null]
+      - name: contact_id
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['salesforce'] }
+
+  - name: salesforce__crm_deals
+    description: "Salesforce Opportunity → staging, feeds class_crm_deals"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        # Uniqueness is enforced by ReplacingMergeTree(_version) at merge
+        # time. A plain dbt `unique` test reads unmerged parts and produces
+        # false-positive duplicates. Relying on engine-level dedup; run
+        # ``OPTIMIZE TABLE ... FINAL`` before auditing.
+        tests: [not_null]
+      - name: deal_id
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['salesforce'] }
+
+  - name: salesforce__crm_activities
+    description: "Salesforce Task + Event → staging, feeds class_crm_activities"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        # Uniqueness is enforced by ReplacingMergeTree(_version) at merge
+        # time. A plain dbt `unique` test reads unmerged parts and produces
+        # false-positive duplicates. Relying on engine-level dedup; run
+        # ``OPTIMIZE TABLE ... FINAL`` before auditing.
+        tests: [not_null]
+      - name: activity_id
+        tests: [not_null]
+      - name: activity_type
+        tests: [not_null]
+      - name: owner_id
+        tests: [not_null]
+      - name: timestamp
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['salesforce'] }
+
+  - name: salesforce__crm_users
+    description: "Salesforce User → staging, feeds class_crm_users"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        # Uniqueness is enforced by ReplacingMergeTree(_version) at merge
+        # time. A plain dbt `unique` test reads unmerged parts and produces
+        # false-positive duplicates. Relying on engine-level dedup; run
+        # ``OPTIMIZE TABLE ... FINAL`` before auditing.
+        tests: [not_null]
+      - name: user_id
+        tests: [not_null]
+      - name: email
+        tests: [not_null]
+      - name: is_active
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['salesforce'] }

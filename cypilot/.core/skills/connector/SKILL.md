@@ -23,7 +23,7 @@ Parse the user's command and route to the appropriate workflow:
 | `/connector test <name>` | [test.md](workflows/test.md) | Test connector (check, discover, read) |
 | `/connector schema <name>` | [schema.md](workflows/schema.md) | Generate JSON schema from real data |
 | `/connector validate <name>` | [validate.md](workflows/validate.md) | Validate package against spec |
-| `/connector build <name>` | Direct | Build CDK connector (Docker → Kind → Airbyte definition) |
+| `/connector build <name>` | Direct | Build CDK connector (Docker → registry/Kind → Airbyte definition) |
 | `/connector deploy <name>` | [deploy.md](workflows/deploy.md) | Deploy to Airbyte + Argo |
 | `/connector reset <name> <tenant>` | Direct | Delete connection/source/definition, drop Bronze tables, clean state |
 | `/connector workflow <name>` | [workflow.md](workflows/workflow.md) | Create/customize Argo workflow templates |
@@ -31,7 +31,7 @@ Parse the user's command and route to the appropriate workflow:
 
 ## CDK Build
 
-For `/connector build <name>`, run `{INGESTION_DIR}/airbyte-toolkit/build-connector.sh {CONNECTOR_PATH}`. This builds the Docker image, loads it into Kind, and registers/updates the Airbyte source definition. Only for `type: cdk` connectors.
+For `/connector build <name>`, run `{INGESTION_DIR}/airbyte-toolkit/build-connector.sh {CONNECTOR_PATH}`. This builds the Docker image, pushes to registry (or loads into Kind for local dev), and registers/updates the Airbyte source definition. Only for `type: cdk` connectors. Use `--push` and `IMAGE_REGISTRY` env var for remote clusters.
 
 ## Connector Reset
 

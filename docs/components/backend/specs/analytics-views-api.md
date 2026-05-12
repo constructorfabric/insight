@@ -812,7 +812,7 @@ Create `class_ci_runs` unifying both sources via `union_by_tag`:
 ### Step 4 — Identity resolution
 
 Register `triggering_actor.login` (GitHub) and `trigger.name` (Bitbucket)
-as `alias_type = 'username'` in `bootstrap_inputs`.
+as `value_type = 'username'` in `identity_inputs`.
 
 ### Impact
 

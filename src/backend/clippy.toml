@@ -1,0 +1,59 @@
+# clippy.toml — workspace-level Clippy configuration for the backend Rust
+# crates. Discovered automatically by `cargo clippy` when run from
+# `src/backend/` (matches `defaults.run.working-directory: src/backend`
+# in `.github/workflows/backend-checks.yml`).
+#
+# We extend `clippy::pedantic`'s `doc_markdown` lint allow-list because
+# rust-1.92.0 expanded the lint to flag many domain acronyms (OAuth2,
+# OIDC, JWT, …) appearing un-backticked in `///` rustdoc comments. Stock
+# Clippy already whitelists Rust-ecosystem terms ("OpenSSL", "Postgres",
+# "JavaScript", …); the `..` token below preserves that default and
+# ADDS the project-specific terms used across our rustdoc comments.
+#
+# WHY whitelist instead of fixing each comment with backticks:
+#   - We use these terms in rustdoc on practically every backend service
+#     (OAuth2/OIDC/PKCE in api-gateway, ClickHouse/MariaDB in DSN docs,
+#     SeaORM in identity-resolution, …). Backticking them all would be
+#     dozens of one-line edits, plus the same edit will be needed every
+#     time a contributor writes a new doc-comment with one of these
+#     terms — high recurring cost.
+#   - These are well-known industry / vendor names, not Rust identifiers
+#     accidentally written in prose. The lint's intent is to catch
+#     "you spelled `Vec` without backticks", not "OAuth2 needs to look
+#     like code".
+#
+# CONTEXT — what motivated this file:
+#   PR #295 ran into Lint & Test failure on a pre-existing line in
+#   `services/api-gateway/src/auth_info.rs:43` (rustdoc mentioning
+#   `OAuth2`). The line was clean on the previous toolchain (rust 1.91)
+#   and only became a CI blocker when GitHub-runners moved to rust
+#   1.92.0. This file pre-empts the same toolchain-drift issue for the
+#   rest of the project's domain vocabulary so we don't hit a fresh
+#   CI failure every few months on the next pedantic-lint expansion.
+#
+# When adding a new term: keep it ALPHABETIZED inside its category, and
+# add `..` to the FIRST list entry — Clippy treats `..` as "extend the
+# default allow-list" rather than "replace it" only when present.
+#
+# Reference: <https://rust-lang.github.io/rust-clippy/master/index.html#doc_markdown>
+
+doc-valid-idents = [
+    # ─── Clippy default list (preserved verbatim) ────────────────────
+    "..",
+    # ─── Auth & identity protocols ───────────────────────────────────
+    "OAuth", "OAuth2", "OIDC", "OpenID", "PKCE",
+    "JWT", "JWTs", "JWS", "JWE",
+    # ─── Wire protocols & RPC ────────────────────────────────────────
+    "gRPC", "HTTPS", "TLS", "mTLS", "WebSocket", "WebSockets",
+    # ─── Data systems ────────────────────────────────────────────────
+    "ClickHouse", "MariaDB", "PostgreSQL", "Redis", "Redpanda",
+    "Kafka", "Postgres",
+    # ─── Pipeline / scheduler vendor names ───────────────────────────
+    "Airbyte", "Argo",
+    # ─── Rust ecosystem we name in docs ──────────────────────────────
+    "SeaORM",
+    # ─── Infra / cloud-native ────────────────────────────────────────
+    "Bitnami", "Kubernetes", "GitHub", "GitLab",
+    # ─── ID / hashing / serialization terms commonly in DSNs / specs ─
+    "UUIDv7",
+]

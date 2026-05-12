@@ -1,0 +1,114 @@
+##
+## Insight — umbrella chart.
+##
+## Canonical unit of distribution for the platform.
+## Emits almost nothing on its own — it orchestrates subcharts.
+##
+## What is INCLUDED here:
+##   - Infrastructure: ClickHouse, MariaDB, Redis, Redpanda
+##   - Application:    api-gateway, analytics-api, identity, frontend
+##
+## What is NOT included (deployed separately):
+##   - Airbyte        — see scripts/install-airbyte.sh
+##   - Argo Workflows — see scripts/install-argo.sh
+##
+## Release name convention: `insight`. Changing the name requires
+## overriding the hardcoded DNS references in values (see values.yaml).
+##
+apiVersion: v2
+name: insight
+description: Insight — observability & analytics platform (umbrella chart)
+type: application
+
+# version    — packaging version of the chart. Bump on EVERY chart change.
+# appVersion — product version. Matches the image tag of all insight-* images.
+# Release pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
+version: 0.1.0
+appVersion: "0.1.0"
+
+kubeVersion: ">=1.27.0-0"
+
+home: https://github.com/cyberfabric/insight
+sources:
+  - https://github.com/cyberfabric/insight
+maintainers:
+  - name: Cyberfabric
+    url: https://github.com/cyberfabric
+
+# Dependencies — the heart of the umbrella.
+#
+# Fields:
+#   name        — dependency chart name (must match the dependency's Chart.yaml name)
+#   version     — strict pin for first-party charts, ~X.Y for bitnami/redpanda
+#   repository  — file:// for local charts, oci:// / https:// for remote
+#   condition   — toggle in values (path to a boolean field)
+#   alias       — short key name in values.yaml (otherwise the full chart name is needed)
+#
+# When adding a new dependency, remember to:
+#   1. helm dependency update charts/insight
+#   2. add a matching block in values.yaml under the same key (or alias)
+#
+dependencies:
+
+  # ─── Infrastructure ─────────────────────────────────────────────────────
+
+  # ClickHouse — OLAP store. Local wrapper chart so we keep control over
+  # keeper/shards/macros configuration.
+  - name: clickhouse
+    version: "0.1.0"
+    repository: "file://../../helmfile/charts/clickhouse"
+    condition: clickhouse.deploy
+
+  # MariaDB — operational DB (tenants, plugin installs, configs).
+  # Bitnami chart, OCI registry. Semver ~20.0.0 = 20.x security patches.
+  - name: mariadb
+    version: "~20.0.0"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: mariadb.deploy
+
+  # Redis — query response cache for analytics-api.
+  - name: redis
+    version: "~21.0.0"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: redis.deploy
+
+  # Redpanda — event bus (notifications, audit log, future).
+  # Kafka-compatible, simpler to operate.
+  - name: redpanda
+    version: "~5.0.0"
+    repository: "https://charts.redpanda.com"
+    condition: redpanda.deploy
+
+  # ─── Application services ──────────────────────────────────────────────
+  # All aliases are camelCase so values.yaml stays clean.
+  # Service names inside the cluster stay kebab-case: `insight-api-gateway`.
+  #
+  # No `condition:` on app services: the umbrella is a single deployable
+  # unit and every app service is mandatory (Constructor Platform /
+  # SRE requirement). The gateway is the only entrance; the rest of the
+  # services are reachable only through it.
+
+  - name: insight-api-gateway
+    alias: apiGateway
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/api-gateway/helm"
+
+  - name: insight-analytics-api
+    alias: analyticsApi
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/analytics-api/helm"
+
+  # Identity RESOLUTION — a C#/stub service that normalizes person records
+  # from ingested bronze data. Distinct from an OIDC identity provider
+  # (that is a separate concern, not part of the umbrella yet). Gated
+  # behind enabled because it requires populated bronze data to run.
+  - name: insight-identity-resolution
+    alias: identityResolution
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/identity/helm"
+    condition: identityResolution.deploy
+
+  - name: insight-frontend
+    alias: frontend
+    version: "0.1.0"
+    repository: "file://../../src/frontend/helm"

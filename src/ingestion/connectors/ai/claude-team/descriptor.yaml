@@ -1,7 +1,0 @@
-name: claude-team
-version: '1.0'
-schedule: 0 2 * * *
-dbt_select: tag:claude-team+
-workflow: sync
-connection:
-  namespace: bronze_claude_team

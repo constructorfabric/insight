@@ -20,7 +20,7 @@ The Identity Resolution DESIGN is decomposed into three features aligned to the 
 **Decomposition Strategy**:
 - Features grouped by **implementation phase**: seed → bootstrap → matching. Each phase delivers independently testable capabilities.
 - Feature 1 (Initial Seed) establishes the `aliases` table and resolution API — the minimum viable system where HR data is directly loaded.
-- Feature 2 (Bootstrap Pipeline) introduces the `bootstrap_inputs` ingestion mechanism, BootstrapJob processing, and conflict/unmapped tracking — enabling automated alias creation from connector data.
+- Feature 2 (Bootstrap Pipeline) introduces the `identity_inputs` ingestion mechanism, BootstrapJob processing, and conflict/unmapped tracking — enabling automated alias creation from connector data.
 - Feature 3 (Matching Engine) adds configurable matching rules with three-phase evaluation (B1/B2/B3), confidence scoring, and operator workflows — enabling intelligent alias resolution beyond exact matches.
 - Dependencies are linear: Feature 1 → Feature 2 → Feature 3. No circular dependencies.
 - 100% coverage of all DESIGN components, tables, and sequences verified.
@@ -56,10 +56,10 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
   - Hot-path alias lookup in `aliases` table
   - ClickHouse Dictionary for analytical Silver step 2 enrichment
   - Tenant isolation on all queries
-  - Cross-domain integration: `aliases.person_id` references `persons.id` (person domain creates person records via dbt seed)
+  - Cross-domain integration: `aliases.person_id` references `persons.person_id` (person domain creates person records; identity-resolution seeds the initial `persons` from `identity_inputs`, see ADR-0002)
 
 - **Out of scope**:
-  - `bootstrap_inputs` table (Feature 2)
+  - `identity_inputs` table (Feature 2)
   - BootstrapJob incremental processing (Feature 2)
   - Match rules and MatchingEngine (Feature 3)
   - Unmapped queue (Feature 2)
@@ -109,6 +109,7 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
   - [ ] `p3` - `cpt-insightspec-ir-db-schemas`
   - [ ] `p1` - `cpt-insightspec-ir-dbtable-aliases`
+  - [x] `p1` - `cpt-insightspec-ir-dbtable-persons-mariadb`
 
 - **Interfaces**:
 
@@ -121,15 +122,15 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
 - [ ] `p1` - **ID**: `cpt-ir-feature-bootstrap-pipeline`
 
-- **Purpose**: Enable automated, incremental alias creation from connector data. Connectors write alias observations to `bootstrap_inputs`; the BootstrapJob processes them into the `aliases` table, routing unresolvable aliases to the `unmapped` queue and detecting alias-level conflicts. This replaces the one-time dbt seed with a continuous pipeline that handles new connectors and ongoing syncs.
+- **Purpose**: Enable automated, incremental alias creation from connector data. Connectors write alias observations to `identity_inputs`; the BootstrapJob processes them into the `aliases` table, routing unresolvable aliases to the `unmapped` queue and detecting alias-level conflicts. This replaces the one-time dbt seed with a continuous pipeline that handles new connectors and ongoing syncs.
 
 - **Depends On**: `cpt-ir-feature-initial-seed` (aliases table and Resolution API must exist)
 
 - **Scope**:
-  - Create `bootstrap_inputs` table in ClickHouse
+  - Create `identity_inputs` table in ClickHouse
   - Create `unmapped` table for unresolved aliases
   - Create `conflicts` table for alias-level disagreements
-  - BootstrapJob: reads bootstrap_inputs incrementally (`_synced_at > last_watermark`). See DESIGN §5 REC-IR-02 for recommended watermark mechanism (dbt incremental + `bootstrap_watermarks` table)
+  - BootstrapJob: reads identity_inputs incrementally (`_synced_at > last_watermark`). See DESIGN §5 REC-IR-02 for recommended watermark mechanism (dbt incremental + `bootstrap_watermarks` table)
   - Alias normalization: email/username → `lower(trim())`; others → `trim()`
   - Auto-create alias on exact match (confidence >= 1.0 from direct lookup)
   - Route unresolved aliases to `unmapped` table
@@ -169,7 +170,7 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
   (Inherits all constraints from Feature 1)
 
 - **Domain Model Entities**:
-  - `bootstrap_inputs` (create)
+  - `identity_inputs` (create)
   - `aliases` (update — add new aliases from bootstrap)
   - `unmapped` (create)
   - `conflicts` (create)
@@ -181,7 +182,7 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
 - **API**:
   - (No new API endpoints — BootstrapJob is a batch job, not an API service)
-  - Connector write contract: dbt `bootstrap_inputs_from_history` macro applied to `fields_history` models (implemented for BambooHR and Zoom)
+  - Connector write contract: dbt `identity_inputs_from_history` macro applied to `fields_history` models (implemented for BambooHR and Zoom)
 
 - **Sequences**:
 
@@ -189,7 +190,7 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
 - **Data**:
 
-  - [x] `p1` - `cpt-insightspec-ir-dbtable-bootstrap-inputs`
+  - [x] `p1` - `cpt-insightspec-ir-dbtable-identity-inputs`
   - [ ] `p2` - `cpt-insightspec-ir-dbtable-unmapped`
   - [ ] `p2` - `cpt-insightspec-ir-dbtable-conflicts`
 
@@ -308,7 +309,8 @@ cpt-ir-feature-matching-engine
 | `cpt-insightspec-ir-component-conflict-detector` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-component-matching-engine` | Feature 3 (matching-engine) |
 | `cpt-insightspec-ir-dbtable-aliases` | Feature 1 (initial-seed) |
-| `cpt-insightspec-ir-dbtable-bootstrap-inputs` | Feature 2 (bootstrap-pipeline) |
+| `cpt-insightspec-ir-dbtable-identity-inputs` | Feature 2 (bootstrap-pipeline) |
+| `cpt-insightspec-ir-dbtable-persons-mariadb` | Feature 1 (initial-seed) |
 | `cpt-insightspec-ir-dbtable-unmapped` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-dbtable-conflicts` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-dbtable-match-rules` | Feature 3 (matching-engine) |

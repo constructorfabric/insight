@@ -1,0 +1,45 @@
+##
+## Argo Workflows — additional RBAC for Insight.
+##
+## argo-workflow-executor: Role bound to the `argo-workflow` ServiceAccount
+## created by the Argo Workflows chart (workflow.serviceAccount.create=true
+## in deploy/argo/values.yaml). Required so the Argo executor sidecar can
+## write step results (workflowtaskresults, pods, pods/log) via the K8s
+## API.
+##
+## Placeholders `${NAMESPACE}` and `${WORKFLOW_SA}` are substituted by
+## deploy/scripts/install-argo.sh so the same file works for any
+## INSIGHT_NAMESPACE (single-namespace deployment model).
+##
+## All Insight components (Airbyte, Argo, the umbrella) live in the SAME
+## namespace, so this RBAC binds only to that one namespace.
+##
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argo-workflow-executor
+  namespace: ${NAMESPACE}
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflowtaskresults"]
+    verbs: ["create", "patch", "get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argo-workflow-executor
+  namespace: ${NAMESPACE}
+subjects:
+  - kind: ServiceAccount
+    name: ${WORKFLOW_SA}
+    namespace: ${NAMESPACE}
+roleRef:
+  kind: Role
+  name: argo-workflow-executor
+  apiGroup: rbac.authorization.k8s.io

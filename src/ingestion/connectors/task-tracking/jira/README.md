@@ -20,7 +20,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: insight-jira-main
-  namespace: data
+  namespace: insight
   labels:
     app.kubernetes.io/part-of: insight
   annotations:
@@ -80,7 +80,7 @@ kubectl apply -f src/ingestion/secrets/connectors/jira.yaml
 | `jira_worklogs` | `GET /rest/api/3/issue/{key}/worklog` | Substream of `jira_issue` | — | Offset |
 | `jira_sprints` | `GET /rest/agile/1.0/board/{board_id}/sprint` | Substream of boards | — | Offset |
 
-An internal `_boards` helper stream (`GET /rest/agile/1.0/board`) is the substream parent for `jira_sprints` — it does not create a Bronze table.
+The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent for `jira_sprints` and materializes its own Bronze table.
 
 ### Identity Key
 

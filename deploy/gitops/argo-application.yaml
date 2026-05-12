@@ -1,0 +1,67 @@
+##
+## ArgoCD Application: Argo Workflows
+##
+## Sync wave 0 — installed in parallel with Airbyte, before Insight.
+## Insight (wave 1) waits until both infra apps become Healthy.
+##
+## Values come from deploy/argo/values.yaml via a multi-source setup
+## so this Application and `install-argo.sh` render identical manifests.
+##
+## The supplemental RBAC (deploy/argo/rbac.yaml) is deployed as a
+## separate ArgoCD Application or applied out-of-band — ArgoCD's
+## helm-chart source cannot emit additional raw manifests next to the
+## chart. See deploy/gitops/README.md.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-workflows
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  sources:
+    - repoURL: https://argoproj.github.io/argo-helm
+      chart: argo-workflows
+      targetRevision: 0.45.16
+      helm:
+        releaseName: argo-workflows
+        valueFiles:
+          - $values/deploy/argo/values.yaml
+        # workflowNamespaces and instanceID are set at runtime so they
+        # track the release namespace (single-namespace deployment model,
+        # multi-tenant safe on shared clusters).
+        parameters:
+          - name: controller.workflowNamespaces[0]
+            value: insight
+          - name: controller.instanceID.enabled
+            value: "true"
+          - name: controller.instanceID.explicitID
+            value: argo-workflows-insight
+
+    - repoURL: https://github.com/cyberfabric/insight.git
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: insight
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

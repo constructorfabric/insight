@@ -98,7 +98,7 @@ Insight's analytics capabilities depend on correct team attribution: commits, is
 
 **ID**: `cpt-orgchart-actor-hr-connector`
 
-**Role**: External system connector (BambooHR, Workday, LDAP) that provides organizational structure data — department names, hierarchy relationships, and person-to-department mappings. Writes org data via dbt models or the shared `bootstrap_inputs` table.
+**Role**: External system connector (BambooHR, Workday, LDAP) that provides organizational structure data — department names, hierarchy relationships, and person-to-department mappings. Writes org data via dbt models or the shared `identity_inputs` table.
 
 #### Analytics Pipeline
 
@@ -513,7 +513,7 @@ Org queries for tenant A **MUST NOT** return data from tenant B under any circum
 | Person domain (`persons` table) | Provides `person_id` targets for assignments; org-chart does not create persons | `p1` |
 | dbt models | Seed/incremental load of org units and assignments from HR Bronze data | `p1` |
 | Argo Workflows | Orchestrates dbt model runs post-connector-sync | `p1` |
-| IR domain (`bootstrap_inputs`) | Optional alternative ingestion path for org data from connectors | `p2` |
+| IR domain (`identity_inputs`) | Optional alternative ingestion path for org data from connectors | `p2` |
 
 ---
 

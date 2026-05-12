@@ -1,0 +1,56 @@
+##
+## Argo Workflows — curated values for Insight.
+##
+## Applied to the argo/argo-workflows chart.
+## Installed as a standalone Helm release in the SAME namespace as the
+## Insight umbrella (default `insight`, override via INSIGHT_NAMESPACE).
+## Separate release like Airbyte, for the same lifecycle reasons —
+## Argo Workflows has its own release cadence and CRD schema; we don't
+## want `helm upgrade` on the Insight umbrella to re-roll Argo every time.
+##
+## Insight services submit Workflow / CronWorkflow objects in the same
+## release namespace, using the WorkflowTemplates shipped by the umbrella
+## chart, or call the Argo server API directly.
+##
+
+server:
+  # Production: --auth-mode=client (Bearer token).
+  # Eval/demo: --auth-mode=server (no auth, port-forward friendly).
+  extraArgs:
+    - "--auth-mode=client"
+  serviceType: ClusterIP
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+
+controller:
+  # The controller watches Workflow resources only in the release namespace.
+  # `workflowNamespaces` and `instanceID` are set by install-argo.sh at
+  # deploy time so they track the INSIGHT_NAMESPACE (single-namespace
+  # model: Airbyte, Argo, umbrella — all in one ns).
+  #
+  # instanceID scopes workflows to this controller, so a second Insight
+  # install in another namespace on the same cluster does not accidentally
+  # pick up our workflows and vice versa.
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 512Mi }
+
+# ServiceAccount used by the workflow steps.
+# Created in each allowed namespace; extra RBAC is applied separately
+# by install-argo.sh (apply rbac.yaml).
+workflow:
+  serviceAccount:
+    create: true
+    name: argo-workflow
+
+executor:
+  resources:
+    requests: { cpu: 50m,  memory: 64Mi }
+    limits:   { cpu: 250m, memory: 128Mi }
+
+# Artifact repository: for storing logs/artifacts between steps.
+# Disabled by default — Insight's workflows are short and pass data
+# through ClickHouse/MariaDB rather than step-to-step artifacts.
+# Enable if you introduce long chains with intermediate files.
+useDefaultArtifactRepo: false

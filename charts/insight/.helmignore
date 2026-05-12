@@ -1,0 +1,14 @@
+# Patterns to ignore when building packages.
+# NB: do NOT put `charts/` here — it breaks subchart resolution.
+# To keep dependency tgz files out of git, use .gitignore instead.
+.DS_Store
+.git/
+.gitignore
+.project
+.idea/
+*.tmproj
+.vscode/
+
+# Local notes
+*.local
+NOTES.local.md

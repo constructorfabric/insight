@@ -1,0 +1,16 @@
+##
+## Argo Workflows — dev overlay.
+##
+## Relaxes auth for local Kind clusters so the UI is usable without
+## minting Bearer tokens. Merged ON TOP of deploy/argo/values.yaml by
+## dev-up.sh via EXTRA_VALUES_FILE.
+##
+## DO NOT apply this in production — a cluster-wide controller without
+## auth lets any pod submit workflows.
+##
+
+server:
+  extraArgs:
+    # `server` mode: no auth on the UI/API. Canonical (`client`)
+    # requires a ServiceAccount token.
+    - "--auth-mode=server"

@@ -3,8 +3,8 @@
 //! Uses `modkit-auth` `JwksKeyProvider` for JWT signature validation
 //! and `validate_claims` for standard claim checks.
 
-use modkit_auth::{JwksKeyProvider, ValidationConfig, validate_claims};
 use modkit_auth::traits::KeyProvider;
+use modkit_auth::{JwksKeyProvider, ValidationConfig, validate_claims};
 use modkit_security::SecurityContext;
 use secrecy::SecretString;
 use std::sync::Arc;
@@ -44,10 +44,7 @@ pub struct OidcService {
 impl OidcService {
     /// Creates a new OIDC service from plugin configuration.
     #[must_use]
-    pub fn new(
-        config: &OidcAuthnPluginConfig,
-        key_provider: Arc<JwksKeyProvider>,
-    ) -> Self {
+    pub fn new(config: &OidcAuthnPluginConfig, key_provider: Arc<JwksKeyProvider>) -> Self {
         let mut allowed_issuers = Vec::new();
         if !config.issuer_url.is_empty() {
             allowed_issuers.push(config.issuer_url.clone());
@@ -252,7 +249,10 @@ mod tests {
     fn extract_scopes_none_returns_empty() {
         let claims = serde_json::json!({});
         let scopes = extract_scopes(&claims);
-        assert!(scopes.is_empty(), "no scope claims should return empty vec, not wildcard");
+        assert!(
+            scopes.is_empty(),
+            "no scope claims should return empty vec, not wildcard"
+        );
     }
 
     #[test]

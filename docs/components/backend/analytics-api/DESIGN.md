@@ -170,7 +170,7 @@ The service calls Identity Resolution via a generic HTTP API contract (resolve p
 
 ```
 GET /v1/persons/{person_id}/aliases
--> { "aliases": [{ "alias_type": "email", "alias_value": "...", "insight_source_id": "..." }] }
+-> { "aliases": [{ "value_type": "email", "value": "...", "insight_source_id": "..." }] }
 ```
 
 The specific Identity Resolution implementation is not a concern of this service.
@@ -406,7 +406,7 @@ Operators: `gt`, `ge`, `lt`, `le`, `eq`. Levels: `good`, `warning`, `critical`.
 
 ```
 GET /v1/persons/{person_id}/aliases
--> { "aliases": [{ "alias_type": "email", "alias_value": "anna@acme.com", "insight_source_id": "..." }] }
+-> { "aliases": [{ "value_type": "email", "value": "anna@acme.com", "insight_source_id": "..." }] }
 ```
 
 **Error responses** (RFC 9457 Problem Details):

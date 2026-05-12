@@ -1,0 +1,88 @@
+version: 2
+
+models:
+  - name: class_task_field_history
+    description: "Unified per-(issue × field × event) history from all task-tracker sources. Event-sourced: one row per changelog entry or synthetic_initial bootstrap row. Source of truth is the Rust jira-enrich binary (per-source)."
+    columns:
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source system discriminator (e.g. 'jira', 'youtrack')"
+        tests:
+          - not_null
+      - name: event_id
+        description: "Natural identifier of the event. For `event_kind='changelog'` this is `jira_issue_history.changelog_id` (shared across all fields changed in one changelog). For `event_kind='synthetic_initial'` it is `'initial:<issue_id>'` (shared across all initial fields of one issue). Per ADR-005, operator audit JOIN key is (insight_source_id, id_readable, event_id, field_id)."
+        tests:
+          - not_null
+      - name: event_kind
+        description: "Discriminator for event origin. Enum8: `changelog` = real field change from jira_issue_history; `synthetic_initial` = bootstrap row emitted for every tracked field on first observation of an issue."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['changelog', 'synthetic_initial']
+      - name: field_id
+        description: "Field identifier (e.g. 'status', 'assignee', 'customfield_10020'). Part of the ReplacingMergeTree ORDER BY together with (insight_source_id, data_source, id_readable, event_id) — see ADR-005."
+        tests:
+          - not_null
+
+  - name: class_task_field_metadata
+    description: "Unified task-tracker field catalog. Declares cardinality (`is_multi`) and whether the field has an opaque ID vs a string literal (`has_id`). Consumed by `jira-enrich` to classify `value_id_type`."
+    columns:
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: field_id
+        tests:
+          - not_null
+
+  - name: class_task_comments
+    description: "Unified issue comments from all task-tracker sources."
+    columns:
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: comment_id
+        tests:
+          - not_null
+
+  - name: class_task_worklogs
+    description: "Unified issue worklogs from all task-tracker sources."
+    columns:
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: worklog_id
+        tests:
+          - not_null
+
+  - name: class_task_users
+    description: "Unified task-tracker user directory (anchor for identity resolution)."
+    columns:
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: user_id
+        tests:
+          - not_null
+
+  - name: class_task_projects
+    description: "Unified task-tracker project catalog."
+    columns:
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: project_id
+        tests:
+          - not_null
+
+  - name: class_task_sprints
+    description: "Unified task-tracker sprints."
+    columns:
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: sprint_id
+        tests:
+          - not_null

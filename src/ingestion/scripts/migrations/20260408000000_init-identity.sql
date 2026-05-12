@@ -44,8 +44,8 @@ ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (insight_tenant_id, id);
 
 -- ============================================================
--- identity.bootstrap_inputs — created by dbt (silver/bootstrap_inputs.sql view
--- + connector models like bamboohr__bootstrap_inputs, zoom__bootstrap_inputs).
+-- identity.identity_inputs — created by dbt (silver/_shared/identity_inputs.sql
+-- + connector models like bamboohr__identity_inputs, zoom__identity_inputs).
 -- NOT created here. See: docs/domain/identity-resolution/specs/DESIGN.md §3.7
 -- ============================================================
 
@@ -60,9 +60,9 @@ CREATE TABLE IF NOT EXISTS identity.aliases
     id                  UUID DEFAULT generateUUIDv7(),
     insight_tenant_id   UUID,
     person_id           UUID,
-    alias_type          LowCardinality(String),
-    alias_value         String,
-    alias_field_name    String DEFAULT '',
+    value_type          LowCardinality(String),
+    value               String,
+    value_field_name    String DEFAULT '',
     insight_source_id   UUID DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
     insight_source_type LowCardinality(String) DEFAULT '',
     source_account_id   String DEFAULT '',
@@ -77,4 +77,4 @@ CREATE TABLE IF NOT EXISTS identity.aliases
     is_deleted          UInt8 DEFAULT 0
 )
 ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY (insight_tenant_id, alias_type, alias_value, insight_source_id, id);
+ORDER BY (insight_tenant_id, value_type, value, insight_source_id, id);

@@ -17,6 +17,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct SecurityContext {
     /// Authenticated user ID (derived from OIDC `sub` claim).
+    #[allow(dead_code)] // will be consumed by authz scope resolution
     pub subject_id: Uuid,
     /// User's tenant ID (from JWT `insight_tenant_id` claim).
     pub insight_tenant_id: Uuid,
@@ -30,6 +31,7 @@ pub struct SecurityContext {
 #[derive(Debug, Clone)]
 pub struct AccessScope {
     /// Org unit IDs the user is allowed to see.
+    #[allow(dead_code)] // will be consumed by query engine for row-level filtering
     pub visible_org_unit_ids: Vec<Uuid>,
     // TODO: add effective_from/effective_to per org unit for time-scoped visibility
 }

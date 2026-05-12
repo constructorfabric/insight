@@ -9,23 +9,6 @@ sources:
       - name: participants
 
 models:
-  - name: zoom__comms_events
-    description: "Zoom communication events (meetings + chat) -> staging, feeds class_comms_events"
-    columns:
-      - name: tenant_id
-        tests:
-          - not_null
-      - name: source_id
-        tests:
-          - not_null
-      - name: unique_key
-        tests:
-          - not_null
-          - unique
-      - name: activity_date
-        tests:
-          - not_null
-
   - name: zoom__collab_meeting_activity
     description: "Zoom meeting activity aggregated per user per day → staging, feeds class_collab_meeting_activity"
     columns:

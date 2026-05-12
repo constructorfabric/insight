@@ -1,0 +1,100 @@
+{
+  "documentationUrl": "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Salesforce Source",
+    "type": "object",
+    "required": [
+      "insight_tenant_id",
+      "insight_source_id",
+      "salesforce_instance_url",
+      "salesforce_client_id",
+      "salesforce_client_secret"
+    ],
+    "additionalProperties": true,
+    "properties": {
+      "insight_tenant_id": {
+        "type": "string",
+        "title": "Insight Tenant ID",
+        "description": "Tenant isolation identifier for the ingestion layer.",
+        "order": 0
+      },
+      "insight_source_id": {
+        "type": "string",
+        "title": "Insight Source ID",
+        "description": "Instance discriminator (e.g. 'salesforce-acme-prod').",
+        "examples": ["salesforce-acme-prod"],
+        "order": 1
+      },
+      "salesforce_instance_url": {
+        "type": "string",
+        "title": "Instance URL",
+        "description": "Salesforce instance URL (e.g. 'https://mycompany.my.salesforce.com'). OAuth token endpoint is derived from this URL.",
+        "examples": ["https://mycompany.my.salesforce.com"],
+        "order": 2
+      },
+      "salesforce_client_id": {
+        "type": "string",
+        "title": "Client ID",
+        "description": "OAuth Consumer Key from the Salesforce External Client App (Client Credentials flow).",
+        "order": 3
+      },
+      "salesforce_client_secret": {
+        "type": "string",
+        "title": "Client Secret",
+        "description": "OAuth Consumer Secret from the Salesforce External Client App.",
+        "airbyte_secret": true,
+        "order": 4
+      },
+      "salesforce_start_date": {
+        "type": "string",
+        "title": "Start Date",
+        "description": "UTC start for initial incremental sync. Accepts YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ. Records older than this are skipped on first run. Omit to fall back to 2 years before now.",
+        "format": "date-time",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$",
+        "examples": ["2024-01-01", "2024-01-01T00:00:00Z"],
+        "order": 5
+      },
+      "salesforce_streams": {
+        "type": "array",
+        "items": { "type": "string" },
+        "title": "Streams Override",
+        "description": "Optional list of SF sobject names to sync. If set, overrides the curated default (Account, Contact, Opportunity, etc.). Use for per-tenant customization (add Lead types, custom objects).",
+        "default": [],
+        "order": 6
+      },
+      "salesforce_stream_slice_step": {
+        "type": "string",
+        "title": "Stream Slice Step",
+        "description": "ISO-8601 duration for concurrent cursor slice width. Smaller = more parallelism, more API calls. Default P30D (30 days).",
+        "pattern": "^P(?:\\d+[YMWD])+(?:T(?:\\d+[HMS])+)?$",
+        "default": "P30D",
+        "order": 7
+      },
+      "salesforce_lookback_window": {
+        "type": "string",
+        "title": "Lookback Window",
+        "description": "ISO-8601 duration to re-read before the cursor position each sync (accounts for Salesforce SystemModstamp eventual consistency). Default PT10M.",
+        "pattern": "^P(?:\\d+[YMWD])*(?:T(?:\\d+[HMS])+)?$",
+        "default": "PT10M",
+        "order": 8
+      },
+      "salesforce_force_use_bulk_api": {
+        "type": "boolean",
+        "title": "Force Bulk API",
+        "description": "Force Bulk API 2.0 even for sobjects with compound/base64 fields (those fields will be dropped from CSV output). Default false: Bulk used when safe, REST fallback otherwise.",
+        "default": false,
+        "order": 9
+      },
+      "salesforce_num_workers": {
+        "type": "integer",
+        "title": "Concurrent Workers",
+        "description": "Max concurrent Bulk jobs + REST slice fetches. Clamped to [1, 50]. Default 20.",
+        "default": 20,
+        "minimum": 1,
+        "maximum": 50,
+        "order": 10
+      }
+    }
+  }
+}

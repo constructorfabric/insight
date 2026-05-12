@@ -30,10 +30,14 @@ If the connector is new, it creates a builder project and publishes a new defini
 ### CDK (Python)
 
 ```bash
+# Local (Kind):
 ./airbyte-toolkit/build-connector.sh {category}/{name}
+
+# Remote (push to registry):
+IMAGE_REGISTRY=ghcr.io/cyberfabric IMAGE_TAG=latest ./airbyte-toolkit/build-connector.sh {category}/{name} --push
 ```
 
-This builds the Docker image, loads it into Kind, and registers/updates the Airbyte source definition.
+This builds the Docker image, pushes to registry (or loads into Kind for local dev), and registers/updates the Airbyte source definition.
 `update-connectors.sh --all` also auto-detects CDK connectors and delegates to `build-connector.sh`.
 
 **Important**:

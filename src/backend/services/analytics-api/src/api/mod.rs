@@ -16,6 +16,7 @@ pub struct AppState {
     pub db: DatabaseConnection,
     pub ch: insight_clickhouse::Client,
     pub identity: IdentityResolutionClient,
+    #[allow(dead_code)] // will be used for runtime config access (rate limits, feature flags)
     pub config: AppConfig,
 }
 
@@ -28,20 +29,47 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/metrics", axum::routing::get(handlers::list_metrics))
         .route("/v1/metrics", axum::routing::post(handlers::create_metric))
         .route("/v1/metrics/{id}", axum::routing::get(handlers::get_metric))
-        .route("/v1/metrics/{id}", axum::routing::put(handlers::update_metric))
-        .route("/v1/metrics/{id}", axum::routing::delete(handlers::delete_metric))
+        .route(
+            "/v1/metrics/{id}",
+            axum::routing::put(handlers::update_metric),
+        )
+        .route(
+            "/v1/metrics/{id}",
+            axum::routing::delete(handlers::delete_metric),
+        )
         // Query
-        .route("/v1/metrics/{id}/query", axum::routing::post(handlers::query_metric))
+        .route(
+            "/v1/metrics/{id}/query",
+            axum::routing::post(handlers::query_metric),
+        )
         // Thresholds
-        .route("/v1/metrics/{id}/thresholds", axum::routing::get(handlers::list_thresholds))
-        .route("/v1/metrics/{id}/thresholds", axum::routing::post(handlers::create_threshold))
-        .route("/v1/metrics/{id}/thresholds/{tid}", axum::routing::put(handlers::update_threshold))
-        .route("/v1/metrics/{id}/thresholds/{tid}", axum::routing::delete(handlers::delete_threshold))
+        .route(
+            "/v1/metrics/{id}/thresholds",
+            axum::routing::get(handlers::list_thresholds),
+        )
+        .route(
+            "/v1/metrics/{id}/thresholds",
+            axum::routing::post(handlers::create_threshold),
+        )
+        .route(
+            "/v1/metrics/{id}/thresholds/{tid}",
+            axum::routing::put(handlers::update_threshold),
+        )
+        .route(
+            "/v1/metrics/{id}/thresholds/{tid}",
+            axum::routing::delete(handlers::delete_threshold),
+        )
         // Person lookup (delegates to Identity Resolution service)
-        .route("/v1/persons/{email}", axum::routing::get(handlers::get_person))
+        .route(
+            "/v1/persons/{email}",
+            axum::routing::get(handlers::get_person),
+        )
         // Column catalog
         .route("/v1/columns", axum::routing::get(handlers::list_columns))
-        .route("/v1/columns/{table}", axum::routing::get(handlers::list_columns_for_table))
+        .route(
+            "/v1/columns/{table}",
+            axum::routing::get(handlers::list_columns_for_table),
+        )
         // Health
         .route("/health", axum::routing::get(handlers::health))
         // Auth middleware on all routes

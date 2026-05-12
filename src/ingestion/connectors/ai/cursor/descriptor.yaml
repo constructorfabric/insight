@@ -1,0 +1,10 @@
+name: cursor
+version: "2026.05.04"
+schedule: 0 2 * * *
+dbt_select: tag:cursor+
+workflow: sync
+connection:
+  namespace: bronze_cursor
+secret:
+  required_fields:
+    - cursor_api_key

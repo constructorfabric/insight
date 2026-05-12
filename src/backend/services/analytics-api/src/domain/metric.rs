@@ -4,10 +4,10 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// A metric definition — an admin-configured SQL query against ClickHouse.
+/// A metric definition — an admin-configured SQL query against `ClickHouse`.
 ///
-/// The `query_ref` field holds raw ClickHouse SQL. The query engine wraps it
-/// as a subquery, appending security filters + OData filters as parameterized
+/// The `query_ref` field holds raw `ClickHouse` SQL. The query engine wraps it
+/// as a subquery, appending security filters + `OData` filters as parameterized
 /// WHERE clauses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metric {
@@ -48,6 +48,7 @@ pub struct CreateMetricRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateMetricRequest {
     pub name: Option<String>,
+    #[allow(clippy::option_option)] // intentional: absent vs null vs value for PATCH semantics
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     pub description: Option<Option<String>>,
     pub query_ref: Option<String>,
@@ -58,14 +59,17 @@ pub struct UpdateMetricRequest {
 /// - absent → `None` (outer)
 /// - `null` → `Some(None)`
 /// - `"text"` → `Some(Some("text"))`
-fn deserialize_optional_nullable<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+#[allow(clippy::option_option)] // intentional: triple-state for PATCH semantics
+fn deserialize_optional_nullable<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     Ok(Some(Option::deserialize(deserializer)?))
 }
 
-/// A column in the ClickHouse schema catalog.
+/// A column in the `ClickHouse` schema catalog.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableColumn {
     pub id: Uuid,

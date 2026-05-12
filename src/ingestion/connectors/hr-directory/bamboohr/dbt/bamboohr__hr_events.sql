@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('bamboohr__bronze_promoted') }}
 {{ config(
     materialized='view',
     schema='staging',
@@ -21,7 +22,8 @@ SELECT
     JSONExtractString(toString(lr.status), 'status')        AS request_status,
     'bamboohr'                                              AS source,
     parseDateTimeBestEffortOrNull(lr.created)               AS created_at,
-    lr._airbyte_extracted_at                                AS ingested_at
+    lr._airbyte_extracted_at                                AS ingested_at,
+    toUnixTimestamp64Milli(lr._airbyte_extracted_at)        AS _version
 FROM {{ source('bamboohr', 'leave_requests') }} lr
 LEFT JOIN {{ source('bamboohr', 'employees') }} e
     ON lr.employeeId = e.id

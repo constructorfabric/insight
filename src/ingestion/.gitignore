@@ -12,3 +12,4 @@ connectors/**/state.json
 workflows/*/
 !workflows/templates/
 !workflows/schedules/
+!workflows/onetime/

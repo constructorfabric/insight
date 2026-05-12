@@ -1,0 +1,156 @@
+version: 2
+
+models:
+  - name: class_wiki_pages
+    description: >
+      Unified per-page snapshot across wiki sources. One row per
+      (tenant, source, page) with latest metadata: space, title, status,
+      author, last editor, version count, timestamps. Feeds future wiki
+      metrics (pages_by_author, pages_per_space) — currently no dashboard
+      metrics consume this model.
+
+      Identity resolution: Confluence v2 API returns only `author_id`
+      (Atlassian accountId). `author_email` is resolved via LEFT JOIN with
+      bronze_jira.jira_user on the same accountId namespace. If Jira is not
+      provisioned, the JOIN is skipped at compile-time and author_email /
+      last_editor_email are NULL — Silver Step 2 maps author_id → person_id.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-page_id"
+        tests:
+          - not_null
+          - unique
+      - name: page_id
+        description: "Wiki page identifier (stable across the source)"
+        tests:
+          - not_null
+      - name: space_id
+        description: "Wiki space identifier"
+      - name: space_name
+        description: "Space display name (from wiki_spaces.name)"
+      - name: title
+        description: "Page title"
+      - name: status
+        description: "Page status (current, archived, trashed for Confluence)"
+      - name: author_id
+        description: "Original author identifier as reported by the source (Atlassian accountId for Confluence)"
+      - name: author_email
+        description: >
+          Work email of original author. Resolved via LEFT JOIN with
+          bronze_jira.jira_user on accountId. NULL when Jira is not
+          provisioned or the account is deactivated/external.
+      - name: last_editor_id
+        description: "Identifier of the author of the latest version"
+      - name: last_editor_email
+        description: "Resolved email of the last editor. NULL if Jira not provisioned."
+      - name: parent_page_id
+        description: "Parent page identifier (hierarchy). NULL for top-level pages."
+      - name: version_count
+        description: "Current revision count. For Confluence: wiki_pages.version.number."
+        tests:
+          - not_null
+      - name: created_at
+        description: "Page creation timestamp (UTC)"
+      - name: updated_at
+        description: "Latest version timestamp (UTC)"
+      - name: space_url
+        description: "Space web URL"
+      - name: source
+        description: "Staging-model discriminator"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['confluence']
+      - name: data_source
+        description: "Framework source discriminator"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_confluence']
+      - name: collected_at
+        description: "When the record was collected"
+
+  - name: class_wiki_activity
+    description: >
+      Unified per-user per-day edit activity across wiki sources. One row per
+      (tenant, source, author, day) with counts of pages edited, total edits
+      (logical sessions), and pages created. Derived from page-version
+      history (Confluence: wiki_page_versions).
+
+      Identity: `author_id` is the source-side identifier (Atlassian accountId
+      for Confluence). `author_email` is resolved via LEFT JOIN with
+      bronze_jira.jira_user. Silver Step 2 (Identity Resolution) maps
+      author_id → person_id.
+
+      Dropped columns (#260): `major_edits` and `minor_edits` were removed
+      because the Confluence Cloud `/pages/{id}/versions` endpoint always
+      returns `minorEdit: false` (verified 2026-05-05). The bronze field
+      `wiki_page_versions.minor_edit` is preserved upstream for forward
+      compatibility but ignored here.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-author_id-day"
+        tests:
+          - not_null
+          - unique
+      - name: author_id
+        description: "Source-side author identifier"
+        tests:
+          - not_null
+      - name: author_email
+        description: "Resolved email via jira_user JOIN. NULL if Jira not provisioned."
+      - name: day
+        description: "Activity date (UTC)"
+        tests:
+          - not_null
+      - name: pages_edited
+        description: "Distinct pages edited on this day"
+        tests:
+          - not_null
+      - name: total_edits
+        description: >
+          Logical edit sessions authored on this day. Consecutive versions of
+          the same (page, author) within a 30-minute gap are collapsed into a
+          single session, so autosaves and rapid republishes do not inflate
+          the count. See `confluence__wiki_activity.sql` (issue #259) for
+          rationale and the threshold knob.
+        tests:
+          - not_null
+      - name: pages_created
+        description: "Pages created on this day (version_number = 1)"
+        tests:
+          - not_null
+      - name: source
+        description: "Staging-model discriminator"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['confluence']
+      - name: data_source
+        description: "Framework source discriminator"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_confluence']
+      - name: collected_at
+        description: "When the record was collected"

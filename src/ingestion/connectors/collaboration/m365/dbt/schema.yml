@@ -10,25 +10,6 @@ sources:
       - name: sharepoint_activity
 
 models:
-  - name: m365__comms_events
-    description: "M365 communication events → staging, feeds class_comms_events"
-    columns:
-      - name: tenant_id
-        tests:
-          - not_null
-      - name: source_id
-        tests:
-          - not_null
-      - name: unique_key
-        tests:
-          - not_null
-          - unique
-      - name: user_email
-        description: "User principal name from M365"
-      - name: activity_date
-        tests:
-          - not_null
-
   - name: m365__collab_chat_activity
     description: "M365 Teams chat activity → staging, feeds class_collab_chat_activity"
     columns:

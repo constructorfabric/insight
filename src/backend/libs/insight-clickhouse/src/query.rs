@@ -182,7 +182,10 @@ impl QueryBuilder {
         use std::fmt::Write;
 
         let select = self.select.as_deref().unwrap_or("*");
-        let mut sql = format!("SELECT {select} FROM {} WHERE insight_tenant_id = ?", self.table);
+        let mut sql = format!(
+            "SELECT {select} FROM {} WHERE insight_tenant_id = ?",
+            self.table
+        );
 
         for filter in &self.filters {
             let _ = write!(sql, " AND {filter}");
@@ -249,10 +252,7 @@ fn validate_order_by(clause: &str) -> bool {
             1 => is_safe_identifier(tokens[0]),
             2 => {
                 is_safe_identifier(tokens[0])
-                    && matches!(
-                        tokens[1].to_ascii_uppercase().as_str(),
-                        "ASC" | "DESC"
-                    )
+                    && matches!(tokens[1].to_ascii_uppercase().as_str(), "ASC" | "DESC")
             }
             _ => false,
         }
@@ -273,7 +273,10 @@ fn validate_filter_condition(condition: &str) -> bool {
     }
     condition.chars().all(|c| {
         c.is_ascii_alphanumeric()
-            || matches!(c, '_' | '.' | ' ' | '?' | '=' | '<' | '>' | '!' | '(' | ')' | ',')
+            || matches!(
+                c,
+                '_' | '.' | ' ' | '?' | '=' | '<' | '>' | '!' | '(' | ')' | ','
+            )
     })
 }
 
@@ -283,13 +286,16 @@ fn is_safe_identifier(s: &str) -> bool {
         return false;
     }
 
-    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Config;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
 
     fn test_client() -> Client {
         Client::new(Config::new("http://localhost:8123", "test_db"))
@@ -301,62 +307,57 @@ mod tests {
     }
 
     #[test]
-    fn bare_query_has_tenant_filter() {
+    fn bare_query_has_tenant_filter() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .to_sql();
 
-        assert_eq!(sql, "SELECT * FROM gold.metrics WHERE insight_tenant_id = ?");
+        assert_eq!(
+            sql,
+            "SELECT * FROM gold.metrics WHERE insight_tenant_id = ?"
+        );
+        Ok(())
     }
 
     #[test]
-    fn select_columns() {
+    fn select_columns() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .select("name, value, created_at")
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .select("name, value, created_at")?
             .to_sql();
 
         assert_eq!(
             sql,
             "SELECT name, value, created_at FROM gold.metrics WHERE insight_tenant_id = ?"
         );
+        Ok(())
     }
 
     #[test]
-    fn single_uuid_filter() {
-        let org_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222")
-            .unwrap_or_else(|e| panic!("invalid test UUID: {e}"));
+    fn single_uuid_filter() -> R {
+        let org_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222")?;
 
         let sql = test_client()
-            .tenant_query("silver.class_commits", test_tenant_id())
-            .unwrap()
-            .filter("org_unit_id = ?", org_id)
-            .unwrap()
+            .tenant_query("silver.class_commits", test_tenant_id())?
+            .filter("org_unit_id = ?", org_id)?
             .to_sql();
 
         assert_eq!(
             sql,
             "SELECT * FROM silver.class_commits WHERE insight_tenant_id = ? AND (org_unit_id = ?)"
         );
+        Ok(())
     }
 
     #[test]
-    fn multiple_filters_appended_with_and() {
-        let org_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222")
-            .unwrap_or_else(|e| panic!("invalid test UUID: {e}"));
+    fn multiple_filters_appended_with_and() -> R {
+        let org_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222")?;
 
         let sql = test_client()
-            .tenant_query("gold.pr_cycle_time", test_tenant_id())
-            .unwrap()
-            .filter("org_unit_id = ?", org_id)
-            .unwrap()
-            .filter("metric_date >= ?", "2026-01-01")
-            .unwrap()
-            .filter("metric_date < ?", "2026-04-01")
-            .unwrap()
+            .tenant_query("gold.pr_cycle_time", test_tenant_id())?
+            .filter("org_unit_id = ?", org_id)?
+            .filter("metric_date >= ?", "2026-01-01")?
+            .filter("metric_date < ?", "2026-04-01")?
             .to_sql();
 
         assert_eq!(
@@ -364,28 +365,27 @@ mod tests {
             "SELECT * FROM gold.pr_cycle_time WHERE insight_tenant_id = ? \
              AND (org_unit_id = ?) AND (metric_date >= ?) AND (metric_date < ?)"
         );
+        Ok(())
     }
 
     #[test]
-    fn order_by_clause() {
+    fn order_by_clause() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .order_by("created_at DESC")
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .order_by("created_at DESC")?
             .to_sql();
 
         assert_eq!(
             sql,
             "SELECT * FROM gold.metrics WHERE insight_tenant_id = ? ORDER BY created_at DESC"
         );
+        Ok(())
     }
 
     #[test]
-    fn limit_and_offset() {
+    fn limit_and_offset() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .limit(25)
             .offset(50)
             .to_sql();
@@ -394,26 +394,20 @@ mod tests {
             sql,
             "SELECT * FROM gold.metrics WHERE insight_tenant_id = ? LIMIT 25 OFFSET 50"
         );
+        Ok(())
     }
 
     #[test]
-    fn full_query_with_all_clauses() {
-        let org_id = Uuid::parse_str("33333333-3333-3333-3333-333333333333")
-            .unwrap_or_else(|e| panic!("invalid test UUID: {e}"));
+    fn full_query_with_all_clauses() -> R {
+        let org_id = Uuid::parse_str("33333333-3333-3333-3333-333333333333")?;
 
         let sql = test_client()
-            .tenant_query("gold.pr_cycle_time", test_tenant_id())
-            .unwrap()
-            .select("person_id, avg_hours, metric_date")
-            .unwrap()
-            .filter("org_unit_id = ?", org_id)
-            .unwrap()
-            .filter("metric_date >= ?", "2026-01-01")
-            .unwrap()
-            .filter("avg_hours > ?", 48)
-            .unwrap()
-            .order_by("avg_hours DESC")
-            .unwrap()
+            .tenant_query("gold.pr_cycle_time", test_tenant_id())?
+            .select("person_id, avg_hours, metric_date")?
+            .filter("org_unit_id = ?", org_id)?
+            .filter("metric_date >= ?", "2026-01-01")?
+            .filter("avg_hours > ?", 48)?
+            .order_by("avg_hours DESC")?
             .limit(100)
             .offset(0)
             .to_sql();
@@ -425,39 +419,38 @@ mod tests {
              AND (org_unit_id = ?) AND (metric_date >= ?) AND (avg_hours > ?) \
              ORDER BY avg_hours DESC LIMIT 100 OFFSET 0"
         );
+        Ok(())
     }
 
     #[test]
-    fn tenant_id_is_always_first_filter() {
+    fn tenant_id_is_always_first_filter() -> R {
         let sql = test_client()
-            .tenant_query("silver.class_people", test_tenant_id())
-            .unwrap()
+            .tenant_query("silver.class_people", test_tenant_id())?
             .to_sql();
 
         assert!(sql.contains("WHERE insight_tenant_id = ?"));
         assert!(!sql.contains("AND"));
+        Ok(())
     }
 
     #[test]
-    fn float_filter() {
+    fn float_filter() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .filter("value > ?", 99.5)
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .filter("value > ?", 99.5)?
             .to_sql();
 
         assert_eq!(
             sql,
             "SELECT * FROM gold.metrics WHERE insight_tenant_id = ? AND (value > ?)"
         );
+        Ok(())
     }
 
     #[test]
-    fn limit_only_no_offset() {
+    fn limit_only_no_offset() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .limit(10)
             .to_sql();
 
@@ -466,74 +459,70 @@ mod tests {
             "SELECT * FROM gold.metrics WHERE insight_tenant_id = ? LIMIT 10"
         );
         assert!(!sql.contains("OFFSET"));
+        Ok(())
     }
 
     #[test]
-    fn order_before_limit() {
+    fn order_before_limit() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .order_by("name ASC")
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .order_by("name ASC")?
             .limit(50)
             .to_sql();
 
-        let order_pos = sql.find("ORDER BY").unwrap_or_else(|| panic!("missing ORDER BY"));
-        let limit_pos = sql.find("LIMIT").unwrap_or_else(|| panic!("missing LIMIT"));
+        let order_pos = sql.find("ORDER BY").ok_or("missing ORDER BY")?;
+        let limit_pos = sql.find("LIMIT").ok_or("missing LIMIT")?;
         assert!(order_pos < limit_pos, "ORDER BY must come before LIMIT");
+        Ok(())
     }
 
     #[test]
-    fn different_tables_produce_different_sql() {
+    fn different_tables_produce_different_sql() -> R {
         let tenant = test_tenant_id();
         let client = test_client();
 
         let sql_silver = client
-            .tenant_query("silver.class_commits", tenant)
-            .unwrap()
+            .tenant_query("silver.class_commits", tenant)?
             .to_sql();
-        let sql_gold = client
-            .tenant_query("gold.pr_cycle_time", tenant)
-            .unwrap()
-            .to_sql();
+        let sql_gold = client.tenant_query("gold.pr_cycle_time", tenant)?.to_sql();
 
         assert!(sql_silver.contains("silver.class_commits"));
         assert!(sql_gold.contains("gold.pr_cycle_time"));
         assert_ne!(sql_silver, sql_gold);
+        Ok(())
     }
 
     // --- validation returns errors, not panics ---
 
     #[test]
-    fn filter_no_placeholder_returns_error() {
+    fn filter_no_placeholder_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .filter("status = 'active'", "unused");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("placeholder"));
+        let err = result.err().ok_or("expected error")?;
+        assert!(err.to_string().contains("placeholder"));
+        Ok(())
     }
 
     #[test]
-    fn filter_two_placeholders_returns_error() {
+    fn filter_two_placeholders_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .filter("value BETWEEN ? AND ?", "unused");
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]
     fn table_with_semicolon_returns_error() {
-        let result = test_client()
-            .tenant_query("gold.metrics; DROP TABLE --", test_tenant_id());
+        let result = test_client().tenant_query("gold.metrics; DROP TABLE --", test_tenant_id());
         assert!(result.is_err());
     }
 
     #[test]
     fn table_with_spaces_returns_error() {
-        let result = test_client()
-            .tenant_query("gold.metrics WHERE 1=1", test_tenant_id());
+        let result = test_client().tenant_query("gold.metrics WHERE 1=1", test_tenant_id());
         assert!(result.is_err());
     }
 
@@ -544,167 +533,160 @@ mod tests {
     }
 
     #[test]
-    fn valid_dotted_table_name() {
+    fn valid_dotted_table_name() -> R {
         let sql = test_client()
-            .tenant_query("silver.class_commits", test_tenant_id())
-            .unwrap()
+            .tenant_query("silver.class_commits", test_tenant_id())?
             .to_sql();
         assert!(sql.contains("FROM silver.class_commits"));
+        Ok(())
     }
 
     #[test]
-    fn filter_with_one_placeholder_ok() {
+    fn filter_with_one_placeholder_ok() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .filter("status = ?", "active")
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .filter("status = ?", "active")?
             .to_sql();
 
         assert!(sql.contains("(status = ?)"));
+        Ok(())
     }
 
     // --- order_by validation ---
 
     #[test]
-    fn order_by_simple_column() {
+    fn order_by_simple_column() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .order_by("metric_date DESC")
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .order_by("metric_date DESC")?
             .to_sql();
         assert!(sql.contains("ORDER BY metric_date DESC"));
+        Ok(())
     }
 
     #[test]
-    fn order_by_multiple_columns() {
+    fn order_by_multiple_columns() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .order_by("metric_date DESC, person_id ASC")
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .order_by("metric_date DESC, person_id ASC")?
             .to_sql();
         assert!(sql.contains("ORDER BY metric_date DESC, person_id ASC"));
+        Ok(())
     }
 
     #[test]
-    fn order_by_injection_semicolon_returns_error() {
+    fn order_by_injection_semicolon_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .order_by("1; DROP TABLE gold.metrics --");
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]
-    fn order_by_injection_subquery_returns_error() {
+    fn order_by_injection_subquery_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .order_by("(SELECT 1)");
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]
-    fn order_by_injection_comment_returns_error() {
+    fn order_by_injection_comment_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .order_by("metric_date -- comment");
         assert!(result.is_err());
+        Ok(())
     }
 
     // --- select validation ---
 
     #[test]
-    fn select_simple_columns() {
+    fn select_simple_columns() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .select("person_id, avg_hours")
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .select("person_id, avg_hours")?
             .to_sql();
         assert!(sql.starts_with("SELECT person_id, avg_hours FROM"));
+        Ok(())
     }
 
     #[test]
-    fn select_star() {
+    fn select_star() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .select("*")
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .select("*")?
             .to_sql();
         assert!(sql.starts_with("SELECT * FROM"));
+        Ok(())
     }
 
     #[test]
-    fn select_injection_subquery_returns_error() {
+    fn select_injection_subquery_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .select("*, (SELECT password FROM users) as x");
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]
-    fn select_injection_quotes_returns_error() {
+    fn select_injection_quotes_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .select("'1' as hack");
         assert!(result.is_err());
+        Ok(())
     }
 
     // --- filter condition validation ---
 
     #[test]
-    fn filter_injection_comment_returns_error() {
+    fn filter_injection_comment_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .filter("status = ? -- bypass", "active");
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]
-    fn filter_injection_semicolon_returns_error() {
+    fn filter_injection_semicolon_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .filter("status = ?; DROP TABLE gold.metrics", "x");
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]
-    fn filter_injection_quotes_returns_error() {
+    fn filter_injection_quotes_returns_error() -> R {
         let result = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
             .filter("status = 'admin' OR '1'=?", "1");
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]
-    fn filter_with_in_clause() {
+    fn filter_with_in_clause() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .filter("org_unit_id IN (?)", "uuid1")
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .filter("org_unit_id IN (?)", "uuid1")?
             .to_sql();
         assert!(sql.contains("(org_unit_id IN (?))"));
+        Ok(())
     }
 
     #[test]
-    fn filter_with_comparison_operators() {
+    fn filter_with_comparison_operators() -> R {
         let sql = test_client()
-            .tenant_query("gold.metrics", test_tenant_id())
-            .unwrap()
-            .filter("value >= ?", 100)
-            .unwrap()
+            .tenant_query("gold.metrics", test_tenant_id())?
+            .filter("value >= ?", 100)?
             .to_sql();
         assert!(sql.contains("(value >= ?)"));
+        Ok(())
     }
 }

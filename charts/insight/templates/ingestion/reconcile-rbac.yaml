@@ -1,0 +1,50 @@
+{{- if .Values.ingestion.templates.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "insight.fullname" . }}-reconcile
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: reconcile-loop
+    {{- include "insight.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "insight.fullname" . }}-reconcile
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: reconcile-loop
+    {{- include "insight.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets, configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: ["onepassword.com"]
+    resources: [onepassworditems]
+    verbs: [get, list, watch]
+  - apiGroups: ["argoproj.io"]
+    resources: [workflows, cronworkflows]
+    verbs: [get, list, create, delete, patch, update]
+  # workflows/status mutation is owned by the workflow-controller; reconcile only reads it
+  - apiGroups: ["argoproj.io"]
+    resources: [workflows/status]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "insight.fullname" . }}-reconcile
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: reconcile-loop
+    {{- include "insight.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "insight.fullname" . }}-reconcile
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "insight.fullname" . }}-reconcile
+{{- end }}

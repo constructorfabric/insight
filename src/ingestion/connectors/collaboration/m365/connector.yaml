@@ -33,7 +33,7 @@ definitions:
           url: >-
             https://login.microsoftonline.com/{{ config['azure_tenant_id']
             }}/oauth2/v2.0/token
-          http_method: GET
+          http_method: POST
           request_body:
             type: RequestBodyUrlEncodedForm
             value:
@@ -72,7 +72,7 @@ streams:
             url: >-
               https://login.microsoftonline.com/{{ config['azure_tenant_id']
               }}/oauth2/v2.0/token
-            http_method: GET
+            http_method: POST
             request_body:
               $ref: "#/definitions/linked/HttpRequester/request_body"
           session_token_path:
@@ -207,7 +207,7 @@ streams:
             url: >-
               https://login.microsoftonline.com/{{ config['azure_tenant_id']
               }}/oauth2/v2.0/token
-            http_method: GET
+            http_method: POST
             request_body:
               $ref: "#/definitions/linked/HttpRequester/request_body"
           session_token_path:
@@ -414,7 +414,7 @@ streams:
             url: >-
               https://login.microsoftonline.com/{{ config['azure_tenant_id']
               }}/oauth2/v2.0/token
-            http_method: GET
+            http_method: POST
             request_body:
               $ref: "#/definitions/linked/HttpRequester/request_body"
           session_token_path:
@@ -541,7 +541,7 @@ streams:
             url: >-
               https://login.microsoftonline.com/{{ config['azure_tenant_id']
               }}/oauth2/v2.0/token
-            http_method: GET
+            http_method: POST
             request_body:
               $ref: "#/definitions/linked/HttpRequester/request_body"
           session_token_path:
@@ -692,7 +692,7 @@ metadata:
   testedStreams:
     email_activity:
       streamHash: 50f4c6ed681d5a16052e190988d3e827e41d92e6
-      isStale: false
+      isStale: true
       hasResponse: true
       responsesAreSuccessful: true
       hasRecords: true

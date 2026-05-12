@@ -1,0 +1,27 @@
+dependencies:
+- name: clickhouse
+  repository: file://../../helmfile/charts/clickhouse
+  version: 0.1.0
+- name: mariadb
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 20.0.0
+- name: redis
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 21.0.3
+- name: redpanda
+  repository: https://charts.redpanda.com
+  version: 5.0.10
+- name: insight-api-gateway
+  repository: file://../../src/backend/services/api-gateway/helm
+  version: 0.1.0
+- name: insight-analytics-api
+  repository: file://../../src/backend/services/analytics-api/helm
+  version: 0.1.0
+- name: insight-identity-resolution
+  repository: file://../../src/backend/services/identity/helm
+  version: 0.1.0
+- name: insight-frontend
+  repository: file://../../src/frontend/helm
+  version: 0.1.0
+digest: sha256:282fda972b116f00ac2f3c4f875ebf8869c62bda01ceda573913a9175c46137b
+generated: "2026-04-30T16:56:22.751471+02:00"

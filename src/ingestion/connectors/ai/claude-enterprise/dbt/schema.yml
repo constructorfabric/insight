@@ -1,0 +1,208 @@
+version: 2
+
+sources:
+  - name: bronze_claude_enterprise
+    schema: bronze_claude_enterprise
+    tables:
+      - name: claude_enterprise_summaries
+      - name: claude_enterprise_users
+      - name: claude_enterprise_chat_projects
+      - name: claude_enterprise_skills
+      - name: claude_enterprise_connectors
+      - name: claude_enterprise_collection_runs
+
+models:
+  - name: claude_enterprise__ai_dev_usage
+    description: >
+      Bronze → Silver step 1: Claude Enterprise per-user Claude Code activity.
+      Feeds class_ai_dev_usage with tool='claude_code' for orgs on the
+      Enterprise subscription. Replaces claude_admin__ai_dev_usage as the
+      canonical Code feed — Enterprise reports per-user (user_email) directly,
+      avoiding the api_key_name → person_id resolution required by Admin.
+
+      Fields not exposed by Enterprise (total_lines_added, agent_sessions,
+      chat_requests, cost_cents) are emitted as NULL; downstream metrics that
+      need them (e.g., ai_loc_share_pct denominator) filter to tool='cursor'.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-user-day"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "User email (user_email from Bronze, lowercased)"
+        tests:
+          - not_null
+      - name: api_key_id
+        description: "Always NULL for Enterprise — Code usage is attributed by email"
+      - name: day
+        tests:
+          - not_null
+      - name: tool
+        description: "Always 'claude_code'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_code']
+      - name: session_count
+      - name: lines_added
+        description: "AI-accepted lines (code_lines_added)"
+      - name: lines_removed
+      - name: total_lines_added
+        description: "Always NULL — Enterprise does not expose total keystrokes"
+      - name: total_lines_removed
+        description: "Always NULL"
+      - name: tool_use_offered
+        description: "code_tool_accepted_count + code_tool_rejected_count"
+      - name: tool_use_accepted
+        description: "code_tool_accepted_count"
+      - name: completions_count
+        description: "Equal to tool_use_accepted (Edit/Write/MultiEdit/NotebookEdit invocations)"
+      - name: agent_sessions
+        description: "NULL — no Code-specific agent counter in Enterprise"
+      - name: chat_requests
+        description: "NULL — chat is reported separately in claude_enterprise__ai_assistant_usage"
+      - name: cost_cents
+        description: "NULL — Enterprise cost is org-level, not per-user"
+      - name: commits_count
+        description: "code_commit_count — git commits attributed to Claude Code sessions"
+      - name: pull_requests_count
+        description: "code_pull_request_count — pull requests attributed to Claude Code sessions"
+      - name: tool_action_breakdown_json
+        description: >
+          Raw claude_code_metrics_json from Bronze — full per-tool breakdown
+          (edit/write/multi_edit/notebook_edit with accepted/rejected counts).
+          Stored as-is for downstream analytics.
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_enterprise']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_claude_enterprise']
+      - name: collected_at
+        tests:
+          - not_null
+
+  - name: claude_enterprise__ai_assistant_usage
+    description: >
+      Bronze → Silver step 1: Claude Enterprise per-user assistant surface activity.
+      Feeds class_ai_assistant_usage with tool='claude' and surfaces 'chat'
+      (Claude.ai chat), 'excel' / 'powerpoint' (Office integrations), 'cowork'
+      (Claude Cowork), and 'cross' (web_search — surface-agnostic counter,
+      emitted as its own row per gist Q2 resolution). One Bronze row per
+      (date, user_email) can produce up to 5 staging rows — one per non-empty
+      surface.
+
+      Replaces the deprecated claude_enterprise__ai_api_usage model, which
+      incorrectly routed engagement data to class_ai_api_usage. Enterprise
+      engagement data represents human ↔ Claude assistant interaction, not
+      programmatic API consumption.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-email-day-surface"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "User email (user_email from Bronze, lowercased)"
+        tests:
+          - not_null
+      - name: day
+        tests:
+          - not_null
+      - name: tool
+        description: "Always 'claude' for Claude Enterprise"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude']
+      - name: surface
+        description: "chat | excel | powerpoint | cowork | cross"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['chat', 'excel', 'powerpoint', 'cowork', 'cross']
+      - name: session_count
+        description: >
+          excel → excel_session_count.
+          powerpoint → powerpoint_session_count.
+          cowork → cowork_session_count.
+          chat, cross → NULL.
+      - name: conversation_count
+        description: >
+          chat → chat_conversation_count.
+          excel, powerpoint, cowork, cross → NULL.
+      - name: message_count
+        description: >
+          chat → chat_message_count.
+          excel → excel_message_count.
+          powerpoint → powerpoint_message_count.
+          cowork → cowork_message_count.
+          cross → NULL.
+      - name: action_count
+        description: >
+          cowork → cowork_action_count.
+          chat, excel, powerpoint, cross → NULL.
+      - name: files_uploaded_count
+        description: "chat → chat_files_uploaded_count. NULL for other surfaces."
+      - name: artifacts_created_count
+        description: "chat → chat_artifacts_created_count. NULL for other surfaces."
+      - name: projects_created_count
+        description: "chat → chat_projects_created_count. NULL for other surfaces."
+      - name: projects_used_count
+        description: "chat → chat_projects_used_count. NULL for other surfaces."
+      - name: skills_used_count
+        description: >
+          chat → chat_skills_used_count.
+          cowork → cowork_skills_used_count.
+          excel, powerpoint, cross → NULL.
+      - name: connectors_used_count
+        description: "chat → chat_connectors_used_count. NULL for other surfaces."
+      - name: thinking_message_count
+        description: "chat → chat_thinking_message_count. NULL for other surfaces."
+      - name: dispatch_turn_count
+        description: "cowork → cowork_dispatch_turn_count. NULL for other surfaces."
+      - name: search_count
+        description: >
+          cross → web_search_count.
+          chat, excel, powerpoint, cowork → NULL.
+      - name: cost_cents
+        description: "Always NULL — Enterprise cost is org-level, not per-user."
+      - name: surface_metrics_json
+        description: >
+          Raw JSON for the surface.
+          chat → chat_metrics_json. excel / powerpoint → office_metrics_json
+          (full structure with both products). cowork → cowork_metrics_json.
+          cross → NULL.
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_enterprise']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_claude_enterprise']
+      - name: collected_at
+        tests:
+          - not_null

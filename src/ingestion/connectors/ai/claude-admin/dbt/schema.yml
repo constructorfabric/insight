@@ -1,0 +1,173 @@
+version: 2
+
+sources:
+  - name: bronze_claude_admin
+    schema: bronze_claude_admin
+    tables:
+      - name: claude_admin_users
+      - name: claude_admin_messages_usage
+      - name: claude_admin_cost_report
+      - name: claude_admin_code_usage
+      - name: claude_admin_api_keys
+      - name: claude_admin_workspaces
+      - name: claude_admin_workspace_members
+      - name: claude_admin_invites
+      - name: claude_admin_collection_runs
+
+models:
+  - name: claude_admin__ai_api_usage
+    description: >
+      Bronze → Silver step 1: Anthropic Admin API programmatic token usage.
+      Feeds class_ai_api_usage with channel='api' and email=NULL — programmatic
+      API key authentication cannot be attributed to individual users. Per-user
+      assistant activity (chat/office/cowork) comes from
+      claude_enterprise__ai_assistant_usage → class_ai_assistant_usage.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-workspace-day-provider-channel-model-key-tier-context"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: >
+          Always NULL for this staging — API key authentication is not tied
+          to a user at request time. Per-user attribution is achieved in
+          Silver Step 2 (Identity Resolution) by treating api_key_id as an
+          identity key (when the org provisions one key per developer).
+      - name: api_key_id
+        description: >
+          Anthropic API key identifier. Primary identity proxy for Admin API
+          usage — mapped to person_id in Silver Step 2 via identity.aliases.
+      - name: workspace_id
+        description: "Anthropic workspace identifier (nullable)"
+      - name: day
+        description: "Usage date (UTC)"
+        tests:
+          - not_null
+      - name: provider
+        description: "Always 'anthropic'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['anthropic']
+      - name: channel
+        description: "Always 'api'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['api']
+      - name: input_tokens
+        description: "uncached_input + cache_read + cache_creation_5m + cache_creation_1h"
+      - name: output_tokens
+      - name: cache_read_tokens
+      - name: cache_creation_tokens
+        description: "cache_creation_5m_tokens + cache_creation_1h_tokens"
+      - name: cost_amount
+        description: "NULL in MVP; future enrichment via claude_admin_cost_report"
+      - name: cost_currency
+      - name: source
+        description: "Always 'claude_admin'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_admin']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_claude_admin']
+      - name: collected_at
+        tests:
+          - not_null
+
+  - name: claude_admin__ai_dev_usage
+    description: >
+      Bronze → Silver step 1: Claude Code daily usage (per user or per
+      API-actor). Feeds class_ai_dev_usage with tool='claude_code'. Emits
+      both actor_type='user' rows (email populated from actor_identifier)
+      and actor_type='api_actor' rows (api_key_id resolved from
+      claude_admin_api_keys.name via JOIN; email NULL). api_actor rows
+      whose name cannot be resolved to an api_key_id are dropped to avoid
+      orphan-identity rows in Silver — Silver Step 2 (Identity Resolution)
+      then maps email / api_key_id → person_id.
+
+      Note: the initial PRD §5.7 required actor_type='user' only. Real
+      Virtuozzo data showed 100% of activity arrives as api_actor (the org
+      provisions named per-developer API keys), so strict user-only
+      filtering would yield zero rows in production. Dual-actor support
+      is the intended behaviour; the PRD clause is to be updated.
+
+      For orgs on the Enterprise subscription, Claude Code is sourced from
+      claude_enterprise__ai_dev_usage instead (Enterprise reports per-user
+      directly, avoiding api_key_name resolution). This model remains available
+      for Admin-only orgs and for historical data.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-email-day"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: >
+          User email (from actor_identifier) when actor_type='user'.
+          NULL when actor_type='api_actor' — use api_key_id instead.
+      - name: api_key_id
+        description: >
+          Anthropic API key ID for api_actor rows (resolved from
+          claude_admin_api_keys.name via JOIN). NULL for user rows.
+          Silver Step 2 maps this to person_id.
+      - name: day
+        description: "Usage date (UTC)"
+        tests:
+          - not_null
+      - name: tool
+        description: "Always 'claude_code'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_code']
+      - name: session_count
+        description: "Number of Claude Code sessions (aggregated across terminal_type)"
+      - name: lines_added
+      - name: lines_removed
+      - name: tool_use_offered
+        description: "tool_use_accepted + tool_use_rejected"
+      - name: tool_use_accepted
+        description: "Accepted tool actions (Edit/Write/MultiEdit/NotebookEdit)"
+      - name: completions_count
+        description: "NULL — not reported by Claude Code"
+      - name: agent_sessions
+        description: "NULL — not reported by Claude Code"
+      - name: chat_requests
+        description: "NULL — not reported by Claude Code"
+      - name: cost_cents
+        description: "NULL — Claude Code reports no per-user cost"
+      - name: source
+        description: "Always 'claude_admin'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_admin']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_claude_admin']
+      - name: collected_at
+        tests:
+          - not_null

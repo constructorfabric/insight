@@ -419,7 +419,7 @@ The system MUST enforce distinct permission boundaries for the three authorship 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-cn-rls`
 
-ClickHouse ROW POLICYs **MUST** be applied to all Bronze and Silver tables to enforce tenant-level data isolation at the database level. RLS policies **MUST** filter on `tenant_id` column and restrict each tenant role to only their data. Policies **MUST** survive table recreation (DROP + CREATE) — they are managed separately via `apply-rls.sh` and a declarative RLS config. The RLS config **MUST** be applied automatically during `./up.sh` initialization and **MUST** be re-applicable without data loss.
+ClickHouse ROW POLICYs **MUST** be applied to all Bronze and Silver tables to enforce tenant-level data isolation at the database level. RLS policies **MUST** filter on `tenant_id` column and restrict each tenant role to only their data. Policies **MUST** survive table recreation (DROP + CREATE) — they are managed separately via `apply-rls.sh` and a declarative RLS config. The RLS config **MUST** be applied automatically during `./dev-up.sh` initialization and **MUST** be re-applicable without data loss.
 
 **Rationale**: Application-level `WHERE tenant_id = ...` is insufficient as the sole isolation mechanism. Database-level RLS provides defense-in-depth and prevents accidental cross-tenant data exposure via ad-hoc queries or BI tools connecting directly to ClickHouse.
 

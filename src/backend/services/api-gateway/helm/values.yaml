@@ -4,7 +4,7 @@ podAnnotations: {}
 
 image:
   repository: ghcr.io/cyberfabric/insight-api-gateway
-  tag: "latest"
+  tag: ""                # MUST be set by the operator. No `:latest` default.
   pullPolicy: IfNotPresent
 
 service:
@@ -42,12 +42,12 @@ oidc:
   audience: ""            # e.g., api://insight
   clientId: ""            # Frontend (public) OIDC client ID
   redirectUri: ""         # e.g., https://insight.example.com/callback
+  # Space-separated OIDC scopes the SPA should request. IdP-specific:
+  #   Entra v2 single-app: "openid profile email api://<clientId>/Access.Default"
+  #   Okta:                "openid profile email <api-name>.<scope>"
+  # Without a resource scope, Entra defaults the audience to Microsoft Graph.
+  scopes: ""
   # jwksUrl: ""           # Override if JWKS URL differs from {issuer}/v1/keys
-
-# ClickHouse connection
-clickhouse:
-  url: "http://clickhouse.data.svc.cluster.local:8123"
-  database: "gold"
 
 # Set to true to disable authentication (local development only)
 authDisabled: false
@@ -62,12 +62,12 @@ gateway:
     burst: 50
     inFlight: 32
 
-# Reverse proxy routes to downstream services
+# Reverse proxy routes. `upstream` is a templated string — `tpl` is
+# applied at chart-render time, so `{{ .Release.Name }}` resolves to
+# the actual umbrella release name. Operator can also pass a literal
+# URL to point at an external service.
 proxy:
-  routes:
-    - prefix: "/analytics"
-      upstream: "http://analytics-api-analytics-api:8081"
-      public: false
+  routes: []
 
 # Health probes
 # Provided by cyberfabric api-gateway module:

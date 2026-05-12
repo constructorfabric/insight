@@ -38,7 +38,7 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 - Per-tenant Argo CronWorkflows generated from connector `descriptor.yaml`
 - Kind K8s cluster for local development (same Helm charts as production)
 - `insight-toolbox` container runs all management scripts inside the cluster
-- Auto-initialization on `./up.sh` — no manual setup
+- Auto-initialization on `./dev-up.sh` — no manual setup
 
 ## 2. Entries
 
@@ -50,7 +50,7 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 
 - [ ] `p1` - **ID**: `cpt-insightspec-feature-local-infra`
 
-- **Purpose**: Provide a fully automated local development environment via Kind K8s cluster that mirrors production topology. Running `./up.sh` creates a working instance with ClickHouse, Airbyte, Argo Workflows, and all initialization — no manual configuration required.
+- **Purpose**: Provide a fully automated local development environment via Kind K8s cluster that mirrors production topology. Running `./dev-up.sh` creates a working instance with ClickHouse, Airbyte, Argo Workflows, and all initialization — no manual configuration required.
 
 - **Depends On**: None
 

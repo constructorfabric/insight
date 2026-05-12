@@ -1,0 +1,38 @@
+##
+## Pre-rendered rbac.yaml for namespace `insight` (default GitOps target).
+##
+## Generated from rbac.yaml with NAMESPACE=insight, WORKFLOW_SA=argo-workflow.
+## For non-default namespaces, fork this repo and render a matching file.
+##
+## Shell-driven installs do NOT use this file — install-argo.sh renders
+## rbac.yaml at runtime with the live INSIGHT_NAMESPACE value.
+##
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argo-workflow-executor
+  namespace: insight
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflowtaskresults"]
+    verbs: ["create", "patch", "get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argo-workflow-executor
+  namespace: insight
+subjects:
+  - kind: ServiceAccount
+    name: argo-workflow
+    namespace: insight
+roleRef:
+  kind: Role
+  name: argo-workflow-executor
+  apiGroup: rbac.authorization.k8s.io

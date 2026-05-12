@@ -1,0 +1,246 @@
+{{- if .Values.ingestion.templates.enabled }}
+{{- /*
+Argo parameter references ({{inputs.parameters.foo}}, {{steps.x.outputs.result}})
+are escaped with Go-template raw-string literals (`…`) so Helm emits them
+verbatim for Argo to resolve at workflow-run time. Helm-resolved values are
+unescaped: they use `include` helpers and .Values references directly.
+
+SECURITY:
+  Argo substitutes parameter refs as LITERAL TEXT. Splicing them
+  directly into Python source enables arbitrary code execution by any
+  submitter — e.g. a crafted connection_id can become valid Python.
+  Mitigation: every workflow-time parameter is exposed to the Python
+  script via env vars (os.environ[...]); the Python source is a static,
+  parameter-free string.
+*/}}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: airbyte-sync
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  # Without this, manual `kubectl create -f` triggers fall back to the
+  # namespace default SA and fail on `workflowtaskresults.argoproj.io`
+  # RBAC (exit code 64). CronWorkflow callers also pin the same SA via
+  # render templates.
+  serviceAccountName: argo-workflow
+  arguments:
+    parameters:
+      - name: connection_name
+      - name: connector
+        value: ""
+      - name: tenant
+        value: ""
+      - name: airbyte_url
+        value: {{ include "insight.airbyte.url" . | quote }}
+  entrypoint: main
+  templates:
+    - name: main
+      inputs:
+        parameters:
+          - name: connection_name
+          - name: airbyte_url
+      steps:
+        - - name: resolve-connection-by-name
+            template: resolve-connection-by-name
+            arguments:
+              parameters:
+                - name: connection_name
+                  value: {{ `"{{inputs.parameters.connection_name}}"` }}
+                - name: airbyte_url
+                  value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+        - - name: sync
+            template: sync
+            arguments:
+              parameters:
+                - name: connection_id
+                  value: {{ `"{{steps.resolve-connection-by-name.outputs.parameters.connection_id}}"` }}
+                - name: airbyte_url
+                  value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+
+    - name: resolve-connection-by-name
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnError
+        backoff:
+          duration: "30s"
+          factor: 2
+          maxDuration: "5m"
+      inputs:
+        parameters:
+          - name: connection_name
+          - name: airbyte_url
+      outputs:
+        parameters:
+          - name: connection_id
+            valueFrom:
+              path: /tmp/connection_id.txt
+      script:
+        image: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+        command: [bash]
+        env:
+          - name: AIRBYTE_URL
+            value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+          - name: INSIGHT_NAMESPACE
+            value: {{ .Release.Namespace | quote }}
+          - name: CONNECTORS_DIR
+            value: "/ingestion/connectors"
+        source: |
+          set -euo pipefail
+          source /ingestion/reconcile-connectors/lib/airbyte.sh
+          source /ingestion/reconcile-connectors/lib/argo.sh
+          name='{{ `{{inputs.parameters.connection_name}}` }}'
+          if ! id="$(argo_resolve_connection_id_by_name "$name")"; then
+            echo "ERROR: connection name not found: $name" >&2
+            exit 1
+          fi
+          printf '%s' "$id" > /tmp/connection_id.txt
+
+    - name: sync
+      inputs:
+        parameters:
+          - name: connection_id
+          - name: airbyte_url
+      steps:
+        - - name: trigger
+            template: trigger-sync
+            arguments:
+              parameters:
+                - name: connection_id
+                  value: {{ `"{{inputs.parameters.connection_id}}"` }}
+                - name: airbyte_url
+                  value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+        - - name: poll
+            template: poll-job
+            arguments:
+              parameters:
+                - name: job_id
+                  value: {{ `"{{steps.trigger.outputs.result}}"` }}
+                - name: airbyte_url
+                  value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+
+    - name: trigger-sync
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnError
+        backoff:
+          duration: "30s"
+          factor: 2
+          maxDuration: "5m"
+      inputs:
+        parameters:
+          - name: connection_id
+          - name: airbyte_url
+      script:
+        image: python:3.12-alpine
+        command: [python3]
+        env:
+          # OAuth client_credentials against /api/v1/applications/token. The
+          # legacy self-minted HMAC JWT is rejected by Airbyte 1.7+ (the
+          # request hangs ~5 min then RST). Per ADR-0013, every workflow
+          # API call goes through the same instance-admin OAuth flow that
+          # reconcile uses.
+          - name: AIRBYTE_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+                key:  {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
+          - name: AIRBYTE_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+                key:  {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
+          - name: CONNECTION_ID
+            value: {{ `"{{inputs.parameters.connection_id}}"` }}
+          - name: AIRBYTE_URL
+            value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+        source: |
+          import urllib.request, urllib.error, json, sys, os
+          def oauth_token():
+              body = json.dumps({
+                  "client_id":     os.environ["AIRBYTE_CLIENT_ID"],
+                  "client_secret": os.environ["AIRBYTE_CLIENT_SECRET"],
+                  "grant_type":    "client_credentials",
+              }).encode()
+              req = urllib.request.Request(
+                  f"{os.environ['AIRBYTE_URL']}/api/v1/applications/token",
+                  data=body, headers={"Content-Type": "application/json"})
+              return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
+          token = oauth_token()
+          headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+          data = json.dumps({"connectionId": os.environ["CONNECTION_ID"]}).encode()
+          req = urllib.request.Request(f"{os.environ['AIRBYTE_URL']}/api/v1/connections/sync", data=data, headers=headers)
+          try:
+              resp = json.load(urllib.request.urlopen(req, timeout=120))
+          except urllib.error.HTTPError as e:
+              body = e.read().decode()
+              print(f"Airbyte API error {e.code}: {body}", file=sys.stderr)
+              sys.exit(1)
+          print(resp["job"]["id"])
+
+    - name: poll-job
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnError
+        backoff:
+          duration: "30s"
+          factor: 2
+          maxDuration: "5m"
+      inputs:
+        parameters:
+          - name: job_id
+          - name: airbyte_url
+      activeDeadlineSeconds: 10800
+      script:
+        image: python:3.12-alpine
+        command: [python3]
+        env:
+          - name: AIRBYTE_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+                key:  {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
+          - name: AIRBYTE_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+                key:  {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
+          - name: JOB_ID
+            value: {{ `"{{inputs.parameters.job_id}}"` }}
+          - name: AIRBYTE_URL
+            value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+        source: |
+          import urllib.request, urllib.error, json, time, sys, os
+          def oauth_token():
+              body = json.dumps({
+                  "client_id":     os.environ["AIRBYTE_CLIENT_ID"],
+                  "client_secret": os.environ["AIRBYTE_CLIENT_SECRET"],
+                  "grant_type":    "client_credentials",
+              }).encode()
+              req = urllib.request.Request(
+                  f"{os.environ['AIRBYTE_URL']}/api/v1/applications/token",
+                  data=body, headers={"Content-Type": "application/json"})
+              return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
+          job_id = int(os.environ["JOB_ID"])
+          airbyte_url = os.environ["AIRBYTE_URL"]
+          while True:
+              # Token TTL is short (~minutes); re-mint per loop iteration.
+              token = oauth_token()
+              headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+              req = urllib.request.Request(
+                  f"{airbyte_url}/api/v1/jobs/get",
+                  data=json.dumps({"id": job_id}).encode(),
+                  headers=headers)
+              resp = json.load(urllib.request.urlopen(req, timeout=30))
+              status = resp["job"]["status"]
+              print(f"Job {job_id} status: {status}", flush=True)
+              if status == "succeeded":
+                  print("Sync complete")
+                  sys.exit(0)
+              elif status in ("failed", "cancelled"):
+                  print(f"Sync failed: {status}")
+                  sys.exit(1)
+              time.sleep(30)
+{{- end }}

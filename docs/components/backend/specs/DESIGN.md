@@ -1260,6 +1260,7 @@ Frontend (React SPA) lives in a **separate repository**. Shared crates in `libs/
 - Single pipeline for the monorepo
 - Lint (clippy, fmt) → Unit tests → Integration tests (testcontainers) → Build changed Docker images → Push to container registry
 - Only rebuild/push images for services whose code (or dependencies) changed
+- Clippy runs at `pedantic` level (deny) — see `Cargo.toml [workspace.lints.clippy]`. The `doc_markdown` lint's allow-list is configured in `src/backend/clippy.toml` (`doc-valid-idents`) and includes the project's domain vocabulary (OAuth2, OIDC, JWT, ClickHouse, MariaDB, SeaORM, Airbyte, Argo, …). This pre-empts toolchain-drift CI failures every time a new rust release expands the lint's catch-set, and lets contributors mention these terms in `///` rustdoc comments without ceremonial backticks. Add new domain acronyms there rather than backticking each occurrence.
 
 **Deployment** (ArgoCD):
 

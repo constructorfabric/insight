@@ -24,14 +24,14 @@
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
+use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Router;
-use modkit::api::{OpenApiRegistry, OperationBuilder};
-use modkit::contracts::{Module, RestApiCapability};
+use modkit::api::{OpenApiRegistry, OperationBuilder, Problem};
 use modkit::context::ModuleCtx;
+use modkit::contracts::{Module, RestApiCapability};
 use serde::Deserialize;
 
 /// Route definition: prefix → upstream.
@@ -39,7 +39,7 @@ use serde::Deserialize;
 pub struct RouteConfig {
     /// URL path prefix to match (e.g. "/analytics").
     pub prefix: String,
-    /// Upstream service base URL (e.g. "http://analytics-api:8081").
+    /// Upstream service base URL (e.g. `http://analytics-api:8081`).
     pub upstream: String,
     /// If true, this route does NOT require authentication.
     /// Default: false (all routes require auth).
@@ -48,16 +48,10 @@ pub struct RouteConfig {
 }
 
 /// Module configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct ProxyConfig {
     pub routes: Vec<RouteConfig>,
-}
-
-impl Default for ProxyConfig {
-    fn default() -> Self {
-        Self { routes: vec![] }
-    }
 }
 
 /// Shared state for proxy handlers.
@@ -142,7 +136,13 @@ impl RestApiCapability for ProxyModule {
             let wildcard_path = format!("{prefix}/{{*rest}}");
             let desc = format!("Proxy → {}", route.upstream);
 
-            let methods = [Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH];
+            let methods = [
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+                Method::PATCH,
+            ];
 
             for method in methods {
                 let st = state.clone();
@@ -152,13 +152,9 @@ impl RestApiCapability for ProxyModule {
                 };
 
                 router = if route.public {
-                    register_public(
-                        router, openapi, method, &wildcard_path, &desc, handler,
-                    )
+                    register_public(router, openapi, method, &wildcard_path, &desc, handler)
                 } else {
-                    register_authenticated(
-                        router, openapi, method, &wildcard_path, &desc, handler,
-                    )
+                    register_authenticated(router, openapi, method, &wildcard_path, &desc, handler)
                 };
             }
 
@@ -169,8 +165,64 @@ impl RestApiCapability for ProxyModule {
             );
         }
 
+        // TEMPORARILY DISABLED — see https://github.com/cyberfabric/cyberfabric-core/pull/1843
+        //
+        // The wildcard `/{*rest}` registered as `authenticated()` here used to
+        // shield 404s behind a 401 for anonymous callers (so they couldn't
+        // probe path existence). But cyberfabric-core's GatewayRoutePolicy
+        // resolves auth requirements with `is_authenticated` short-circuiting
+        // before the public-route check, so this wildcard masks every
+        // explicitly `.public()` route at a more specific path — including
+        // /v1/auth/config, breaking the SPA's unauthenticated bootstrap.
+        //
+        // PR #1843 flips that precedence (public wins over wildcard
+        // authenticated). Once it lands and we bump the cf-api-gateway
+        // dependency past the fix, RE-ENABLE this block to restore the
+        // 404→401 topology shield.
+        //
+        // let fallback_methods = [
+        //     Method::GET,
+        //     Method::POST,
+        //     Method::PUT,
+        //     Method::DELETE,
+        //     Method::PATCH,
+        // ];
+        // for method in fallback_methods {
+        //     let handler =
+        //         move |_req: Request<Body>| async move { not_found_problem().into_response() };
+        //     router = OperationBuilder::new(method.clone(), "/{*rest}")
+        //         .summary("Authenticated 404 fallback")
+        //         .authenticated()
+        //         .no_license_required()
+        //         .json_response(StatusCode::NOT_FOUND, "Not found")
+        //         .handler(handler)
+        //         .register(router, openapi);
+        // }
+        tracing::warn!(
+            "authenticated 404 fallback DISABLED pending cyberfabric-core PR #1843 — \
+             unmatched paths will return Axum's default 404 without auth checking"
+        );
+
         Ok(router)
     }
+}
+
+/// RFC 9457 Problem for unmatched paths. Returned only after auth has
+/// already validated the token; unauthenticated callers get 401 from the
+/// auth middleware before reaching this handler.
+///
+/// Currently only the test references it — the handler that calls it is
+/// commented out pending cyberfabric-core PR #1843. Drop the
+/// `#[allow(dead_code)]` once the fallback is re-enabled.
+#[allow(dead_code)]
+fn not_found_problem() -> Problem {
+    Problem::new(
+        StatusCode::NOT_FOUND,
+        "Not Found",
+        "no route matches this path",
+    )
+    .with_type("urn:insight:error:not_found")
+    .with_code("not_found")
 }
 
 /// Register an authenticated proxy route via `OperationBuilder`.
@@ -226,17 +278,14 @@ async fn proxy_handler(state: Arc<ProxyState>, req: Request<Body>) -> Response {
                 error = %e,
                 "proxy request failed"
             );
-            (
+            Problem::new(
                 StatusCode::BAD_GATEWAY,
-                serde_json::json!({
-                    "type": "urn:insight:error:bad_gateway",
-                    "title": "Bad Gateway",
-                    "status": 502,
-                    "detail": "upstream service unavailable"
-                })
-                .to_string(),
+                "Bad Gateway",
+                "upstream service unavailable",
             )
-                .into_response()
+            .with_type("urn:insight:error:bad_gateway")
+            .with_code("bad_gateway")
+            .into_response()
         }
     }
 }
@@ -292,10 +341,9 @@ async fn forward_request(
     let mut response = builder.body(Body::from(resp_body))?;
 
     if !resp_headers.contains_key("content-type") {
-        response.headers_mut().insert(
-            "content-type",
-            HeaderValue::from_static("application/json"),
-        );
+        response
+            .headers_mut()
+            .insert("content-type", HeaderValue::from_static("application/json"));
     }
 
     Ok(response)
@@ -316,4 +364,82 @@ fn is_hop_by_hop(name: &str) -> bool {
             | "upgrade"
             | "host"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[tokio::test]
+    async fn not_found_problem_conforms_to_rfc9457() -> TestResult {
+        let response = not_found_problem().into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        // RFC 9457 §3 mandates application/problem+json — modkit::api::Problem
+        // sets this automatically; assert it so we catch any regression.
+        let ct = response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .ok_or("content-type missing")?;
+        assert_eq!(ct, "application/problem+json");
+
+        let body = to_bytes(response.into_body(), 4096).await?;
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+
+        assert_eq!(json["status"], 404);
+        assert_eq!(json["title"], "Not Found");
+        assert_eq!(json["type"], "urn:insight:error:not_found");
+        assert_eq!(json["code"], "not_found");
+        assert!(json["detail"].is_string());
+        Ok(())
+    }
+
+    /// Verifies the routing precedence assumption the fallback relies on:
+    /// a wildcard `/{*rest}` at the root must NOT shadow a more specific
+    /// `/configured/{*rest}` route. If Axum ever changes this rule, the
+    /// fallback would start hijacking proxy traffic and this test fires.
+    #[tokio::test]
+    async fn fallback_does_not_intercept_configured_routes() -> TestResult {
+        let app = Router::new()
+            .route(
+                "/configured/{*rest}",
+                get(|| async { (StatusCode::OK, "configured") }),
+            )
+            .route(
+                "/{*rest}",
+                get(|| async { not_found_problem().into_response() }),
+            );
+
+        // Configured route → handler
+        let req = axum::http::Request::builder()
+            .uri("/configured/v1/anything")
+            .body(Body::empty())?;
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), 4096).await?;
+        assert_eq!(&body[..], b"configured");
+
+        // Unmatched path → fallback 404 (RFC 9457 problem+json)
+        let req = axum::http::Request::builder()
+            .uri("/unknown/foo/bar")
+            .body(Body::empty())?;
+        let resp = app.oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let ct = resp
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .ok_or("content-type missing")?;
+        assert_eq!(ct, "application/problem+json");
+        let body = to_bytes(resp.into_body(), 4096).await?;
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+        assert_eq!(json["status"], 404);
+        assert_eq!(json["type"], "urn:insight:error:not_found");
+        Ok(())
+    }
 }

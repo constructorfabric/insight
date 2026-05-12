@@ -1,0 +1,47 @@
+##
+## App-of-Apps root Application.
+##
+## Single entry point: apply this to the cluster, then ArgoCD picks up
+## every other Application manifest in `deploy/gitops/` and creates them too.
+##
+## Convenient for enterprise customers: the vendor provides a Git repo link,
+## the customer applies ONE file, and the rest lives in Git.
+##
+## Usage:
+##   # 1. Fork the insight repo or create a customer-owned config repo
+##   # 2. Edit source.repoURL and source.path below to point at your fork
+##   # 3. kubectl apply -f root-app.yaml
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: insight-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  source:
+    # ────────────────────────────────────────────────────────
+    # CHANGE THIS: point at your fork or internal customer repo.
+    # ────────────────────────────────────────────────────────
+    repoURL: https://github.com/cyberfabric/insight.git
+    targetRevision: main
+    path: deploy/gitops
+    directory:
+      recurse: false
+      # Skip root-app.yaml itself and the README to avoid a recursion loop.
+      exclude: '{root-app.yaml,README.md}'
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

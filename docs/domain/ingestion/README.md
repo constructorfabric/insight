@@ -12,7 +12,7 @@ cp connections/example-tenant.yaml.example connections/my-tenant.yaml
 # Edit: fill in real API keys
 
 # 2. Start everything
-./up.sh
+./dev-up.sh
 
 # 3. Run a sync manually
 ./run-sync.sh m365 my-tenant
@@ -29,8 +29,8 @@ cp connections/example-tenant.yaml.example connections/my-tenant.yaml
 
 | Command | What it does |
 |---------|-------------|
-| `./up.sh` | Start all services. Idempotent — safe to re-run |
-| `./down.sh` | Stop all services. Data preserved |
+| `./dev-up.sh` | Start all services. Idempotent — safe to re-run |
+| `./dev-down.sh` | Stop all services. Data preserved |
 | `./cleanup.sh` | Delete cluster and all data. Asks for confirmation |
 
 ### Operations
@@ -46,7 +46,7 @@ cp connections/example-tenant.yaml.example connections/my-tenant.yaml
 
 ```bash
 # Full setup from scratch
-./up.sh
+./dev-up.sh
 
 # Update M365 connector manifest after editing connector.yaml
 ./update-connectors.sh
@@ -68,7 +68,7 @@ open http://localhost:30500
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Airbyte | http://localhost:8000 | Printed by `up.sh` |
+| Airbyte | http://localhost:8000 | Printed by `dev-up.sh` |
 | Argo UI | http://localhost:30500 | No auth (local) |
 | ClickHouse | http://localhost:30123 | user: `default`, password: `clickhouse` |
 
@@ -106,7 +106,7 @@ tenant_id: my_tenant
 
 destination:
   type: clickhouse
-  host: clickhouse.data.svc.cluster.local
+  host: insight-clickhouse.insight.svc.cluster.local
   port: 8123
   username: default
   password: clickhouse

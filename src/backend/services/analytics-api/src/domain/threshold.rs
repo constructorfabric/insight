@@ -56,6 +56,7 @@ pub fn validate_threshold(operator: &str, level: &str) -> Result<(), &'static st
 }
 
 /// Evaluate a numeric value against a threshold condition.
+#[allow(dead_code)] // will be called by query engine when threshold evaluation is wired
 pub fn threshold_matches(value: f64, operator: &str, threshold: f64) -> bool {
     match operator {
         "gt" => value > threshold,

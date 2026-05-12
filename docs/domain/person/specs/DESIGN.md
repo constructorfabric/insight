@@ -39,7 +39,7 @@ The Person domain owns the canonical person record — the single source of trut
 
 The core challenge this domain solves is **golden record assembly**: when multiple source systems (BambooHR, Active Directory, GitLab, Jira) each contribute partial, sometimes contradictory information about the same person, the GoldenRecordBuilder component resolves these contributions into a single best-value record. Source priority rules determine which system's value wins for each attribute; conflicts that cannot be resolved by priority are flagged for operator review.
 
-The architecture is ClickHouse-native, matching the project-wide decision. The `persons` table is a single merged entity (combining the v1 `person_entity`, `person`, and `person_golden` tables) with golden record fields inlined. SCD Type 2/Type 3 history is managed by dbt macros producing `*_snapshot` and `*_fields_history` tables — this is out of scope for this design but referenced for completeness. Person-attribute observations are read from the shared `bootstrap_inputs` table (owned by the IR domain); the Person domain reads `bootstrap_inputs` rows where `alias_type` corresponds to person attributes (e.g., `display_name`, `role`, `location`).
+The Person-domain analytical layer is ClickHouse-native, matching the project-wide decision for analytical storage. The Person-domain `persons` entity described below is a merged view over two underlying stores: (a) the MariaDB-backed `persons` identity-attribute history table owned by the Identity-Resolution domain (see identity-resolution DESIGN §3.7), which records every observed field value per source per person, and (b) the golden-record projection derived from it — either as a ClickHouse materialised view or as a separately-maintained table in the analytical layer. SCD Type 2/Type 3 history on top of the golden projection is managed by dbt macros producing `*_snapshot` and `*_fields_history` tables — this is out of scope for this design but referenced for completeness. Person-attribute observations reach this domain through two paths: directly from the MariaDB `persons` table for operator-driven edits, and from the shared `identity_inputs` ClickHouse table (also owned by Identity Resolution) for connector-sourced observations where `value_type` corresponds to person attributes (e.g., `display_name`, `role`, `location`).
 
 ### 1.2 Architecture Drivers
 
@@ -60,7 +60,7 @@ The architecture is ClickHouse-native, matching the project-wide decision. The `
 
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |---|---|---|---|---|
-| `cpt-person-nfr-golden-record-freshness` | Golden record updated within 30 min of source change | GoldenRecordBuilder | Triggered by bootstrap_inputs processing; batch update | Monitor `persons.updated_at` lag vs `bootstrap_inputs._synced_at` |
+| `cpt-person-nfr-golden-record-freshness` | Golden record updated within 30 min of source change | GoldenRecordBuilder | Triggered by identity_inputs processing; batch update | Monitor `persons.updated_at` lag vs `identity_inputs._synced_at` |
 | `cpt-person-nfr-tenant-isolation` | No cross-tenant person data leaks | All tables | `insight_tenant_id` as first column in all ORDER BY keys | Cross-tenant query returns empty |
 | `cpt-person-nfr-completeness-tracking` | Completeness score always accurate | GoldenRecordBuilder | Recomputed on every golden record rebuild | Verify `completeness_score` matches non-empty attribute count |
 
@@ -77,7 +77,7 @@ The architecture is ClickHouse-native, matching the project-wide decision. The `
 │  ────────────                 ─────────────           ─────────       │
 │                                                                       │
 │  ┌──────────────────┐    ┌───────────────────┐                       │
-│  │ bootstrap_inputs  │    │     persons        │──── Gold dashboards  │
+│  │ identity_inputs  │    │     persons        │──── Gold dashboards  │
 │  │ (IR domain, shared)│──▶│  (golden record)   │                      │
 │  └──────────────────┘    └───────────────────┘                       │
 │         │                   (history via dbt                          │
@@ -103,7 +103,7 @@ The architecture is ClickHouse-native, matching the project-wide decision. The `
 
 | Layer | Responsibility | Technology |
 |---|---|---|
-| Ingestion | Read person-attribute observations from shared `bootstrap_inputs` | ClickHouse (read from IR domain table) |
+| Ingestion | Read person-attribute observations from shared `identity_inputs` | ClickHouse (read from IR domain table) |
 | Processing | GoldenRecordBuilder assembles best-value records; ConflictDetector flags disagreements | Python / dbt macros |
 | Storage | Person records, source contributions, availability, conflicts | ClickHouse (ReplacingMergeTree, MergeTree) |
 | API | REST endpoints for person CRUD, golden record queries | Python (FastAPI) |
@@ -140,16 +140,16 @@ When sources disagree on an attribute and source priority alone cannot determine
 
 - [ ] `p2` - **ID**: `cpt-person-principle-domain-isolation`
 
-The Person domain owns person records and nothing else. Alias-to-person mapping belongs to the Identity Resolution domain. Org hierarchy and assignments belong to the Org-Chart domain. The Person domain reads from the shared `bootstrap_inputs` table but does not write to it. It writes only to its own tables.
+The Person domain owns person records and nothing else. Alias-to-person mapping belongs to the Identity Resolution domain. Org hierarchy and assignments belong to the Org-Chart domain. The Person domain reads from the shared `identity_inputs` table but does not write to it. It writes only to its own tables.
 
 
 ### 2.2 Constraints
 
-#### ClickHouse-Only Storage
+#### Analytical Storage in ClickHouse
 
-- [ ] `p2` - **ID**: `cpt-person-constraint-ch-only`
+- [ ] `p2` - **ID**: `cpt-person-constraint-analytical-ch`
 
-All person domain tables reside in ClickHouse. No PostgreSQL, no MariaDB. This is a project-wide decision.
+The analytical tables owned by the Person domain (golden-record projection, `person_availability`, `person_conflicts`) reside in ClickHouse. The MariaDB-backed `persons` identity-attribute history table read by this domain is owned by the Identity-Resolution domain (see identity-resolution DESIGN §3.7 and ingestion [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)); the Person domain reads from it but does not manage its schema.
 
 
 #### PR #55 Naming Conventions
@@ -159,11 +159,11 @@ All person domain tables reside in ClickHouse. No PostgreSQL, no MariaDB. This i
 All tables and columns follow PR #55 glossary conventions: plural table names, `id UUID DEFAULT generateUUIDv7()`, `insight_tenant_id UUID`, `insight_source_id UUID` + `insight_source_type LowCardinality(String)`, `DateTime64(3, 'UTC')` timestamps, `is_` prefix booleans as `UInt8`, `LowCardinality(String)` for enums, no `Nullable` unless semantically needed.
 
 
-#### Shared bootstrap_inputs Table
+#### Shared identity_inputs Table
 
-- [ ] `p2` - **ID**: `cpt-person-constraint-shared-bootstrap`
+- [ ] `p2` - **ID**: `cpt-person-constraint-shared-identity-inputs`
 
-The `bootstrap_inputs` table is owned by the Identity Resolution domain. The Person domain reads from it (filtering by person-attribute `alias_type` values like `display_name`, `role`, `location`) but does not write to it or modify its schema.
+Both the `identity_inputs` ClickHouse table and the MariaDB `persons` identity-attribute history table are owned by the Identity-Resolution domain. The Person domain reads from them (filtering by person-attribute `value_type` values like `display_name`, `role`, `location`) but does not write to them or modify their schemas. Connector-sourced observations flow through `identity_inputs`; operator-driven edits flow through MariaDB `persons`.
 
 
 #### dbt-Managed History
@@ -221,15 +221,15 @@ SCD Type 2/Type 3 history for the `persons` table is managed by dbt macros produ
 
 ##### Why this component exists
 
-Assembles the best-value `persons` record from incoming attribute observations (via `bootstrap_inputs`), using configurable per-attribute source priority rules. Without it, person records would show arbitrary or stale attribute values without any consistency guarantee.
+Assembles the best-value `persons` record from incoming attribute observations (via `identity_inputs`), using configurable per-attribute source priority rules. Without it, person records would show arbitrary or stale attribute values without any consistency guarantee.
 
 ##### Responsibility scope
 
-- `build(person_id)` — reads incoming attribute observations from `bootstrap_inputs` for the person; applies per-attribute source priority; writes merged golden record fields to `persons`.
+- `build(person_id)` — reads incoming attribute observations from `identity_inputs` for the person; applies per-attribute source priority; writes merged golden record fields to `persons`.
 - `completeness_score(person_id)` — computes fraction of non-empty canonical attributes.
 - Tracks per-attribute source in `persons.*_source` columns (e.g., `email_source = 'bamboohr'`).
 - Invokes ConflictDetector when source priority alone cannot resolve a disagreement.
-- Triggered after each person-attribute observation arrives via `bootstrap_inputs` (from bootstrap pipeline or dbt models).
+- Triggered after each person-attribute observation arrives via `identity_inputs` (from bootstrap pipeline or dbt models).
 
 ##### Responsibility boundaries
 
@@ -254,7 +254,7 @@ Detects and records person-attribute-level conflicts — when two or more source
 
 ##### Responsibility scope
 
-- `detect(person_id)` — compares attribute values from different sources (tracked via `*_source` columns and `bootstrap_inputs` history); writes to `person_conflicts` table when values disagree and are not resolvable by priority.
+- `detect(person_id)` — compares attribute values from different sources (tracked via `*_source` columns and `identity_inputs` history); writes to `person_conflicts` table when values disagree and are not resolvable by priority.
 - Sets `persons.conflict_status = 'needs_review'` when unresolved conflicts exist.
 - Marks conflicts as `resolved` when operator provides resolution or when a higher-priority source updates.
 
@@ -325,14 +325,14 @@ REST API layer for person record CRUD, golden record queries, conflict managemen
 
 | Dependency Module | Interface Used | Purpose |
 |---|---|---|
-| IR domain (`bootstrap_inputs` table) | ClickHouse read | Read person-attribute observations for golden record assembly |
+| IR domain (`identity_inputs` table) | ClickHouse read | Read person-attribute observations for golden record assembly |
 | IR domain (`aliases` table) | Logical FK (`aliases.person_id → persons.id`) | IR resolves aliases to person records owned by this domain |
 | Org-chart domain (`person_assignments` table) | Logical FK (`person_assignments.person_id → persons.id`) | Org-chart assigns persons to org units |
 | dbt models (Bronze → Silver) | ClickHouse tables | dbt seed populates `persons` from HR Bronze data in Phase 1 MVP |
 
 **Dependency Rules**:
-- Person domain reads from `bootstrap_inputs` but does not write to it
-- Person domain writes person-attribute unmapped observations to the shared `unmapped` table (IR domain) — differentiated by `alias_type`
+- Person domain reads from `identity_inputs` but does not write to it
+- Person domain writes person-attribute unmapped observations to the shared `unmapped` table (IR domain) — differentiated by `value_type`
 - Person domain does not depend on IR domain internals (aliases, match_rules)
 - IR domain and org-chart domain depend on `persons.id` as a stable FK target
 
@@ -366,14 +366,14 @@ REST API layer for person record CRUD, golden record queries, conflict managemen
 
 ```mermaid
 sequenceDiagram
-    participant BI as bootstrap_inputs (IR domain)
+    participant BI as identity_inputs (IR domain)
     participant PS as PersonService
     participant GRB as GoldenRecordBuilder
     participant CD as ConflictDetector
     participant P as persons (CH)
     participant PC as person_conflicts (CH)
 
-    PS ->> BI: Read person-attribute observations (alias_type in [display_name, role, location, ...])
+    PS ->> BI: Read person-attribute observations (value_type in [display_name, role, location, ...])
     BI -->> PS: attribute change records
 
     loop For each person with changes
@@ -548,7 +548,7 @@ Person-attribute-level conflicts — when two sources provide different values f
 
 **ORDER BY**: `(insight_tenant_id, person_id, status, attribute_name, id)`
 
-> **Shared unmapped table** ([ADR-0001](./ADR/0001-shared-unmapped-table.md)): Person-attribute observations that cannot be resolved are stored in the IR domain's shared `unmapped` table (not a separate `person_unmapped`). Both domains use the same structure and data origin (`bootstrap_inputs`). Differentiation is by `alias_type`: identity types (`email`, `username`, `employee_id`, `platform_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.).
+> **Shared unmapped table** ([ADR-0001](./ADR/0001-shared-unmapped-table.md)): Person-attribute observations that cannot be resolved are stored in the IR domain's shared `unmapped` table (not a separate `person_unmapped`). Both domains use the same structure and data origin (`identity_inputs`). Differentiation is by `value_type`: identity types (`id`, `email`, `username`, `employee_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.).
 
 **Engine**: `ReplacingMergeTree(updated_at)`
 
@@ -590,6 +590,6 @@ These tables are produced by dbt's `snapshot` and custom macros. The Person doma
 
 - **PRD**: [PRD.md](./PRD.md)
 - **Features**: features/ (to be created from DECOMPOSITION entries)
-- **Related (IR domain)**: [Identity Resolution DESIGN](../../identity-resolution/specs/DESIGN.md) — aliases, bootstrap_inputs
+- **Related (IR domain)**: [Identity Resolution DESIGN](../../identity-resolution/specs/DESIGN.md) — aliases, identity_inputs
 - **Related (org-chart domain)**: Org-chart domain DESIGN — org_units, person_assignments
 - **Source material**: Original identity-resolution v1 DESIGN — person_entity, person, person_golden schemas (merged into `persons`)

@@ -134,9 +134,6 @@ mod tests {
             issuer_url: "https://okta.example.com/".to_owned(),
             ..Default::default()
         };
-        assert_eq!(
-            cfg.effective_jwks_url(),
-            "https://okta.example.com/v1/keys"
-        );
+        assert_eq!(cfg.effective_jwks_url(), "https://okta.example.com/v1/keys");
     }
 }

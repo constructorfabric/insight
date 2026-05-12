@@ -74,17 +74,16 @@ Per-source deep-dive specifications for Constructor Insight connectors. Each fil
 
 | Source | Spec | Status |
 |--------|------|--------|
-| Cursor | [`ai-dev/cursor.md`](ai-dev/cursor.md) | Proposed |
-| Windsurf | [`ai-dev/windsurf.md`](ai-dev/windsurf.md) | Proposed |
-| GitHub Copilot | [`ai-dev/github-copilot.md`](ai-dev/github-copilot.md) | Proposed |
-| JetBrains | [`ai-dev/jetbrains.md`](ai-dev/jetbrains.md) | Draft |
+| Cursor | [`ai/cursor.md`](ai/cursor.md) | Proposed |
+| Windsurf | [`ai/windsurf.md`](ai/windsurf.md) | Proposed |
+| GitHub Copilot | [`ai/github-copilot.md`](ai/github-copilot.md) | Proposed |
+| JetBrains | [`ai/jetbrains.md`](ai/jetbrains.md) | Draft |
 
 ### AI Tools
 
 | Source | Spec | Status |
 |--------|------|--------|
-| Claude API | [`ai/claude-api.md`](ai/claude-api.md) | Proposed |
-| Claude Team Plan | [`ai/claude-team.md`](ai/claude-team.md) | Proposed |
+| Claude Admin | [`ai/claude-admin/README.md`](ai/claude-admin/README.md) | Proposed |
 | OpenAI API | [`ai/openai-api.md`](ai/openai-api.md) | Proposed |
 | ChatGPT Team | [`ai/chatgpt-team.md`](ai/chatgpt-team.md) | Proposed |
 
@@ -132,7 +131,7 @@ Per-source deep-dive specifications for Constructor Insight connectors. Each fil
 | `class_design_activity` | Figma | [`design/README.md`](design/README.md) |
 | Task Tracker unified schema | YouTrack + Jira | [`task-tracking/README.md`](task-tracking/README.md) |
 | `class_people` + `class_org_units` | BambooHR + Workday + LDAP | [`hr-directory/README.md`](hr-directory/README.md) |
-| `class_ai_dev_usage` | Cursor + Windsurf + Copilot + JetBrains + Claude Code | [`ai-dev/`](ai-dev/) |
+| `class_ai_dev_usage` | Cursor + Windsurf + Copilot + JetBrains + Claude Code | [`ai/`](ai/) |
 
 ---
 

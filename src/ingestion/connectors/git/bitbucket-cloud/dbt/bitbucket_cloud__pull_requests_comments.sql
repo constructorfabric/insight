@@ -1,6 +1,9 @@
+-- depends_on: {{ ref('bitbucket_cloud__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
+    order_by=['unique_key'],
+    settings={'allow_nullable_key': 1},
     schema='staging',
     tags=['bitbucket-cloud', 'silver:class_git_pull_requests_comments']
 ) }}

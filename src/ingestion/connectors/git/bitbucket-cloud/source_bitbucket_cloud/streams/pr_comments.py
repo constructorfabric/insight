@@ -1,101 +1,111 @@
-"""Bitbucket Cloud PR comments stream (REST, per-PR, incremental).
-
-Fetches both general discussion comments AND inline code comments from
-a single endpoint. Inline comments are distinguished by the `inline` field.
-"""
+"""Bitbucket Cloud PR comments stream (incremental, per-PR, HttpSubStream of pull_requests)."""
 
 import logging
 from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
-from source_bitbucket_cloud.streams.base import (
-    BitbucketAuthError,
-    BitbucketCloudRestStream,
-    _make_unique_key,
-    _now_iso,
-)
+from airbyte_cdk.models import SyncMode
+from airbyte_cdk.sources.streams.http import HttpSubStream
+
+from source_bitbucket_cloud.streams.base import BitbucketCloudStream, _make_unique_key, _truncate
+
 
 logger = logging.getLogger("airbyte")
 
 
-class PRCommentsStream(BitbucketCloudRestStream):
-    """Fetches comments for each PR via REST API.
+class PRCommentsStream(HttpSubStream, BitbucketCloudStream):
+    """Comments per PR. Per-PR incremental state keyed by ``pull_request_updated_on``.
 
-    Uses per-PR incremental state keyed by workspace/repo_slug/pr_id
-    with synced_at = parent PR updated_on.
+    - ``HttpSubStream`` re-iterates the parent PRs stream in full_refresh to build
+      slices. Each PR slice is then gated by our own state so unchanged PRs are
+      skipped.
+    - PRs with ``comment_count == 0`` are skipped entirely (no API call).
     """
 
     name = "pull_request_comments"
     cursor_field = "pull_request_updated_on"
+    # Per-record get_updated_state marks the whole PR synced; mid-slice
+    # checkpointing would therefore complete a PR after comment #1 and
+    # drop remaining comments on crash. State persists only at slice
+    # (per-PR) boundaries.
+    state_checkpoint_interval = None
+    ignore_404 = True
 
-    def __init__(self, parent, **kwargs):
-        super().__init__(**kwargs)
-        self._parent = parent
-        self._partitions_with_errors: set = set()
-
-    def _path(self, stream_slice: Optional[Mapping[str, Any]] = None, **kwargs) -> str:
+    def _path(self, stream_slice: Optional[Mapping[str, Any]] = None) -> str:
         s = stream_slice or {}
-        workspace = s.get("workspace", "")
-        slug = s.get("repo_slug", "")
-        pr_id = s.get("pr_id", "")
-        return f"repositories/{workspace}/{slug}/pullrequests/{pr_id}/comments"
+        pr = s["parent"]
+        return (
+            f"repositories/{pr['workspace']}/{pr['repo_slug']}/"
+            f"pullrequests/{pr['id']}/comments"
+        )
 
     def stream_slices(
         self,
+        sync_mode: SyncMode,
+        cursor_field: Optional[list] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
-        **kwargs,
     ) -> Iterable[Optional[Mapping[str, Any]]]:
+        # Iterate parent via stream_slices + read_records directly (not via
+        # HttpSubStream/read_only_records) — Stream.read() overrides incoming
+        # stream_state with self.state, skipping PRs the child still needs
+        # after a mid-stream crash. read_records honours the passed state.
         state = stream_state or {}
         total = 0
-        skipped = 0
+        skipped_unchanged = 0
         skipped_no_comments = 0
-        for pr in self._parent.get_child_slices():
-            workspace = pr.get("workspace", "")
-            slug = pr.get("repo_slug", "")
-            pr_id = pr.get("pr_id")
-            pr_updated_on = pr.get("updated_on", "")
-            comment_count = pr.get("comment_count")
-            if not (workspace and slug and pr_id):
-                continue
-            total += 1
-            if not comment_count:
-                skipped_no_comments += 1
-                continue
-            partition_key = f"{workspace}/{slug}/{pr_id}"
-            child_cursor = state.get(partition_key, {}).get("synced_at", "")
-            if pr_updated_on and child_cursor and pr_updated_on <= child_cursor:
-                skipped += 1
-                continue
-            yield {
-                "workspace": workspace,
-                "repo_slug": slug,
-                "pr_id": pr_id,
-                "pr_updated_on": pr_updated_on,
-                "partition_key": partition_key,
-            }
-        fetched = total - skipped - skipped_no_comments
-        if skipped or skipped_no_comments:
-            logger.info(
-                f"PR comments: {fetched}/{total} PRs need comment sync "
-                f"({skipped} unchanged, {skipped_no_comments} zero comments)"
-            )
 
-    def parse_response(self, response, stream_slice=None, **kwargs):
+        for repo_slice in self.parent.stream_slices(
+            sync_mode=SyncMode.full_refresh, cursor_field=None, stream_state={},
+        ):
+            for pr in self.parent.read_records(
+                sync_mode=SyncMode.full_refresh,
+                stream_slice=repo_slice,
+                stream_state={},
+            ):
+                if not isinstance(pr, Mapping):
+                    continue
+                if not pr.get("comment_count"):
+                    skipped_no_comments += 1
+                    continue
+                total += 1
+
+                workspace = pr.get("workspace", "")
+                slug = pr.get("repo_slug", "")
+                pr_id = pr.get("id")
+                pr_updated_on = pr.get("updated_on", "") or ""
+                partition_key = f"{workspace}/{slug}/{pr_id}"
+
+                synced_at = (state.get(partition_key, {}) or {}).get(self.cursor_field, "") or ""
+                if pr_updated_on and synced_at and pr_updated_on <= synced_at:
+                    skipped_unchanged += 1
+                    continue
+
+                yield {"parent": pr}
+
+        logger.info(
+            f"pull_request_comments: {total - skipped_unchanged} PRs to fetch "
+            f"({skipped_unchanged} unchanged, {skipped_no_comments} zero-comment, "
+            f"state_entries={len(state)})"
+        )
+
+    def parse_response(
+        self,
+        response,
+        stream_slice: Optional[Mapping[str, Any]] = None,
+        **kwargs: Any,
+    ):
         s = stream_slice or {}
-        workspace = s.get("workspace", "")
-        slug = s.get("repo_slug", "")
-        pr_id = s.get("pr_id")
+        pr = s["parent"]
+        workspace = pr["workspace"]
+        slug = pr["repo_slug"]
+        pr_id = pr["id"]
+        pr_updated_on = pr.get("updated_on", "")
 
-        if not self._guard_response(response):
-            return
-
-        data = response.json()
-        values = data.get("values", [])
-
-        for comment in values:
+        emitted = 0
+        for comment in self._iter_values(response):
             comment_id = comment.get("id")
             if comment_id is None:
                 continue
-
+            emitted += 1
             user = comment.get("user") or {}
             content = comment.get("content") or {}
             inline = comment.get("inline")
@@ -106,46 +116,28 @@ class PRCommentsStream(BitbucketCloudRestStream):
                     self._tenant_id, self._source_id,
                     workspace, slug, str(pr_id), str(comment_id),
                 ),
-                "tenant_id": self._tenant_id,
-                "source_id": self._source_id,
-                "data_source": "insight_bitbucket_cloud",
-                "collected_at": _now_iso(),
                 "comment_id": comment_id,
                 "pr_id": pr_id,
-                "body": content.get("raw"),
-                "body_html": content.get("html"),
+                "body": _truncate(content.get("raw")),
                 "created_on": comment.get("created_on"),
                 "updated_on": comment.get("updated_on"),
                 "author_display_name": user.get("display_name"),
                 "author_uuid": user.get("uuid"),
-                "author_nickname": user.get("nickname"),
                 "is_inline": inline is not None,
                 "inline_path": (inline or {}).get("path"),
                 "inline_from": (inline or {}).get("from"),
                 "inline_to": (inline or {}).get("to"),
                 "parent_comment_id": parent_comment.get("id") if parent_comment else None,
                 "is_deleted": comment.get("deleted", False),
-                "pull_request_updated_on": s.get("pr_updated_on"),
+                "pull_request_updated_on": pr_updated_on,
                 "workspace": workspace,
                 "repo_slug": slug,
             }
-            yield record
+            yield self._envelope(record)
 
-    def read_records(self, sync_mode=None, stream_slice=None, stream_state=None, **kwargs):
-        s = stream_slice or {}
-        if not (s.get("workspace") and s.get("repo_slug") and s.get("pr_id")):
-            return
-        try:
-            yield from super().read_records(
-                sync_mode=sync_mode, stream_slice=stream_slice,
-                stream_state=stream_state, **kwargs,
-            )
-        except BitbucketAuthError:
-            raise
-        except Exception as exc:
-            pk = s.get("partition_key", "?")
-            self._partitions_with_errors.add(pk)
-            logger.error(f"Failed pr_comments slice {pk}, cursor frozen: {exc}")
+        logger.debug(
+            f"pull_request_comments: {workspace}/{slug}/pr={pr_id} page emitted={emitted}"
+        )
 
     def get_updated_state(
         self,
@@ -155,19 +147,19 @@ class PRCommentsStream(BitbucketCloudRestStream):
         workspace = latest_record.get("workspace", "")
         slug = latest_record.get("repo_slug", "")
         pr_id = latest_record.get("pr_id")
-        partition_key = f"{workspace}/{slug}/{pr_id}" if (workspace and slug and pr_id) else ""
-        if partition_key in self._partitions_with_errors:
+        if not (workspace and slug) or pr_id is None:
             return current_stream_state
-        pr_updated_on = latest_record.get("pull_request_updated_on", "")
-        if partition_key and pr_updated_on:
-            current_stream_state[partition_key] = {"synced_at": pr_updated_on}
+        partition_key = f"{workspace}/{slug}/{pr_id}"
+        pr_updated_on = latest_record.get(self.cursor_field, "") or ""
+        if pr_updated_on:
+            current_stream_state[partition_key] = {self.cursor_field: pr_updated_on}
         return current_stream_state
 
     def get_json_schema(self) -> Mapping[str, Any]:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "additionalProperties": True,
+            "additionalProperties": False,
             "properties": {
                 "tenant_id": {"type": "string"},
                 "source_id": {"type": "string"},
@@ -177,12 +169,10 @@ class PRCommentsStream(BitbucketCloudRestStream):
                 "comment_id": {"type": ["null", "integer"]},
                 "pr_id": {"type": ["null", "integer"]},
                 "body": {"type": ["null", "string"]},
-                "body_html": {"type": ["null", "string"]},
                 "created_on": {"type": ["null", "string"]},
                 "updated_on": {"type": ["null", "string"]},
                 "author_display_name": {"type": ["null", "string"]},
                 "author_uuid": {"type": ["null", "string"]},
-                "author_nickname": {"type": ["null", "string"]},
                 "is_inline": {"type": ["null", "boolean"]},
                 "inline_path": {"type": ["null", "string"]},
                 "inline_from": {"type": ["null", "integer"]},

@@ -57,12 +57,11 @@
 - [Source 12: LDAP / Active Directory (Directory)](#source-12-ldap-active-directory-directory)
   - [`ldap_users` — User account directory](#ldapusers-user-account-directory)
   - [`ldap_group_members` — Group and OU membership](#ldapgroupmembers-group-and-ou-membership)
-- [Source 13: Claude API (AI Tool)](#source-13-claude-api-ai-tool)
-  - [`claude_api_daily_usage` — Daily token usage per API key per model](#claudeapidailyusage-daily-token-usage-per-api-key-per-model)
-  - [`claude_api_requests` — Individual API request events](#claudeapirequests-individual-api-request-events)
-- [Source 14: Claude Team Plan (AI Tool)](#source-14-claude-team-plan-ai-tool)
-  - [`claude_team_seats` — Seat assignment and status](#claudeteamseats-seat-assignment-and-status)
-  - [`claude_team_activity` — Daily usage per user per model per client](#claudeteamactivity-daily-usage-per-user-per-model-per-client)
+- [Source 13: Claude Admin — Anthropic API (AI Tool)](#source-13-claude-admin-anthropic-api-ai-tool)
+  - [`claude_admin_messages_usage` — Daily token usage per API key per model](#claudeadminmessagesusage-daily-token-usage-per-api-key-per-model)
+- [Source 14: Claude Admin — Anthropic Team / Seat Plans (AI Tool)](#source-14-claude-admin-anthropic-team-seat-plans-ai-tool)
+  - [`claude_admin_users` — Seat assignment and status](#claudeadminusers-seat-assignment-and-status)
+  - [`claude_admin_code_usage` — Daily Claude Code usage per user](#claudeadmincodeusage-daily-claude-code-usage-per-user)
 - [Source 15: GitHub Copilot (AI Dev Tool)](#source-15-github-copilot-ai-dev-tool)
   - [`copilot_seats` — Seat assignment and last activity](#copilotseats-seat-assignment-and-last-activity)
   - [`copilot_usage` — Org-level daily usage totals](#copilotusage-org-level-daily-usage-totals)
@@ -1119,17 +1118,17 @@ Group membership is many-to-many. A user in `Engineering > Backend` appears in b
 
 ---
 
-## Source 13: Claude API (AI Tool)
+## Source 13: Claude Admin — Anthropic API (AI Tool)
 
-**Direct Anthropic API usage** — tracks token consumption and costs for teams calling the Claude API programmatically (internal tooling, automations, AI-powered features). Different from Cursor/Windsurf: there is no IDE context, no completions model. The unit of analysis is an API request, not a developer session.
+**Direct Anthropic API usage** — tracks token consumption and costs for teams calling the Claude API programmatically (internal tooling, automations, AI-powered features). Different from Cursor/Windsurf: there is no IDE context, no completions model. The unit of analysis is a token bucket per dimensional combination (model × api_key × workspace × service_tier × context_window) per day, not a developer session.
 
-**API source:** Anthropic Admin API (`/v1/usage`). Returns aggregated usage per time bucket, groupable by model and API key. Per-request detail is available only if the caller passes an `X-Anthropic-User-Id` header — otherwise `user_id` is NULL and usage is attributable only to the API key.
+**API source:** Anthropic Admin API (`/v1/organizations/usage_report/messages`, `/v1/organizations/cost_report`). Returns daily aggregated usage groupable by up to 5 dimensions. Per-request detail is not exposed by this endpoint — only daily rollups.
 
-**Two tables:** daily aggregates (from the usage API) + individual request events (requires per-request instrumentation with user context).
+Bronze tables (served by the `claude-admin` connector — see Source 14): `claude_admin_messages_usage` and `claude_admin_cost_report`.
 
 ---
 
-### `claude_api_daily_usage` — Daily token usage per API key per model
+### `claude_admin_messages_usage` — Daily token usage per API key per model
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1147,9 +1146,9 @@ Granularity: one row per `(date, api_key_id, model)`. No user attribution at thi
 
 ---
 
-### `claude_api_requests` — Individual API request events
+### `claude_admin_messages_usage` — per-request events (not available)
 
-Available only when the caller passes `X-Anthropic-User-Id` in the request header. Without this header, requests are not recorded at this level — only in daily aggregates above.
+Individual API request events were hypothesized in early drafts but are **not** available from the current Anthropic Admin API. Only daily aggregates (above) are supported. The `X-Anthropic-User-Id` request header can be set by callers, but it does not surface in Admin API responses.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1170,24 +1169,24 @@ Available only when the caller passes `X-Anthropic-User-Id` in the request heade
 
 ---
 
-## Source 14: Claude Team Plan (AI Tool)
+## Source 14: Claude Admin — Anthropic Team / Seat Plans (AI Tool)
 
-**Per-seat subscription** for claude.ai — covers usage through the web interface, mobile app, and **Claude Code** CLI. Fundamentally different from Source 13 (Claude API):
+**Per-seat subscription** for claude.ai — covers Claude Code CLI usage. Fundamentally different from the programmatic API (Source 13):
 
-| Aspect | Claude API (Source 13) | Claude Team (Source 14) |
-|--------|------------------------|-------------------------|
+| Aspect | Programmatic API (Source 13) | Team / Seat Plan (Source 14) |
+|--------|------------------------------|-------------------------------|
 | Billing | Pay-per-token | Fixed per-seat/month |
-| Access | `api.anthropic.com` | `claude.ai` + Claude Code |
-| Usage data | Token counts + costs | Token counts, no per-request cost (flat subscription) |
-| Clients | Programmatic only | `web`, `claude_code`, `mobile` |
+| Access | `api.anthropic.com` | Claude Code CLI (via Admin API) |
+| Usage data | Token counts + costs | Tokens, tool actions, session counts (no per-request cost) |
+| Clients | Programmatic only | `claude_code` (web/mobile not exposed by the Admin API) |
 
-**Claude Code** appears in Team plan data as `client = 'claude_code'`. Its usage patterns differ significantly from web: larger contexts, longer sessions, tool-use heavy (`stop_reason = 'tool_use'`).
+**Claude Code** is the only client surfaced by the Admin API's `/usage_report/claude_code` endpoint. Web/mobile activity for seat-based plans is covered by the separate `claude-enterprise` connector (Enterprise Analytics API).
 
-**API source:** Anthropic Admin API — user management and usage endpoints for Team/Enterprise accounts.
+**API source:** Anthropic Admin API — user management and Claude Code usage endpoints for Team/Enterprise accounts. Unified with Source 13 under a single Insight connector: `claude-admin` (8 Bronze streams; see `src/ingestion/connectors/ai/claude-admin/`).
 
 ---
 
-### `claude_team_seats` — Seat assignment and status
+### `claude_admin_users` — Seat assignment and status
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1200,22 +1199,22 @@ Available only when the caller passes `X-Anthropic-User-Id` in the request heade
 
 ---
 
-### `claude_team_activity` — Daily usage per user per model per client
+### `claude_admin_code_usage` — Daily Claude Code usage per user
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `user_id` | text | Anthropic platform user ID |
-| `email` | text | User email |
+| `actor_identifier` | text | User email (when `actor_type='user'`) or API key name (when `actor_type='api_actor'`) |
+| `actor_type` | text | `user` / `api_actor` |
 | `date` | date | Activity date |
-| `client` | text | `web` / `claude_code` / `mobile` — which surface was used |
-| `model` | text | Model ID, e.g. `claude-opus-4-6`, `claude-sonnet-4-6` |
-| `message_count` | numeric | Number of messages / turns sent |
-| `conversation_count` | numeric | Number of distinct conversations or sessions |
-| `input_tokens` | numeric | Input tokens consumed |
-| `output_tokens` | numeric | Output tokens generated |
-| `cache_read_tokens` | numeric | Tokens served from prompt cache |
-| `cache_write_tokens` | numeric | Tokens written to prompt cache |
-| `tool_use_count` | numeric | Tool/function calls made (relevant for Claude Code agent sessions) |
+| `terminal_type` | text | Terminal/client type (e.g., `Apple_Terminal`, `rider`, `unknown`) |
+| `session_count` | numeric | Number of distinct sessions |
+| `lines_added` | numeric | Lines of code added |
+| `lines_removed` | numeric | Lines of code removed |
+| `tool_use_accepted` | numeric | Accepted tool actions (sum across edit/write/multi_edit/notebook tools) |
+| `tool_use_rejected` | numeric | Rejected tool actions |
+| `core_metrics_json` | text | Full `core_metrics` object (JSON) — sessions, LOC, commits, PRs |
+| `tool_actions_json` | text | Full `tool_actions` object (JSON) — per-tool accepted/rejected counts |
+| `model_breakdown_json` | text | Full `model_breakdown` array (JSON) — per-model tokens + estimated cost |
 
 **`client = 'claude_code'` signals:** Claude Code sessions tend to have high `tool_use_count`, long multi-turn conversations, and large `cache_write_tokens` (system prompt + file context caching). These patterns distinguish developer AI tool usage from general knowledge work.
 
@@ -1647,8 +1646,7 @@ No `cost_cents` — flat subscription.
 | **BambooHR** | `bamboohr_employees`, `bamboohr_departments`, `bamboohr_leave_requests` | SMB HR; current-state records only |
 | **Workday** | `workday_workers`, `workday_organizations`, `workday_leave` | Enterprise HCM; effective-dated, worker_type, supervisory orgs |
 | **LDAP / AD** | `ldap_users`, `ldap_group_members` | Directory protocol; account status + group membership |
-| **Claude API** | `claude_api_daily_usage`, `claude_api_requests` | Anthropic Admin API; per-request user attribution requires `X-Anthropic-User-Id` header |
-| **Claude Team** | `claude_team_seats`, `claude_team_activity` | Per-seat subscription; covers web, mobile, Claude Code via `client` field |
+| **Claude Admin** | `claude_admin_users`, `claude_admin_messages_usage`, `claude_admin_cost_report`, `claude_admin_code_usage`, `claude_admin_api_keys`, `claude_admin_workspaces`, `claude_admin_workspace_members`, `claude_admin_invites` | Anthropic Admin API (merged from former claude-api + claude-team); token usage + costs + seats + Claude Code usage |
 | **GitHub Copilot** | `copilot_seats`, `copilot_usage`, `copilot_usage_breakdown` | Org-level aggregates only; no per-user daily metrics in API |
 | **HubSpot** | `hubspot_contacts`, `hubspot_companies`, `hubspot_deals`, `hubspot_activities`, `hubspot_owners` | CRM; contacts + pipeline + sales activities |
 | **Salesforce** | `salesforce_contacts`, `salesforce_accounts`, `salesforce_opportunities`, `salesforce_activities`, `salesforce_users` | Enterprise CRM; Tasks + Events separate; 18-char IDs |
@@ -1689,7 +1687,7 @@ When Identity Manager merges two previously separate `person_id` values (or spli
 
 ### OQ-3: AI API tools — per-key user attribution
 
-`claude_api_daily_usage` and `openai_api_daily_usage` aggregate by `api_key_id`, not by person. Per-request user attribution requires the caller to pass `X-Anthropic-User-Id` / `user` field — optional conventions, not enforced.
+`claude_admin_messages_usage` and `openai_api_daily_usage` aggregate by `api_key_id`, not by person. Per-request user attribution requires the caller to pass `X-Anthropic-User-Id` / `user` field — optional conventions, not enforced.
 
 - Should `class_ai_api_usage` carry a nullable `person_id` (resolved only when the header is present)?
 - Or is per-key usage tracked separately from per-person IDE tool usage (`class_ai_dev_usage`), with no attempt to unify them at Silver?

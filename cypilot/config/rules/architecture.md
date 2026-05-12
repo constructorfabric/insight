@@ -12,10 +12,14 @@ Data pipeline architecture and source categorisation rules for Constructor Insig
 
 <!-- toc -->
 
-- [Bronze / Silver / Gold Layers](#bronze-silver-gold-layers)
+- [Bronze / Silver / Gold Layers](#bronze--silver--gold-layers)
 - [Identity Resolution](#identity-resolution)
 - [Source Categories](#source-categories)
 - [Collection Run Tables](#collection-run-tables)
+- [dbt Pipeline Conventions (summary)](#dbt-pipeline-conventions-summary)
+  - [Anti-patterns](#anti-patterns)
+  - [Reference: shared macros](#reference-shared-macros)
+  - [Validation](#validation)
 - [Critical Files](#critical-files)
 
 <!-- /toc -->
@@ -72,6 +76,47 @@ Every source has exactly one `{source}_collection_runs` table as its final Bronz
 Fields: `run_id`, `started_at`, `completed_at`, `status` (`running`/`completed`/`failed`), counts per entity type, `api_calls`, `errors`, `settings`.
 
 Evidence: `docs/CONNECTORS_REFERENCE.md:333–347` — `github_collection_runs`.
+
+## dbt Pipeline Conventions (summary)
+
+Full specification: [docs/domain/ingestion-data-flow/specs/DESIGN.md](../../../docs/domain/ingestion-data-flow/specs/DESIGN.md) and ADRs in [docs/domain/ingestion-data-flow/specs/ADR/](../../../docs/domain/ingestion-data-flow/specs/ADR/).
+
+**Hard rules** every dbt model under `src/ingestion/silver/` and `src/ingestion/connectors/*/dbt/` MUST follow:
+
+1. **`engine='ReplacingMergeTree(_version)'`** for incremental models. Versionless `ReplacingMergeTree` only for `materialized='table'` with no `_version` column upstream. **Never** plain MergeTree.
+2. **`order_by=['unique_key']`** — single column, never composite. Encode the natural key into `unique_key` in staging if needed.
+3. **`unique_key` formula** — `{insight_tenant_id}-{insight_source_id}-{natural_key_parts}` everywhere (Airbyte AddFields, Python CDK helpers, SQL concat in explode models, Rust `format!`). See [ADR-0004](../../../docs/domain/ingestion-data-flow/specs/ADR/0004-unique-key-formula.md).
+4. **Bronze tables MUST be promoted** to `ReplacingMergeTree(_airbyte_extracted_at)` on first dbt run via `promote_bronze_to_rmt` macro. Each connector has a `<connector>__bronze_promoted` bootstrap model. See [ADR-0002](../../../docs/domain/ingestion-data-flow/specs/ADR/0002-promote-bronze-to-rmt.md).
+5. **Connector → silver via `union_by_tag`** — connectors write to per-connector staging models tagged `silver:<class>`; silver class models do `union_by_tag('silver:<class>')`. Never write directly to silver from a connector.
+6. **Rust-owned staging tables** — wrap on the dbt side as `materialized='ephemeral'` (no DB object; dbt inlines as CTE). See [ADR-0003](../../../docs/domain/ingestion-data-flow/specs/ADR/0003-ephemeral-rust-passthrough.md).
+7. **Read pattern** — silver consumers MUST use `SELECT … FROM silver.X FINAL` or `argMax(... ORDER BY _version)`. RMT tables hold multiple versions per `unique_key` until background merge.
+8. **Airbyte sync mode** — always `destinationSyncMode='append'`. `append_dedup` and `overwrite` are forbidden (OOM, data loss on retry). See `cpt-dataflow-constraint-airbyte-append`.
+
+### Anti-patterns
+
+- ❌ Plain `MergeTree` (default engine) — duplicates accumulate forever
+- ❌ Composite `order_by=(...)` instead of `['unique_key']`
+- ❌ `materialized='view'` for silver `class_*` / `fct_*` / `mtr_*`
+- ❌ `incremental_strategy='delete+insert'` with RMT — two dedup mechanisms stacked
+- ❌ Reading silver without `FINAL` / `argMax`
+- ❌ Connector emitting record without `unique_key` field
+
+### Reference: shared macros
+
+| Macro | Purpose |
+|---|---|
+| `union_by_tag(tag)` | Generates `UNION ALL` over all dbt models tagged with `tag`. Patched to handle ephemeral models (no DB relation check). |
+| `promote_bronze_to_rmt(table, order_by)` | Idempotent migration of a bronze MergeTree to ReplacingMergeTree(_airbyte_extracted_at). |
+| `create_task_field_history_staging()` | `on-run-start` macro: DDL of `staging.jira__task_field_history` (Rust-populated). |
+| `snapshot()` | Append-only SCD2 helper. |
+| `fields_history()` | Per-(entity, field) change log derived from a snapshot. |
+| `identity_inputs_from_history()` | Emits UPSERT/DELETE observation rows for `identity.identity_inputs`. |
+
+### Validation
+
+- `cpt validate --artifact docs/domain/ingestion-data-flow/specs/DESIGN.md` — structure + cross-refs (audit trail)
+- Skill `/check-dbt-conventions` — LLM-based correctness check (engine, order_by, unique_key formula presence)
+- `dbt parse` — Jinja / config syntax (CI gate)
 
 ## Critical Files
 

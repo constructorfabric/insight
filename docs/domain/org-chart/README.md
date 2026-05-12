@@ -22,7 +22,7 @@ This domain covers:
 
 Out of scope:
 - Person records (`persons` table, golden record) — see [`docs/domain/person/`](../person/)
-- Alias resolution (`aliases`, `bootstrap_inputs`, matching engine) — see [`docs/domain/identity-resolution/`](../identity-resolution/)
+- Alias resolution (`aliases`, `identity_inputs`, matching engine) — see [`docs/domain/identity-resolution/`](../identity-resolution/)
 - SCD Type 2 snapshot table schemas — managed by dbt macros
 - Permission / RBAC
 - Connector implementation
@@ -30,4 +30,4 @@ Out of scope:
 ## Cross-Domain References
 
 - **Person domain**: `person_assignments.person_id` references `persons.id`. The Person domain owns person records; this domain assigns persons to org units. `persons.org_unit_id` references `org_units.id` (golden record field).
-- **Identity Resolution domain**: `bootstrap_inputs` (owned by IR domain) may carry org-related data as an alternative ingestion path. No direct table references between IR and Org-Chart.
+- **Identity Resolution domain**: `identity_inputs` (owned by IR domain) may carry org-related data as an alternative ingestion path. No direct table references between IR and Org-Chart.

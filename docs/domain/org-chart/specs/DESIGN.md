@@ -39,7 +39,7 @@ The Org-Chart domain owns the organizational hierarchy — the tree of org units
 
 The architecture is built around two ClickHouse tables: `org_units` (hierarchy nodes with materialized path) and `person_assignments` (temporal links between persons and org units, roles, teams, or other organizational dimensions). Both tables use `[effective_from, effective_to)` half-open intervals for temporal correctness, ensuring that transfers, re-orgs, and role changes are attributed to the correct time period in analytics.
 
-This domain is deliberately thin: it stores org structure and person-to-org links, but does not own person records (Person domain) or alias resolution (IR domain). It reads org data from HR connectors via dbt models or the shared `bootstrap_inputs` table, and writes to its own tables. SCD Type 2 history is managed by dbt macros producing `*_snapshot` tables — out of scope for this design but referenced for completeness.
+This domain is deliberately thin: it stores org structure and person-to-org links, but does not own person records (Person domain) or alias resolution (IR domain). It reads org data from HR connectors via dbt models or the shared `identity_inputs` table, and writes to its own tables. SCD Type 2 history is managed by dbt macros producing `*_snapshot` tables — out of scope for this design but referenced for completeness.
 
 ### 1.2 Architecture Drivers
 
@@ -101,7 +101,7 @@ This domain is deliberately thin: it stores org structure and person-to-org link
 
 | Layer | Responsibility | Technology |
 |---|---|---|
-| Ingestion | Read org hierarchy and assignment data from HR connectors via dbt or bootstrap_inputs | ClickHouse / dbt |
+| Ingestion | Read org hierarchy and assignment data from HR connectors via dbt or identity_inputs | ClickHouse / dbt |
 | Processing | HierarchyManager manages org unit lifecycle; AssignmentTracker manages temporal assignments | Python / dbt macros |
 | Storage | Org units and person assignments with temporal semantics | ClickHouse (ReplacingMergeTree) |
 | API | REST endpoints for org unit CRUD, assignment queries, hierarchy traversal | Python (FastAPI) |
@@ -326,7 +326,7 @@ REST API layer for org unit management, assignment queries, and hierarchy traver
 | Person domain (`persons` table) | Logical FK (`person_assignments.person_id → persons.id`) | Persons referenced in assignments |
 | Person domain (`persons.org_unit_id`) | Logical FK (`persons.org_unit_id → org_units.id`) | Golden record references current org unit |
 | dbt models (HR Bronze → org data) | ClickHouse tables | dbt populates org_units and person_assignments from HR connector data |
-| IR domain (`bootstrap_inputs`) | ClickHouse read (optional) | Alternative ingestion path for org data from connectors |
+| IR domain (`identity_inputs`) | ClickHouse read (optional) | Alternative ingestion path for org data from connectors |
 
 **Dependency Rules**:
 - Org-chart domain does not depend on IR domain internals (aliases, match_rules, unmapped)

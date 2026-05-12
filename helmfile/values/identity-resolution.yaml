@@ -1,0 +1,22 @@
+##
+## Identity Resolution — local development overrides
+##
+## Base values: src/backend/services/identity/helm/values.yaml
+##
+## Config Secret: `insight-identity-resolution-config` carries the
+## IDENTITY__clickhouse_* env vars. Emitted by the umbrella chart when
+## `identityResolution.deploy=true` (see charts/insight/templates/secrets.yaml).
+## For helmfile-only deploys, the Secret must already exist in the namespace.
+##
+
+replicaCount: 1
+
+existingSecret: insight-identity-resolution-config
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi

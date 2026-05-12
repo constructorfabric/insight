@@ -1,0 +1,46 @@
+[package]
+name = "jira-enrich"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Cyber Fabric"]
+repository = "https://github.com/cyberfabric/insight"
+rust-version = "1.80"
+description = "Jira Silver enrich — materializes silver.task_tracker_field_history from bronze_jira."
+
+[lints.rust]
+unsafe_code = "forbid"
+unused_mut = "warn"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+
+[features]
+# `io` pulls in ClickHouse 0.14 which requires rustc ≥ 1.89. Core tests do not need it:
+#   cargo test                       # core only — works on rustc 1.80+
+#   cargo build --features io        # full binary, requires rustc 1.89+ (production/Docker build)
+default = []
+io = ["dep:clickhouse"]
+
+[dependencies]
+# Core (pure) deps.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+
+# CLI + logging for main.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+clap = { version = "=4.5.40", features = ["derive", "env"] }
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }
+
+# IO — feature-gated. ClickHouse 0.14 needs rustc 1.89+.
+clickhouse = { version = "0.14", optional = true, features = ["chrono"] }
+
+[dev-dependencies]
+pretty_assertions = "1.4"

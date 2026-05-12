@@ -4,13 +4,11 @@ sources:
   - name: bronze_slack
     schema: bronze_slack
     tables:
-      - name: users
-      - name: channels
-      - name: messages
+      - name: users_details
 
 models:
-  - name: slack__comms_events
-    description: "Slack message events -> staging, feeds class_comms_events"
+  - name: slack__users_latest
+    description: "Latest analytics snapshot per Slack user (tenant_id, source_id, user_id). Email is kept as a tracked attribute so downstream SCD2 records email changes instead of creating new entities."
     columns:
       - name: tenant_id
         tests:
@@ -18,16 +16,19 @@ models:
       - name: source_id
         tests:
           - not_null
+      - name: user_id
+        tests:
+          - not_null
+      - name: email
+        tests:
+          - not_null
       - name: unique_key
         tests:
           - not_null
           - unique
-      - name: activity_date
-        tests:
-          - not_null
 
   - name: slack__users_snapshot
-    description: "Slack users snapshot — tracks field changes over time"
+    description: "Slack users SCD2 snapshot — tracks email, is_guest, is_billable_seat changes over time."
     columns:
       - name: tenant_id
         tests:
@@ -40,7 +41,7 @@ models:
           - not_null
 
   - name: slack__users_fields_history
-    description: "Slack users field-level change history"
+    description: "Slack users field-level change history (email, is_guest, is_billable_seat)."
     columns:
       - name: tenant_id
         tests:
@@ -50,7 +51,7 @@ models:
           - not_null
 
   - name: slack__collab_chat_activity
-    description: "Slack chat activity aggregated per user per day → staging, feeds class_collab_chat_activity"
+    description: "Slack daily chat activity per user (admin.analytics.getFile). Feeds silver.class_collab_chat_activity."
     columns:
       - name: tenant_id
         tests:
@@ -66,5 +67,8 @@ models:
         tests:
           - not_null
       - name: date
+        tests:
+          - not_null
+      - name: data_source
         tests:
           - not_null

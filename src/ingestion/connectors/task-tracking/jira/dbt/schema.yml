@@ -1,9 +1,8 @@
 version: 2
 
-# Bronze source declarations only.
-# Cross-source task-tracker unification (Silver `class_task_tracker_*`) is
-# delivered by the task-tracking Silver layer package, not by this connector.
-# See DESIGN §1.1 and §3.2.
+# Bronze (Airbyte-produced) + staging (Rust jira-enrich output) source declarations.
+# Connector-level models union into silver `class_task_*` via `union_by_tag`
+# (see src/ingestion/silver/task-tracking/).
 
 sources:
   - name: bronze_jira
@@ -17,3 +16,42 @@ sources:
       - name: jira_comments
       - name: jira_worklogs
       - name: jira_sprints
+      - name: jira_boards
+      # Normalized lookup streams — populated globally per source instance.
+      # `jira_issue` references these by ID only; display names come from JOIN.
+      - name: jira_statuses
+      - name: jira_priorities
+      - name: jira_issuetypes
+      - name: jira_resolutions
+
+  # Staging tables written by the Rust `jira-enrich` binary (not by dbt). DDL is
+  # managed by the `create_task_field_history_staging` macro in `on-run-start`.
+  - name: staging_jira
+    schema: staging
+    tables:
+      - name: jira__task_field_history
+
+models:
+  - name: jira__bronze_promoted
+    description: |
+      Bootstrap model that promotes every Airbyte-managed `bronze_jira.*` table from
+      MergeTree to ReplacingMergeTree(_airbyte_extracted_at) with a natural-key
+      ORDER BY. Idempotent — subsequent runs are no-ops once tables are RMT.
+
+      Every other Jira staging model declares a `depends_on` comment referencing
+      this model, so dbt's DAG materializes the view (and runs the migration
+      side effects) before any model reads bronze.
+  - name: jira__task_comments
+    description: "Per-source staging projection of Jira comments. Unioned into silver.class_task_comments."
+  - name: jira__task_worklogs
+    description: "Per-source staging projection of Jira worklogs. Unioned into silver.class_task_worklogs."
+  - name: jira__task_users
+    description: "Per-source staging projection of Jira users. Unioned into silver.class_task_users."
+  - name: jira__task_projects
+    description: "Per-source staging projection of Jira projects. Unioned into silver.class_task_projects."
+  - name: jira__task_sprints
+    description: "Per-source staging projection of Jira sprints. Unioned into silver.class_task_sprints."
+  - name: jira__task_field_metadata
+    description: "Per-source staging projection of Jira field catalog. Unioned into silver.class_task_field_metadata."
+  - name: jira__task_field_history
+    description: "Thin view over the Rust-written staging.jira__task_field_history, so dbt can union it into silver.class_task_field_history."

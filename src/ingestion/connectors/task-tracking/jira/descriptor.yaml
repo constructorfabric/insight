@@ -1,14 +1,20 @@
 name: jira
-version: "1.0"
-
+version: "2026.05.04"
 schedule: "0 3 * * *"
 workflow: sync
 
-# Silver routing (class_task_tracker_*) is delivered by the task-tracking Silver
-# layer package, not by this connector. This connector ships only Bronze source
-# declarations in dbt/schema.yml. dbt_select is empty so the connector's dbt
-# step is a deliberate no-op. See DESIGN §1.1 and §3.2.
-dbt_select: ""
+# Silver routing (class_task_*) is delivered by the task-tracking Silver layer
+# package, not by this connector. The pipeline runs the jira-rust path:
+# dbt(tag:jira) → tt-enrich-jira-run → dbt(tag:silver,tag:jira+). This
+# selector is the third step — only silver models that union jira staging
+# (class_task_*), not the full silver layer. See DESIGN §1.1 and §3.2.
+dbt_select: "tag:silver,tag:jira+"
 
 connection:
   namespace: bronze_jira
+secret:
+  required_fields:
+    - jira_instance_url
+    - jira_email
+    - jira_api_token
+    - jira_project_keys

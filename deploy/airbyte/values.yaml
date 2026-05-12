@@ -1,0 +1,138 @@
+##
+## Airbyte — curated values for Insight.
+##
+## Applied to the OFFICIAL airbyte/airbyte chart, not a wrapper —
+## customization is values-only (see install-airbyte.sh).
+##
+## Chart version is pinned in the installer / GitOps manifest. Current: 1.8.5.
+##
+## What is here:
+##   - safe defaults for eval/demo (embedded Postgres + MinIO)
+##   - documented customization points for prod (external DB, S3, auth)
+##   - Keycloak disabled (Insight uses its own OIDC surface)
+##
+## Integration conventions with Insight:
+##   - namespace: airbyte
+##   - release name: airbyte
+##   - server service: airbyte-airbyte-server-svc
+##   - port: 8001
+##   - auth: JWT signed with AB_JWT_SIGNATURE_SECRET
+## The ingestion code under `src/ingestion/` expects these exact names.
+##
+
+global:
+  # Deployment mode. community = OSS, enterprise = commercial license.
+  edition: community
+
+  # Auth: always on. The Airbyte chart generates a random admin password
+  # on first install and stores it in `airbyte-auth-secrets`
+  # (key: instance-admin-password). We disable only Keycloak — it pulls
+  # in an extra Postgres and duplicates our own OIDC surface from the
+  # Insight umbrella. Server-signed JWT for API access still works.
+  #
+  # In Airbyte 1.5.x simple-auth mode the admin email/organization must
+  # be configured through a one-time API setup call — install-airbyte.sh
+  # does this automatically post-install (sets admin@example.com +
+  # organization `Insight`). Setting `instanceAdmin.email` in values has
+  # no effect in this mode.
+  auth:
+    enabled: true
+
+  # Storage for logs and state.
+  # Defaults to embedded MinIO. For prod → s3/gcs/azure (see below).
+  storage:
+    type: minio
+    # ── Example S3 override (uncomment in prod-values):
+    # type: s3
+    # bucket:
+    #   log: insight-airbyte-logs
+    #   state: insight-airbyte-state
+    #   workloadOutput: insight-airbyte-output
+    # s3:
+    #   region: eu-west-1
+    #   authenticationType: credentials   # or instanceProfile
+    # # Creds in a pre-created Secret in the airbyte namespace:
+    # #   kubectl -n airbyte create secret generic airbyte-s3-creds \
+    # #     --from-literal=AWS_ACCESS_KEY_ID=... \
+    # #     --from-literal=AWS_SECRET_ACCESS_KEY=...
+    # storageSecretName: airbyte-s3-creds
+
+  # Airbyte state DB. Defaults to embedded Postgres (subchart).
+  # For prod → external managed DB.
+  database:
+    type: internal
+    # ── External example:
+    # type: external
+    # host: postgres.insight.svc.cluster.local
+    # port: 5432
+    # database: airbyte
+    # user: airbyte
+    # secretName: airbyte-db-secret
+    # passwordSecretKey: password
+
+# ─── Embedded subcharts ─────────────────────────────────────────────────
+# Both should be disabled in prod — then global.database.type=external
+# and global.storage.type=s3 must point at external resources.
+postgresql:
+  enabled: true
+minio:
+  enabled: true
+
+# ─── Keycloak disabled ──────────────────────────────────────────────────
+# Authentication to the Airbyte API is done via a server-signed JWT
+# (see env.sh). Real enterprise auth is handled at the Insight layer.
+keycloak:
+  enabled: false
+keycloak-setup:
+  enabled: false
+
+# ─── Resources (minimal eval profile) ───────────────────────────────────
+# For prod — 3-5x these limits; see deploy/airbyte/values-prod.yaml.
+server:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+
+webapp:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  # Ingress for the Airbyte UI. In prod typically behind your own OIDC proxy;
+  # for eval a port-forward is enough.
+  ingress:
+    enabled: false
+
+worker:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: "2",  memory: 2Gi }
+
+workload-launcher:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+workload-api-server:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+temporal:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+cron:
+  resources:
+    # Airbyte's scheduler; 256Mi is too tight once it holds a
+    # Temporal worker pool — we saw OOMKilled on Kind. Bumped to 512Mi.
+    requests: { cpu: 50m,  memory: 256Mi }
+    limits:   { cpu: 200m, memory: 512Mi }
+
+# Connector Builder UI. In dev you may turn it off to save resources;
+# for prod keep it on — useful for Low-Code Connectors.
+connectorBuilderServer:
+  enabled: true

@@ -1,0 +1,863 @@
+version: "7.0.4"
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - claude_admin_workspaces
+
+definitions:
+  api_key_authenticator:
+    type: ApiKeyAuthenticator
+    api_token: "{{ config['admin_api_key'] }}"
+    header: x-api-key
+
+  anthropic_headers:
+    anthropic-version: "2023-06-01"
+    Content-Type: application/json
+    Cache-Control: no-cache, no-store
+
+  tenant_id_injection:
+    type: AddFields
+    fields:
+      - path: [tenant_id]
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [insight_source_id]
+        value: "{{ config.get('insight_source_id', '') }}"
+      - path: [collected_at]
+        value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      - path: [data_source]
+        value: insight_claude_admin
+
+  cursor_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ response.get('next_page', '') }}"
+      stop_condition: "{{ response.get('next_page') is none or response.get('next_page') == '' }}"
+    page_token_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: page
+
+  after_id_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ response.get('has_more', false) and response.get('last_id', '') or '' }}"
+      stop_condition: "{{ not response.get('has_more', false) }}"
+    page_token_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: after_id
+
+  offset_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: OffsetIncrement
+      page_size: 1000
+    page_token_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: offset
+    page_size_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: limit
+
+streams:
+  # ── Stream 1: claude_admin_users (full refresh, after_id cursor pagination) ──
+  - type: DeclarativeStream
+    name: claude_admin_users
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          insight_source_id:
+            type: string
+          id:
+            type: string
+          type:
+            type:
+              - string
+              - "null"
+          email:
+            type: string
+          name:
+            type:
+              - string
+              - "null"
+          role:
+            type: string
+          status:
+            type:
+              - string
+              - "null"
+          added_at:
+            type:
+              - string
+              - "null"
+          last_active_at:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type: string
+          data_source:
+            type: string
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.anthropic.com
+        path: /v1/organizations/users
+        http_method: GET
+        request_headers:
+          $ref: "#/definitions/anthropic_headers"
+        authenticator:
+          $ref: "#/definitions/api_key_authenticator"
+        request_parameters:
+          limit: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+      paginator:
+        $ref: "#/definitions/after_id_paginator"
+    transformations:
+      - $ref: "#/definitions/tenant_id_injection"
+
+  # ── Stream 2: claude_admin_messages_usage (incremental, cursor pagination) ──
+  - type: DeclarativeStream
+    name: claude_admin_messages_usage
+    primary_key:
+      - unique
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          insight_source_id:
+            type: string
+          unique:
+            type: string
+          date:
+            type: string
+          model:
+            type:
+              - string
+              - "null"
+          api_key_id:
+            type:
+              - string
+              - "null"
+          workspace_id:
+            type:
+              - string
+              - "null"
+          service_tier:
+            type:
+              - string
+              - "null"
+          context_window:
+            type:
+              - string
+              - "null"
+          inference_geo:
+            type:
+              - string
+              - "null"
+          speed:
+            type:
+              - string
+              - "null"
+          uncached_input_tokens:
+            type: number
+          cache_read_tokens:
+            type: number
+          cache_creation_5m_tokens:
+            type: number
+          cache_creation_1h_tokens:
+            type: number
+          output_tokens:
+            type: number
+          web_search_requests:
+            type: number
+          collected_at:
+            type: string
+          data_source:
+            type: string
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.anthropic.com
+        path: "/v1/organizations/usage_report/messages?group_by[]=model&group_by[]=api_key_id&group_by[]=workspace_id&group_by[]=service_tier&group_by[]=context_window"
+        http_method: GET
+        request_headers:
+          $ref: "#/definitions/anthropic_headers"
+        authenticator:
+          $ref: "#/definitions/api_key_authenticator"
+        request_parameters:
+          bucket_width: "1d"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "0"
+            - results
+      paginator:
+        $ref: "#/definitions/cursor_paginator"
+    transformations:
+      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [date]
+            value: "{{ stream_interval['start_time'][:10] }}"
+          - path: [cache_read_tokens]
+            value: "{{ record.get('cache_read_input_tokens', 0) }}"
+          - path: [cache_creation_5m_tokens]
+            value: "{{ record.get('cache_creation', {}).get('ephemeral_5m_input_tokens', 0) }}"
+          - path: [cache_creation_1h_tokens]
+            value: "{{ record.get('cache_creation', {}).get('ephemeral_1h_input_tokens', 0) }}"
+          - path: [web_search_requests]
+            value: "{{ record.get('server_tool_use', {}).get('web_search_requests', 0) }}"
+          - path: [unique]
+            value: "{{ stream_interval['start_time'][:10] }}|{{ record.get('model') or '' }}|{{ record.get('api_key_id') or '' }}|{{ record.get('workspace_id') or '' }}|{{ record.get('service_tier') or '' }}|{{ record.get('context_window') or '' }}"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: date
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%dT00:00:00Z')) }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      step: P1D
+      cursor_granularity: PT1S
+      start_time_option:
+        type: RequestOption
+        field_name: starting_at
+        inject_into: request_parameter
+      end_time_option:
+        type: RequestOption
+        field_name: ending_at
+        inject_into: request_parameter
+
+  # ── Stream 3: claude_admin_cost_report (incremental, cursor pagination) ──
+  - type: DeclarativeStream
+    name: claude_admin_cost_report
+    primary_key:
+      - unique
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          insight_source_id:
+            type: string
+          unique:
+            type: string
+          date:
+            type: string
+          workspace_id:
+            type:
+              - string
+              - "null"
+          description:
+            type:
+              - string
+              - "null"
+          amount:
+            type:
+              - string
+              - "null"
+          currency:
+            type:
+              - string
+              - "null"
+          cost_type:
+            type:
+              - string
+              - "null"
+          model:
+            type:
+              - string
+              - "null"
+          service_tier:
+            type:
+              - string
+              - "null"
+          context_window:
+            type:
+              - string
+              - "null"
+          token_type:
+            type:
+              - string
+              - "null"
+          inference_geo:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type: string
+          data_source:
+            type: string
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.anthropic.com
+        path: "/v1/organizations/cost_report?group_by[]=workspace_id&group_by[]=description"
+        http_method: GET
+        request_headers:
+          $ref: "#/definitions/anthropic_headers"
+        authenticator:
+          $ref: "#/definitions/api_key_authenticator"
+        request_parameters:
+          bucket_width: "1d"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+            - "0"
+            - results
+      paginator:
+        $ref: "#/definitions/cursor_paginator"
+    transformations:
+      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [date]
+            value: "{{ stream_interval['start_time'][:10] }}"
+          - path: [unique]
+            value: "{{ stream_interval['start_time'][:10] }}|{{ record.get('workspace_id') or '' }}|{{ record.get('description') or '' }}"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: date
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%dT00:00:00Z')) }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      step: P1D
+      cursor_granularity: PT1S
+      start_time_option:
+        type: RequestOption
+        field_name: starting_at
+        inject_into: request_parameter
+      end_time_option:
+        type: RequestOption
+        field_name: ending_at
+        inject_into: request_parameter
+
+  # ── Stream 4: claude_admin_code_usage (incremental, next_page pagination) ──
+  - type: DeclarativeStream
+    name: claude_admin_code_usage
+    primary_key:
+      - unique
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          insight_source_id:
+            type: string
+          unique:
+            type: string
+          date:
+            type: string
+          actor_type:
+            type:
+              - string
+              - "null"
+          actor_identifier:
+            type:
+              - string
+              - "null"
+          terminal_type:
+            type:
+              - string
+              - "null"
+          customer_type:
+            type:
+              - string
+              - "null"
+          session_count:
+            type:
+              - number
+              - "null"
+          lines_added:
+            type:
+              - number
+              - "null"
+          lines_removed:
+            type:
+              - number
+              - "null"
+          tool_use_accepted:
+            type:
+              - number
+              - "null"
+          tool_use_rejected:
+            type:
+              - number
+              - "null"
+          core_metrics_json:
+            type:
+              - string
+              - "null"
+          tool_actions_json:
+            type:
+              - string
+              - "null"
+          model_breakdown_json:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type: string
+          data_source:
+            type: string
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.anthropic.com
+        path: /v1/organizations/usage_report/claude_code
+        http_method: GET
+        request_headers:
+          $ref: "#/definitions/anthropic_headers"
+        authenticator:
+          $ref: "#/definitions/api_key_authenticator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+      paginator:
+        $ref: "#/definitions/cursor_paginator"
+    transformations:
+      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [date]
+            value: "{{ record.get('date', '')[:10] }}"
+          - path: [actor_type]
+            value: "{{ record.get('actor', {}).get('type') or '' }}"
+          - path: [actor_identifier]
+            value: "{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}"
+          - path: [session_count]
+            value: "{{ record.get('core_metrics', {}).get('num_sessions', 0) }}"
+          - path: [lines_added]
+            value: "{{ record.get('core_metrics', {}).get('lines_of_code', {}).get('added', 0) }}"
+          - path: [lines_removed]
+            value: "{{ record.get('core_metrics', {}).get('lines_of_code', {}).get('removed', 0) }}"
+          - path: [tool_use_accepted]
+            value: "{{ (record.get('tool_actions', {}).get('edit_tool', {}).get('accepted', 0) or 0) + (record.get('tool_actions', {}).get('write_tool', {}).get('accepted', 0) or 0) + (record.get('tool_actions', {}).get('multi_edit_tool', {}).get('accepted', 0) or 0) + (record.get('tool_actions', {}).get('notebook_edit_tool', {}).get('accepted', 0) or 0) }}"
+          - path: [tool_use_rejected]
+            value: "{{ (record.get('tool_actions', {}).get('edit_tool', {}).get('rejected', 0) or 0) + (record.get('tool_actions', {}).get('write_tool', {}).get('rejected', 0) or 0) + (record.get('tool_actions', {}).get('multi_edit_tool', {}).get('rejected', 0) or 0) + (record.get('tool_actions', {}).get('notebook_edit_tool', {}).get('rejected', 0) or 0) }}"
+          - path: [core_metrics_json]
+            value: "{{ record.get('core_metrics', {}) | tojson }}"
+          - path: [tool_actions_json]
+            value: "{{ record.get('tool_actions', {}) | tojson }}"
+          - path: [model_breakdown_json]
+            value: "{{ record.get('model_breakdown', []) | tojson }}"
+          - path: [unique]
+            value: "{{ record.get('date', '')[:10] }}|{{ record.get('actor', {}).get('type') or '' }}|{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}|{{ record.get('terminal_type') or '' }}"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: date
+      cursor_datetime_formats:
+        - "%Y-%m-%d"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      datetime_format: "%Y-%m-%d"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%d'))[:10] }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: PT1S
+      start_time_option:
+        type: RequestOption
+        field_name: starting_at
+        inject_into: request_parameter
+
+  # ── Stream 5: claude_admin_api_keys (full refresh, offset pagination) ──
+  - type: DeclarativeStream
+    name: claude_admin_api_keys
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          insight_source_id:
+            type: string
+          id:
+            type: string
+          name:
+            type: string
+          status:
+            type: string
+          created_at:
+            type:
+              - string
+              - "null"
+          created_by_id:
+            type:
+              - string
+              - "null"
+          created_by_name:
+            type:
+              - string
+              - "null"
+          created_by_type:
+            type:
+              - string
+              - "null"
+          workspace_id:
+            type:
+              - string
+              - "null"
+          partial_key_hint:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type: string
+          data_source:
+            type: string
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.anthropic.com
+        path: /v1/organizations/api_keys
+        http_method: GET
+        request_headers:
+          $ref: "#/definitions/anthropic_headers"
+        authenticator:
+          $ref: "#/definitions/api_key_authenticator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+      paginator:
+        $ref: "#/definitions/offset_paginator"
+    transformations:
+      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [created_by_id]
+            value: "{{ record.get('created_by', {}).get('id', '') }}"
+          - path: [created_by_name]
+            value: "{{ record.get('created_by', {}).get('name', '') }}"
+          - path: [created_by_type]
+            value: "{{ record.get('created_by', {}).get('type', '') }}"
+
+  # ── Stream 6: claude_admin_workspaces (full refresh, offset pagination)
+  #    Merged from claude-api: data_residency fallback '' (defensive).
+  - type: DeclarativeStream
+    name: claude_admin_workspaces
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          insight_source_id:
+            type: string
+          id:
+            type: string
+          name:
+            type: string
+          display_name:
+            type:
+              - string
+              - "null"
+          created_at:
+            type:
+              - string
+              - "null"
+          archived_at:
+            type:
+              - string
+              - "null"
+          data_residency:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type: string
+          data_source:
+            type: string
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.anthropic.com
+        path: /v1/organizations/workspaces
+        http_method: GET
+        request_headers:
+          $ref: "#/definitions/anthropic_headers"
+        authenticator:
+          $ref: "#/definitions/api_key_authenticator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+      paginator:
+        $ref: "#/definitions/offset_paginator"
+    transformations:
+      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [data_residency]
+            value: "{{ record.get('data_residency', {}) | tojson if record.get('data_residency') else '' }}"
+
+  # ── Stream 7: claude_admin_workspace_members (full refresh, substream of workspaces) ──
+  - type: DeclarativeStream
+    name: claude_admin_workspace_members
+    primary_key:
+      - unique
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          insight_source_id:
+            type: string
+          unique:
+            type: string
+          type:
+            type:
+              - string
+              - "null"
+          user_id:
+            type: string
+          workspace_id:
+            type: string
+          workspace_role:
+            type: string
+          collected_at:
+            type: string
+          data_source:
+            type: string
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.anthropic.com
+        path: "/v1/organizations/workspaces/{{ stream_partition['workspace_id'] }}/members"
+        http_method: GET
+        request_headers:
+          $ref: "#/definitions/anthropic_headers"
+        authenticator:
+          $ref: "#/definitions/api_key_authenticator"
+        request_parameters:
+          limit: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+      paginator:
+        type: NoPagination
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: workspace_id
+            stream:
+              type: DeclarativeStream
+              name: claude_admin_workspaces_parent
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  properties:
+                    id:
+                      type: string
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  url_base: https://api.anthropic.com
+                  path: /v1/organizations/workspaces
+                  http_method: GET
+                  request_headers:
+                    $ref: "#/definitions/anthropic_headers"
+                  authenticator:
+                    $ref: "#/definitions/api_key_authenticator"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - data
+                paginator:
+                  $ref: "#/definitions/offset_paginator"
+    transformations:
+      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [workspace_id]
+            value: "{{ stream_partition['workspace_id'] }}"
+          - path: [unique]
+            value: "{{ record.get('user_id', '') }}:{{ stream_partition['workspace_id'] }}"
+
+  # ── Stream 8: claude_admin_invites (full refresh, offset pagination)
+  #    Merged from claude-api: uses `created_at` (project-wide convention)
+  #    instead of claude-team's `invited_at`.
+  - type: DeclarativeStream
+    name: claude_admin_invites
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          tenant_id:
+            type: string
+          insight_source_id:
+            type: string
+          id:
+            type: string
+          email:
+            type: string
+          role:
+            type: string
+          status:
+            type: string
+          created_at:
+            type:
+              - string
+              - "null"
+          expires_at:
+            type:
+              - string
+              - "null"
+          workspace_id:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type: string
+          data_source:
+            type: string
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.anthropic.com
+        path: /v1/organizations/invites
+        http_method: GET
+        request_headers:
+          $ref: "#/definitions/anthropic_headers"
+        authenticator:
+          $ref: "#/definitions/api_key_authenticator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+      paginator:
+        $ref: "#/definitions/offset_paginator"
+    transformations:
+      - $ref: "#/definitions/tenant_id_injection"
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required:
+      - insight_tenant_id
+      - admin_api_key
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Tenant isolation identifier (UUID), injected as tenant_id field into every record
+        order: 0
+      admin_api_key:
+        type: string
+        title: Admin API Key
+        description: Anthropic Admin API key (Organization admin scope; from Anthropic Console)
+        airbyte_secret: true
+        order: 1
+      insight_source_id:
+        type: string
+        title: Source Instance ID
+        description: Optional connector instance identifier for multi-instance deployments
+        default: ""
+        order: 2
+      start_date:
+        type: string
+        title: Start Date
+        description: "Earliest date to collect data from. Must be full ISO 8601 with time component (e.g. 2026-01-01T00:00:00Z) — the messages_usage and cost_report streams use strict datetime parsing and reject bare YYYY-MM-DD. Defaults to 90 days ago."
+        order: 3
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    claude_admin_users: true
+    claude_admin_messages_usage: true
+    claude_admin_cost_report: true
+    claude_admin_code_usage: true
+    claude_admin_api_keys: true
+    claude_admin_workspaces: true
+    claude_admin_workspace_members: true
+    claude_admin_invites: true

@@ -1,0 +1,22 @@
+{{/*
+Init script that runs once on first ClickHouse container start.
+Mounted at /docker-entrypoint-initdb.d/ — the upstream image runs
+every .sql / .sh file there after the server boots, and writes a
+marker file so subsequent restarts skip the scripts.
+
+Databases to create on first boot are values-driven via
+`initDatabases` so the chart stays connector-agnostic. Additional
+per-source bronze databases beyond the configured list are created
+lazily by the ingestion pipelines themselves.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "clickhouse.fullname" . }}-init
+  labels:
+    {{- include "clickhouse.labels" . | nindent 4 }}
+data:
+  001-databases.sql: |
+    {{- range .Values.initDatabases }}
+    CREATE DATABASE IF NOT EXISTS {{ . }};
+    {{- end }}

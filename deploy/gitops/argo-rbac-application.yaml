@@ -1,0 +1,52 @@
+##
+## ArgoCD Application: Argo Workflows supplemental RBAC.
+##
+## Companion to argo-application.yaml. The Argo helm chart cannot emit a
+## Role/RoleBinding for the release namespace, so this Application applies
+## deploy/argo/rbac.yaml directly from Git.
+##
+## The raw rbac.yaml file uses `${NAMESPACE}` / `${WORKFLOW_SA}` placeholders
+## that are substituted by deploy/scripts/install-argo.sh for shell-driven
+## installs. For the ArgoCD path we keep a pre-rendered copy in
+## `rbac-insight.yaml` (targeting namespace `insight`) and reference that
+## file. For a different INSIGHT_NAMESPACE, fork the repo and render a
+## new copy.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-workflows-rbac
+  namespace: argocd
+  annotations:
+    # Same wave as argo-workflows: the chart creates the `argo-workflow`
+    # SA; this RBAC binds to it. RoleBindings are idempotent and do not
+    # require the SA to exist beforehand.
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/cyberfabric/insight.git
+    targetRevision: main
+    path: deploy/argo
+    directory:
+      include: 'rbac-insight.yaml'
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: insight
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Same-wave as argo-application; if the RBAC Application reconciles
+      # first and the `insight` namespace does not exist yet, ArgoCD would
+      # fail trying to create Role/RoleBinding. Ensure the namespace is
+      # created independently.
+      - CreateNamespace=true
+      - ServerSideApply=true

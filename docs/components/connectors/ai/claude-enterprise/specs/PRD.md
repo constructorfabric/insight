@@ -113,7 +113,7 @@ Unlike the Admin API connectors, the Enterprise Analytics API is **engagement-fo
 | Reporting Lag | The Enterprise Analytics API makes data for day `N-1` queryable only on day `N+2` (three full days after aggregation). Data for day `N` is therefore queryable starting on day `N+3`. |
 | Cursor Pagination | Pagination mechanism used by the Enterprise Analytics API: clients pass `page=<opaque_token>` and receive a `next_page` field (string or `null`) in the response. Opaque to the client. |
 | `person_id` | Canonical cross-system person identifier resolved by the Identity Manager. |
-| `class_ai_*` | Silver streams for AI usage metrics (`class_ai_dev_usage`, `class_ai_tool_usage`, `class_ai_api_usage`). Out of scope for this PRD. |
+| `class_ai_*` | Silver streams for AI usage metrics. This connector feeds two of them: `class_ai_dev_usage` (Claude Code activity → `claude_enterprise__ai_dev_usage`) and `class_ai_assistant_usage` (chat / cowork / office → `claude_enterprise__ai_assistant_usage`). |
 | Bronze Table | Raw data table in the destination, preserving source-native field names and types without transformation, with tenant tagging and provenance fields added. |
 | `data_source` | Discriminator field set to `insight_claude_enterprise` in all Bronze rows emitted by this connector. |
 
@@ -185,11 +185,13 @@ Unlike the Admin API connectors, the Enterprise Analytics API is **engagement-fo
 - Configurable base URL override for local development and testing
 - Incremental sync for all date-parameterized streams using a date-based cursor
 - Enforcement of the Anthropic minimum queryable date (2026-01-01) and three-day reporting lag
+- Silver-layer staging models routing Bronze → `class_ai_dev_usage` (Claude Code activity) and Bronze → `class_ai_assistant_usage` (chat / cowork / office) for orgs on the Enterprise subscription. Per the cross-vendor source-resolution rule, this connector becomes the canonical Code feed when present; Claude Admin's `claude_admin__ai_dev_usage` is left untagged for `class_ai_dev_usage` to avoid double-counting.
 
 ### 4.2 Out of Scope
 
 - Admin API data (token usage, cost, API keys, workspaces, invites) — covered by the forthcoming `claude-admin` connector
-- Silver-layer routing and transformations (`class_ai_*` streams) — responsibility of the AI silver pipeline and not scheduled for this connector iteration
+- `class_ai_api_usage` (programmatic API tokens) — Enterprise does not expose token-level metering; this class is fed by `claude-admin` and future OpenAI staging
+- `class_ai_cost` — Enterprise cost is org-level (subscription), not per-user; not surfaced in the Analytics API
 - Silver step 2 identity resolution (`email` → `person_id`) — responsibility of the Identity Manager
 - Gold-layer aggregations and cross-source productivity metrics
 - Real-time or sub-daily granularity — the Enterprise Analytics API provides per-day aggregates only

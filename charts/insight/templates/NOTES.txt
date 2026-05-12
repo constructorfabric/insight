@@ -1,0 +1,62 @@
+{{- include "insight.validate" . }}
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║   Insight v{{ .Chart.AppVersion }} installed into namespace {{ .Release.Namespace | printf "%-15s" }}    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Release:    {{ .Release.Name }}
+Revision:   {{ .Release.Revision }}
+
+Resolved infra endpoints (see ConfigMap {{ .Release.Name }}-platform):
+  ClickHouse:  {{ include "insight.clickhouse.url" . }}  {{ if not .Values.clickhouse.deploy }}[external]{{ end }}
+  MariaDB:     {{ include "insight.mariadb.host" . }}:{{ include "insight.mariadb.port" . }}  {{ if not .Values.mariadb.deploy }}[external]{{ end }}
+  Redis:       {{ include "insight.redis.url" . }}  {{ if not .Values.redis.deploy }}[external]{{ end }}
+  Redpanda:    {{ include "insight.redpanda.brokers" . }}  {{ if not .Values.redpanda.deploy }}[external]{{ end }}
+  Airbyte:     {{ include "insight.airbyte.url" . }}
+
+Application services (always-on):
+  ✓ API Gateway        http://{{ include "insight.apiGateway.host" . }}:8080
+  ✓ Analytics API      http://{{ include "insight.analyticsApi.host" . }}:8081
+  ✓ Frontend           http://{{ include "insight.frontend.host" . }}:80
+{{- if .Values.identityResolution.deploy }}
+  ✓ Identity Res.      http://{{ include "insight.identityResolution.host" . }}:8082  (deployed)
+{{- else }}
+  · Identity Res.      not deployed (requires BambooHR sync; enable via identityResolution.deploy=true)
+{{- end }}
+{{- if .Values.ingestion.templates.enabled }}
+  ✓ Ingestion templates: airbyte-sync, dbt-run, ingestion-pipeline
+{{- end }}
+
+NOT installed by this chart (see deploy/):
+  ✗ Airbyte          → deploy/scripts/install-airbyte.sh
+  ✗ Argo Workflows   → deploy/scripts/install-argo.sh
+
+Next steps:
+
+  1. Wait for all pods to be ready:
+       kubectl -n {{ .Release.Namespace }} rollout status -l app.kubernetes.io/part-of=insight deploy --timeout=5m
+
+  2. Open the frontend locally:
+       kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "insight.frontend.host" . }} 8080:80
+
+  3. Docs: https://github.com/cyberfabric/insight
+
+{{- /* Only warn when auth is enabled, no existingSecret is set,
+       and inline issuer is also empty — i.e. operator hasn't picked
+       any of the three valid OIDC paths. */ -}}
+{{- $oid := default dict .Values.apiGateway.oidc -}}
+{{ if and (not .Values.apiGateway.authDisabled) (not $oid.existingSecret) (not $oid.issuer) -}}
+⚠  WARNING: OIDC is not configured. For production set either
+            apiGateway.oidc.existingSecret OR all four inline fields
+            (issuer + audience + clientId + redirectUri).
+{{- end }}
+
+{{- if .Values.credentials.autoGenerate }}
+
+Auto-generated DB credentials (stored in Secret insight-db-creds — fixed name):
+
+  ClickHouse:       kubectl -n {{ .Release.Namespace }} get secret insight-db-creds -o jsonpath='{.data.clickhouse-password}' | base64 -d
+  MariaDB user:     kubectl -n {{ .Release.Namespace }} get secret insight-db-creds -o jsonpath='{.data.mariadb-password}' | base64 -d
+  MariaDB root:     kubectl -n {{ .Release.Namespace }} get secret insight-db-creds -o jsonpath='{.data.mariadb-root-password}' | base64 -d
+  Redis:            kubectl -n {{ .Release.Namespace }} get secret insight-db-creds -o jsonpath='{.data.redis-password}' | base64 -d
+{{- end }}

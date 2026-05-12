@@ -103,7 +103,7 @@ Insight connects to 10+ external platforms, each contributing partial person dat
 
 **ID**: `cpt-person-actor-golden-record-builder`
 
-**Role**: Assembles the best-value `persons` record from incoming person-attribute observations (read from `bootstrap_inputs`), applying per-attribute source priority rules. Recomputes `completeness_score` on each rebuild. Invokes ConflictDetector when source priority cannot resolve a disagreement.
+**Role**: Assembles the best-value `persons` record from incoming person-attribute observations (read from `identity_inputs`), applying per-attribute source priority rules. Recomputes `completeness_score` on each rebuild. Invokes ConflictDetector when source priority cannot resolve a disagreement.
 
 #### ConflictDetector
 
@@ -115,7 +115,7 @@ Insight connects to 10+ external platforms, each contributing partial person dat
 
 **ID**: `cpt-person-actor-hr-connector`
 
-**Role**: External system connector (BambooHR, Workday, LDAP) that writes person-attribute observations to the shared `bootstrap_inputs` table. Provides the most authoritative source for employment data (role, department, manager, employee ID).
+**Role**: External system connector (BambooHR, Workday, LDAP) that writes person-attribute observations to the shared `identity_inputs` table. Provides the most authoritative source for employment data (role, department, manager, employee ID).
 
 #### Analytics Pipeline
 
@@ -129,8 +129,8 @@ Insight connects to 10+ external platforms, each contributing partial person dat
 
 ### 3.1 Module-Specific Environment Constraints
 
-- **Storage**: All person domain tables reside in ClickHouse. No separate RDBMS.
-- **Shared input**: Person-attribute observations originate from the `bootstrap_inputs` table owned by the Identity Resolution domain.
+- **Storage**: The Person-domain analytical tables (golden-record projection, `person_availability`, `person_conflicts`) reside in ClickHouse. The MariaDB-backed `persons` identity-attribute history table read by this domain is owned and maintained by the Identity-Resolution domain (see identity-resolution DESIGN §3.7 and ingestion [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)).
+- **Shared input**: Person-attribute observations originate from two sources — the `identity_inputs` ClickHouse table (connector-sourced) and the MariaDB `persons` history table (operator edits), both owned by the Identity Resolution domain.
 - **SCD history**: Historical versions of person records are managed by dbt macros (SCD Type 2 / Type 3). This domain defines the current-state table; history schemas are out of scope.
 - **Naming**: All tables and columns follow the shared glossary conventions.
 
@@ -333,9 +333,9 @@ The system **MUST** allow querying a person's availability periods for a given d
 
 - [ ] `p1` - **ID**: `cpt-person-nfr-golden-record-freshness`
 
-The system **MUST** update the golden record within 30 minutes of a source contribution change arriving in `bootstrap_inputs`.
+The system **MUST** update the golden record within 30 minutes of a source contribution change arriving in `identity_inputs`.
 
-**Threshold**: `persons.updated_at` within 30 min of corresponding `bootstrap_inputs._synced_at`.
+**Threshold**: `persons.updated_at` within 30 min of corresponding `identity_inputs._synced_at`.
 
 **Rationale**: Stale golden records cause analytics to show outdated person attributes (wrong role, wrong department), undermining trust in dashboards.
 
@@ -407,17 +407,17 @@ The system **MUST** return a single person record (GET /persons/:id) in < 50 ms 
 
 **Compatibility**: The `id` UUID format and column name are stable. Adding new golden record columns is backward-compatible. Renaming or removing columns is breaking.
 
-#### Bootstrap Inputs Read Contract
+#### Identity Inputs Read Contract
 
-- [ ] `p1` - **ID**: `cpt-person-contract-bootstrap-inputs-read`
+- [ ] `p1` - **ID**: `cpt-person-contract-identity-inputs-read`
 
-**Direction**: required from external (reads from IR domain's `bootstrap_inputs` table)
+**Direction**: required from external (reads from IR domain's `identity_inputs` table)
 
 **Protocol/Format**: ClickHouse SELECT
 
-**Description**: The Person domain reads person-attribute observations from `bootstrap_inputs` by filtering on `alias_type` values that correspond to person attributes (`display_name`, `role`, `location`, `email`, `username`). The table schema is owned by the IR domain.
+**Description**: The Person domain reads person-attribute observations from `identity_inputs` by filtering on `value_type` values that correspond to person attributes (`display_name`, `role`, `location`, `email`, `username`). The table schema is owned by the IR domain.
 
-**Compatibility**: The Person domain depends on `bootstrap_inputs` schema stability. Column additions are backward-compatible; column removals or renames require coordination with IR domain.
+**Compatibility**: The Person domain depends on `identity_inputs` schema stability. Column additions are backward-compatible; column removals or renames require coordination with IR domain.
 
 ---
 
@@ -431,10 +431,10 @@ The system **MUST** return a single person record (GET /persons/:id) in < 50 ms 
 
 **Preconditions**:
 - Person record exists in `persons` table
-- HR connector has synced and written person-attribute observations to `bootstrap_inputs`
+- HR connector has synced and written person-attribute observations to `identity_inputs`
 
 **Main Flow**:
-1. GoldenRecordBuilder reads new person-attribute observations from `bootstrap_inputs` (filtered by person-attribute `alias_type` values)
+1. GoldenRecordBuilder reads new person-attribute observations from `identity_inputs` (filtered by person-attribute `value_type` values)
 2. For each person with changes: compare incoming attributes against current `persons` row
 3. Apply source priority per attribute; select highest-priority non-empty value
 4. Write golden record fields to `persons` with corresponding `*_source` values
@@ -526,7 +526,7 @@ The system **MUST** return a single person record (GET /persons/:id) in < 50 ms 
 | Dependency | Description | Criticality |
 |---|---|---|
 | ClickHouse 24.x+ | Storage engine for all person domain tables; `generateUUIDv7()` support | `p1` |
-| IR domain (`bootstrap_inputs` table) | Shared table providing person-attribute observations from connectors | `p1` |
+| IR domain (`identity_inputs` table) | Shared table providing person-attribute observations from connectors | `p1` |
 | IR domain (`aliases` table) | References `persons.id` — IR domain is a consumer of person records | `p1` |
 | dbt models | Seed `persons` from HR Bronze (Phase 1); manage SCD snapshots | `p1` |
 | Org-chart domain (`person_assignments`) | References `persons.id` for assignment tracking | `p2` |
@@ -540,7 +540,7 @@ The system **MUST** return a single person record (GET /persons/:id) in < 50 ms 
 - The 7 canonical golden record attributes (display_name, email, username, role, manager_person_id, org_unit_id, location) cover all current analytical needs. New attributes can be added without schema changes to the priority mechanism.
 - Source priority configuration is per-tenant. Each tenant may define its own attribute source priority rules.
 - HR connectors (BambooHR, Workday) provide the most reliable person-attribute data and are ranked second only to manual overrides.
-- The shared `bootstrap_inputs` table schema is stable and owned by the IR domain. Person domain depends on column names and types remaining consistent.
+- The shared `identity_inputs` table schema is stable and owned by the IR domain. Person domain depends on column names and types remaining consistent.
 - dbt manages SCD snapshot schemas independently; the Person domain does not need to know their structure.
 - Operators review conflicts on a regular basis. Backlog alerts trigger if unresolved conflicts exceed a configured threshold.
 
@@ -552,7 +552,7 @@ The system **MUST** return a single person record (GET /persons/:id) in < 50 ms 
 |---|---|---|
 | Source priority misconfiguration | Wrong source wins for attributes; golden records show stale or incorrect values | Default priority well-documented; operator manual override as escape hatch |
 | High conflict volume overwhelms operators | Conflict queue grows unbounded; `needs_review` persons never resolved | Monitor conflict rate; tune priority rules to resolve more conflicts automatically; consider auto-resolve for low-impact attributes |
-| `bootstrap_inputs` schema change by IR domain | Person domain reads break silently; golden record assembly fails | Cross-domain contract (§7.2); schema changes require coordination |
+| `identity_inputs` schema change by IR domain | Person domain reads break silently; golden record assembly fails | Cross-domain contract (§7.2); schema changes require coordination |
 | Completeness score misleading | Operators chase low scores for persons where missing attributes are expected (e.g., bots have no `manager_person_id`) | Consider per-status completeness targets; bots and external contractors may have different expected attribute sets |
 | dbt seed timing vs. IR bootstrap timing | IR creates aliases before person records exist; aliases reference non-existent `person_id` | **Constraint**: Person dbt seed MUST complete before IR BootstrapJob runs. Enforced by Argo Workflow dependency ordering |
 | ClickHouse ReplacingMergeTree dedup delay | Stale person records visible briefly after update | Application reads use FINAL keyword for critical queries; analytical queries tolerate brief staleness |

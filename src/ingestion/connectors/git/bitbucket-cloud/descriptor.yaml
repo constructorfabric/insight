@@ -1,5 +1,6 @@
 name: bitbucket-cloud
-version: "1.0"
+version: "2026.05.04"
+cdk_image: "ghcr.io/cyberfabric/source-bitbucket-cloud-insight:2026.04.21.16.10-b36cf42"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
@@ -7,3 +8,7 @@ dbt_select: "tag:bitbucket-cloud+"
 
 connection:
   namespace: "bronze_bitbucket_cloud"
+secret:
+  required_fields:
+    - bitbucket_token
+    - bitbucket_workspaces

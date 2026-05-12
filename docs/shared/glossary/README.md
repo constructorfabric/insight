@@ -390,10 +390,10 @@ Use consistent `VARCHAR` lengths based on content type:
 
 | Tier | Length | Use for | Examples |
 |------|--------|---------|----------|
-| **Short** | `VARCHAR(50)` | Type codes, enum-like values, short identifiers | `alias_type`, `assignment_type`, `source` |
+| **Short** | `VARCHAR(50)` | Type codes, enum-like values, short identifiers | `value_type`, `assignment_type`, `source` |
 | **Medium** | `VARCHAR(100)` | System names, rule names, attribute names | `insight_source_type`, `attribute_name`, `condition_type` |
 | **Standard** | `VARCHAR(255)` | Human-readable names, display values | `display_name`, `name`, `role`, `location` |
-| **Long** | `VARCHAR(500)` | Emails, URLs, external identifiers, user agents | `alias_value`, `email`, `source_account_id`, `actor_user_agent` |
+| **Long** | `VARCHAR(500)` | Emails, URLs, external identifiers, user agents | `value`, `email`, `source_account_id`, `actor_user_agent` |
 | **Unbounded** | `TEXT` | Paths, free-form text, reasons, descriptions | `path`, `reason`, `description` |
 
 **Rules:**
@@ -520,8 +520,8 @@ Existing code and specs that conflict with the adopted conventions. To be update
 | `src/ingestion/connectors/hr-directory/bamboohr/dbt/to_class_people.sql:16` | `CAST(NULL AS Nullable(DateTime))` for `valid_to` | ClickHouse Nullable avoidance (section 6); use sentinel value (e.g., `'1970-01-01'`) instead of `Nullable` |
 | `src/ingestion/connectors/hr-directory/bamboohr/dbt/to_class_people.sql:12` | bare `tenant_id` | `insight_tenant_id` (section 3.1) |
 | `src/ingestion/connectors/hr-directory/bamboohr/dbt/to_class_people.sql:15` | `valid_from` / `valid_to` | `effective_from` / `effective_to` (section 4.2) |
-| `src/ingestion/connectors/ai/claude-api/dbt/to_ai_api_usage.sql:8` | `insight_source_id` without `insight_source_type` | Source tracking fields must co-occur (section 3.2) |
-| `src/ingestion/connectors/ai/claude-api/dbt/to_ai_api_usage.sql:7` | bare `tenant_id` | `insight_tenant_id` (section 3.1) |
+| `src/ingestion/connectors/ai/claude-admin/dbt/claude_admin__ai_api_usage.sql` | `insight_source_id` without `insight_source_type` | Source tracking fields must co-occur (section 3.2) |
+| `src/ingestion/connectors/ai/claude-admin/dbt/claude_admin__ai_api_usage.sql` | bare `tenant_id` | `insight_tenant_id` (section 3.1) |
 
 ### Spec documents
 

@@ -1,147 +1,125 @@
-"""Bitbucket Cloud PR commits stream (REST, per-PR, incremental)."""
+"""Bitbucket Cloud PR commits stream (incremental, per-PR, HttpSubStream of pull_requests)."""
 
 import logging
-import re
 from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
-from source_bitbucket_cloud.streams.base import (
-    BitbucketAuthError,
-    BitbucketCloudRestStream,
-    _make_unique_key,
-    _now_iso,
-)
+from airbyte_cdk.models import SyncMode
+from airbyte_cdk.sources.streams.http import HttpSubStream
+
+from source_bitbucket_cloud.streams.base import BitbucketCloudStream, _make_unique_key
+
 
 logger = logging.getLogger("airbyte")
 
-# Regex to parse "Name <email>" from Bitbucket author.raw
-_AUTHOR_RAW_RE = re.compile(r"^(.*?)\s*<([^>]+)>\s*$")
 
+class PRCommitsStream(HttpSubStream, BitbucketCloudStream):
+    """Commits per PR. Per-PR incremental state keyed by ``pull_request_updated_on``.
 
-class PRCommitsStream(BitbucketCloudRestStream):
-    """Fetches commits linked to each PR via REST API.
-
-    Uses per-PR incremental state keyed by workspace/repo_slug/pr_id
-    with synced_at = parent PR updated_on.
+    ``HttpSubStream`` re-iterates parent PRs to build slices; our own state
+    skips PRs whose ``updated_on`` hasn't moved since last sync.
     """
 
     name = "pull_request_commits"
     cursor_field = "pull_request_updated_on"
+    # Per-record get_updated_state marks the whole PR synced; mid-slice
+    # checkpointing would therefore complete a PR after commit #1 and
+    # drop remaining commits on crash. State persists only at slice
+    # (per-PR) boundaries.
+    state_checkpoint_interval = None
+    ignore_404 = True
 
-    def __init__(self, parent, **kwargs):
-        super().__init__(**kwargs)
-        self._parent = parent
-        self._partitions_with_errors: set = set()
-
-    def _path(self, stream_slice: Optional[Mapping[str, Any]] = None, **kwargs) -> str:
+    def _path(self, stream_slice: Optional[Mapping[str, Any]] = None) -> str:
         s = stream_slice or {}
-        workspace = s.get("workspace", "")
-        slug = s.get("repo_slug", "")
-        pr_id = s.get("pr_id", "")
-        return f"repositories/{workspace}/{slug}/pullrequests/{pr_id}/commits"
+        pr = s["parent"]
+        return (
+            f"repositories/{pr['workspace']}/{pr['repo_slug']}/"
+            f"pullrequests/{pr['id']}/commits"
+        )
 
     def stream_slices(
         self,
+        sync_mode: SyncMode,
+        cursor_field: Optional[list] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
-        **kwargs,
     ) -> Iterable[Optional[Mapping[str, Any]]]:
+        # Iterate parent via stream_slices + read_records directly (not via
+        # HttpSubStream/read_only_records) — Stream.read() overrides incoming
+        # stream_state with self.state, skipping PRs the child still needs
+        # after a mid-stream crash. read_records honours the passed state.
         state = stream_state or {}
         total = 0
-        skipped = 0
-        for pr in self._parent.get_child_slices():
-            workspace = pr.get("workspace", "")
-            slug = pr.get("repo_slug", "")
-            pr_id = pr.get("pr_id")
-            pr_updated_on = pr.get("updated_on", "")
-            if not (workspace and slug and pr_id):
-                continue
-            total += 1
-            partition_key = f"{workspace}/{slug}/{pr_id}"
-            child_cursor = state.get(partition_key, {}).get("synced_at", "")
-            if pr_updated_on and child_cursor and pr_updated_on <= child_cursor:
-                skipped += 1
-                continue
-            yield {
-                "workspace": workspace,
-                "repo_slug": slug,
-                "pr_id": pr_id,
-                "pr_updated_on": pr_updated_on,
-                "partition_key": partition_key,
-            }
-        if skipped:
-            logger.info(
-                f"PR commits: {total - skipped}/{total} PRs need commit sync "
-                f"({skipped} skipped, unchanged)"
-            )
+        skipped_unchanged = 0
 
-    def parse_response(self, response, stream_slice=None, **kwargs):
+        for repo_slice in self.parent.stream_slices(
+            sync_mode=SyncMode.full_refresh, cursor_field=None, stream_state={},
+        ):
+            for pr in self.parent.read_records(
+                sync_mode=SyncMode.full_refresh,
+                stream_slice=repo_slice,
+                stream_state={},
+            ):
+                if not isinstance(pr, Mapping):
+                    continue
+                total += 1
+                workspace = pr.get("workspace", "")
+                slug = pr.get("repo_slug", "")
+                pr_id = pr.get("id")
+                pr_updated_on = pr.get("updated_on", "") or ""
+                partition_key = f"{workspace}/{slug}/{pr_id}"
+
+                synced_at = (state.get(partition_key, {}) or {}).get(self.cursor_field, "") or ""
+                if pr_updated_on and synced_at and pr_updated_on <= synced_at:
+                    skipped_unchanged += 1
+                    continue
+
+                yield {"parent": pr}
+
+        logger.info(
+            f"pull_request_commits: {total - skipped_unchanged} PRs to fetch "
+            f"({skipped_unchanged} unchanged, state_entries={len(state)})"
+        )
+
+    def parse_response(
+        self,
+        response,
+        stream_slice: Optional[Mapping[str, Any]] = None,
+        **kwargs: Any,
+    ):
         s = stream_slice or {}
-        workspace = s.get("workspace", "")
-        slug = s.get("repo_slug", "")
-        pr_id = s.get("pr_id")
+        pr = s["parent"]
+        workspace = pr["workspace"]
+        slug = pr["repo_slug"]
+        pr_id = pr["id"]
+        pr_updated_on = pr.get("updated_on", "")
 
-        if not self._guard_response(response):
-            return
-
-        data = response.json()
-        values = data.get("values", [])
-
-        for commit in values:
-            commit_hash = commit.get("hash", "")
+        emitted = 0
+        for commit in self._iter_values(response):
+            commit_hash = commit.get("hash", "") or ""
             if not commit_hash:
                 continue
+            emitted += 1
+            author_user = (commit.get("author") or {}).get("user") or {}
 
-            author = commit.get("author") or {}
-            author_raw = author.get("raw", "")
-            author_user = author.get("user") or {}
-
-            # Parse "Name <email>" from author.raw
-            author_name = author_raw
-            author_email = None
-            match = _AUTHOR_RAW_RE.match(author_raw)
-            if match:
-                author_name = match.group(1).strip()
-                author_email = match.group(2).strip()
-
+            # message/date/author_name/author_email intentionally omitted:
+            # the `commits` stream carries the full commit record, joined
+            # downstream by hash. Only hash + PR linkage is needed here.
             record = {
                 "unique_key": _make_unique_key(
                     self._tenant_id, self._source_id,
                     workspace, slug, str(pr_id), commit_hash,
                 ),
-                "tenant_id": self._tenant_id,
-                "source_id": self._source_id,
-                "data_source": "insight_bitbucket_cloud",
-                "collected_at": _now_iso(),
                 "pr_id": pr_id,
                 "hash": commit_hash,
-                "message": commit.get("message"),
-                "date": commit.get("date"),
-                "author_raw": author_raw,
-                "author_name": author_name,
-                "author_email": author_email,
-                "author_display_name": author_user.get("display_name"),
                 "author_uuid": author_user.get("uuid"),
-                "author_nickname": author_user.get("nickname"),
-                "pull_request_updated_on": s.get("pr_updated_on"),
+                "pull_request_updated_on": pr_updated_on,
                 "workspace": workspace,
                 "repo_slug": slug,
             }
-            yield record
+            yield self._envelope(record)
 
-    def read_records(self, sync_mode=None, stream_slice=None, stream_state=None, **kwargs):
-        s = stream_slice or {}
-        if not (s.get("workspace") and s.get("repo_slug") and s.get("pr_id")):
-            return
-        try:
-            yield from super().read_records(
-                sync_mode=sync_mode, stream_slice=stream_slice,
-                stream_state=stream_state, **kwargs,
-            )
-        except BitbucketAuthError:
-            raise
-        except Exception as exc:
-            pk = s.get("partition_key", "?")
-            self._partitions_with_errors.add(pk)
-            logger.error(f"Failed pr_commits slice {pk}, cursor frozen: {exc}")
+        logger.debug(
+            f"pull_request_commits: {workspace}/{slug}/pr={pr_id} page emitted={emitted}"
+        )
 
     def get_updated_state(
         self,
@@ -151,19 +129,19 @@ class PRCommitsStream(BitbucketCloudRestStream):
         workspace = latest_record.get("workspace", "")
         slug = latest_record.get("repo_slug", "")
         pr_id = latest_record.get("pr_id")
-        partition_key = f"{workspace}/{slug}/{pr_id}" if (workspace and slug and pr_id) else ""
-        if partition_key in self._partitions_with_errors:
+        if not (workspace and slug) or pr_id is None:
             return current_stream_state
-        pr_updated_on = latest_record.get("pull_request_updated_on", "")
-        if partition_key and pr_updated_on:
-            current_stream_state[partition_key] = {"synced_at": pr_updated_on}
+        partition_key = f"{workspace}/{slug}/{pr_id}"
+        pr_updated_on = latest_record.get(self.cursor_field, "") or ""
+        if pr_updated_on:
+            current_stream_state[partition_key] = {self.cursor_field: pr_updated_on}
         return current_stream_state
 
     def get_json_schema(self) -> Mapping[str, Any]:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "additionalProperties": True,
+            "additionalProperties": False,
             "properties": {
                 "tenant_id": {"type": "string"},
                 "source_id": {"type": "string"},
@@ -172,14 +150,7 @@ class PRCommitsStream(BitbucketCloudRestStream):
                 "collected_at": {"type": "string"},
                 "pr_id": {"type": ["null", "integer"]},
                 "hash": {"type": ["null", "string"]},
-                "message": {"type": ["null", "string"]},
-                "date": {"type": ["null", "string"]},
-                "author_raw": {"type": ["null", "string"]},
-                "author_name": {"type": ["null", "string"]},
-                "author_email": {"type": ["null", "string"]},
-                "author_display_name": {"type": ["null", "string"]},
                 "author_uuid": {"type": ["null", "string"]},
-                "author_nickname": {"type": ["null", "string"]},
                 "pull_request_updated_on": {"type": ["null", "string"]},
                 "workspace": {"type": "string"},
                 "repo_slug": {"type": "string"},

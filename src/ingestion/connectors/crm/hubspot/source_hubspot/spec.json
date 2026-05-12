@@ -1,0 +1,44 @@
+{
+  "documentationUrl": "https://developers.hubspot.com/docs/api/overview",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "HubSpot Source",
+    "type": "object",
+    "required": [
+      "insight_tenant_id",
+      "insight_source_id",
+      "hubspot_access_token"
+    ],
+    "additionalProperties": true,
+    "properties": {
+      "insight_tenant_id": {
+        "type": "string",
+        "title": "Insight Tenant ID",
+        "description": "Tenant isolation identifier for the ingestion layer. Used as a partition key in Bronze and joined to silver tables.",
+        "order": 0
+      },
+      "insight_source_id": {
+        "type": "string",
+        "title": "Insight Source ID",
+        "description": "Instance discriminator (e.g. 'hubspot-acme-prod').",
+        "examples": ["hubspot-acme-prod"],
+        "order": 1
+      },
+      "hubspot_access_token": {
+        "type": "string",
+        "title": "Private App Access Token",
+        "description": "HubSpot Private App access token. Create under Settings → Integrations → Private Apps. Token must have CRM + properties read scopes for every enabled stream.",
+        "airbyte_secret": true,
+        "order": 2
+      },
+      "hubspot_start_date": {
+        "type": "string",
+        "title": "Start Date",
+        "description": "UTC start (YYYY-MM-DD) for the initial incremental sync. Records with updatedAt older than this are skipped on first run. Leave blank to fall back to 2 years before now.",
+        "format": "date",
+        "examples": ["2024-01-01"],
+        "order": 3
+      }
+    }
+  }
+}

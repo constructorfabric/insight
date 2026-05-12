@@ -13,7 +13,7 @@
 -- Raw SQL equivalents of dbt models:
 --   seed_persons_from_cursor.sql
 --   seed_aliases_from_cursor.sql
---   seed_bootstrap_inputs_from_cursor.sql
+--   seed_identity_inputs_from_cursor.sql
 -- ============================================================
 
 
@@ -57,8 +57,8 @@ QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, 
 -- ============================================================
 
 INSERT INTO identity.aliases (
-    id, insight_tenant_id, person_id, alias_type, alias_value,
-    alias_field_name, insight_source_type, source_account_id
+    id, insight_tenant_id, person_id, value_type, value,
+    value_field_name, insight_source_type, source_account_id
 )
 WITH source AS (
     SELECT
@@ -74,13 +74,13 @@ WITH source AS (
 ),
 new_aliases AS (
     SELECT person_id, insight_tenant_id, source_account_id,
-           'email' AS alias_type,
-           lower(trim(email)) AS alias_value,
-           'bronze_cursor.cursor_members.email' AS alias_field_name
+           'email' AS value_type,
+           lower(trim(email)) AS value,
+           'bronze_cursor.cursor_members.email' AS value_field_name
     FROM source WHERE email IS NOT NULL AND email != ''
     UNION ALL
     SELECT person_id, insight_tenant_id, source_account_id,
-           'platform_id',
+           'id',
            trim(source_account_id),
            'bronze_cursor.cursor_members.id'
     FROM source WHERE source_account_id IS NOT NULL AND source_account_id != ''
@@ -95,27 +95,30 @@ SELECT
     generateUUIDv7(),
     na.insight_tenant_id,
     na.person_id,
-    na.alias_type,
-    na.alias_value,
-    na.alias_field_name,
+    na.value_type,
+    na.value,
+    na.value_field_name,
     'cursor',
     na.source_account_id
 FROM new_aliases na
 LEFT ANTI JOIN identity.aliases existing
-    ON  na.alias_type              = existing.alias_type
-    AND na.alias_value             = existing.alias_value
+    ON  na.value_type              = existing.value_type
+    AND na.value                   = existing.value
     AND na.source_account_id       = existing.source_account_id
     AND existing.insight_source_type = 'cursor'
     AND existing.is_deleted        = 0;
 
 
 -- ============================================================
--- Step 3: Add bootstrap_inputs from Cursor (raw observations)
+-- Step 3: Add identity_inputs from Cursor (raw observations)
+-- `value_type='id'` replaces `platform_id`: for Cursor,
+-- platform_id was always equal to source_account_id; 'id' is the
+-- ADR-0002 canonical binding observation.
 -- ============================================================
 
-INSERT INTO identity.bootstrap_inputs (
+INSERT INTO identity.identity_inputs (
     id, insight_tenant_id, insight_source_type, source_account_id,
-    alias_type, alias_value, alias_field_name, operation_type
+    value_type, value, value_field_name, operation_type
 )
 WITH source AS (
     SELECT
@@ -128,13 +131,13 @@ WITH source AS (
 ),
 observations AS (
     SELECT source_account_id, tenant_id,
-           'email' AS alias_type,
-           email AS alias_value,
-           'bronze_cursor.cursor_members.email' AS alias_field_name
+           'email' AS value_type,
+           email AS value,
+           'bronze_cursor.cursor_members.email' AS value_field_name
     FROM source WHERE email IS NOT NULL AND email != ''
     UNION ALL
     SELECT source_account_id, tenant_id,
-           'platform_id',
+           'id',
            source_account_id,
            'bronze_cursor.cursor_members.id'
     FROM source WHERE source_account_id IS NOT NULL AND source_account_id != ''
@@ -150,14 +153,14 @@ SELECT
     UUIDNumToString(sipHash128(coalesce(o.tenant_id, ''))),
     'cursor',
     o.source_account_id,
-    o.alias_type,
-    o.alias_value,
-    o.alias_field_name,
+    o.value_type,
+    o.value,
+    o.value_field_name,
     'UPSERT'
 FROM observations o
-LEFT ANTI JOIN identity.bootstrap_inputs existing
-    ON  o.alias_type              = existing.alias_type
-    AND o.alias_value             = existing.alias_value
+LEFT ANTI JOIN identity.identity_inputs existing
+    ON  o.value_type              = existing.value_type
+    AND o.value                   = existing.value
     AND o.source_account_id       = existing.source_account_id
     AND existing.insight_source_type = 'cursor';
 
@@ -168,5 +171,5 @@ LEFT ANTI JOIN identity.bootstrap_inputs existing
 
 -- SELECT count() FROM person.persons;
 -- SELECT insight_tenant_id, count() FROM person.persons GROUP BY insight_tenant_id;
--- SELECT alias_type, count() FROM identity.aliases GROUP BY alias_type;
--- SELECT insight_source_type, alias_type, count() FROM identity.bootstrap_inputs GROUP BY insight_source_type, alias_type;
+-- SELECT value_type, count() FROM identity.aliases GROUP BY value_type;
+-- SELECT insight_source_type, value_type, count() FROM identity.identity_inputs GROUP BY insight_source_type, value_type;

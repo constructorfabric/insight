@@ -1,0 +1,72 @@
+##
+## ArgoCD Application: Airbyte
+##
+## Sync wave 0 — installed FIRST, before Insight.
+## The Insight Application waits until this one becomes Healthy.
+##
+## Values come from deploy/airbyte/values.yaml via a multi-source setup
+## (ArgoCD 2.6+). This keeps a SINGLE source of truth for Airbyte config
+## — `install-airbyte.sh` and this Application render identical manifests.
+##
+## To customize, fork this repo and either edit values.yaml in-place or
+## add a second valueFile pointing at your own overrides.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: airbyte
+  namespace: argocd
+  annotations:
+    # Lower wave runs earlier. Insight = wave 1.
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    # On Application deletion, cascade-delete the created resources.
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  sources:
+    # 1. The Airbyte helm chart.
+    - repoURL: https://airbytehq.github.io/helm-charts
+      chart: airbyte
+      # Version pin — REQUIRED for reproducible deploys.
+      targetRevision: 1.8.5
+      helm:
+        releaseName: airbyte
+        valueFiles:
+          # $values is resolved against the ref=values source below.
+          - $values/deploy/airbyte/values.yaml
+
+    # 2. Values source (this repo). `ref` makes it available for
+    #    $values substitution above and does not sync manifests from it.
+    - repoURL: https://github.com/cyberfabric/insight.git
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: insight
+
+  syncPolicy:
+    automated:
+      prune: true           # delete resources that are no longer in Git
+      selfHeal: true        # auto-sync on drift in the cluster
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+
+  # The Airbyte chart creates many resources, including heavy Temporal CRDs.
+  # Ignore fields that helm/kubectl patches would flip back and forth.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas

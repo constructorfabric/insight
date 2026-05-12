@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "source-hubspot-insight"
+version = "1.0.0"
+description = "Airbyte source connector for HubSpot (CDK-native, CRM Search API with v4 associations)"
+requires-python = ">=3.10"
+dependencies = [
+    "airbyte-cdk>=7.16.0",
+    "requests>=2.31.0",
+    "pendulum>=3.0.0",
+    "python-dateutil>=2.8",
+]
+
+[project.scripts]
+source-hubspot-insight = "source_hubspot.source:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["source_hubspot*"]
+
+[tool.setuptools.package-data]
+"source_hubspot" = ["spec.json"]

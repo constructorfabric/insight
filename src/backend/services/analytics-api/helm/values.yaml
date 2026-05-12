@@ -4,7 +4,7 @@ podAnnotations: {}
 
 image:
   repository: ghcr.io/cyberfabric/insight-analytics-api
-  tag: "latest"
+  tag: ""                  # MUST be set by the operator. No `:latest` default.
   pullPolicy: IfNotPresent
 
 service:
@@ -19,36 +19,13 @@ resources:
     cpu: 500m
     memory: 512Mi
 
-# Use a pre-provisioned Secret instead of creating one from values below.
-# If set, secret.yaml is skipped entirely.
+# Pre-provisioned Secret with the full analytics-api configuration:
+#   ANALYTICS__database_url, ANALYTICS__clickhouse_*, ANALYTICS__redis_url,
+#   ANALYTICS__identity_resolution_url, ANALYTICS__bind_addr.
+# The umbrella populates `insight-analytics-api-config` automatically; for
+# standalone installs the operator pre-creates an equivalent Secret and
+# sets `existingSecret` to its name.
 existingSecret: ""
-
-# Database connections
-database:
-  # MariaDB connection URL
-  url: "mysql://insight:insight-pass@insight-mariadb:3306/analytics"
-
-clickhouse:
-  url: "http://insight-clickhouse:8123"
-  database: "insight"
-  # Credentials: prefer a pre-existing K8s Secret (set credentialsSecret.name).
-  # When credentialsSecret.name is set, user/password below are ignored and
-  # values are injected via env: secretKeyRef at pod level.
-  credentialsSecret:
-    name: ""                  # e.g., clickhouse-credentials
-    userKey: "username"
-    passwordKey: "password"
-  # Inline fallback (used only when credentialsSecret.name is empty).
-  user: "insight"
-  password: "insight-pass"
-
-# Identity Resolution service
-identityResolution:
-  url: "http://insight-identity-resolution:8082"
-
-# Redis for caching
-redis:
-  url: "redis://insight-redis-master:6379"
 
 # Health probes
 livenessProbe:

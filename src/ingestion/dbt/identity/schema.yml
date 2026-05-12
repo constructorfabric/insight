@@ -1,11 +1,9 @@
 version: 2
 
-sources:
-  # bronze_cursor is declared in connectors/ai-dev/cursor/dbt/schema.yml (with full table list)
-  - name: bronze_claude_team
-    schema: bronze_claude_team
-    tables:
-      - name: claude_team_users
+# Sources used by the identity seeds below are declared in their respective
+# connector schema.yml files:
+#   - bronze_cursor        → connectors/ai/cursor/dbt/schema.yml
+#   - bronze_claude_admin  → connectors/ai/claude-admin/dbt/schema.yml
 
 models:
   # --- Cursor seed ---
@@ -43,7 +41,7 @@ models:
   - name: seed_aliases_from_cursor
     description: >
       Phase 1 seed: Cursor members → identity.aliases table.
-      Each cursor member produces up to 3 alias rows: email, platform_id, display_name.
+      Each cursor member produces up to 3 alias rows: id, email, display_name.
       Joins on email to resolve person_id from seed_persons_from_cursor.
     columns:
       - name: id
@@ -55,17 +53,17 @@ models:
         description: "FK to person.persons.id"
         tests:
           - not_null
-      - name: alias_type
-        description: "email, platform_id, or display_name"
+      - name: value_type
+        description: "id, email, or display_name"
         tests:
           - not_null
           - accepted_values:
-              values: ['email', 'platform_id', 'display_name']
-      - name: alias_value
-        description: "Normalized alias value"
+              values: ['id', 'email', 'display_name']
+      - name: value
+        description: "Normalized value"
         tests:
           - not_null
-      - name: alias_field_name
+      - name: value_field_name
         description: "Fully-qualified Bronze field path"
         tests:
           - not_null
@@ -79,27 +77,27 @@ models:
         tests:
           - not_null
 
-  - name: seed_bootstrap_inputs_from_cursor
+  - name: seed_identity_inputs_from_cursor
     description: >
-      Phase 1 seed: Cursor members → identity.bootstrap_inputs table.
+      Phase 1 seed: Cursor members → identity.identity_inputs table.
       Raw alias observations (no normalization). Each cursor member produces
-      up to 3 rows: email, platform_id, display_name.
+      up to 3 rows: id, email, display_name.
     columns:
       - name: insight_tenant_id
         description: "Tenant UUID (derived from Bronze tenant_id via sipHash128)"
         tests:
           - not_null
-      - name: alias_type
-        description: "email, platform_id, or display_name"
+      - name: value_type
+        description: "id, email, or display_name"
         tests:
           - not_null
           - accepted_values:
-              values: ['email', 'platform_id', 'display_name']
-      - name: alias_value
-        description: "Raw alias value (not normalized)"
+              values: ['id', 'email', 'display_name']
+      - name: value
+        description: "Raw value (not normalized)"
         tests:
           - not_null
-      - name: alias_field_name
+      - name: value_field_name
         description: "Fully-qualified Bronze field path"
         tests:
           - not_null
@@ -119,11 +117,11 @@ models:
           - accepted_values:
               values: ['UPSERT']
 
-  # --- Claude Team seed ---
+  # --- Claude Admin seed ---
 
-  - name: seed_persons_from_claude_team
+  - name: seed_persons_from_claude_admin
     description: >
-      Phase 1 seed: Claude Team users → person.persons table.
+      Phase 1 seed: Claude Admin users → person.persons table.
       Idempotent — skips users whose email already exists in persons.
       Deduplicates Bronze by taking latest row per email.
     columns:
@@ -137,7 +135,7 @@ models:
         tests:
           - not_null
       - name: display_name
-        description: "Person display name from Claude Team"
+        description: "Person display name from Claude Admin"
         tests:
           - not_null
       - name: email
@@ -145,16 +143,16 @@ models:
         tests:
           - not_null
       - name: status
-        description: "Always 'active' for Claude Team users"
+        description: "Always 'active' for Claude Admin users"
         tests:
           - not_null
           - accepted_values:
               values: ['active']
 
-  - name: seed_aliases_from_claude_team
+  - name: seed_aliases_from_claude_admin
     description: >
-      Phase 1 seed: Claude Team users → identity.aliases table.
-      Each user produces up to 3 alias rows: email, platform_id, display_name.
+      Phase 1 seed: Claude Admin users → identity.aliases table.
+      Each user produces up to 3 alias rows: id, email, display_name.
       Joins on email to resolve person_id from persons table.
       Idempotent — skips aliases that already exist.
     columns:
@@ -167,62 +165,62 @@ models:
         description: "FK to person.persons.id"
         tests:
           - not_null
-      - name: alias_type
-        description: "email, platform_id, or display_name"
+      - name: value_type
+        description: "id, email, or display_name"
         tests:
           - not_null
           - accepted_values:
-              values: ['email', 'platform_id', 'display_name']
-      - name: alias_value
-        description: "Normalized alias value"
+              values: ['id', 'email', 'display_name']
+      - name: value
+        description: "Normalized value"
         tests:
           - not_null
-      - name: alias_field_name
+      - name: value_field_name
         description: "Fully-qualified Bronze field path"
         tests:
           - not_null
           - accepted_values:
               values:
-                - 'bronze_claude_team.claude_team_users.email'
-                - 'bronze_claude_team.claude_team_users.id'
-                - 'bronze_claude_team.claude_team_users.name'
+                - 'bronze_claude_admin.claude_admin_users.email'
+                - 'bronze_claude_admin.claude_admin_users.id'
+                - 'bronze_claude_admin.claude_admin_users.name'
       - name: source_account_id
-        description: "Claude Team user ID (source_account_id)"
+        description: "Claude Admin user ID (source_account_id)"
         tests:
           - not_null
 
-  - name: seed_bootstrap_inputs_from_claude_team
+  - name: seed_identity_inputs_from_claude_admin
     description: >
-      Phase 1 seed: Claude Team users → identity.bootstrap_inputs table.
+      Phase 1 seed: Claude Admin users → identity.identity_inputs table.
       Raw alias observations (no normalization). Each user produces
-      up to 3 rows: email, platform_id, display_name.
+      up to 3 rows: id, email, display_name.
       Deduplicates Bronze by taking latest row per email.
     columns:
       - name: insight_tenant_id
         description: "Tenant UUID (derived from Bronze tenant_id via sipHash128)"
         tests:
           - not_null
-      - name: alias_type
-        description: "email, platform_id, or display_name"
+      - name: value_type
+        description: "id, email, or display_name"
         tests:
           - not_null
           - accepted_values:
-              values: ['email', 'platform_id', 'display_name']
-      - name: alias_value
-        description: "Raw alias value (not normalized)"
+              values: ['id', 'email', 'display_name']
+      - name: value
+        description: "Raw value (not normalized)"
         tests:
           - not_null
-      - name: alias_field_name
+      - name: value_field_name
         description: "Fully-qualified Bronze field path"
         tests:
           - not_null
           - accepted_values:
               values:
-                - 'bronze_claude_team.claude_team_users.email'
-                - 'bronze_claude_team.claude_team_users.id'
-                - 'bronze_claude_team.claude_team_users.name'
+                - 'bronze_claude_admin.claude_admin_users.email'
+                - 'bronze_claude_admin.claude_admin_users.id'
+                - 'bronze_claude_admin.claude_admin_users.name'
       - name: source_account_id
-        description: "Claude Team user ID"
+        description: "Claude Admin user ID"
         tests:
           - not_null
       - name: operation_type

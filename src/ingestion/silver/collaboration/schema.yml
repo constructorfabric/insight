@@ -1,23 +1,6 @@
 version: 2
 
 models:
-  - name: class_comms_events
-    description: "Unified communication events from all sources"
-    columns:
-      - name: tenant_id
-        description: "Tenant isolation field"
-        tests:
-          - not_null
-      - name: source_id
-        description: "Source instance identifier"
-        tests:
-          - not_null
-      - name: unique_key
-        description: "Composite deduplication key"
-        tests:
-          - not_null
-          - unique
-
   - name: class_collab_chat_activity
     description: "Unified daily chat activity per user from all collaboration sources (M365 Teams, Slack)"
     columns:

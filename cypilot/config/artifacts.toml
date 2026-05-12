@@ -5,7 +5,7 @@ name = "InsightSpec"
 slug = "insightspec"
 kit = "sdlc"
 codebase = ["docs"]
-children = ["ir", "person", "orgchart"]
+children = ["ir", "person", "orgchart", "metric-cat", "dataflow"]
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -124,6 +124,16 @@ name = "LDAP Connector Specification"
 
 [[systems.artifacts]]
 kind = "PRD"
+path = "docs/components/connectors/hr-directory/ms-entra/specs/PRD.md"
+name = "MS Entra Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/hr-directory/ms-entra/specs/DESIGN.md"
+name = "MS Entra Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
 path = "docs/components/connectors/task-tracking/silver/specs/PRD.md"
 name = "Task Tracking Silver Layer PRD"
 
@@ -224,68 +234,43 @@ name = "Outline Connector Specification"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/cursor.md"
+path = "docs/components/connectors/ai/cursor.md"
 name = "Cursor Connector Specification"
 
 [[systems.artifacts]]
 kind = "PRD"
-path = "docs/components/connectors/ai-dev/cursor/specs/PRD.md"
+path = "docs/components/connectors/ai/cursor/specs/PRD.md"
 name = "Cursor Connector PRD"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/cursor/specs/DESIGN.md"
+path = "docs/components/connectors/ai/cursor/specs/DESIGN.md"
 name = "Cursor Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/windsurf.md"
+path = "docs/components/connectors/ai/windsurf.md"
 name = "Windsurf Connector Specification"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/github-copilot.md"
+path = "docs/components/connectors/ai/github-copilot.md"
 name = "GitHub Copilot Connector Specification"
 
 [[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/connectors/ai/claude-api/specs/PRD.md"
-name = "Claude API Connector PRD"
-
-[[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai/claude-api/specs/DESIGN.md"
-name = "Claude API Connector Design"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-001-group-by-limit-inference-geo.md"
-name = "ADR-001: Drop inference_geo from group_by dimensions"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-002-api-response-structure.md"
-name = "ADR-002: API response structure — nested records and field mapping"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-003-cursor-granularity-boundary-fix.md"
-name = "ADR-003: Cursor granularity PT1S to avoid empty date-boundary windows"
+path = "docs/components/connectors/ai/claude-admin/README.md"
+name = "Claude Admin Connector Specification"
 
 [[systems.artifacts]]
 kind = "PRD"
-path = "docs/components/connectors/ai/claude-team/specs/PRD.md"
-name = "Claude Team Plan Connector PRD"
+path = "docs/components/connectors/ai/claude-admin/specs/PRD.md"
+name = "Claude Admin Connector PRD"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai/claude-team/specs/DESIGN.md"
-name = "Claude Team Plan Connector Design"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/ai/claude-team/specs/ADR/ADR-001-cursor-granularity-boundary-fix.md"
-name = "ADR-001: Cursor granularity PT1S for consistency with claude-api"
+path = "docs/components/connectors/ai/claude-admin/specs/DESIGN.md"
+name = "Claude Admin Connector Design"
 
 [[systems.artifacts]]
 kind = "PRD"
@@ -413,6 +398,90 @@ name = "Airbyte Toolkit Design"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0001-version-driven-reconcile.md"
+name = "ADR-0001: Descriptor-Version-Driven Reconcile"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0002-adoption-of-existing-resources.md"
+name = "ADR-0002: Adoption of Existing Airbyte Resources via Tag Annotation"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0003-credential-rotation-no-env.md"
+name = "ADR-0003: Credential Rotation via sources/update API"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0004-cluster-config-via-configmap.md"
+name = "ADR-0004: Cluster Config via Kubernetes ConfigMap"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0005-connection-name-as-argo-identifier.md"
+name = "ADR-0005: Connection Name as Argo Identifier"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0006-cron-self-run-with-file-persistent-logs.md"
+name = "ADR-0006: Cron Self-Run with File-Persistent Logs"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0007-required-fields-in-descriptor-not-example.md"
+name = "ADR-0007: Required Secret Fields Declared in descriptor.yaml"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0008-auto-trigger-sync-on-data-change.md"
+name = "ADR-0008: Auto-Trigger Sync on Data-Affecting Reconcile Actions"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0009-airbyte-workspace-as-namespace.md"
+name = "ADR-0009: Insight connectors in one Airbyte workspace, identified by custom flag"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0010-nocode-via-builder-projects.md"
+name = "ADR-0010: NoCode connectors managed via connector_builder_projects"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0011-cdk-prebuilt-images.md"
+name = "ADR-0011: CDK connectors use pre-built ghcr.io images, reconcile never builds at runtime"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/components/airbyte-toolkit/specs/feature-reconcile/FEATURE.md"
+name = "Reconcile Engine Feature"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/deployment/specs/PRD.md"
+name = "Deployment PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/deployment/specs/DESIGN.md"
+name = "Deployment Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "PRD"
 path = "docs/components/backend/specs/PRD.md"
 name = "Backend PRD"
@@ -434,6 +503,30 @@ traceability = "DOCS-ONLY"
 kind = "DESIGN"
 path = "docs/components/backend/specs/DESIGN.md"
 name = "Backend Architecture"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/api-gateway/bff/PRD.md"
+name = "BFF (Backend-for-Frontend) PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/api-gateway/bff/DESIGN.md"
+name = "BFF Architecture"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/api-gateway/router/PRD.md"
+name = "API Gateway Router PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/api-gateway/router/DESIGN.md"
+name = "API Gateway Router Architecture"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
@@ -531,4 +624,54 @@ name = "Org-Chart Domain Design"
 kind = "PRD"
 path = "docs/domain/org-chart/specs/PRD.md"
 name = "Org-Chart Domain PRD"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Ingestion Data Flow"
+slug = "dataflow"
+kit = "sdlc"
+codebase = ["docs/domain/ingestion-data-flow", "src/ingestion"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/ingestion-data-flow/specs/DESIGN.md"
+name = "Ingestion Data Flow Design"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0001-rmt-with-version-and-unique-key.md"
+name = "ADR-0001: ReplacingMergeTree(_version) + ORDER BY (unique_key)"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0002-promote-bronze-to-rmt.md"
+name = "ADR-0002: Promote bronze MergeTree → RMT on first dbt run"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0003-ephemeral-rust-passthrough.md"
+name = "ADR-0003: Ephemeral materialization for Rust-owned staging pass-through"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0004-unique-key-formula.md"
+name = "ADR-0004: unique_key formula"
+traceability = "FULL"
+
+[[systems]]
+name = "Metric Catalog"
+slug = "metric-cat"
+kit = "sdlc"
+codebase = ["docs/domain/metric-catalog"]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/metric-catalog/specs/PRD.md"
+name = "Metric Catalog PRD"
 traceability = "DOCS-ONLY"

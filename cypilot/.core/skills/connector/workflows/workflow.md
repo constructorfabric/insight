@@ -97,7 +97,7 @@ spec:
         command: ["bash", "-c"]
         args:
           - |
-            RESULT=$(curl -sf "http://clickhouse.data.svc.cluster.local:8123/?user=default&password=${CLICKHOUSE_PASSWORD}" \
+            RESULT=$(curl -sf "http://insight-clickhouse.insight.svc.cluster.local:8123/?user=default&password=${CLICKHOUSE_PASSWORD}" \
               --data "{{inputs.parameters.query}}")
             if [ "$RESULT" != "0" ]; then
               echo "VALIDATION FAILED: $RESULT invalid rows"

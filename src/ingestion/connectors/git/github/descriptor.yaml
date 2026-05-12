@@ -1,5 +1,6 @@
 name: github
-version: "1.0"
+version: "2026.05.04"
+# cdk_image: <not yet published — add full ghcr.io reference when image is built>
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
@@ -7,3 +8,8 @@ dbt_select: "tag:github+"
 
 connection:
   namespace: "bronze_github"
+secret:
+  required_fields:
+    - github_token
+    - github_organizations
+    - github_start_date

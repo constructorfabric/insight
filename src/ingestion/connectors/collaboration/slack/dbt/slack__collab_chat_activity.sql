@@ -1,64 +1,51 @@
+-- depends_on: {{ ref('slack__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
+    order_by=['unique_key'],
+    settings={'allow_nullable_key': 1},
     schema='staging',
     tags=['slack', 'silver:class_collab_chat_activity']
 ) }}
 
--- Slack chat activity aggregated per user per day.
--- Email can be NULL when Slack workspace policy hides it — we keep the row and
--- fall back to display_name for person_key (matches the git-plugin convention:
---   if(email != '', lower(email), lower(user_name))).
+-- Slack daily chat activity per user, sourced from admin.analytics.getFile?type=member.
+-- Bronze row is already one per (user, date); we simply reshape to the shared
+-- class_collab_chat_activity schema. Fields that require raw message-level
+-- partitioning (direct vs group vs channel breakdown, reply counts, urgency)
+-- are not available from the analytics endpoint and are set to NULL.
 
 SELECT
-    m.tenant_id,
-    m.source_id AS insight_source_id,
+    u.tenant_id,
+    u.source_id AS insight_source_id,
     MD5(concat(
-        m.tenant_id, '-',
-        m.source_id, '-',
-        coalesce(m.user, ''), '-',
-        toString(toDate(toDateTime(toFloat64(m.ts))))
+        u.tenant_id, '-',
+        u.source_id, '-',
+        coalesce(u.user_id, ''), '-',
+        toString(toDate(parseDateTimeBestEffort(u.date)))
     )) AS unique_key,
-    m.user AS user_id,
-    coalesce(u.display_name, u.real_name, '') AS user_name,
-    coalesce(u.email, '') AS email,
-    if(coalesce(u.email, '') != '',
-       lower(u.email),
-       lower(coalesce(u.display_name, u.real_name, m.user))) AS person_key,
-    toDate(toDateTime(toFloat64(m.ts))) AS date,
-    countIf(c.is_im = true OR c.is_mpim = true) AS direct_messages,
-    countIf(c.is_channel = true OR c.is_group = true) AS group_chat_messages,
-    count(*) AS total_chat_messages,
-    CAST(NULL AS Nullable(Int64)) AS channel_posts,
+    u.user_id,
+    coalesce(u.email_address, '') AS user_name,
+    coalesce(u.email_address, '') AS email,
+    if(coalesce(u.email_address, '') != '',
+       lower(u.email_address),
+       lower(u.user_id)) AS person_key,
+    toDate(parseDateTimeBestEffort(u.date)) AS date,
+    CAST(NULL AS Nullable(Int64)) AS direct_messages,
+    CAST(NULL AS Nullable(Int64)) AS group_chat_messages,
+    coalesce(u.messages_posted_count, 0) AS total_chat_messages,
+    u.channel_messages_posted_count AS channel_posts,
     CAST(NULL AS Nullable(Int64)) AS channel_replies,
     CAST(NULL AS Nullable(Int64)) AS urgent_messages,
     CAST(NULL AS Nullable(String)) AS report_period,
     now() AS collected_at,
     'insight_slack' AS data_source,
-    toUnixTimestamp64Milli(now()) AS _version
-FROM {{ source('bronze_slack', 'messages') }} m
-LEFT JOIN {{ source('bronze_slack', 'channels') }} c
-    ON m.channel_id = c.channel_id
-    AND m.tenant_id = c.tenant_id
-    AND m.source_id = c.source_id
-LEFT JOIN {{ source('bronze_slack', 'users') }} u
-    ON m.user = u.slack_user_id
-    AND m.tenant_id = u.tenant_id
-    AND m.source_id = u.source_id
-WHERE m.user IS NOT NULL
-  AND m.user != ''
-  AND m.subtype IS NULL
+    toUnixTimestamp64Milli(now64()) AS _version
+FROM {{ source('bronze_slack', 'users_details') }} AS u
+WHERE u.user_id IS NOT NULL
+  AND u.user_id != ''
 {% if is_incremental() %}
   AND (
     (SELECT max(date) FROM {{ this }}) IS NULL
-    OR toDate(toDateTime(toFloat64(m.ts))) > (SELECT max(date) - INTERVAL 7 DAY FROM {{ this }})
+    OR toDate(parseDateTimeBestEffort(u.date)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
   )
 {% endif %}
-GROUP BY
-    m.tenant_id,
-    m.source_id,
-    m.user,
-    u.email,
-    u.display_name,
-    u.real_name,
-    toDate(toDateTime(toFloat64(m.ts)))

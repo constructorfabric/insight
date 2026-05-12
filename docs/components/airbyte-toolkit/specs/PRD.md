@@ -1,3 +1,10 @@
+---
+cpt:
+  artifact: PRD
+  system: insightspec
+  version: "1.1"
+---
+
 # PRD — Airbyte Toolkit
 
 <!-- toc -->
@@ -21,6 +28,7 @@
   - [5.3 State Synchronization](#53-state-synchronization)
   - [5.4 Credential Resolution](#54-credential-resolution)
   - [5.5 Cleanup](#55-cleanup)
+  - [5.6 Reconcile Engine](#56-reconcile-engine)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -107,14 +115,32 @@ These two state files use different key formats, different tenant naming convent
 
 **Role**: Provides credential secrets (connector credentials, Airbyte auth secrets, ClickHouse credentials) via K8s Secret resources.
 
+#### Toolkit CLI
+
+**ID**: `cpt-insightspec-actor-toolkit-cli`
+
+**Role**: The reconcile/adopt shell process itself, running either as the in-cluster cron pod (driven by the Argo CronWorkflow) or as a local operator invocation. Performs Secret discovery, Airbyte CRUD, CronWorkflow lifecycle, sync triggering, and file-persistent logging.
+
 ## 3. Operational Concept & Environment
 
 ### 3.1 Module-Specific Environment Constraints
 
 - Requires `kubectl` with access to the cluster (for reading K8s Secrets).
-- Requires `python3` (3.10+) with `pyyaml` (available in toolbox image).
+- Requires `python3` (3.10+) with `pyyaml`, plus `yq` (Mike Farah's Go
+  binary, NOT the Python wrapper) and `jq` for descriptor parsing. Host
+  invocations preflight via `lib/host-side-prerequisites.sh::ensure_tooling`
+  with platform-aware install policy:
+    - **macOS** — auto-install via `brew` when available, else download.
+    - **WSL** / **Windows native** (Git Bash, MSYS) — download static
+      binaries into `~/.insight/bin/`.
+    - **Linux native** — fail with a platform-specific install hint
+      (apt/dnf/pacman/snap); operator installs and re-runs.
+  The toolbox image ships all three pre-installed.
 - Requires `node` (for JWT minting via `crypto` module) or equivalent.
-- Airbyte API must be reachable (localhost via port-forward, or in-cluster service URL).
+- Airbyte API must be reachable. From host,
+  `lib/host-side-prerequisites.sh::ensure_airbyte_pf` opens a port-forward
+  to `airbyte-airbyte-server-svc:8001` with an EXIT trap; in-cluster runs
+  hit the service URL directly.
 
 ## 4. Scope
 
@@ -202,11 +228,19 @@ The toolkit **MUST** create sources and connections for a given tenant by:
 
 **Rationale**: This is the core operation that wires a tenant's data sources to the pipeline.
 
+#### Connector lifecycle namespace and registration path
+
+Insight connectors are namespaced by Airbyte workspace + `custom: true` flag (ADR-0009). NoCode connectors are registered through Airbyte's `connector_builder_projects` API rather than the legacy `create_custom` endpoint (ADR-0010); this provides UI editability and a clean update path for the version-bump algorithm. CDK (Docker-image) connectors continue to use `create_custom` via the CDK registration path.
+
+CDK connectors carry their full Docker image reference in `descriptor.yaml.cdk_image` (e.g. `ghcr.io/cyberfabric/source-...:tag`). Reconcile uses this verbatim — no derivation, no convention, no `IMAGE_REGISTRY` env. See ADR-0011. NoCode connectors register via builder_projects (ADR-0010). Both paths converge on `custom: true` definitions inside the single Airbyte workspace, which is auto-discovered at runtime via `ab_workspace_id` (ADR-0009).
+
 ### 5.3 State Synchronization
 
 #### Sync from Airbyte API
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-sync-state`
+
+> **Status**: deprecated (see ADR-0001 / FEATURE-reconcile). Superseded by `cpt-insightspec-fr-cli-surface` — Airbyte itself is now the authoritative state store, so a "rebuild local state" command is no longer required. ID retained for backward compatibility.
 
 The toolkit **MUST** provide a command that rebuilds the state file from the current Airbyte API state (definitions, sources, destinations, connections).
 
@@ -228,9 +262,139 @@ The toolkit **MUST** resolve Airbyte API credentials (JWT token, workspace ID) f
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-cleanup`
 
+> **Status**: deprecated (see ADR-0001 / FEATURE-reconcile). Superseded by `cpt-insightspec-fr-cli-surface` — cleanup is now expressed as orphan-GC inside the reconcile engine (driven by `insight` membership tag), not as a separate state-file-driven command. ID retained for backward compatibility.
+
 The toolkit **MUST** provide a command that deletes all Airbyte resources (connections, sources, destinations) tracked in the state file and clears the state.
 
 **Rationale**: Needed for full reset scenarios (breaking schema changes, re-provisioning).
+
+### 5.6 Reconcile Engine
+
+#### Version-driven reconcile
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-version-driven-reconcile`
+
+The toolkit **MUST** treat each connector's `descriptor.yaml.version` field as the single source of truth for reconcile decisions: when the value mismatches `definition.declarativeManifest.description` in Airbyte (for nocode) or `dockerImageTag` (for CDK), the toolkit **MUST** republish the definition and cascade the change to dependent sources and connections; when it matches, the toolkit **MUST NOT** republish or recreate the definition.
+
+**Rationale**: A single human-edited semver per connector eliminates state-file ambiguity and makes "no change → no work" deterministic at the definition layer. Storing the version on the Airbyte side removes the need for a parallel local state to know "what we last applied".
+
+**Actors**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-airbyte-api`
+
+#### Adopt legacy Airbyte resources
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-adopt-legacy-resources`
+
+The toolkit **MUST** provide an `adopt` mode that, for every K8s Secret matched to an existing Airbyte source by naming convention, annotates the Airbyte side **without** creating, deleting, or recreating any source or connection: it **MUST** patch `definition.declarativeManifest.description` to the descriptor version, **MUST** patch `connection.tags` to include `insight` and `cfg-hash:<sha256(secret.data)>`, and **MUST** delete only those duplicate definitions whose reference count is zero.
+
+**Rationale**: Existing clusters carry connections that have accumulated Airbyte sync state (cursors). A first-pass reconcile that performed creates/deletes would discard that state. The adopt mode is the safe migration path — metadata-only, idempotent, and re-runnable.
+
+**Actors**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-airbyte-api`
+
+#### Orphan garbage collection
+
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-orphan-gc`
+
+The toolkit **MUST** delete Airbyte sources, connections, and definitions that carry the `insight` membership tag (or our naming convention) but have no corresponding K8s Secret + descriptor pair, **unless** invoked with `--no-gc`. The sweep **MUST** log every deletion target in dry-run mode before any state-changing call.
+
+**Rationale**: Without GC, deleted Secrets leave stale Airbyte resources forever, polluting the workspace and confusing operators. The opt-out flag (`--no-gc`) covers controlled migrations where the operator wants to preserve resources temporarily.
+
+**Actors**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-ci-pipeline`, `cpt-insightspec-actor-airbyte-api`
+
+#### Sync-state preservation on breaking change
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-state-preserved-on-breaking-change`
+
+When a connection's catalog drifts in a way that requires recreation (changed primary key or cursor field on a stream), the toolkit **MUST** export the existing Airbyte connection state via `POST /api/v1/state/get`, delete and recreate the connection, then import the state via `POST /api/v1/state/create_or_update`. For non-breaking catalog drift, the toolkit **MUST** call `connections/update` only and **MUST NOT** delete the connection.
+
+**Rationale**: Recreating a connection without state export discards every accumulated cursor — historical resync of all data, every time. Export/import preserves cursors across breaking schema changes; the in-place `connections/update` path covers the common case where state never leaves connectionId scope.
+
+**Actors**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-airbyte-api`
+
+#### Secret validation
+
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-secret-validation`
+
+The toolkit **MUST** provide a read-only command (`secrets/validate.sh`) that compares cluster Secrets in the `data` namespace against `secrets/connectors/*.yaml.example` schemas and reports drift between the OnePasswordItem custom resource and its child Secret (labels and annotations). The command **MUST NOT** modify any cluster object and **MUST** exit non-zero only on schema violations (missing required fields, missing labels), warnings on annotation drift.
+
+**Rationale**: 1Password operator copies labels onto child Secrets but not custom annotations. Without an explicit drift check, a connector can silently fall out of discovery when its CR diverges from its Secret. Read-only failure modes keep the validator safe to run any time.
+
+**Actors**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-k8s-api`
+
+#### Reconcile CLI surface
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-cli-surface`
+
+The toolkit **MUST** expose all reconcile and adopt operations through a single entrypoint `src/ingestion/reconcile-connectors.sh` accepting subcommand `adopt` or `reconcile` (default), and the flags `--dry-run`, `--connector <name>`, `--no-gc`. The entrypoint **MUST NOT** require any other script (`connect.sh`, `register.sh`, `cleanup.sh`, `sync-state.sh`, `reset-connector.sh`, `update-connectors.sh`, `update-connections.sh`) to be invoked directly by users or CI.
+
+**Rationale**: One entrypoint with a small, predictable flag set is easier to discover, document, and automate in CI than a fan of scripts whose names overlap with their roles. Bad/unlabelled Secrets produce a per-connector WARN+skip rather than a global abort.
+
+**Actors**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-ci-pipeline`
+
+#### 5.6.7 Cron-driven self-run
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-cron-self-run`
+
+The toolkit **MUST** self-run the reconcile loop on a `*/15 * * * *` schedule via an in-cluster Argo CronWorkflow deployed by the umbrella chart at `charts/insight/templates/ingestion/reconcile-cron.yaml`, owning a ServiceAccount whose RBAC allows reading `secrets`, `onepassworditems`, and `configmaps`, and creating/deleting `workflows.argoproj.io` and `cronworkflows.argoproj.io`. The schedule **MUST** be overridable via Helm value `ingestion.reconcile.schedule`.
+
+**Actor**: Cluster cron pod (`cpt-insightspec-actor-toolkit-cli`).
+**Rationale**: Removes external orchestrator (Kestra) dependency; reconcile loop runs autonomously inside the cluster.
+**Verification**: `helm template … | grep -A4 schedule` shows the schedule; integration test confirms a CronWorkflow object is created.
+
+#### 5.6.8 Name-based connection resolve
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-name-based-connection-resolve`
+
+The Argo `airbyte-sync` WorkflowTemplate **MUST** resolve `connection_id` from a `connection_name` parameter (pattern `{connector}-{source_id}-to-clickhouse-{tenant}`) at submit time via an init-step that calls `ab_list_connections`. A lookup miss **MUST** fail the Workflow with an explicit `ERROR: connection name not found` message. The toolkit **MUST NOT** hard-code `connection_id` (UUID) in any CronWorkflow spec.
+
+**Actor**: Cluster cron pod, Airbyte API consumer (`cpt-insightspec-actor-toolkit-cli`).
+**Rationale**: Recreate-with-state assigns a new UUID; storing names instead of UUIDs in CronWorkflow specs survives recreation.
+**Verification**: deleting+recreating a connection yields a different UUID; the next scheduled CronWorkflow tick still completes.
+
+#### 5.6.9 Auto-trigger sync on data-affecting change
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-auto-trigger-sync-on-data-change`
+
+When a reconcile iteration performs a data-affecting change for a connector (descriptor.yaml.version bump, K8s Secret data change detected via `cfg_hash` mismatch, new connector/connection creation, or recreate-with-state on breaking syncCatalog drift) the toolkit **MUST** submit one one-shot `airbyte-sync` Workflow rendered from `templates/sync-trigger.yaml.tpl`. The toolkit **MUST NOT** submit a sync Workflow when the only change is a tag-only patch or a `definition.description`-only patch.
+
+**Actor**: Cluster cron pod (`cpt-insightspec-actor-toolkit-cli`).
+**Rationale**: Decouple data freshness from cron tick latency; avoid spurious syncs on cosmetic patches.
+**Verification**: scenario tests for each trigger and exclusion.
+
+#### 5.6.10 File-persistent logs
+
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-file-persistent-logs`
+
+The toolkit **MUST** emit run logs to `/var/log/insight/reconcile-${YYYY-MM-DD}.log` on PVC `insight-reconcile-logs` when running in-cluster, and to `${XDG_STATE_HOME:-$HOME/.local/state}/insight/reconcile-${YYYY-MM-DD}.log` when running locally. The PVC default size **MUST** be 5Gi, overridable via Helm value `ingestion.reconcile.logs.size`. The toolkit **MUST** write log lines ONLY on changes or errors; runs that detect no changes **MUST** emit ZERO log lines to the file. Every run **MUST** emit exactly one stdout summary line for `kubectl logs` sanity.
+
+**Actor**: Cluster cron pod / local operator (`cpt-insightspec-actor-toolkit-cli`).
+**Rationale**: Durable change history across pod restarts without log noise from idle runs.
+**Verification**: 100 idle runs followed by `wc -l ${log_file}` = 0; the same run sequence emits 100 stdout summary lines.
+
+#### 5.6.11 Cascade-delete CronWorkflow on Secret-missing
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-cascade-delete-cronworkflow`
+
+When a previously-known K8s Secret for a connector is no longer present, the toolkit **MUST** cascade-delete the corresponding Airbyte connection, source, definition (if its `ref_count` reaches zero), and the per-connector Argo CronWorkflow named `${connector}-${tenant}-sync`. The toolkit **MUST NOT** delete the Bronze ClickHouse data produced by prior syncs.
+
+**Actor**: Cluster cron pod (`cpt-insightspec-actor-toolkit-cli`).
+**Rationale**: Operators remove Secrets to revoke connectors; the toolkit must complete teardown without manual cleanup.
+**Verification**: scenario test creates Secret → CronWorkflow appears; deletes Secret → CronWorkflow gone within next tick; ClickHouse Bronze tables retain prior rows.
+
+#### 5.6.12 Leak-free idempotent loop
+
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-leak-free-loop`
+
+The cron-driven reconcile loop **MUST** be safe to run 1000+ times with zero state mutation when no Secrets, descriptors, or Airbyte resources have changed. Specifically: no `/tmp/airbyte-token*` or `/tmp/pf-*.log` residue across runs, no orphan `kubectl port-forward` background processes, no duplicate Airbyte sources/connections/definitions, no duplicate Argo CronWorkflows, no growth of the daily log file.
+
+**Actor**: Cluster cron pod / local operator (`cpt-insightspec-actor-toolkit-cli`).
+**Rationale**: A cron-driven loop is run thousands of times per quarter; any per-run resource leak compounds into operational pain.
+**Verification**: idempotency harness (Phase 18) runs the loop 100× and asserts the four invariants.
+
+#### Changelog
+
+- 2026-05-05 — v1.1 — Added §5.6.7…§5.6.12 (cron-self-run, name-based-connection-resolve, auto-trigger-sync-on-data-change, file-persistent-logs, cascade-delete-cronworkflow, leak-free-loop) for Phase 2 of the reconcile refactor.
+- 2026-05-06 — v1.1 — Added §5.2 connector-lifecycle namespace + nocode registration path (per ADR-0009 / ADR-0010).
+- 2026-05-07 — v1.1 — Extended §5.2 connector-lifecycle paragraph with CDK pre-built ghcr images path (per ADR-0011).
 
 ## 6. Non-Functional Requirements
 
@@ -257,6 +421,8 @@ The toolkit **MUST** work both from the host machine (via kubectl + port-forward
 #### CLI commands
 
 - [ ] `p1` - **ID**: `cpt-insightspec-interface-toolkit-cli`
+
+> **Status**: superseded by `cpt-insightspec-fr-cli-surface` (single `reconcile-connectors.sh` entrypoint per ADR-0001 / FEATURE-reconcile). The legacy `register.sh` / `connect.sh` / `sync-state.sh` / `cleanup.sh` scripts have been removed. ID retained for backward compatibility.
 
 **Type**: Shell scripts (bash)
 
@@ -352,7 +518,8 @@ The toolkit **MUST** work both from the host machine (via kubectl + port-forward
 
 ## 11. Assumptions
 
-- Airbyte API is reachable (port-forwarded on host, or in-cluster via service URL).
+- Airbyte API is reachable (auto-port-forwarded on host via
+  `lib/host-side-prerequisites.sh`, or in-cluster via service URL).
 - K8s Secrets exist and are correctly labeled before toolkit commands run.
 - One Airbyte workspace per cluster (the default workspace created by Helm chart).
 - Tenant ID is currently a free-form string; will migrate to UUID. No format validation enforced now.

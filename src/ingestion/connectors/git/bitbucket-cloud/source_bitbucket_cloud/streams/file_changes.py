@@ -1,126 +1,188 @@
-"""Bitbucket Cloud file changes stream — per-commit diffstat.
+"""Bitbucket Cloud file_changes stream — per-commit diffstat.
 
-CDK-native: stream_slices yields one slice per commit (non-merge only,
-deduplicated). Commit metadata is read from a temp file written by the
-commits stream — zero extra API calls, near-zero memory.
-CDK handles pagination (next URL), retry, and backoff for each slice.
+Parent is ``commits``. file_changes consumes the records that the commits
+stream emits (so the cross-branch bloom-filter dedup, HEAD-unchanged skip,
+and force-push reset all happen once inside the commits stream and
+file_changes inherits them for free).
+
+file_changes has its own ``committed_date`` cursor + ``head_sha`` per branch.
+When invoking the commits parent it translates its state into commits-state
+shape so the parent's HEAD-unchanged skip and cursor early-exit fire
+against *file_changes'* progress, not the commits stream's own progress.
+
+This means: if commits stream already finished a branch in this run but
+file_changes died mid-way through the same branch, the next run re-iterates
+exactly the commits file_changes missed (not more, not less), because the
+translated state carries file_changes' cursor + head_sha into the commits
+re-invocation.
 """
 
 import logging
-import os
-from typing import Any, Iterable, Mapping, MutableMapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional
 
-from source_bitbucket_cloud.streams.base import (
-    BitbucketAuthError,
-    BitbucketCloudRestStream,
-    _make_unique_key,
-    _now_iso,
-)
+from airbyte_cdk.models import SyncMode
+from airbyte_cdk.sources.streams.http import HttpSubStream
+
+from source_bitbucket_cloud.streams.base import BitbucketCloudStream, _make_unique_key
+
 
 logger = logging.getLogger("airbyte")
 
 
-class FileChangesStream(BitbucketCloudRestStream):
-    """File changes per commit (all branches, non-merge only, deduplicated).
-
-    Data source: GET /repositories/{workspace}/{slug}/diffstat/{sha}
-    Commit list comes from a temp TSV written by CommitsStream during its
-    parse_response — no re-read, no extra API calls, near-zero memory.
-    """
+class FileChangesStream(HttpSubStream, BitbucketCloudStream):
 
     name = "file_changes"
+    cursor_field = "committed_date"
+    # cursor advances on the first diffstat row of each commit; mid-slice
+    # checkpointing would therefore mark a commit done after file #1
+    # and drop remaining files on crash. State persists only at slice
+    # (per-commit) boundaries.
+    state_checkpoint_interval = None
+    ignore_404 = True
 
-    def __init__(self, parent, **kwargs):
-        super().__init__(**kwargs)
-        self._parent = parent
+    def __init__(
+        self,
+        parent,  # CommitsStream
+        start_date: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent=parent, **kwargs)
+        self._start_date = start_date
+        self._current_partition_key: str = ""
+        self._current_head_sha: str = ""
 
-    def _path(self, stream_slice=None, **kwargs) -> str:
+    # ------------------------------------------------------------------
+    # Path — diffstat endpoint
+    # ------------------------------------------------------------------
+
+    def _path(self, stream_slice: Optional[Mapping[str, Any]] = None) -> str:
         s = stream_slice or {}
-        workspace = s.get("workspace", "")
-        slug = s.get("slug", "")
-        sha = s.get("sha", "")
+        workspace = s.get("workspace")
+        slug = s.get("slug")
+        sha = s.get("sha")
+        if not workspace or not slug or not sha:
+            raise ValueError("file_changes stream_slice requires 'workspace', 'slug', 'sha'")
         return f"repositories/{workspace}/{slug}/diffstat/{sha}"
+
+    # ------------------------------------------------------------------
+    # Slices — consume commits parent with translated state
+    # ------------------------------------------------------------------
 
     def stream_slices(
         self,
+        sync_mode: SyncMode,
+        cursor_field: Optional[List[str]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
-        **kwargs,
     ) -> Iterable[Optional[Mapping[str, Any]]]:
-        meta_path = self._parent.get_commit_meta_path()
+        # sync_mode/cursor_field ignored: file_changes is incremental-only and
+        # always drives the commits parent with translated (committed_date) state.
+        del sync_mode, cursor_field
+        state = stream_state or {}
+        translated = self._translate_state(state)
+        logger.info(
+            f"file_changes: stream_slices start state_entries={len(state)} "
+            f"translated_entries={len(translated)} start_date={self._start_date or '<none>'}"
+        )
+
         total = 0
         skipped_merge = 0
 
-        if not os.path.exists(meta_path):
-            logger.warning(f"Commit metadata file not found: {meta_path}, skipping file_changes")
-            return
+        # Drive the commits parent with *our* translated state so the parent
+        # applies its HEAD-unchanged skip, force-push reset, and cursor
+        # early-exit relative to file_changes' progress.
+        for parent_slice in self.parent.stream_slices(
+            sync_mode=SyncMode.incremental,
+            cursor_field=["date"],
+            stream_state=translated,
+        ):
+            branch = parent_slice["parent"]
+            workspace = branch["workspace"]
+            slug = branch["repo_slug"]
+            branch_name = branch["name"]
+            partition_key = f"{workspace}/{slug}/{branch_name}"
+            current_head = branch.get("target_hash", "") or ""
 
-        with open(meta_path, "r") as f:
-            for line in f:
-                line = line.rstrip("\n")
-                if not line:
-                    continue
-                parts = line.split("\t", 4)
-                if len(parts) < 5:
-                    continue
-                sha, workspace, slug, committed_date, parent_count_str = parts
-                parent_count = int(parent_count_str) if parent_count_str.isdigit() else 0
-
-                # Skip merge commits
-                if parent_count > 1:
+            for commit_record in self.parent.read_records(
+                sync_mode=SyncMode.incremental,
+                cursor_field=["date"],
+                stream_slice=parent_slice,
+                stream_state=translated,
+            ):
+                parents = commit_record.get("parent_hashes") or []
+                if len(parents) > 1:
                     skipped_merge += 1
+                    continue
+
+                sha = commit_record.get("hash", "") or ""
+                committed_date = commit_record.get("date", "") or ""
+                if not sha:
                     continue
 
                 total += 1
                 yield {
                     "workspace": workspace,
                     "slug": slug,
+                    "branch": branch_name,
                     "sha": sha,
                     "committed_date": committed_date,
+                    "partition_key": partition_key,
+                    "head_sha": current_head,
                 }
 
-        logger.info(f"File changes: {total} commits to fetch ({skipped_merge} merge skipped)")
+        logger.info(
+            f"file_changes: {total} commits to diffstat ({skipped_merge} merge skipped)"
+        )
 
-    def request_params(
+    def _translate_state(self, state: Mapping[str, Any]) -> Dict[str, Dict[str, str]]:
+        """Map file_changes state → commits-state shape.
+
+        file_changes: {pk: {committed_date, head_sha}}
+        commits:      {pk: {date, head_sha}}
+        """
+        translated: Dict[str, Dict[str, str]] = {}
+        for pk, entry in (state or {}).items():
+            if not isinstance(entry, dict):
+                continue
+            translated[pk] = {
+                "date": entry.get(self.cursor_field, "") or "",
+                "head_sha": entry.get("head_sha", "") or "",
+            }
+        return translated
+
+    # ------------------------------------------------------------------
+    # Parse diffstat response
+    # ------------------------------------------------------------------
+
+    def parse_response(
         self,
-        next_page_token: Optional[Mapping[str, Any]] = None,
-        **kwargs,
-    ) -> MutableMapping[str, Any]:
-        if next_page_token:
-            return {}
-        return {"pagelen": "100"}
-
-    def parse_response(self, response, stream_slice=None, **kwargs):
+        response,
+        stream_slice: Optional[Mapping[str, Any]] = None,
+        **kwargs: Any,
+    ):
         s = stream_slice or {}
+        self._current_partition_key = s.get("partition_key", "")
+        self._current_head_sha = s.get("head_sha", "")
         workspace = s.get("workspace", "")
         slug = s.get("slug", "")
-
-        if not self._guard_response(response):
-            return
-
-        data = response.json()
-        values = data.get("values", [])
         sha = s.get("sha", "")
         committed_date = s.get("committed_date", "")
+        if not workspace or not slug or not sha:
+            return
 
-        for entry in values:
-            # Bitbucket diffstat: new.path for added/modified, old.path for deleted
+        emitted = 0
+        for entry in self._iter_values(response):
             new_file = entry.get("new") or {}
             old_file = entry.get("old") or {}
             filename = new_file.get("path") or old_file.get("path") or ""
-
             if not filename:
                 continue
-
-            status = entry.get("status", "")
+            status = entry.get("status", "") or ""
             previous_filename = old_file.get("path") if status == "renamed" else None
 
-            pk_parts = [workspace, slug, sha, filename]
-            yield {
-                "unique_key": _make_unique_key(self._tenant_id, self._source_id, *pk_parts),
-                "tenant_id": self._tenant_id,
-                "source_id": self._source_id,
-                "data_source": "insight_bitbucket_cloud",
-                "collected_at": _now_iso(),
+            record = {
+                "unique_key": _make_unique_key(
+                    self._tenant_id, self._source_id, workspace, slug, sha, filename,
+                ),
                 "source_type": "commit",
                 "sha": sha,
                 "filename": filename,
@@ -132,30 +194,45 @@ class FileChangesStream(BitbucketCloudRestStream):
                 "workspace": workspace,
                 "repo_slug": slug,
             }
+            emitted += 1
+            yield self._envelope(record)
 
-    def read_records(self, sync_mode=None, stream_slice=None, stream_state=None, **kwargs):
-        s = stream_slice or {}
-        if not (s.get("workspace") and s.get("slug") and s.get("sha")):
-            return
-        try:
-            yield from super().read_records(
-                sync_mode=sync_mode, stream_slice=stream_slice,
-                stream_state=stream_state, **kwargs,
-            )
-        except BitbucketAuthError:
-            raise
-        except Exception as exc:
-            logger.error(
-                f"Failed file_changes for {s.get('workspace')}/{s.get('slug')}/"
-                f"{s.get('sha', '?')[:8]}: {exc}"
-            )
-            raise
+        logger.debug(
+            f"file_changes: {workspace}/{slug}/{sha[:8]} diffstat emitted={emitted}"
+        )
+
+    # ------------------------------------------------------------------
+    # State
+    # ------------------------------------------------------------------
+
+    def get_updated_state(
+        self,
+        current_stream_state: MutableMapping[str, Any],
+        latest_record: Mapping[str, Any],
+    ) -> MutableMapping[str, Any]:
+        partition_key = self._current_partition_key
+        if not partition_key:
+            return current_stream_state
+        record_date = latest_record.get(self.cursor_field, "") or ""
+        entry = dict(current_stream_state.get(partition_key, {}) or {})
+        prev_date = entry.get(self.cursor_field, "") or ""
+        if record_date and record_date > prev_date:
+            entry[self.cursor_field] = record_date
+        if self._current_head_sha:
+            entry["head_sha"] = self._current_head_sha
+        if entry:
+            current_stream_state[partition_key] = entry
+        return current_stream_state
+
+    # ------------------------------------------------------------------
+    # Schema
+    # ------------------------------------------------------------------
 
     def get_json_schema(self) -> Mapping[str, Any]:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "additionalProperties": True,
+            "additionalProperties": False,
             "properties": {
                 "tenant_id": {"type": "string"},
                 "source_id": {"type": "string"},

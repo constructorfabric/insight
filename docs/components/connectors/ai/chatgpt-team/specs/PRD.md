@@ -238,11 +238,11 @@ A developer may use both ChatGPT Team (via web/desktop) and the OpenAI API (prog
 
 **Status**: CLOSED. `class_ai_tool_usage` (conversational) and `class_ai_api_usage` (programmatic) are separate Silver streams. Cross-stream analysis by `person_id` is performed at Gold level.
 
-### OQ-CGT-2: Unified Silver schema with Claude Team Plan
+### OQ-CGT-2: Unified Silver schema with Claude Admin (Anthropic seats)
 
-ChatGPT Team and Claude Team Plan have nearly identical data shapes (seats + daily activity by client). A unified `class_ai_tool_usage` schema must accommodate both:
+ChatGPT Team and the Anthropic Admin API (via `claude-admin`) have similar data shapes for seats + daily Claude Code activity. A unified `class_ai_tool_usage` schema must accommodate both — note that Anthropic does not expose web/mobile chat usage through the Admin API:
 
-- `source`: `claude_team` / `chatgpt_team`
+- `data_source`: `insight_claude_admin` / `insight_chatgpt_team`
 - Shared fields: `date`, `email`, `client`, `model`, token counts, `message_count`, `conversation_count`
 - Claude-specific: `tool_use_count`, `cache_write_tokens`, `cache_read_tokens`
 - OpenAI-specific: `reasoning_tokens`

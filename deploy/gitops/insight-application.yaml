@@ -1,0 +1,67 @@
+##
+## ArgoCD Application: Insight umbrella
+##
+## Sync wave 1 — deployed AFTER Airbyte/Argo (wave 0).
+## ArgoCD waits for the previous wave to become Healthy first.
+##
+## Version pin: `targetRevision` is the SINGLE upgrade knob for Insight.
+## Bumping the product version = a PR that changes one line here.
+##
+## Values come from a git-hosted overlay (deploy/gitops/insight-values.yaml)
+## so chart and configuration stay in sync: no inlined values to drift.
+## The overlay carries the GitOps-specific overrides — image tags, OIDC
+## existingSecret reference, ingress hosts, TLS, and most importantly
+## `credentials.autoGenerate: false` (see insight-values.example.yaml
+## for why this is mandatory under ArgoCD).
+##
+## NOTE: this repo ships `insight-values.example.yaml` with `*.example.com`
+## placeholders. Customers MUST copy it to `insight-values.yaml`, replace
+## the placeholder hosts, and pre-create the `insight-db-creds` Secret in
+## the release namespace before the first sync.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: insight
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  sources:
+    # 1. The umbrella chart (published to OCI). For dev / self-hosted,
+    #    replace with a Git repo + `path: charts/insight`.
+    - repoURL: ghcr.io/cyberfabric/charts
+      chart: insight
+      targetRevision: 0.1.0
+      helm:
+        releaseName: insight
+        valueFiles:
+          - $values/deploy/gitops/insight-values.yaml
+
+    # 2. Values source (this repo).
+    - repoURL: https://github.com/cyberfabric/insight.git
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: insight
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

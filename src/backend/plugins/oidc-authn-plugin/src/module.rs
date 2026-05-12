@@ -52,9 +52,7 @@ impl Module for OidcAuthnPlugin {
         }
 
         if config.jwks_refresh_interval_seconds == 0 {
-            anyhow::bail!(
-                "oidc-authn-plugin: jwks_refresh_interval_seconds must be > 0"
-            );
+            anyhow::bail!("oidc-authn-plugin: jwks_refresh_interval_seconds must be > 0");
         }
 
         if config.leeway_seconds < 0 {
@@ -113,8 +111,7 @@ impl Module for OidcAuthnPlugin {
             .map_err(|_| anyhow::anyhow!("{} module already initialized", Self::MODULE_NAME))?;
 
         // Register scoped client in ClientHub
-        let api: Arc<dyn AuthNResolverPluginClient> =
-            Arc::new(OidcAuthnClient::new(service));
+        let api: Arc<dyn AuthNResolverPluginClient> = Arc::new(OidcAuthnClient::new(service));
         ctx.client_hub()
             .register_scoped::<dyn AuthNResolverPluginClient>(
                 ClientScope::gts_id(&instance_id),

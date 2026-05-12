@@ -1,6 +1,6 @@
 -- Phase 1 (Initial Seed): Cursor members → identity.aliases
 -- One-time seed. Creates alias records linking cursor identities to persons.
--- Idempotent: skips aliases that already exist (by alias_type + alias_value + source).
+-- Idempotent: skips aliases that already exist (by value_type + value + source).
 -- Source: docs/domain/identity-resolution/specs/DECOMPOSITION.md §2.1
 --
 -- Prerequisite:
@@ -11,11 +11,15 @@
 {{ config(
     materialized='incremental',
     unique_key='id',
+    order_by=['id'],
+    settings={'allow_nullable_key': 1},
     schema='identity',
     tags=['identity:seed', 'aliases']
 ) }}
 
--- Each cursor member emits up to 3 alias rows: email, platform_id, display_name.
+-- Each cursor member emits up to 3 alias rows: email, id, display_name.
+-- `id` carries source_account_id as the ADR-0002 canonical binding observation
+-- (replaces the former `platform_id`, which was always equal to source_account_id).
 -- Join on email to resolve person_id from the seed_persons_from_cursor output.
 
 WITH source AS (
@@ -40,9 +44,9 @@ aliases AS (
         generateUUIDv7()                                            AS id,
         insight_tenant_id,
         person_id,
-        'email'                                                     AS alias_type,
-        lower(trim(email))                                          AS alias_value,
-        'bronze_cursor.cursor_members.email'                        AS alias_field_name,
+        'email'                                                     AS value_type,
+        lower(trim(email))                                          AS value,
+        'bronze_cursor.cursor_members.email'                        AS value_field_name,
         toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
         'cursor'                                                    AS insight_source_type,
         source_account_id,
@@ -60,12 +64,12 @@ aliases AS (
 
     UNION ALL
 
-    -- platform_id (cursor user ID)
+    -- id (binding observation per ADR-0002; value = source_account_id)
     SELECT
         generateUUIDv7(),
         insight_tenant_id,
         person_id,
-        'platform_id',
+        'id',
         trim(source_account_id),
         'bronze_cursor.cursor_members.id',
         toUUID('00000000-0000-0000-0000-000000000000'),
@@ -109,11 +113,12 @@ aliases AS (
     WHERE name IS NOT NULL AND name != ''
 )
 
-SELECT a.* FROM aliases a
+SELECT a.*, toUnixTimestamp64Milli(now64()) AS _version FROM aliases a
 {% if is_incremental() %}
 LEFT ANTI JOIN {{ this }} existing
-    ON  a.alias_type          = existing.alias_type
-    AND a.alias_value         = existing.alias_value
+    ON  a.value_type          = existing.value_type
+    AND a.value               = existing.value
+    AND a.insight_tenant_id   = existing.insight_tenant_id
     AND a.insight_source_type = existing.insight_source_type
     AND a.source_account_id   = existing.source_account_id
     AND existing.is_deleted   = 0

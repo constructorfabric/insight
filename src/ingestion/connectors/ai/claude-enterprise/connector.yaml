@@ -100,8 +100,11 @@ streams:
         type: RecordSelector
         extractor:
           type: DpathExtractor
+          # The /summaries endpoint wraps records under "summaries" (unlike
+          # the other Enterprise Analytics endpoints which use "data").
+          # Using "data" here would silently return 0 records.
           field_path:
-            - data
+            - summaries
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -146,6 +149,18 @@ streams:
               - "null"
           date:
             type: string
+          # API-native time bounds — /summaries returns starting_at / ending_at
+          # for each day's record; we keep them for diagnostic parity with the
+          # API response. `date` (derived from stream_interval) is the canonical
+          # day field used downstream.
+          starting_at:
+            type:
+              - string
+              - "null"
+          ending_at:
+            type:
+              - string
+              - "null"
           daily_active_user_count:
             type:
               - integer
@@ -157,6 +172,18 @@ streams:
           monthly_active_user_count:
             type:
               - integer
+              - "null"
+          daily_adoption_rate:
+            type:
+              - number
+              - "null"
+          weekly_adoption_rate:
+            type:
+              - number
+              - "null"
+          monthly_adoption_rate:
+            type:
+              - number
               - "null"
           assigned_seat_count:
             type:
@@ -210,12 +237,20 @@ streams:
             path:
               - collected_at
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          # API response records don't include a `date` field (only `starting_at`
+          # / `ending_at`). Derive `date` from the cursor's stream_interval —
+          # with P1D step this matches the `starting_date` request parameter
+          # exactly. Same pattern used in users/skills/connectors/chat_projects.
+          - type: AddedFieldDefinition
+            path:
+              - date
+            value: "{{ stream_interval['start_time'][:10] }}"
           - type: AddedFieldDefinition
             path:
               - unique_key
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['date'] }}
+              }}-{{ stream_interval['start_time'][:10] }}
 
   # ─────────────────────────────────────────────────────────────────────────
   # Stream 2: claude_enterprise_users (incremental, 1-day step)

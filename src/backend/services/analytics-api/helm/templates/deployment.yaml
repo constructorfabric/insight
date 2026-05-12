@@ -13,12 +13,17 @@ spec:
     metadata:
       labels:
         {{- include "insight-analytics-api.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
       annotations:
-        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
-        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-        {{- end }}
+      {{- end }}
     spec:
+      {{- with .Values.global }}
+      {{- with .imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
       terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true
@@ -26,28 +31,17 @@ spec:
         fsGroup: 1000
       containers:
         - name: analytics-api
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
           envFrom:
+            # Operator MUST pre-create this Secret (umbrella does it
+            # automatically as `insight-analytics-api-config`).
             - secretRef:
-                name: {{ .Values.existingSecret | default (printf "%s-config" (include "insight-analytics-api.fullname" .)) }}
-          {{- if .Values.clickhouse.credentialsSecret.name }}
-          env:
-            - name: ANALYTICS__clickhouse_user
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
-                  key: {{ .Values.clickhouse.credentialsSecret.userKey | quote }}
-            - name: ANALYTICS__clickhouse_password
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
-                  key: {{ .Values.clickhouse.credentialsSecret.passwordKey | quote }}
-          {{- end }}
+                name: {{ required "existingSecret is required (umbrella provides `insight-analytics-api-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
           securityContext:
             allowPrivilegeEscalation: false
           {{- with .Values.livenessProbe }}
@@ -67,19 +61,6 @@ spec:
           command: ["/app/analytics-api", "migrate"]
           envFrom:
             - secretRef:
-                name: {{ .Values.existingSecret | default (printf "%s-config" (include "insight-analytics-api.fullname" .)) }}
-          {{- if .Values.clickhouse.credentialsSecret.name }}
-          env:
-            - name: ANALYTICS__clickhouse_user
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
-                  key: {{ .Values.clickhouse.credentialsSecret.userKey | quote }}
-            - name: ANALYTICS__clickhouse_password
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
-                  key: {{ .Values.clickhouse.credentialsSecret.passwordKey | quote }}
-          {{- end }}
+                name: {{ .Values.existingSecret | quote }}
           securityContext:
             allowPrivilegeEscalation: false

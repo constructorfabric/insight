@@ -1,0 +1,109 @@
+version: 2
+
+sources:
+  - name: bronze_openai
+    schema: bronze_openai
+    tables:
+      - name: users
+      - name: usage_completions
+      - name: usage_embeddings
+      - name: usage_moderations
+      - name: usage_images
+      - name: usage_audio_speeches
+      - name: usage_audio_transcriptions
+      - name: usage_vector_stores
+      - name: usage_code_interpreter
+      - name: costs
+
+models:
+  - name: to_ai_tool_usage
+    description: >
+      OpenAI completions usage from Admin API.
+      Maps per-user, per-model, per-project daily completion metrics
+      to class_ai_tool_usage Silver schema. Provider=openai.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field — framework-injected"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Connector instance identifier"
+      - name: unique_id
+        description: "Composite dedup key: bucket_start_time|project_id|model|user_id"
+        tests:
+          - not_null
+      - name: report_date
+        description: "Usage date derived from bucket_start_time"
+        tests:
+          - not_null
+      - name: user_id
+        description: "OpenAI user ID — identity key for Silver step 2"
+      - name: project_id
+        description: "OpenAI project ID"
+      - name: model
+        description: "Model name (e.g. gpt-4o, gpt-4o-mini)"
+      - name: input_tokens
+        description: "Input tokens consumed"
+      - name: output_tokens
+        description: "Output tokens generated"
+      - name: input_cached_tokens
+        description: "Input tokens served from prompt cache"
+      - name: input_audio_tokens
+        description: "Input audio tokens"
+      - name: output_audio_tokens
+        description: "Output audio tokens"
+      - name: num_model_requests
+        description: "Number of API requests"
+      - name: is_batch
+        description: "Whether request was a batch API call"
+      - name: service_tier
+        description: "Service tier used for the request"
+      - name: person_id
+        description: "NULL at Silver step 1 — resolved in step 2 via Identity Manager"
+      - name: provider
+        description: "Always 'openai'"
+      - name: client
+        description: "Always 'openai_api'"
+      - name: data_source
+        description: "Always 'insight_openai' — source discriminator"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['insight_openai']
+
+  - name: to_ai_cost
+    description: >
+      OpenAI costs from Admin API.
+      Maps per-line-item, per-project daily cost data
+      to class_ai_cost Silver schema. Provider=openai.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field — framework-injected"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Connector instance identifier"
+      - name: unique_id
+        description: "Composite dedup key: bucket_start_time|line_item|project_id"
+        tests:
+          - not_null
+      - name: report_date
+        description: "Cost date derived from bucket_start_time"
+        tests:
+          - not_null
+      - name: line_item
+        description: "Cost line item (e.g. completions, embeddings, images)"
+      - name: project_id
+        description: "OpenAI project ID"
+      - name: amount_value
+        description: "Cost amount in currency units"
+      - name: amount_currency
+        description: "Currency code (e.g. usd)"
+      - name: provider
+        description: "Always 'openai'"
+      - name: data_source
+        description: "Always 'insight_openai' — source discriminator"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['insight_openai']

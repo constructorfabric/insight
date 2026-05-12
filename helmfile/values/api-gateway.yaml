@@ -22,3 +22,6 @@ proxy:
     - prefix: "/analytics"
       upstream: "http://analytics-api-analytics-api:8081"
       public: false
+    - prefix: "/identity-resolution"
+      upstream: "http://identity-resolution-identity-resolution:8082"
+      public: false

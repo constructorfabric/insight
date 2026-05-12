@@ -39,14 +39,14 @@ stringData:
 
 ### Automatically injected
 
-These fields are set by `airbyte-toolkit/connect.sh` and should NOT be in the Secret:
+These fields are set by `reconcile-connectors.sh` and should NOT be in the Secret:
 
 | Field | Source |
 |-------|--------|
-| `insight_tenant_id` | `tenant_id` from tenant YAML |
+| `insight_tenant_id` | `tenant_id` from ConfigMap `insight-config` (ns `data`) or `INSIGHT_TENANT_ID` env |
 | `insight_source_id` | `insight.cyberfabric.com/source-id` annotation |
 
-All connector parameters are in the K8s Secret. Tenant YAML contains only `tenant_id`.
+All connector parameters are in the K8s Secret. Tenant identity is read from the cluster ConfigMap.
 
 ## Multi-Instance
 

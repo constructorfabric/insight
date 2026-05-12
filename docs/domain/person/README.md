@@ -30,5 +30,5 @@ Out of scope:
 
 ## Cross-Domain References
 
-- **Identity Resolution domain**: `aliases.person_id` references `persons.id`. IR resolves aliases to person records owned by this domain. The shared `bootstrap_inputs` table (owned by IR) provides person-attribute observations that feed golden record assembly.
+- **Identity Resolution domain**: `aliases.person_id` references `persons.person_id` (the stable UUIDv7 identity, not the auto-increment observation row PK). The MariaDB `persons` history is owned and written by the identity-resolution domain itself; this domain reads it (plus the shared `identity_inputs` ClickHouse table) to project the golden record.
 - **Org-Chart domain**: `persons.org_unit_id` references `org_units.id`. The Org-Chart domain owns the org hierarchy; this domain stores the current org unit assignment as a golden record field. `person_assignments.person_id` references `persons.id`.

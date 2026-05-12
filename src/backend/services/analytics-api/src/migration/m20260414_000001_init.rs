@@ -7,6 +7,7 @@ pub struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
+    #[allow(clippy::too_many_lines)] // migration DDL — splitting would reduce readability
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // ── metrics ─────────────────────────────────────────
         manager
@@ -85,11 +86,7 @@ impl MigrationTrait for Migration {
                             .decimal_len(20, 6)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(Thresholds::Level)
-                            .string_len(20)
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Thresholds::Level).string_len(20).not_null())
                     .col(
                         ColumnDef::new(Thresholds::CreatedAt)
                             .timestamp_with_time_zone()

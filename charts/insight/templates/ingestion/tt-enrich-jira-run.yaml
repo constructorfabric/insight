@@ -1,0 +1,59 @@
+{{- if .Values.ingestion.templates.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: tt-enrich-jira-run
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  serviceAccountName: argo-workflow
+  {{- with .Values.global.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  entrypoint: run
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: insight_source_id
+          - name: jira_enrich_image
+            default: {{ required "ingestion.jiraEnrichImage is required when ingestion.templates.enabled=true" .Values.ingestion.jiraEnrichImage | quote }}
+          - name: clickhouse_host
+            default: {{ include "insight.clickhouse.fqdn" . | quote }}
+          - name: clickhouse_port
+            default: {{ include "insight.clickhouse.port" . | quote }}
+          - name: clickhouse_user
+            default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+          - name: batch_size
+            default: "10000"  # RULE-DEFAULTS-OK: tested CH INSERT chunk size for the jira-enrich Rust binary; tunable per submission.
+      activeDeadlineSeconds: 7200
+      container:
+        image: {{ `"{{inputs.parameters.jira_enrich_image}}"` }}
+        imagePullPolicy: IfNotPresent
+        # Emissary executor can't resolve local-image entrypoints via registry,
+        # so set command explicitly (matches Dockerfile ENTRYPOINT).
+        command: ["/usr/local/bin/jira-enrich"]
+        env:
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+          - name: RUST_LOG
+            value: "info"
+        args:
+          - {{ `"--insight-source-id={{inputs.parameters.insight_source_id}}"` }}
+          - {{ `"--clickhouse-host={{inputs.parameters.clickhouse_host}}"` }}
+          - {{ `"--clickhouse-port={{inputs.parameters.clickhouse_port}}"` }}
+          - {{ `"--clickhouse-user={{inputs.parameters.clickhouse_user}}"` }}
+          - {{ `"--batch-size={{inputs.parameters.batch_size}}"` }}
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+{{- end }}

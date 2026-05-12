@@ -1,6 +1,9 @@
+-- depends_on: {{ ref('zoom__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
+    order_by=['unique_key'],
+    settings={'allow_nullable_key': 1},
     schema='staging',
     tags=['zoom', 'silver:class_collab_meeting_activity']
 ) }}
@@ -57,7 +60,7 @@ SELECT
     CAST(NULL AS Nullable(String)) AS report_period,
     now() AS collected_at,
     'insight_zoom' AS data_source,
-    toUnixTimestamp64Milli(now()) AS _version
+    toUnixTimestamp64Milli(now64()) AS _version
 FROM {{ source('bronze_zoom', 'participants') }} p
 LEFT JOIN {{ source('bronze_zoom', 'meetings') }} m
     ON p.meeting_uuid = m.uuid

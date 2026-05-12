@@ -6,19 +6,30 @@ on:
     paths:
       - "src/backend/**"
       - "src/ingestion/**"
+      - "charts/insight/**"
+      - ".github/workflows/build-images.yml"
   pull_request:
     branches: [main]
     paths:
       - "src/backend/**"
       - "src/ingestion/**"
+      - "charts/insight/**"
+      - ".github/workflows/build-images.yml"
+  workflow_dispatch:
+
+# One in-flight chart-publish per branch. Prevents two merges from racing
+# the auto-commit-back step.
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/cyberfabric
 
 permissions:
-  contents: read
-  packages: write
+  contents: write   # publish-chart auto-commits Chart.yaml bumps back to main
+  packages: write   # publish-chart pushes the umbrella chart to GHCR
 
 jobs:
   changes:
@@ -26,6 +37,9 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       ingestion: ${{ steps.filter.outputs.ingestion }}
+      jira_enrich: ${{ steps.filter.outputs.jira_enrich }}
+      umbrella: ${{ steps.filter.outputs.umbrella }}
+      build_tag: ${{ steps.tag.outputs.build_tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -36,10 +50,26 @@ jobs:
               - 'src/backend/**'
             ingestion:
               - 'src/ingestion/**'
+            jira_enrich:
+              - 'src/ingestion/connectors/task-tracking/jira/enrich/**'
+            umbrella:
+              - 'charts/insight/**'
+
+      # Compute the canonical build tag once for the whole workflow so every
+      # downstream job (image builds + chart publish) tags with the SAME
+      # string. metadata-action's {{date}} would otherwise drift by up to a
+      # minute across parallel matrix steps, and subchart appVersion bumps
+      # would point at images that don't exist.
+      - name: Compute build tag
+        id: tag
+        run: |
+          BUILD_TAG="$(date -u +%Y.%m.%d.%H.%M)-$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          echo "build_tag=${BUILD_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Build tag for this run: ${BUILD_TAG}"
 
   backend:
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -55,7 +85,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # Authenticate to GHCR only when we'll actually push (main pushes /
+      # manual dispatches from main). On PRs — especially from forks —
+      # the token has no `packages: write` and there's nothing to push,
+      # so skip the login entirely.
       - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -66,14 +101,17 @@ jobs:
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}
           tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=
 
-      - uses: docker/build-push-action@v6
+      # PRs (including forks) build only — verifies the Dockerfile and the
+      # build still works without polluting GHCR. Pushes happen only on
+      # merges to main and on manual dispatches from main.
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/backend
           file: src/backend/${{ matrix.dockerfile }}
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -81,7 +119,7 @@ jobs:
 
   toolbox:
     needs: changes
-    if: needs.changes.outputs.ingestion == 'true'
+    if: needs.changes.outputs.ingestion == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,6 +127,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -99,15 +138,251 @@ jobs:
         with:
           images: ${{ env.IMAGE_PREFIX }}/insight-toolbox
           tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=
 
-      - uses: docker/build-push-action@v6
+      # Build → validate → push. The build step loads the image into the
+      # local Docker daemon so the validate step can `docker run` against it;
+      # the push step reuses the buildx cache (essentially free). Without
+      # the validate step a broken dbt project (duplicate model name,
+      # broken `ref()`, jinja error, schema.yml mismatch) only manifests
+      # at first CronWorkflow run in the cluster.
+      - name: Build toolbox image (load locally)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          load: true
+          push: false
+          tags: insight-toolbox:ci-validate
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Validate dbt project (dbt parse)
+        # `dbt parse` exercises the dbt manifest: duplicate model/test
+        # names, broken `ref()`/`source()`, jinja syntax errors,
+        # schema.yml model patches that don't match a model — all error
+        # here. It does NOT execute any SQL against the warehouse: the
+        # dummy profile below is never connected, the adapter just
+        # needs to be loadable.
+        run: |
+          mkdir -p /tmp/dbt-ci-profiles
+          cat > /tmp/dbt-ci-profiles/profiles.yml <<'YAML'
+          ingestion:
+            target: ci-parse
+            outputs:
+              ci-parse:
+                type: clickhouse
+                host: dummy.local
+                port: 8123
+                schema: dbt_parse_ci
+                user: ci
+                password: ci
+                secure: false
+          YAML
+          docker run --rm \
+            -v /tmp/dbt-ci-profiles:/profiles:ro \
+            -w /ingestion/dbt \
+            insight-toolbox:ci-validate \
+            dbt parse --profiles-dir /profiles
+
+      - name: Push toolbox image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: src/ingestion
+          file: src/ingestion/tools/toolbox/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+
+  jira-enrich:
+    needs: changes
+    if: needs.changes.outputs.jira_enrich == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/insight-jira-enrich
+          tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: src/ingestion/connectors/task-tracking/jira/enrich
+          file: src/ingestion/connectors/task-tracking/jira/enrich/Dockerfile
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ─── Umbrella chart publish ────────────────────────────────────────────────
+  # Per merge to main: bump subchart appVersions for whichever services were
+  # rebuilt in this run, patch-bump the umbrella version, regenerate
+  # Chart.lock, package, push to oci://ghcr.io/cyberfabric/charts/insight,
+  # and commit the bumps back to main with [skip ci] so we don't recurse.
+  #
+  # Runs only on push-to-main (not on PRs) and only when at least one bucket
+  # actually rebuilt or the umbrella's own files changed. PR runs validate
+  # the workflow itself by passing through changes/build jobs, then stop.
+  #
+  # See ADR-0001 (docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md)
+  # and the gitops SPEC §2.4 for the contract.
+  publish-chart:
+    needs: [changes, backend, toolbox, jira-enrich]
+    if: |
+      always()
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && github.ref == 'refs/heads/main'
+      && (needs.backend.result == 'success' || needs.backend.result == 'skipped')
+      && (needs.toolbox.result == 'success' || needs.toolbox.result == 'skipped')
+      && (needs.jira-enrich.result == 'success' || needs.jira-enrich.result == 'skipped')
+      && (
+        needs.changes.outputs.backend == 'true'
+        || needs.changes.outputs.ingestion == 'true'
+        || needs.changes.outputs.jira_enrich == 'true'
+        || needs.changes.outputs.umbrella == 'true'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history needed because we'll commit back to the same branch.
+          fetch-depth: 0
+          # Default GITHUB_TOKEN is fine for ungated branches; if main is
+          # protected, swap this for a PAT in repo secrets that can bypass.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.14.0'
+
+      - name: Bump subchart appVersions
+        env:
+          BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
+          BACKEND: ${{ needs.changes.outputs.backend }}
+        run: |
+          set -euo pipefail
+          if [ "$BACKEND" = "true" ]; then
+            for sub in src/backend/services/api-gateway/helm \
+                      src/backend/services/analytics-api/helm \
+                      src/backend/services/identity/helm; do
+              echo "Bumping $sub/Chart.yaml appVersion → $BUILD_TAG"
+              yq -i ".appVersion = \"$BUILD_TAG\"" "$sub/Chart.yaml"
+            done
+          else
+            echo "No backend rebuilt; skipping subchart appVersion bumps."
+          fi
+
+      - name: Bump ingestion image refs
+        env:
+          BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
+          INGESTION: ${{ needs.changes.outputs.ingestion }}
+          JIRA_ENRICH: ${{ needs.changes.outputs.jira_enrich }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+        run: |
+          set -euo pipefail
+          # Ingestion images are pinned in the umbrella values.yaml as full
+          # image refs, not as subchart appVersions, because they have no
+          # subchart of their own (they run as Argo Workflow steps).
+          if [ "$INGESTION" = "true" ]; then
+            REF="$IMAGE_PREFIX/insight-toolbox:$BUILD_TAG"
+            echo "Setting ingestion.toolboxImage → $REF"
+            yq -i ".ingestion.toolboxImage = \"$REF\"" charts/insight/values.yaml
+          fi
+          if [ "$JIRA_ENRICH" = "true" ]; then
+            REF="$IMAGE_PREFIX/insight-jira-enrich:$BUILD_TAG"
+            echo "Setting ingestion.jiraEnrichImage → $REF"
+            yq -i ".ingestion.jiraEnrichImage = \"$REF\"" charts/insight/values.yaml
+          fi
+
+      - name: Bump umbrella version
+        id: umbrella
+        env:
+          BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          CURRENT="$(yq '.version' charts/insight/Chart.yaml)"
+          NEXT="$(echo "$CURRENT" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3+1 }')"
+          echo "Umbrella version $CURRENT → $NEXT"
+          yq -i ".version = \"$NEXT\"" charts/insight/Chart.yaml
+          yq -i ".appVersion = \"$BUILD_TAG\"" charts/insight/Chart.yaml
+          echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
+
+      - name: Helm dependency update
+        run: helm dependency update charts/insight
+
+      - name: Helm package
+        run: |
+          mkdir -p dist
+          helm package charts/insight -d dist/
+
+      - name: Helm registry login (GHCR)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Helm push
+        run: |
+          helm push "dist/insight-${{ steps.umbrella.outputs.version }}.tgz" \
+            oci://ghcr.io/cyberfabric/charts
+
+      - name: Commit version bumps back to main
+        env:
+          UMBRELLA_VERSION: ${{ steps.umbrella.outputs.version }}
+          BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          git config user.email "ci@cyberfabric.local"
+          git config user.name  "insight-ci"
+
+          git add charts/insight/Chart.yaml \
+                  charts/insight/Chart.lock \
+                  charts/insight/values.yaml \
+                  src/backend/services/api-gateway/helm/Chart.yaml \
+                  src/backend/services/analytics-api/helm/Chart.yaml \
+                  src/backend/services/identity/helm/Chart.yaml
+
+          if git diff --staged --quiet; then
+            echo "no version changes to commit"
+            exit 0
+          fi
+
+          # [skip ci] in the message prevents the push from re-triggering
+          # this workflow. paths-filter on the next real merge will diff
+          # against THIS commit, so service-file changes are correctly
+          # detected on the subsequent run.
+          git commit -m "chore(release): umbrella ${UMBRELLA_VERSION} (build ${BUILD_TAG}) [skip ci]"
+
+          # Push, with one rebase-retry to absorb a race against
+          # origin/${GITHUB_REF_NAME} advancing between job start and
+          # now. The workflow concurrency group narrows but does not
+          # eliminate this window — a manual push, an unrelated
+          # workflow's push, or a force-push could all advance the
+          # branch tip. Mirrors the gitops poller's policy: rebase
+          # once, fail loud on second failure.
+          if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            echo "push failed; rebasing onto refreshed origin/${GITHUB_REF_NAME} and retrying"
+            if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
+              echo "rebase failed (conflict on bumped files?); aborting"
+              git rebase --abort 2>/dev/null || true
+              exit 1
+            fi
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi

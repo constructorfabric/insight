@@ -1,0 +1,151 @@
+version: 2
+
+sources:
+  - name: bronze_cursor
+    schema: bronze_cursor
+    tables:
+      - name: cursor_members
+      - name: cursor_audit_logs
+      - name: cursor_usage_events
+      - name: cursor_usage_events_daily_resync
+      - name: cursor_daily_usage
+
+models:
+  - name: cursor__ai_dev_usage
+    description: >
+      Bronze → Silver step 1: Cursor per-user per-day usage → class_ai_dev_usage.
+      Sourced from cursor_daily_usage (POST /teams/daily-usage-data), filtered to
+      isActive=true and non-empty email. One row per (tenant, email, day).
+      session_count=1 per active day (Cursor exposes no per-day session counter).
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-userId-day"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "Work email (lowercased) — identity key"
+        tests:
+          - not_null
+      - name: api_key_id
+        description: "Always NULL — Cursor uses session auth, not API keys"
+      - name: day
+        description: "Usage date (UTC)"
+        tests:
+          - not_null
+      - name: tool
+        description: "Always 'cursor'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['cursor']
+      - name: session_count
+        description: "Always 1 per active day (Cursor has no session counter)"
+      - name: lines_added
+        description: "acceptedLinesAdded from cursor_daily_usage"
+      - name: lines_removed
+        description: "acceptedLinesDeleted"
+      - name: total_lines_added
+        description: "totalLinesAdded — all lines the user wrote that day (AI-accepted + manual). Cursor-specific; needed as denominator for ai_loc_share."
+      - name: total_lines_removed
+        description: "totalLinesDeleted — all lines deleted (incl. manual). Cursor-specific."
+      - name: tool_use_offered
+        description: "totalTabsShown"
+      - name: tool_use_accepted
+        description: "totalTabsAccepted"
+      - name: completions_count
+        description: "totalTabsAccepted (duplicate of tool_use_accepted for Cursor)"
+      - name: agent_sessions
+        description: "agentRequests"
+      - name: chat_requests
+        description: "chatRequests + composerRequests"
+      - name: cost_cents
+        description: "NULL in MVP (cost data lives in cursor_usage_events, per-event)"
+      - name: commits_count
+        description: "Always NULL for Cursor — Claude-Enterprise-specific column for git commits attributed to AI sessions."
+      - name: pull_requests_count
+        description: "Always NULL for Cursor — Claude-Enterprise-specific column."
+      - name: tool_action_breakdown_json
+        description: "Always NULL for Cursor — Claude-Enterprise-specific raw JSON of tool-action counts."
+      - name: source
+        description: "Always 'cursor'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['cursor']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_cursor']
+      - name: collected_at
+        tests:
+          - not_null
+      - name: _version
+        description: "ReplacingMergeTree version — toUnixTimestamp64Milli(_airbyte_extracted_at) per ADR-0001."
+        tests:
+          - not_null
+
+  - name: cursor__members_snapshot
+    description: >
+      SCD2 snapshot of Cursor team members. Appends a new row when
+      name, role, or isRemoved changes.
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+      - name: email
+        description: "Member email — identity key"
+        tests:
+          - not_null
+      - name: name
+        description: "Display name"
+      - name: role
+        description: "Team role (owner, admin, member)"
+      - name: isRemoved
+        description: "Whether the member has been removed"
+      - name: _row_hash
+        description: "cityHash64 of tracked columns"
+      - name: _tracked_at
+        description: "Timestamp when this version was captured"
+
+  - name: cursor__members_history
+    description: >
+      Field-level change log for Cursor team members.
+      One row per changed field per version transition.
+    columns:
+      - name: entity_id
+        description: "Member ID (stable identifier)"
+        tests:
+          - not_null
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: field_name
+        description: "Changed field: name, role, or isRemoved"
+        tests:
+          - not_null
+      - name: old_value
+        description: "Previous value (empty string for first version)"
+      - name: new_value
+        description: "New value"
+      - name: updated_at
+        description: "When the change was detected"
+        tests:
+          - not_null

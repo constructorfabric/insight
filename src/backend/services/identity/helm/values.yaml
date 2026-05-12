@@ -4,7 +4,7 @@ podAnnotations: {}
 
 image:
   repository: ghcr.io/cyberfabric/insight-identity-resolution
-  tag: "latest"
+  tag: ""                # MUST be set by the operator. No `:latest` default.
   pullPolicy: IfNotPresent
 
 service:
@@ -19,22 +19,14 @@ resources:
     cpu: 250m
     memory: 256Mi
 
-# Use a pre-provisioned Secret instead of creating one from values below.
+# Pre-provisioned Secret with the full identity-resolution config:
+#   IDENTITY__clickhouse_url, IDENTITY__clickhouse_database,
+#   IDENTITY__clickhouse_user, IDENTITY__clickhouse_password.
+# (Plus IDENTITY__database_url once PR #214 lands — see DESIGN.)
+# The umbrella populates `insight-identity-resolution-config` automatically
+# when `identityResolution.deploy=true`; for standalone installs the
+# operator pre-creates an equivalent Secret.
 existingSecret: ""
-
-clickhouse:
-  url: "http://insight-clickhouse:8123"
-  database: "insight"
-  # Credentials: prefer a pre-existing K8s Secret (set credentialsSecret.name).
-  # When set, user/password below are ignored and values are injected via
-  # env: secretKeyRef at pod level.
-  credentialsSecret:
-    name: ""                  # e.g., clickhouse-credentials
-    userKey: "username"
-    passwordKey: "password"
-  # Inline fallback (used only when credentialsSecret.name is empty).
-  user: "insight"
-  password: ""
 
 livenessProbe:
   httpGet:

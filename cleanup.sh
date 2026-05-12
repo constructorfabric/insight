@@ -28,4 +28,4 @@ for d in src/ingestion/workflows/*/; do
   rm -rf "$d" 2>/dev/null || true
 done
 
-echo "=== Cleaned. Run ./up.sh for fresh install ==="
+echo "=== Cleaned. Run ./dev-up.sh for fresh install ==="

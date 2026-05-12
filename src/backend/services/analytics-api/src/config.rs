@@ -30,13 +30,14 @@ pub struct AppConfig {
     pub clickhouse_password: Option<String>,
 
     /// Identity Resolution service base URL (e.g., `http://identity-resolution:8082`).
-    /// Optional — when empty, person_ids from $filter are used directly against
-    /// ClickHouse without alias resolution (MVP mode).
+    /// Optional — when empty, `person_ids` from `$filter` are used directly against
+    /// `ClickHouse` without alias resolution (MVP mode).
     #[serde(default)]
     pub identity_resolution_url: String,
 
     /// Redis URL for caching (e.g., `redis://localhost:6379`).
     #[serde(default)]
+    #[allow(dead_code)] // will be used when caching layer is implemented
     pub redis_url: String,
 }
 

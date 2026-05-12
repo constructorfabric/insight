@@ -3,9 +3,21 @@ image:
   tag: "25.3"
   pullPolicy: IfNotPresent
 
+# Databases to create on first boot. Connector-agnostic — operator (or
+# umbrella) supplies the list. Additional bronze schemas beyond this
+# list are created lazily by the ingestion pipelines themselves.
+initDatabases: []
+
+# Login user. NO default — operator (or umbrella) MUST set explicitly.
+username: ""
+
+# Password is sourced from a Secret. NO default — every install MUST
+# wire `auth.existingSecret` + `auth.existingSecretPasswordKey`. The
+# umbrella does this automatically via `clickhouse.passwordSecret`,
+# which it forwards to the subchart as `auth.existingSecret/Key`.
 auth:
-  username: insight
-  password: insight-local
+  existingSecret: ""
+  existingSecretPasswordKey: ""
 
 persistence:
   size: 5Gi
@@ -17,3 +29,9 @@ resources:
   limits:
     cpu: "1"
     memory: 1Gi
+
+# Probe overrides. Defaults soften k8s' implicit `timeoutSeconds: 1` so
+# CH `/ping` doesn't get killed under bulk-insert load — see template
+# comment for rationale. Empty {} means "use template defaults".
+livenessProbe: {}
+readinessProbe: {}

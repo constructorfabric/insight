@@ -13,7 +13,7 @@ Identity Resolution maps disparate identity signals — emails, usernames, emplo
 ## Scope
 
 This domain covers:
-- Bootstrap mechanism (`bootstrap_inputs` table, BootstrapJob component)
+- Bootstrap mechanism (`identity_inputs` table, BootstrapJob component)
 - Alias store (`aliases` table, alias resolution API)
 - Matching engine (`match_rules`, confidence scoring, normalization pipeline)
 - Unmapped alias queue (operator review workflow)
@@ -30,9 +30,9 @@ Out of scope:
 
 ## Cross-Domain References
 
-- **Person domain**: `aliases.person_id` references `persons.id`. The Person domain owns person records; Identity Resolution links aliases to existing persons.
-- **Org-Chart domain**: `bootstrap_inputs` may carry org-related data consumed by the Org-Chart domain. No direct table references.
-- **Shared table**: `bootstrap_inputs` is owned by this domain and read by the Person domain (for person-attribute observations) and optionally by the Org-Chart domain.
+- **Person domain**: `aliases.person_id` references `persons.person_id` (the stable UUIDv7 identity, not the auto-increment observation row PK). The Person domain owns person records; Identity Resolution links aliases to existing persons.
+- **Org-Chart domain**: `identity_inputs` may carry org-related data consumed by the Org-Chart domain. No direct table references.
+- **Shared table**: `identity_inputs` is owned by this domain and read by the Person domain (for person-attribute observations) and optionally by the Org-Chart domain.
 
 ## Source Documents (Inbox)
 
