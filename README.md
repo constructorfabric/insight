@@ -266,7 +266,7 @@ Lifecycle commands (run from repo root):
 
 ### Cluster deployment
 
-Cyberfabric clusters are deployed from the private `infra/insight-gitops` repository — Makefile-driven, OCI-pinned umbrella chart, sealed secrets, L0/L2/L3 layered architecture. Engineers should refer to that repository's README; the deploy model is specified in [`docs/components/deployment/gitops/SPEC.md`](docs/components/deployment/gitops/SPEC.md).
+Cyberfabric clusters are deployed from the private `infra/insight-gitops` repository — Makefile-driven, OCI-pinned umbrella chart, sealed secrets, L0/L2/L3 layered architecture. Engineers should refer to that repository's README; the deploy model is specified in [`docs/components/deployment/gitops/README.md`](docs/components/deployment/gitops/README.md).
 
 External consumers run the umbrella chart directly:
 
@@ -360,7 +360,7 @@ For cluster deployments image tags flow through automatically: the umbrella char
 
 ### CI/CD
 
-GitHub Actions builds and pushes backend + toolbox container images on every merge to `main` (see [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)). Images are tagged `YYYY.MM.DD.HH.mm-<short-sha>` and `latest`. The same workflow publishes the umbrella Helm chart to `oci://ghcr.io/cyberfabric/charts/insight:<semver>` and auto-commits the version bumps back to `main`. See [ADR-0001](docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md) for the publish-on-merge rationale and [`docs/components/deployment/gitops/SPEC.md`](docs/components/deployment/gitops/SPEC.md) for the gitops deploy contract.
+GitHub Actions builds and pushes backend + toolbox container images on every merge to `main` (see [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)). Images are tagged `YYYY.MM.DD.HH.mm-<short-sha>` and `latest`. The same workflow publishes the umbrella Helm chart to `oci://ghcr.io/cyberfabric/charts/insight:<semver>` and auto-commits the version bumps back to `main`. See [ADR-0001](docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md) for the publish-on-merge rationale and [`docs/components/deployment/gitops/README.md`](docs/components/deployment/gitops/README.md) for the gitops deploy contract.
 
 To trigger manually: Actions → "Build & Push Container Images" → Run workflow.
 

@@ -185,7 +185,7 @@ The third driver is reproducibility for the development team itself: a developer
 ### 4.2 Out of Scope
 
 - **Orchestration of customer / external installs.** Anyone consuming the chart from OCI picks their own tooling (helm, ArgoCD, Flux, Terraform Helm provider, kustomize render, custom GitOps). The Deployment subsystem does not ship a customer-facing installer script; it ships the chart and documents the values contract.
-- **The `infra/insight-gitops` repository content itself.** That repo is owned operationally by Cyberfabric SRE and lives on private GitLab. Its design and operational contract are captured in the [gitops SPEC](../gitops/SPEC.md); the public deployment PRD/DESIGN documents the chart-as-artifact and the dev wrapper, not the gitops repo's internals.
+- **The `infra/insight-gitops` repository content itself.** That repo is owned operationally by Cyberfabric SRE and lives on private GitLab. Its design and operational contract are captured in the [gitops SPEC](../gitops/README.md); the public deployment PRD/DESIGN documents the chart-as-artifact and the dev wrapper, not the gitops repo's internals.
 - Multi-architecture (linux/arm64) frontend image publication.
 - Bidirectional sync between the umbrella-managed `insight-db-creds` Secret and a customer-supplied secret-management system (Vault, AWS Secrets Manager, External Secrets Operator). Customers integrating with such systems pre-create `insight-db-creds` themselves (the chart auto-detects BYO via absence of the `app.kubernetes.io/managed-by=Helm` label and skips its own Secret-template emission); or they accept the auto-generated values and mirror them outwards by their own means.
 - Cluster provisioning (creating the customer's Kubernetes cluster, setting up a StorageClass, installing ingress-nginx on a production cluster). The dev wrapper bootstraps Kind for local work; gitops production handles L0 in `infra/insight-gitops` (out of this repo's scope); external chart consumers bring their own cluster.
@@ -342,7 +342,7 @@ The same chart shape **MUST** render under both configurations; cross-namespace 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-dep-layered-architecture`
 
-For Cyberfabric-operated clusters, the system **MUST** model the deploy as three independent layers, per the contract documented in [gitops SPEC §1.5](../gitops/SPEC.md#15-layer-model):
+For Cyberfabric-operated clusters, the system **MUST** model the deploy as three independent layers, per the contract documented in [gitops SPEC §1.5](../gitops/README.md#15-layer-model):
 
 - **L0 Bootstrap** — cluster prerequisites (sealed-secrets-controller, ingress-nginx, cert-manager) plus the `insight-infra` and `insight` namespaces. Cluster-scoped, runs once per cluster.
 - **L2 System** — shared stateful infrastructure (MariaDB, ClickHouse, Redis, Redpanda, Redpanda Console, Airbyte, Argo Workflows). One Helm release per service in `insight-infra`. Each service can be self-hosted or replaced by a managed external endpoint without changing the umbrella's values surface — the L3 app values point at the actual host either way.
@@ -635,7 +635,7 @@ Every merge to `main` of `cyberfabric/insight` **MUST** publish a new umbrella c
 - The bundled Airbyte and Argo Workflows versions remain viable for the next release cycle; upgrades to newer minors are handled in dedicated PRs with regression tests over ingestion workflows.
 - On a shared cluster, tenant isolation is acceptable at the Kubernetes namespace boundary — workloads within a tenant namespace are mutually trusted. On a Cyberfabric-operated cluster, tenant isolation is at the cluster boundary (one customer per cluster).
 - The Constructor Platform provides stable Secret resource references; tenants receive them out-of-band (not created by the consumer's chart install).
-- The `infra/insight-gitops` repo (private, on internal GitLab) exists and is operationally maintained by Cyberfabric SRE per its own [SPEC](../gitops/SPEC.md); the public deployment artifacts in this repo do not depend on its content.
+- The `infra/insight-gitops` repo (private, on internal GitLab) exists and is operationally maintained by Cyberfabric SRE per its own [SPEC](../gitops/README.md); the public deployment artifacts in this repo do not depend on its content.
 
 ## 12. Risks
 
@@ -648,4 +648,4 @@ Every merge to `main` of `cyberfabric/insight` **MUST** publish a new umbrella c
 | Airbyte chart 1.9.x was deliberately skipped because its bundled app 2.0.x-alpha is not production-grade. | Consumer asking for 1.9 gets a "no". | Document the policy in the Airbyte README; revisit when 2.0 GA ships. |
 | Bitnami's late-2025 registry change means the MariaDB / Redis subcharts rely on `bitnamilegacy` + `global.security.allowInsecureImages`. | If Bitnami deprecates `bitnamilegacy`, both subcharts break. | Monitor Bitnami's policy; plan a migration to a vendored or self-hosted registry; enterprise customers are expected to use their own internal registry. |
 | GHCR retention may delete old umbrella tags. | A gitops env pinned to an old version can lose its chart artifact. | Cyberfabric SRE policy: mirror long-lived production pins to a self-hosted registry; document the procedure in the gitops SPEC follow-ups (`§8`). |
-| Chart artifact is not yet signed. | A compromised intermediate could publish a malformed chart that the gitops poller would pick up. | Track as an open item in the gitops SPEC ([§8](../gitops/SPEC.md#8-open-items)); plan cosign signing at publish time and verification before `make deploy`. |
+| Chart artifact is not yet signed. | A compromised intermediate could publish a malformed chart that the gitops poller would pick up. | Track as an open item in the gitops SPEC ([§8](../gitops/README.md#8-open-items)); plan cosign signing at publish time and verification before `make deploy`. |
