@@ -42,7 +42,7 @@ Tenant separation across customers is at the **cluster boundary** for gitops pro
 
 ### 1.2 Architecture Drivers
 
-**ADRs**: [ADR-0001 — Publish the Umbrella Helm Chart per Merge to main](./ADR/0001-chart-publishing-on-merge.md).
+**ADRs**: [ADR-0001 — Publish the Umbrella Helm Chart per Merge to main](./ADR/0001-chart-publishing-on-merge.md) — `cpt-insightspec-adr-dep-chart-publishing-on-merge`.
 
 #### Functional Drivers
 

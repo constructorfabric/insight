@@ -482,6 +482,12 @@ name = "Deployment Design"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md"
+name = "ADR-0001: Chart Publishing on Merge"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "PRD"
 path = "docs/components/backend/specs/PRD.md"
 name = "Backend PRD"

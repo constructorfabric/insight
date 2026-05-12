@@ -157,4 +157,5 @@ The implementation lives in:
 This decision directly addresses the following requirements or design elements:
 
 * `cpt-insightspec-fr-dep-umbrella-chart` -- the umbrella chart is the single deploy artifact and is now published per merge.
-* `cpt-insightspec-fr-dep-canonical-installer` -- chart-vs-image drift was the principal failure mode of the prior installer story; this decision eliminates it structurally.
+* `cpt-insightspec-fr-dep-chart-publishing` -- per-merge publishing of the umbrella chart from `cyberfabric/insight` CI is the mechanism this decision establishes.
+* `cpt-insightspec-fr-dep-oci-distribution` -- the OCI registry as the single addressable artifact path is the distribution surface this decision selects.
