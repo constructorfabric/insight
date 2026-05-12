@@ -188,7 +188,7 @@ models:
         tests:
           - not_null
       - name: unique_key
-        description: "Composite dedup key: MD5(tenant-source-page_id-day)"
+        description: "Composite dedup key: {tenant}-{source}-{page_id}-{day} (ADR-0004)"
         tests:
           - not_null
           - unique
