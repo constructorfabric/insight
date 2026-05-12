@@ -69,8 +69,7 @@
 # ArgoCD renders charts via `helm template`, where Helm's `lookup`
 # function ALWAYS returns nil — so under a reconcile loop every sync
 # would regenerate `randAlphaNum 24` and rotate every DB password.
-# Set `autoGenerate: false` in any GitOps overlay (see
-# deploy/gitops/insight-values.example.yaml) and pre-create
+# Set `autoGenerate: false` in any GitOps overlay and pre-create
 # `insight-db-creds` via ExternalSecrets / sealed-secrets / SOPS.
 #
 # For Constructor Platform / BYO (air-gapped, custom secret tooling):
