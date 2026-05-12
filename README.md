@@ -22,10 +22,9 @@ This repository is the **monorepo** for the Insight product. It contains:
 - [Connector Coverage](#connector-coverage)
 - [Key Concepts](#key-concepts)
 - [Quick Start](#quick-start)
-  - [Path 1 — Local Kind cluster (`dev-up.sh`)](#path-1--local-kind-cluster-dev-upsh)
-  - [Path 2 — Remote cluster install (`install.sh`)](#path-2--remote-cluster-install-installsh)
-  - [Path 3 — ArgoCD GitOps](#path-3--argocd-gitops)
-  - [Configure connectors (any path)](#configure-connectors-any-path)
+  - [Local development (`dev-up.sh`)](#local-development-dev-upsh)
+  - [Cluster deployment](#cluster-deployment)
+  - [Configure connectors](#configure-connectors)
   - [Services and ports](#services-and-ports)
   - [Image configuration](#image-configuration)
   - [CI/CD](#cicd)
@@ -227,17 +226,14 @@ This repo uses [Cypilot](https://github.com/cyberfabric/cyber-pilot) — an AI a
 
 ## Quick Start
 
-Three deployment paths cover the full range from laptop hacking to production GitOps. All three target the **same** umbrella Helm chart at [`charts/insight/`](charts/insight/) — only the orchestration layer differs.
+Two ways to bring up Insight:
 
-| Path | When to use | Cluster |
-|---|---|---|
-| **1. Local Kind** ([`./dev-up.sh`](./dev-up.sh)) | Laptop development with hot reload | Local Kind cluster (built by the script) |
-| **2. Canonical imperative** ([`./deploy/scripts/install.sh`](./deploy/scripts/install.sh)) | Remote dev/staging or on-prem prod | Any kubectl-accessible cluster |
-| **3. ArgoCD GitOps** ([`deploy/gitops/`](./deploy/gitops/)) | Enterprise GitOps environments | Any cluster running ArgoCD 2.6+ |
+- **Local development** — [`./dev-up.sh`](./dev-up.sh) builds a local Kind cluster from source and runs the full stack with hot reload.
+- **Cluster deployment** — Cyberfabric engineers use the private `infra/insight-gitops` repository (Makefile-driven, OCI-pinned chart). External consumers of the umbrella Helm chart use it directly via `helm`, ArgoCD, Flux, or whatever orchestrator they already have; the chart contract lives at [`charts/insight/README.md`](charts/insight/README.md).
 
-Common prerequisites: `kubectl` ≥ 1.27, `helm` ≥ 3.13, `kubeconfig` for the target cluster. Path 1 also needs `kind` and `docker`.
+Common prerequisites: `kubectl` ≥ 1.27, `helm` ≥ 3.13, `kubeconfig` for the target cluster. Local development also needs `kind` and `docker`.
 
-### Path 1 — Local Kind cluster (`dev-up.sh`)
+### Local development (`dev-up.sh`)
 
 For laptop development. Builds all backend + toolbox images from `src/`, loads them into Kind, deploys the stack with single-replica defaults, and opens stable port-forwards.
 
@@ -268,120 +264,22 @@ Lifecycle commands (run from repo root):
 | `./dev-down.sh` | Stop port-forwards (Kind cluster + data preserved) |
 | `./cleanup.sh` | Delete Kind cluster and all volumes |
 
-### Path 2 — Remote cluster install (`install.sh`)
+### Cluster deployment
 
-For dev/staging clusters in cloud, on-prem, or anywhere reachable via kubectl. Pulls images from `ghcr.io/cyberfabric/*`; no local builds.
+Cyberfabric clusters are deployed from the private `infra/insight-gitops` repository — Makefile-driven, OCI-pinned umbrella chart, sealed secrets, L0/L2/L3 layered architecture. Engineers should refer to that repository's README; the deploy model is specified in [`docs/components/deployment/gitops/SPEC.md`](docs/components/deployment/gitops/SPEC.md).
 
-**Pre-flight on the cluster:**
-- A default `StorageClass` (or set `global.storageClass` in the overlay).
-- An `ingress-nginx` (or any other; set `apiGateway.ingress.className`).
-- An OIDC application registered with your IdP, returning `issuer`, `client_id`, `audience`, and `redirect_uri` matching your ingress hostname.
-
-**Steps:**
+External consumers run the umbrella chart directly:
 
 ```bash
-export KUBECONFIG=/path/to/cluster.kubeconfig
-ENV=dev-vhc                 # whatever name fits this environment
-mkdir -p access/$ENV
-
-# 1. Namespace + OIDC Secret (pre-create — chart references existingSecret)
-kubectl create namespace insight
-kubectl -n insight create secret generic insight-oidc \
-  --from-literal='APP__modules__oidc-authn-plugin__config__issuer_url=https://<idp>/.../v2.0' \
-  --from-literal='APP__modules__oidc-authn-plugin__config__audience=api://<app-id>' \
-  --from-literal='APP__modules__auth-info__config__issuer_url=https://<idp>/.../v2.0' \
-  --from-literal='APP__modules__auth-info__config__client_id=<client-id>' \
-  --from-literal='APP__modules__auth-info__config__redirect_uri=https://<host>/callback'
-
-# 2. Cluster-specific overlay (gitignored — `access/` is in .gitignore)
-cat > access/$ENV/values.yaml <<'EOF'
-credentials:
-  deploymentMode: helm
-  autoGenerate: true             # umbrella generates `insight-db-creds` randomly
-
-global:
-  storageClass: local-path       # or whatever your cluster uses
-
-clickhouse:
-  database: insight
-  username: insight
-  image: { tag: "25.3" }
-mariadb:
-  database: insight
-  username: insight
-  auth:                          # bitnami subchart needs auth.username/database to create the user
-    username: insight
-    database: insight
-
-apiGateway:
-  image: { tag: "<pinned-tag>" } # see ghcr.io/cyberfabric/insight-api-gateway/tags
-  ingress:
-    enabled: true
-    className: nginx
-    host: insight.example.com    # ← your DNS
-  oidc:
-    existingSecret: insight-oidc
-
-analyticsApi:
-  image: { tag: "<pinned-tag>" }
-
-frontend:
-  image: { tag: "<frontend-tag>" }   # SEPARATE repo `cyberfabric/insight-front` — different release cadence
-  oidc:
-    issuer: https://<idp>/.../v2.0
-    clientId: <client-id>
-
-ingestion:
-  toolboxImage:    ghcr.io/cyberfabric/insight-toolbox:<pinned-tag>
-  jiraEnrichImage: ghcr.io/cyberfabric/insight-jira-enrich:<pinned-tag>
-EOF
-
-# 3. Three step installers, in order (Airbyte → Argo → Insight)
-INSIGHT_NAMESPACE=insight \
-AIRBYTE_SETUP_EMAIL=admin@example.com AIRBYTE_SETUP_ORG=Example \
-./deploy/scripts/install-airbyte.sh
-
-INSIGHT_NAMESPACE=insight ./deploy/scripts/install-argo.sh
-
-INSIGHT_NAMESPACE=insight \
-INSIGHT_VALUES_FILES=$PWD/access/$ENV/values.yaml \
-./deploy/scripts/install-insight.sh
+helm install insight oci://ghcr.io/cyberfabric/charts/insight \
+  --version <V> \
+  --namespace insight --create-namespace \
+  -f values.yaml
 ```
 
-After this the umbrella + ingestion are running. To wire connectors and run a sync, see [Configure connectors](#configure-connectors-any-path) below.
+Chart versions are published per merge to `main`; see [ADR-0001](docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md) for the publish-on-merge contract. The chart contract — values shape, integration modes, BYO credential keys, OIDC requirements — lives in [`charts/insight/README.md`](charts/insight/README.md).
 
-For an end-to-end working example see [`access/dev-vhc/README.md`](access/dev-vhc/README.md) (gitignored — populated when a real environment is set up).
-
-### Path 3 — ArgoCD GitOps
-
-For enterprise environments where ArgoCD already manages cluster state. Four `Application` manifests — Airbyte, Argo Workflows, Argo RBAC, Insight umbrella — with sync-wave annotations enforcing order.
-
-**Pre-flight:**
-- ArgoCD ≥ 2.6 in the cluster.
-- `insight-db-creds` Secret pre-created with all four required keys (`clickhouse-password`, `mariadb-password`, `mariadb-root-password`, `redis-password`). Auto-gen does **not** work under GitOps — `helm template` returns nil from `lookup`, so credentials would rotate on every sync. Use ExternalSecrets / sealed-secrets / SOPS to keep values out of Git. The chart's validator refuses `deploymentMode: gitops` + `autoGenerate: true` together to prevent this footgun.
-- `insight-oidc` Secret pre-created (same shape as Path 2).
-- DNS + TLS (cert-manager + ACME, or pre-issued).
-
-**Steps:**
-
-```bash
-# 1. Pre-create insight-db-creds and insight-oidc with your secret tooling.
-
-# 2. Customer overlay — copy example and replace placeholders.
-cp deploy/gitops/insight-values.example.yaml deploy/gitops/insight-values.yaml
-$EDITOR deploy/gitops/insight-values.yaml   # replace *.example.com hosts; pin all image tags
-
-# 3. Apply the App-of-Apps root manifest.
-kubectl apply -f deploy/gitops/root-app.yaml
-
-# 4. Watch reconcile.
-argocd app list
-argocd app get insight
-```
-
-See [`deploy/gitops/README.md`](deploy/gitops/README.md) for sync-wave details, multi-source `$values` references, RBAC variants, and how to point Applications at your fork.
-
-### Configure connectors (any path)
+### Configure connectors
 
 Once the umbrella is running:
 
@@ -417,7 +315,7 @@ kubectl -n insight get workflows -l tenant=default --watch
 
 ### Services and ports
 
-For Path 1 (`dev-up.sh`) all services have stable local port-forwards:
+For local development (`dev-up.sh`) all services have stable local port-forwards:
 
 | Service | URL | Notes |
 |---|---|---|
@@ -429,13 +327,13 @@ For Path 1 (`dev-up.sh`) all services have stable local port-forwards:
 | MariaDB | localhost:3306 | |
 | Redis | localhost:6379 | |
 
-For Paths 2/3 you set up port-forwards manually or rely on the configured ingress hostname.
+For cluster deployments services are reached via the configured ingress hostname (or set up port-forwards manually).
 
 ### Image configuration
 
 The chart fails fast if any image tag is empty — there are **no `:latest` defaults** anywhere.
 
-For Path 1 (`dev-up.sh`) tags come from `.env.<name>`:
+For local development (`dev-up.sh`) tags come from `.env.<name>`:
 
 | `.env` variable | Default | Description |
 |---|---|---|
@@ -447,7 +345,7 @@ For Path 1 (`dev-up.sh`) tags come from `.env.<name>`:
 | `BUILD_AND_PUSH` | `false` | Push built images to `$IMAGE_REGISTRY` |
 | `IMAGE_PLATFORM` | _(empty)_ | Cross-build platform, e.g. `linux/amd64` |
 
-For Paths 2/3 image tags go directly into the Helm overlay (`apiGateway.image.tag`, `frontend.image.tag`, `ingestion.toolboxImage`, etc.). Available tags:
+For cluster deployments image tags flow through automatically: the umbrella chart's CI bumps each subchart's `appVersion` on every merge to `main`, and the subchart templates default `image.tag` to `.Chart.AppVersion`. Env overlays only need to pin a tag explicitly for a hotfix scenario (testing one service at a different tag than the one bundled in the umbrella version). Image source repos:
 
 | Image | Source repo | Tags |
 |---|---|---|
@@ -462,7 +360,7 @@ For Paths 2/3 image tags go directly into the Helm overlay (`apiGateway.image.ta
 
 ### CI/CD
 
-GitHub Actions builds and pushes backend + toolbox container images on every merge to `main` (see [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)). Images are tagged `YYYY.MM.DD.HH.mm-<short-sha>` and `latest`.
+GitHub Actions builds and pushes backend + toolbox container images on every merge to `main` (see [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)). Images are tagged `YYYY.MM.DD.HH.mm-<short-sha>` and `latest`. The same workflow publishes the umbrella Helm chart to `oci://ghcr.io/cyberfabric/charts/insight:<semver>` and auto-commits the version bumps back to `main`. See [ADR-0001](docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md) for the publish-on-merge rationale and [`docs/components/deployment/gitops/SPEC.md`](docs/components/deployment/gitops/SPEC.md) for the gitops deploy contract.
 
 To trigger manually: Actions → "Build & Push Container Images" → Run workflow.
 
