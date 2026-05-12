@@ -260,13 +260,28 @@ jobs:
       )
     runs-on: ubuntu-latest
     steps:
+      # Mint a short-lived (1h) installation token from the
+      # insight-chart-release-bot GitHub App so the auto-commit push at the
+      # end of this job can bypass branch protection on `main`. The App has
+      # Contents: read & write on this repo only and is on `main`'s bypass
+      # list; default GITHUB_TOKEN cannot bypass, and we explicitly chose
+      # App-over-PAT to avoid tying release pushes to a single human.
+      # GHCR push (helm registry login below) stays on GITHUB_TOKEN via
+      # packages: write — the App was deliberately not granted that scope.
+      - name: Mint chart-release App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.INSIGHT_RELEASE_APP_ID }}
+          private-key: ${{ secrets.INSIGHT_RELEASE_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4
         with:
           # Full history needed because we'll commit back to the same branch.
           fetch-depth: 0
-          # Default GITHUB_TOKEN is fine for ungated branches; if main is
-          # protected, swap this for a PAT in repo secrets that can bypass.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # App token; persists in the git remote so the final `git push`
+          # in this job runs as the App and clears `main` branch protection.
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
