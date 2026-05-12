@@ -217,54 +217,15 @@ case "${command}" in
 
   validate-strict)
     # Run the exact jsonschema check the Builder UI performs (no $ref resolution).
-    # Prints per-path errors with the deepest-matching oneOf branch context so the
-    # user can pinpoint bad fields. Exits non-zero on any error.
-    # Schema path is resolved dynamically from `airbyte_cdk.__file__` so the
-    # validator survives Python-version bumps in the upstream image.
+    # Logic lives in validate_strict.py (per the no-inline-Python rule in
+    # cypilot/config/rules/code-conventions.md §"No inline scripts"); this case
+    # just mounts the script + the connector dir and invokes it inside the
+    # container which ships airbyte_cdk + pyyaml + jsonschema.
     docker run --rm \
       --entrypoint=/bin/sh \
       -v "${connector_dir}:/input:ro" \
-      "${IMAGE}" -c "python3 - <<'PY'
-import sys
-from pathlib import Path
-import airbyte_cdk
-import yaml, jsonschema
-SCHEMA_PATH = (
-    Path(airbyte_cdk.__file__).resolve().parent
-    / 'sources' / 'declarative' / 'declarative_component_schema.yaml'
-)
-with open(SCHEMA_PATH) as f:
-    schema = yaml.safe_load(f)
-with open('/input/connector.yaml') as f:
-    manifest = yaml.safe_load(f)
-v = jsonschema.Draft7Validator(schema)
-errs = list(v.iter_errors(manifest))
-if not errs:
-    print('Manifest is strictly valid (Builder-UI compatible)')
-    sys.exit(0)
-print(f'STRICT VALIDATION FAILED — {len(errs)} top-level error(s)')
-def best_leaf(e):
-    leaves = []
-    def walk(cur):
-        if cur.context:
-            for ce in cur.context:
-                walk(ce)
-        else:
-            leaves.append(cur)
-    walk(e)
-    # Prefer the deepest-path leaf that is NOT a 'is not one of' union-noise message.
-    def score(c):
-        path_depth = len(list(c.absolute_path))
-        noise = 'is not one of' in c.message
-        return (0 if noise else 1, path_depth)
-    return sorted(leaves, key=score, reverse=True)[0] if leaves else e
-for i, e in enumerate(errs, 1):
-    leaf = best_leaf(e)
-    path = '/'.join(str(p) for p in leaf.absolute_path)
-    print(f'  [{i}] {path}: {leaf.message[:240]}')
-sys.exit(1)
-PY
-"
+      -v "${SCRIPT_DIR}/validate_strict.py:/scripts/validate_strict.py:ro" \
+      "${IMAGE}" -c "python3 /scripts/validate_strict.py /input/connector.yaml"
     ;;
 
   check|discover)

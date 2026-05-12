@@ -16,7 +16,7 @@ Runs Airbyte declarative-manifest connectors in Docker without the full Airbyte 
 
 ## Validation ladder — always in this order
 
-1. **`validate-strict`** — first. Catches Builder UI blockers (`$ref` misuse, missing `type: AddedFieldDefinition`, templated integer fields, bad `$schema` URL, etc.) early, before runtime wastes a round trip.
+1. **`validate-strict`** — first. Catches Builder UI blockers (`$ref` misuse, missing `type: AddedFieldDefinition`, integer-only slots templated by mistake, bad `$schema` URL, etc.) early, before runtime wastes a round trip.
 2. **`validate`** — second. Smoke-checks that the CDK loader accepts the manifest at runtime, after `$ref` resolution.
 3. **`check <tenant>`** — third. Real credentials against the real API. Catches query-syntax errors and auth problems.
 4. **`discover` / `read`** — fourth. Produces real records locally; feeds `generate-schema.sh`.
@@ -239,29 +239,20 @@ Keep both `%ms` (for live record values) and `%Y-%m-%dT%H:%M:%S` (for persisted 
 → The `requester` is a `$ref` (opaque to the Builder validator). Inline or use granular leaf-field `$ref`.
 
 ```
-[1] streams/0/retriever/paginator/pagination_strategy/page_size: 50 is not of type 'integer'
+[1] concurrency_level/default_concurrency: "{{ config.get('x_concurrency', 1) }}" is not of type 'integer'
 ```
 
-→ `page_size` was a template string. Make it a literal int.
+→ `concurrency_level.default_concurrency` is integer-only — it does NOT accept a Jinja template. Replace with a literal integer.
 
-If you need raw validator output with all alternative branches, invoke manually. Resolve the schema path via `airbyte_cdk.__file__` so the snippet survives Python-version bumps in the upstream image:
+If you need raw validator output with all alternative branches (e.g. while iterating on a `oneOf` union), bypass the leaf-picker and dump every error directly:
 
 ```bash
 docker run --rm \
   -v "$PWD/src/ingestion/connectors/<class>/<connector>:/input:ro" \
+  -v "$PWD/src/ingestion/tools/declarative-connector/validate_strict.py:/scripts/validate_strict.py:ro" \
   --entrypoint=/bin/sh \
   airbyte/source-declarative-manifest:local \
-  -c "python3 - <<'PY'
-from pathlib import Path
-import airbyte_cdk, yaml, jsonschema
-schema_path = (
-    Path(airbyte_cdk.__file__).resolve().parent
-    / 'sources' / 'declarative' / 'declarative_component_schema.yaml'
-)
-s = yaml.safe_load(open(schema_path))
-m = yaml.safe_load(open('/input/connector.yaml'))
-for e in jsonschema.Draft7Validator(s).iter_errors(m):
-    print(e)
-PY
-"
+  -c "python3 /scripts/validate_strict.py /input/connector.yaml"
 ```
+
+For lower-level inspection (every error including the noisy `oneOf` branches), edit `validate_strict.py` locally — keeping the logic in a `.py` file is the project's no-inline-Python rule (`cypilot/config/rules/code-conventions.md` §"No inline scripts").

@@ -396,9 +396,10 @@ kubectl apply -f src/ingestion/secrets/connectors/<name>.yaml
 
 ### 5.2 Validate manifest structure (no API call)
 
-Run **both** validators, in order — never skip `validate-strict`:
+Run **both** validators, in order — never skip `validate-strict`. **Working directory** for every command in §5.2–§5.5: `src/ingestion/` (path arguments like `<category>/<name>` are resolved relative to `src/ingestion/connectors/`):
 
 ```bash
+# cd src/ingestion
 ./tools/declarative-connector/source.sh validate-strict <category>/<name>   # Builder-UI compat
 ./tools/declarative-connector/source.sh validate        <category>/<name>   # CDK runtime
 ```
@@ -429,8 +430,11 @@ Verify that all cursor fields exist in the schema (this prevents ClickHouse dest
 
 ### 5.6 Read data locally — per-stream smoke test (MANDATORY)
 
+Working directory: `src/ingestion/`.
+
 ```bash
-./airbyte-toolkit/generate-catalog.sh <category>/<name> <tenant>
+# cd src/ingestion
+./tools/declarative-connector/generate-catalog.sh <category>/<name> <tenant>
 ```
 
 Then read **each stream in isolation** — not just one combined read. `validate` and `validate-strict` are purely structural; **only a real `read` against the real API catches runtime pitfalls** that the Builder-UI (or Airbyte production) would otherwise hit. Known runtime-only landmines:
@@ -442,9 +446,10 @@ Then read **each stream in isolation** — not just one combined read. `validate
 | `record.get('X', {}).get('Y')` when `record['X']` is present but `null` | `jinja2.exceptions.UndefinedError: 'None' has no attribute 'get'` — defaults on `.get()` only apply to **missing** keys, not `None` values | Replace with `(record.get('X') or {}).get('Y')`. Use the same pattern for every chain that may hit a nullable parent object. |
 | Source API query syntax (e.g. YouTrack `updated:`, Jira JQL, Salesforce SOQL) does not match your template | HTTP 400 `invalid_query` from the source | Never trust documentation alone — run `check` against a live tenant and inspect the generated URL. Each API has its own datetime dialect. See `src/ingestion/tools/declarative-connector/README.md` §"Datetime syntax pitfalls". |
 
-**Per-stream `read` pattern** (for thorough testing — saves the full catalog, swaps in single-stream catalog, resets state, runs `read`, captures the emitted `STATE`, then runs `read` a second time to verify cursor advancement):
+**Per-stream `read` pattern** (for thorough testing — saves the full catalog, swaps in single-stream catalog, resets state, runs `read`, captures the emitted `STATE`, then runs `read` a second time to verify cursor advancement). **Working directory: repo root** — the `INGESTION` variable below makes the script independent of `cd` location:
 
 ```bash
+# cd <repo root>
 INGESTION=src/ingestion
 CONNECTOR_PATH=<category>/<name>            # e.g. task-tracking/youtrack
 CONN=$INGESTION/connectors/$CONNECTOR_PATH
