@@ -505,8 +505,9 @@ The dual-purpose intent of the four `<infra>.deploy` toggles is documented in [`
 
 #### OCI artifact reference
 
-- [ ] `p1` - **ID**: `cpt-insightspec-interface-dep-oci-artifact`
+- [ ] `p1` - **ID**: `cpt-insightspec-interface-dep-oci-endpoints`
 
+- **Implements**: `cpt-insightspec-interface-dep-oci-artifact` (PRD §7.1).
 - **Contracts**: `cpt-insightspec-contract-dep-oci-registry`.
 - **Technology**: Helm OCI (`helm pull oci://…`, `helm upgrade --install oci://…`).
 - **Location**: `oci://ghcr.io/cyberfabric/charts/insight`, tags = umbrella semver.
