@@ -5,7 +5,7 @@ Argo Workflows is the engine for ingestion pipelines (Airbyte sync → dbt run �
 The curated values file at [`values.yaml`](./values.yaml) is the reference consumed by both deployment paths:
 
 - **Local development** — `./dev-up.sh` invokes `deploy/scripts/install-argo.sh` against the local Kind cluster in the `insight` namespace.
-- **Cluster deployment** — the private [`infra/insight-gitops`](../../docs/components/deployment/gitops/SPEC.md) repository drives Argo from its `system/argo-workflows/values.yaml` overlay onto the `insight-infra` namespace as part of the L2 system layer.
+- **Cluster deployment** — the private [`infra/insight-gitops`](../../docs/components/deployment/gitops/README.md) repository drives Argo from its `system/argo-workflows/values.yaml` overlay onto the `insight-infra` namespace as part of the L2 system layer.
 
 `controller.instanceID` scopes workflows to the matching Insight install, so multiple installs on the same cluster do not interfere with each other.
 

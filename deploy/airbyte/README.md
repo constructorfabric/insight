@@ -5,7 +5,7 @@ Airbyte runs as its own Helm release, separate from the Insight umbrella. The um
 The curated values file at [`values.yaml`](./values.yaml) is the reference consumed by both deployment paths:
 
 - **Local development** — `./dev-up.sh` invokes `deploy/scripts/install-airbyte.sh`, which applies `values.yaml` against the local Kind cluster in the `insight` namespace.
-- **Cluster deployment** — the private [`infra/insight-gitops`](../../docs/components/deployment/gitops/SPEC.md) repository drives Airbyte from its `system/airbyte/values.yaml` overlay onto the `insight-infra` namespace as part of the L2 system layer.
+- **Cluster deployment** — the private [`infra/insight-gitops`](../../docs/components/deployment/gitops/README.md) repository drives Airbyte from its `system/airbyte/values.yaml` overlay onto the `insight-infra` namespace as part of the L2 system layer.
 
 ## Why a separate Helm release
 

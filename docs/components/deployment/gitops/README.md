@@ -3,7 +3,7 @@ status: proposed
 date: 2026-05-06
 ---
 
-# SPEC — Hybrid GitOps Deployment
+# GitOps Deployment — Design and Operations
 
 This document is the technical source of truth for the hybrid GitOps deployment system used to ship the Insight platform from a public open-source codebase to internal Kubernetes clusters that sit behind a corporate VPN. It defines the data flow, the tagging contract, the manifests repository, the hourly poller, the manual deploy step, and the secret-management workflow. It is structured so that a follow-up implementation task can generate the actual repository layout and Makefile from this specification without further architectural decisions.
 

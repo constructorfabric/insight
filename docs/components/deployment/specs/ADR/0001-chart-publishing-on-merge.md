@@ -139,7 +139,7 @@ In every subchart's values, `image.tag` defaults to the *umbrella's* `.Chart.App
 
 ## More Information
 
-The companion document is the deployment SPEC at [`gitops/SPEC.md`](../../gitops/SPEC.md), which describes the contract in operational detail (poller behaviour, Makefile shape, repository layout). Sections [§2.3](../../gitops/SPEC.md#23-chart-and-manifest-versioning) and [§2.4](../../gitops/SPEC.md#24-chart-publishing) of that SPEC are the day-to-day reference; this ADR records why those rules exist.
+The companion document is the deployment SPEC at [`gitops/README.md`](../../gitops/README.md), which describes the contract in operational detail (poller behaviour, Makefile shape, repository layout). Sections [§2.3](../../gitops/README.md#23-chart-and-manifest-versioning) and [§2.4](../../gitops/README.md#24-chart-publishing) of that SPEC are the day-to-day reference; this ADR records why those rules exist.
 
 The implementation lives in:
 
@@ -152,7 +152,7 @@ The implementation lives in:
 
 - **PRD**: [PRD.md](../PRD.md)
 - **DESIGN**: [DESIGN.md](../DESIGN.md)
-- **SPEC**: [gitops/SPEC.md](../../gitops/SPEC.md)
+- **SPEC**: [gitops/README.md](../../gitops/README.md)
 
 This decision directly addresses the following requirements or design elements:
 
