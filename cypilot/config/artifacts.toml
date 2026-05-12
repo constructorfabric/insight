@@ -163,9 +163,34 @@ path = "docs/components/connectors/task-tracking/jira/specs/DESIGN.md"
 name = "Jira Connector Design"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/task-tracking/youtrack/specs/PRD.md"
+name = "YouTrack Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/task-tracking/youtrack/specs/DESIGN.md"
+name = "YouTrack Connector Design"
+
+[[systems.artifacts]]
 kind = "DECOMPOSITION"
 path = "docs/components/connectors/task-tracking/youtrack/specs/DECOMPOSITION.md"
 name = "YouTrack Task-Tracker Connector Decomposition"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/task-tracking/youtrack/specs/ADR/ADR-001-project-scoped-custom-fields.md"
+name = "YouTrack Connector ADR-001: Project-Scoped Custom Fields"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/task-tracking/youtrack/specs/ADR/ADR-002-activitiespage-cursor-pagination.md"
+name = "YouTrack Connector ADR-002: activitiesPage Cursor Pagination"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/task-tracking/youtrack/specs/ADR/ADR-003-no-whitelist-full-ingestion.md"
+name = "YouTrack Connector ADR-003: No-Whitelist Full-Ingestion Scope"
 
 [[systems.artifacts]]
 kind = "PRD"

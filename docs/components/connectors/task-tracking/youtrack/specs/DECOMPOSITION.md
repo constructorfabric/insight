@@ -20,7 +20,10 @@ date: 2026-04-23
   - [2.9 Silver Plug-In Verification — MEDIUM](#29-silver-plug-in-verification--medium)
   - [2.10 Test Invariants & E2E Smoke — HIGH](#210-test-invariants--e2e-smoke--high)
 - [3. Feature Dependencies](#3-feature-dependencies)
-- [4. Coverage Reconciliation Note](#4-coverage-reconciliation-note)
+- [4. Coverage Reconciliation Status](#4-coverage-reconciliation-status)
+  - [Bronze coverage (§2.1–§2.4) — DONE](#bronze-coverage-2124--done)
+  - [Silver / Enrich coverage (§2.5–§2.10) — FORWARD-LOOKING](#silver--enrich-coverage-25210--forward-looking)
+  - [Status promotion](#status-promotion)
 
 <!-- /toc -->
 
@@ -38,19 +41,19 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 - **No-whitelist scope**: ingestion covers everything the YouTrack permanent token can reach — no `youtrack_project_short_names` K8s Secret field exists.
 - **Silver reuse**: the `silver/task-tracking/class_task_*` union models delivered by PR #205 are consumed unchanged; YouTrack plugs in via dbt tags (`silver:class_task_*`) on its per-source staging models.
 
-**Key architectural decisions** (codified as ADRs, planned in the spec-generation plan at `cypilot/.plans/generate-youtrack-spec/`):
+**Key architectural decisions** (codified as ADRs under [`ADR/`](./ADR/) for Bronze-now decisions; future scope marked as planned):
 
-- ADR-001 (connector) — Project-scoped custom fields ingestion via per-project substream.
-- ADR-002 (connector) — activitiesPage cursor pagination (not offset).
-- ADR-003 (connector) — No-whitelist full-ingestion scope.
-- ADR-001 (silver/enrich) — activitiesPage event-sourcing with backward replay.
-- ADR-002 (silver/enrich) — Multi-value backward replay semantics.
+- [Connector ADR-001 — Project-scoped custom fields ingestion via per-project substream](./ADR/ADR-001-project-scoped-custom-fields.md) (accepted)
+- [Connector ADR-002 — activitiesPage cursor pagination (not offset)](./ADR/ADR-002-activitiespage-cursor-pagination.md) (accepted)
+- [Connector ADR-003 — No-whitelist full-ingestion scope](./ADR/ADR-003-no-whitelist-full-ingestion.md) (accepted)
+- Enrich ADR-001 — activitiesPage event-sourcing with backward replay (planned — future scope §2.6; see [`README.md`](./README.md))
+- Enrich ADR-002 — Multi-value backward replay semantics (planned — future scope §2.6)
 
 **Inherited architectural ADRs** from Jira silver (applicable, not duplicated):
 
 - Rust single-binary, core/io split, DDL-owned-by-dbt, cursorless-incremental, event-id-traceability, event-kind-column.
 
-**Dependency on PR #205**: feature 2.5 (dbt staging) onward consumes the silver package (`src/ingestion/silver/task-tracking/class_task_*`), the `create_task_field_history_staging` dbt macro, and the `ingestion-pipeline` Argo template introduced in PR #205. No code-level feature can land until PR #205 is merged to `main`.
+**Dependency on PR #205** (merged): feature 2.5 (dbt staging) onward consumes the silver package (`src/ingestion/silver/task-tracking/class_task_*`), the `create_task_field_history_staging` dbt macro, and the `ingestion-pipeline` Argo template introduced in PR #205. PR #205 is now merged to `main` — Bronze features (§2.1–§2.4) shipped in PR #227 without needing this. Silver/enrich features (§2.5–§2.10) can now begin in follow-up PRs.
 
 **Donor code references** (private repo, accessed by maintainers via the Phase 1 research notes — paths inside the donor repo are stable):
 
@@ -68,7 +71,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 ### 2.1 [Bronze Airbyte Manifest Skeleton](feature-bronze-manifest/) — HIGH
 
-- [ ] `p1` - **ID**: `cpt-insightspec-feature-youtrack-bronze-manifest`
+- [x] `p1` - **ID**: `cpt-insightspec-feature-youtrack-bronze-manifest`
 
 - **Purpose**: Scaffold the declarative Airbyte source package at `src/ingestion/connectors/task-tracking/youtrack/` with `connector.yaml` (version, DeclarativeSource, auth, paginators, add_fields, error_handler), `descriptor.yaml` (name, version, schedule, `connection.namespace=bronze_youtrack`, empty `dbt_select`), `dbt/schema.yml` (Bronze source declarations), `README.md`, and the already-committed K8s Secret example. Provides the foundation all other Bronze features extend.
 
@@ -76,7 +79,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 - **Scope**:
   - `connector.yaml` skeleton: `auth` (`BearerAuthenticator` with `youtrack_token`), `base_requester` (url_base from `youtrack_base_url`), `error_handler` (`Retry-After`, 429/503 RETRY, 401/403 FAIL), `add_fields` (`tenant_id`, `source_id` injection), three paginator definitions (offset for directory streams, cursor for activitiesPage, cursor for issue `$skip/$top` hybrid).
-  - `descriptor.yaml` — `namespace: bronze_youtrack`, schedule `"0 3 * * *"` (align with jira), `dbt_select: tag:youtrack`.
+  - `descriptor.yaml` — `namespace: bronze_youtrack`, schedule `"0 3 * * *"` (align with jira), `dbt_select: ""` (no-op for Bronze-only until Feature 2.5 per-source silver-tag staging lands).
   - `dbt/schema.yml` — source block `bronze_youtrack` with empty `tables:` (populated by feature 2.2/2.3/2.4).
   - `README.md` — full connector README (overview, prerequisites, K8s Secret, streams table placeholder, identity, silver targets, operational constraints).
   - Sanity check: `check.stream_names = ["youtrack_projects"]` (cheapest endpoint).
@@ -86,28 +89,28 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Custom Python CDK code.
 
 - **Requirements Covered**:
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-bronze-scaffold`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-bronze-auth-bearer`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-bronze-retry-policy`
-  - [ ] `p1` — `cpt-insightspec-nfr-youtrack-secret-rotation`
-  - [ ] `p1` — `cpt-insightspec-nfr-youtrack-no-log-token`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-bronze-scaffold`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-bronze-auth-bearer`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-bronze-retry-policy`
+  - [x] `p1` — `cpt-insightspec-nfr-youtrack-secret-rotation`
+  - [x] `p1` — `cpt-insightspec-nfr-youtrack-no-log-token`
 
 - **Design Principles Covered**:
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-declarative-first`
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-symmetry-with-jira`
+  - [x] `p1` — `cpt-insightspec-principle-youtrack-declarative-first`
+  - [x] `p1` — `cpt-insightspec-principle-youtrack-symmetry-with-jira`
 
 - **Design Constraints Covered**:
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-no-whitelist`
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-k8s-secret-identity`
+  - [x] `p1` — `cpt-insightspec-constraint-youtrack-no-whitelist`
+  - [x] `p1` — `cpt-insightspec-constraint-youtrack-k8s-secret-identity`
 
 - **Domain Model Entities**:
   - Airbyte Source Definition
   - K8s Secret (`insight-youtrack-{source-id}`)
 
 - **Design Components**:
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-airbyte-manifest`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-descriptor`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-dbt-source-decl`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-airbyte-manifest`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-descriptor`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-dbt-source-decl`
 
 - **API**:
   - `check`: `GET /api/admin/projects?$top=1` via Airbyte `check` handshake
@@ -115,17 +118,17 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - CLI: `./airbyte-toolkit/connect.sh <tenant>` picks up the source definition
 
 - **Sequences**:
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-connector-check`
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-secret-discovery`
+  - [x] `p1` — `cpt-insightspec-seq-youtrack-connector-check`
+  - [x] `p1` — `cpt-insightspec-seq-youtrack-secret-discovery`
 
 - **Data**:
-  - [ ] `p1` — `cpt-insightspec-db-youtrack-bronze-namespace`
+  - [x] `p1` — `cpt-insightspec-db-youtrack-bronze-namespace`
 
 ---
 
 ### 2.2 [Bronze Directory Streams (Full-Refresh)](feature-bronze-directories/) — HIGH
 
-- [ ] `p1` - **ID**: `cpt-insightspec-feature-youtrack-bronze-directories`
+- [x] `p1` - **ID**: `cpt-insightspec-feature-youtrack-bronze-directories`
 
 - **Purpose**: Implement the reference-data streams that need full-refresh semantics and no cursor: projects, users, agiles (with nested sprints), issue link types, optional `customFieldSettings` bundles. These feed identity resolution, sprint context, and link decoding.
 
@@ -144,26 +147,26 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Hub users endpoint (`/hub/api/rest/users`) — reserved for self-hosted hub-integrated deployments; to be added as a follow-up if required.
 
 - **Requirements Covered**:
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-projects`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-users`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-agiles-sprints`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-link-types`
-  - [ ] `p1` — `cpt-insightspec-nfr-youtrack-directory-overwrite`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-stream-projects`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-stream-users`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-stream-agiles-sprints`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-stream-link-types`
+  - [x] `p1` — `cpt-insightspec-nfr-youtrack-directory-overwrite`
 
 - **Design Principles Covered**:
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-identity-by-email`
+  - [x] `p1` — `cpt-insightspec-principle-youtrack-identity-by-email`
 
 - **Design Constraints Covered**:
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-no-whitelist`
+  - [x] `p1` — `cpt-insightspec-constraint-youtrack-no-whitelist`
 
 - **Domain Model Entities**:
   - Project, User, Agile Board, Sprint, IssueLinkType
 
 - **Design Components**:
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-projects`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-users`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-agiles-sprints`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-link-types`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-stream-projects`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-stream-users`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-stream-agiles-sprints`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-stream-link-types`
 
 - **API**:
   - `GET /api/admin/projects`
@@ -172,20 +175,20 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - `GET /api/issueLinkTypes`
 
 - **Sequences**:
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-directory-refresh`
+  - [x] `p1` — `cpt-insightspec-seq-youtrack-directory-refresh`
 
 - **Data**:
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_projects`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_user`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_agiles`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_sprints`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_issue_link_types`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_projects`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_user`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_agiles`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_sprints`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_issue_link_types`
 
 ---
 
 ### 2.3 [Bronze Incremental Issues & Substreams](feature-bronze-issues/) — HIGH
 
-- [ ] `p1` - **ID**: `cpt-insightspec-feature-youtrack-bronze-issues`
+- [x] `p1` - **ID**: `cpt-insightspec-feature-youtrack-bronze-issues`
 
 - **Purpose**: Implement the incremental issue stream, plus three substream children (`youtrack_issue_history` derived from `activitiesPage`, `youtrack_comments`, `youtrack_worklogs`). Every substream uses `incremental_dependency=true` so only issues updated since the last sync have their children re-hit. Includes `youtrack_issue_links` emitted from the issue document itself.
 
@@ -204,29 +207,29 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Activity replay (owned by feature 2.6 enrich core).
 
 - **Requirements Covered**:
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-issue-incremental`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-activities-cursor`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-comments`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-worklogs`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-issue-links`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-incremental-dependency`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-stream-issue-incremental`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-stream-activities-cursor`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-stream-comments`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-stream-worklogs`
+  - [ ] `p2` — `cpt-insightspec-fr-youtrack-stream-issue-links` *(deferred — `links_json` captured but flat projection lives in §2.5)*
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-incremental-dependency`
 
 - **Design Principles Covered**:
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-cursor-for-activities`
+  - [x] `p1` — `cpt-insightspec-principle-youtrack-cursor-for-activities`
 
 - **Design Constraints Covered**:
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-activitiespage-cursor` (ADR-002 connector)
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-no-whitelist`
+  - [x] `p1` — `cpt-insightspec-constraint-youtrack-activitiespage-cursor` (ADR-002 connector)
+  - [x] `p1` — `cpt-insightspec-constraint-youtrack-no-whitelist`
 
 - **Domain Model Entities**:
   - Issue, ActivityItem, Comment, WorkItem, IssueLink
 
 - **Design Components**:
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-issue`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-issue-history`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-comments`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-worklogs`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-issue-links`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-stream-issue`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-stream-issue-history`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-stream-comments`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-stream-worklogs`
+  - [ ] `p2` — `cpt-insightspec-component-youtrack-stream-issue-links` *(deferred to §2.5)*
 
 - **API**:
   - `GET /api/issues?query={...}&fields={ISSUE_FIELDS}`
@@ -235,22 +238,22 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - `GET /api/issues/{id}/timeTracking/workItems`
 
 - **Sequences**:
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-issue-incremental`
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-activities-cursor-walk`
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-substream-dependency`
+  - [x] `p1` — `cpt-insightspec-seq-youtrack-issue-incremental`
+  - [x] `p1` — `cpt-insightspec-seq-youtrack-activities-cursor-walk`
+  - [x] `p1` — `cpt-insightspec-seq-youtrack-substream-dependency`
 
 - **Data**:
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_issue`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_issue_history`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_comments`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_worklogs`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_issue_links`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_issue`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_issue_history`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_comments`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_worklogs`
+  - [ ] `p2` — `cpt-insightspec-dbtable-youtrack-youtrack_issue_links` *(deferred — no separate Bronze table; rows live inside `youtrack_issue.links_json` until §2.5)*
 
 ---
 
 ### 2.4 [Project-Scoped Custom Field Ingestion](feature-custom-fields/) — HIGH
 
-- [ ] `p1` - **ID**: `cpt-insightspec-feature-youtrack-custom-fields`
+- [x] `p1` - **ID**: `cpt-insightspec-feature-youtrack-custom-fields`
 
 - **Purpose**: Discover and ingest the per-project custom field registry via `/api/admin/projects/{id}/customFields` as a dedicated substream (parent = `youtrack_projects`). Populates `youtrack_project_custom_fields` with project-scoped field definitions, bundle values, cardinality flags. Drives Silver `class_task_field_metadata`.
 
@@ -267,29 +270,29 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Global `customFieldSettings/bundles` endpoint (optional; only needed if project-scoped call omits bundle values — verified in Phase 1 research).
 
 - **Requirements Covered**:
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-stream-project-custom-fields`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-custom-field-bundles`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-stream-project-custom-fields`
+  - [x] `p1` — `cpt-insightspec-fr-youtrack-custom-field-bundles`
 
 - **Design Principles Covered**:
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-project-scoped-registry`
+  - [x] `p1` — `cpt-insightspec-principle-youtrack-project-scoped-registry`
 
 - **Design Constraints Covered**:
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-project-scoped-fields` (ADR-001 connector)
+  - [x] `p1` — `cpt-insightspec-constraint-youtrack-project-scoped-fields` (ADR-001 connector)
 
 - **Domain Model Entities**:
   - ProjectCustomField, FieldBundle, BundleValue
 
 - **Design Components**:
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-stream-project-custom-fields`
+  - [x] `p1` — `cpt-insightspec-component-youtrack-stream-project-custom-fields`
 
 - **API**:
   - `GET /api/admin/projects/{id}/customFields`
 
 - **Sequences**:
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-custom-field-discovery`
+  - [x] `p1` — `cpt-insightspec-seq-youtrack-custom-field-discovery`
 
 - **Data**:
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_project_custom_fields`
+  - [x] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack_project_custom_fields`
 
 ---
 
@@ -299,7 +302,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 - **Purpose**: Project the Bronze streams into the shape the silver `class_task_*` union models expect. Produce `youtrack__changelog_items.sql` (normalizes activitiesPage events — the enrich input), `youtrack__issue_field_snapshot.sql` (current state materialization), and seven `youtrack__task_*.sql` files (one per `class_task_*` tag: comments, worklogs, users, projects, sprints, field_metadata, field_history). A thin view `youtrack__task_field_history.sql` re-exposes the Rust-owned staging table into the dbt graph.
 
-- **Depends On**: `cpt-insightspec-feature-youtrack-bronze-issues`, `cpt-insightspec-feature-youtrack-custom-fields`
+- **Depends On**: cpt-insightspec-feature-youtrack-bronze-issues, cpt-insightspec-feature-youtrack-custom-fields
 
 - **Scope**:
   - `src/ingestion/connectors/task-tracking/youtrack/dbt/youtrack__changelog_items.sql` — flatten `youtrack_issue_history.activities[]`; emit one row per (issue_id, activity_id, field_id, added_item, removed_item) respecting v2 `applyBackward` semantics. `materialized='table'`, tagged `youtrack`.
@@ -314,23 +317,23 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Silver `class_task_*` models — unchanged from PR #205.
 
 - **Requirements Covered**:
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-staging-projections`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-staging-changelog-items`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-staging-field-snapshot`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-silver-tag-plugin`
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-staging-projections
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-staging-changelog-items
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-staging-field-snapshot
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-silver-tag-plugin
 
 - **Design Principles Covered**:
   - [ ] `p1` — `cpt-insightspec-principle-youtrack-symmetry-with-jira`
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-tag-based-union`
+  - [ ] `p1` — cpt-insightspec-principle-youtrack-tag-based-union
 
 - **Design Constraints Covered**:
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-ddl-owned-by-dbt`
+  - [ ] `p1` — cpt-insightspec-constraint-youtrack-ddl-owned-by-dbt
 
 - **Domain Model Entities**:
   - ChangelogItem, IssueFieldSnapshot, TaskComment, TaskWorklog, TaskUser, TaskProject, TaskSprint, TaskFieldMetadata, TaskFieldHistory
 
 - **Design Components**:
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-dbt-staging`
+  - [ ] `p1` — cpt-insightspec-component-youtrack-dbt-staging
   - [ ] `p1` — `cpt-insightspec-component-youtrack-dbt-source-decl`
 
 - **API**:
@@ -338,18 +341,18 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - `dbt test --select tag:youtrack`
 
 - **Sequences**:
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-dbt-staging-run`
+  - [ ] `p1` — cpt-insightspec-seq-youtrack-dbt-staging-run
 
 - **Data**:
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack__changelog_items`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack__issue_field_snapshot`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack__task_comments`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack__task_worklogs`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack__task_users`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack__task_projects`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack__task_sprints`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack__task_field_metadata`
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-youtrack__task_field_history` (view over Rust output)
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__changelog_items
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__issue_field_snapshot
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_comments
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_worklogs
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_users
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_projects
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_sprints
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_field_metadata
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_field_history (view over Rust output)
 
 ---
 
@@ -359,7 +362,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 - **Purpose**: Port the v2 `replay/*` TypeScript algorithm to Rust. Produces per-(issue × field × event) history rows with `synthetic_initial` bootstrap and multi-value backward semantics. Output schema matches the jira-enrich contract so the silver `class_task_field_history` union works transparently.
 
-- **Depends On**: `cpt-insightspec-feature-youtrack-dbt-staging`
+- **Depends On**: cpt-insightspec-feature-youtrack-dbt-staging
 
 - **Scope**:
   - Cargo package `src/ingestion/connectors/task-tracking/youtrack/enrich/` — `Cargo.toml`, `Dockerfile`, `build.sh`, `README.md`.
@@ -374,38 +377,38 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Argo workflow orchestration (feature 2.8).
 
 - **Requirements Covered**:
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-enrich-replay-backward`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-enrich-synthetic-initial`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-enrich-multi-value-backward`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-enrich-field-id-fallback`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-enrich-seq-disambiguation`
-  - [ ] `p1` — `cpt-insightspec-nfr-youtrack-enrich-deterministic`
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-enrich-replay-backward
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-enrich-synthetic-initial
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-enrich-multi-value-backward
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-enrich-field-id-fallback
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-enrich-seq-disambiguation
+  - [ ] `p1` — cpt-insightspec-nfr-youtrack-enrich-deterministic
 
 - **Design Principles Covered**:
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-event-sourcing`
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-core-io-split`
+  - [ ] `p1` — cpt-insightspec-principle-youtrack-event-sourcing
+  - [ ] `p1` — cpt-insightspec-principle-youtrack-core-io-split
 
 - **Design Constraints Covered**:
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-activitiespage-event-sourcing` (ADR-001 silver)
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-multi-value-backward` (ADR-002 silver)
+  - [ ] `p1` — cpt-insightspec-constraint-youtrack-activitiespage-event-sourcing (ADR-001 silver)
+  - [ ] `p1` — cpt-insightspec-constraint-youtrack-multi-value-backward (ADR-002 silver)
 
 - **Domain Model Entities**:
   - IssueStateEntry, FieldMetadata, ChangeSet, EventKind
 
 - **Design Components**:
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-enrich-core`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-enrich-types`
+  - [ ] `p1` — cpt-insightspec-component-youtrack-enrich-core
+  - [ ] `p1` — cpt-insightspec-component-youtrack-enrich-types
 
 - **API**:
   - Rust library API: `core::replay(issue: YTIssue, activities: Vec<YTActivityItem>) -> Vec<IssueStateEntry>`
   - Internal: `core::apply_backward(activity, &mut state) -> Option<ApplyResult>`
 
 - **Sequences**:
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-replay-backward`
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-synthetic-initial-emit`
+  - [ ] `p1` — cpt-insightspec-seq-youtrack-replay-backward
+  - [ ] `p1` — cpt-insightspec-seq-youtrack-synthetic-initial-emit
 
 - **Data**:
-  - [ ] `p1` — `cpt-insightspec-db-youtrack-enrich-in-memory-state`
+  - [ ] `p1` — cpt-insightspec-db-youtrack-enrich-in-memory-state
 
 ---
 
@@ -415,7 +418,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 - **Purpose**: Provide the ClickHouse I/O layer for `youtrack-enrich`: read from `staging.youtrack__changelog_items` + `staging.youtrack__issue_field_snapshot`; write to `staging.youtrack__task_field_history` (DDL owned by the shared `create_task_field_history_staging` macro). Binary entrypoint `main.rs` wires CLI args, tenant scope, batching, timeouts, and observability.
 
-- **Depends On**: `cpt-insightspec-feature-youtrack-enrich-core`
+- **Depends On**: cpt-insightspec-feature-youtrack-enrich-core
 
 - **Scope**:
   - `src/io/ch_client.rs` — ClickHouse client with `with_validation(false)` (avoid DESCRIBE hang per jira silver ADR), per-batch INSERT timeout (default 60s configurable).
@@ -431,40 +434,40 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Schema migrations (owned by dbt macro, feature 2.5 consumer).
 
 - **Requirements Covered**:
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-enrich-ch-reader`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-enrich-ch-writer`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-enrich-cli`
-  - [ ] `p1` — `cpt-insightspec-nfr-youtrack-enrich-fail-fast-schema`
-  - [ ] `p1` — `cpt-insightspec-nfr-youtrack-enrich-batch-timeout`
-  - [ ] `p1` — `cpt-insightspec-nfr-youtrack-enrich-observability`
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-enrich-ch-reader
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-enrich-ch-writer
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-enrich-cli
+  - [ ] `p1` — cpt-insightspec-nfr-youtrack-enrich-fail-fast-schema
+  - [ ] `p1` — cpt-insightspec-nfr-youtrack-enrich-batch-timeout
+  - [ ] `p1` — cpt-insightspec-nfr-youtrack-enrich-observability
 
 - **Design Principles Covered**:
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-core-io-split`
+  - [ ] `p1` — cpt-insightspec-principle-youtrack-core-io-split
 
 - **Design Constraints Covered**:
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-ch-with-validation-false`
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-ddl-owned-by-dbt`
+  - [ ] `p1` — cpt-insightspec-constraint-youtrack-ch-with-validation-false
+  - [ ] `p1` — cpt-insightspec-constraint-youtrack-ddl-owned-by-dbt
 
 - **Domain Model Entities**:
   - BatchedIssueStream, ClickHouseRow
 
 - **Design Components**:
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-enrich-io-reader`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-enrich-io-writer`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-enrich-io-ch-client`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-enrich-main`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-enrich-shell-wrapper`
+  - [ ] `p1` — cpt-insightspec-component-youtrack-enrich-io-reader
+  - [ ] `p1` — cpt-insightspec-component-youtrack-enrich-io-writer
+  - [ ] `p1` — cpt-insightspec-component-youtrack-enrich-io-ch-client
+  - [ ] `p1` — cpt-insightspec-component-youtrack-enrich-main
+  - [ ] `p1` — cpt-insightspec-component-youtrack-enrich-shell-wrapper
 
 - **API**:
   - CLI: `youtrack-enrich --tenant <name> [--issue-batch-size 500] [--per-batch-timeout-secs 60]`
   - CLI shell: `./src/ingestion/run-tt-enrich-youtrack.sh <tenant>`
 
 - **Sequences**:
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-enrich-batch-loop`
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-enrich-schema-assert`
+  - [ ] `p1` — cpt-insightspec-seq-youtrack-enrich-batch-loop
+  - [ ] `p1` — cpt-insightspec-seq-youtrack-enrich-schema-assert
 
 - **Data**:
-  - [ ] `p1` — `cpt-insightspec-dbtable-youtrack-staging-youtrack__task_field_history` (written by Rust, DDL by dbt)
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-staging-youtrack__task_field_history (written by Rust, DDL by dbt)
 
 ---
 
@@ -474,7 +477,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 - **Purpose**: Add a YouTrack branch to the Argo `ingestion-pipeline` template: `airbyte-sync(youtrack) → dbt(tag:youtrack) → youtrack-enrich → dbt(tag:silver)`. Deliver `tt-enrich-youtrack-run.yaml` (standalone WorkflowTemplate). Build and publish the `youtrack-enrich` container image via the existing toolbox.
 
-- **Depends On**: `cpt-insightspec-feature-youtrack-dbt-staging`, `cpt-insightspec-feature-youtrack-enrich-io`
+- **Depends On**: cpt-insightspec-feature-youtrack-dbt-staging, cpt-insightspec-feature-youtrack-enrich-io
 
 - **Scope**:
   - `src/ingestion/workflows/templates/tt-enrich-youtrack-run.yaml` — new WorkflowTemplate, symmetric to `tt-enrich-jira-run.yaml`.
@@ -487,23 +490,23 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Secret creation (user manages via `./secrets/apply.sh`).
 
 - **Requirements Covered**:
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-argo-pipeline-branch`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-standalone-enrich-wf-template`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-container-image-build`
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-argo-pipeline-branch
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-standalone-enrich-wf-template
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-container-image-build
 
 - **Design Principles Covered**:
   - [ ] `p1` — `cpt-insightspec-principle-youtrack-symmetry-with-jira`
 
 - **Design Constraints Covered**:
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-argo-poll-deadline`
+  - [ ] `p1` — cpt-insightspec-constraint-youtrack-argo-poll-deadline
 
 - **Domain Model Entities**:
   - WorkflowTemplate, Workflow Run
 
 - **Design Components**:
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-wf-tt-enrich-youtrack-run`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-wf-ingestion-pipeline-branch`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-image-build`
+  - [ ] `p1` — cpt-insightspec-component-youtrack-wf-tt-enrich-youtrack-run
+  - [ ] `p1` — cpt-insightspec-component-youtrack-wf-ingestion-pipeline-branch
+  - [ ] `p1` — cpt-insightspec-component-youtrack-image-build
 
 - **API**:
   - `argo submit ingestion-pipeline --parameter connector=youtrack --parameter tenant=<tenant>`
@@ -511,10 +514,10 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - `./src/ingestion/logs.sh -f latest`
 
 - **Sequences**:
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-argo-pipeline-branch`
+  - [ ] `p1` — cpt-insightspec-seq-youtrack-argo-pipeline-branch
 
 - **Data**:
-  - [ ] `p1` — `cpt-insightspec-db-youtrack-argo-run-metadata`
+  - [ ] `p1` — cpt-insightspec-db-youtrack-argo-run-metadata
 
 ---
 
@@ -524,7 +527,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 - **Purpose**: Verify that the existing `src/ingestion/silver/task-tracking/class_task_*` union models (delivered by PR #205) correctly include YouTrack rows via `union_by_tag('silver:class_task_*')` without any modification. No schema changes — only validation and a short operational note added to `src/ingestion/silver/task-tracking/schema.yml` describing YouTrack-specific caveats (missing-email fallback, multi-value cardinality quirks).
 
-- **Depends On**: `cpt-insightspec-feature-youtrack-dbt-staging`, `cpt-insightspec-feature-youtrack-enrich-io`
+- **Depends On**: cpt-insightspec-feature-youtrack-dbt-staging, cpt-insightspec-feature-youtrack-enrich-io
 
 - **Scope**:
   - After Features 2.5 and 2.7 land, run `dbt run --select tag:silver` and verify every `class_task_*` table contains rows with `source='youtrack'`.
@@ -536,36 +539,36 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Cross-source dedup logic.
 
 - **Requirements Covered**:
-  - [ ] `p2` — `cpt-insightspec-fr-youtrack-silver-tag-plugin`
-  - [ ] `p2` — `cpt-insightspec-nfr-youtrack-silver-backward-compat`
+  - [ ] `p2` — cpt-insightspec-fr-youtrack-silver-tag-plugin
+  - [ ] `p2` — cpt-insightspec-nfr-youtrack-silver-backward-compat
 
 - **Design Principles Covered**:
-  - [ ] `p2` — `cpt-insightspec-principle-youtrack-tag-based-union`
+  - [ ] `p2` — cpt-insightspec-principle-youtrack-tag-based-union
   - [ ] `p2` — `cpt-insightspec-principle-youtrack-silver-ownership-boundary`
 
 - **Design Constraints Covered**:
-  - [ ] `p2` — `cpt-insightspec-constraint-youtrack-no-silver-schema-change`
+  - [ ] `p2` — cpt-insightspec-constraint-youtrack-no-silver-schema-change
 
 - **Domain Model Entities**:
   - ClassTask{Comments,Worklogs,Users,Projects,Sprints,FieldMetadata,FieldHistory}
 
 - **Design Components**:
-  - [ ] `p2` — `cpt-insightspec-component-youtrack-silver-union-class-task-star`
+  - [ ] `p2` — cpt-insightspec-component-youtrack-silver-union-class-task-star
 
 - **API**:
   - `dbt test --select tag:silver --select tag:task`
 
 - **Sequences**:
-  - [ ] `p2` — `cpt-insightspec-seq-youtrack-silver-verify-rows`
+  - [ ] `p2` — cpt-insightspec-seq-youtrack-silver-verify-rows
 
 - **Data**:
-  - [ ] `p2` — `cpt-insightspec-dbtable-youtrack-class_task_field_history`
-  - [ ] `p2` — `cpt-insightspec-dbtable-youtrack-class_task_comments`
-  - [ ] `p2` — `cpt-insightspec-dbtable-youtrack-class_task_worklogs`
-  - [ ] `p2` — `cpt-insightspec-dbtable-youtrack-class_task_users`
-  - [ ] `p2` — `cpt-insightspec-dbtable-youtrack-class_task_projects`
-  - [ ] `p2` — `cpt-insightspec-dbtable-youtrack-class_task_sprints`
-  - [ ] `p2` — `cpt-insightspec-dbtable-youtrack-class_task_field_metadata`
+  - [ ] `p2` — cpt-insightspec-dbtable-youtrack-class_task_field_history
+  - [ ] `p2` — cpt-insightspec-dbtable-youtrack-class_task_comments
+  - [ ] `p2` — cpt-insightspec-dbtable-youtrack-class_task_worklogs
+  - [ ] `p2` — cpt-insightspec-dbtable-youtrack-class_task_users
+  - [ ] `p2` — cpt-insightspec-dbtable-youtrack-class_task_projects
+  - [ ] `p2` — cpt-insightspec-dbtable-youtrack-class_task_sprints
+  - [ ] `p2` — cpt-insightspec-dbtable-youtrack-class_task_field_metadata
 
 ---
 
@@ -575,7 +578,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 - **Purpose**: Ensure correctness across the full pipeline. Reuse the eleven source-agnostic dbt invariants in `src/ingestion/dbt/tests/task/` without modification (they operate on `silver.class_task_*` and work for any tagged source). Add one youtrack-specific Rust unit test case catalog. Perform an E2E smoke run on the test-tenant following the jira E2E playbook: bronze counts, silver counts, idempotency check, schema drift check.
 
-- **Depends On**: `cpt-insightspec-feature-youtrack-silver-plugin`, `cpt-insightspec-feature-youtrack-argo-workflow`
+- **Depends On**: cpt-insightspec-feature-youtrack-silver-plugin, cpt-insightspec-feature-youtrack-argo-workflow
 
 - **Scope**:
   - Rust unit tests — extend `src/ingestion/connectors/task-tracking/youtrack/enrich/src/core/tests.rs` with fixtures covering every activity category enumerated in Phase 1 research.
@@ -594,23 +597,23 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - Load testing.
 
 - **Requirements Covered**:
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-dbt-invariants-pass`
-  - [ ] `p1` — `cpt-insightspec-fr-youtrack-e2e-smoke`
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-dbt-invariants-pass
+  - [ ] `p1` — cpt-insightspec-fr-youtrack-e2e-smoke
   - [ ] `p1` — `cpt-insightspec-nfr-youtrack-idempotency`
   - [ ] `p1` — `cpt-insightspec-nfr-youtrack-schema-drift-detection`
 
 - **Design Principles Covered**:
-  - [ ] `p1` — `cpt-insightspec-principle-youtrack-test-invariants-source-agnostic`
+  - [ ] `p1` — cpt-insightspec-principle-youtrack-test-invariants-source-agnostic
 
 - **Design Constraints Covered**:
-  - [ ] `p1` — `cpt-insightspec-constraint-youtrack-reuse-jira-invariants`
+  - [ ] `p1` — cpt-insightspec-constraint-youtrack-reuse-jira-invariants
 
 - **Domain Model Entities**:
   - Invariant, E2ERun, BronzeCount, SilverCount
 
 - **Design Components**:
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-rust-unit-tests`
-  - [ ] `p1` — `cpt-insightspec-component-youtrack-e2e-smoke-report`
+  - [ ] `p1` — cpt-insightspec-component-youtrack-rust-unit-tests
+  - [ ] `p1` — cpt-insightspec-component-youtrack-e2e-smoke-report
 
 - **API**:
   - `cargo test --package youtrack-enrich`
@@ -619,11 +622,11 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - `./src/ingestion/logs.sh -f latest`
 
 - **Sequences**:
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-e2e-smoke-run`
-  - [ ] `p1` — `cpt-insightspec-seq-youtrack-idempotency-check`
+  - [ ] `p1` — cpt-insightspec-seq-youtrack-e2e-smoke-run
+  - [ ] `p1` — cpt-insightspec-seq-youtrack-idempotency-check
 
 - **Data**:
-  - [ ] `p1` — `cpt-insightspec-db-youtrack-e2e-counts-report`
+  - [ ] `p1` — cpt-insightspec-db-youtrack-e2e-counts-report
 
 ---
 
@@ -677,18 +680,31 @@ cpt-insightspec-feature-youtrack-bronze-manifest
 
 ---
 
-## 4. Coverage Reconciliation Note
+## 4. Coverage Reconciliation Status
 
-> **Status**: provisional — coverage IDs below are **forward-looking**.
+> **Bronze (§2.1–§2.4)**: reconciled — every `cpt-insightspec-*` identifier resolves to a real entry in [PRD.md](./PRD.md), [DESIGN.md](./DESIGN.md), or [ADR/](./ADR/). Implementation status reflected by `[x]` checkboxes.
+>
+> **Silver / Enrich (§2.5–§2.10)**: forward-looking — IDs remain placeholders. See [`README.md`](./README.md) in this folder for the full future-scope plan and reconciliation gate.
 
-The `cpt-insightspec-fr-youtrack-*`, `-nfr-*`, `-principle-*`, `-constraint-*`, `-component-*`, `-seq-*`, and `-db-*` identifiers referenced throughout Section 2 are placeholders that will be reconciled with the concrete PRD and DESIGN artifacts once they are generated by the spec-generation plan at `cypilot/.plans/generate-youtrack-spec/`.
+### Bronze coverage (§2.1–§2.4) — DONE
 
-Reconciliation tasks (executed as part of the spec-plan Phase 12 Review Gate):
+- Every `cpt-insightspec-fr-youtrack-*`, `-nfr-*`, `-principle-*`, `-constraint-*`, `-component-*`, `-seq-*`, and `-db-*` ID referenced in §2.1–§2.4 above is defined in [PRD.md](./PRD.md) §5 / §6, [DESIGN.md](./DESIGN.md) §2.1 / §2.2 / §3.2 / §3.6 / §3.7, or as an `ADR-*.md` file under [ADR/](./ADR/).
+- Bronze ADRs (3 files): [ADR-001 project-scoped custom fields](./ADR/ADR-001-project-scoped-custom-fields.md), [ADR-002 activitiesPage cursor pagination](./ADR/ADR-002-activitiespage-cursor-pagination.md), [ADR-003 no-whitelist full-ingestion](./ADR/ADR-003-no-whitelist-full-ingestion.md).
+- The cross-check: `cpt list-ids --artifact docs/components/connectors/task-tracking/youtrack/specs/PRD.md` and `... DESIGN.md` produce ID sets that strictly contain the Bronze IDs referenced here.
+- Implementation status reflected: every `[ ]` in §2.1–§2.4 has been flipped to `[x]` where this PR ships the implementation. `cpt-insightspec-{fr,component,dbtable}-youtrack-stream-issue-links` and related entries remain `[ ]` (deferred — `links_json` is captured but the flat projection is owned by feature 2.5).
 
-1. Regenerate or confirm ID stems using the slugs emitted by the PRD/DESIGN (`cpt list-ids --artifact docs/components/connectors/task-tracking/youtrack/specs/PRD.md`).
-2. For every placeholder ID in this DECOMPOSITION, verify the corresponding real ID exists in the PRD/DESIGN; replace placeholders with real IDs.
-3. Ensure 100% PRD/DESIGN coverage: every FR, NFR, principle, constraint, component, and sequence in PRD/DESIGN appears in at least one feature's "Covered" list.
-4. Update checklist status markers (`[ ]`) to mirror implementation progress as code lands (via PRs referencing these feature IDs).
-5. Promote `status: proposed` → `status: accepted` once PRD and DESIGN are merged.
+### Silver / Enrich coverage (§2.5–§2.10) — FORWARD-LOOKING
 
-Until reconciliation completes, treat this DECOMPOSITION as an **executable blueprint for code work**, independent of the final spec IDs. The feature boundaries, scope, dependencies, and parallelism rationale do **not** depend on the final IDs and are stable.
+The `cpt-insightspec-*` identifiers referenced throughout §2.5–§2.10 are **placeholders** awaiting:
+
+1. Per-source dbt staging models (DECOMPOSITION §2.5) and their `silver:class_task_*` tags.
+2. Rust `youtrack-enrich` crate (DECOMPOSITION §2.6 + §2.7) including types, replay engine, IO layer, tests.
+3. Argo `tt-enrich-youtrack-run.yaml` template (DECOMPOSITION §2.8) and `ingestion-pipeline` branch.
+4. Silver plug-in verification (DECOMPOSITION §2.9) — `silver.class_task_*.source = 'youtrack'` row counts.
+5. dbt test invariants + E2E smoke run (DECOMPOSITION §2.10).
+
+When these features land (separate PRs — see [`README.md`](./README.md) §"Implementation roadmap" for the gate sequence), §5.6–§5.10 of [PRD.md](./PRD.md) and the Silver/Enrich sections of [DESIGN.md](./DESIGN.md) + new Enrich ADRs will be added, and the `[ ]` checkboxes in §2.5–§2.10 below will be flipped to `[x]`.
+
+### Status promotion
+
+`status: proposed` (frontmatter) will flip to `status: accepted` when the silver/enrich features (§2.5–§2.10) ship — at which point every checkbox in §2 is `[x]` and every ID is reconciled.
