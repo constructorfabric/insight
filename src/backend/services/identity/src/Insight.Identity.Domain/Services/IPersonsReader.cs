@@ -36,4 +36,50 @@ public interface IPersonsReader
         Guid tenantId,
         Guid parentPersonId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Phase 2 (POST /v1/profiles, value_type='email'): distinct
+    /// <c>person_id</c>s whose CURRENT email observation on any source
+    /// equals <paramref name="emailLowercase"/>. Empty list = no match.
+    /// Count &gt; 1 = data invariant violated, caller maps to 422.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAsync(
+        Guid tenantId,
+        string emailLowercase,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Phase 2 (POST /v1/profiles, value_type='id'): distinct
+    /// <c>person_id</c>s whose CURRENT <c>value_type='id'</c>
+    /// observation within the given source instance equals
+    /// <paramref name="value"/>. Empty list = no match. Count &gt; 1 =
+    /// data invariant violated, caller maps to 422.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> ResolvePersonIdsBySourceIdAsync(
+        Guid tenantId,
+        string sourceType,
+        Guid sourceId,
+        string value,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Phase 2 (POST /v1/profiles): all CURRENT source-native ids for
+    /// one person, one row per source instance (latest
+    /// <c>value_type='id'</c> per (source_type, source_id) partition).
+    /// Used to populate the <c>ids[]</c> list in the response.
+    /// </summary>
+    Task<IReadOnlyList<PersonSourceId>> GetCurrentSourceIdsAsync(
+        Guid tenantId,
+        Guid personId,
+        CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// One source-native id binding for a person — emitted in the
+/// <c>ids[]</c> list of <c>POST /v1/profiles</c> response. Domain-layer
+/// shape; Api project re-projects to wire DTO.
+/// </summary>
+public sealed record PersonSourceId(
+    string InsightSourceType,
+    Guid InsightSourceId,
+    string Value);

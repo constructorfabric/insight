@@ -101,4 +101,71 @@ public sealed class PersonsRepository : IPersonsReader
             return false;
         }
     }
+
+    // ── Phase 2 / POST /v1/profiles ────────────────────────────────────
+
+    public async Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAsync(
+        Guid tenantId,
+        string emailLowercase,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(SqlProfiles.ResolvePersonIdsByEmail, conn);
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@value", emailLowercase);
+        return await ReadPersonIdsAsync(cmd, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<Guid>> ResolvePersonIdsBySourceIdAsync(
+        Guid tenantId,
+        string sourceType,
+        Guid sourceId,
+        string value,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(SqlProfiles.ResolvePersonIdsBySourceId, conn);
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@source_type", sourceType);
+        cmd.Parameters.AddWithValue("@source_id", sourceId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@value", value);
+        return await ReadPersonIdsAsync(cmd, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<PersonSourceId>> GetCurrentSourceIdsAsync(
+        Guid tenantId,
+        Guid personId,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(SqlProfiles.CurrentSourceIdsForPerson, conn);
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@person_id", personId.ToByteArray(bigEndian: true));
+
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var list = new List<PersonSourceId>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var sourceIdBytes = (byte[])reader["insight_source_id"];
+            list.Add(new PersonSourceId(
+                InsightSourceType: reader.GetString("insight_source_type"),
+                InsightSourceId: new Guid(sourceIdBytes, bigEndian: true),
+                Value: reader.GetString("value")));
+        }
+        return list;
+    }
+
+    private static async Task<IReadOnlyList<Guid>> ReadPersonIdsAsync(
+        MySqlCommand cmd,
+        CancellationToken cancellationToken)
+    {
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var ids = new List<Guid>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var bytes = (byte[])reader["person_id"];
+            ids.Add(new Guid(bytes, bigEndian: true));
+        }
+        return ids;
+    }
 }
