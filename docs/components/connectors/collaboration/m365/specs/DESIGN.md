@@ -325,7 +325,7 @@ Bronze tables are created by the destination container. All tables share the sam
 | `isExternal` | Boolean | External guest |
 | `hasOtherAction` | Boolean | Other Teams actions |
 | `assignedProducts` | Array | Licenses |
-| `teamChatMessageCount` | Number | **Channel posts (not group DMs).** Per Microsoft Graph docs the field name is misleading: it counts messages posted in Teams channels, excluding replies. See #431 — Silver maps it to `channel_posts`, not `group_chat_messages`. |
+| `teamChatMessageCount` | Number | **Channel posts (not group DMs).** Per Microsoft Graph docs the field name is misleading: it counts messages posted in Teams channels, excluding replies. See #431 — Silver does NOT map this to a standalone column (the canonical `channel_posts` is sourced from `postMessages`); it contributes only to the `total_chat_messages` aggregate. |
 | `privateChatMessageCount` | Number | Private (1:1) chat messages — true 1:1 DMs |
 | `postMessages` | Number | Channel posts (thread starts) |
 | `replyMessages` | Number | Channel replies |
