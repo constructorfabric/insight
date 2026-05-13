@@ -325,9 +325,9 @@ Bronze tables are created by the destination container. All tables share the sam
 | `isExternal` | Boolean | External guest |
 | `hasOtherAction` | Boolean | Other Teams actions |
 | `assignedProducts` | Array | Licenses |
-| `teamChatMessageCount` | Number | Team/group chat messages |
-| `privateChatMessageCount` | Number | Private (1:1) chat messages |
-| `postMessages` | Number | Channel posts |
+| `teamChatMessageCount` | Number | **Channel posts (not group DMs).** Per Microsoft Graph docs the field name is misleading: it counts messages posted in Teams channels, excluding replies. See #431 — Silver does NOT map this to a standalone column (the canonical `channel_posts` is sourced from `postMessages`); it contributes only to the `total_chat_messages` aggregate. |
+| `privateChatMessageCount` | Number | Private (1:1) chat messages — true 1:1 DMs |
+| `postMessages` | Number | Channel posts (thread starts) |
 | `replyMessages` | Number | Channel replies |
 | `callCount` | Number | Calls |
 | `meetingCount` | Number | Total meetings |
@@ -346,7 +346,7 @@ Bronze tables are created by the destination container. All tables share the sam
 | `sharedChannelTenantDisplayNames` | String | Shared channel tenant names |
 | `lastActivityDate` | String | Last Teams activity |
 
-**Note**: Total chat messages = `teamChatMessageCount + privateChatMessageCount`. `postMessages` and `replyMessages` are channel activity — exclude from message counts.
+**Note**: Total chat messages = `teamChatMessageCount + privateChatMessageCount` (DMs + channel posts). `postMessages` and `replyMessages` are also channel activity and overlap with `teamChatMessageCount` — Silver picks `postMessages` for the canonical `channel_posts` column and uses `teamChatMessageCount` only inside the `total_chat_messages` aggregate. **Group-chat (multi-party DM) counts are NOT exposed by this endpoint** — see #431. Silver `group_chat_messages` is therefore NULL for `data_source='insight_m365'` until a `/chats` API stream is added.
 
 #### Table: `onedrive_activity`
 
