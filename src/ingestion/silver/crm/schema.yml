@@ -5,9 +5,11 @@ models:
     description: "Unified CRM users from all sources (Salesforce, HubSpot)"
     columns:
       - name: user_id
-        description: "Source-specific user ID"
+        description: "Source-specific record-owner ID (HubSpot: owners.id). Joins to record-owner fields on deals/engagements."
         tests:
           - not_null
+      - name: hs_user_id
+        description: "HubSpot-only: owners.userId. Joins to `created_by_user_id` on engagements/deals — what HubSpot Reports attributes activity on."
       - name: email
         description: "Email — identity key for Silver Step 2"
         tests:

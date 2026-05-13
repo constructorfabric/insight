@@ -10,9 +10,17 @@
 
 -- Live (`contacts`) and archived (`contacts_archived`) are sibling Bronze tables;
 -- ReplacingMergeTree on `unique_key` dedups, with `_version = greatest(updatedAt, archivedAt)`
--- so an archive event always outranks the prior live update.
+-- so an archive event always outranks the prior live update. The archived
+-- sibling is only synced when Airbyte is configured to backfill deleted
+-- records — guard the UNION with adapter.get_relation so absent archived
+-- tables don't break the build.
+{%- set bronze_tables = ['contacts'] -%}
+{%- if adapter.get_relation(database=none, schema='bronze_hubspot', identifier='contacts_archived') -%}
+  {%- do bronze_tables.append('contacts_archived') -%}
+{%- endif %}
+
 WITH src AS (
-    {% for tbl in ['contacts', 'contacts_archived'] %}
+    {% for tbl in bronze_tables %}
     SELECT
         tenant_id,
         source_id,

@@ -298,6 +298,72 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_assistant_usage (
 SQL
 fi
 
+# silver.class_people — identity dbt model. Used by crm-gold-views and any
+# future migration that joins person → department / org-unit. Minimum-viable
+# columns the crm gold views select.
+if ! ch_table_exists silver class_people; then
+  echo "  Creating placeholder: silver.class_people"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_people (
+    unique_key      String,
+    email           Nullable(String),
+    department_name Nullable(String),
+    _version        UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_crm_users — CRM dbt model (HubSpot owners + Salesforce users).
+# Used by crm-gold-views to resolve activity/deal owner_id and
+# hs_created_by_user_id back to canonical email.
+if ! ch_table_exists silver class_crm_users; then
+  echo "  Creating placeholder: silver.class_crm_users"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_crm_users (
+    unique_key String,
+    user_id    String,
+    hs_user_id Nullable(String),
+    email      Nullable(String),
+    _version   UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_crm_deals — CRM dbt model. Used by crm-gold-views for
+# pipeline-now / closed-won aggregates and the weekly deal-flow chart.
+if ! ch_table_exists silver class_crm_deals; then
+  echo "  Creating placeholder: silver.class_crm_deals"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_crm_deals (
+    unique_key  String,
+    created_at  Nullable(DateTime64(3)),
+    close_date  Nullable(Date),
+    is_won      Int8,
+    is_closed   Int8,
+    amount_home Nullable(Float64),
+    owner_id    Nullable(String),
+    _version    UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_crm_activities — CRM dbt model (HubSpot engagements +
+# Salesforce tasks/events). Used by crm-gold-views for outreach-activity
+# bullets (calls / emails / meetings / tasks).
+if ! ch_table_exists silver class_crm_activities; then
+  echo "  Creating placeholder: silver.class_crm_activities"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_crm_activities (
+    unique_key         String,
+    timestamp          Nullable(DateTime64(3)),
+    activity_type      String,
+    owner_id           Nullable(String),
+    created_by_user_id Nullable(String),
+    _version           UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
 # silver.class_git_commits — git dbt model.
 if ! ch_table_exists silver class_git_commits; then
   echo "  Creating placeholder: silver.class_git_commits"
