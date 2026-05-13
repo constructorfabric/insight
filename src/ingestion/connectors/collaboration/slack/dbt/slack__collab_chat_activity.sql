@@ -10,9 +10,22 @@
 
 -- Slack daily chat activity per user, sourced from admin.analytics.getFile?type=member.
 -- Bronze row is already one per (user, date); we simply reshape to the shared
--- class_collab_chat_activity schema. Fields that require raw message-level
--- partitioning (direct vs group vs channel breakdown, reply counts, urgency)
--- are not available from the analytics endpoint and are set to NULL.
+-- class_collab_chat_activity schema. The analytics endpoint reports
+-- `messages_posted_count` (every message the user sent) and
+-- `channel_messages_posted_count` (the channel slice) but does NOT break out
+-- DMs from MPIMs from channel-thread replies.
+--
+-- direct_messages / group_chat_messages stay NULL — true DM/MPIM separation
+-- needs the message-stream content connector + `*:history` scopes.
+--
+-- direct_and_group_messages (#266): the analytics endpoint's
+-- `total - channel` residual is exactly "everything the user posted outside
+-- channels" = DMs + MPIMs (and counts as the natural Slack mirror of
+-- m365's `privateChatMessageCount` plus group chats — except Slack DOES
+-- surface group chats inside this residual, where m365 does not). Cross-
+-- vendor comparison caveats are documented in silver/collaboration/schema.yml.
+-- `greatest(0, …)` guards against any Slack analytics off-by-one that would
+-- otherwise produce a negative residual.
 
 SELECT
     u.tenant_id,
@@ -32,6 +45,11 @@ SELECT
     toDate(parseDateTimeBestEffort(u.date)) AS date,
     CAST(NULL AS Nullable(Int64)) AS direct_messages,
     CAST(NULL AS Nullable(Int64)) AS group_chat_messages,
+    -- #266: total - channel = DMs + MPIMs (everything posted outside channels).
+    toInt64(greatest(
+        coalesce(u.messages_posted_count, 0) - coalesce(u.channel_messages_posted_count, 0),
+        0
+    )) AS direct_and_group_messages,
     coalesce(u.messages_posted_count, 0) AS total_chat_messages,
     u.channel_messages_posted_count AS channel_posts,
     CAST(NULL AS Nullable(Int64)) AS channel_replies,
