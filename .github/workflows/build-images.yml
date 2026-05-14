@@ -16,6 +16,18 @@ on:
       - "charts/insight/**"
       - ".github/workflows/build-images.yml"
   workflow_dispatch:
+    inputs:
+      # Cross-repo dispatch hook: cyberfabric/cyber-insight-front's CI sends
+      # the just-published frontend image tag here so the umbrella chart
+      # bumps the frontend subchart appVersion to match. When set, ALL
+      # backend image-build jobs are skipped (the dispatch carries no
+      # backend code change), and publish-chart runs to bump + republish.
+      # Leave empty for a manual full-rebuild dispatch (legacy behaviour).
+      frontend_tag:
+        description: "Frontend image tag to pin (e.g. 2026.05.14.10.00-abc1234). Empty = full manual rebuild."
+        required: false
+        type: string
+        default: ""
 
 # One in-flight chart-publish per branch. Prevents two merges from racing
 # the auto-commit-back step.
@@ -91,7 +103,9 @@ jobs:
 
   backend-api-gateway:
     needs: changes
-    if: needs.changes.outputs.api_gateway == 'true' || github.event_name == 'workflow_dispatch'
+    if: |
+      needs.changes.outputs.api_gateway == 'true'
+      || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -121,7 +135,9 @@ jobs:
 
   backend-analytics-api:
     needs: changes
-    if: needs.changes.outputs.analytics_api == 'true' || github.event_name == 'workflow_dispatch'
+    if: |
+      needs.changes.outputs.analytics_api == 'true'
+      || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -151,7 +167,9 @@ jobs:
 
   backend-identity:
     needs: changes
-    if: needs.changes.outputs.identity == 'true' || github.event_name == 'workflow_dispatch'
+    if: |
+      needs.changes.outputs.identity == 'true'
+      || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -183,7 +201,9 @@ jobs:
 
   toolbox:
     needs: changes
-    if: needs.changes.outputs.toolbox == 'true' || github.event_name == 'workflow_dispatch'
+    if: |
+      needs.changes.outputs.toolbox == 'true'
+      || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -263,7 +283,9 @@ jobs:
 
   jira-enrich:
     needs: changes
-    if: needs.changes.outputs.jira_enrich == 'true' || github.event_name == 'workflow_dispatch'
+    if: |
+      needs.changes.outputs.jira_enrich == 'true'
+      || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -325,6 +347,7 @@ jobs:
         || needs.changes.outputs.toolbox     == 'true'
         || needs.changes.outputs.jira_enrich == 'true'
         || needs.changes.outputs.umbrella    == 'true'
+        || inputs.frontend_tag != ''
       )
     runs-on: ubuntu-latest
     steps:
@@ -385,6 +408,22 @@ jobs:
             yq -i ".appVersion = \"$BUILD_TAG\"" src/backend/services/identity/helm/Chart.yaml
           fi
 
+      # Cross-repo frontend bump. The frontend lives in
+      # cyberfabric/cyber-insight-front and builds its own image; on
+      # publish-to-main its CI dispatches THIS workflow with frontend_tag
+      # set to the just-built tag. We mirror that into the frontend
+      # subchart's appVersion so the deploy path resolves the right image
+      # (subchart deployment templates default image.tag to
+      # .Chart.AppVersion, which is the SUBCHART's appVersion).
+      - name: Bump frontend subchart appVersion (cross-repo dispatch)
+        if: inputs.frontend_tag != ''
+        env:
+          FRONTEND_TAG: ${{ inputs.frontend_tag }}
+        run: |
+          set -euo pipefail
+          echo "Bumping frontend subchart appVersion → $FRONTEND_TAG"
+          yq -i ".appVersion = \"$FRONTEND_TAG\"" src/frontend/helm/Chart.yaml
+
       - name: Bump ingestion image refs
         env:
           BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
@@ -429,6 +468,7 @@ jobs:
             src/backend/services/api-gateway/helm/Chart.yaml \
             src/backend/services/analytics-api/helm/Chart.yaml \
             src/backend/services/identity/helm/Chart.yaml \
+            src/frontend/helm/Chart.yaml \
             | sort -V | tail -1)
           echo "Umbrella version $CURRENT → $NEXT (appVersion → $NEW_APP)"
           yq -i ".version = \"$NEXT\""        charts/insight/Chart.yaml
@@ -467,7 +507,8 @@ jobs:
                   charts/insight/values.yaml \
                   src/backend/services/api-gateway/helm/Chart.yaml \
                   src/backend/services/analytics-api/helm/Chart.yaml \
-                  src/backend/services/identity/helm/Chart.yaml
+                  src/backend/services/identity/helm/Chart.yaml \
+                  src/frontend/helm/Chart.yaml
 
           if git diff --staged --quiet; then
             echo "no version changes to commit"
