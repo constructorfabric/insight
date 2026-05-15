@@ -27,9 +27,13 @@ _DISC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 # disc_load_descriptors
 # Walks ${CONNECTORS_DIR}/*/*/descriptor.yaml and emits TSV per descriptor:
-#   name<TAB>connector_dir<TAB>version<TAB>type<TAB>cdk_image
-#     (type = nocode|cdk; cdk_image is the full Docker image reference for
-#      type=cdk, empty for nocode or absent)
+#   name<TAB>connector_dir<TAB>version<TAB>type<TAB>cdk_image<TAB>enrich_image<TAB>dbt_select
+#     (type = nocode|cdk; cdk_image is the full Docker reference for
+#      type=cdk, empty for nocode or absent; enrich_image is the full Docker
+#      reference for connectors with an enrich sidecar, empty otherwise;
+#      dbt_select is the dbt selector passed to the ingestion-pipeline.)
+# This is the single bash-side reader of descriptor.yaml — every other lib /
+# python helper consumes values via this TSV rather than re-reading the file.
 # Skips files missing `name` or `version`; logs a WARN to stderr per skip.
 # ---------------------------------------------------------------------------
 disc_load_descriptors() {
@@ -50,11 +54,13 @@ name = d.get("name")
 version = d.get("version")
 ctype = d.get("type", "nocode")
 cdk_image = d.get("cdk_image", "") or ""
+enrich_image = d.get("enrich_image", "") or ""
+dbt_select = d.get("dbt_select", "") or ""
 if not name:
     sys.stderr.write(f"WARN: descriptor missing name, skip: {path}\n"); sys.exit(0)
 if version is None:
     sys.stderr.write(f"WARN: descriptor missing version, skip: {path}\n"); sys.exit(0)
-print(f"{name}\t{connector_dir}\t{version}\t{ctype}\t{cdk_image}")
+print(f"{name}\t{connector_dir}\t{version}\t{ctype}\t{cdk_image}\t{enrich_image}\t{dbt_select}")
 PY
   done < <(find "${CONNECTORS_DIR}" -name 'descriptor.yaml' -print0 2>/dev/null)
   # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-descriptor

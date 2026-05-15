@@ -31,7 +31,8 @@ if ! kubectl get workflowtemplate -n "$INSIGHT_NS" airbyte-sync >/dev/null 2>&1;
   echo "       The umbrella chart should have installed it. Check:" >&2
   echo "         helm get values insight -n $INSIGHT_NS | grep ingestion" >&2
   echo "       and ensure ingestion.templates.enabled=true with" >&2
-  echo "       ingestion.toolboxImage and ingestion.jiraEnrichImage set." >&2
+  echo "       ingestion.toolboxImage set (enrich images are sourced from" >&2
+  echo "       descriptor.yaml.enrich_image per ADR-0014)." >&2
   exit 1
 fi
 echo "  Found shared WorkflowTemplates in $INSIGHT_NS"

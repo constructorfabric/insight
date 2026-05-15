@@ -88,6 +88,8 @@ All operations are idempotent. Creating a resource that already exists in state 
 | `cpt-insightspec-adr-airbyte-workspace-as-namespace` | Insight definitions live in one Airbyte workspace, identified by `custom: true` | §3.2 reconcile-engine, §3.9 Reconciliation Model, §3.11 Naming Convention |
 | `cpt-insightspec-adr-nocode-via-builder-projects` | nocode definitions registered via `connector_builder_projects` (create/publish/update_active_manifest); CDK keeps `create_custom` | §3.2 registrar, §3.2 reconcile-engine, §3.9 Reconciliation Model |
 | `cpt-insightspec-adr-cdk-prebuilt-images` | CDK connectors carry the full Docker image reference in `descriptor.cdk_image`; reconcile splits it into `dockerRepository`/`dockerImageTag` per Docker reference grammar — no derivation, no convention, no env var; never builds at runtime | §3.2 reconcile-engine, §3.9 Reconciliation Model |
+| `cpt-insightspec-adr-enrich-image-in-descriptor` | enrich sidecar image (jira-enrich, future youtrack-enrich) declared in `descriptor.yaml.enrich_image`; sole source of truth; Helm/CI/dev-up read from descriptor, never from chart values | §3.2 reconcile-engine, §3.13 Argo Integration |
+| `cpt-insightspec-adr-semver-and-full-refresh` | strict semver `MAJOR.MINOR.PATCH`; any bump re-discovers catalog so new streams/fields are auto-enabled; major bump dispatches one-shot dbt `--full-refresh` scoped to `descriptor.dbt_select`; no cross-connector cascade | §3.2 reconcile-engine, §3.9 Reconciliation Model, §3.13 Argo Integration |
 
 #### NFR Allocation
 
@@ -291,19 +293,23 @@ Drives Airbyte resources (definitions, sources, connections) into the desired st
 ##### Responsibility scope
 
 - Owns the diff & apply loop across three layers (definition / source / connection).
-- Decides when to republish a definition: only when `descriptor.yaml.version` ≠ `definition.declarativeManifest.description` (nocode) or `dockerImageTag` (CDK).
+- Decides when to republish a definition: only when `descriptor.yaml.version` ≠ `definition.declarativeManifest.description` (nocode) or `dockerImageTag` (CDK). Per ADR-0015, the version is strict semver `MAJOR.MINOR.PATCH`; reconcile classifies the diff as `none | patch | minor | major | migration` and propagates `bump_kind` downstream.
+- On every `republish` (any `bump_kind` ≠ `none`, including `migration`), re-discovers the source schema and updates the connection's `sync_catalog` so new streams and fields are auto-enabled (per ADR-0015, applies to nocode and cdk identically).
+- On `bump_kind == major`, sets `dbt_full_refresh=true` on the auto-triggered sync workflow's pipeline submission. The flag is one-shot — not persisted — and scoped to the bumped connector's `descriptor.dbt_select`. There is no cross-connector cascade: connector B is never touched because connector A bumped.
 - Performs idempotent `sources/update` per Secret (`sources` are append-tolerant; connection state is preserved).
 - Decides when to recreate a connection: only on breaking syncCatalog drift; uses `cpt-insightspec-seq-breaking-change-recreate-with-state` to preserve cursors via `/api/v1/state/{get,create_or_update}`.
 - Creates/recreates Airbyte connections with `scheduleType=manual`; the per-connector Argo CronWorkflow (rendered by `cpt-insightspec-component-argo-cronworkflow-renderer`) is the sole sync scheduler. Airbyte's own Temporal scheduler must not fire syncs in parallel with Argo, or Bronze rows land without dbt → Silver.
+- Reads `descriptor.yaml.enrich_image` (per ADR-0014) for connectors with an enrich sidecar and passes the value as a submission parameter on the rendered `ingestion-pipeline` Workflow.
 - Drives orphan GC by `insight` membership tag (skipped under `--no-gc`).
-- Reports per-connector outcome: `created` | `updated` | `no-op` | `recreated` | `deleted` | `skipped`.
+- Reports per-connector outcome: `created` | `updated` | `no-op` | `recreated` | `deleted` | `skipped`, plus `bump_kind` and `dbt_full_refresh` for every connector touched this run.
 
 ##### Responsibility boundaries
 
 - Does NOT author connector manifests (`connectors/*/connector.yaml` is owned by connector authors).
-- Does NOT manage Argo workflows.
+- Does NOT manage Argo workflows beyond rendering one-shot sync triggers and CronWorkflows.
 - Does NOT modify K8s Secrets.
 - Does NOT keep parallel local state — Airbyte is the source of truth post-refactor (no more `state.yaml` / `airbyte-state` ConfigMap).
+- Does NOT propagate full-refresh across connectors. A major bump on A re-materializes A's `dbt_select` scope only; connector B is not resynced or full-refreshed even when downstream silver models join both. Bronze is append-only, dedup happens in silver via `unique_key`, so cross-source consistency holds without resyncing B.
 
 ##### Related components (by ID)
 
@@ -851,6 +857,10 @@ The reconciliation model defines the relationship between desired state (on disk
 
 **CDK connector lifecycle** (per ADR-0011): Insight CDK connectors point at pre-built Docker images via the descriptor field `cdk_image`, which carries the full image reference (e.g. `ghcr.io/cyberfabric/source-bitbucket-cloud-insight:2026.04.21.16.10-b36cf42`). Reconcile splits this string into `dockerRepository` + `dockerImageTag` using the canonical Docker reference grammar (digest `@sha256:` first; else last `:` after last `/`; no tag → `:latest`) — no derivation, no convention, no env var. The image name has no required structure. `descriptor.version` is the Insight semantic version (audit, Argo labels) and is independent of `cdk_image`. Reconcile **never builds Docker images at runtime** — it only registers/updates the source_definition. First registration uses `source_definitions/create_custom`; subsequent image bumps (same repository, new tag) use `source_definitions/update` (existing `ab_set_definition_image_tag`). Missing `cdk_image` for `type=cdk` → reconcile WARNs and skips that connector for the run. Local-dev image build remains in `lib/cdk-build.sh` (operator-invoked, not part of the reconcile loop).
 
+**Semver versioning and catalog refresh** (per ADR-0015): `descriptor.yaml.version` is strict semver `MAJOR.MINOR.PATCH` (regex `^\d+\.\d+\.\d+$`, no pre-release). Reconcile classifies a version diff as `none | patch | minor | major | migration` and propagates `bump_kind` to downstream steps. On any non-`none` `bump_kind` (including `migration`, the one-time legacy → semver step), reconcile calls `sources/discover_schema`, re-normalizes with `normalize_catalog_to_append.py` (all streams `selected: true`, no field-level exclusion), and PATCHes the connection's `sync_catalog`. New streams and fields the connector advertises land in bronze automatically. On `bump_kind == major`, reconcile additionally sets `dbt_full_refresh=true` on the auto-triggered one-shot sync workflow's `ingestion-pipeline` submission, scoping the re-materialization to the bumped connector's `descriptor.dbt_select`. The flag is one-shot; it is not persisted on the connection or anywhere else, so the next scheduled CronWorkflow tick runs the normal incremental dbt. **There is no cross-connector cascade**: connector B is never touched because connector A bumped, even when silver models join both — bronze is append-only and dedup happens in silver via `unique_key`, so cross-source consistency holds without resyncing B.
+
+**Enrich sidecar image lifecycle** (per ADR-0014): connectors with an enrich step (today: jira; planned: youtrack) declare the sidecar image in `descriptor.yaml.enrich_image` (full reference, same shape as `cdk_image`). The descriptor is the only place this image is declared — reconcile reads it via `disc_load_descriptors`, propagates the value through `render_sync_trigger.py` into the rendered `ingestion-pipeline` submission, and the `tt-enrich-jira-run` WorkflowTemplate consumes it as a required input parameter (no Helm-time default). CI bumps the field in `descriptor.yaml` whenever a new enrich binary is published.
+
 **NoCode definition lifecycle** (per ADR-0010 v2): `connectors/<area>/<name>/connector.yaml` (manifest in repo) → `connector_builder_projects/create` (builder project + draft manifest) → `connector_builder_projects/publish` (active source_definition) → on subsequent runs, `declarative_source_definitions/create_manifest` (with `setAsActiveManifest: true`) bumps the version when `descriptor.yaml.version` changes. The legacy `connector_builder_projects/update_active_manifest` endpoint was removed in Airbyte 1.7+. Orphan definitions (`custom: true`, no linked builder project) discovered during reconcile produce a WARN and are skipped — they are NOT deleted (cascade-breaks linked sources/connections per ADR-0010 §Consequences). Operators run the dedicated `tools/migrate-orphan-definition.sh <connector>` helper, which exports per-connection state, creates the new source under a temp name, recreates the connections + restores state on the new source, and only then deletes the old source as the cutover step (transactional pattern). Subsequent reconcile passes find a healthy builder + definition pair and use `create_manifest` for any further version bumps. CDK definitions retain the `create_custom` registration path. All definition iteration filters on `custom: true` per ADR-0009 to scope to Insight-managed definitions inside the shared Airbyte workspace, which is auto-discovered at runtime via `ab_workspace_id`.
 
 Drives PRD requirements `cpt-insightspec-fr-version-driven-reconcile`, `cpt-insightspec-fr-orphan-gc`, `cpt-insightspec-fr-state-preserved-on-breaking-change`, `cpt-insightspec-fr-cli-surface`. Related ADRs are listed in §1.2 Architecture Drivers.
@@ -875,7 +885,8 @@ The reconcile engine identifies resources by deterministic conventions, not by s
 
 | Where | What | Format / Value | Purpose |
 |---|---|---|---|
-| `connectors/<name>/descriptor.yaml` | `version` field | semver-like string (baseline `2026.05.04`) | Single human-edited driver of reconcile decisions |
+| `connectors/<name>/descriptor.yaml` | `version` field | strict semver `MAJOR.MINOR.PATCH` (per ADR-0015); legacy non-semver values accepted on the Airbyte side until next bump | Single human-edited driver of reconcile decisions; `bump_kind` classification drives catalog refresh and full-refresh dispatch |
+| `connectors/<name>/descriptor.yaml` | `enrich_image` field (optional) | full Docker reference (e.g. `ghcr.io/cyberfabric/insight-jira-enrich:1.2.3`) | Single source of truth for the connector's enrich sidecar image (per ADR-0014); reconcile passes it to the `ingestion-pipeline` submission |
 | Airbyte `definition.declarativeManifest.description` (nocode) | mirrors descriptor version | string equal to descriptor `version` | Marks "what version is currently published" |
 | Airbyte `definition.dockerImageTag` (CDK) | mirrors descriptor version | tag including version | Marks current published image for CDK connectors |
 | Airbyte `connection.tags` | membership + config hash | `["insight", "cfg-hash:<sha256(secret.data)>"]` | Membership marker + per-instance config drift detector |

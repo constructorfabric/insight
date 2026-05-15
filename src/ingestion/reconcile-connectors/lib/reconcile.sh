@@ -201,6 +201,11 @@ reconcile_classify_change() {
 # reconcile_definitions <connector_name> <target_version> <type> <connector_dir> [<cdk_image>]
 # diff-definition-version algorithm. Idempotent.
 #
+# Per ADR-0015: target_version is strict semver MAJOR.MINOR.PATCH.
+# Validation is delegated to python/classify_bump.py — non-semver target
+# fails fast with exit 2 here (operator typo); legacy non-semver values on
+# the Airbyte side are classified as `migration` (no full-refresh).
+#
 # For nocode connectors: drives the builder_projects publish/update flow.
 #   - If no definition exists -> create builder project + publish manifest.
 #   - If definition exists but builder project doesn't (orphan) -> delete
@@ -213,10 +218,14 @@ reconcile_classify_change() {
 # The reference is split via python/split_docker_image_ref.py into
 # dockerRepository + dockerImageTag (digest or tag). When cdk_image is empty
 # for type=cdk, WARN+skip until the image is published.
+#
+# Output: TSV `<action>\t<bump_kind>\t<definition_id>` on stdout where
+#   action     ∈ {republish, noop}
+#   bump_kind  ∈ {none, patch, minor, major, migration}
 # ---------------------------------------------------------------------------
 reconcile_definitions() {
   local connector_name="$1" target_version="$2" type="$3" connector_dir="${4:-}" cdk_image="${5:-}"
-  local definition_id current_value action manifest_path
+  local definition_id current_value action manifest_path bump_kind
   local rc=0
 
   # connector_dir is already a full path emitted by disc_load_descriptors
@@ -230,9 +239,17 @@ reconcile_definitions() {
   if [[ "${type}" == "cdk" && -z "${cdk_image}" ]]; then
     reconcile__log WARN "${connector_name}" \
       "connector is cdk type but no image set in descriptor — skipping until image is published"
-    printf 'noop\n'
+    printf 'noop\tnone\t\n'
     return 0
   fi
+
+  # Per ADR-0015: descriptor.version is validated as strict semver only
+  # when an actual diff is detected (the comparison below calls
+  # classify_bump.py). Legacy values such as "2026.05.04" or "1.0" pass
+  # through unchanged on the noop path so the migration to semver can
+  # happen one connector at a time, on whatever cadence the operator
+  # chooses, without a fleet-wide hard cutoff.
+  bump_kind="none"
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-none
   local workspace_id
@@ -253,15 +270,18 @@ for d in json.load(sys.stdin):
       if [[ ! -f "${manifest_path}" ]]; then
         reconcile__log WARN "${connector_name}" \
           "connector is nocode type but no manifest file at ${manifest_path} — skipping"
-        printf '%s\n' "noop"
+        printf 'noop\tnone\t\n'
         return 0
       fi
       if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
         reconcile__log CHANGE "${connector_name}" \
           "would publish connector for the first time (no definition exists yet)"
+        # First-time publish is treated as bump_kind=major per ADR-0015 §Bump
+        # kinds: the connector has no existing state to preserve, so its first
+        # sync is effectively a full-refresh from cursor zero.
         # Pseudo def_id so downstream layers stay informative in dry-run.
         # Real run reaches the live calls below and returns the real UUID.
-        printf '%s\t%s\n' "republish" "DRY-RUN-PENDING-NOCODE"
+        printf 'republish\tmajor\tDRY-RUN-PENDING-NOCODE\n'
         return 0
       fi
       local builder_id new_def_id
@@ -283,7 +303,7 @@ for d in json.load(sys.stdin):
       reconcile__log CHANGE "${connector_name}" \
         "published for the first time: builder project ${builder_id}, definition ${new_def_id}"
       _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
-      printf '%s\t%s\n' "republish" "${new_def_id}"
+      printf 'republish\tmajor\t%s\n' "${new_def_id}"
       return 0
     fi
     # @cpt-begin:cpt-insightspec-algo-reconcile-create-cdk-definition:p1
@@ -298,8 +318,11 @@ for d in json.load(sys.stdin):
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
       reconcile__log CHANGE "${connector_name}" \
         "would register cdk image ${docker_repo}:${docker_tag} as new definition"
+      # CDK first-publish: per ADR-0015 §Bump-kind storage scope, CDK bump
+      # classification is deferred — first publish emits bump_kind=patch so
+      # the downstream re-discover runs without triggering full-refresh.
       # Pseudo def_id so downstream layers stay informative in dry-run.
-      printf '%s\t%s\n' "republish" "DRY-RUN-PENDING-CDK"
+      printf 'republish\tpatch\tDRY-RUN-PENDING-CDK\n'
       return 0
     fi
     local new_def_id
@@ -314,7 +337,7 @@ for d in json.load(sys.stdin):
     reconcile__log CHANGE "${connector_name}" \
       "registered cdk image ${docker_repo}:${docker_tag} as definition ${new_def_id}"
     _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
-    printf '%s\t%s\n' "republish" "${new_def_id}"
+    printf 'republish\tpatch\t%s\n' "${new_def_id}"
     return 0
     # @cpt-end:cpt-insightspec-algo-reconcile-create-cdk-definition:p1
   fi
@@ -328,12 +351,23 @@ for d in json.load(sys.stdin):
     fi
     if [[ "${current_value}" == "${target_version}" ]]; then
       action="noop"
+      bump_kind="none"
       _RECONCILE_NOOP=$((_RECONCILE_NOOP + 1))
     else
       action="republish"
+      # Per ADR-0015: classify the diff for the caller (re-discover catalog
+      # always; dispatch full-refresh on major only). `current_value` may be
+      # a legacy non-semver string (e.g. "2026.05.04") — classify_bump.py
+      # returns "migration" in that case (no full-refresh).
+      if ! bump_kind="$(python3 "${_RECONCILE_PY_DIR}/classify_bump.py" \
+            "${target_version}" "${current_value}" 2>/dev/null)"; then
+        reconcile__log ERROR "${connector_name}" \
+          "classify_bump rejected target '${target_version}' (must be strict semver per ADR-0015)"
+        return 1
+      fi
       if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
         reconcile__log CHANGE "${connector_name}" \
-          "would update connector definition to version ${target_version}"
+          "would update connector definition to version ${target_version} (bump_kind=${bump_kind})"
       else
         if [[ ! -f "${manifest_path}" ]]; then
           reconcile__log ERROR "${connector_name}" \
@@ -349,7 +383,7 @@ for d in json.load(sys.stdin):
           # which preserves state. See tools/migrate-orphan-definition.sh.
           reconcile__log WARN "${connector_name}" \
             "ORPHAN definition ${definition_id} has no linked builder project. Version drift NOT propagated. Run \`bash src/ingestion/reconcile-connectors/tools/migrate-orphan-definition.sh ${connector_name}\` to safely recreate (state-preserving)."
-          printf 'noop\n'
+          printf 'noop\tnone\t%s\n' "${definition_id}"
           return 0
         else
           if ! ab_builder_update_active_manifest \
@@ -358,7 +392,7 @@ for d in json.load(sys.stdin):
             return 1
           fi
           reconcile__log CHANGE "${connector_name}" \
-            "connector definition version: ${current_value} → ${target_version}"
+            "connector definition version: ${current_value} → ${target_version} (bump_kind=${bump_kind})"
         fi
         _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
       fi
@@ -380,15 +414,20 @@ for d in json.load(sys.stdin):
     if [[ "${current_repo}" != "${desc_repo}" ]]; then
       reconcile__log WARN "${connector_name}" \
         "cdk image repository changed (${current_repo} → ${desc_repo}); manual recreate-with-state needed — skipping for now"
-      printf 'noop\n'
+      printf 'noop\tnone\t%s\n' "${definition_id}"
       return 0
     fi
     current_value="${current_tag}"
     if [[ "${current_tag}" == "${desc_tag}" ]]; then
       action="noop"
+      bump_kind="none"
       _RECONCILE_NOOP=$((_RECONCILE_NOOP + 1))
     else
       action="republish"
+      # Per ADR-0015 §Bump-kind storage scope: CDK image bumps emit
+      # bump_kind=patch so re-discover runs without full-refresh. Operators
+      # who need a CDK full-refresh dispatch it explicitly.
+      bump_kind="patch"
       if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
         reconcile__log CHANGE "${connector_name}" \
           "would update connector definition to version ${desc_tag}"
@@ -406,7 +445,7 @@ for d in json.load(sys.stdin):
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-mismatch
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-return-noop
-  printf '%s\t%s\n' "${action}" "${definition_id}"
+  printf '%s\t%s\t%s\n' "${action}" "${bump_kind}" "${definition_id}"
   return "${rc}"
   # @cpt-end:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-return-noop
 }
@@ -619,6 +658,52 @@ reconcile_connections() {
 }
 
 # ---------------------------------------------------------------------------
+# reconcile_refresh_catalog <connector_name> <source_id> <connection_id>
+# Per ADR-0015 / cpt-insightspec-algo-reconcile-refresh-catalog-on-republish:
+# called whenever the definition was republished and a connection already
+# exists. Re-discovers the source schema, normalizes append-only with
+# every stream and field selected, then POSTs /connections/update to PATCH
+# the sync_catalog in place. State (per-stream cursors) survives the
+# update because Airbyte keys state on (connectionId, streamName), not on
+# catalog shape.
+# Returns 0 on success or noop (dry-run / connection_id empty), 1 on
+# discover or update failure.
+# ---------------------------------------------------------------------------
+reconcile_refresh_catalog() {
+  local connector_name="$1" source_id="$2" connection_id="$3"
+  if [[ -z "${connection_id}" ]]; then
+    # Bootstrap path: caller will have already created the connection with
+    # a freshly-discovered catalog. Nothing to refresh.
+    return 0
+  fi
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+    reconcile__log CHANGE "${connector_name}" \
+      "would refresh sync_catalog on connection ${connection_id} (re-discover; new streams/fields auto-enabled)"
+    return 0
+  fi
+  local discover_json sync_catalog
+  if ! discover_json="$(ab_discover_schema "${source_id}")"; then
+    reconcile__log ERROR "${connector_name}" \
+      "ab_discover_schema failed during catalog refresh for source ${source_id}"
+    return 1
+  fi
+  if ! sync_catalog="$(printf '%s' "${discover_json}" \
+        | python3 "${_RECONCILE_PY_DIR}/normalize_catalog_to_append.py")"; then
+    reconcile__log ERROR "${connector_name}" \
+      "normalize_catalog_to_append failed during catalog refresh for source ${source_id}"
+    return 1
+  fi
+  if ! ab_update_connection_sync_catalog "${connection_id}" "${sync_catalog}" >/dev/null; then
+    reconcile__log ERROR "${connector_name}" \
+      "ab_update_connection_sync_catalog failed for connection ${connection_id}"
+    return 1
+  fi
+  reconcile__log CHANGE "${connector_name}" \
+    "sync_catalog refreshed on connection ${connection_id} (new streams/fields auto-enabled)"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # reconcile_recreate_with_state <connection_id> <source_id> <definition_id> \
 #                               <source_name> <target_cfg_json> <cfg_hash> \
 #                               <connector_name>
@@ -801,7 +886,8 @@ reconcile_dry_run() {
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # _reconcile_one_connector <name> <connector_dir> <version> <type> <cdk_image> \
-#                          <opt_dry_run> <opt_no_sync_trigger> <opt_connector>
+#                          <enrich_image> <dbt_select> <opt_dry_run> \
+#                          <opt_no_sync_trigger> <opt_connector>
 # Per-connector body extracted from the main loop so a single connector's
 # failure can't kill the whole reconcile run. We deliberately do NOT enable
 # `set -e` here — failures bubble up through explicit `if ! ...; then`
@@ -809,8 +895,8 @@ reconcile_dry_run() {
 # Returns 0 on success, non-zero on any per-layer failure.
 # ---------------------------------------------------------------------------
 _reconcile_one_connector() {
-  local name="$1" connector_dir="$2" version="$3" type="$4" cdk_image="$5"
-  local opt_dry_run="$6" opt_no_sync_trigger="$7" opt_connector="$8"
+  local name="$1" connector_dir="$2" version="$3" type="$4" cdk_image="$5" enrich_image="$6" dbt_select="$7"
+  local opt_dry_run="$8" opt_no_sync_trigger="$9" opt_connector="${10}"
   set +e  # explicit per-call error handling below
 
   if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
@@ -866,16 +952,19 @@ _reconcile_one_connector() {
   local rc=0
 
   # Layer 1 — definition
-  local def_result def_id def_action
+  local def_result def_id def_action def_bump_kind
   if ! def_result="$(reconcile_definitions "${name}" "${version}" "${type}" "${connector_dir}" "${cdk_image}")"; then
     log_line ERROR "${name}: failed to reconcile connector definition"
     return 1
   fi
-  # `awk -F'\t'` (not `cut -f2`) — with cut, a missing TAB makes the whole
-  # line collapse into f1 AND f2 (e.g. `noop\n` returns "noop" for both
-  # fields), defeating the empty-def_id guard below. awk emits empty.
+  # TSV `action\tbump_kind\tdef_id` per ADR-0015. `awk -F'\t'` (not `cut`)
+  # so a missing-tab line collapses to empty in the trailing fields rather
+  # than mirroring field 1 into 2 and 3 (defeats the empty-def_id guard
+  # below).
   def_action="$(printf '%s' "${def_result}" | tail -1 | awk -F'\t' '{print $1}')"
-  def_id="$(printf '%s' "${def_result}" | tail -1 | awk -F'\t' '{print $2}')"
+  def_bump_kind="$(printf '%s' "${def_result}" | tail -1 | awk -F'\t' '{print $2}')"
+  def_id="$(printf '%s' "${def_result}" | tail -1 | awk -F'\t' '{print $3}')"
+  [[ -n "${def_bump_kind}" ]] || def_bump_kind="none"
   if [[ -z "${def_id}" ]]; then
     reconcile__log WARN "${name}" "definition not ready — skipping source and connection setup"
     _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
@@ -935,13 +1024,14 @@ print(json.dumps(d))
   #      recreate the connection, but a credential rotation is still a
   #      genuine reason to re-sync (the new credentials may scope to a
   #      different account / dataset).
-  local conn_result conn_action
+  local conn_result conn_action conn_id
   if ! conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}")"; then
     log_line ERROR "${name}: failed to reconcile connection"
     _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
     return 1
   fi
   conn_action="$(printf '%s' "${conn_result}" | tail -1 | awk -F'\t' '{print $1}')"
+  conn_id="$(printf '%s' "${conn_result}" | tail -1 | awk -F'\t' '{print $2}')"
   case "${conn_action}" in
     created)
       data_changed=1
@@ -965,6 +1055,17 @@ print(json.dumps(d))
       ;;
   esac
 
+  # Per ADR-0015: every version bump that resulted in a republish (any
+  # bump_kind != none) refreshes the connection's sync_catalog so new
+  # streams and fields advertised by the connector land in bronze on the
+  # next sync. Bootstrap path (conn_action == created) already discovered
+  # the catalog as part of ab_create_connection, so skip there.
+  if [[ "${def_action}" == "republish" && "${conn_action}" != "created" ]]; then
+    if ! reconcile_refresh_catalog "${name}" "${src_id}" "${conn_id}"; then
+      rc=1
+    fi
+  fi
+
   # CronWorkflow apply (idempotent — kubectl apply no-op when YAML unchanged).
   local conn_name schedule tenant
   conn_name="$(reconcile_compute_connection_name "${name}")"
@@ -979,12 +1080,24 @@ print(json.dumps(d))
   fi
 
   # Sync-trigger only on data-affecting changes (per ADR-0008 / KEY DECISION #2).
+  # Per ADR-0015: bump_kind=major dispatches a one-shot dbt --full-refresh
+  # on the auto-triggered sync only. Scoped to this connector's
+  # descriptor.dbt_select — no cross-connector cascade.
   if [[ "${data_changed}" -eq 1 && "${opt_no_sync_trigger}" -ne 1 ]]; then
     if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-      log_line INFO "${name}: would trigger a one-shot sync"
+      if [[ "${def_bump_kind}" == "major" ]]; then
+        log_line INFO "${name}: would trigger a one-shot sync with dbt --full-refresh (bump_kind=major)"
+      else
+        log_line INFO "${name}: would trigger a one-shot sync (bump_kind=${def_bump_kind})"
+      fi
     elif argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" \
-                                   "${connector_dir}" "${source_id_label}" >/dev/null 2>&1; then
-      log_line INFO "${name}: triggered a one-shot sync"
+                                   "${source_id_label}" "${dbt_select}" \
+                                   "${enrich_image}" "${def_bump_kind}" >/dev/null 2>&1; then
+      if [[ "${def_bump_kind}" == "major" ]]; then
+        log_line INFO "${name}: triggered a one-shot sync with dbt --full-refresh (bump_kind=major)"
+      else
+        log_line INFO "${name}: triggered a one-shot sync"
+      fi
     else
       log_line ERROR "${name}: failed to trigger sync"
       rc=1
@@ -1014,9 +1127,9 @@ reconcile_run() {
   local descriptors_tsv
   descriptors_tsv="$(disc_load_descriptors)"
 
-  while IFS=$'\t' read -r name connector_dir version type cdk_image; do
+  while IFS=$'\t' read -r name connector_dir version type cdk_image enrich_image dbt_select; do
     [[ -n "${name}" ]] || continue
-    if ! _reconcile_one_connector "${name}" "${connector_dir}" "${version}" "${type}" "${cdk_image}" \
+    if ! _reconcile_one_connector "${name}" "${connector_dir}" "${version}" "${type}" "${cdk_image}" "${enrich_image}" "${dbt_select}" \
          "${opt_dry_run}" "${opt_no_sync_trigger}" "${opt_connector}"; then
       log_line ERROR "${name}: reconcile failed (continuing with next)"
       _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))

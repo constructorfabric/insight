@@ -29,10 +29,13 @@ spec:
           - name: dbt_select_staging         # e.g. "tag:jira"; empty for non-jira
             default: ""  # RULE-DEFAULTS-OK: empty-string sentinel — non-jira callers send "" so the `data_source == 'jira'` predicate is the only dispatch.
           - name: dbt_select                 # e.g. "tag:silver"
+          - name: dbt_full_refresh           # one-shot full-refresh flag; "true" iff bump_kind=major (per ADR-0015)
+            default: "false"
           - name: toolbox_image
             default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+          # Sourced from the jira descriptor's enrich_image field by the
+          # submitter; required when data_source == "jira".
           - name: jira_enrich_image
-            default: {{ required "ingestion.jiraEnrichImage is required when ingestion.templates.enabled=true" .Values.ingestion.jiraEnrichImage | quote }}
           - name: airbyte_url
             default: {{ include "insight.airbyte.url" . | quote }}
           - name: clickhouse_host
@@ -65,6 +68,8 @@ spec:
               parameters:
                 - name: dbt_select
                   value: {{ `"{{inputs.parameters.dbt_select_staging}}"` }}
+                - name: dbt_full_refresh
+                  value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
                 - name: toolbox_image
                   value: {{ `"{{inputs.parameters.toolbox_image}}"` }}
                 - name: clickhouse_host
@@ -105,6 +110,8 @@ spec:
               parameters:
                 - name: dbt_select
                   value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+                - name: dbt_full_refresh
+                  value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
                 - name: toolbox_image
                   value: {{ `"{{inputs.parameters.toolbox_image}}"` }}
                 - name: clickhouse_host
@@ -125,6 +132,8 @@ spec:
               parameters:
                 - name: dbt_select
                   value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+                - name: dbt_full_refresh
+                  value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
                 - name: toolbox_image
                   value: {{ `"{{inputs.parameters.toolbox_image}}"` }}
                 - name: clickhouse_host

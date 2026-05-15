@@ -20,6 +20,13 @@ spec:
       inputs:
         parameters:
           - name: dbt_select
+          # One-shot full-refresh flag per ADR-0015. Set to "true" by the
+          # reconcile sync-trigger when a connector's major version was
+          # bumped this run; scoped via dbt_select to that connector's
+          # downstream models only (no cross-connector cascade). Empty/
+          # "false" runs incremental.
+          - name: dbt_full_refresh
+            default: "false"
           # Operator-pinned values from umbrella chart. Submitter may override
           # per-call but typically just submits and gets these defaults baked in
           # at chart-render time. `insight.<dep>.host/port` helpers know whether
@@ -54,6 +61,8 @@ spec:
                 key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
           - name: DBT_SELECT
             value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+          - name: DBT_FULL_REFRESH
+            value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
           - name: CLICKHOUSE_HOST
             value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
           - name: CLICKHOUSE_PORT
@@ -93,5 +102,11 @@ spec:
           # `dbt run --select ""` matches NOTHING (not "all models") —
           # ${VAR:+...} drops the flag entirely when DBT_SELECT is empty
           # so manual triggers without the parameter run all models.
-          dbt run --profiles-dir . ${DBT_SELECT:+--select "$DBT_SELECT"}
+          # DBT_FULL_REFRESH="true" appends --full-refresh per ADR-0015;
+          # any other value (false / empty) runs incremental.
+          if [[ "${DBT_FULL_REFRESH:-false}" == "true" ]]; then
+            dbt run --profiles-dir . --full-refresh ${DBT_SELECT:+--select "$DBT_SELECT"}
+          else
+            dbt run --profiles-dir . ${DBT_SELECT:+--select "$DBT_SELECT"}
+          fi
 {{- end }}

@@ -22,7 +22,6 @@
           }
         },
         "toolboxImage":    { "type": "string" },
-        "jiraEnrichImage": { "type": "string" },
         "reconcile": {
           "type": "object",
           "properties": {

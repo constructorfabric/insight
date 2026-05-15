@@ -390,11 +390,57 @@ The cron-driven reconcile loop **MUST** be safe to run 1000+ times with zero sta
 **Rationale**: A cron-driven loop is run thousands of times per quarter; any per-run resource leak compounds into operational pain.
 **Verification**: idempotency harness (Phase 18) runs the loop 100× and asserts the four invariants.
 
+#### 5.6.13 Semver version format
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-semver-version-format`
+
+The toolkit **MUST** accept `descriptor.yaml.version` only in strict semver `MAJOR.MINOR.PATCH` form (regex `^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$`) whenever the value differs from what Airbyte holds. Legacy non-semver values (e.g. `2026.05.04`, `1.0`) **MAY** remain in descriptors that have not yet been edited; reconcile **MUST** treat such legacy values on the Airbyte side as a `migration` bump (no full-refresh) when the operator updates the descriptor to a semver value. A non-semver target value **MUST** be rejected with a clear error that names the offending value and references ADR-0015.
+
+**Actor**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-airbyte-api`
+**Rationale**: A parseable version format is the only way to dispatch the `major`-bump full-refresh behavior (§5.6.15) deterministically.
+
+#### 5.6.14 Catalog refresh on every version bump
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-catalog-refresh-on-bump`
+
+On every version-bump-driven definition republish (any non-`none` `bump_kind`, including `migration`), the toolkit **MUST** call `sources/discover_schema` and PATCH the existing connection's `sync_catalog` so that every stream the source now advertises is `selected: true` and every field in each stream's `jsonSchema.properties` is implicitly selected (`fieldSelectionEnabled: false`, no exclusion list). The behavior **MUST** apply identically to both nocode and cdk connectors. Re-discover **MUST NOT** run on `bump_kind == none` (string-equal target and current).
+
+**Actor**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-airbyte-api`
+**Rationale**: Without a refresh on bump, new streams or new fields added by the connector author never reach bronze on existing connections.
+
+#### 5.6.15 Full-refresh dispatch on major bump
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-full-refresh-on-major-bump`
+
+When a nocode connector's `descriptor.version` bumps such that `target.major > current.major`, the toolkit **MUST** set `dbt_full_refresh=true` on the auto-triggered one-shot sync workflow's `ingestion-pipeline` submission. On any other `bump_kind` (`none`, `patch`, `minor`, `migration`) the flag **MUST** be `false`. The flag is one-shot: it **MUST NOT** be persisted on the connection, K8s resource, or descriptor — the next scheduled CronWorkflow tick **MUST** run incremental dbt as usual.
+
+**Actor**: `cpt-insightspec-actor-platform-engineer`
+**Rationale**: A major bump signals breaking semantics; downstream silver/gold models must be re-materialized from a clean slate. Scoping the flag to the auto-trigger workflow keeps the behavior one-shot and predictable.
+
+#### 5.6.16 No cross-connector cascade
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-no-cross-connector-cascade`
+
+A major-bump full-refresh on connector A **MUST NOT** cause any Airbyte API call to be issued for connector B's source, connection, or definition — regardless of whether downstream silver/gold dbt models join A and B. Reconcile's blast radius for a major bump is exactly `descriptor.dbt_select` of the bumped connector.
+
+**Actor**: `cpt-insightspec-actor-platform-engineer`
+**Rationale**: Bronze is append-only and silver dedups via `unique_key`; cross-source consistency holds without resyncing B. Cascading would multiply rate-limit and load on unrelated sources for no data benefit.
+
+#### 5.6.17 Enrich image sourced from descriptor
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-enrich-image-from-descriptor`
+
+For connectors that run an enrich sidecar (today: jira; planned: youtrack), the image reference **MUST** be sourced exclusively from `descriptor.yaml.enrich_image`. The Helm chart **MUST NOT** carry an `ingestion.<connector>EnrichImage` value or a WorkflowTemplate default for the image; the `tt-enrich-<connector>-run` WorkflowTemplate input parameter `<connector>_enrich_image` **MUST** be required (no default), and reconcile **MUST** pass the descriptor value to the rendered `ingestion-pipeline` submission.
+
+**Actor**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-ci-pipeline`
+**Rationale**: A connector's complete deployment surface (manifest version, source-image, enrich-image, schedule, dbt scope) must be visible in one file. Splitting the enrich image into chart values hides the linkage from operators and PR reviewers.
+
 #### Changelog
 
 - 2026-05-05 — v1.1 — Added §5.6.7…§5.6.12 (cron-self-run, name-based-connection-resolve, auto-trigger-sync-on-data-change, file-persistent-logs, cascade-delete-cronworkflow, leak-free-loop) for Phase 2 of the reconcile refactor.
 - 2026-05-06 — v1.1 — Added §5.2 connector-lifecycle namespace + nocode registration path (per ADR-0009 / ADR-0010).
 - 2026-05-07 — v1.1 — Extended §5.2 connector-lifecycle paragraph with CDK pre-built ghcr images path (per ADR-0011).
+- 2026-05-13 — v1.2 — Added §5.6.13…§5.6.17 (semver-version-format, catalog-refresh-on-bump, full-refresh-on-major-bump, no-cross-connector-cascade, enrich-image-from-descriptor) per ADR-0014 + ADR-0015.
 
 ## 6. Non-Functional Requirements
 

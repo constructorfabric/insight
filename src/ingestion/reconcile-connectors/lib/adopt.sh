@@ -315,7 +315,10 @@ adopt_run() {
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-list-actual
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
-  while IFS=$'\t' read -r name connector_dir version type cdk_image; do
+  # adopt does not consume enrich_image / dbt_select but reads the full TSV
+  # schema disc_load_descriptors emits — a partial read would silently drop
+  # trailing fields and mask later schema drift.
+  while IFS=$'\t' read -r name connector_dir version type cdk_image enrich_image dbt_select; do
     [[ -n "${name}" ]] || continue
     if ! _adopt_one_connector "${name}" "${connector_dir}" "${version}" "${type}" "${cdk_image}" \
          "${dry_run}" "${opt_connector}" "${workspace_id}" \
@@ -323,6 +326,7 @@ adopt_run() {
       log_line ERROR "${name}: adopt failed (continuing with next)"
       _ADOPT_FAILED=$((_ADOPT_FAILED + 1))
     fi
+    : "${enrich_image:=}" "${dbt_select:=}"  # silence unused; reserved for future adopt logic
   done <<<"${descriptors_tsv}"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
 

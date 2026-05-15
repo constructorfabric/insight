@@ -494,6 +494,18 @@ name = "ADR-0011: CDK connectors use pre-built ghcr.io images, reconcile never b
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0014-enrich-image-in-descriptor.md"
+name = "ADR-0014: Enrich sidecar image (jira-enrich, future youtrack-enrich) sourced from descriptor.yaml.enrich_image, not from Helm values"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0015-semver-and-full-refresh.md"
+name = "ADR-0015: Strict semver MAJOR.MINOR.PATCH; any bump re-discovers catalog; major bump dispatches one-shot dbt --full-refresh; no cross-connector cascade"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "FEATURE"
 path = "docs/components/airbyte-toolkit/specs/feature-reconcile/FEATURE.md"
 name = "Reconcile Engine Feature"

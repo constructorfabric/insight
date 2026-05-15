@@ -2,7 +2,10 @@
 #   dbt(tag:jira) -> tt-enrich-jira-run -> dbt(tag:silver,tag:jira+).
 #
 # Variables resolved by run-tt-enrich-jira.sh and rendered via envsubst:
-#   NAMESPACE, TENANT, TENANT_DASHED, SOURCE_ID
+#   NAMESPACE, TENANT, TENANT_DASHED, SOURCE_ID, JIRA_ENRICH_IMAGE
+#
+# Per ADR-0014 the JIRA_ENRICH_IMAGE comes from the jira descriptor.yaml,
+# not from Helm values.
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
@@ -40,6 +43,8 @@ spec:
               parameters:
                 - name: insight_source_id
                   value: "${SOURCE_ID}"
+                - name: jira_enrich_image
+                  value: "${JIRA_ENRICH_IMAGE}"
 
           - name: silver
             depends: enrich

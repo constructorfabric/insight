@@ -119,13 +119,18 @@ airbyte:
 # the cluster. If Argo is not installed, set enabled=false or the umbrella
 # will fail with `no matches for kind "WorkflowTemplate"`.
 #
-# `toolboxImage` and `jiraEnrichImage` are baked into the rendered
-# WorkflowTemplate as the input-parameter default. Submitters (api-gateway,
-# CronWorkflow YAML, run-sync.sh) can still override per-call, but in the
-# common case they just submit the workflow without specifying a tag and
-# get the operator-pinned version. NO `:latest` defaults — the validator
-# refuses to render when `templates.enabled=true` and these fields are
-# empty (single source of truth: the umbrella values overlay).
+# `toolboxImage` is baked into the rendered WorkflowTemplate as the
+# input-parameter default. Submitters (api-gateway, CronWorkflow YAML,
+# run-sync.sh) can still override per-call, but in the common case they
+# just submit the workflow without specifying a tag and get the
+# operator-pinned version. NO `:latest` defaults — the validator refuses
+# to render when `templates.enabled=true` and this field is empty.
+#
+# Enrich sidecar images (jira-enrich, future youtrack-enrich) are NOT in
+# values.yaml — per ADR-0014 their version lives exclusively in the
+# connector's descriptor.yaml.enrich_image and is propagated to the
+# tt-enrich-*-run WorkflowTemplate via the rendered ingestion-pipeline
+# submission.
 ingestion:
   # PREREQUISITE: when `templates.enabled=true`, the rendered Argo
   # `WorkflowTemplate` objects pin `serviceAccountName: argo-workflow`.
@@ -140,7 +145,6 @@ ingestion:
   templates:
     enabled: true
   toolboxImage: "ghcr.io/cyberfabric/insight-toolbox:2026.05.20.16.41-a5a9495" # e.g. "ghcr.io/cyberfabric/insight-toolbox:2026.04.28.10.34-b08b460"
-  jiraEnrichImage: "ghcr.io/cyberfabric/insight-jira-enrich:2026.05.20.16.41-a5a9495" # e.g. "ghcr.io/cyberfabric/insight-jira-enrich:2026.04.21.09.37-ccb013f"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)

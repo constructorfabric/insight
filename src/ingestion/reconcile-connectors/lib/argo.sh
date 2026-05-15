@@ -9,7 +9,7 @@
 #                            CONNECTOR_DIR INSIGHT_SOURCE_ID
 #   argo_delete_cronworkflow CONNECTOR TENANT
 #   argo_submit_sync_trigger CONNECTOR CONNECTION_NAME TENANT \
-#                            CONNECTOR_DIR INSIGHT_SOURCE_ID
+#                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE [BUMP_KIND]
 #   argo_resolve_connection_id_by_name CONNECTION_NAME
 #
 # Depends on: lib/env.sh (env_load), lib/airbyte.sh (ab_workspace_id,
@@ -73,14 +73,17 @@ argo_delete_cronworkflow() {
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-sync-trigger:p1
 argo_submit_sync_trigger() {
   local connector="$1" connection_name="$2" tenant="$3"
-  local connector_dir="$4" insight_source_id="$5"
+  local insight_source_id="$4" dbt_select="$5" enrich_image="$6"
+  local bump_kind="${7:-none}"
   local rendered create_out
   rendered="$(python3 "${ARGO_PY_DIR}/render_sync_trigger.py" \
     --connector "$connector" \
     --connection-name "$connection_name" \
     --tenant "$tenant" \
-    --connector-dir "$connector_dir" \
     --insight-source-id "$insight_source_id" \
+    --dbt-select "$dbt_select" \
+    --enrich-image "$enrich_image" \
+    --bump-kind "$bump_kind" \
     --tpl "${ARGO_TPL_DIR}/sync-trigger.yaml.tpl")" || return 1
   if ! create_out="$(printf '%s' "$rendered" | kubectl create -f - 2>&1)"; then
     printf '%s: kubectl create failed: %s\n' \

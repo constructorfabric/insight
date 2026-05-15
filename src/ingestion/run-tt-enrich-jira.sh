@@ -7,9 +7,11 @@ set -euo pipefail
 #   2. tt-enrich-jira-run                     — Rust binary writes task_field_history
 #   3. dbt run --select tag:silver,tag:jira+  — silver models downstream of jira (class_task_*)
 #
-# All ingestion infrastructure parameters (toolbox_image, jira_enrich_image,
-# clickhouse_host/port/user, batch_size) come from WorkflowTemplate defaults —
-# see charts/insight/templates/ingestion/{dbt-run,tt-enrich-jira-run}.yaml.
+# Infrastructure parameters (toolbox_image, clickhouse_*, batch_size) come
+# from WorkflowTemplate defaults baked at helm-install time — see
+# charts/insight/templates/ingestion/{dbt-run,tt-enrich-jira-run}.yaml. The
+# enrich image comes from the jira descriptor's enrich_image field; this
+# script reads it and passes it to the workflow as jira_enrich_image.
 #
 # Required env:
 #   KUBECONFIG          path to the insight cluster kubeconfig
@@ -48,15 +50,30 @@ fi
 
 TENANT_DASHED="${TENANT//_/-}"
 
+# Resolve enrich image from the jira descriptor. Fail fast on a missing
+# value rather than rendering an empty `image:` field that Argo would
+# reject with an obscure container-creation error.
+JIRA_DESCRIPTOR="$SCRIPT_DIR/connectors/task-tracking/jira/descriptor.yaml"
+if ! JIRA_ENRICH_IMAGE="$(python3 \
+      "$SCRIPT_DIR/reconcile-connectors/python/parse_descriptor.py" \
+      --descriptor "$JIRA_DESCRIPTOR" --field enrich_image)" \
+   || [[ -z "$JIRA_ENRICH_IMAGE" ]]; then
+  echo "ERROR: descriptor.yaml.enrich_image missing or empty at $JIRA_DESCRIPTOR" >&2
+  echo "       Set it before running tt-enrich." >&2
+  exit 1
+fi
+
 echo "Running Jira tt-enrich (staging-jira -> enrich -> silver):"
 echo "  namespace:         $INSIGHT_NAMESPACE"
 echo "  tenant:            $TENANT"
 echo "  insight_source_id: $SOURCE_ID"
+echo "  jira_enrich_image: $JIRA_ENRICH_IMAGE"
 
 NAMESPACE="$INSIGHT_NAMESPACE" \
   TENANT="$TENANT" \
   TENANT_DASHED="$TENANT_DASHED" \
   SOURCE_ID="$SOURCE_ID" \
+  JIRA_ENRICH_IMAGE="$JIRA_ENRICH_IMAGE" \
   envsubst < workflows/onetime/tt-enrich-jira.yaml.tpl |
   kubectl create -n "$INSIGHT_NAMESPACE" -f -
 

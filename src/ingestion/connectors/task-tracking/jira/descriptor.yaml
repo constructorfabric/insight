@@ -1,5 +1,6 @@
 name: jira
 version: "2026.05.04"
+enrich_image: "ghcr.io/cyberfabric/insight-jira-enrich:2026.05.20.16.41-a5a9495"
 schedule: "0 3 * * *"
 workflow: sync
 

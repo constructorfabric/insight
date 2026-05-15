@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Extract leading column from descriptor TSV and emit JSON list of names.
 
-Stdin:  TSV `name<TAB>connector_dir<TAB>version<TAB>type` lines.
+Stdin:  rows emitted by `disc_load_descriptors` (any number of TSV fields;
+        only the first column `name` is read).
 Stdout: JSON array of name strings (preserves order; skips empty).
 Exit:   0 always.
 """
