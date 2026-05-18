@@ -51,11 +51,12 @@ Architecture-shaping decisions are captured as ADRs in
 
 - [`cpt-insightspec-adr-0002-read-from-mariadb-persons`](ADR/0002-read-from-mariadb-persons.md) — Read From the MariaDB `persons` Table.
 - [`cpt-insightspec-adr-0003-latest-per-source-semantics`](ADR/0003-latest-per-source-semantics.md) — Latest-Per-Source Lookup Semantics.
-- [`cpt-insightspec-adr-0004-lowercase-email-lookup`](ADR/0004-lowercase-email-lookup.md) — Lowercase Emails on Storage and Lookup.
+- [`cpt-insightspec-adr-0004-lowercase-email-lookup`](ADR/0004-lowercase-email-lookup.md) — Lowercase Emails on Storage and Lookup (**Superseded by ADR-0011**).
 - [`cpt-insightspec-adr-0005-tenant-context-strategy`](ADR/0005-tenant-context-strategy.md) — Composite Tenant Context With JWT Stub.
 - [`cpt-insightspec-adr-0006-display-name-split-fallback`](ADR/0006-display-name-split-fallback.md) — Display-Name Split Fallback.
 - [`cpt-insightspec-adr-0007-value-type-routing`](ADR/0007-value-type-routing.md) — `value_type` Routing.
 - [`cpt-insightspec-adr-0008-bamboohr-identity-inputs-extension`](ADR/0008-bamboohr-identity-inputs-extension.md) — Extend BambooHR `identity_inputs`.
+- [`cpt-insightspec-adr-0011-persons-relax-uniqueness-and-collation`](ADR/0011-persons-relax-uniqueness-and-collation.md) — Persons relax UNIQUE + switch `value_id` to case-insensitive collation.
 
 #### Functional Drivers
 
@@ -66,9 +67,10 @@ Architecture-shaping decisions are captured as ADRs in
 | [`cpt-insightspec-fr-identity-lookup-404`](PRD.md#not-found-returns-rfc-7807) | `PersonsEndpoints.GetByEmail` returns `Results.Problem(...)` with `type=urn:insight:error:person_not_found`, `status=404` when the resolve step returns null. |
 | [`cpt-insightspec-fr-identity-lookup-400-tenant`](PRD.md#missing-tenant-returns-rfc-7807) | `CompositeTenantContext.Resolve` returns null when no resolver fires; endpoint converts to `Results.Problem(type=urn:insight:error:tenant_unresolved, status=400)`. |
 | [`cpt-insightspec-fr-identity-lookup-parent`](PRD.md#surface-parent-attributes-when-present) | `PersonAssembler` projects `parent_email`, `parent_id`, `parent_person_id` value_types directly onto the response shape. |
-| [`cpt-insightspec-fr-identity-routing-lowercase`](PRD.md#lowercase-email-at-the-boundary) | `PersonLookupService.GetByEmailAsync` calls `email.Trim().ToLowerInvariant()` before the repository call. |
 | [`cpt-insightspec-fr-identity-routing-name-split`](PRD.md#display-name-split-fallback) | `DisplayNameSplitter` runs after assembly when both `first_name` and `last_name` observations are missing. |
 | [`cpt-insightspec-fr-identity-migrations-startup`](PRD.md#service-owned-migrations-at-startup) | `Program.cs` calls `MigrationRunner.Run` (DbUp + MySql adapter) before `app.RunAsync()`; embedded SQL resources under `Migrations/`. |
+| [`cpt-insightspec-fr-identity-schema-relax-uniqueness`](PRD.md#schema-allows-recording-state-transitions) | `Migrations/004_persons_relax_constraints.sql` drops `UNIQUE uq_person_observation` on `(..., value_hash)` and adds the same name on `(..., created_at)`. The seeder's `INSERT IGNORE` in step 7 now dedupes by `created_at` (re-runs idempotent) while genuine transitions on the same partition (Active->Inactive->Active) persist as separate rows. ADR-0011 documents the design decision. |
+| [`cpt-insightspec-fr-identity-schema-case-insensitive-value-id`](PRD.md#value-comparisons-are-case-insensitive) | The same migration `ALTER COLUMN value_id MODIFY ... COLLATE utf8mb4_unicode_ci`. `idx_value_id` rebuilds under the new collation; existing SQL (`WHERE value_id = @x`) is now case-insensitive without code changes. `value_full_text` is already `utf8mb4_unicode_ci`; `value` (TEXT) uses table default `utf8mb4_unicode_ci`; `value_hash` (CHAR ascii) stays `ascii_bin` as it is a SHA-256 digest. |
 
 #### NFR Allocation
 
@@ -259,8 +261,9 @@ SQL strings.
 ##### Responsibility scope
 
 - `PersonLookupService.GetByEmailAsync(tenant, email)` —
-  lowercases + trims the email, resolves `person_id`, fetches
-  latest-per-source observations, hands them to the assembler.
+  trims the email, resolves `person_id` (case-insensitive via
+  the column collation per ADR-0011), fetches latest-per-source
+  observations, hands them to the assembler.
 - `PersonAssembler.Assemble(observations)` — collapses per-`value_type`
   observations across sources by latest `created_at`, falls back to
   `DisplayNameSplitter` when `first_name`/`last_name` are absent.
@@ -399,7 +402,8 @@ api-gateway  →  identity-api  →  CompositeTenantContext  →  PersonLookupSe
 1. api-gateway calls `GET /v1/persons/alice@example.com` with
    `X-Insight-Tenant-Id: 01933a40-...` (UUID).
 2. `CompositeTenantContext.Resolve` reads the header → `Guid`.
-3. `PersonLookupService.GetByEmailAsync` lowercases + trims the email.
+3. `PersonLookupService.GetByEmailAsync` trims the email (case
+   handled at the storage layer per ADR-0011).
 4. `PersonsRepository.ResolvePersonIdByEmailAsync` issues
    `SELECT person_id FROM persons WHERE insight_tenant_id=@t AND
    value_type='email' AND value_id=@email ORDER BY created_at DESC,
@@ -567,9 +571,10 @@ Every log line is structured JSON via `CompactJsonFormatter` with:
 | `cpt-insightspec-fr-identity-lookup-404` | §1.2 Functional Drivers; §3.3 API Contracts. |
 | `cpt-insightspec-fr-identity-lookup-400-tenant` | §1.2 Functional Drivers; §3.6 Sequence "Tenant unresolved". |
 | `cpt-insightspec-fr-identity-lookup-parent` | §1.2 Functional Drivers; §3.7 schema. |
-| `cpt-insightspec-fr-identity-routing-lowercase` | §1.2 Functional Drivers; §3.2 Domain `PersonLookupService`. |
 | `cpt-insightspec-fr-identity-routing-name-split` | §1.2 Functional Drivers; §3.2 Domain `DisplayNameSplitter`. |
 | `cpt-insightspec-fr-identity-migrations-startup` | §1.2 Functional Drivers; §3.6 Sequence "Startup with migration". |
+| `cpt-insightspec-fr-identity-schema-relax-uniqueness` | §1.2 Functional Drivers; ADR-0011 §Decision Outcome (new UNIQUE on `created_at`). |
+| `cpt-insightspec-fr-identity-schema-case-insensitive-value-id` | §1.2 Functional Drivers; ADR-0011 §Decision Outcome (collation switch to `utf8mb4_unicode_ci`). |
 | `cpt-insightspec-nfr-identity-latency` | §1.2 NFR Allocation; §3.7 covered index. |
 | `cpt-insightspec-nfr-identity-memory` | §1.2 NFR Allocation; §2.1 Principle "Observation log, not relational tree". |
 | `cpt-insightspec-nfr-identity-logging-pii` | §1.2 NFR Allocation; §4.2 Logging shape. |

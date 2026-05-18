@@ -83,11 +83,11 @@ ASP.NET Core / Serilog / RFC 7807 conventions established for other
 
 | Term | Definition |
 |------|------------|
-| `persons` | The MariaDB append-only observation log; one row per (tenant, person_id, source_type, source_id, value_type, value_hash). Defined in `identity` DB. |
+| `persons` | The MariaDB append-only observation log; one row per (tenant, person_id, source_type, source_id, value_type, created_at) per ADR-0011. The earlier UNIQUE on `value_hash` wrongly collapsed state transitions and was dropped. Defined in `identity` DB. |
 | `account_person_map` | SCD2 cache derived from `persons` rows where `value_type='id'`; maps source-account → `person_id` over time. |
 | Observation | One row in `persons` — a single (`value_type`, `value`) datapoint emitted by one source for one person at one instant. Never updated; superseded by a newer observation with the same partition key. |
 | `value_type` | Free-form `VARCHAR(50)` attribute name. Canonical set: `id`, `email`, `username`, `display_name`, `first_name`, `last_name`, `department`, `division`, `job_title`, `status`, `employee_id`, `parent_email`, `parent_id`, `parent_person_id`. |
-| `value_id` / `value_full_text` / `value` | Routing columns selected per `value_type` per ADR-0007. `id`/`email`/`username` → `value_id` (strict utf8mb4_bin); `display_name` → `value_full_text` (utf8mb4_unicode_ci); everything else → `value`. |
+| `value_id` / `value_full_text` / `value` | Routing columns selected per `value_type` per ADR-0007. `id`/`email`/`username` → `value_id` (utf8mb4_unicode_ci — case-insensitive per ADR-0011); `display_name` → `value_full_text` (utf8mb4_unicode_ci); everything else → `value`. |
 | `insight_tenant_id` | `BINARY(16)` tenant UUID; part of every query and every index. |
 | Latest-per-source | The projection `ROW_NUMBER() OVER (PARTITION BY source_type, source_id, value_type ORDER BY created_at DESC)` — picks the most recent observation per attribute per source. |
 | Assembler | `PersonAssembler` — collapses latest-per-source rows into a single `PersonResponse` by picking the latest value across sources per `value_type`. |
@@ -221,10 +221,12 @@ visible row is well-formed per the routing rules in ADR-0007.
 
 - [x] `p1` - **ID**: `cpt-insightspec-fr-identity-lookup-resolve-by-email`
 
-The system **MUST** resolve a lowercased email to a single `person_id`
-using the latest observation per
+The system **MUST** resolve an email to a single `person_id` using
+the latest observation per
 `(insight_source_type, insight_source_id, value_type, value_id)`
-partition where `value_type = 'email'` and `insight_tenant_id` matches.
+partition where `value_type = 'email'` and `insight_tenant_id`
+matches. The comparison is case-insensitive at the storage layer
+(ADR-0011); the caller need not lowercase the input.
 
 **Rationale**: Email is the lookup key used by every current caller;
 "latest per source" matches the seed pipeline's semantics and avoids
@@ -292,20 +294,6 @@ unblocks them without coupling to the reconciliation service.
 
 ### 5.2 Routing and normalisation
 
-#### Lowercase email at the boundary
-
-- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-routing-lowercase`
-
-The system **MUST** lowercase the email before lookup; storage and
-lookup share the `utf8mb4_bin` collation on `value_id` so the
-byte-identical lowercased form is required for an index hit.
-
-**Rationale**: Producers vary on email case; without lowercasing at
-read time we miss matches. Storage stays in the original case for
-audit, but the lookup index is over the lowercased form.
-
-**Actors**: `cpt-insightspec-actor-api-gateway`
-
 #### Display-name split fallback
 
 - [x] `p2` - **ID**: `cpt-insightspec-fr-identity-routing-name-split`
@@ -338,6 +326,49 @@ startup ordering prevents requests from ever hitting an unmigrated
 table.
 
 **Actors**: `cpt-insightspec-actor-mariadb`, `cpt-insightspec-actor-platform-sre`
+
+#### Schema allows recording state transitions
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-schema-relax-uniqueness`
+
+The `persons` table **MUST** record every observation event, including
+a value reverting to a prior value at a different point in time
+(`Active → Inactive → Active`). The UNIQUE constraint **MUST NOT**
+include `value_hash` (which collapsed return-to-prior-value
+transitions); it **MUST** use `created_at` as the disambiguator so
+re-runs of the seeder against the same source snapshot remain
+idempotent while genuine state transitions are preserved.
+
+**Rationale**: Per ADR-0011, the original UNIQUE on `value_hash` was
+a design mistake — it conflated "same observation re-emitted on a
+re-run" (which should dedupe) with "same value observed again at a
+later time" (which should not). The fix is structural: drop the
+value-hash-based UNIQUE and re-key on `created_at`.
+
+**Actors**: `cpt-insightspec-actor-mariadb`,
+`cpt-insightspec-actor-seed-pipeline`
+
+#### Value comparisons are case-insensitive
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-schema-case-insensitive-value-id`
+
+All `value_id`-routed value_types (`id`, `email`, `username`,
+`employee_id`, `parent_email`, `parent_id`, `parent_person_id`)
+**MUST** compare case-insensitively. The column collation **MUST**
+be `utf8mb4_unicode_ci` so the comparison applies uniformly at the
+storage layer; SQL callers **MUST NOT** be required to wrap reads
+in `LOWER()` to get the right answer.
+
+**Rationale**: Per ADR-0011, the original `utf8mb4_bin` collation
+on `value_id` made every comparison strictly case-sensitive — a
+production lookup for `Roman.Mitasov@constructor.tech` against a
+stored `roman.mitasov@constructor.tech` returned 404. Switching the
+column to `utf8mb4_unicode_ci` aligns the storage with how the
+platform conventionally compares emails and UUID strings, and
+removes a fragile per-caller contract.
+
+**Actors**: `cpt-insightspec-actor-api-gateway`,
+`cpt-insightspec-actor-mariadb`
 
 ## 6. Non-Functional Requirements
 
@@ -433,9 +464,10 @@ this NFR forces the explicit bytes binding everywhere.
 **Stability**: stable for Phase 1 contract; Phase 2 will add a POST
 counterpart accepting `{id, id_type}` without breaking this GET.
 
-**Description**: Resolves `{email}` (lowercased) to a single
-`PersonResponse` JSON body. Tenant supplied via
-`X-Insight-Tenant-Id` header (preferred) or config default.
+**Description**: Resolves `{email}` to a single `PersonResponse`
+JSON body. Comparison is case-insensitive at the storage layer
+(ADR-0011). Tenant supplied via `X-Insight-Tenant-Id` header
+(preferred) or config default.
 Returns 200 + body on hit, 404 + RFC 7807 on miss, 400 + RFC 7807
 on missing tenant, 5xx on service error.
 
@@ -521,9 +553,9 @@ non-breaking.
 2. api-gateway resolves the JWT principal and derives the email +
    tenant header.
 3. api-gateway issues `GET /v1/persons/{email}` to the service.
-4. The service lowercases the email, resolves the `person_id` via the
-   latest-per-source email observation, hydrates all attributes, and
-   returns 200 + JSON.
+4. The service resolves the `person_id` via the latest-per-source
+   email observation (case-insensitive comparison per ADR-0011),
+   hydrates all attributes, and returns 200 + JSON.
 5. api-gateway merges the person object into the analytics response.
 
 **Postconditions**:

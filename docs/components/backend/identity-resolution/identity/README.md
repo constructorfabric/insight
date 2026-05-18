@@ -29,7 +29,7 @@ optionally `IDENTITY__identity__tenant_default_id` (from
 
 | Endpoint | Description |
 |---|---|
-| `GET /v1/persons/{email}` | Resolve person by email (lowercased). Returns 404 when no current observation matches. |
+| `GET /v1/persons/{email}` | Resolve person by email (case-insensitive). Returns 404 when no current observation matches. |
 | `GET /health` | DB ping. 200 / 503. |
 | `GET /healthz` | Process liveness. 200 `text/plain "ok"`. |
 

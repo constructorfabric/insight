@@ -643,6 +643,11 @@ kind = "ADR"
 path = "docs/components/backend/identity-resolution/identity/specs/ADR/0008-bamboohr-identity-inputs-extension.md"
 name = "ADR-0008: Extend BambooHR identity_inputs With Person Attributes"
 
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0011-persons-relax-uniqueness-and-collation.md"
+name = "ADR-0011: Persons Relax UNIQUE and Switch value_id Collation"
+
 [[systems]]
 name = "Orchestrator"
 slug = "orch"

@@ -21,7 +21,18 @@
 
 <!-- /toc -->
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0011 (2026-05-18).
+
+> **Superseded.** This ADR chose "lowercase on write + lowercase at
+> the boundary" because the `persons.value_id` column was
+> `utf8mb4_bin`. ADR-0011 swaps the column collation to
+> `utf8mb4_unicode_ci`, which makes the comparison case-insensitive
+> at the storage layer. Boundary-side lowercase and the former
+> routing-lowercase FR are no longer a contract; the FR was removed
+> alongside ADR-0011. This file is retained for historical context
+> and the rejected-options analysis that informed ADR-0011's
+> decision matrix (the "Switch collation" option below is exactly
+> what ADR-0011 ended up adopting).
 
 ## Context and Problem Statement
 
@@ -109,6 +120,6 @@ returns the assembled record.
 
 ## Traceability
 
-- [`cpt-insightspec-fr-identity-routing-lowercase`](../PRD.md#lowercase-email-at-the-boundary)
 - [`cpt-insightspec-fr-identity-lookup-resolve-by-email`](../PRD.md#resolve-email-to-person_id)
 - [`cpt-insightspec-nfr-identity-latency`](../PRD.md#p95-lookup-latency)
+- [`cpt-insightspec-adr-0011-persons-relax-uniqueness-and-collation`](0011-persons-relax-uniqueness-and-collation.md) — supersedes this ADR.
