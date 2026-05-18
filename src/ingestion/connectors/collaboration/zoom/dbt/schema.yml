@@ -9,8 +9,62 @@ sources:
       - name: participants
 
 models:
+  - name: zoom__meeting_sessions
+    description: >
+      Zoom meeting-session stitching → per (tenant, source, uuid)
+      assignment to a `logical_meeting_id`. Extracted from
+      `zoom__collab_meeting_activity` (CR on PR #284) so that the
+      downstream staging model can stay `materialized='incremental'`
+      per DESIGN.md §3.7. Bounded rebuild window: bronze read is
+      filtered to the last 90 days of `_airbyte_extracted_at` —
+      anything older keeps the cluster assignment it had at write
+      time. `_version = now()` per write so the
+      `ReplacingMergeTree(_version)` always keeps the most recent
+      stitching decision per uuid (a late-arriving session can
+      re-cluster earlier sessions in the same chain).
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{uuid} (ADR-0004)"
+        tests:
+          - not_null
+          - unique
+      - name: uuid
+        description: "Zoom session UUID — primary join key to bronze_zoom.participants.meeting_uuid"
+        tests:
+          - not_null
+      - name: id
+        description: "Zoom Meeting ID (reused across sessions and recurring meetings) — stitching scope"
+      - name: logical_meeting_id
+        description: >
+          `concat(id, '#', cluster_idx)`. Sessions sharing the same
+          Zoom Meeting ID with inter-session gap ≤ 5 min share a
+          `cluster_idx`, collapsing host-drop rejoins (observed
+          11–147 s in production). Recurring meetings legitimately
+          reusing the ID across days end up in different clusters
+          because their gaps are hours/days, not minutes. Back-to-back
+          PMI sessions with < 5-min gap may still be merged (known
+          trade-off, see issue #258).
+        tests:
+          - not_null
+      - name: has_video
+        description: "Carried through from bronze for downstream `video_duration_seconds` gating."
+      - name: has_screen_share
+        description: "Carried through from bronze for downstream `screen_share_duration_seconds` gating."
+
   - name: zoom__collab_meeting_activity
-    description: "Zoom meeting activity aggregated per user per day → staging, feeds class_collab_meeting_activity"
+    description: >
+      Zoom meeting activity aggregated per user per day → staging, feeds
+      class_collab_meeting_activity. Joins to `zoom__meeting_sessions`
+      FINAL on `(tenant, source, uuid)` to pull `logical_meeting_id`,
+      then `meetings_attended = uniqExact(logical_meeting_id)` collapses
+      host-drop rejoins (issue #258). Bronze re-emits for participants
+      are deduplicated before aggregation.
     columns:
       - name: tenant_id
         tests:
@@ -28,3 +82,13 @@ models:
       - name: date
         tests:
           - not_null
+      - name: meetings_attended
+        description: >
+          Distinct logical meetings the user attended on this day. Computed
+          as `uniqExact(logical_meeting_id)` over participant rows, where
+          `logical_meeting_id` clusters consecutive sessions sharing the
+          same Zoom Meeting ID with inter-session gap ≤ 5 min — this
+          collapses host-drop rejoins (observed gaps 11–147 s in production).
+          Recurring meetings reusing the same ID across days remain separate
+          logical meetings. Back-to-back PMI sessions with < 5-min gap may
+          still be merged (known trade-off, see issue #258).
