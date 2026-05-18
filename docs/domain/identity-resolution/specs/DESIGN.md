@@ -730,7 +730,7 @@ Identity-attribute observation history for persons, stored in MariaDB. Each row 
 |---|---|---|
 | `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | PK (row identifier for operator references) |
 | `value_type` | `VARCHAR(50) NOT NULL` | Attribute kind — canonical: `id`, `email`, `username`, `display_name`. Known custom: `employee_id`, `platform_id`, etc. (free-form, extensible) |
-| `insight_source_type` | `VARCHAR(100) NOT NULL` | Source system: `bamboohr`, `zoom`, `cursor`, `claude_admin`, `gitlab`, etc. |
+| `insight_source_type` | `VARCHAR(30) NOT NULL` | Source system: `bamboohr`, `zoom`, `cursor`, `claude_admin`, `gitlab`, etc. Tiny tier — connector keys are short, owned vocabulary (longest today is `claude_enterprise` = 17 chars) |
 | `insight_source_id` | `BINARY(16) NOT NULL` | Connector instance UUID (temporary: sipHash128 from Bronze string `source_id` until `sources` table exists — see REC-IR-04) |
 | `insight_tenant_id` | `BINARY(16) NOT NULL` | Tenant UUID (temporary: sipHash128 from Bronze string `tenant_id` until `tenants` table exists — see REC-IR-04) |
 | `value_id` | `VARCHAR(320) COLLATE utf8mb4_bin NULL` | Value for `value_type IN ('id', 'email', 'username')`. Strict byte comparison; hot-path lookup target. Size 320 covers RFC 5321/5322 email maximum (64 local + `@` + 255 domain). `username` is id-like (case-sensitive in most platforms) and routes here for strict-equality lookup |
@@ -796,7 +796,7 @@ Row 120 supersedes row 5 as the current `display_name` for person `p-1001` (late
 | Column | Type | Description |
 |---|---|---|
 | `insight_tenant_id` | `BINARY(16) NOT NULL` | Tenant UUID |
-| `insight_source_type` | `VARCHAR(100) NOT NULL` | Source system: `bamboohr`, `zoom`, etc. |
+| `insight_source_type` | `VARCHAR(30) NOT NULL` | Source system: `bamboohr`, `zoom`, etc. Tiny tier (see glossary §11) |
 | `insight_source_id` | `BINARY(16) NOT NULL` | Connector instance UUID |
 | `source_account_id` | `VARCHAR(320) NOT NULL` | Source-native account identifier (same type as `persons.value_id`, same domain) |
 | `person_id` | `BINARY(16) NOT NULL` | Person UUID (random UUIDv7); derived from `persons.person_id` of the opening observation |

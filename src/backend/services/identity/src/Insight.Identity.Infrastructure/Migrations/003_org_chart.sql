@@ -31,7 +31,7 @@
 -- /specs/DESIGN.md "Table: org_chart".
 CREATE TABLE IF NOT EXISTS org_chart (
     insight_tenant_id BINARY(16) NOT NULL,
-    insight_source_type VARCHAR(100) NOT NULL,
+    insight_source_type VARCHAR(30) NOT NULL,
     insight_source_id BINARY(16) NOT NULL,
     child_person_id BINARY(16) NOT NULL,
     parent_person_id BINARY(16) NOT NULL,

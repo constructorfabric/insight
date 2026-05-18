@@ -64,7 +64,7 @@ public sealed class MariaDbFixture : IAsyncLifetime
         CREATE TABLE IF NOT EXISTS persons (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             value_type VARCHAR(50) NOT NULL,
-            insight_source_type VARCHAR(100) NOT NULL,
+            insight_source_type VARCHAR(30) NOT NULL,
             insight_source_id BINARY(16) NOT NULL,
             insight_tenant_id BINARY(16) NOT NULL,
             value_id VARCHAR(320) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
@@ -95,7 +95,7 @@ public sealed class MariaDbFixture : IAsyncLifetime
     private const string OrgChartDdl = """
         CREATE TABLE IF NOT EXISTS org_chart (
             insight_tenant_id BINARY(16) NOT NULL,
-            insight_source_type VARCHAR(100) NOT NULL,
+            insight_source_type VARCHAR(30) NOT NULL,
             insight_source_id BINARY(16) NOT NULL,
             child_person_id BINARY(16) NOT NULL,
             parent_person_id BINARY(16) NOT NULL,
