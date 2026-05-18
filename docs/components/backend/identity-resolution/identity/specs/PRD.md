@@ -20,6 +20,7 @@
   - [5.2 Profile lookup (POST /v1/profiles, Phase 2 — #347)](#52-profile-lookup-post-v1profiles-phase-2--347)
   - [5.3 Routing and normalisation](#53-routing-and-normalisation)
   - [5.4 Schema lifecycle](#54-schema-lifecycle)
+  - [5.5 Parent/child edge cache](#55-parentchild-edge-cache)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -452,6 +453,142 @@ startup ordering prevents requests from ever hitting an unmigrated
 table.
 
 **Actors**: `cpt-insightspec-actor-mariadb`, `cpt-insightspec-actor-platform-sre`
+
+### 5.5 Parent/child edge cache
+
+Phase 1 of cyberfabric/cyber-insight#348 — storage layer for
+organisational tree relationships. No API surface change in Phase 1;
+the cache is read by Phase 2 endpoint enrichment and Phase 3 subchart
+walks.
+
+The cache depends on **`value_type='status'`** observations to close
+edges on employee deactivation (see `cpt-insightspec-fr-identity-org-chart-rebuild`
+below). The canonical value_type set the rebuild reads is therefore
+`parent_email`, `parent_person_id`, `email`, and `status` — these
+must continue to be enumerable as expected `value_type` values in
+new connector dbt models.
+
+**Multi-parent extensibility.** Phase 1 enforces single-parent per
+`(tenant, source_type, source_id, child)`. The schema can be promoted
+to multi-parent if a future source emits multiple supervisors per
+employee (matrix orgs) by adding `parent_person_id` to the primary
+key. The read API contract is already a list, so no consumer-side
+change is required. No source today produces multi-parent data; this
+is captured for future-readers, not implemented in Phase 1.
+
+#### Materialised parent/child edge cache
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-org-chart-table`
+
+The service **MUST** own a `org_chart` table that stores
+direct parent->child edges per
+`(insight_tenant_id, insight_source_type, insight_source_id)` and
+keeps SCD2 history via `valid_from`/`valid_to`. The Phase-1 invariant
+is at most one CURRENT edge per
+`(tenant, source_type, source_id, child_person_id)`; multi-parent
+support (matrix orgs) is deferred to a Phase-1.5 schema change that
+adds `parent_person_id` to the primary key.
+
+**Rationale**: Per-source edges are first-class — Alice's manager in
+BambooHR is not the same edge as her channel admin in Slack — and a
+dedicated cache lets the Phase-3 recursive subchart endpoint be an
+index walk rather than a partition-arithmetic-inside-recursion query.
+
+**Actors**: `cpt-insightspec-actor-mariadb`,
+`cpt-insightspec-actor-seed-pipeline`
+
+#### Rebuild edges from persons deterministically
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-org-chart-rebuild`
+
+The seeder (`seed-persons-from-identity-input.py` step 9) **MUST**
+rebuild `org_chart` from `persons` using the same two-table-
+swap pattern as `account_person_map`: build into
+`org_chart_next`, atomically `RENAME TABLE` into place, drop
+the old artefact. The rebuild **MUST** UNION two sources of edges:
+
+1. `value_type='parent_person_id'` observations (resolved Insight
+   UUIDs that a future reconciliation service will write; currently
+   zero rows but the path stays live).
+2. `value_type='parent_email'` observations resolved by JOIN to the
+   latest `value_type='email'` observation per (tenant, email)
+   partition. The JOIN **MUST** lowercase + trim the
+   `parent_email` side and **MUST** pick at most one `person_id`
+   per (tenant, email) via `ROW_NUMBER() OVER (...) WHERE rn=1`
+   ordered by `created_at DESC` so pending-iresolution
+   accumulation cannot break the UNIQUE key.
+
+Source 1 **MUST** take precedence over Source 2 when both have a
+row for the same `(tenant, person, source_type, source_id)`
+partition (NOT EXISTS guard). Malformed `value_id`s in Source 1
+(not a canonical 36-char UUID) and self-loops in both sources
+**MUST** be skipped pre-insert. Parent_emails that do not match any
+current email-bearer in the tenant **MUST** be skipped and counted
+in the seeder log; the seeder **MUST NOT** synthesise stub persons
+to carry an unresolved `parent_email`.
+
+Source 2 **MUST** intersect each `parent_email` observation period
+with the child's active intervals derived from `value_type='status'`
+observations:
+
+- An active interval starts at any `status` observation whose value
+  is not Inactive/Terminated and the previous observation was either
+  absent or Inactive/Terminated.
+- An active interval ends at the next observation whose value is
+  Inactive/Terminated, or NULL if no such observation exists.
+- A child with NO `status` observations **MUST** be treated as
+  always-active (synthetic [-infinity, NULL) interval) so connectors
+  that emit `parent_email` without `status` do not silently drop
+  every edge.
+- Re-activation (Inactive -> Active) **MUST** produce a second
+  `org_chart` row for the same (child, parent, source)
+  rather than reopening the existing closed row; SCD2 history
+  reflects every deactivation/reactivation cycle honestly.
+
+The seeder **MUST** process BambooHR accounts ahead of other source
+types in step 5 (person_id assignment) so the canonical
+`supervisorEmail` source establishes `person_id`s before downstream
+connectors share emails with it.
+
+After the swap, the seeder **MUST** count two-hop cycles among
+CURRENT edges (`valid_to IS NULL`) — pairs `(A->B)` and `(B->A)` on
+the same `(tenant, source_type, source_id)` — and **MUST** emit a
+WARN line when the count is non-zero, without failing the pipeline.
+Deeper cycles (A->B->C->A) are not detected in Phase 1; the Phase-3
+`/v1/subchart/{person_id}?depth=N` recursive CTE bounds traversal
+by `depth` to make those harmless to consumers.
+
+**Rationale**: Append-only `persons` with latest-per-partition makes
+the rebuild deterministic; symmetry with `account_person_map` lets
+operators reason about both caches the same way. The two-source
+union keeps the cache useful today (Source 2) while making the
+future reconciliation path activate transparently (Source 1). No
+stubs avoids inheriting the deferred operator-resolution work from
+ADR-0002.
+
+**Actors**: `cpt-insightspec-actor-seed-pipeline`,
+`cpt-insightspec-actor-mariadb`
+
+#### Read current parent and children edges
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-org-chart-read`
+
+The service **MUST** expose `IPersonsReader.GetCurrentParentsAsync`
+and `GetCurrentChildrenAsync` returning `OrgChartEdge` records
+scoped to a single tenant. Both **MUST** read CURRENT edges only
+(`valid_to IS NULL`) and **MUST** preserve per-source-instance edge
+granularity in the result. Temporal "as-of T" queries are Phase 3+
+and add a new method on the same interface; the table's
+`idx_valid_from` is the supporting index.
+
+**Rationale**: Phase-2 endpoint enrichment (parent/subordinates
+fields on `/v1/persons` and `/v1/profiles`) and Phase-3 subchart
+recursion both call the same two reads — keeping them on
+`IPersonsReader` keeps the abstraction stable across the three
+phases.
+
+**Actors**: `cpt-insightspec-actor-api-gateway`,
+`cpt-insightspec-actor-mariadb`
 
 ## 6. Non-Functional Requirements
 

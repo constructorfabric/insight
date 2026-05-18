@@ -87,6 +87,64 @@ public sealed class PersonsRepository : IPersonsReader
         return ids;
     }
 
+    public Task<IReadOnlyList<OrgChartEdge>> GetCurrentParentsAsync(
+        Guid tenantId,
+        Guid childPersonId,
+        CancellationToken cancellationToken)
+        => ReadEdgesAsync(
+            SqlOrgChart.CurrentParentsForChild,
+            tenantId,
+            ("@child_person_id", childPersonId),
+            cancellationToken);
+
+    public Task<IReadOnlyList<OrgChartEdge>> GetCurrentChildrenAsync(
+        Guid tenantId,
+        Guid parentPersonId,
+        CancellationToken cancellationToken)
+        => ReadEdgesAsync(
+            SqlOrgChart.CurrentChildrenForParent,
+            tenantId,
+            ("@parent_person_id", parentPersonId),
+            cancellationToken);
+
+    /// <summary>
+    /// Shared reader for the two <c>org_chart</c> SELECTs: the
+    /// SQL shape, projection, and binary-to-Guid conversion are
+    /// identical — only the WHERE-bound parameter differs (child vs
+    /// parent). Keeping one body avoids drift between the two readers.
+    /// Unlike <see cref="GetDirectSubordinateIdsAsync"/>, both bound
+    /// values here are BINARY(16) — `org_chart` stores person
+    /// ids in the same binary form as the rest of the schema (the
+    /// textual `value_id` form is a `persons`-only quirk per ADR-0007).
+    /// </summary>
+    private async Task<IReadOnlyList<OrgChartEdge>> ReadEdgesAsync(
+        string sql,
+        Guid tenantId,
+        (string name, Guid value) bound,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue(bound.name, bound.value.ToByteArray(bigEndian: true));
+
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var edges = new List<OrgChartEdge>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var childBytes  = (byte[])reader["child_person_id"];
+            var parentBytes = (byte[])reader["parent_person_id"];
+            var sourceBytes = (byte[])reader["insight_source_id"];
+            edges.Add(new OrgChartEdge(
+                InsightSourceType: reader.GetString("insight_source_type"),
+                InsightSourceId:   new Guid(sourceBytes, bigEndian: true),
+                ChildPersonId:     new Guid(childBytes,  bigEndian: true),
+                ParentPersonId:    new Guid(parentBytes, bigEndian: true),
+                ValidFrom:         reader.GetDateTime("valid_from")));
+        }
+        return edges;
+    }
+
     public async Task<bool> PingAsync(CancellationToken cancellationToken)
     {
         try

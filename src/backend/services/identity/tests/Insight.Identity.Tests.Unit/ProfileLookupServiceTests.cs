@@ -130,5 +130,12 @@ public sealed class ProfileLookupServiceTests
 
         public Task<IReadOnlyList<Guid>> GetDirectSubordinateIdsAsync(Guid tenantId, Guid parentPersonId, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
+
+        // org_chart surface (#348 Phase 1) — not used by ProfileLookupService.
+        public Task<IReadOnlyList<OrgChartEdge>> GetCurrentParentsAsync(Guid tenantId, Guid childPersonId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
+
+        public Task<IReadOnlyList<OrgChartEdge>> GetCurrentChildrenAsync(Guid tenantId, Guid parentPersonId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
     }
 }

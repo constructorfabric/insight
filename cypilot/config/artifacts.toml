@@ -648,6 +648,11 @@ kind = "ADR"
 path = "docs/components/backend/identity-resolution/identity/specs/ADR/0009-post-profile-with-uniqueness-invariant.md"
 name = "ADR-0009: POST /v1/profiles with Single-Result Invariant"
 
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0010-org-chart-cache.md"
+name = "ADR-0010: Materialized SCD2 Cache for Person Parent/Child Edges (org_chart)"
+
 [[systems]]
 name = "Orchestrator"
 slug = "orch"

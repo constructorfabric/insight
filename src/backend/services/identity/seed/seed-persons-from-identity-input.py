@@ -1,12 +1,32 @@
 #!/usr/bin/env python3
 """
 Seed: identity.identity_inputs (ClickHouse) -> persons +
-account_person_map (MariaDB).
+account_person_map + org_chart (MariaDB).
 
 Writes observations from `identity_inputs` into `persons`, minting
 stable `person_id`s as needed, then rebuilds `account_person_map`
-(an SCD2 materialized view of the source-account -> person_id
-binding) from scratch.
+(SCD2 source-account -> person_id binding) and `org_chart`
+(SCD2 parent -> child edges) from scratch.
+
+`org_chart` derives edges from two sources, in order of
+priority:
+
+1. `value_type='parent_person_id'` observations (already-resolved
+   Insight UUIDs). Future reconciliation service will write these
+   directly; currently zero rows but the path stays live.
+2. `value_type='parent_email'` observations resolved via JOIN against
+   the latest `value_type='email'` observation per person within the
+   same tenant. Unresolved parent_emails (no person currently bearing
+   that email) are skipped and counted in the log -- per ADR-0010 we
+   do not synthesise stub persons in Phase 1.
+
+Source 1 wins when both observations exist for the same partition.
+
+To make Source 2 land correct edges, the seeder processes BambooHR
+accounts FIRST in step 5 -- BambooHR carries the canonical
+`supervisorEmail` field, and putting its accounts in `persons` ahead
+of downstream connectors gives the rebuild a fully-populated email
+side before parent_email resolution happens. See ADR-0010.
 
 Observation schema (persons) is split into three value columns
 with hardcoded routing by `value_type`:
@@ -257,7 +277,7 @@ def route_value(value_type: str, value: str) -> tuple[str | None, str | None, st
 
 # -- Main -----------------------------------------------------------------
 def main():
-    print("=== Seed: identity_inputs -> MariaDB persons + account_person_map ===")
+    print("=== Seed: identity_inputs -> MariaDB persons + account_person_map + org_chart ===")
 
     # 1. Read all identity_inputs rows from ClickHouse.
     #    ORDER BY _synced_at DESC within a source-account so that the
@@ -391,7 +411,20 @@ def main():
     skipped_no_email          = 0
     skipped_oversized_account = 0
 
-    for key, obs_list in accounts.items():
+    # BambooHR-first ordering: BambooHR carries the canonical
+    # supervisorEmail (parent_email) field, so its accounts must enter
+    # `persons` ahead of downstream connectors that share emails. The
+    # within-run email-automerge dict (`email_to_new_person`) then sees
+    # the BambooHR-minted person_id first, and Zoom/Slack/etc accounts
+    # sharing the same email attach to it instead of minting their own
+    # UUIDs. Alphabetical order already places bamboohr first today,
+    # but making the rule explicit guards against future source_type
+    # names that would sort earlier (e.g. an `airtable` connector).
+    def _account_sort_key(k: tuple) -> tuple:
+        _tenant, source_type, source_id, source_account_id = k
+        return (0 if source_type == "bamboohr" else 1, source_type, source_id, source_account_id)
+
+    for key, obs_list in sorted(accounts.items(), key=lambda kv: _account_sort_key(kv[0])):
         if key in known_accounts:
             account_person[key] = known_accounts[key]
             account_reason[key] = ""
@@ -606,6 +639,342 @@ def main():
     cursor.execute("DROP TABLE account_person_map_old")
     conn.commit()
 
+    # 9. Rebuild org_chart from persons (SCD2 parent->child edges)
+    #    via the same two-table swap pattern as step 8. Edges come from
+    #    two sources, in priority order:
+    #
+    #    Source 1 -- already-resolved parent_person_id observations.
+    #    Reserved for the future reconciliation service that resolves
+    #    parent_email -> person_id and writes it back to persons.
+    #    Currently zero rows; kept live so the path activates as soon
+    #    as the service exists.
+    #
+    #    Source 2 -- parent_email observations resolved via JOIN to the
+    #    LATEST email observation per (tenant, email) partition (the
+    #    inner ROW_NUMBER subquery picks one person_id per email so
+    #    pending-iresolution accumulation cannot trigger UNIQUE PK
+    #    conflicts on org_chart_next).
+    #
+    #    Source 1 wins when both have a row for the same partition
+    #    (NOT EXISTS guard in Source 2).
+    #
+    #    Deactivation handling (active intervals).
+    #    `valid_to` is intersected with the child's ACTIVE INTERVALS as
+    #    determined by `value_type='status'` observations on the same
+    #    (tenant, source_type, source_id, person_id) partition. Active
+    #    intervals are the periods between an Active-marking status
+    #    observation and the next Inactive/Terminated observation (or
+    #    NULL if still active). A re-activation (Inactive -> Active)
+    #    opens a new active interval, which produces a second
+    #    org_chart row for the same (child, parent, source)
+    #    when the parent_email observation predates the deactivation
+    #    and the rebound never happened.
+    #
+    #    Persons WITHOUT any status observation are treated as
+    #    always-active (synthetic [1970-01-01, NULL) interval) so a
+    #    connector that emits parent_email but not status (none today
+    #    in the pipeline, but possible for future connectors) does not
+    #    silently drop every edge.
+    #
+    #    NO STUB CREATION: parent_emails that don't resolve to any
+    #    person.email in the same tenant are skipped silently here and
+    #    counted in the post-rebuild diagnostics; the org-chart will
+    #    show the relationship as "no current parent" until the missing
+    #    person enters persons (e.g. when the supervisor's own BambooHR
+    #    row arrives or the connector backfills a missing email). See
+    #    ADR-0010.
+    #
+    #    Common filters:
+    #    * Self-loops (CEO listed as their own supervisor): filtered
+    #      pre-INSERT so the CHECK constraint never has to reject them
+    #      (and so they don't inflate the "rows scanned" stats).
+    #    * Malformed parent_person_id values: REGEXP guards Source 1
+    #      against non-UUID strings that would crash UNHEX or produce
+    #      nonsense binary.
+    print("  Rebuilding org_chart from persons (parent_person_id + parent_email -> email JOIN, with active intervals)...")
+    cursor.execute("DROP TABLE IF EXISTS org_chart_next")
+    cursor.execute("CREATE TABLE org_chart_next LIKE org_chart")
+    cursor.execute(
+        """
+        INSERT INTO org_chart_next
+            (insight_tenant_id, insight_source_type, insight_source_id,
+             child_person_id, parent_person_id,
+             author_person_id, reason, valid_from, valid_to)
+        WITH
+        -- ── Active intervals per child ──────────────────────────────
+        --
+        -- `state_log`: every `value_type='status'` observation tagged
+        -- as Active(1) or Inactive(0) on the partition. LAG yields the
+        -- previous state so consecutive duplicates can be collapsed
+        -- (otherwise repeated Active observations would each open a
+        -- new interval and confuse the LEAD-based interval end below).
+        state_log AS (
+            SELECT
+                insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                created_at, id,
+                CASE
+                    WHEN value_full_text IN ('Inactive', 'Terminated', 'inactive', 'terminated')
+                        THEN 0 ELSE 1
+                END AS is_active,
+                LAG(CASE
+                    WHEN value_full_text IN ('Inactive', 'Terminated', 'inactive', 'terminated')
+                        THEN 0 ELSE 1
+                END) OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, person_id
+                    ORDER BY created_at, id
+                ) AS prev_is_active
+            FROM persons
+            WHERE value_type = 'status'
+              AND value_full_text IS NOT NULL
+        ),
+        -- `state_transitions`: only rows where state CHANGED (or the
+        -- very first observation). These are the boundary timestamps
+        -- of active intervals. The LEAD here MUST run before the
+        -- WHERE is_active = 1 filter in `active_intervals` -- otherwise
+        -- the window operates on Active-only rows and never sees the
+        -- next Inactive row, leaving every interval_end = NULL even
+        -- when the employee was deactivated (cypilot-pr-review #477
+        -- Finding 1, latent bug that didn't surface in the kind-cluster
+        -- test only because BambooHR data had no Active->Inactive
+        -- transitions in the snapshot).
+        state_transitions AS (
+            SELECT
+                insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                created_at, id, is_active,
+                LEAD(created_at) OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, person_id
+                    ORDER BY created_at, id
+                ) AS next_transition_at
+            FROM state_log
+            WHERE prev_is_active IS NULL OR prev_is_active <> is_active
+        ),
+        -- `active_intervals`: an interval per Active transition,
+        -- ending at the next transition (which is necessarily Inactive
+        -- because consecutive duplicates were filtered out) or NULL if
+        -- this is the most recent transition.
+        active_intervals AS (
+            SELECT
+                insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                created_at        AS interval_start,
+                next_transition_at AS interval_end
+            FROM state_transitions
+            WHERE is_active = 1
+        ),
+        -- `default_active`: synthetic [-inf, +inf) interval for child
+        -- persons that have NO status observation at all. Phase-1
+        -- assumption: a connector emitting parent_email without
+        -- emitting status is treating every employee as active.
+        default_active AS (
+            SELECT DISTINCT
+                pe.insight_tenant_id, pe.insight_source_type, pe.insight_source_id, pe.person_id,
+                CAST('1970-01-01 00:00:00.000000' AS DATETIME(6)) AS interval_start,
+                CAST(NULL AS DATETIME(6)) AS interval_end
+            FROM persons pe
+            WHERE pe.value_type = 'parent_email'
+              AND pe.value_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM persons s
+                  WHERE s.insight_tenant_id   = pe.insight_tenant_id
+                    AND s.insight_source_type = pe.insight_source_type
+                    AND s.insight_source_id   = pe.insight_source_id
+                    AND s.person_id           = pe.person_id
+                    AND s.value_type          = 'status'
+              )
+        ),
+        all_active AS (
+            SELECT * FROM active_intervals
+            UNION ALL
+            SELECT * FROM default_active
+        ),
+        -- ── parent_email observation periods ───────────────────────
+        pe_periods AS (
+            SELECT
+                pe.insight_tenant_id, pe.insight_source_type, pe.insight_source_id,
+                pe.person_id AS child_person_id,
+                pe.value_id AS parent_email,
+                pe.author_person_id, pe.reason,
+                pe.created_at AS pe_from,
+                LEAD(pe.created_at) OVER (
+                    PARTITION BY pe.insight_tenant_id, pe.insight_source_type,
+                                 pe.insight_source_id, pe.person_id
+                    ORDER BY pe.created_at, pe.id
+                ) AS pe_to
+            FROM persons pe
+            WHERE pe.value_type = 'parent_email'
+              AND pe.value_id IS NOT NULL
+        ),
+        -- ── email -> person_id resolver (latest email wins) ────────
+        email_to_person AS (
+            SELECT
+                p.insight_tenant_id, p.value_id, p.person_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p.insight_tenant_id, p.value_id
+                    ORDER BY p.created_at DESC, p.id DESC
+                ) AS rn
+            FROM persons p
+            WHERE p.value_type = 'email'
+              AND p.value_id IS NOT NULL
+        )
+
+        -- ── Source 1: already-resolved parent_person_id ────────────
+        SELECT
+            insight_tenant_id, insight_source_type, insight_source_id,
+            person_id                                       AS child_person_id,
+            UNHEX(REPLACE(value_id, '-', ''))               AS parent_person_id,
+            author_person_id, reason,
+            created_at                                      AS valid_from,
+            LEAD(created_at) OVER (
+                PARTITION BY insight_tenant_id, insight_source_type,
+                             insight_source_id, person_id
+                ORDER BY created_at
+            )                                               AS valid_to
+        FROM persons
+        WHERE value_type = 'parent_person_id'
+          AND value_id IS NOT NULL
+          AND value_id REGEXP '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          AND HEX(person_id) <> REPLACE(value_id, '-', '')
+
+        UNION ALL
+
+        -- ── Source 2: parent_email -> email JOIN, intersected with
+        --             active intervals of the CHILD ────────────────
+        SELECT
+            pe.insight_tenant_id, pe.insight_source_type, pe.insight_source_id,
+            pe.child_person_id,
+            parent.person_id                                AS parent_person_id,
+            pe.author_person_id, pe.reason,
+            GREATEST(pe.pe_from, ai.interval_start)         AS valid_from,
+            CASE
+                WHEN pe.pe_to IS NULL AND ai.interval_end IS NULL THEN NULL
+                WHEN pe.pe_to        IS NULL                      THEN ai.interval_end
+                WHEN ai.interval_end IS NULL                      THEN pe.pe_to
+                ELSE LEAST(pe.pe_to, ai.interval_end)
+            END                                             AS valid_to
+        FROM pe_periods pe
+        INNER JOIN email_to_person parent
+            ON parent.insight_tenant_id = pe.insight_tenant_id
+           AND parent.value_id          = LOWER(TRIM(pe.parent_email))
+           AND parent.rn                = 1
+        INNER JOIN all_active ai
+            ON ai.insight_tenant_id   = pe.insight_tenant_id
+           AND ai.insight_source_type = pe.insight_source_type
+           AND ai.insight_source_id   = pe.insight_source_id
+           AND ai.person_id           = pe.child_person_id
+           -- Intervals must overlap: ai_start < pe_to AND ai_end > pe_from
+           -- (treat NULL ends as +infinity via sentinel).
+           AND ai.interval_start < COALESCE(pe.pe_to, '9999-12-31 23:59:59.999999')
+           AND COALESCE(ai.interval_end, '9999-12-31 23:59:59.999999') > pe.pe_from
+        WHERE parent.person_id <> pe.child_person_id
+          AND NOT EXISTS (
+              SELECT 1 FROM persons ppi
+              WHERE ppi.insight_tenant_id   = pe.insight_tenant_id
+                AND ppi.person_id           = pe.child_person_id
+                AND ppi.insight_source_type = pe.insight_source_type
+                AND ppi.insight_source_id   = pe.insight_source_id
+                AND ppi.value_type          = 'parent_person_id'
+                AND ppi.value_id IS NOT NULL
+          )
+        """
+    )
+    cursor.execute("DROP TABLE IF EXISTS org_chart_old")
+    cursor.execute(
+        "RENAME TABLE "
+        "  org_chart      TO org_chart_old, "
+        "  org_chart_next TO org_chart"
+    )
+    cursor.execute("DROP TABLE org_chart_old")
+    conn.commit()
+
+    # Diagnostics: how many parent observations each source contributed,
+    # and how many parent_emails were skipped because the email-bearer
+    # is not in persons yet (no-stub policy per ADR-0010).
+    cursor.execute(
+        """
+        SELECT
+            SUM(value_type = 'parent_person_id' AND value_id IS NOT NULL) AS pp_total,
+            SUM(value_type = 'parent_email'     AND value_id IS NOT NULL) AS pe_total
+        FROM persons
+        """
+    )
+    pp_total, pe_total = cursor.fetchone()
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM persons pe
+        WHERE pe.value_type = 'parent_email' AND pe.value_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM persons p_email
+              WHERE p_email.insight_tenant_id = pe.insight_tenant_id
+                AND p_email.value_type        = 'email'
+                AND p_email.value_id          = LOWER(TRIM(pe.value_id))
+          )
+        """
+    )
+    parent_email_unresolved = cursor.fetchone()[0]
+
+    # How many current vs historical edges total
+    cursor.execute("SELECT COUNT(*) FROM org_chart WHERE valid_to IS NULL")
+    current_edges = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM org_chart WHERE valid_to IS NOT NULL")
+    historical_edges = cursor.fetchone()[0]
+
+    # How many distinct children currently have NO edge but DID have one
+    # at some past point -- i.e. deactivated since the last seed of the
+    # source. Useful as a "deactivation pressure" gauge.
+    cursor.execute(
+        """
+        SELECT COUNT(DISTINCT child_person_id) FROM org_chart oc
+        WHERE NOT EXISTS (
+            SELECT 1 FROM org_chart cur
+            WHERE cur.insight_tenant_id   = oc.insight_tenant_id
+              AND cur.insight_source_type = oc.insight_source_type
+              AND cur.insight_source_id   = oc.insight_source_id
+              AND cur.child_person_id     = oc.child_person_id
+              AND cur.valid_to IS NULL
+        )
+        """
+    )
+    children_only_historical = cursor.fetchone()[0]
+
+    print(f"  parent observations: parent_person_id={pp_total or 0}, parent_email={pe_total or 0}")
+    print(f"  edges: {current_edges} current, {historical_edges} historical")
+    if parent_email_unresolved:
+        print(
+            f"  WARN: {parent_email_unresolved} parent_email observations had no matching "
+            f"email-bearer in persons (no stub created -- see ADR-0010)"
+        )
+    if children_only_historical:
+        print(
+            f"  Note: {children_only_historical} children have only historical edges "
+            f"(deactivated and not re-activated -- see ADR-0010 active-intervals)"
+        )
+
+    # Cycle detection: warn (do not fail). A real cycle in the source
+    # data should surface but a single bad row should not block the
+    # whole pipeline. The seeder marks two-hop cycles via a self-join
+    # over CURRENT edges only (valid_to IS NULL); SCD2 history is not
+    # relevant because cycles in past states are no longer harmful.
+    # Deeper cycles (A->B->C->A) are caught later by the Phase-3
+    # `/v1/subchart/{person_id}?depth=N` endpoint with depth-bounded
+    # recursive CTE traversal.
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM org_chart oc
+        WHERE valid_to IS NULL
+          AND EXISTS (
+              SELECT 1 FROM org_chart anc
+              WHERE anc.valid_to IS NULL
+                AND anc.insight_tenant_id   = oc.insight_tenant_id
+                AND anc.insight_source_type = oc.insight_source_type
+                AND anc.insight_source_id   = oc.insight_source_id
+                AND anc.child_person_id     = oc.parent_person_id
+                AND anc.parent_person_id    = oc.child_person_id
+          )
+        """
+    )
+    two_hop_cycles = cursor.fetchone()[0]
+    if two_hop_cycles:
+        print(f"  WARN: org_chart has {two_hop_cycles} two-hop cycles -- review source data")
+
     # Summary
     cursor.execute("""
         SELECT value_type, COUNT(*) AS cnt
@@ -624,6 +993,12 @@ def main():
     cursor.execute("SELECT COUNT(*) FROM account_person_map WHERE valid_to IS NULL")
     current_map = cursor.fetchone()[0]
     print(f"    account_person_map rows: {total_map} ({current_map} current, {total_map - current_map} historical)")
+
+    cursor.execute("SELECT COUNT(*) FROM org_chart")
+    total_edges = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM org_chart WHERE valid_to IS NULL")
+    current_edges = cursor.fetchone()[0]
+    print(f"    org_chart edges: {total_edges} ({current_edges} current, {total_edges - current_edges} historical)")
 
     conn.close()
     print("\n=== Seed complete ===")
