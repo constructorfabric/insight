@@ -1,0 +1,651 @@
+version: 6.48.15
+
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - email_activity
+
+definitions:
+  streams:
+    email_activity:
+      type: DeclarativeStream
+      name: email_activity
+      primary_key:
+        - unique_key
+      retriever:
+        type: SimpleRetriever
+        requester:
+          $ref: "#/definitions/base_requester"
+          path: >-
+            /beta/reports/getEmailActivityUserDetail(date={{
+            stream_interval.start_time[:10] }})
+          http_method: GET
+          request_parameters:
+            $format: application/json
+        record_selector:
+          type: RecordSelector
+          extractor:
+            type: DpathExtractor
+            field_path:
+              - value
+        paginator:
+          type: DefaultPaginator
+          page_token_option:
+            type: RequestOption
+            inject_into: request_parameter
+            field_name: skiptoken
+          pagination_strategy:
+            type: CursorPagination
+            cursor_value: >-
+              {{ response['@odata.nextLink'].split('$skiptoken=')[1] if
+              response['@odata.nextLink'] is defined else None }}
+            stop_condition: "{{ response['@odata.nextLink'] is not defined }}"
+        decoder:
+          type: JsonDecoder
+      incremental_sync:
+        type: DatetimeBasedCursor
+        cursor_field: reportRefreshDate
+        cursor_datetime_formats:
+          - "%Y-%m-%d"
+        datetime_format: "%Y-%m-%d"
+        start_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ day_delta(-27, format='%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+        end_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+      transformations:
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - unique_key
+              value: >-
+                {{ (record['userPrincipalName'] ~ '-' ~ record['reportRefreshDate']) | lower }}
+      schema_loader:
+        type: InlineSchemaLoader
+        schema:
+          $ref: "#/schemas/email_activity"
+    teams_activity:
+      type: DeclarativeStream
+      name: teams_activity
+      primary_key:
+        - unique_key
+      retriever:
+        type: SimpleRetriever
+        requester:
+          $ref: "#/definitions/base_requester"
+          path: >-
+            /beta/reports/getTeamsUserActivityUserDetail(date={{
+            stream_interval.start_time[:10] }})
+          http_method: GET
+          request_parameters:
+            $format: application/json
+        record_selector:
+          type: RecordSelector
+          extractor:
+            type: DpathExtractor
+            field_path:
+              - value
+        paginator:
+          type: DefaultPaginator
+          page_token_option:
+            type: RequestOption
+            inject_into: request_parameter
+            field_name: skiptoken
+          pagination_strategy:
+            type: CursorPagination
+            cursor_value: >-
+              {{ response['@odata.nextLink'].split('$skiptoken=')[1] if
+              response['@odata.nextLink'] is defined else None }}
+            stop_condition: "{{ response['@odata.nextLink'] is not defined }}"
+        decoder:
+          type: JsonDecoder
+      incremental_sync:
+        type: DatetimeBasedCursor
+        cursor_field: reportRefreshDate
+        cursor_datetime_formats:
+          - "%Y-%m-%d"
+        datetime_format: "%Y-%m-%d"
+        start_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ day_delta(-27, format='%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+        end_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+      transformations:
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - unique_key
+              value: >-
+                {{ (record['userPrincipalName'] ~ '-' ~ record['reportRefreshDate']) | lower }}
+      schema_loader:
+        type: InlineSchemaLoader
+        schema:
+          $ref: "#/schemas/teams_activity"
+    onedrive_activity:
+      type: DeclarativeStream
+      name: onedrive_activity
+      primary_key:
+        - unique_key
+      retriever:
+        type: SimpleRetriever
+        requester:
+          $ref: "#/definitions/base_requester"
+          path: >-
+            /beta/reports/getOneDriveActivityUserDetail(date={{
+            stream_interval.start_time[:10] }})
+          http_method: GET
+          request_parameters:
+            $format: application/json
+        record_selector:
+          type: RecordSelector
+          extractor:
+            type: DpathExtractor
+            field_path:
+              - value
+        paginator:
+          type: DefaultPaginator
+          page_token_option:
+            type: RequestOption
+            inject_into: request_parameter
+            field_name: skiptoken
+          pagination_strategy:
+            type: CursorPagination
+            cursor_value: >-
+              {{ response['@odata.nextLink'].split('$skiptoken=')[1] if
+              response['@odata.nextLink'] is defined else None }}
+            stop_condition: "{{ response['@odata.nextLink'] is not defined }}"
+        decoder:
+          type: JsonDecoder
+      incremental_sync:
+        type: DatetimeBasedCursor
+        cursor_field: reportRefreshDate
+        cursor_datetime_formats:
+          - "%Y-%m-%d"
+        datetime_format: "%Y-%m-%d"
+        start_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ day_delta(-27, format='%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+        end_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+      transformations:
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - unique_key
+              value: >-
+                {{ (record['userPrincipalName'] ~ '-' ~ record['reportRefreshDate']) | lower }}
+      schema_loader:
+        type: InlineSchemaLoader
+        schema:
+          $ref: "#/schemas/onedrive_activity"
+    sharepoint_activity:
+      type: DeclarativeStream
+      name: sharepoint_activity
+      primary_key:
+        - unique_key
+      retriever:
+        type: SimpleRetriever
+        requester:
+          $ref: "#/definitions/base_requester"
+          path: >-
+            /beta/reports/getSharePointActivityUserDetail(date={{
+            stream_interval.start_time[:10] }})
+          http_method: GET
+          request_parameters:
+            $format: application/json
+        record_selector:
+          type: RecordSelector
+          extractor:
+            type: DpathExtractor
+            field_path:
+              - value
+        paginator:
+          type: DefaultPaginator
+          page_token_option:
+            type: RequestOption
+            inject_into: request_parameter
+            field_name: skiptoken
+          pagination_strategy:
+            type: CursorPagination
+            cursor_value: >-
+              {{ response['@odata.nextLink'].split('$skiptoken=')[1] if
+              response['@odata.nextLink'] is defined else None }}
+            stop_condition: "{{ response['@odata.nextLink'] is not defined }}"
+        decoder:
+          type: JsonDecoder
+      incremental_sync:
+        type: DatetimeBasedCursor
+        cursor_field: reportRefreshDate
+        cursor_datetime_formats:
+          - "%Y-%m-%d"
+        datetime_format: "%Y-%m-%d"
+        start_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ day_delta(-27, format='%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+        end_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+      transformations:
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - unique_key
+              value: >-
+                {{ (record['userPrincipalName'] ~ '-' ~ record['reportRefreshDate']) | lower }}
+      schema_loader:
+        type: InlineSchemaLoader
+        schema:
+          $ref: "#/schemas/sharepoint_activity"
+  base_requester:
+    type: HttpRequester
+    url_base: https://graph.microsoft.com/
+    authenticator:
+      type: SessionTokenAuthenticator
+      login_requester:
+        type: HttpRequester
+        url_base: >-
+          https://login.microsoftonline.com/{{ config['tenant_id']
+          }}/oauth2/v2.0/token
+        authenticator:
+          type: NoAuth
+        http_method: POST
+        request_parameters: {}
+        request_headers: {}
+        request_body_data:
+          scope: https://graph.microsoft.com/.default
+          client_id: "{{ config['client_id'] }}"
+          grant_type: client_credentials
+          client_secret: "{{ config['client_secret'] }}"
+      session_token_path:
+        - access_token
+      expiration_duration: PT1H
+      request_authentication:
+        type: Bearer
+
+streams:
+  - $ref: "#/definitions/streams/email_activity"
+  - $ref: "#/definitions/streams/teams_activity"
+  - $ref: "#/definitions/streams/onedrive_activity"
+  - $ref: "#/definitions/streams/sharepoint_activity"
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - tenant_id
+      - client_id
+      - client_secret
+    properties:
+      tenant_id:
+        type: string
+        title: Tenant ID
+        order: 0
+      client_id:
+        type: string
+        title: Client ID
+        order: 1
+      client_secret:
+        type: string
+        title: Client Secret
+        airbyte_secret: true
+        order: 2
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    email_activity: true
+    teams_activity: true
+    onedrive_activity: true
+    sharepoint_activity: true
+  testedStreams:
+    email_activity:
+      streamHash: 4c5d3ca26f66dd6f47ae4bdd66eccd77b3c6ff1a
+      hasResponse: true
+      responsesAreSuccessful: true
+      hasRecords: true
+      primaryKeysArePresent: true
+      primaryKeysAreUnique: true
+    teams_activity:
+      streamHash: 87119cf616d63260ef76b52836691cb2d00a5ccd
+      hasResponse: true
+      responsesAreSuccessful: true
+      hasRecords: true
+      primaryKeysArePresent: true
+      primaryKeysAreUnique: true
+    onedrive_activity:
+      streamHash: 3d3e4f26baef846c4a259dda348b72cb1c4dd6c7
+      hasResponse: true
+      responsesAreSuccessful: true
+      hasRecords: true
+      primaryKeysArePresent: true
+      primaryKeysAreUnique: true
+    sharepoint_activity:
+      streamHash: c2de78e82dce4c2573091512bf66a565040330ea
+      hasResponse: true
+      responsesAreSuccessful: true
+      hasRecords: true
+      primaryKeysArePresent: true
+      primaryKeysAreUnique: true
+  assist: {}
+
+schemas:
+  email_activity:
+    type: object
+    $schema: http://json-schema.org/schema#
+    additionalProperties: true
+    properties:
+      assignedProducts:
+        type:
+          - array
+          - "null"
+        items:
+          type:
+            - string
+            - "null"
+      displayName:
+        type:
+          - string
+          - "null"
+      isDeleted:
+        type:
+          - boolean
+          - "null"
+      lastActivityDate:
+        type:
+          - string
+          - "null"
+      meetingCreatedCount:
+        type:
+          - number
+          - "null"
+      meetingInteractedCount:
+        type:
+          - number
+          - "null"
+      readCount:
+        type:
+          - number
+          - "null"
+      receiveCount:
+        type:
+          - number
+          - "null"
+      reportPeriod:
+        type:
+          - string
+          - "null"
+      reportRefreshDate:
+        type: string
+      sendCount:
+        type:
+          - number
+          - "null"
+      unique_key:
+        type:
+          - string
+          - "null"
+      userPrincipalName:
+        type:
+          - string
+          - "null"
+    required:
+      - reportRefreshDate
+  teams_activity:
+    type: object
+    $schema: http://json-schema.org/schema#
+    additionalProperties: true
+    properties:
+      adHocMeetingsAttendedCount:
+        type:
+          - number
+          - "null"
+      adHocMeetingsOrganizedCount:
+        type:
+          - number
+          - "null"
+      assignedProducts:
+        type:
+          - array
+          - "null"
+        items:
+          type:
+            - string
+            - "null"
+      audioDuration:
+        type:
+          - string
+          - "null"
+      callCount:
+        type:
+          - number
+          - "null"
+      hasOtherAction:
+        type:
+          - boolean
+          - "null"
+      isDeleted:
+        type:
+          - boolean
+          - "null"
+      isExternal:
+        type:
+          - boolean
+          - "null"
+      isLicensed:
+        type:
+          - boolean
+          - "null"
+      lastActivityDate:
+        type:
+          - string
+          - "null"
+      meetingCount:
+        type:
+          - number
+          - "null"
+      meetingsAttendedCount:
+        type:
+          - number
+          - "null"
+      meetingsOrganizedCount:
+        type:
+          - number
+          - "null"
+      postMessages:
+        type:
+          - number
+          - "null"
+      privateChatMessageCount:
+        type:
+          - number
+          - "null"
+      replyMessages:
+        type:
+          - number
+          - "null"
+      reportPeriod:
+        type:
+          - string
+          - "null"
+      reportRefreshDate:
+        type: string
+      scheduledOneTimeMeetingsAttendedCount:
+        type:
+          - number
+          - "null"
+      scheduledOneTimeMeetingsOrganizedCount:
+        type:
+          - number
+          - "null"
+      scheduledRecurringMeetingsAttendedCount:
+        type:
+          - number
+          - "null"
+      scheduledRecurringMeetingsOrganizedCount:
+        type:
+          - number
+          - "null"
+      screenShareDuration:
+        type:
+          - string
+          - "null"
+      sharedChannelTenantDisplayNames:
+        type:
+          - string
+          - "null"
+      teamChatMessageCount:
+        type:
+          - number
+          - "null"
+      tenantDisplayName:
+        type:
+          - string
+          - "null"
+      unique_key:
+        type: string
+      urgentMessages:
+        type:
+          - number
+          - "null"
+      userId:
+        type:
+          - string
+          - "null"
+      userPrincipalName:
+        type:
+          - string
+          - "null"
+      videoDuration:
+        type:
+          - string
+          - "null"
+    required:
+      - unique_key
+      - reportRefreshDate
+  onedrive_activity:
+    type: object
+    $schema: http://json-schema.org/schema#
+    additionalProperties: true
+    properties:
+      assignedProducts:
+        type:
+          - array
+          - "null"
+        items:
+          type:
+            - string
+            - "null"
+      isDeleted:
+        type:
+          - boolean
+          - "null"
+      lastActivityDate:
+        type:
+          - string
+          - "null"
+      reportPeriod:
+        type:
+          - string
+          - "null"
+      reportRefreshDate:
+        type: string
+      sharedExternallyFileCount:
+        type:
+          - number
+          - "null"
+      sharedInternallyFileCount:
+        type:
+          - number
+          - "null"
+      syncedFileCount:
+        type:
+          - number
+          - "null"
+      unique_key:
+        type: string
+      userPrincipalName:
+        type:
+          - string
+          - "null"
+      viewedOrEditedFileCount:
+        type:
+          - number
+          - "null"
+    required:
+      - unique_key
+      - reportRefreshDate
+  sharepoint_activity:
+    type: object
+    $schema: http://json-schema.org/schema#
+    additionalProperties: true
+    properties:
+      assignedProducts:
+        type:
+          - array
+          - "null"
+        items:
+          type:
+            - string
+            - "null"
+      isDeleted:
+        type:
+          - boolean
+          - "null"
+      lastActivityDate:
+        type:
+          - string
+          - "null"
+      reportPeriod:
+        type:
+          - string
+          - "null"
+      reportRefreshDate:
+        type: string
+      sharedExternallyFileCount:
+        type:
+          - number
+          - "null"
+      sharedInternallyFileCount:
+        type:
+          - number
+          - "null"
+      syncedFileCount:
+        type:
+          - number
+          - "null"
+      unique_key:
+        type: string
+      userPrincipalName:
+        type:
+          - string
+          - "null"
+      viewedOrEditedFileCount:
+        type:
+          - number
+          - "null"
+      visitedPageCount:
+        type:
+          - number
+          - "null"
+    required:
+      - unique_key
+      - reportRefreshDate

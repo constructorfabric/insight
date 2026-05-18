@@ -1,0 +1,163 @@
+{
+  "streams": [
+    {
+      "stream": {
+        "name": "email_activity",
+        "json_schema": {
+          "type": "object",
+          "$schema": "http://json-schema.org/schema#",
+          "additionalProperties": true,
+          "properties": {
+            "assignedProducts": {"type": ["array", "null"], "items": {"type": ["string", "null"]}},
+            "displayName": {"type": ["string", "null"]},
+            "isDeleted": {"type": ["boolean", "null"]},
+            "lastActivityDate": {"type": ["string", "null"]},
+            "meetingCreatedCount": {"type": ["number", "null"]},
+            "meetingInteractedCount": {"type": ["number", "null"]},
+            "readCount": {"type": ["number", "null"]},
+            "receiveCount": {"type": ["number", "null"]},
+            "reportPeriod": {"type": ["string", "null"]},
+            "reportRefreshDate": {"type": "string"},
+            "sendCount": {"type": ["number", "null"]},
+            "unique_key": {"type": ["string", "null"]},
+            "userPrincipalName": {"type": ["string", "null"]}
+          },
+          "required": ["reportRefreshDate"]
+        },
+        "supported_sync_modes": ["full_refresh", "incremental"],
+        "source_defined_cursor": true,
+        "default_cursor_field": ["reportRefreshDate"],
+        "source_defined_primary_key": [["unique_key"]],
+        "is_resumable": true,
+        "is_file_based": false
+      },
+      "sync_mode": "incremental",
+      "cursor_field": ["reportRefreshDate"],
+      "destination_sync_mode": "append_dedup",
+      "primary_key": [["unique_key"]]
+    },
+    {
+      "stream": {
+        "name": "teams_activity",
+        "json_schema": {
+          "type": "object",
+          "$schema": "http://json-schema.org/schema#",
+          "additionalProperties": true,
+          "properties": {
+            "adHocMeetingsAttendedCount": {"type": ["number", "null"]},
+            "adHocMeetingsOrganizedCount": {"type": ["number", "null"]},
+            "assignedProducts": {"type": ["array", "null"], "items": {"type": ["string", "null"]}},
+            "audioDuration": {"type": ["string", "null"]},
+            "callCount": {"type": ["number", "null"]},
+            "hasOtherAction": {"type": ["boolean", "null"]},
+            "isDeleted": {"type": ["boolean", "null"]},
+            "isExternal": {"type": ["boolean", "null"]},
+            "isLicensed": {"type": ["boolean", "null"]},
+            "lastActivityDate": {"type": ["string", "null"]},
+            "meetingCount": {"type": ["number", "null"]},
+            "meetingsAttendedCount": {"type": ["number", "null"]},
+            "meetingsOrganizedCount": {"type": ["number", "null"]},
+            "postMessages": {"type": ["number", "null"]},
+            "privateChatMessageCount": {"type": ["number", "null"]},
+            "replyMessages": {"type": ["number", "null"]},
+            "reportPeriod": {"type": ["string", "null"]},
+            "reportRefreshDate": {"type": "string"},
+            "scheduledOneTimeMeetingsAttendedCount": {"type": ["number", "null"]},
+            "scheduledOneTimeMeetingsOrganizedCount": {"type": ["number", "null"]},
+            "scheduledRecurringMeetingsAttendedCount": {"type": ["number", "null"]},
+            "scheduledRecurringMeetingsOrganizedCount": {"type": ["number", "null"]},
+            "screenShareDuration": {"type": ["string", "null"]},
+            "sharedChannelTenantDisplayNames": {"type": ["string", "null"]},
+            "teamChatMessageCount": {"type": ["number", "null"]},
+            "tenantDisplayName": {"type": ["string", "null"]},
+            "unique_key": {"type": "string"},
+            "urgentMessages": {"type": ["number", "null"]},
+            "userId": {"type": ["string", "null"]},
+            "userPrincipalName": {"type": ["string", "null"]},
+            "videoDuration": {"type": ["string", "null"]}
+          },
+          "required": ["unique_key", "reportRefreshDate"]
+        },
+        "supported_sync_modes": ["full_refresh", "incremental"],
+        "source_defined_cursor": true,
+        "default_cursor_field": ["reportRefreshDate"],
+        "source_defined_primary_key": [["unique_key"]],
+        "is_resumable": true,
+        "is_file_based": false
+      },
+      "sync_mode": "incremental",
+      "cursor_field": ["reportRefreshDate"],
+      "destination_sync_mode": "append_dedup",
+      "primary_key": [["unique_key"]]
+    },
+    {
+      "stream": {
+        "name": "onedrive_activity",
+        "json_schema": {
+          "type": "object",
+          "$schema": "http://json-schema.org/schema#",
+          "additionalProperties": true,
+          "properties": {
+            "assignedProducts": {"type": ["array", "null"], "items": {"type": ["string", "null"]}},
+            "isDeleted": {"type": ["boolean", "null"]},
+            "lastActivityDate": {"type": ["string", "null"]},
+            "reportPeriod": {"type": ["string", "null"]},
+            "reportRefreshDate": {"type": "string"},
+            "sharedExternallyFileCount": {"type": ["number", "null"]},
+            "sharedInternallyFileCount": {"type": ["number", "null"]},
+            "syncedFileCount": {"type": ["number", "null"]},
+            "unique_key": {"type": "string"},
+            "userPrincipalName": {"type": ["string", "null"]},
+            "viewedOrEditedFileCount": {"type": ["number", "null"]}
+          },
+          "required": ["unique_key", "reportRefreshDate"]
+        },
+        "supported_sync_modes": ["full_refresh", "incremental"],
+        "source_defined_cursor": true,
+        "default_cursor_field": ["reportRefreshDate"],
+        "source_defined_primary_key": [["unique_key"]],
+        "is_resumable": true,
+        "is_file_based": false
+      },
+      "sync_mode": "incremental",
+      "cursor_field": ["reportRefreshDate"],
+      "destination_sync_mode": "append_dedup",
+      "primary_key": [["unique_key"]]
+    },
+    {
+      "stream": {
+        "name": "sharepoint_activity",
+        "json_schema": {
+          "type": "object",
+          "$schema": "http://json-schema.org/schema#",
+          "additionalProperties": true,
+          "properties": {
+            "assignedProducts": {"type": ["array", "null"], "items": {"type": ["string", "null"]}},
+            "isDeleted": {"type": ["boolean", "null"]},
+            "lastActivityDate": {"type": ["string", "null"]},
+            "reportPeriod": {"type": ["string", "null"]},
+            "reportRefreshDate": {"type": "string"},
+            "sharedExternallyFileCount": {"type": ["number", "null"]},
+            "sharedInternallyFileCount": {"type": ["number", "null"]},
+            "syncedFileCount": {"type": ["number", "null"]},
+            "unique_key": {"type": "string"},
+            "userPrincipalName": {"type": ["string", "null"]},
+            "viewedOrEditedFileCount": {"type": ["number", "null"]},
+            "visitedPageCount": {"type": ["number", "null"]}
+          },
+          "required": ["unique_key", "reportRefreshDate"]
+        },
+        "supported_sync_modes": ["full_refresh", "incremental"],
+        "source_defined_cursor": true,
+        "default_cursor_field": ["reportRefreshDate"],
+        "source_defined_primary_key": [["unique_key"]],
+        "is_resumable": true,
+        "is_file_based": false
+      },
+      "sync_mode": "incremental",
+      "cursor_field": ["reportRefreshDate"],
+      "destination_sync_mode": "append_dedup",
+      "primary_key": [["unique_key"]]
+    }
+  ]
+}
