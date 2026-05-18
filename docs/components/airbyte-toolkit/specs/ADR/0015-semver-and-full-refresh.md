@@ -100,7 +100,7 @@ This avoids a "big bang" where every connector simultaneously appears to bump fr
 
 ### Confirmation
 
-- Unit test: `diff_definition.py` accepts only `MAJOR.MINOR.PATCH` as target; emits the right `bump_kind` for every case in the table above.
+- Unit test: `classify_bump.py` accepts only `MAJOR.MINOR.PATCH` as target; emits the right `bump_kind` for every case in the table above.
 - Integration test: bumping a connector's `MINOR` and reconciling causes `sync_catalog` on the existing connection to be PATCHed with the freshly-discovered streams, all `selected: true`.
 - Integration test: bumping `MAJOR` results in the next auto-trigger carrying `dbt_full_refresh=true`; the subsequent scheduled run does not.
 - Regression: with a legacy `current` (`2026.05.04`) and a semver `target` (`1.0.0`), no full-refresh is dispatched.
