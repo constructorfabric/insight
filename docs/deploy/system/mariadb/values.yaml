@@ -1,0 +1,65 @@
+##
+## MariaDB — shared base values for the L2 system layer.
+##
+## Chart: oci://registry-1.docker.io/bitnamicharts/mariadb
+## Pin in Makefile: MARIADB_VERSION (default 20.0.x)
+## Release: `mariadb` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/mariadb-values.yaml.
+##
+## App layer (umbrella in the `insight` namespace) reaches this release
+## as `mariadb.insight-infra.svc.cluster.local:3306`. The umbrella's
+## `mariadb.host` value should be left empty so the chart helper
+## resolves to that DNS name automatically.
+##
+
+fullnameOverride: mariadb
+
+# Bitnami removed free images from docker.io/bitnami/* in 2025; mirror
+# to bitnamilegacy/* (https://github.com/bitnami/charts/issues/30850).
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  registry: docker.io
+  repository: bitnamilegacy/mariadb
+
+# Credentials come from a sealed-secret committed at
+# environments/<env>/sealed-secrets/insight-infra/mariadb-creds-sealedsecret.yaml.
+# The secret must carry the keys the Bitnami chart expects:
+#   mariadb-root-password, mariadb-password
+auth:
+  existingSecret: mariadb-creds
+  database: insight
+  username: insight
+
+primary:
+  persistence:
+    enabled: true
+    size: 8Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+
+# NOTE: per-service databases (e.g. `identity` per ADR-0006) are NOT
+# provisioned here — that would require mirroring the umbrella chart's
+# per-service DB list into this gitops repo, and every chart change
+# would force a parallel update here. The umbrella chart's
+# `mariadb-initdb-scripts.yaml` only fires when `mariadb.deploy=true`,
+# which leaves a gap for the gitops layered model
+# (`mariadb.deploy=false` + external L2 MariaDB).
+#
+# Known follow-up: the umbrella chart needs a Helm pre-install/
+# pre-upgrade hook Job that provisions per-service DBs against
+# whatever MariaDB its values point at (bundled OR external), using
+# `mariadb-root-password` from `insight-db-creds`. The chart's earlier
+# `identity-db-init-job.yaml` had this shape and was rolled back due to
+# a credential timing issue with a regular-template Secret; a corrected
+# hook ordering fixes it.
+
+# No replica (single-primary). Customers wanting HA flip in a per-env
+# overlay (architecture: replication, secondary: …).
+
+metrics:
+  enabled: false

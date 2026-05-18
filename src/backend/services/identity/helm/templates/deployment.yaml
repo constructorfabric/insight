@@ -28,6 +28,43 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+      {{- if .Values.waitForMariadb.enabled }}
+      initContainers:
+        - name: wait-for-mariadb
+          image: "{{ .Values.waitForMariadb.image.repository }}:{{ .Values.waitForMariadb.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              host="{{ default (printf "%s-mariadb" .Release.Name) .Values.waitForMariadb.host }}"
+              port="{{ .Values.waitForMariadb.port }}"
+              timeout={{ .Values.waitForMariadb.timeoutSeconds }}
+              elapsed=0
+              echo "wait-for-mariadb: ${host}:${port} (timeout=${timeout}s)"
+              until nc -z "${host}" "${port}"; do
+                if [ "${elapsed}" -ge "${timeout}" ]; then
+                  echo "wait-for-mariadb: ERROR — ${host}:${port} not reachable within ${timeout}s" >&2
+                  exit 1
+                fi
+                sleep 2
+                elapsed=$((elapsed + 2))
+              done
+              echo "wait-for-mariadb: ${host}:${port} is up after ${elapsed}s"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      {{- end }}
       containers:
         - name: identity
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"

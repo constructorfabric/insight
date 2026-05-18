@@ -20,6 +20,10 @@ WITH tasks AS (
             ELSE 'task'
         END                                         AS activity_type,
         OwnerId                                     AS owner_id,
+        -- Rep who logged the activity (universal SF audit field). Parallels
+        -- HubSpot's `properties_hs_created_by_user_id`; gold attributes
+        -- non-call activities by this column.
+        CAST(CreatedById AS Nullable(String))       AS created_by_user_id,
         WhoId                                       AS contact_id,
         CASE WHEN startsWith(coalesce(WhatId, ''), '006') THEN WhatId
              ELSE NULL END                          AS deal_id,
@@ -58,6 +62,10 @@ events AS (
             ELSE 'meeting'
         END                                         AS activity_type,
         OwnerId                                     AS owner_id,
+        -- Rep who logged the activity (universal SF audit field). Parallels
+        -- HubSpot's `properties_hs_created_by_user_id`; gold attributes
+        -- non-call activities by this column.
+        CAST(CreatedById AS Nullable(String))       AS created_by_user_id,
         WhoId                                       AS contact_id,
         CASE WHEN startsWith(coalesce(WhatId, ''), '006') THEN WhatId
              ELSE NULL END                          AS deal_id,

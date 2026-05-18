@@ -56,6 +56,8 @@ Architecture-shaping decisions are captured as ADRs in
 - [`cpt-insightspec-adr-0006-display-name-split-fallback`](ADR/0006-display-name-split-fallback.md) — Display-Name Split Fallback.
 - [`cpt-insightspec-adr-0007-value-type-routing`](ADR/0007-value-type-routing.md) — `value_type` Routing.
 - [`cpt-insightspec-adr-0008-bamboohr-identity-inputs-extension`](ADR/0008-bamboohr-identity-inputs-extension.md) — Extend BambooHR `identity_inputs`.
+- [`cpt-insightspec-adr-0009-post-profile-with-uniqueness-invariant`](ADR/0009-post-profile-with-uniqueness-invariant.md) — `POST /v1/profiles` with single-result invariant (Phase 2).
+- [`cpt-insightspec-adr-0010-org-chart-cache`](ADR/0010-org-chart-cache.md) — Materialised SCD2 cache for person parent/child edges (`org_chart`).
 - [`cpt-insightspec-adr-0011-persons-relax-uniqueness-and-collation`](ADR/0011-persons-relax-uniqueness-and-collation.md) — Persons relax UNIQUE + switch `value_id` to case-insensitive collation.
 
 #### Functional Drivers
@@ -71,6 +73,13 @@ Architecture-shaping decisions are captured as ADRs in
 | [`cpt-insightspec-fr-identity-migrations-startup`](PRD.md#service-owned-migrations-at-startup) | `Program.cs` calls `MigrationRunner.Run` (DbUp + MySql adapter) before `app.RunAsync()`; embedded SQL resources under `Migrations/`. |
 | [`cpt-insightspec-fr-identity-schema-relax-uniqueness`](PRD.md#schema-allows-recording-state-transitions) | `Migrations/004_persons_relax_constraints.sql` drops `UNIQUE uq_person_observation` on `(..., value_hash)` and adds the same name on `(..., created_at)`. The seeder's `INSERT IGNORE` in step 7 now dedupes by `created_at` (re-runs idempotent) while genuine transitions on the same partition (Active->Inactive->Active) persist as separate rows. ADR-0011 documents the design decision. |
 | [`cpt-insightspec-fr-identity-schema-case-insensitive-value-id`](PRD.md#value-comparisons-are-case-insensitive) | The same migration `ALTER COLUMN value_id MODIFY ... COLLATE utf8mb4_unicode_ci`. `idx_value_id` rebuilds under the new collation; existing SQL (`WHERE value_id = @x`) is now case-insensitive without code changes. `value_full_text` is already `utf8mb4_unicode_ci`; `value` (TEXT) uses table default `utf8mb4_unicode_ci`; `value_hash` (CHAR ascii) stays `ascii_bin` as it is a SHA-256 digest. |
+| [`cpt-insightspec-fr-identity-profile-resolve`](PRD.md#resolve-profile-by-email-or-source-native-id) | New `PersonsEndpoints.MapPost("/v1/profiles")` handler dispatches to `ProfileLookupService.ResolveAsync` which routes by `ResolveProfileKind` (`Email` or `SourceId`) to `IPersonsReader.ResolvePersonIdsByEmailAsync` / `ResolvePersonIdsBySourceIdAsync`. Both reader methods execute CTE queries (`SqlProfiles.cs`) with partition `(insight_tenant_id, person_id, insight_source_type, insight_source_id, value_type)` and `rn=1` filter — the canonical latest-per-source-instance projection. |
+| [`cpt-insightspec-fr-identity-profile-ambiguous-422`](PRD.md#surface-single-result-invariant-via-422) | `ProfileLookupService.ResolveAsync` returns a tagged `ProfileLookupResult` (`Found` / `NotFound` / `Ambiguous`). When the reader returns `>1` distinct `person_id`, the endpoint emits an `AmbiguousProfileProblemResponse` (RFC 7807 extension carrying the lookup body + the matched `person_ids` list) with status 422. |
+| [`cpt-insightspec-fr-identity-profile-ids-list`](PRD.md#project-full-alias-list-on-response) | `IPersonsReader.GetCurrentSourceIdsAsync` runs `SqlProfiles.CurrentSourceIdsForPerson` returning latest `value_type='id'` per source instance; `ProfileAssembler.Assemble` ships the list unchanged into the response shape; `ProfileResponse.From(Profile)` maps the domain record to the wire DTO. |
+| [`cpt-insightspec-fr-identity-profile-validation`](PRD.md#validate-request-body-via-fluentvalidation) | `ResolveProfileCommandValidator` (FluentValidation `AbstractValidator<ResolveProfileCommandModel>`) expresses cross-field rules via `When(value_type=='id', ...)` / `When(value_type=='email', ...)`; registered via `AddValidatorsFromAssemblyContaining<…>` in `Program.cs`; endpoint awaits `validator.ValidateAsync` before resolving tenant; first-error wins on `urn:insight:error:*` URN. |
+| [`cpt-insightspec-fr-identity-org-chart-table`](PRD.md#materialised-parentchild-edge-cache) | `Migrations/003_org_chart.sql` adds the SCD2 edge table with PK `(tenant, source_type, source_id, child, valid_from)`, CHECK `no_self_loop`, and indexes on current-parent / current-children / cross-source views; ADR-0010 records the design decision. |
+| [`cpt-insightspec-fr-identity-org-chart-rebuild`](PRD.md#rebuild-edges-from-persons-deterministically) | `seed-persons-from-identity-input.py` step 9 builds `org_chart_next` from a UNION of `value_type='parent_person_id'` (Source 1, future reconciliation) and `value_type='parent_email'` JOINed to the latest `value_type='email'` observation per `(tenant, value_id)` partition (Source 2, current pipeline); Source 1 wins via NOT EXISTS guard. Step 5 sorts accounts BambooHR-first so the canonical `supervisorEmail` source establishes `person_id`s before downstream connectors. Source 2 intersects each `parent_email` period with the child's **active intervals** derived from `value_type='status'` observations (Active/Inactive/Terminated, with LAG to collapse duplicates and LEAD to compute interval ends); children without any status observation get a synthetic [-inf,+inf) interval. Re-activation (Inactive -> Active) produces a fresh row rather than reopening the closed one — SCD2 history is preserved. Two-table swap via `RENAME` mirrors step 8. Parent_emails with no email-bearer in `persons` are skipped and counted in the seeder log (no stubs created — see ADR-0010). Post-swap two-hop cycle detection self-joins CURRENT edges and emits a WARN line if `(A->B)` and `(B->A)` co-exist; deeper cycles are bounded structurally by the Phase-3 subchart endpoint's depth parameter. |
+| [`cpt-insightspec-fr-identity-org-chart-read`](PRD.md#read-current-parent-and-children-edges) | `IPersonsReader.GetCurrentParentsAsync` / `GetCurrentChildrenAsync` issue `SELECT ... WHERE child_person_id=@c AND valid_to IS NULL` (respectively `parent_person_id=@p`); `SqlOrgChart` holds both query strings, `PersonsRepository.ReadEdgesAsync` is the shared row→`OrgChartEdge` reader. |
 
 #### NFR Allocation
 
@@ -526,6 +535,40 @@ Phase 1 — the seed pipeline rebuilds it as an SCD2 cache from
 Future Phase 2 lookups will use it for "as-of" account → person
 binding queries.
 
+#### Table: `org_chart` (MariaDB)
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-org-chart`
+
+Defined in `Insight.Identity.Infrastructure/Migrations/003_org_chart.sql`
+(see ADR-0010). The service migrates and reads the table — the
+seed pipeline (`seed-persons-from-identity-input.py` step 9)
+rebuilds it as an SCD2 cache of direct parent->child edges
+derived from `persons` via two sources: `value_type='parent_person_id'`
+observations (Source 1, future reconciliation service) and
+`value_type='parent_email'` observations resolved by JOIN to the
+latest matching `value_type='email'` observation per tenant
+(Source 2, the current pipeline's only edge producer). Source 2
+intersects each parent_email period with the child's active
+intervals derived from `value_type='status'` observations.
+
+The Phase-1 invariant is at most one CURRENT edge per
+`(tenant, source_type, source_id, child)`; multi-parent (matrix
+orgs) becomes a Phase-1.5 change that adds `parent_person_id` to
+the PK.
+
+Read paths in Phase 1:
+- `IPersonsReader.GetCurrentParentsAsync(tenant, child)` —
+  `WHERE child_person_id=@c AND valid_to IS NULL` against
+  `idx_current_parent`.
+- `IPersonsReader.GetCurrentChildrenAsync(tenant, parent)` —
+  `WHERE parent_person_id=@p AND valid_to IS NULL` against
+  `idx_current_children`.
+
+Phase 2 callers will project these onto the `/v1/persons` and
+`/v1/profiles` response shapes (designated-source supervisor +
+per-source detail). Phase 3 (`/v1/subchart/{person_id}?depth=N`,
+issue #348) walks the table via a depth-bounded recursive CTE.
+
 #### Table: `SchemaVersions` (MariaDB, DbUp-managed)
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-schema-versions`
@@ -575,6 +618,9 @@ Every log line is structured JSON via `CompactJsonFormatter` with:
 | `cpt-insightspec-fr-identity-migrations-startup` | §1.2 Functional Drivers; §3.6 Sequence "Startup with migration". |
 | `cpt-insightspec-fr-identity-schema-relax-uniqueness` | §1.2 Functional Drivers; ADR-0011 §Decision Outcome (new UNIQUE on `created_at`). |
 | `cpt-insightspec-fr-identity-schema-case-insensitive-value-id` | §1.2 Functional Drivers; ADR-0011 §Decision Outcome (collation switch to `utf8mb4_unicode_ci`). |
+| `cpt-insightspec-fr-identity-org-chart-table` | §1.2 Functional Drivers; §3.7 Table `org_chart`; ADR-0010. |
+| `cpt-insightspec-fr-identity-org-chart-rebuild` | §1.2 Functional Drivers; rebuild step in seeder (`seed-persons-from-identity-input.py` step 9). |
+| `cpt-insightspec-fr-identity-org-chart-read` | §1.2 Functional Drivers; §3.7 read paths note; `SqlOrgChart` + `PersonsRepository.ReadEdgesAsync`. |
 | `cpt-insightspec-nfr-identity-latency` | §1.2 NFR Allocation; §3.7 covered index. |
 | `cpt-insightspec-nfr-identity-memory` | §1.2 NFR Allocation; §2.1 Principle "Observation log, not relational tree". |
 | `cpt-insightspec-nfr-identity-logging-pii` | §1.2 NFR Allocation; §4.2 Logging shape. |

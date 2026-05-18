@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -51,6 +52,11 @@ builder.Services.AddSingleton<MariaDbConnectionFactory>();
 builder.Services.AddSingleton<PersonsRepository>();
 builder.Services.AddSingleton<IPersonsReader>(sp => sp.GetRequiredService<PersonsRepository>());
 builder.Services.AddSingleton<PersonLookupService>();
+builder.Services.AddSingleton<ProfileLookupService>();
+
+// FluentValidation — Phase 2 POST /v1/profiles body. Scans the Api
+// assembly for AbstractValidator<T> implementations.
+builder.Services.AddValidatorsFromAssemblyContaining<Insight.Identity.Api.Validation.ResolveProfileCommandValidator>();
 
 // Composite tenant resolver: header → JWT (stub) → config default.
 builder.Services.AddSingleton<HeaderTenantContext>();

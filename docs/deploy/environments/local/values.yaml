@@ -1,0 +1,142 @@
+##
+## Insight umbrella — local k3s overlay (sample).
+##
+## Layered model:
+##   L2 services (mariadb / clickhouse / redis / redpanda / airbyte /
+##                argo-workflows) run as separate Helm releases in
+##                insight-infra, deployed via `make system-<svc> ENV=local`.
+##   L3 umbrella (this overlay) runs the app services only into `insight`.
+##
+## OIDC is disabled for sandbox; the apiGateway lets unauthenticated
+## requests through. Bring up the rest of the stack and then decide on
+## an IdP (Okta, Entra, Auth0, Keycloak, stub Dex, …).
+##
+
+# Gitops contract: `insight-db-creds` is pre-sealed in the `insight`
+# namespace, fetched by `scripts/secret-fetch.sh` with resource name
+# `insight-local-insight-db-creds`. The two composed Secrets the chart
+# references via existingSecret — `insight-analytics-api-config` and
+# `insight-identity-config` — are derived from `insight-db-creds` + the
+# L2 hosts/ports below by `scripts/compose-app-secrets.sh` (invoked
+# from `apply-app-secrets`, a `deploy-insight` prereq). No chart-side
+# autogen; the chart validator enforces autoGenerate=false in gitops
+# mode (otherwise ArgoCD-style reconciles would rotate passwords).
+credentials:
+  deploymentMode: gitops
+  autoGenerate: false
+
+global:
+  storageClass: local-path
+
+# ─── L2 cross-namespace wiring ─────────────────────────────────────────────
+# Each subchart's `deploy: false` flips the umbrella from
+# "render the bundled subchart" to "the app will dial the host below".
+# Passwords default to insight-db-creds.<key> per chart values.yaml.
+
+clickhouse:
+  deploy: false
+  host: clickhouse.insight-infra.svc.cluster.local
+  port: 8123
+  database: insight
+  username: insight
+  # passwordSecret -> {name: insight-db-creds, key: clickhouse-password}
+
+mariadb:
+  deploy: false
+  host: mariadb.insight-infra.svc.cluster.local
+  port: 3306
+  database: insight
+  username: insight
+  # passwordSecret -> {name: insight-db-creds, key: mariadb-password}
+
+redis:
+  deploy: false
+  host: redis-master.insight-infra.svc.cluster.local
+  port: 6379
+  # passwordSecret -> {name: insight-db-creds, key: redis-password}
+
+redpanda:
+  deploy: false
+  # The chart wants a single comma-separated brokers string (the value
+  # ends up as REDPANDA_BROKERS env var). It does NOT use host/port like
+  # the other subcharts. Single broker for the local sandbox.
+  brokers: "redpanda.insight-infra.svc.cluster.local:9093"
+
+# ─── Ingestion off for local ───────────────────────────────────────────────
+# The umbrella ships Argo WorkflowTemplate objects into its own namespace
+# (`insight`); the Argo controller in insight-infra only watches its own
+# namespace today. Keep the templates off for the local sandbox. Airbyte
+# is still installed at L2 — this only disables the umbrella's
+# WorkflowTemplates.
+ingestion:
+  templates:
+    enabled: false
+
+# ─── App services ──────────────────────────────────────────────────────────
+#
+# Pin `image.tag` to a concrete tag published to GHCR by the upstream
+# CI. The published tag format is `YYYY.MM.DD.HH.MM-<short-sha>`; pick
+# the latest one from the chart appVersion in
+# https://github.com/cyberfabric/cyber-insight (or whichever umbrella
+# you're tracking) and update on bumps.
+#
+# The example tags below are illustrative — replace them with whatever
+# the umbrella chart pinned in `.insight-version` was built against.
+
+apiGateway:
+  replicaCount: 1
+  image:
+    tag: "REPLACE_WITH_LATEST_BACKEND_TAG"
+  # Sandbox: no OIDC. Real envs flip this to false and supply an
+  # `insight-oidc` Secret in the `insight` namespace.
+  authDisabled: true
+  ingress:
+    enabled: false
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+analyticsApi:
+  replicaCount: 1
+  image:
+    tag: "REPLACE_WITH_LATEST_BACKEND_TAG"
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+# Identity Resolution — .NET 9 service. Owns its own MariaDB database
+# (`identity`) and applies DbUp migrations against it at startup. The
+# database itself must already exist with the `insight` user granted
+# ALL on it. When `mariadb.deploy=false` (as here), the engineer runs
+# the one-time `CREATE DATABASE identity` SQL against the L2 MariaDB
+# before the first deploy. The composed `insight-identity-config`
+# Secret (IDENTITY__mariadb__url, optional IDENTITY__identity__
+# tenant_default_id) is produced by scripts/compose-app-secrets.sh
+# from insight-db-creds.
+identity:
+  deploy: true
+  image:
+    repository: ghcr.io/cyberfabric/insight-identity
+    tag: "REPLACE_WITH_LATEST_BACKEND_TAG"
+  databaseName: "identity"
+  # Optional. When set (must be a valid GUID), identity-resolution
+  # lookups don't 400 with "Tenant not provided" if the caller omits
+  # X-Insight-Tenant-Id. The nil GUID below is the conventional
+  # placeholder for "unscoped" — replace with your real default tenant
+  # id once seeded, or remove this key to require the header.
+  tenantDefaultId: "00000000-0000-0000-0000-000000000000"
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+frontend:
+  replicaCount: 1
+  # The frontend image is built from a separate repo (insight-front)
+  # with its own publish-chart workflow; its tag is decoupled from the
+  # backend services above. Pin the latest tag from
+  # https://github.com/orgs/cyberfabric/packages?q=cyber-insight-front
+  # (or whichever upstream you're tracking).
+  image:
+    tag: "REPLACE_WITH_LATEST_FRONTEND_TAG"
+  ingress:
+    enabled: false

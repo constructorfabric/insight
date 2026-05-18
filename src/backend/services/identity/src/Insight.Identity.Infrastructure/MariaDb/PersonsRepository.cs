@@ -24,13 +24,13 @@ public sealed class PersonsRepository : IPersonsReader
 
     public async Task<Guid?> ResolvePersonIdByEmailAsync(
         Guid tenantId,
-        string emailLowercase,
+        string email,
         CancellationToken cancellationToken)
     {
         await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var cmd = new MySqlCommand(Sql.ResolvePersonIdByEmail, conn);
         cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
-        cmd.Parameters.AddWithValue("@email", emailLowercase);
+        cmd.Parameters.AddWithValue("@email", email);
         var raw = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return raw is byte[] bytes && bytes.Length == 16 ? new Guid(bytes, bigEndian: true) : null;
     }
@@ -87,6 +87,64 @@ public sealed class PersonsRepository : IPersonsReader
         return ids;
     }
 
+    public Task<IReadOnlyList<OrgChartEdge>> GetCurrentParentsAsync(
+        Guid tenantId,
+        Guid childPersonId,
+        CancellationToken cancellationToken)
+        => ReadEdgesAsync(
+            SqlOrgChart.CurrentParentsForChild,
+            tenantId,
+            ("@child_person_id", childPersonId),
+            cancellationToken);
+
+    public Task<IReadOnlyList<OrgChartEdge>> GetCurrentChildrenAsync(
+        Guid tenantId,
+        Guid parentPersonId,
+        CancellationToken cancellationToken)
+        => ReadEdgesAsync(
+            SqlOrgChart.CurrentChildrenForParent,
+            tenantId,
+            ("@parent_person_id", parentPersonId),
+            cancellationToken);
+
+    /// <summary>
+    /// Shared reader for the two <c>org_chart</c> SELECTs: the
+    /// SQL shape, projection, and binary-to-Guid conversion are
+    /// identical — only the WHERE-bound parameter differs (child vs
+    /// parent). Keeping one body avoids drift between the two readers.
+    /// Unlike <see cref="GetDirectSubordinateIdsAsync"/>, both bound
+    /// values here are BINARY(16) — `org_chart` stores person
+    /// ids in the same binary form as the rest of the schema (the
+    /// textual `value_id` form is a `persons`-only quirk per ADR-0007).
+    /// </summary>
+    private async Task<IReadOnlyList<OrgChartEdge>> ReadEdgesAsync(
+        string sql,
+        Guid tenantId,
+        (string name, Guid value) bound,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue(bound.name, bound.value.ToByteArray(bigEndian: true));
+
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var edges = new List<OrgChartEdge>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var childBytes  = (byte[])reader["child_person_id"];
+            var parentBytes = (byte[])reader["parent_person_id"];
+            var sourceBytes = (byte[])reader["insight_source_id"];
+            edges.Add(new OrgChartEdge(
+                InsightSourceType: reader.GetString("insight_source_type"),
+                InsightSourceId:   new Guid(sourceBytes, bigEndian: true),
+                ChildPersonId:     new Guid(childBytes,  bigEndian: true),
+                ParentPersonId:    new Guid(parentBytes, bigEndian: true),
+                ValidFrom:         reader.GetDateTime("valid_from")));
+        }
+        return edges;
+    }
+
     public async Task<bool> PingAsync(CancellationToken cancellationToken)
     {
         try
@@ -100,5 +158,72 @@ public sealed class PersonsRepository : IPersonsReader
         {
             return false;
         }
+    }
+
+    // ── Phase 2 / POST /v1/profiles ────────────────────────────────────
+
+    public async Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAsync(
+        Guid tenantId,
+        string email,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(SqlProfiles.ResolvePersonIdsByEmail, conn);
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@value", email);
+        return await ReadPersonIdsAsync(cmd, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<Guid>> ResolvePersonIdsBySourceIdAsync(
+        Guid tenantId,
+        string sourceType,
+        Guid sourceId,
+        string value,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(SqlProfiles.ResolvePersonIdsBySourceId, conn);
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@source_type", sourceType);
+        cmd.Parameters.AddWithValue("@source_id", sourceId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@value", value);
+        return await ReadPersonIdsAsync(cmd, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<PersonSourceId>> GetCurrentSourceIdsAsync(
+        Guid tenantId,
+        Guid personId,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(SqlProfiles.CurrentSourceIdsForPerson, conn);
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@person_id", personId.ToByteArray(bigEndian: true));
+
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var list = new List<PersonSourceId>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var sourceIdBytes = (byte[])reader["insight_source_id"];
+            list.Add(new PersonSourceId(
+                InsightSourceType: reader.GetString("insight_source_type"),
+                InsightSourceId: new Guid(sourceIdBytes, bigEndian: true),
+                Value: reader.GetString("value")));
+        }
+        return list;
+    }
+
+    private static async Task<IReadOnlyList<Guid>> ReadPersonIdsAsync(
+        MySqlCommand cmd,
+        CancellationToken cancellationToken)
+    {
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var ids = new List<Guid>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var bytes = (byte[])reader["person_id"];
+            ids.Add(new Guid(bytes, bigEndian: true));
+        }
+        return ids;
     }
 }

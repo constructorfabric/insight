@@ -13,8 +13,27 @@
 -- /crm/v3/objects/meetings?archived=true ("Paging through deleted objects
 -- is not yet supported"). `_version = greatest(updatedAt, archivedAt)` so
 -- an archive event outranks the prior live update under ReplacingMergeTree.
+-- Archived siblings are only synced when Airbyte's HubSpot connector is
+-- configured to backfill deleted records — guard each UNION with
+-- adapter.get_relation so absent archived tables don't break the build.
+-- Schema derived from the dbt source so a tenant-prefixed
+-- `bronze_hubspot_<tenant>` rename doesn't silently drop the archived arms.
+{%- set bronze_schema = source('bronze_hubspot', 'engagements_meetings').schema -%}
+{%- set calls_tables = ['engagements_calls'] -%}
+{%- if adapter.get_relation(database=none, schema=bronze_schema, identifier='engagements_calls_archived') -%}
+  {%- do calls_tables.append('engagements_calls_archived') -%}
+{%- endif -%}
+{%- set emails_tables = ['engagements_emails'] -%}
+{%- if adapter.get_relation(database=none, schema=bronze_schema, identifier='engagements_emails_archived') -%}
+  {%- do emails_tables.append('engagements_emails_archived') -%}
+{%- endif -%}
+{%- set tasks_tables = ['engagements_tasks'] -%}
+{%- if adapter.get_relation(database=none, schema=bronze_schema, identifier='engagements_tasks_archived') -%}
+  {%- do tasks_tables.append('engagements_tasks_archived') -%}
+{%- endif %}
+
 WITH calls AS (
-    {% for tbl in ['engagements_calls', 'engagements_calls_archived'] %}
+    {% for tbl in calls_tables %}
     SELECT
         tenant_id,
         source_id,
@@ -22,6 +41,12 @@ WITH calls AS (
         id                                              AS activity_id,
         'call'                                          AS activity_type,
         properties_hubspot_owner_id                     AS owner_id,
+        -- Rep who logged the activity — resolves to silver.class_crm_users
+        -- via `hs_user_id` (HubSpot Owners `userId`). This is what HubSpot's
+        -- "Activities by user" report attributes on; the owner side (above)
+        -- is the record owner, often inherited from contact owner and
+        -- therefore inflated for inbound-heavy reps.
+        properties_hs_created_by_user_id                AS created_by_user_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_contacts, '[]'), 'Array(String)'), 1), '')  AS contact_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_deals, '[]'), 'Array(String)'), 1), '')     AS deal_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1), '') AS account_id,
@@ -55,7 +80,7 @@ WITH calls AS (
     {% endfor %}
 ),
 emails AS (
-    {% for tbl in ['engagements_emails', 'engagements_emails_archived'] %}
+    {% for tbl in emails_tables %}
     SELECT
         tenant_id,
         source_id,
@@ -63,6 +88,12 @@ emails AS (
         id                                              AS activity_id,
         'email'                                         AS activity_type,
         properties_hubspot_owner_id                     AS owner_id,
+        -- Rep who logged the activity — resolves to silver.class_crm_users
+        -- via `hs_user_id` (HubSpot Owners `userId`). This is what HubSpot's
+        -- "Activities by user" report attributes on; the owner side (above)
+        -- is the record owner, often inherited from contact owner and
+        -- therefore inflated for inbound-heavy reps.
+        properties_hs_created_by_user_id                AS created_by_user_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_contacts, '[]'), 'Array(String)'), 1), '')  AS contact_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_deals, '[]'), 'Array(String)'), 1), '')     AS deal_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1), '') AS account_id,
@@ -100,6 +131,12 @@ meetings AS (
         id                                              AS activity_id,
         'meeting'                                       AS activity_type,
         properties_hubspot_owner_id                     AS owner_id,
+        -- Rep who logged the activity — resolves to silver.class_crm_users
+        -- via `hs_user_id` (HubSpot Owners `userId`). This is what HubSpot's
+        -- "Activities by user" report attributes on; the owner side (above)
+        -- is the record owner, often inherited from contact owner and
+        -- therefore inflated for inbound-heavy reps.
+        properties_hs_created_by_user_id                AS created_by_user_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_contacts, '[]'), 'Array(String)'), 1), '')  AS contact_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_deals, '[]'), 'Array(String)'), 1), '')     AS deal_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1), '') AS account_id,
@@ -138,7 +175,7 @@ meetings AS (
     FROM {{ source('bronze_hubspot', 'engagements_meetings') }}
 ),
 tasks AS (
-    {% for tbl in ['engagements_tasks', 'engagements_tasks_archived'] %}
+    {% for tbl in tasks_tables %}
     SELECT
         tenant_id,
         source_id,
@@ -146,6 +183,12 @@ tasks AS (
         id                                              AS activity_id,
         'task'                                          AS activity_type,
         properties_hubspot_owner_id                     AS owner_id,
+        -- Rep who logged the activity — resolves to silver.class_crm_users
+        -- via `hs_user_id` (HubSpot Owners `userId`). This is what HubSpot's
+        -- "Activities by user" report attributes on; the owner side (above)
+        -- is the record owner, often inherited from contact owner and
+        -- therefore inflated for inbound-heavy reps.
+        properties_hs_created_by_user_id                AS created_by_user_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_contacts, '[]'), 'Array(String)'), 1), '')  AS contact_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_deals, '[]'), 'Array(String)'), 1), '')     AS deal_id,
         nullIf(arrayElement(JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1), '') AS account_id,

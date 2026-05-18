@@ -1,0 +1,43 @@
+##
+## Argo Workflows L2 base values — applied to every env. Per-env overrides
+## go in environments/<env>/argo-values.yaml.
+##
+## Refresh procedure: review and update when the upstream chart's values
+## file changes. Diff before vendoring; record the SHA above.
+##
+
+server:
+  # Production: --auth-mode=client (Bearer token).
+  # Eval/demo: --auth-mode=server (no auth, port-forward friendly).
+  extraArgs:
+    - "--auth-mode=client"
+  serviceType: ClusterIP
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+
+controller:
+  # The controller watches Workflow resources only in the release namespace.
+  # `workflowNamespaces` and `instanceID` are set by the Makefile's
+  # deploy-argo target (single-namespace model: Airbyte, Argo, umbrella —
+  # all in one ns). instanceID scopes workflows to this controller, so a
+  # second Insight install in another namespace on the same cluster does
+  # not pick up our workflows and vice versa.
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 512Mi }
+
+workflow:
+  serviceAccount:
+    create: true
+    name: argo-workflow
+
+executor:
+  resources:
+    requests: { cpu: 50m,  memory: 64Mi }
+    limits:   { cpu: 250m, memory: 128Mi }
+
+# Insight workflows are short and pass data through ClickHouse/MariaDB
+# rather than step-to-step artifacts; keep disabled unless a longer
+# pipeline genuinely needs intermediate files.
+useDefaultArtifactRepo: false

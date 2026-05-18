@@ -14,6 +14,14 @@ uv.lock
 local
 access
 
+# Exceptions for the gitops-sample starter under docs/deploy — `local`
+# is a valid env name in the committed template and the `local/`
+# subdirectories must ship.
+!docs/deploy/bootstrap/local/
+!docs/deploy/bootstrap/local/**
+!docs/deploy/environments/local/
+!docs/deploy/environments/local/**
+
 # IDE
 .vs/
 .prs/

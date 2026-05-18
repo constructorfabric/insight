@@ -1,0 +1,33 @@
+##
+## Redpanda Console — shared base values for the L2 system layer.
+##
+## Chart: redpanda/console (repo: https://charts.redpanda.com)
+## Pin in Makefile: REDPANDA_CONSOLE_VERSION (3.7.0 at time of writing)
+## Release: `redpanda-console` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/redpanda-console-values.yaml
+## (usually to enable an ingress for the UI).
+##
+## Reaches the broker as
+## `redpanda.insight-infra.svc.cluster.local:9093` (Kafka API).
+##
+## Chart 3.x removed the `console:` top-level wrapper; values that used
+## to live under `console.config.*` now sit directly at the top level
+## (`config.*`, `ingress.*`, `resources.*`, etc.).
+##
+
+fullnameOverride: redpanda-console
+
+config:
+  kafka:
+    brokers:
+      - redpanda.insight-infra.svc.cluster.local:9093
+
+# UI is internal-only by default. Enable an ingress in the per-env
+# overlay if the team wants browser access to the console.
+ingress:
+  enabled: false
+
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits:   { cpu: 500m, memory: 256Mi }

@@ -1,0 +1,96 @@
+##
+## Airbyte L2 base values — applied to every env. Per-env overrides go in
+## environments/<env>/airbyte-values.yaml.
+##
+
+global:
+  # Deployment mode. community = OSS, enterprise = commercial license.
+  edition: community
+
+  # Auth: always on. The Airbyte chart generates a random admin password
+  # on first install and stores it in `airbyte-auth-secrets`
+  # (key: instance-admin-password). We disable only Keycloak — it pulls
+  # in an extra Postgres and duplicates our own OIDC surface from the
+  # Insight umbrella. Server-signed JWT for API access still works.
+  #
+  # In Airbyte 1.5.x simple-auth mode the admin email/organization must
+  # be configured through a one-time API setup call — scripts/airbyte-setup.sh
+  # does this automatically post-install (sets admin@example.com +
+  # organization `Insight`). Setting `instanceAdmin.email` in values has
+  # no effect in this mode.
+  auth:
+    enabled: true
+
+  # Storage for logs and state.
+  # Defaults to embedded MinIO. For prod → s3/gcs/azure (override in
+  # environments/<env>/airbyte-values.yaml).
+  storage:
+    type: minio
+
+  # Airbyte state DB. Defaults to embedded Postgres (subchart).
+  # For prod → external managed DB (override in env file).
+  database:
+    type: internal
+
+# ─── Embedded subcharts ─────────────────────────────────────────────────
+# Both should be disabled in prod overlays — then global.database.type=external
+# and global.storage.type=s3 must point at external resources.
+postgresql:
+  enabled: true
+minio:
+  enabled: true
+
+# ─── Keycloak disabled ──────────────────────────────────────────────────
+# Authentication to the Airbyte API is done via a server-signed JWT.
+# Real enterprise auth is handled at the Insight layer.
+keycloak:
+  enabled: false
+keycloak-setup:
+  enabled: false
+
+# ─── Resources (minimal eval profile) ───────────────────────────────────
+# For prod — 3-5x these limits in the env overlay.
+server:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+
+webapp:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  ingress:
+    enabled: false
+
+worker:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: "2",  memory: 2Gi }
+
+workload-launcher:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+workload-api-server:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+temporal:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+cron:
+  resources:
+    # Airbyte's scheduler; 256Mi is too tight once it holds a Temporal
+    # worker pool (OOMKilled on Kind). Bumped to 512Mi.
+    requests: { cpu: 50m,  memory: 256Mi }
+    limits:   { cpu: 200m, memory: 512Mi }
+
+connectorBuilderServer:
+  enabled: true

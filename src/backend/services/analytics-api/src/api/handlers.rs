@@ -318,7 +318,7 @@ pub async fn query_metric(
             }
             let where_inner = format!(" WHERE {}", clauses.join(" AND "));
             (
-                inject_where_into_first_subquery(&from_clause, &where_inner)
+                inject_date_filter_into_subqueries(&from_clause, &where_inner)
                     .unwrap_or_else(|| from_clause.clone()),
                 true,
             )
@@ -335,16 +335,25 @@ pub async fn query_metric(
     // Parse OData $filter (simplified — production needs a proper OData parser)
     if let Some(ref filter) = req.filter {
         if !date_pushed {
-            if let Some(date_from) = extract_odata_value(filter, "metric_date", "ge") {
-                sql.push_str(" AND metric_date >= ?");
-                params.push(date_from);
-            }
-            if let Some(date_to) = extract_odata_value(filter, "metric_date", "lt") {
-                sql.push_str(" AND metric_date < ?");
-                params.push(date_to);
-            } else if let Some(date_to) = extract_odata_value(filter, "metric_date", "le") {
-                sql.push_str(" AND metric_date <= ?");
-                params.push(date_to);
+            // Date filter was provided but couldn't be pushed into a subquery
+            // (e.g. the FROM clause is a bare table without parentheses — the
+            // "Team Members" shape, where the outer query reads
+            // `bronze_bamboohr.employees` directly). Adding the filter to the
+            // outer WHERE would reference `metric_date` against a table that
+            // doesn't expose that column, producing a ClickHouse
+            // `UNKNOWN_IDENTIFIER` 500. Drop the filter with a warning so the
+            // request still returns 200 (unfiltered) and the misconfiguration
+            // is visible in logs.
+            let has_date_filter = extract_odata_value(filter, "metric_date", "ge").is_some()
+                || extract_odata_value(filter, "metric_date", "lt").is_some()
+                || extract_odata_value(filter, "metric_date", "le").is_some();
+            if has_date_filter {
+                tracing::warn!(
+                    metric_id = %id,
+                    "date filter on metric_date was provided but could not be \
+                     injected into a subquery (FROM clause is not a subquery). \
+                     Filter is ignored; the request returns unfiltered results.",
+                );
             }
         }
         // Person filter — use person_id directly (no Identity Resolution for MVP).
@@ -494,7 +503,7 @@ fn extract_odata_value(filter: &str, field: &str, op: &str) -> Option<String> {
 /// subquery). This guarantees the `metric_date` filter lands at the level where the raw
 /// table with a `metric_date` column is actually read. JOIN branches and nested
 /// subqueries are recursed into; the filter is applied only at the innermost SELECT.
-fn inject_where_into_first_subquery(from_clause: &str, where_clause: &str) -> Option<String> {
+fn inject_date_filter_into_subqueries(from_clause: &str, where_clause: &str) -> Option<String> {
     let (new_from, injected) = walk_inject(from_clause, where_clause);
     if injected { Some(new_from) } else { None }
 }
@@ -1265,5 +1274,127 @@ mod tests {
         assert!(!is_valid_ident(""));
         assert!(!is_valid_ident(".leading_dot"));
         assert!(!is_valid_ident("trailing_dot."));
+    }
+
+    // ── inject_date_filter_into_subqueries ──────────────────
+    //
+    // These tests pin the contract of the date-filter walker so future
+    // refactors do not silently regress the two-level injection (which the
+    // bullet `query_ref` shape relies on) or the bare-table fallback (which
+    // the Team Members query relies on).
+
+    #[test]
+    fn inject_simple_leaf_subquery_before_group_by() -> Result<(), Box<dyn std::error::Error>> {
+        // Single subquery with GROUP BY → WHERE inserted right before GROUP BY.
+        let from = "(SELECT person_id, sum(metric_value) AS v \
+                     FROM insight.task_delivery_bullet_rows \
+                     GROUP BY person_id) p";
+        let where_clause = " WHERE metric_date >= '2026-04-01'";
+
+        let output = inject_date_filter_into_subqueries(from, where_clause)
+            .ok_or("expected walker to inject")?;
+        assert!(
+            output.contains("WHERE metric_date >= '2026-04-01' GROUP BY person_id"),
+            "WHERE must land just before GROUP BY; got:\n{output}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inject_bullet_shape_hits_both_p_and_inner_c() -> Result<(), Box<dyn std::error::Error>> {
+        // Regression test for the actual production bullet shape:
+        // FROM (p) LEFT JOIN (... FROM (inner_c) ...) c ON ...
+        // The walker must descend into the c side and inject into inner_c too,
+        // so both per-person and company-wide aggregates see the same period.
+        let from = "(SELECT metric_key, person_id, sum(metric_value) AS v \
+                     FROM insight.task_delivery_bullet_rows \
+                     GROUP BY metric_key, person_id) p \
+                    LEFT JOIN (SELECT metric_key, median(v) AS m \
+                               FROM (SELECT metric_key, person_id, sum(metric_value) AS v \
+                                     FROM insight.task_delivery_bullet_rows \
+                                     GROUP BY metric_key, person_id) inner_c \
+                               GROUP BY metric_key) c \
+                    ON c.metric_key = p.metric_key";
+        let where_clause = " WHERE metric_date >= '2026-04-01'";
+
+        let output = inject_date_filter_into_subqueries(from, where_clause)
+            .ok_or("expected walker to inject")?;
+        let count = output.matches("WHERE metric_date >= '2026-04-01'").count();
+        assert_eq!(
+            count, 2,
+            "WHERE must be injected into BOTH p and inner_c (expected count=2). \
+             A regression here means per-person and company-wide aggregates \
+             read different time periods. Got count={count}; full output:\n{output}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inject_returns_none_for_bare_table_from() {
+        // Team Members shape: FROM is a bare table + JOIN, not a subquery.
+        // The walker has no place to inject WHERE; must return None so the
+        // caller's fallback knows to skip outer-WHERE injection (which would
+        // otherwise reference metric_date on a table that doesn't have it →
+        // ClickHouse UNKNOWN_IDENTIFIER 500).
+        let from = "bronze_bamboohr.employees e \
+                    LEFT JOIN insight.people p ON e.workEmail = p.email";
+        let where_clause = " WHERE metric_date >= '2026-04-01'";
+
+        let result = inject_date_filter_into_subqueries(from, where_clause);
+
+        assert!(
+            result.is_none(),
+            "bare-table FROM must NOT inject — fallback handler relies on this"
+        );
+    }
+
+    #[test]
+    fn inject_combines_via_and_when_existing_where_present()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Subquery already has a WHERE clause. The new condition must be
+        // combined through AND, not duplicate or replace the existing WHERE.
+        // Order (new-before-existing vs existing-before-new) is not semantically
+        // meaningful in SQL — assert presence + AND-glue, not position.
+        let from = "(SELECT person_id FROM insight.task_delivery_bullet_rows \
+                     WHERE org_unit_id = 'eng' GROUP BY person_id) p";
+        let where_clause = " WHERE metric_date >= '2026-04-01'";
+
+        let output = inject_date_filter_into_subqueries(from, where_clause)
+            .ok_or("expected walker to inject")?;
+        // Both conditions present
+        assert!(
+            output.contains("org_unit_id = 'eng'"),
+            "existing predicate must survive; got:\n{output}"
+        );
+        assert!(
+            output.contains("metric_date >= '2026-04-01'"),
+            "new predicate must be present; got:\n{output}"
+        );
+        // Connected by AND, no duplicate WHERE
+        assert!(
+            output.contains(" AND "),
+            "predicates must be AND-glued; got:\n{output}"
+        );
+        assert_eq!(
+            output.matches(" WHERE ").count(),
+            1,
+            "must not emit two `WHERE` keywords; got:\n{output}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inject_appends_to_end_when_no_group_by() -> Result<(), Box<dyn std::error::Error>> {
+        // Edge case: subquery has no GROUP BY. WHERE appended at the end.
+        let from = "(SELECT * FROM insight.task_delivery_bullet_rows) p";
+        let where_clause = " WHERE metric_date >= '2026-04-01'";
+
+        let output = inject_date_filter_into_subqueries(from, where_clause)
+            .ok_or("expected walker to inject")?;
+        assert!(
+            output.contains("FROM insight.task_delivery_bullet_rows WHERE metric_date"),
+            "WHERE must be appended right after the source table; got:\n{output}"
+        );
+        Ok(())
     }
 }

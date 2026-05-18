@@ -160,7 +160,7 @@ Tables that contain or reference data from external source systems include sourc
 | Column | Type | Required | Description |
 |--------|------|----------|-------------|
 | `insight_source_id` | `UUID NOT NULL` | When source-specific | Connector instance identifier -- distinguishes between two GitLab instances for the same tenant. Propagated from Bronze layer |
-| `insight_source_type` | `VARCHAR(100) NOT NULL` | When source-specific | Source system type (e.g., `github`, `gitlab`, `bamboohr`, `jira`, `slack`). Replaces `source_system` / `source` |
+| `insight_source_type` | `VARCHAR(30) NOT NULL` | When source-specific | Source system type (e.g., `github`, `gitlab`, `bamboohr`, `jira`, `slack`). Replaces `source_system` / `source`. Tiny tier — connector keys are short, owned vocabulary; the longest in production today is `claude_enterprise` (17 chars). |
 | `source_account_id` | `VARCHAR(500) NOT NULL` | When source-specific | Unique account/user ID within the source system (e.g., GitHub user ID, Jira account ID). Source-native format, not normalised |
 
 **Rules:**
@@ -390,8 +390,9 @@ Use consistent `VARCHAR` lengths based on content type:
 
 | Tier | Length | Use for | Examples |
 |------|--------|---------|----------|
-| **Short** | `VARCHAR(50)` | Type codes, enum-like values, short identifiers | `value_type`, `assignment_type`, `source` |
-| **Medium** | `VARCHAR(100)` | System names, rule names, attribute names | `insight_source_type`, `attribute_name`, `condition_type` |
+| **Tiny** | `VARCHAR(30)` | Bounded enum / connector keys with a small, owned vocabulary | `insight_source_type` (`bamboohr`, `zoom`, `claude_enterprise`, …) |
+| **Short** | `VARCHAR(50)` | Type codes, enum-like values, short identifiers | `value_type`, `assignment_type`, `source`, `reason` |
+| **Medium** | `VARCHAR(100)` | System names, rule names, attribute names | `attribute_name`, `condition_type` |
 | **Standard** | `VARCHAR(255)` | Human-readable names, display values | `display_name`, `name`, `role`, `location` |
 | **Long** | `VARCHAR(500)` | Emails, URLs, external identifiers, user agents | `value`, `email`, `source_account_id`, `actor_user_agent` |
 | **Unbounded** | `TEXT` | Paths, free-form text, reasons, descriptions | `path`, `reason`, `description` |

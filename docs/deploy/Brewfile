@@ -1,0 +1,23 @@
+# Insight GitOps — required tooling.
+#
+# Run: brew bundle install
+# Verify: make doctor
+#
+# Versions are not pinned here — `make doctor` enforces minimums.
+
+brew "helm"           # Helm 3.14+ (OCI chart pulls)
+brew "kubernetes-cli" # kubectl 1.27+
+brew "kubeseal"       # Bitnami sealed-secrets client
+brew "skopeo"         # OCI registry tag listing (optional, for chart-version automation)
+brew "yq"             # YAML editing (image.tag bumps, values reads)
+brew "jq"             # JSON post-processing
+brew "gnu-getopt"     # GNU getopt for portable option parsing in scripts (optional)
+
+# Password-manager CLI: integration-specific. `make seal-secret` shells out
+# to `scripts/secret-fetch.sh`, which in the shipped sample reads a local
+# YAML file. Point that script at your own backend (1Password, Vault,
+# Bitwarden, AWS Secrets Manager, Passbolt, ...) and install whichever CLI
+# / dependencies it needs here. Example for Passbolt:
+#   tap "passbolt/tap"
+#   brew "go-passbolt-cli"
+#   brew "gnupg"

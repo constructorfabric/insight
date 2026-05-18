@@ -1,0 +1,25 @@
+##
+## cert-manager — local k3s overlay.
+##
+## CRDs are installed via the chart's --set crds.enabled=true at install
+## time (see Makefile bootstrap-cert-manager target). This file carries
+## only the runtime overrides. The companion selfsigned-issuer.yaml
+## defines a ClusterIssuer that local Ingress resources can reference.
+##
+replicaCount: 1
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits:   { cpu: 100m, memory: 128Mi }
+
+webhook:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { cpu: 100m, memory: 128Mi }
+
+cainjector:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { cpu: 100m, memory: 128Mi }
+
+prometheus:
+  enabled: false   # local — no Prometheus

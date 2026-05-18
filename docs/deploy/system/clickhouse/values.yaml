@@ -1,0 +1,58 @@
+##
+## ClickHouse — shared base values for the L2 system layer.
+##
+## Chart: oci://registry-1.docker.io/bitnamicharts/clickhouse
+## Pin in Makefile: CLICKHOUSE_VERSION
+## Release: `clickhouse` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/clickhouse-values.yaml.
+##
+## App layer reaches this release as
+## `clickhouse.insight-infra.svc.cluster.local:8123` (HTTP) or `:9000` (native).
+##
+
+fullnameOverride: clickhouse
+
+# Bitnami removed free images from docker.io/bitnami/* in 2025
+# (https://github.com/bitnami/charts/issues/30850). Mirror to the
+# community-hosted bitnamilegacy/* repository (same images, still free)
+# and disable the chart's "secure images" allow-list check.
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  registry: docker.io
+  repository: bitnamilegacy/clickhouse
+
+# Credentials sourced from sealed-secret at
+# environments/<env>/sealed-secrets/insight-infra/clickhouse-creds-sealedsecret.yaml.
+# Required keys: admin-password (and username if you override the default).
+auth:
+  username: insight
+  existingSecret: clickhouse-creds
+  existingSecretKey: admin-password
+
+# Single-shard / single-replica baseline. Multi-shard topologies are a
+# per-env overlay (shards, replicaCount, zookeeper.enabled).
+shards: 1
+replicaCount: 1
+
+persistence:
+  enabled: true
+  size: 10Gi
+
+resources:
+  requests: { cpu: 200m, memory: 512Mi }
+  limits:   { cpu: "2",  memory: 4Gi }
+
+# ZooKeeper is required by ClickHouse for replication. Disabled here
+# because the single-replica baseline does not replicate. Enable in the
+# per-env overlay if you bump replicaCount.
+zookeeper:
+  enabled: false
+keeper:
+  enabled: false
+
+metrics:
+  enabled: false

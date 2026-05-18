@@ -21,13 +21,35 @@ SELECT * FROM (
         ForecastCategory                                AS forecast_category,
         StageName                                       AS stage,
         Amount                                          AS amount,
+        -- SF's `Amount` is in record-currency. Single-currency orgs treat it
+        -- as home; multi-currency orgs surface ConvertedAmount but we don't
+        -- assume that mode here. Aliasing keeps gold per-rep aggregates
+        -- comparable across connectors; tenants on multi-currency setups can
+        -- swap this for ConvertedAmount at silver. `acv/tcv/arr` have no
+        -- native SF equivalent (HubSpot computes them from line items).
+        Amount                                          AS amount_home,
+        CAST(NULL AS Nullable(Float64))                 AS acv,
+        CAST(NULL AS Nullable(Float64))                 AS tcv,
+        CAST(NULL AS Nullable(Float64))                 AS arr,
         toDateOrNull(CloseDate)                         AS close_date,
         OwnerId                                         AS owner_id,
+        -- Rep who created the Opportunity record (universal SF audit field).
+        -- Parallels HubSpot's `properties_hs_created_by_user_id`.
+        CAST(CreatedById AS Nullable(String))           AS created_by_user_id,
         AccountId                                       AS account_id,
         toInt64(IsClosed = true)                        AS is_closed,
         toInt64(IsWon = true)                           AS is_won,
         LeadSource                                      AS lead_source,
         Probability                                     AS probability,
+        Type                                            AS deal_type,
+        -- SF has no built-in "closed lost reason" — orgs use a custom field
+        -- (e.g. LossReason__c) that varies per tenant. Expose NULL; tenants
+        -- with the custom field can override at gold.
+        CAST(NULL AS Nullable(String))                  AS lost_reason,
+        -- SF has no native "pipeline" concept (record-types fill this role
+        -- but aren't a stable cross-org primitive). Expose NULL; pipeline
+        -- scoping at gold uses StageName / ForecastCategory.
+        CAST(NULL AS Nullable(String))                  AS pipeline_id,
         toJSONString(map(
             'Type',      coalesce(toString(Type), ''),
             'IsDeleted', if(coalesce(IsDeleted, false), 'true', 'false')

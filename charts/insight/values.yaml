@@ -268,6 +268,14 @@ mariadb:
   # `post-install` so the Secret is already applied when the Job runs,
   # and the Job has an internal wait-for-MariaDB loop so the bundled
   # subchart's first-boot delay doesn't matter.
+  # Reset of a legacy value persisted in helm release storage from a
+  # pre-#406 chart version (`insight-mariadb-initdb-scripts`). The
+  # ConfigMap it referenced was deleted in #406; the bitnami subchart
+  # rendered a `custom-init-scripts` mount as long as this value stayed
+  # truthy, so any MariaDB pod recreation hit FailedMount. Explicit
+  # empty string ensures bitnami emits the StatefulSet without the
+  # mount even when an operator runs `helm upgrade --reuse-values`.
+  initdbScriptsConfigMap: ""
   primary:
     persistence:
       size: 5Gi

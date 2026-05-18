@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.0" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Insight.Identity.Api\Insight.Identity.Api.csproj" />
     <ProjectReference Include="..\..\src\Insight.Identity.Domain\Insight.Identity.Domain.csproj" />
     <ProjectReference Include="..\..\src\Insight.Identity.Infrastructure\Insight.Identity.Infrastructure.csproj" />
   </ItemGroup>

@@ -1,0 +1,54 @@
+##
+## Redpanda — shared base values for the L2 system layer.
+##
+## Chart: redpanda/redpanda (repo: https://charts.redpanda.com)
+## Pin in Makefile: REDPANDA_VERSION
+## Release: `redpanda` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/redpanda-values.yaml.
+##
+## App layer reaches this release as
+## `redpanda.insight-infra.svc.cluster.local:9093` (Kafka API).
+## Redpanda Console runs as a separate release — see system/redpanda-console/.
+##
+
+fullnameOverride: redpanda
+
+# Single broker baseline. Customers wanting a real cluster bump
+# statefulset.replicas (and likely storage.persistentVolume.size) in a
+# per-env overlay.
+statefulset:
+  replicas: 1
+
+# Chart 26.x moved resources from statefulset.resources to top-level
+# `resources:` with the Redpanda-specific cpu.cores / memory.container.max
+# shape (https://docs.redpanda.com/.../manage-resources/).
+resources:
+  cpu:
+    cores: 1
+  memory:
+    container:
+      max: 2Gi
+
+storage:
+  persistentVolume:
+    enabled: true
+    size: 5Gi
+
+# Local / internal-only — TLS and SASL off for the baseline. Real prod
+# envs enable both via overlay; the umbrella's `redpanda.host` and
+# tls/auth values then flow through to producers/consumers.
+tls:
+  enabled: false
+auth:
+  sasl:
+    enabled: false
+
+# Console runs as its own release (system/redpanda-console/); the
+# bundled console subchart is disabled to avoid a second copy.
+console:
+  enabled: false
+
+# External listeners off — the cluster is reached only from inside.
+external:
+  enabled: false

@@ -26,6 +26,19 @@ resources:
 # pre-creates an equivalent Secret.
 existingSecret: ""
 
+# Wait for MariaDB TCP before main container starts. Closes the pod-restart
+# race that the umbrella's pre-install Helm hook (mariadb-init-svcdbs-job)
+# does not cover: hooks only fire on helm install/upgrade, not on docker
+# restart / kubectl delete pod / node drain / helm rollback.
+waitForMariadb:
+  enabled: true
+  image:
+    repository: busybox
+    tag: "1.36"
+  host: ""          # empty → "{{ .Release.Name }}-mariadb"; set for external MariaDB
+  port: 3306
+  timeoutSeconds: 180
+
 livenessProbe:
   httpGet:
     path: /health

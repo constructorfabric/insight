@@ -1,0 +1,45 @@
+##
+## ClusterIssuers for local k3s.
+##
+## - selfsigned-cluster-issuer: hands out cert-manager's built-in
+##   self-signed certs. Browsers will warn; that's fine for local dev.
+## - local-ca: a long-lived self-signed root CA stored as a Secret in
+##   cert-manager's namespace. Issues leaf certs for ingress hosts so
+##   you can trust the root once and avoid per-host warnings.
+##
+## Apply via `make bootstrap-cert-manager ENV=local` (handled after the
+## cert-manager chart is up and the webhook is ready).
+##
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-cluster-issuer
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: local-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: insight-local-ca
+  secretName: local-ca-key-pair
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  duration: 87600h        # 10 years — local dev root
+  renewBefore: 720h       # 30 days
+  issuerRef:
+    name: selfsigned-cluster-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: local-ca
+spec:
+  ca:
+    secretName: local-ca-key-pair

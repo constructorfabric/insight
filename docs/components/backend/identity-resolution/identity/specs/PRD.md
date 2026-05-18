@@ -17,8 +17,10 @@
   - [4.2 Out of Scope](#42-out-of-scope)
 - [5. Functional Requirements](#5-functional-requirements)
   - [5.1 Lookup contract](#51-lookup-contract)
-  - [5.2 Routing and normalisation](#52-routing-and-normalisation)
-  - [5.3 Schema lifecycle](#53-schema-lifecycle)
+  - [5.2 Profile lookup (POST /v1/profiles, Phase 2 — #347)](#52-profile-lookup-post-v1profiles-phase-2--347)
+  - [5.3 Routing and normalisation](#53-routing-and-normalisation)
+  - [5.4 Schema lifecycle](#54-schema-lifecycle)
+  - [5.5 Parent/child edge cache](#55-parentchild-edge-cache)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -181,13 +183,21 @@ visible row is well-formed per the routing rules in ADR-0007.
 
 ### 4.1 In Scope
 
-- `GET /v1/persons/{email}` returning a single `PersonResponse` with
-  parent attributes (`parent_email`, `parent_id`, `parent_person_id`)
-  but no recursive subordinate expansion.
+- `GET /v1/persons/{email}` (Phase 1) returning a single
+  `PersonResponse` with parent attributes (`parent_email`,
+  `parent_id`, `parent_person_id`) but no recursive subordinate
+  expansion. Preserved unchanged by Phase 2.
+- `POST /v1/profiles` (Phase 2, cyberfabric/cyber-insight#347)
+  — single-profile lookup by either email (across all sources) or
+  source-native id (within one source instance), returning a
+  `ProfileResponse` with the full `ids[]` list of current
+  `value_type='id'` bindings. Single-result invariant enforced;
+  multiple matches surface as `422 urn:insight:error:ambiguous_profile`.
 - `GET /health` — DB ping (200 if reachable, 503 otherwise).
 - `GET /healthz` — process liveness (200 `text/plain "ok"`).
 - Tenant resolution by `X-Insight-Tenant-Id` header with optional
   fallback to `IDENTITY__identity__tenant_default_id` config.
+  Same `CompositeTenantContext` used by both endpoints.
 - Lowercase-email lookup against `value_type = 'email'`.
 - Display-name split fallback when explicit `first_name` /
   `last_name` observations are absent.
@@ -196,11 +206,17 @@ visible row is well-formed per the routing rules in ADR-0007.
 
 ### 4.2 Out of Scope
 
-- Recursive subordinate expansion via `parent_person_id` (Phase 2).
-- Real JWT-claim validation (Phase 2 — `JwtTenantContext` is wired in
-  DI as a stub, returns `null`).
-- Multi-result return shape with id-type filtering (Phase 2).
-- Temporal "as-of" queries by date range (Phase 3).
+- Recursive subordinate expansion via `parent_person_id` —
+  cyberfabric/cyber-insight#348 (GET subchart) lands separately.
+- Real JWT-claim validation (Phase 2.5 — `JwtTenantContext` is wired
+  in DI as a stub, returns `null`; api-gateway BFF forwarding lands
+  this).
+- Batch (multi-lookup) profile resolution — Phase 2 surfaces a single
+  lookup per request; multi-lookup body shape is a possible Phase 3
+  extension.
+- Temporal "as-of" queries by date range — Phase 3.
+- Write path (`POST /v1/resolve` golden-record bootstrap) —
+  cyberfabric/cyber-insight#349.
 - Writing observations into `persons` (owned by the seed pipeline
   and a future reconciliation service).
 - Merge / split workflows on person identities.
@@ -292,7 +308,106 @@ unblocks them without coupling to the reconciliation service.
 
 **Actors**: `cpt-insightspec-actor-api-gateway`
 
-### 5.2 Routing and normalisation
+### 5.2 Profile lookup (POST /v1/profiles, Phase 2 — #347)
+
+#### Resolve profile by email or source-native id
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-profile-resolve`
+
+The system **MUST** expose `POST /v1/profiles` accepting a JSON body
+of shape `{ value_type, value, insight_source_type?, insight_source_id? }`
+and returning a single `ProfileResponse` when exactly one current
+observation matches.
+
+The contract has two valid request shapes:
+- `value_type='email'` — `value` is the email to look up across ALL
+  source instances for the tenant. `insight_source_type` and
+  `insight_source_id` **MUST** be absent.
+- `value_type='id'` — `value` is the source-native account id from a
+  `persons.value_type='id'` observation. Both `insight_source_type`
+  and `insight_source_id` **MUST** be supplied.
+
+The handler resolves over the canonical latest-per-source-instance
+partition `(insight_tenant_id, person_id, insight_source_type,
+insight_source_id, value_type)`; observations superseded by a newer
+row on the same partition do not contribute.
+
+**Rationale**: Phase 1 GET endpoint is limited to email lookup; the
+analytics front-end and internal workflows need to resolve by other
+identifier types (source-native id especially for the
+person-by-source workflows in cyberfabric/cyber-insight#344). POST
+with a structured body keeps the contract extensible for Phase 3
+date-range filtering without further URL gymnastics.
+
+**Actors**: `cpt-insightspec-actor-api-gateway`,
+`cpt-insightspec-actor-identity-argo`
+
+#### Surface single-result invariant via 422
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-profile-ambiguous-422`
+
+When `POST /v1/profiles` matches more than one distinct `person_id`
+on the same lookup, the system **MUST** return `422 Unprocessable
+Entity` with an RFC 7807 body of type
+`urn:insight:error:ambiguous_profile`. The body **MUST** echo the
+offending lookup verbatim and include the list of matched
+`person_ids` so the caller can investigate the data invariant
+violation without re-querying.
+
+**Rationale**: The data invariant is "exactly one current person
+per source-instance id, and exactly one current person per email
+across all sources for a tenant". A violation indicates a corrupted
+`persons` table state; silently picking one record would mask the
+problem and risk wrong-person responses. 422 (RFC 9110 §15.5.21
+"semantically correct request, server cannot process due to
+data state") matches the cyberfabric platform convention used by
+analytics-api for similar invariant breaches.
+
+**Actors**: `cpt-insightspec-actor-platform-sre`
+
+#### Project full alias list on response
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-profile-ids-list`
+
+The `ProfileResponse` **MUST** include an `ids[]` array enumerating
+every current `value_type='id'` binding for the resolved person, one
+entry per `(insight_source_type, insight_source_id)` instance. Each
+entry has the shape
+`{ insight_source_type, insight_source_id, value }` and corresponds
+to the latest observation on its partition.
+
+**Rationale**: Consumers downstream (analytics enrichment, future
+front-end org-tree) need the full alias picture without making N
+follow-up lookups per source.
+
+**Actors**: `cpt-insightspec-actor-api-gateway`
+
+#### Validate request body via FluentValidation
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-profile-validation`
+
+The system **MUST** reject malformed `POST /v1/profiles` bodies with
+`400 Bad Request` + RFC 7807 body before reaching the persistence
+layer. The error type **MUST** be one of:
+`urn:insight:error:invalid_value_type`,
+`urn:insight:error:invalid_value`,
+`urn:insight:error:missing_source_for_id`,
+`urn:insight:error:source_not_allowed_for_email`.
+
+Cross-field rules are expressed via FluentValidation's `When(...)`
+predicates; the validator is registered in DI via
+`AddValidatorsFromAssemblyContaining<…>`.
+
+**Rationale**: Cross-field validation (`value_type='id'` requires
+both source fields; `value_type='email'` forbids them) is not
+ergonomically expressible with Data Annotations; FluentValidation
+keeps the rules in one class that is unit-testable independently of
+the endpoint.
+
+**Actors**: `cpt-insightspec-actor-api-gateway`,
+`cpt-insightspec-actor-platform-sre`
+
+### 5.3 Routing and normalisation
 
 #### Display-name split fallback
 
@@ -309,7 +424,7 @@ a connector backfill.
 
 **Actors**: `cpt-insightspec-actor-api-gateway`
 
-### 5.3 Schema lifecycle
+### 5.4 Schema lifecycle
 
 #### Service-owned migrations at startup
 
@@ -366,6 +481,142 @@ stored `alice.smith@company.com` returned 404. Switching the
 column to `utf8mb4_unicode_ci` aligns the storage with how the
 platform conventionally compares emails and UUID strings, and
 removes a fragile per-caller contract.
+
+**Actors**: `cpt-insightspec-actor-api-gateway`,
+`cpt-insightspec-actor-mariadb`
+
+### 5.5 Parent/child edge cache
+
+Phase 1 of cyberfabric/cyber-insight#348 — storage layer for
+organisational tree relationships. No API surface change in Phase 1;
+the cache is read by Phase 2 endpoint enrichment and Phase 3 subchart
+walks.
+
+The cache depends on **`value_type='status'`** observations to close
+edges on employee deactivation (see `cpt-insightspec-fr-identity-org-chart-rebuild`
+below). The canonical value_type set the rebuild reads is therefore
+`parent_email`, `parent_person_id`, `email`, and `status` — these
+must continue to be enumerable as expected `value_type` values in
+new connector dbt models.
+
+**Multi-parent extensibility.** Phase 1 enforces single-parent per
+`(tenant, source_type, source_id, child)`. The schema can be promoted
+to multi-parent if a future source emits multiple supervisors per
+employee (matrix orgs) by adding `parent_person_id` to the primary
+key. The read API contract is already a list, so no consumer-side
+change is required. No source today produces multi-parent data; this
+is captured for future-readers, not implemented in Phase 1.
+
+#### Materialised parent/child edge cache
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-org-chart-table`
+
+The service **MUST** own a `org_chart` table that stores
+direct parent->child edges per
+`(insight_tenant_id, insight_source_type, insight_source_id)` and
+keeps SCD2 history via `valid_from`/`valid_to`. The Phase-1 invariant
+is at most one CURRENT edge per
+`(tenant, source_type, source_id, child_person_id)`; multi-parent
+support (matrix orgs) is deferred to a Phase-1.5 schema change that
+adds `parent_person_id` to the primary key.
+
+**Rationale**: Per-source edges are first-class — Alice's manager in
+BambooHR is not the same edge as her channel admin in Slack — and a
+dedicated cache lets the Phase-3 recursive subchart endpoint be an
+index walk rather than a partition-arithmetic-inside-recursion query.
+
+**Actors**: `cpt-insightspec-actor-mariadb`,
+`cpt-insightspec-actor-seed-pipeline`
+
+#### Rebuild edges from persons deterministically
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-org-chart-rebuild`
+
+The seeder (`seed-persons-from-identity-input.py` step 9) **MUST**
+rebuild `org_chart` from `persons` using the same two-table-
+swap pattern as `account_person_map`: build into
+`org_chart_next`, atomically `RENAME TABLE` into place, drop
+the old artefact. The rebuild **MUST** UNION two sources of edges:
+
+1. `value_type='parent_person_id'` observations (resolved Insight
+   UUIDs that a future reconciliation service will write; currently
+   zero rows but the path stays live).
+2. `value_type='parent_email'` observations resolved by JOIN to the
+   latest `value_type='email'` observation per (tenant, email)
+   partition. The JOIN **MUST** lowercase + trim the
+   `parent_email` side and **MUST** pick at most one `person_id`
+   per (tenant, email) via `ROW_NUMBER() OVER (...) WHERE rn=1`
+   ordered by `created_at DESC` so pending-iresolution
+   accumulation cannot break the UNIQUE key.
+
+Source 1 **MUST** take precedence over Source 2 when both have a
+row for the same `(tenant, person, source_type, source_id)`
+partition (NOT EXISTS guard). Malformed `value_id`s in Source 1
+(not a canonical 36-char UUID) and self-loops in both sources
+**MUST** be skipped pre-insert. Parent_emails that do not match any
+current email-bearer in the tenant **MUST** be skipped and counted
+in the seeder log; the seeder **MUST NOT** synthesise stub persons
+to carry an unresolved `parent_email`.
+
+Source 2 **MUST** intersect each `parent_email` observation period
+with the child's active intervals derived from `value_type='status'`
+observations:
+
+- An active interval starts at any `status` observation whose value
+  is not Inactive/Terminated and the previous observation was either
+  absent or Inactive/Terminated.
+- An active interval ends at the next observation whose value is
+  Inactive/Terminated, or NULL if no such observation exists.
+- A child with NO `status` observations **MUST** be treated as
+  always-active (synthetic [-infinity, NULL) interval) so connectors
+  that emit `parent_email` without `status` do not silently drop
+  every edge.
+- Re-activation (Inactive -> Active) **MUST** produce a second
+  `org_chart` row for the same (child, parent, source)
+  rather than reopening the existing closed row; SCD2 history
+  reflects every deactivation/reactivation cycle honestly.
+
+The seeder **MUST** process BambooHR accounts ahead of other source
+types in step 5 (person_id assignment) so the canonical
+`supervisorEmail` source establishes `person_id`s before downstream
+connectors share emails with it.
+
+After the swap, the seeder **MUST** count two-hop cycles among
+CURRENT edges (`valid_to IS NULL`) — pairs `(A->B)` and `(B->A)` on
+the same `(tenant, source_type, source_id)` — and **MUST** emit a
+WARN line when the count is non-zero, without failing the pipeline.
+Deeper cycles (A->B->C->A) are not detected in Phase 1; the Phase-3
+`/v1/subchart/{person_id}?depth=N` recursive CTE bounds traversal
+by `depth` to make those harmless to consumers.
+
+**Rationale**: Append-only `persons` with latest-per-partition makes
+the rebuild deterministic; symmetry with `account_person_map` lets
+operators reason about both caches the same way. The two-source
+union keeps the cache useful today (Source 2) while making the
+future reconciliation path activate transparently (Source 1). No
+stubs avoids inheriting the deferred operator-resolution work from
+ADR-0002.
+
+**Actors**: `cpt-insightspec-actor-seed-pipeline`,
+`cpt-insightspec-actor-mariadb`
+
+#### Read current parent and children edges
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-org-chart-read`
+
+The service **MUST** expose `IPersonsReader.GetCurrentParentsAsync`
+and `GetCurrentChildrenAsync` returning `OrgChartEdge` records
+scoped to a single tenant. Both **MUST** read CURRENT edges only
+(`valid_to IS NULL`) and **MUST** preserve per-source-instance edge
+granularity in the result. Temporal "as-of T" queries are Phase 3+
+and add a new method on the same interface; the table's
+`idx_valid_from` is the supporting index.
+
+**Rationale**: Phase-2 endpoint enrichment (parent/subordinates
+fields on `/v1/persons` and `/v1/profiles`) and Phase-3 subchart
+recursion both call the same two reads — keeping them on
+`IPersonsReader` keeps the abstraction stable across the three
+phases.
 
 **Actors**: `cpt-insightspec-actor-api-gateway`,
 `cpt-insightspec-actor-mariadb`

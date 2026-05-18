@@ -1,0 +1,47 @@
+# gitleaks rules for insight-gitops.
+#
+# Run as a pre-commit hook. Permissive by default (this repo only contains
+# sealed-secret manifests and Helm values), but blocks the most common
+# accidental leaks.
+
+title = "insight-gitops gitleaks"
+
+[allowlist]
+description = "Files that may contain shaped-but-not-secret material"
+paths = [
+  '''(^|/)environments/[^/]+/sealed-secrets/.*-sealedsecret\.yaml$''',
+  '''(^|/)environments/[^/]+/sealed-secrets/.*-secret-template\.yaml$''',
+  '''(^|/)environments/[^/]+/pub-cert\.pem$''',
+  '''^README\.md$''',
+  '''^docs/.*$''',
+]
+
+[[rules]]
+id = "kube-secret-stringdata"
+description = "Kubernetes Secret with non-empty stringData (raw secret in plaintext)"
+regex = '''stringData:\s*\n(\s+[A-Za-z0-9_.\-]+:\s*['"]?[A-Za-z0-9+/=._\-]{8,})'''
+tags = ["kubernetes", "secret"]
+
+[[rules]]
+id = "kube-secret-data-base64"
+description = "Kubernetes Secret with non-empty data (base64 secret committed)"
+regex = '''(?m)^\s*data:\s*\n(\s+[A-Za-z0-9_.\-]+:\s+[A-Za-z0-9+/=]{20,})'''
+tags = ["kubernetes", "secret"]
+[rules.allowlist]
+description = "SealedSecret encryptedData blocks are expected"
+regexes = ['''encryptedData:''']
+
+[[rules]]
+id = "private-key"
+description = "PEM private key"
+regex = '''-----BEGIN ([A-Z]+ )?PRIVATE KEY-----'''
+
+[[rules]]
+id = "github-token"
+description = "GitHub PAT"
+regex = '''ghp_[A-Za-z0-9]{36,}'''
+
+[[rules]]
+id = "generic-aws-key"
+description = "AWS access key"
+regex = '''AKIA[0-9A-Z]{16}'''

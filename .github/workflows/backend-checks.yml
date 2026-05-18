@@ -48,3 +48,41 @@ jobs:
 
       - name: Run tests
         run: cargo test --all
+
+  dotnet-identity:
+    name: .NET — Identity Service Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend/services/identity
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: NuGet cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('src/backend/services/identity/**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore Insight.Identity.sln
+
+      - name: Build
+        run: dotnet build Insight.Identity.sln --no-restore --configuration Release
+
+      - name: Unit tests
+        run: >
+          dotnet test tests/Insight.Identity.Tests.Unit/Insight.Identity.Tests.Unit.csproj
+          --no-build --configuration Release
+
+      - name: Integration tests (Testcontainers MariaDB)
+        run: >
+          dotnet test tests/Insight.Identity.Tests.Integration/Insight.Identity.Tests.Integration.csproj
+          --no-build --configuration Release

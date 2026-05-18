@@ -1,0 +1,49 @@
+##
+## Redis — shared base values for the L2 system layer.
+##
+## Chart: oci://registry-1.docker.io/bitnamicharts/redis
+## Pin in Makefile: REDIS_VERSION
+## Release: `redis` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/redis-values.yaml.
+##
+## App layer reaches this release as
+## `redis-master.insight-infra.svc.cluster.local:6379`.
+## Used by analytics-api as query-response cache.
+##
+
+fullnameOverride: redis
+
+# Bitnami removed free images from docker.io/bitnami/* in 2025; mirror
+# to bitnamilegacy/* (https://github.com/bitnami/charts/issues/30850).
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  registry: docker.io
+  repository: bitnamilegacy/redis
+
+# Standalone (no replicas) — analytics-api only needs a cache; a Redis
+# failover topology adds complexity without buying much for this use.
+# Flip in a per-env overlay (architecture: replication, replica: …) if
+# a customer requires HA.
+architecture: standalone
+
+# Credentials from environments/<env>/sealed-secrets/insight-infra/redis-creds-sealedsecret.yaml.
+# Required key: redis-password.
+auth:
+  enabled: true
+  existingSecret: redis-creds
+  existingSecretPasswordKey: redis-password
+
+master:
+  persistence:
+    enabled: true
+    size: 1Gi
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+
+metrics:
+  enabled: false

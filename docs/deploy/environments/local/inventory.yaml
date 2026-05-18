@@ -1,0 +1,54 @@
+##
+## environments/local/inventory.yaml
+##
+## Declarative inventory for this env. Drives `make bootstrap`,
+## `make system`, `make seal`, `make deploy`. Fine-grained targets
+## (`make bootstrap-*`, `make system-<svc>`, `make seal-secret …`)
+## stay available for one-off / rotation operations.
+##
+
+# ─── Cluster targeting ─────────────────────────────────────────────────
+kubeContext: insight-local    # required. CLI KUBE_CTX=... overrides,
+                              # then env var, then this value.
+protected: false              # true → `make deploy` requires
+                              #   CONFIRM=yes-deploy-<env>
+
+# ─── Namespaces ────────────────────────────────────────────────────────
+namespaces:
+  services: insight           # L3 app subcharts
+  infra:    insight-infra     # L2 shared stateful
+  # Controller namespaces accept upstream-chart defaults; uncomment
+  # only to override.
+  # ingressNginx:  ingress-nginx
+  # certManager:   cert-manager
+  # sealedSecrets: kube-system
+
+# ─── L3 helm release ───────────────────────────────────────────────────
+release: insight
+
+# ─── L0 — cluster prereqs (drives `make bootstrap`) ────────────────────
+bootstrap:
+  namespaces:    true
+  ingressNginx:  true
+  certManager:   true
+  sealedSecrets: true
+
+# ─── L2 — shared infra (drives `make system`) ──────────────────────────
+system:
+  mariadb:         true
+  clickhouse:      true
+  redis:           true
+  redpanda:        true
+  redpandaConsole: false
+  airbyte:         true
+  argoWorkflows:   true
+
+# ─── Secrets (drives `make seal`) ──────────────────────────────────────
+secrets:
+  infra:
+    - { name: mariadb-creds,    enabled: true }
+    - { name: clickhouse-creds, enabled: true }
+    - { name: redis-creds,      enabled: true }
+  services:
+    - { name: insight-db-creds, enabled: true  }
+    - { name: insight-oidc,     enabled: false }   # sandbox: authDisabled=true

@@ -14,6 +14,10 @@ SELECT * FROM (
         source_id,
         unique_key,
         Id                                              AS user_id,
+        -- HubSpot Owners API exposes two IDs (owners.id + owners.userId);
+        -- SF's User.Id is canonical (no parallel identifier). Emit NULL so
+        -- the column shape matches HubSpot at silver UNION ALL.
+        CAST(NULL AS Nullable(String))                  AS hs_user_id,
         Email                                           AS email,
         FirstName                                       AS first_name,
         LastName                                        AS last_name,

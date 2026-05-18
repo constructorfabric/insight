@@ -1,0 +1,31 @@
+##
+## ingress-nginx — local k3s overlay.
+##
+## Insight env values reference `ingressClassName: nginx`; this controller
+## claims that class. k3s ships its own traefik via the built-in HelmChart
+## manifest; the two coexist without conflict because each only acts on
+## its declared class. To remove traefik permanently, restart k3s with
+## `--disable=traefik` (edit /etc/rancher/k3s/config.yaml) — that is a
+## host-level concern and out of scope for this Helm install.
+##
+## On k3s the LoadBalancer Service type is implemented by built-in
+## servicelb (klipper), which maps the service to host ports 80/443.
+##
+controller:
+  ingressClassResource:
+    name: nginx
+    enabled: true
+    default: true        # claim the cluster default so unannotated ingresses pick this controller
+  watchIngressWithoutClass: true
+  service:
+    type: LoadBalancer
+  config:
+    proxy-body-size: "16m"
+  resources:
+    requests: { cpu: 50m,  memory: 90Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+  metrics:
+    enabled: false       # local dev — no Prometheus to scrape
+
+defaultBackend:
+  enabled: false
