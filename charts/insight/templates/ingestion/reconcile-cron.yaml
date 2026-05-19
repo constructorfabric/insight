@@ -8,6 +8,13 @@ metadata:
   labels:
     app.kubernetes.io/component: reconcile-loop
     {{- include "insight.labels" . | nindent 4 }}
+    {{- with .Values.ingestion.reconcile.argoInstanceId }}
+    # When the cluster's Argo workflow-controller runs with `instanceID:`
+    # set, it only schedules CronWorkflows carrying a matching
+    # controller-instanceid label. Without this, lastScheduled stays
+    # `never` and the reconcile loop silently doesn't tick.
+    workflows.argoproj.io/controller-instanceid: {{ . | quote }}
+    {{- end }}
 spec:
   schedule: {{ required "ingestion.reconcile.schedule is required" .Values.ingestion.reconcile.schedule | quote }}
   concurrencyPolicy: Forbid

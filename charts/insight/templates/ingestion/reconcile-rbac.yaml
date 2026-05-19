@@ -30,6 +30,13 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: [workflows/status]
     verbs: [get, list]
+  # Argo executor (v3.4+) writes step results via the pod SA. Without
+  # this rule, every workflow step under serviceAccountName=insight-
+  # reconcile fails with exit 64 / `workflowtaskresults … is forbidden`
+  # before reaching the user container.
+  - apiGroups: ["argoproj.io"]
+    resources: [workflowtaskresults]
+    verbs: [create, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
