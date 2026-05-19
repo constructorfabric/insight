@@ -1135,7 +1135,12 @@ streams:
         field_name: cursor
       pagination_strategy:
         type: CursorPagination
-        page_size: '{{ config.get(''youtrack_activities_page_size'', 200) }}'
+        # Airbyte CDK declarative_component_schema rejects Jinja templates on
+        # CursorPagination.page_size — the field must be an integer literal.
+        # (OffsetIncrement.page_size, used elsewhere in this file, does
+        # accept templates.) Hard-coded to the prior default; if a custom
+        # page size becomes necessary, plumb it through a different mechanism.
+        page_size: 200
         cursor_value: '{{ response.get(''afterCursor'', '''') }}'
         stop_condition: '{{ not response.get(''hasAfter'') }}'
     requester:
