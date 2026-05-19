@@ -57,7 +57,7 @@ spec:
           command: [bash]
           args:
             - "-c"
-            - "bash /src/ingestion/reconcile-connectors/main.sh"
+            - "bash /ingestion/reconcile-connectors/main.sh"
           env:
             - name: AIRBYTE_URL
               value: {{ include "insight.airbyte.url" . | quote }}
