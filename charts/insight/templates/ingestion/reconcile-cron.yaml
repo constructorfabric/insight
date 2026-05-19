@@ -63,6 +63,14 @@ spec:
               value: {{ include "insight.airbyte.url" . | quote }}
             - name: INSIGHT_NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            # CONNECTORS_DIR — where the toolbox image keeps connectors/
+            # (Dockerfile builds with context=src/ingestion and
+            # `COPY . /ingestion`, so descriptors land at
+            # /ingestion/connectors/<category>/<name>/descriptor.yaml).
+            # lib/discover.sh, lib/validate.sh, lib/connector-naming.sh
+            # and lib/reconcile.sh all hard-require this variable.
+            - name: CONNECTORS_DIR
+              value: "/ingestion/connectors"
             # Airbyte workspace UUID is auto-discovered at runtime via ab_workspace_id (ADR-0009).
             # Bronze destination is auto-resolved-or-created by reconcile from
             # the Clickhouse connection details below (ADR-0012). The legacy
