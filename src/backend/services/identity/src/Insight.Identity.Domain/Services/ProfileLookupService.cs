@@ -60,7 +60,7 @@ public sealed class ProfileLookupService
 
         var personId = personIds[0];
 
-        var person = await _personLookup
+        var (person, observations) = await _personLookup
             .HydrateForProfileAsync(tenantId, personId, options, cancellationToken)
             .ConfigureAwait(false);
         if (person is null)
@@ -70,9 +70,6 @@ public sealed class ProfileLookupService
             return new ProfileLookupResult.NotFound();
         }
 
-        var observations = await _reader
-            .GetLatestObservationsAsync(tenantId, personId, cancellationToken)
-            .ConfigureAwait(false);
         var ids = await _reader
             .GetCurrentSourceIdsAsync(tenantId, personId, cancellationToken)
             .ConfigureAwait(false);

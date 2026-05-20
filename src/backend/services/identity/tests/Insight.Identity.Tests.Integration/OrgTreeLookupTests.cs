@@ -272,13 +272,23 @@ public sealed class OrgTreeLookupTests : IAsyncLifetime
         string valueType,
         string value)
     {
+        // ADR-0007: route by value_type. Identifier-like fields land in
+        // value_id (indexed, case-insensitive collation per ADR-0011);
+        // display_name lands in value_full_text; free-form fields land
+        // in the value TEXT column.
+        var col = valueType switch
+        {
+            "email" or "id" or "username" => "value_id",
+            "display_name" => "value_full_text",
+            _ => "value",
+        };
         await using var conn = new MySqlConnection(_fixture.ConnectionString);
         await conn.OpenAsync().ConfigureAwait(false);
-        const string sql = """
+        var sql = $"""
             INSERT INTO persons
                 (insight_tenant_id, insight_source_type, insight_source_id,
-                 person_id, author_person_id, value_type, value_id, reason)
-            VALUES (@t, @st, @sid, @pid, @a, @vt, @vid, '')
+                 person_id, author_person_id, value_type, {col}, reason)
+            VALUES (@t, @st, @sid, @pid, @a, @vt, @val, '')
             """;
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@t",   TenantId.ToByteArray(bigEndian: true));
@@ -287,7 +297,7 @@ public sealed class OrgTreeLookupTests : IAsyncLifetime
         cmd.Parameters.AddWithValue("@pid", personId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@a",   AuthorPersonId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@vt",  valueType);
-        cmd.Parameters.AddWithValue("@vid", value);
+        cmd.Parameters.AddWithValue("@val", value);
         await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 

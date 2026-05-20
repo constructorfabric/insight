@@ -39,8 +39,13 @@ public sealed class PersonLookupService
         return root;
     }
 
-    /// <summary>Hydrate the org-tree for a caller that already resolved the <c>person_id</c>.</summary>
-    public async Task<Person?> HydrateForProfileAsync(
+    /// <summary>
+    /// Hydrate the org-tree for a caller that already resolved the
+    /// <c>person_id</c>. Returns the assembled <see cref="Person"/>
+    /// together with the observations used to build it so the caller
+    /// can reuse them without a second DB round-trip.
+    /// </summary>
+    public async Task<(Person? Person, IReadOnlyList<PersonObservation> Observations)> HydrateForProfileAsync(
         Guid tenantId,
         Guid personId,
         LookupOptions options,
@@ -48,9 +53,8 @@ public sealed class PersonLookupService
     {
         ArgumentNullException.ThrowIfNull(options);
         var visited = new HashSet<Guid>();
-        var (root, _) = await HydrateAsync(tenantId, personId, options, depth: 0, visited, cancellationToken)
+        return await HydrateAsync(tenantId, personId, options, depth: 0, visited, cancellationToken)
             .ConfigureAwait(false);
-        return root;
     }
 
     private async Task<(Person? Person, IReadOnlyList<PersonObservation> Observations)> HydrateAsync(
@@ -74,18 +78,19 @@ public sealed class PersonLookupService
             return (null, Array.Empty<PersonObservation>());
         }
 
+        // Parent is always hydrated when an org_chart edge exists — it
+        // is a single O(1) lookup and the legacy parent_* contract is
+        // unconditional. Only subordinates recursion is gated by
+        // ExpandSubordinates.
         ParentProjection? parent = null;
-        if (options.ExpandParent)
+        var parentEdges = await _reader
+            .GetCurrentParentsAsync(tenantId, personId, cancellationToken)
+            .ConfigureAwait(false);
+        var parentEdge = FilterToSource(parentEdges, options.OrgChartSourceType);
+        if (parentEdge is not null)
         {
-            var parentEdges = await _reader
-                .GetCurrentParentsAsync(tenantId, personId, cancellationToken)
+            parent = await ResolveParentAsync(tenantId, parentEdge, options.OrgChartSourceType, cancellationToken)
                 .ConfigureAwait(false);
-            var parentEdge = FilterToSource(parentEdges, options.OrgChartSourceType);
-            if (parentEdge is not null)
-            {
-                parent = await ResolveParentAsync(tenantId, parentEdge, options.OrgChartSourceType, cancellationToken)
-                    .ConfigureAwait(false);
-            }
         }
 
         IReadOnlyList<Person> subordinates = Array.Empty<Person>();
@@ -168,16 +173,23 @@ public sealed class PersonLookupService
     }
 }
 
-/// <summary>Lookup behaviour switches passed from the Api layer into the domain services.</summary>
+/// <summary>
+/// Lookup behaviour switches passed from the Api layer into the domain
+/// services. <see cref="ExpandSubordinates"/> is the only kill-switch
+/// here — parent is always hydrated when an <c>org_chart</c> edge exists.
+/// </summary>
 public sealed record LookupOptions(
-    bool ExpandParent,
     bool ExpandSubordinates,
     int MaxDepth,
     string OrgChartSourceType)
 {
-    /// <summary>Expand parent + subordinates from BambooHR, depth-capped at 16.</summary>
+    /// <summary>
+    /// Test-only convenience: expand subordinates from BambooHR,
+    /// depth-capped at 16. Production paths bind from
+    /// <c>AppOptions</c> via <c>PersonsEndpoints.BuildLookupOptions</c>.
+    /// </summary>
     public static readonly LookupOptions Default =
-        new(ExpandParent: true, ExpandSubordinates: true, MaxDepth: 16, OrgChartSourceType: "bamboohr");
+        new(ExpandSubordinates: true, MaxDepth: 16, OrgChartSourceType: "bamboohr");
 }
 
 /// <summary>Parent edge resolved into the fields the assembler writes onto the response.</summary>

@@ -217,7 +217,7 @@ but the formatter stays compact-JSON for log aggregation parity.
 | `ValueTypes` | Static class enumerating canonical `value_type` strings. | Free-form on the DB side; the enumeration documents the set the assembler projects. |
 | `IPersonsReader` | Port — `ResolvePersonIdByEmailAsync` / `GetLatestObservationsAsync` (Phase 1 lookup), `ResolvePersonIdsByEmailAsync` / `ResolvePersonIdsBySourceIdAsync` / `GetCurrentSourceIdsAsync` (profile resolution), `GetCurrentParentsAsync` / `GetCurrentChildrenAsync` (org_chart reads). | Infrastructure provides `PersonsRepository`. |
 | `ITenantContext` | Port — `Guid? Resolve(HttpContext)`. | Implementations: `HeaderTenantContext`, `JwtTenantContext` (stub), `ConfigTenantContext`, `CompositeTenantContext`. |
-| `LookupOptions` | `Insight.Identity.Domain.Services.LookupOptions` — passed from the API layer into both lookup services. Fields: `ExpandParent`, `ExpandSubordinates`, `MaxDepth`, `OrgChartSourceType`. | Bound from `AppOptions` per request. |
+| `LookupOptions` | `Insight.Identity.Domain.Services.LookupOptions` — passed from the API layer into both lookup services. Fields: `ExpandSubordinates`, `MaxDepth`, `OrgChartSourceType`. Parent hydration is unconditional (always populated when an `org_chart` edge exists); only the subordinates recursion is gated. | Bound from `AppOptions` per request via `PersonsEndpoints.BuildLookupOptions`. `LookupOptions.Default` (`ExpandSubordinates: true`, `MaxDepth: 16`, `OrgChartSourceType: "bamboohr"`) is a test-only convenience — production paths never read it. |
 
 ### 3.2 Component Model
 

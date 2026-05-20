@@ -112,6 +112,33 @@ public sealed class OrgTreeEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GET_persons_bob_with_expand_subordinates_false_keeps_supervisor_drops_subtree()
+    {
+        // Kill-switch: subordinates recursion is gated by
+        // identity.expand_subordinates. Parent hydration is unconditional,
+        // so supervisor_email / parent_* must still surface.
+        using var app = new TestApplicationFactory(
+            _fixture.ConnectionString,
+            TenantId,
+            expandSubordinates: false);
+        var client = app.CreateClient();
+        var response = await client.GetAsync(new Uri("/v1/persons/bob@example.com", UriKind.Relative))
+            .ConfigureAwait(false);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>().ConfigureAwait(false);
+
+        doc.GetProperty("email").GetString().Should().Be("bob@example.com");
+
+        // Parent pair still hydrated — Bob reports to Carol via BambooHR.
+        doc.GetProperty("supervisor_email").GetString().Should().Be("carol@example.com");
+        doc.GetProperty("parent_person_id").GetGuid().Should().Be(CarolPersonId);
+
+        // Subtree suppressed — kill-switch wins regardless of seed.
+        doc.GetProperty("subordinates").EnumerateArray().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task POST_profiles_email_returns_same_org_tree_plus_ids_list()
     {
         var client = _app!.CreateClient();

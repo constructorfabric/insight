@@ -136,7 +136,6 @@ public static class PersonsEndpoints
     /// <summary>Translate the config block into the domain-layer lookup options.</summary>
     private static LookupOptions BuildLookupOptions(AppOptions config) =>
         new(
-            ExpandParent: config.ExpandSubordinates,
             ExpandSubordinates: config.ExpandSubordinates,
             MaxDepth: config.MaxSubordinateDepth,
             OrgChartSourceType: config.OrgChartSourceType);
