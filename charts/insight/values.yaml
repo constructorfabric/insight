@@ -139,8 +139,8 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/cyberfabric/insight-toolbox:2026.05.14.09.08-6babdf9" # e.g. "ghcr.io/cyberfabric/insight-toolbox:2026.04.28.10.34-b08b460"
-  jiraEnrichImage: "ghcr.io/cyberfabric/insight-jira-enrich:2026.05.14.09.08-6babdf9" # e.g. "ghcr.io/cyberfabric/insight-jira-enrich:2026.04.21.09.37-ccb013f"
+  toolboxImage: "ghcr.io/cyberfabric/insight-toolbox:2026.05.20.12.43-4598530" # e.g. "ghcr.io/cyberfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  jiraEnrichImage: "ghcr.io/cyberfabric/insight-jira-enrich:2026.05.20.12.43-4598530" # e.g. "ghcr.io/cyberfabric/insight-jira-enrich:2026.04.21.09.37-ccb013f"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
