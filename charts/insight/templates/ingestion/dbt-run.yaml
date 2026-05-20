@@ -32,7 +32,12 @@ spec:
             default: {{ include "insight.clickhouse.port" . | quote }}
           - name: clickhouse_user
             default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
-      activeDeadlineSeconds: 1800
+      # 2h. Incremental dbt runs finish in seconds, but full-refresh
+      # (triggered manually or by a future major-bump dispatch per
+      # PR #456 / ADR-0015) can rebuild the entire staging+silver
+      # layer for a connector. 30m caps were observed killing the
+      # job on hubspot full-refresh.
+      activeDeadlineSeconds: 7200
       script:
         image: {{ `"{{inputs.parameters.toolbox_image}}"` }}
         # IfNotPresent so dev clusters use the locally-built `insight-toolbox:local`

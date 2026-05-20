@@ -192,7 +192,14 @@ spec:
         parameters:
           - name: job_id
           - name: airbyte_url
-      activeDeadlineSeconds: 10800
+      # 24h. Initial full-refresh on a fresh connector with deep
+      # history (youtrack issue_history, hubspot archived streams)
+      # has been observed to run 5h+; the prior 3h ceiling killed
+      # the poll step with SIGTERM (exit 143) before the Airbyte
+      # job finished, leaving the connector in a stuck state on
+      # the very first sync. 24h covers the worst case and still
+      # bounds runaway jobs.
+      activeDeadlineSeconds: 86400
       script:
         image: python:3.12-alpine
         command: [python3]
