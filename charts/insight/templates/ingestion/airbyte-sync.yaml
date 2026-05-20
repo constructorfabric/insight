@@ -192,14 +192,14 @@ spec:
         parameters:
           - name: job_id
           - name: airbyte_url
-      # 24h. Initial full-refresh on a fresh connector with deep
-      # history (youtrack issue_history, hubspot archived streams)
-      # has been observed to run 5h+; the prior 3h ceiling killed
-      # the poll step with SIGTERM (exit 143) before the Airbyte
-      # job finished, leaving the connector in a stuck state on
-      # the very first sync. 24h covers the worst case and still
-      # bounds runaway jobs.
-      activeDeadlineSeconds: 86400
+      # 48h absolute backstop only — the script below enforces a
+      # progress-based (idle) timeout, so a legitimate long sync
+      # (youtrack issue_history initial full-refresh, hubspot archived
+      # streams) can run as long as it is actually emitting records
+      # without tripping a wall-clock cap. This number is the runaway
+      # ceiling: if the polling logic itself wedges or Airbyte returns
+      # bytes-emitting churn forever, k8s still kills the pod.
+      activeDeadlineSeconds: 172800
       script:
         image: python:3.12-alpine
         command: [python3]
@@ -218,6 +218,18 @@ spec:
             value: {{ `"{{inputs.parameters.job_id}}"` }}
           - name: AIRBYTE_URL
             value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+          # Progress-watchdog knobs. The poll loop tracks a tuple of
+          # (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
+          # on the latest attempt. Any change resets the idle timer;
+          # no change for IDLE_THRESHOLD_SECONDS → exit with a clear
+          # "no progress" failure (distinct from the SIGTERM that
+          # activeDeadlineSeconds produces). Override per-env via
+          # Helm values if a tenant has unusually slow paginated
+          # streams (e.g. heavily-rate-limited APIs).
+          - name: POLL_INTERVAL_SECONDS
+            value: {{ default 30  .Values.ingestion.airbyteSync.pollIntervalSeconds | quote }}
+          - name: IDLE_THRESHOLD_SECONDS
+            value: {{ default 1800 .Values.ingestion.airbyteSync.idleThresholdSeconds | quote }}
         source: |
           import urllib.request, urllib.error, json, time, sys, os
           def oauth_token():
@@ -230,8 +242,31 @@ spec:
                   f"{os.environ['AIRBYTE_URL']}/api/v1/applications/token",
                   data=body, headers={"Content-Type": "application/json"})
               return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
+
+          def attempt_progress(resp):
+              # Latest attempt's totalStats — emitted-by-source counters
+              # tick on every record/state message Airbyte sees, so they
+              # are the cheapest reliable progress signal (cheaper than
+              # streamStats, which is per-stream and grows).
+              attempts = resp.get("attempts") or []
+              if not attempts:
+                  return None
+              a = attempts[-1].get("attempt", {})
+              ts = a.get("totalStats") or {}
+              return (
+                  a.get("status"),
+                  int(ts.get("bytesEmitted")        or a.get("bytesSynced")   or 0),
+                  int(ts.get("recordsEmitted")      or a.get("recordsSynced") or 0),
+                  int(ts.get("stateMessagesEmitted") or 0),
+              )
+
           job_id = int(os.environ["JOB_ID"])
           airbyte_url = os.environ["AIRBYTE_URL"]
+          poll_interval = int(os.environ["POLL_INTERVAL_SECONDS"])
+          idle_threshold = int(os.environ["IDLE_THRESHOLD_SECONDS"])
+
+          last_progress = None
+          last_progress_at = time.time()
           while True:
               # Token TTL is short (~minutes); re-mint per loop iteration.
               token = oauth_token()
@@ -242,12 +277,23 @@ spec:
                   headers=headers)
               resp = json.load(urllib.request.urlopen(req, timeout=30))
               status = resp["job"]["status"]
-              print(f"Job {job_id} status: {status}", flush=True)
+              progress = attempt_progress(resp)
+              now = time.time()
+              if progress is not None and progress != last_progress:
+                  last_progress = progress
+                  last_progress_at = now
+                  print(f"Job {job_id} status={status} bytes={progress[1]} records={progress[2]} states={progress[3]}", flush=True)
+              else:
+                  idle_for = int(now - last_progress_at)
+                  print(f"Job {job_id} status={status} no-progress-for={idle_for}s threshold={idle_threshold}s", flush=True)
+                  if idle_for > idle_threshold:
+                      print(f"FAIL: Airbyte job has not emitted any record/byte/state for {idle_for}s (threshold {idle_threshold}s). Treating as stuck.", flush=True)
+                      sys.exit(2)
               if status == "succeeded":
                   print("Sync complete")
                   sys.exit(0)
               elif status in ("failed", "cancelled"):
                   print(f"Sync failed: {status}")
                   sys.exit(1)
-              time.sleep(30)
+              time.sleep(poll_interval)
 {{- end }}
