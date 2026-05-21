@@ -4,9 +4,9 @@
 #
 # Public surface:
 #   argo_render_cronworkflow CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
-#                            CONNECTOR_DIR INSIGHT_SOURCE_ID
+#                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE
 #   argo_apply_cronworkflow  CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
-#                            CONNECTOR_DIR INSIGHT_SOURCE_ID
+#                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE
 #   argo_delete_cronworkflow CONNECTOR TENANT
 #   argo_submit_sync_trigger CONNECTOR CONNECTION_NAME TENANT \
 #                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE [BUMP_KIND]
@@ -26,24 +26,26 @@ ARGO_TPL_DIR="$( cd "${ARGO_SCRIPT_DIR}/../templates" && pwd )"
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 argo_render_cronworkflow() {
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
-  local connector_dir="$5" insight_source_id="$6"
+  local insight_source_id="$5" dbt_select="$6" enrich_image="$7"
   python3 "${ARGO_PY_DIR}/render_cronworkflow.py" \
     --connector "$connector" \
     --connection-name "$connection_name" \
     --schedule "$schedule" \
     --tenant "$tenant" \
-    --connector-dir "$connector_dir" \
     --insight-source-id "$insight_source_id" \
+    --dbt-select "$dbt_select" \
+    --enrich-image "$enrich_image" \
     --tpl "${ARGO_TPL_DIR}/cron-workflow.yaml.tpl"
 }
 # @cpt-end:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 
 argo_apply_cronworkflow() {
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
-  local connector_dir="$5" insight_source_id="$6"
+  local insight_source_id="$5" dbt_select="$6" enrich_image="$7"
   local rendered apply_out
   rendered="$(argo_render_cronworkflow "$connector" "$connection_name" \
-                "$schedule" "$tenant" "$connector_dir" "$insight_source_id")" || return 1
+                "$schedule" "$tenant" "$insight_source_id" \
+                "$dbt_select" "$enrich_image")" || return 1
   if ! apply_out="$(printf '%s' "$rendered" | kubectl apply -f - 2>&1)"; then
     printf '%s: kubectl apply failed: %s\n' \
       "$connector" "$apply_out" >&2

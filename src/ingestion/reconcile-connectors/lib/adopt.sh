@@ -178,8 +178,9 @@ print(json.dumps(out))
 # ---------------------------------------------------------------------------
 _adopt_one_connector() {
   local name="$1" connector_dir="$2" version="$3" type="$4" cdk_image="$5"
-  local dry_run="$6" opt_connector="$7" workspace_id="$8"
-  local definitions_json="$9" sources_json="${10}" connections_json="${11}"
+  local enrich_image="$6" dbt_select="$7"
+  local dry_run="$8" opt_connector="$9" workspace_id="${10}"
+  local definitions_json="${11}" sources_json="${12}" connections_json="${13}"
   set +e
 
   if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
@@ -273,7 +274,8 @@ for x in json.load(sys.stdin): print(x)')
     [[ -n "${source_id_label}" ]] || source_id_label="main"
     # ADOPT_DRY_RUN guarded above (would_call branch).
     if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                                "${connector_dir}" "${source_id_label}" >/dev/null 2>&1; then
+                                "${source_id_label}" "${dbt_select}" \
+                                "${enrich_image}" >/dev/null 2>&1; then
       log_line INFO "${name}: created Argo CronWorkflow ${name}-${tenant}-sync"
     else
       # ADOPT_DRY_RUN guarded above (would_call branch).
@@ -281,10 +283,10 @@ for x in json.load(sys.stdin): print(x)')
       return 1
     fi
   fi
-  # silence unused-arg shellcheck warning (workspace_id is plumbed
-  # for symmetry with reconcile.sh; connector_dir is now consumed
-  # by the CronWorkflow render step above).
-  : "${workspace_id}"
+  # silence unused-arg shellcheck warning (workspace_id and connector_dir
+  # are plumbed for symmetry with reconcile.sh; descriptor-derived
+  # parameters now flow via dbt_select / enrich_image arguments).
+  : "${workspace_id}" "${connector_dir}"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-if-matched
   return 0
 }
@@ -315,18 +317,15 @@ adopt_run() {
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-list-actual
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
-  # adopt does not consume enrich_image / dbt_select but reads the full TSV
-  # schema disc_load_descriptors emits — a partial read would silently drop
-  # trailing fields and mask later schema drift.
   while IFS=$'\t' read -r name connector_dir version type cdk_image enrich_image dbt_select; do
     [[ -n "${name}" ]] || continue
     if ! _adopt_one_connector "${name}" "${connector_dir}" "${version}" "${type}" "${cdk_image}" \
+         "${enrich_image}" "${dbt_select}" \
          "${dry_run}" "${opt_connector}" "${workspace_id}" \
          "${definitions_json}" "${sources_json}" "${connections_json}"; then
       log_line ERROR "${name}: adopt failed (continuing with next)"
       _ADOPT_FAILED=$((_ADOPT_FAILED + 1))
     fi
-    : "${enrich_image:=}" "${dbt_select:=}"  # silence unused; reserved for future adopt logic
   done <<<"${descriptors_tsv}"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-loop
 

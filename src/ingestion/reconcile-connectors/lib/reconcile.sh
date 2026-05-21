@@ -1074,7 +1074,8 @@ print(json.dumps(d))
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     log_line INFO "${name}: would create/update Argo CronWorkflow"
   elif ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                                  "${connector_dir}" "${source_id_label}" >/dev/null 2>&1; then
+                                  "${source_id_label}" "${dbt_select}" \
+                                  "${enrich_image}" >/dev/null 2>&1; then
     log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
     rc=1
   fi
