@@ -65,28 +65,5 @@ internal static class Sql
         WHERE rn = 1
         """;
 
-    /// <summary>
-    /// Direct subordinates by latest <c>parent_person_id</c> observation
-    /// per source; reserved for Phase 2.
-    /// </summary>
-    public const string DirectSubordinateIds = """
-        WITH ranked AS (
-            SELECT
-                person_id,
-                value_id,
-                ROW_NUMBER() OVER (
-                    PARTITION BY person_id, insight_source_type, insight_source_id
-                    ORDER BY created_at DESC, id DESC
-                ) AS rn
-            FROM persons
-            WHERE insight_tenant_id = @tenant_id
-              AND value_type = 'parent_person_id'
-        )
-        SELECT DISTINCT person_id
-        FROM ranked
-        WHERE rn = 1
-          AND value_id = @parent_person_id
-        """;
-
     public const string Healthcheck = "SELECT 1";
 }

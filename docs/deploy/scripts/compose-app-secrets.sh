@@ -25,8 +25,10 @@
 #   .mariadb.host    .mariadb.port   .mariadb.username    .mariadb.database
 #   .clickhouse.host .clickhouse.port .clickhouse.username .clickhouse.database
 #   .redis.host      .redis.port
-#   .identity.databaseName    (defaults to "identity")
-#   .identity.tenantDefaultId (optional; empty disables the resolver)
+#   .identity.databaseName       (defaults to "identity")
+#   .identity.tenantDefaultId    (optional; empty disables the resolver)
+#   .identity.orgChartSourceType (optional; empty falls back to the
+#                                 appsettings default `bamboohr`)
 #
 # Cleartext passwords live only in this shell's memory; they are never
 # written to disk and never echoed.
@@ -56,7 +58,8 @@ CH_DB=$(   yq -r '.clickhouse.database'      "$VALUES")
 RD_HOST=$( yq -r '.redis.host'               "$VALUES")
 RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
 IDENTITY_DB=$(yq -r '.identity.databaseName       // "identity"' "$VALUES")
-IDENTITY_TENANT_DEFAULT=$(yq -r '.identity.tenantDefaultId // ""' "$VALUES")
+IDENTITY_TENANT_DEFAULT=$(yq -r '.identity.tenantDefaultId    // ""' "$VALUES")
+IDENTITY_ORG_CHART_SOURCE=$(yq -r '.identity.orgChartSourceType // ""' "$VALUES")
 
 for v in MDB_HOST MDB_USER MDB_DB CH_HOST CH_USER CH_DB RD_HOST; do
   [ -n "${!v}" ] && [ "${!v}" != "null" ] || {
@@ -148,6 +151,9 @@ stringData:
 EOF
   if [ -n "$IDENTITY_TENANT_DEFAULT" ] && [ "$IDENTITY_TENANT_DEFAULT" != "null" ]; then
     echo "  IDENTITY__identity__tenant_default_id: \"${IDENTITY_TENANT_DEFAULT}\""
+  fi
+  if [ -n "$IDENTITY_ORG_CHART_SOURCE" ] && [ "$IDENTITY_ORG_CHART_SOURCE" != "null" ]; then
+    echo "  IDENTITY__identity__org_chart_source_type: \"${IDENTITY_ORG_CHART_SOURCE}\""
   fi
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
 echo "composed → $NS_APP/insight-identity-config"

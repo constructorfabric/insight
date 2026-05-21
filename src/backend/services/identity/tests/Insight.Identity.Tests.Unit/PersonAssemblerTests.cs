@@ -16,7 +16,7 @@ public sealed class PersonAssemblerTests
     [Fact]
     public void Returns_null_for_empty_observations()
     {
-        var person = PersonAssembler.Assemble(PersonId, Array.Empty<PersonObservation>(), Array.Empty<Person>());
+        var person = PersonAssembler.Assemble(PersonId, Array.Empty<PersonObservation>(), parent: null, Array.Empty<Person>());
         person.Should().BeNull();
     }
 
@@ -29,7 +29,7 @@ public sealed class PersonAssemblerTests
             Obs(ValueTypes.Email, "new@example.com", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
         };
 
-        var person = PersonAssembler.Assemble(PersonId, obs, Array.Empty<Person>());
+        var person = PersonAssembler.Assemble(PersonId, obs, parent: null, Array.Empty<Person>());
 
         person.Should().NotBeNull();
         person!.Email.Should().Be("new@example.com");
@@ -44,7 +44,7 @@ public sealed class PersonAssemblerTests
             Obs(ValueTypes.Email, "alice@example.com"),
         };
 
-        var person = PersonAssembler.Assemble(PersonId, obs, Array.Empty<Person>());
+        var person = PersonAssembler.Assemble(PersonId, obs, parent: null, Array.Empty<Person>());
 
         person.Should().NotBeNull();
         person!.FirstName.Should().Be("Alice");
@@ -61,42 +61,70 @@ public sealed class PersonAssemblerTests
             Obs(ValueTypes.LastName, "Smith"),
         };
 
-        var person = PersonAssembler.Assemble(PersonId, obs, Array.Empty<Person>());
+        var person = PersonAssembler.Assemble(PersonId, obs, parent: null, Array.Empty<Person>());
 
         person!.FirstName.Should().Be("Alice");
         person.LastName.Should().Be("Smith");
     }
 
     [Fact]
-    public void Carries_through_org_chart_attributes()
+    public void Parent_projection_fills_supervisor_and_legacy_fields()
     {
-        var parentPerson = Guid.NewGuid();
-        var obs = new[]
-        {
-            Obs(ValueTypes.Email, "alice@example.com"),
-            Obs(ValueTypes.ParentEmail, "bob@example.com"),
-            Obs(ValueTypes.ParentId, "BOB-7"),
-            Obs(ValueTypes.ParentPersonId, parentPerson.ToString("D")),
-        };
+        var parentGuid = Guid.NewGuid();
+        var obs = new[] { Obs(ValueTypes.Email, "alice@example.com") };
+        var parent = new ParentProjection(
+            PersonId: parentGuid,
+            Email: "bob@example.com",
+            DisplayName: "Jones, Bob",
+            SourceNativeId: "BOB-7");
 
-        var person = PersonAssembler.Assemble(PersonId, obs, Array.Empty<Person>());
+        var person = PersonAssembler.Assemble(PersonId, obs, parent, Array.Empty<Person>());
 
-        person!.ParentEmail.Should().Be("bob@example.com");
+        person!.SupervisorEmail.Should().Be("bob@example.com");
+        person.SupervisorName.Should().Be("Jones, Bob");
+        person.ParentEmail.Should().Be("bob@example.com");
         person.ParentId.Should().Be("BOB-7");
-        person.ParentPersonId.Should().Be(parentPerson);
+        person.ParentPersonId.Should().Be(parentGuid);
     }
 
     [Fact]
-    public void Empty_strings_for_missing_attributes()
+    public void Null_parent_leaves_all_parent_fields_null_even_with_stale_observations()
+    {
+        // Stale value_type='parent_*' observations must not bleed
+        // through when the org_chart edge is absent.
+        var obs = new[]
+        {
+            Obs(ValueTypes.Email, "alice@example.com"),
+            // Raw string literals: these value_types no longer
+            // contribute to relationships (org_chart is source-of-truth)
+            // and intentionally do not exist as ValueTypes constants.
+            Obs("parent_email", "stale-from-persons@example.com"),
+            Obs("parent_id", "STALE-1"),
+            Obs("parent_person_id", Guid.NewGuid().ToString("D")),
+        };
+
+        var person = PersonAssembler.Assemble(PersonId, obs, parent: null, Array.Empty<Person>());
+
+        person!.SupervisorEmail.Should().BeNull();
+        person.SupervisorName.Should().BeNull();
+        person.ParentEmail.Should().BeNull();
+        person.ParentId.Should().BeNull();
+        person.ParentPersonId.Should().BeNull();
+    }
+
+    [Fact]
+    public void Empty_strings_for_missing_core_attributes()
     {
         var obs = new[] { Obs(ValueTypes.Email, "alice@example.com") };
 
-        var person = PersonAssembler.Assemble(PersonId, obs, Array.Empty<Person>());
+        var person = PersonAssembler.Assemble(PersonId, obs, parent: null, Array.Empty<Person>());
 
         person!.DisplayName.Should().BeEmpty();
         person.Department.Should().BeEmpty();
         person.JobTitle.Should().BeEmpty();
         person.Status.Should().BeEmpty();
+        person.SupervisorEmail.Should().BeNull();
+        person.SupervisorName.Should().BeNull();
         person.ParentEmail.Should().BeNull();
         person.ParentPersonId.Should().BeNull();
     }

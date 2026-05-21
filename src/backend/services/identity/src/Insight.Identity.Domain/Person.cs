@@ -1,9 +1,8 @@
 namespace Insight.Identity.Domain;
 
 /// <summary>
-/// Person projection returned by the API. Field shape matches the legacy
-/// Rust stub for drop-in replacement; <see cref="PersonId"/> is added so
-/// downstream services can pivot off the resolved Insight UUID.
+/// Person projection returned by <c>GET /v1/persons/{email}</c>,
+/// including the org-tree (single supervisor + recursive subordinates).
 /// </summary>
 public sealed record Person(
     Guid PersonId,
@@ -15,6 +14,8 @@ public sealed record Person(
     string Division,
     string JobTitle,
     string Status,
+    string? SupervisorEmail,
+    string? SupervisorName,
     string? ParentEmail,
     string? ParentId,
     Guid? ParentPersonId,

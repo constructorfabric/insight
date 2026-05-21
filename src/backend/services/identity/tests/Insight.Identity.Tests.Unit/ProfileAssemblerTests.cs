@@ -14,6 +14,29 @@ public sealed class ProfileAssemblerTests
     private static PersonObservation Obs(string valueType, string value, string source = "bamboohr", DateTime? createdAt = null) =>
         new(PersonId, source, SourceId, valueType, value, createdAt ?? new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
 
+    private static Person FlatPerson(Guid? parentPersonId = null,
+                                     string? supervisorEmail = null,
+                                     string? supervisorName = null,
+                                     string? parentEmail = null,
+                                     string? parentId = null,
+                                     IReadOnlyList<Person>? subordinates = null) =>
+        new(
+            PersonId: PersonId,
+            Email: "alice@example.com",
+            DisplayName: "Alice Smith",
+            FirstName: "Alice",
+            LastName: "Smith",
+            Department: "Eng",
+            Division: "R&D",
+            JobTitle: "SWE",
+            Status: "Active",
+            SupervisorEmail: supervisorEmail,
+            SupervisorName: supervisorName,
+            ParentEmail: parentEmail,
+            ParentId: parentId,
+            ParentPersonId: parentPersonId,
+            Subordinates: subordinates ?? Array.Empty<Person>());
+
     [Fact]
     public void Assembles_full_profile_with_ids_list()
     {
@@ -32,7 +55,7 @@ public sealed class ProfileAssemblerTests
             new PersonSourceId("slack", Guid.NewGuid(), "U03ABC"),
         };
 
-        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, ids);
+        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, FlatPerson(), ids);
 
         profile.PersonId.Should().Be(PersonId);
         profile.InsightTenantId.Should().Be(TenantId);
@@ -50,7 +73,7 @@ public sealed class ProfileAssemblerTests
     {
         var obs = new[] { Obs(ValueTypes.Email, "alice@example.com") };
 
-        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, Array.Empty<PersonSourceId>());
+        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, FlatPerson(), Array.Empty<PersonSourceId>());
 
         profile.Department.Should().BeNull();
         profile.Division.Should().BeNull();
@@ -58,6 +81,8 @@ public sealed class ProfileAssemblerTests
         profile.Status.Should().BeNull();
         profile.Username.Should().BeNull();
         profile.EmployeeId.Should().BeNull();
+        profile.SupervisorEmail.Should().BeNull();
+        profile.SupervisorName.Should().BeNull();
         profile.ParentEmail.Should().BeNull();
         profile.ParentId.Should().BeNull();
         profile.ParentPersonId.Should().BeNull();
@@ -73,7 +98,7 @@ public sealed class ProfileAssemblerTests
             Obs(ValueTypes.Division, "   "),
         };
 
-        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, Array.Empty<PersonSourceId>());
+        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, FlatPerson(), Array.Empty<PersonSourceId>());
 
         profile.Department.Should().BeNull();
         profile.Division.Should().BeNull();
@@ -88,7 +113,7 @@ public sealed class ProfileAssemblerTests
             Obs(ValueTypes.DisplayName, "Smith, Alice"),
         };
 
-        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, Array.Empty<PersonSourceId>());
+        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, FlatPerson(), Array.Empty<PersonSourceId>());
 
         profile.FirstName.Should().Be("Alice");
         profile.LastName.Should().Be("Smith");
@@ -103,35 +128,50 @@ public sealed class ProfileAssemblerTests
             Obs(ValueTypes.Email, "new@example.com", createdAt: new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
         };
 
-        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, Array.Empty<PersonSourceId>());
+        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, FlatPerson(), Array.Empty<PersonSourceId>());
 
         profile.Email.Should().Be("new@example.com");
     }
 
     [Fact]
-    public void Surfaces_parent_attributes_when_present()
+    public void Borrows_parent_fields_from_org_tree_projection()
     {
         var parentGuid = Guid.NewGuid();
-        var obs = new[]
-        {
-            Obs(ValueTypes.Email, "alice@example.com"),
-            Obs(ValueTypes.ParentEmail, "boss@example.com"),
-            Obs(ValueTypes.ParentId, "BOSS-001"),
-            Obs(ValueTypes.ParentPersonId, parentGuid.ToString("D")),
-        };
+        var obs = new[] { Obs(ValueTypes.Email, "alice@example.com") };
+        var orgTree = FlatPerson(
+            parentPersonId: parentGuid,
+            supervisorEmail: "boss@example.com",
+            supervisorName: "Boss, Big",
+            parentEmail: "boss@example.com",
+            parentId: "BOSS-001");
 
-        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, Array.Empty<PersonSourceId>());
+        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, orgTree, Array.Empty<PersonSourceId>());
 
+        profile.SupervisorEmail.Should().Be("boss@example.com");
+        profile.SupervisorName.Should().Be("Boss, Big");
         profile.ParentEmail.Should().Be("boss@example.com");
         profile.ParentId.Should().Be("BOSS-001");
         profile.ParentPersonId.Should().Be(parentGuid);
     }
 
     [Fact]
+    public void Borrows_subordinates_list_from_org_tree_projection()
+    {
+        var subordinate = FlatPerson() with { PersonId = Guid.NewGuid(), Email = "report@example.com" };
+        var orgTree = FlatPerson(subordinates: new[] { subordinate });
+
+        var obs = new[] { Obs(ValueTypes.Email, "alice@example.com") };
+        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, orgTree, Array.Empty<PersonSourceId>());
+
+        profile.Subordinates.Should().HaveCount(1);
+        profile.Subordinates[0].Email.Should().Be("report@example.com");
+    }
+
+    [Fact]
     public void Empty_ids_list_is_preserved_not_synthesised()
     {
         var obs = new[] { Obs(ValueTypes.Email, "alice@x.com") };
-        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, Array.Empty<PersonSourceId>());
+        var profile = ProfileAssembler.Assemble(PersonId, TenantId, obs, FlatPerson(), Array.Empty<PersonSourceId>());
         profile.Ids.Should().BeEmpty();
     }
 }

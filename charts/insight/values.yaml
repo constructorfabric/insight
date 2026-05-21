@@ -438,6 +438,11 @@ identity:
   # `X-Insight-Tenant-Id` or the API returns 400
   # `urn:insight:error:tenant_unresolved`.
   tenantDefaultId: ""
+  # Which `org_chart.insight_source_type` drives the supervisor /
+  # subordinates projection on /v1/persons and /v1/profiles. Empty
+  # string falls back to the appsettings default `bamboohr`; set
+  # explicitly here to pin the active source per environment.
+  orgChartSourceType: ""
   # When deploy=true the umbrella also generates `insight-identity-config`
   # with IDENTITY__* env vars sourced from the auto-generated MariaDB
   # credentials in `insight-db-creds`.

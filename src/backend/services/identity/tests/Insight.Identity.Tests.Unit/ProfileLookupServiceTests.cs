@@ -5,29 +5,24 @@ using Xunit;
 
 namespace Insight.Identity.Tests.Unit;
 
-/// <summary>
-/// Unit tests for <see cref="ProfileLookupService"/> covering routing,
-/// invariant enforcement, and the defensive "resolver succeeded but
-/// hydration came back empty" branch — that branch is unreachable in
-/// healthy production (resolve and hydration both read <c>persons</c>
-/// in the same transaction window) but represents a distinct code path
-/// that must not silently produce a hollow profile.
-/// </summary>
 public sealed class ProfileLookupServiceTests
 {
     private static readonly Guid TenantId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static readonly Guid PersonId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
     private static readonly Guid SourceId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
 
+    private static readonly LookupOptions Options = LookupOptions.Default;
+
     [Fact]
     public async Task Returns_NotFound_when_resolver_returns_empty_list()
     {
         var reader = new StubReader { ResolveEmail = Array.Empty<Guid>() };
-        var svc = new ProfileLookupService(reader);
+        var svc = new ProfileLookupService(reader, new PersonLookupService(reader));
 
         var result = await svc.ResolveAsync(
             TenantId,
             new ResolveProfileQuery(ResolveProfileKind.Email, "ghost@nowhere.test", null, null),
+            Options,
             CancellationToken.None);
 
         result.Should().BeOfType<ProfileLookupResult.NotFound>();
@@ -38,11 +33,12 @@ public sealed class ProfileLookupServiceTests
     {
         var ids = new[] { PersonId, Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee") };
         var reader = new StubReader { ResolveEmail = ids };
-        var svc = new ProfileLookupService(reader);
+        var svc = new ProfileLookupService(reader, new PersonLookupService(reader));
 
         var result = await svc.ResolveAsync(
             TenantId,
             new ResolveProfileQuery(ResolveProfileKind.Email, "shared@example.test", null, null),
+            Options,
             CancellationToken.None);
 
         result.Should().BeOfType<ProfileLookupResult.Ambiguous>()
@@ -52,21 +48,18 @@ public sealed class ProfileLookupServiceTests
     [Fact]
     public async Task Returns_NotFound_when_resolver_succeeds_but_hydration_is_empty()
     {
-        // Defensive path: resolver returns exactly one person_id, but
-        // GetLatestObservationsAsync comes back empty. Treat as not-found
-        // rather than synthesise a hollow Profile (assembler would throw
-        // or produce a record full of nulls).
         var reader = new StubReader
         {
             ResolveEmail = new[] { PersonId },
             LatestObservations = Array.Empty<PersonObservation>(),
             CurrentSourceIds = Array.Empty<PersonSourceId>(),
         };
-        var svc = new ProfileLookupService(reader);
+        var svc = new ProfileLookupService(reader, new PersonLookupService(reader));
 
         var result = await svc.ResolveAsync(
             TenantId,
             new ResolveProfileQuery(ResolveProfileKind.Email, "ghost@example.test", null, null),
+            Options,
             CancellationToken.None);
 
         result.Should().BeOfType<ProfileLookupResult.NotFound>();
@@ -76,7 +69,7 @@ public sealed class ProfileLookupServiceTests
     public async Task Routes_to_source_id_resolver_for_id_lookups()
     {
         var reader = new StubReader { ResolveSourceId = new[] { PersonId } };
-        var svc = new ProfileLookupService(reader);
+        var svc = new ProfileLookupService(reader, new PersonLookupService(reader));
 
         var query = new ResolveProfileQuery(
             ResolveProfileKind.SourceId,
@@ -84,13 +77,8 @@ public sealed class ProfileLookupServiceTests
             SourceType: "bamboohr",
             SourceId: SourceId);
 
-        // Hydration empty here — proves routing happened (email resolver
-        // would have been called and returned the configured empty list).
-        var result = await svc.ResolveAsync(TenantId, query, CancellationToken.None);
+        var result = await svc.ResolveAsync(TenantId, query, Options, CancellationToken.None);
 
-        // Empty hydration falls through to the defensive NotFound; the
-        // important assertion is that ResolveSourceId path was taken,
-        // which the stub records.
         result.Should().BeOfType<ProfileLookupResult.NotFound>();
         reader.SourceIdCalls.Should().Be(1);
         reader.EmailCalls.Should().Be(0);
@@ -124,14 +112,9 @@ public sealed class ProfileLookupServiceTests
         public Task<IReadOnlyList<PersonSourceId>> GetCurrentSourceIdsAsync(Guid tenantId, Guid personId, CancellationToken cancellationToken)
             => Task.FromResult(CurrentSourceIds);
 
-        // Phase-1 surface — not used by ProfileLookupService.
         public Task<Guid?> ResolvePersonIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
             => Task.FromResult<Guid?>(null);
 
-        public Task<IReadOnlyList<Guid>> GetDirectSubordinateIdsAsync(Guid tenantId, Guid parentPersonId, CancellationToken cancellationToken)
-            => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
-
-        // org_chart surface (#348 Phase 1) — not used by ProfileLookupService.
         public Task<IReadOnlyList<OrgChartEdge>> GetCurrentParentsAsync(Guid tenantId, Guid childPersonId, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
 

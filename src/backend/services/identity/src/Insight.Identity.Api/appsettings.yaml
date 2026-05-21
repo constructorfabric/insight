@@ -1,13 +1,7 @@
-# Non-secret defaults. Everything that depends on the deployment (DB
-# credentials, tenant pinning) lives in env vars — mirrors the
-# IDENTITY__* convention from the retired Rust stub:
-#
-#   • In cluster: `insight-identity-config` Kubernetes Secret mounted
-#     via `envFrom.secretRef` in the Helm chart.
-#   • Local F5: `Properties/launchSettings.json`.
-#   • Local CLI: env vars from `.env.local` (template at
-#     `src/backend/services/identity/.env.local.example`) or
-#     `dotnet user-secrets set 'mariadb:url' '...'`.
+# Non-secret defaults. Deployment-specific values (DB credentials,
+# tenant pinning) come from env vars via the `insight-identity-config`
+# Secret in cluster, `Properties/launchSettings.json` for local F5, or
+# `.env.local` / `dotnet user-secrets` for local CLI.
 #
 # MariaDB pool/timeout knobs are intentionally absent — zero/unset = use
 # MySqlConnector defaults (ConnectionTimeout=15s, CommandTimeout=30s).
@@ -15,8 +9,9 @@
 # `SET NAMES` round-trip and surfaces as `Connect Timeout expired`.
 identity:
   bind_addr: "0.0.0.0:8082"
-  expand_subordinates: false
-  max_subordinate_depth: 5
+  expand_subordinates: true
+  max_subordinate_depth: 16
+  org_chart_source_type: "bamboohr"
 
 Serilog:
   MinimumLevel:

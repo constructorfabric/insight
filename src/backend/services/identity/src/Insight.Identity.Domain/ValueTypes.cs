@@ -5,9 +5,11 @@ namespace Insight.Identity.Domain;
 /// </summary>
 /// <remarks>
 /// The DB column is a free-form <c>VARCHAR(50)</c> and is intentionally
-/// extensible — these constants enumerate the subset this service knows how
-/// to project into the <c>Person</c> response. Unknown <c>value_type</c>s
-/// are read but not surfaced.
+/// extensible — these constants enumerate the subset this service knows
+/// how to project onto the response. Unknown <c>value_type</c>s are
+/// read but not surfaced. Relationship fields (<c>parent_*</c>) are not
+/// in this set: org-tree edges are sourced from <c>org_chart</c>, not
+/// from observations.
 /// </remarks>
 public static class ValueTypes
 {
@@ -21,17 +23,4 @@ public static class ValueTypes
     public const string Status = "status";
     public const string EmployeeId = "employee_id";
     public const string Username = "username";
-
-    /// <summary>Source-native supervisor email (BambooHR <c>supervisorEmail</c>).</summary>
-    public const string ParentEmail = "parent_email";
-
-    /// <summary>Source-native supervisor identifier (BambooHR <c>supervisorEId</c>).</summary>
-    public const string ParentId = "parent_id";
-
-    /// <summary>
-    /// Resolved Insight <c>person_id</c> of the supervisor, written by the
-    /// reconciliation service. Used as the sole edge for the org tree in
-    /// Phase 2 lookups.
-    /// </summary>
-    public const string ParentPersonId = "parent_person_id";
 }

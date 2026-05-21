@@ -21,15 +21,18 @@ and the (forthcoming) reconciliation service.
 
 The umbrella emits Secret `insight-identity-config` automatically when
 `identity.deploy=true`. It carries `IDENTITY__mariadb__url` (derived
-from auto-generated MariaDB credentials in `insight-db-creds`) and
-optionally `IDENTITY__identity__tenant_default_id` (from
-`identity.tenantDefaultId`).
+from auto-generated MariaDB credentials in `insight-db-creds`),
+`IDENTITY__identity__tenant_default_id` (from `identity.tenantDefaultId`,
+optional), and `IDENTITY__identity__org_chart_source_type` (from
+`identity.orgChartSourceType`, optional — empty falls back to the
+`appsettings.yaml` default `bamboohr`).
 
 ## API surface
 
 | Endpoint | Description |
 |---|---|
-| `GET /v1/persons/{email}` | Resolve person by email (case-insensitive). Returns 404 when no current observation matches. |
+| `GET /v1/persons/{email}` | **Deprecated** — see PRD §7.1; new callers use `POST /v1/profiles`. Resolve person by email (case-insensitive). Returns 404 when no current observation matches. |
+| `POST /v1/profiles` | Profile lookup by email or source-native id. Body-form replacement for the deprecated path-form. |
 | `GET /health` | DB ping. 200 / 503. |
 | `GET /healthz` | Process liveness. 200 `text/plain "ok"`. |
 

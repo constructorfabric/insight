@@ -5,7 +5,9 @@
 ##
 ## Config Secret: `insight-identity-config` carries
 ##   IDENTITY__mariadb__url
-##   IDENTITY__identity__tenant_default_id (optional)
+##   IDENTITY__identity__tenant_default_id     (optional)
+##   IDENTITY__identity__org_chart_source_type (optional; falls back to
+##                                              appsettings default `bamboohr`)
 ## Emitted by the umbrella chart when `identity.deploy=true`. For
 ## helmfile-only deploys the Secret must already exist in the namespace.
 ##

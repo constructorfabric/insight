@@ -3,37 +3,47 @@ using Microsoft.Extensions.Configuration;
 namespace Insight.Identity.Api.Configuration;
 
 /// <summary>
-/// Top-level service options. Mirrors the Rust service's
-/// <c>IDENTITY__*</c> snake_case env layout: <c>IDENTITY__bind_addr</c>,
-/// <c>IDENTITY__database_url</c>, <c>IDENTITY__tenant_default_id</c>.
-/// Configuration providers wired in <c>Program.cs</c> normalize the
-/// double-underscore prefix and case; <see cref="ConfigurationKeyNameAttribute"/>
-/// bridges the snake_case keys to PascalCase properties because the default
-/// binder only does case-insensitive matching, not separator translation.
+/// Top-level service options bound from the <c>identity</c>
+/// configuration section. The <c>IDENTITY__*</c> double-underscore
+/// env-var layout is normalized by the configuration providers in
+/// <c>Program.cs</c>; <see cref="ConfigurationKeyNameAttribute"/>
+/// bridges the snake_case keys to PascalCase properties because the
+/// default binder only does case-insensitive matching, not separator
+/// translation.
 /// </summary>
 public sealed class AppOptions
 {
     public const string SectionName = "identity";
 
+    /// <summary>HTTP listener bind address.</summary>
     [ConfigurationKeyName("bind_addr")]
     public string BindAddr { get; init; } = "0.0.0.0:8082";
 
     /// <summary>
-    /// Default tenant UUID used when no <c>X-Insight-Tenant-Id</c> header
-    /// arrives and JWT auth is not yet wired. Mirrors the Phase 1 flow
-    /// the Rust stub used for local development.
+    /// Default tenant UUID used when no <c>X-Insight-Tenant-Id</c>
+    /// header arrives and JWT auth is not yet wired.
     /// </summary>
     [ConfigurationKeyName("tenant_default_id")]
     public Guid? TenantDefaultId { get; init; }
 
     /// <summary>
-    /// Phase 2 toggle. Phase 1 deployments leave this <c>false</c> so the
-    /// API returns a single person without recursive subordinate
-    /// expansion.
+    /// Kill switch for the recursive org-tree walk on
+    /// <c>/v1/persons</c> and <c>/v1/profiles</c>.
     /// </summary>
     [ConfigurationKeyName("expand_subordinates")]
-    public bool ExpandSubordinates { get; init; }
+    public bool ExpandSubordinates { get; init; } = true;
 
+    /// <summary>Hard cap on org-tree recursion depth.</summary>
     [ConfigurationKeyName("max_subordinate_depth")]
-    public int MaxSubordinateDepth { get; init; } = 5;
+    public int MaxSubordinateDepth { get; init; } = 16;
+
+    /// <summary>
+    /// Which <c>insight_source_type</c> drives the org-tree
+    /// projection (parent + subordinates) returned by the lookup
+    /// endpoints. Other sources still contribute to attribute
+    /// hydration and the <c>ids[]</c> list but stay invisible to the
+    /// tree.
+    /// </summary>
+    [ConfigurationKeyName("org_chart_source_type")]
+    public string OrgChartSourceType { get; init; } = "bamboohr";
 }

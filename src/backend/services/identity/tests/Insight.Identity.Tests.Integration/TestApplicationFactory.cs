@@ -19,11 +19,16 @@ public sealed class TestApplicationFactory : WebApplicationFactory<Program>
 {
     private readonly string _databaseConnectionString;
     private readonly Guid? _defaultTenantId;
+    private readonly bool? _expandSubordinates;
 
-    public TestApplicationFactory(string databaseConnectionString, Guid? defaultTenantId)
+    public TestApplicationFactory(
+        string databaseConnectionString,
+        Guid? defaultTenantId,
+        bool? expandSubordinates = null)
     {
         _databaseConnectionString = databaseConnectionString;
         _defaultTenantId = defaultTenantId;
+        _expandSubordinates = expandSubordinates;
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -48,6 +53,10 @@ public sealed class TestApplicationFactory : WebApplicationFactory<Program>
             if (_defaultTenantId is { } tenant)
             {
                 dict["identity:tenant_default_id"] = tenant.ToString("D");
+            }
+            if (_expandSubordinates is { } expand)
+            {
+                dict["identity:expand_subordinates"] = expand ? "true" : "false";
             }
             config.AddInMemoryCollection(dict);
         });

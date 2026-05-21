@@ -59,12 +59,8 @@ BambooHR, Cursor, Claude Admin, Jira, Slack, MS Entra, and others. PR
 #214 introduced an append-only `persons` observation log that unifies
 every connector behind a single schema (one row per
 `(insight_tenant_id, person_id, insight_source_type, insight_source_id,
-value_type, value_hash)`). Until this service shipped, the only
-synchronous consumer was a Rust stub that loaded BambooHR `employees`
-into an in-memory `HashMap` at startup — single-source, restart-coupled
-to the bronze snapshot, and unable to surface non-BambooHR observations.
-
-The platform needs a synchronous lookup path that (a) sees every source
+value_type, value_hash)`). The platform needs a synchronous lookup
+path on top of that log that (a) sees every source
 the seed pipeline writes, (b) returns live data without a pod restart,
 (c) is tenant-safe by construction, and (d) follows the cyberfabric
 ASP.NET Core / Serilog / RFC 7807 conventions established for other
@@ -298,13 +294,49 @@ win; the default is opt-in for single-tenant clusters.
 
 - [x] `p1` - **ID**: `cpt-insightspec-fr-identity-lookup-parent`
 
-The system **MUST** surface `parent_email`, `parent_id`, and
-`parent_person_id` on the response when those `value_type`s exist for
-the resolved person.
+The system **MUST** surface `supervisor_email`, `supervisor_name`, and
+the legacy alias triple `parent_email` / `parent_id` /
+`parent_person_id` on the response. All five fields **MUST** be
+hydrated from the parent edge in `org_chart` filtered to a single
+configured source (default `bamboohr`, controlled by
+`IDENTITY__identity__org_chart_source_type`). Stale
+`value_type='parent_*'` observations in `persons` **MUST NOT** be
+projected onto the response — the org-tree source of truth is
+`org_chart`.
 
-**Rationale**: Org-tree consumers need the supervisor edge today even
-though recursive expansion is Phase 2; surfacing the raw observations
-unblocks them without coupling to the reconciliation service.
+**Rationale**: Sourcing the supervisor edge from `org_chart` makes
+the response shape symmetric with the recursive subordinates walk —
+both come from the same materialised SCD2 cache filtered to one
+source. The legacy `parent_*` triple is kept additive so existing
+api-gateway adapters keep working unchanged.
+
+**Actors**: `cpt-insightspec-actor-api-gateway`
+
+#### Recursively expand subordinates
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-lookup-subordinates`
+
+The system **MUST** populate `subordinates[]` on the response with the
+full recursive subtree below the resolved person, walking
+`org_chart` filtered to the same configured source as the parent
+edge. Recursion **MUST** stop on:
+<list type="bullet">
+  <item>cycles — already-visited `person_id` (defence-in-depth on top
+        of the seeder's two-hop check),</item>
+  <item>missing observations — a `child_person_id` with no rows in
+        `persons` is skipped (no hollow leaves),</item>
+  <item>depth cap — `IDENTITY__identity__max_subordinate_depth`
+        (default 16, well above any realistic org tree).</item>
+</list>
+Subordinates **MUST** use the same wire shape as the top-level
+person (`PersonResponse` is self-referential). Empty list is the
+"leaf" signal.
+
+**Rationale**: Surfaces the recursive supervisor tree directly on
+the response so callers do not need a second round-trip per
+subordinate. Cross-source enrichment (matrix orgs, multi-source
+trees) is reserved for the `GET /v1/subchart/{person_id}?depth=N`
+endpoint tracked under #348 Phase 3.
 
 **Actors**: `cpt-insightspec-actor-api-gateway`
 
@@ -379,6 +411,26 @@ to the latest observation on its partition.
 **Rationale**: Consumers downstream (analytics enrichment, future
 front-end org-tree) need the full alias picture without making N
 follow-up lookups per source.
+
+**Actors**: `cpt-insightspec-actor-api-gateway`
+
+#### Project the same org-tree shape as /v1/persons
+
+- [x] `p1` - **ID**: `cpt-insightspec-fr-identity-profile-org-tree`
+
+The `POST /v1/profiles` response **MUST** carry the same org-tree
+fields the `GET /v1/persons/{email}` response carries:
+`supervisor_email`, `supervisor_name`, the legacy `parent_*` triple,
+and the recursive `subordinates[]` walk. The hydration **MUST** use
+the same `org_chart_source_type` config knob and produce identical
+tree shapes for the same resolved `person_id` regardless of which
+endpoint the caller used.
+
+**Rationale**: Phase 2 of #348 unifies the two read paths so the
+front-end and api-gateway can use either endpoint interchangeably
+without losing org-tree context. Implementation: `ProfileLookupService`
+delegates the tree walk to `PersonLookupService.HydrateForProfileAsync`,
+keeping the recursion in one place.
 
 **Actors**: `cpt-insightspec-actor-api-gateway`
 
@@ -712,19 +764,204 @@ this NFR forces the explicit bytes binding everywhere.
 
 **Type**: HTTP/REST endpoint.
 
-**Stability**: stable for Phase 1 contract; Phase 2 will add a POST
-counterpart accepting `{id, id_type}` without breaking this GET.
+**Stability**: **deprecated** — new integrations must use [`POST /v1/profiles`](#post-v1profiles--profile-resolution) instead. The path-form lookup keeps the caller's email in the URL, which leaks into observability surfaces this service does not control (api-gateway access logs, ingress logs, browser history, CDN/proxy logs) even though our own request-logging redacts the segment to `/v1/persons/<redacted>`. Existing callers continue to work; the service emits `Deprecation: true` and `Link: <…/v1/profiles>; rel="successor-version"` on every response per RFC 8594. Removal is scheduled with the cyber-insight v1 release cut.
 
-**Description**: Resolves `{email}` to a single `PersonResponse`
-JSON body. Comparison is case-insensitive at the storage layer
+**Stability history**: Phase 2 of #348 added `supervisor_email`,
+`supervisor_name`, and the `subordinates[]` recursion onto the existing
+shape — both are additive (non-breaking) per the policy below.
+
+**Description**: Resolves `{email}` to a single `PersonResponse` JSON
+body with the org-tree projection from the BambooHR slice of
+`org_chart` (`identity.org_chart_source_type` config knob — defaults
+to `bamboohr`). Comparison is case-insensitive at the storage layer
 (ADR-0011). Tenant supplied via `X-Insight-Tenant-Id` header
 (preferred) or config default.
-Returns 200 + body on hit, 404 + RFC 7807 on miss, 400 + RFC 7807
-on missing tenant, 5xx on service error.
+Returns 200 + body on hit, 404 + RFC 7807 on miss, 400 + RFC 7807 on
+missing tenant, 5xx on service error.
 
 **Breaking Change Policy**: Major version bump for response-shape
 changes; additive fields are non-breaking; the URL template is
 stable across minor versions.
+
+**Request**
+
+```http
+GET /v1/persons/alice@example.com
+Accept: application/json
+X-Insight-Tenant-Id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+```
+
+No request body. Path parameter `{email}` carries the lookup key
+(URL-encoded if it contains a `+`, `@`, or non-ASCII characters).
+
+**Response 200 OK**
+
+```jsonc
+{
+  "person_id": "11111111-1111-1111-1111-111111111111",
+  "email": "alice@example.com",
+  "display_name": "Alice Smith",
+  "first_name": "Alice",
+  "last_name": "Smith",
+  "department": "Engineering",
+  "division": "R&D",
+  "job_title": "Staff Engineer",
+  "status": "Active",
+  // Hydrated from the BambooHR `org_chart` edge — Bob's own observations.
+  "supervisor_email": "bob@example.com",
+  "supervisor_name": "Jones, Bob",
+  // Legacy alias triple mirroring the same edge (kept for older callers).
+  "parent_email": "bob@example.com",
+  "parent_id": "BOB-7",
+  "parent_person_id": "22222222-2222-2222-2222-222222222222",
+  // Recursive BambooHR-only walk down `org_chart`; same shape, full depth.
+  "subordinates": [
+    {
+      "person_id": "33333333-...",
+      "email": "dave@example.com",
+      "display_name": "Dave Ng",
+      "first_name": "Dave",
+      "last_name": "Ng",
+      "department": "Engineering",
+      "division": "R&D",
+      "job_title": "Senior Engineer",
+      "status": "Active",
+      "supervisor_email": "alice@example.com",
+      "supervisor_name": "Alice Smith",
+      "parent_email": "alice@example.com",
+      "parent_id": "ALICE-1",
+      "parent_person_id": "11111111-1111-1111-1111-111111111111",
+      "subordinates": []
+    }
+  ]
+}
+```
+
+**Response 404 Not Found** — `RFC 7807` body, `type:
+urn:insight:error:person_not_found`.
+
+**Response 400 Bad Request** — `RFC 7807` body, `type:
+urn:insight:error:tenant_unresolved` when neither header nor
+`tenant_default_id` resolve a tenant UUID.
+
+#### `POST /v1/profiles` — Profile resolution
+
+- [x] `p1` - **ID**: `cpt-insightspec-interface-identity-profile-resolve`
+
+**Type**: HTTP/REST endpoint (JSON request body).
+
+**Stability**: stable. Phase 2 of #348 added the same org-tree fields
+as the GET endpoint (additive).
+
+**Description**: Resolves a single `person_id` either by email across
+all sources for the tenant (`value_type="email"`) or by source-native
+account id within one source instance (`value_type="id"`). Surfaces
+the full `ids[]` projection (all current `value_type='id'`
+observations, one per source instance) and the same BambooHR-scoped
+org-tree (`supervisor_*`, legacy `parent_*`, `subordinates[]`) the
+GET endpoint emits. Multiple matching `person_id`s violate the
+single-result invariant and produce a 422 RFC 7807 problem-details
+body of type `urn:insight:error:ambiguous_profile` carrying the
+original request body plus the list of conflicting `person_id`s
+(ADR-0009).
+
+**Breaking Change Policy**: Major version bump for response-shape
+changes; additive fields are non-breaking; the URL is stable across
+minor versions.
+
+**Request — by email**
+
+```http
+POST /v1/profiles
+Content-Type: application/json
+X-Insight-Tenant-Id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+
+{
+  "value_type": "email",
+  "value": "alice@example.com",
+  "insight_source_type": null,
+  "insight_source_id": null
+}
+```
+
+**Request — by source-native id**
+
+```http
+POST /v1/profiles
+Content-Type: application/json
+X-Insight-Tenant-Id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+
+{
+  "value_type": "id",
+  "value": "alice-bamboo-001",
+  "insight_source_type": "bamboohr",
+  "insight_source_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+}
+```
+
+`insight_source_type` and `insight_source_id` MUST be null for
+`value_type="email"` and MUST both be present for `value_type="id"`.
+
+**Response 200 OK**
+
+```jsonc
+{
+  "person_id": "11111111-1111-1111-1111-111111111111",
+  "insight_tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "email": "alice@example.com",
+  "display_name": "Alice Smith",
+  "first_name": "Alice",
+  "last_name": "Smith",
+  "department": "Engineering",
+  "division": "R&D",
+  "job_title": "Staff Engineer",
+  "status": "Active",
+  "username": "asmith",
+  "employee_id": "ALICE-1",
+  // Org-tree (same shape as `/v1/persons/{email}`, BambooHR-only).
+  "supervisor_email": "bob@example.com",
+  "supervisor_name": "Jones, Bob",
+  "parent_email": "bob@example.com",
+  "parent_id": "BOB-7",
+  "parent_person_id": "22222222-2222-2222-2222-222222222222",
+  "subordinates": [
+    /* recursive PersonResponse[] — empty when leaf */
+  ],
+  // All current source-native id bindings (one per source instance).
+  "ids": [
+    { "insight_source_type": "bamboohr", "insight_source_id": "bbbb...", "value": "alice-bamboo-001" },
+    { "insight_source_type": "slack",    "insight_source_id": "eeee...", "value": "U03ABCDEF" }
+  ]
+}
+```
+
+Optional attribute fields that have no observation are omitted from the
+JSON body (the assembler emits `null` and the serializer drops them).
+
+**Response 404 Not Found** — `RFC 7807` body, `type:
+urn:insight:error:person_not_found`.
+
+**Response 400 Bad Request** — `RFC 7807` body with one of:
+`urn:insight:error:tenant_unresolved`,
+`urn:insight:error:invalid_value_type`,
+`urn:insight:error:missing_source_type`, etc. (one URN per call —
+first FluentValidation failure wins).
+
+**Response 422 Unprocessable Entity** —
+`urn:insight:error:ambiguous_profile`. Body extends the standard
+RFC 7807 shape with the original `lookup` body and the conflicting
+`person_ids[]`:
+
+```jsonc
+{
+  "type": "urn:insight:error:ambiguous_profile",
+  "title": "Data Invariant Violated",
+  "status": 422,
+  "detail": "lookup matched 2 distinct person_ids; invariant requires exactly 1",
+  "lookup": { "value_type": "email", "value": "shared@example.com", "insight_source_type": null, "insight_source_id": null },
+  "person_ids": ["11111111-...", "33333333-..."]
+}
+```
 
 #### `GET /health` — Database readiness
 
@@ -739,6 +976,26 @@ healthy, 503 otherwise. Wired as the Helm readiness probe.
 
 **Breaking Change Policy**: No payload shape — never breaking.
 
+**Request**
+
+```http
+GET /health
+```
+
+No body, no headers required.
+
+**Response 200 OK**
+
+```jsonc
+{ "status": "healthy" }
+```
+
+**Response 503 Service Unavailable**
+
+```jsonc
+{ "status": "unhealthy" }
+```
+
 #### `GET /healthz` — Process liveness
 
 - [x] `p1` - **ID**: `cpt-insightspec-interface-identity-healthz`
@@ -752,6 +1009,26 @@ does not touch MariaDB. Wired as the Helm liveness probe.
 
 **Breaking Change Policy**: No payload shape — never breaking.
 
+**Request**
+
+```http
+GET /healthz
+```
+
+**Response 200 OK** — `text/plain` body:
+
+```
+ok
+```
+
+#### Future endpoints (#348 Phase 3)
+
+`GET /v1/subchart/{person_id}?depth=N` — recursive subchart walk via a
+depth-bounded MariaDB CTE over `org_chart`. Tracked separately under
+the #348 Phase 3 work; the contract will land in a follow-up PR and
+the endpoint will share the same `OrgChartSourceType` config knob as
+this section's endpoints.
+
 ### 7.2 External Integration Contracts
 
 #### `IDENTITY__*` env-var contract
@@ -761,9 +1038,20 @@ does not touch MariaDB. Wired as the Helm liveness probe.
 **Direction**: required from operator (Helm umbrella or BYO Secret).
 
 **Protocol/Format**: ASP.NET Core configuration with double-underscore
-section delimiter (`IDENTITY__mariadb__url`,
-`IDENTITY__identity__tenant_default_id`, etc.). YAML overlay supported
-via `appsettings.yaml`.
+section delimiter. YAML overlay supported via `appsettings.yaml`.
+
+Known keys (snake-case, all under `IDENTITY__identity__*` unless
+noted):
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `IDENTITY__mariadb__url` | URL string | — | MariaDB connection (`mysql://user:pass@host:port/db`). One of `url`/`connection_string` is required. |
+| `IDENTITY__mariadb__connection_string` | KV string | — | MySqlConnector key/value form, used when the URL shape cannot express needed options. |
+| `IDENTITY__identity__bind_addr` | string | `0.0.0.0:8082` | Listener bind address. |
+| `IDENTITY__identity__tenant_default_id` | UUID | — | Fallback tenant when no `X-Insight-Tenant-Id` header arrives. Useful for single-tenant clusters and local dev. |
+| `IDENTITY__identity__expand_subordinates` | bool | `true` | Kill switch for the recursive org-tree walk on `/v1/persons` and `/v1/profiles`. |
+| `IDENTITY__identity__max_subordinate_depth` | int | `16` | Hard cap on the recursion depth. |
+| `IDENTITY__identity__org_chart_source_type` | string | `bamboohr` | Which `insight_source_type` drives the org-tree projection on `/v1/persons` and `/v1/profiles`. |
 
 **Compatibility**: Backward-compatible field additions only; renames
 require a major version bump of the chart's umbrella schema.

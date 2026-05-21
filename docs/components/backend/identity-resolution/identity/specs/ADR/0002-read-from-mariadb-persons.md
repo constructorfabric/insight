@@ -87,15 +87,15 @@ is enforced at build time.
 
 ### Read ClickHouse bronze BambooHR employees directly
 
-- Good, because the data is already there in bronze for the legacy
-  Rust stub.
+- Good, because the data is already materialised in bronze by the
+  BambooHR connector.
 - Bad, because it is BambooHR-only; multi-source coverage is lost.
 - Bad, because the synchronous path depends on ClickHouse
   availability — a slower store with eventual-consistency semantics
   for late-arriving connector rows.
 - Bad, because `bronze_bamboohr.employees` is a snapshot view — first
-  install lacks the table entirely, which is the failure mode the
-  Rust stub's startup-load pattern actually triggers.
+  install lacks the table entirely, which forces a startup-load
+  pattern that crash-loops the pod until the first connector sync.
 
 ### Read both — MariaDB primary, ClickHouse fallback
 

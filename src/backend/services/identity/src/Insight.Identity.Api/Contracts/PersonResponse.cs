@@ -4,9 +4,9 @@ using Insight.Identity.Domain;
 namespace Insight.Identity.Api.Contracts;
 
 /// <summary>
-/// Wire-format projection of <see cref="Person"/>. Snake-case JSON
-/// matches the legacy Rust stub so existing api-gateway adapters keep
-/// working through the migration window.
+/// Wire-format projection of <see cref="Person"/> returned by
+/// <c>GET /v1/persons/{email}</c>. Snake-case JSON keeps existing
+/// api-gateway adapters compatible.
 /// </summary>
 public sealed record PersonResponse(
     [property: JsonPropertyName("person_id")] Guid PersonId,
@@ -18,6 +18,8 @@ public sealed record PersonResponse(
     [property: JsonPropertyName("division")] string Division,
     [property: JsonPropertyName("job_title")] string JobTitle,
     [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("supervisor_email")] string? SupervisorEmail,
+    [property: JsonPropertyName("supervisor_name")] string? SupervisorName,
     [property: JsonPropertyName("parent_email")] string? ParentEmail,
     [property: JsonPropertyName("parent_id")] string? ParentId,
     [property: JsonPropertyName("parent_person_id")] Guid? ParentPersonId,
@@ -39,6 +41,8 @@ public sealed record PersonResponse(
             person.Division,
             person.JobTitle,
             person.Status,
+            person.SupervisorEmail,
+            person.SupervisorName,
             person.ParentEmail,
             person.ParentId,
             person.ParentPersonId,

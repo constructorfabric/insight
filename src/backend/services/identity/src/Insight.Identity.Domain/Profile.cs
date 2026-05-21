@@ -3,7 +3,8 @@ namespace Insight.Identity.Domain;
 /// <summary>
 /// Domain shape returned by <c>POST /v1/profiles</c> — the latest
 /// projection of a person's identity assembled across all sources.
-/// Unlike <see cref="Person"/> (Phase 1 GET response):
+/// Differs from <see cref="Person"/> (the <c>GET /v1/persons/{email}</c>
+/// shape):
 /// <list type="bullet">
 ///   <item>Optional fields are nullable rather than empty strings — the
 ///         API layer hides nulls from JSON via
@@ -12,8 +13,11 @@ namespace Insight.Identity.Domain;
 ///         scope of the resolved record.</item>
 ///   <item>Carries <see cref="Ids"/> — full list of source-native id
 ///         bindings, one per source instance.</item>
-///   <item>No subordinates list (Phase 2 org-tree is a separate
-///         endpoint, see cyberfabric/cyber-insight#348).</item>
+///   <item>The org-tree fields (<see cref="SupervisorEmail"/>,
+///         <see cref="SupervisorName"/>, <see cref="Subordinates"/>,
+///         legacy <c>parent_*</c>) follow the same single-source walk
+///         <see cref="Person"/> uses; both endpoints emit identical
+///         tree shapes for the same resolved person.</item>
 /// </list>
 /// </summary>
 public sealed record Profile(
@@ -29,7 +33,10 @@ public sealed record Profile(
     string? Status,
     string? Username,
     string? EmployeeId,
+    string? SupervisorEmail,
+    string? SupervisorName,
     string? ParentEmail,
     string? ParentId,
     Guid? ParentPersonId,
+    IReadOnlyList<Person> Subordinates,
     IReadOnlyList<Services.PersonSourceId> Ids);

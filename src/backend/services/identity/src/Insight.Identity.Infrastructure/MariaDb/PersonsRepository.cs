@@ -5,13 +5,9 @@ using MySqlConnector;
 namespace Insight.Identity.Infrastructure.MariaDb;
 
 /// <summary>
-/// MariaDB-backed <see cref="IPersonsReader"/>. UUIDs are passed as raw
-/// 16-byte values to match the <c>BINARY(16)</c> storage. We use
-/// <see cref="Guid.ToByteArray(bool)">big-endian</see> serialization
-/// (RFC 4122 wire order) on both sides because the Python seeder and
-/// the Rust service write UUID bytes in that order — .NET's default
-/// mixed-endian <c>ToByteArray()</c> would silently fail every lookup
-/// against rows produced by either of them.
+/// MariaDB-backed <see cref="IPersonsReader"/>. UUIDs round-trip as
+/// raw 16-byte big-endian values (RFC 4122 wire order) — see
+/// <c>cpt-insightspec-nfr-identity-uuid-roundtrip</c>.
 /// </summary>
 public sealed class PersonsRepository : IPersonsReader
 {
@@ -62,31 +58,6 @@ public sealed class PersonsRepository : IPersonsReader
         return list;
     }
 
-    public async Task<IReadOnlyList<Guid>> GetDirectSubordinateIdsAsync(
-        Guid tenantId,
-        Guid parentPersonId,
-        CancellationToken cancellationToken)
-    {
-        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var cmd = new MySqlCommand(Sql.DirectSubordinateIds, conn);
-        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
-        // `parent_person_id` is intentionally stored as a 36-char string in
-        // `persons.value_id` (VARCHAR(320) COLLATE utf8mb4_bin) — see
-        // ADR-0007. The reconciliation service writes it via the same
-        // textual representation. NOT BINARY(16) like the other UUID
-        // columns; do not "fix" this to ToByteArray.
-        cmd.Parameters.AddWithValue("@parent_person_id", parentPersonId.ToString("D"));
-
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        var ids = new List<Guid>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            var bytes = (byte[])reader["person_id"];
-            ids.Add(new Guid(bytes, bigEndian: true));
-        }
-        return ids;
-    }
-
     public Task<IReadOnlyList<OrgChartEdge>> GetCurrentParentsAsync(
         Guid tenantId,
         Guid childPersonId,
@@ -107,16 +78,6 @@ public sealed class PersonsRepository : IPersonsReader
             ("@parent_person_id", parentPersonId),
             cancellationToken);
 
-    /// <summary>
-    /// Shared reader for the two <c>org_chart</c> SELECTs: the
-    /// SQL shape, projection, and binary-to-Guid conversion are
-    /// identical — only the WHERE-bound parameter differs (child vs
-    /// parent). Keeping one body avoids drift between the two readers.
-    /// Unlike <see cref="GetDirectSubordinateIdsAsync"/>, both bound
-    /// values here are BINARY(16) — `org_chart` stores person
-    /// ids in the same binary form as the rest of the schema (the
-    /// textual `value_id` form is a `persons`-only quirk per ADR-0007).
-    /// </summary>
     private async Task<IReadOnlyList<OrgChartEdge>> ReadEdgesAsync(
         string sql,
         Guid tenantId,
@@ -159,8 +120,6 @@ public sealed class PersonsRepository : IPersonsReader
             return false;
         }
     }
-
-    // ── Phase 2 / POST /v1/profiles ────────────────────────────────────
 
     public async Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAsync(
         Guid tenantId,
