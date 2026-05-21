@@ -36,12 +36,12 @@ SELECT
     MD5(concat(
         m.tenant_id, '-',
         m.source_id, '-',
-        coalesce(lower(u.email), ''), '-',
+        lower(u.email), '-',
         toString(toDate(parseDateTimeBestEffort(m.created_at)))
     )) AS unique_key,
-    u.email AS user_id,
+    lower(u.email) AS user_id,
     coalesce(any(u.full_name), '') AS user_name,
-    u.email AS email,
+    lower(u.email) AS email,
     lower(u.email) AS person_key,
     toDate(parseDateTimeBestEffort(m.created_at)) AS date,
     CAST(NULL AS Nullable(Int64)) AS direct_messages,
@@ -81,5 +81,5 @@ WHERE u.email IS NOT NULL AND u.email != ''
 GROUP BY
     m.tenant_id,
     m.source_id,
-    u.email,
+    lower(u.email),
     toDate(parseDateTimeBestEffort(m.created_at))
