@@ -213,6 +213,21 @@ path = "docs/components/connectors/collaboration/zoom/specs/DESIGN.md"
 name = "Zoom Connector Design"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/collaboration/zulip-proxy/specs/PRD.md"
+name = "Zulip-Proxy Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/collaboration/zulip-proxy/specs/DESIGN.md"
+name = "Zulip-Proxy Connector Design"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/components/connectors/collaboration/zulip-proxy/specs/FEATURE.md"
+name = "Zulip-Proxy Connector Bring-up Feature"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/connectors/zulip.md"
 name = "Zulip Connector Specification"
