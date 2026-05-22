@@ -1,0 +1,91 @@
+name: E2E — Bronze to API
+
+# End-to-end transformation tests covering bronze → dbt → ClickHouse
+# migration views → analytics-api HTTP response → CSV assert.
+#
+# Everything (Python, Rust, dbt, pytest) runs inside the runner image
+# defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
+# image is used for local development via src/ingestion/tests/e2e/e2e.sh.
+#
+# Specs: docs/domain/bronze-to-api-e2e/specs/
+# Code:  src/ingestion/tests/e2e/
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/ingestion/**"
+      - "src/backend/services/analytics-api/**"
+      - "src/backend/libs/insight-clickhouse/**"
+      - "src/backend/Cargo.toml"
+      - "src/backend/Cargo.lock"
+      - ".github/workflows/e2e-bronze-to-api.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/ingestion/**"
+      - "src/backend/services/analytics-api/**"
+      - "src/backend/libs/insight-clickhouse/**"
+      - "src/backend/Cargo.toml"
+      - "src/backend/Cargo.lock"
+      - ".github/workflows/e2e-bronze-to-api.yml"
+  workflow_dispatch:
+
+env:
+  # NB: forbids developers from running `pytest --update-snapshots` in CI.
+  # The guard lives in src/ingestion/tests/e2e/fixtures/test_fixtures.py.
+  CI: "true"
+
+jobs:
+  e2e:
+    name: Run E2E suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: src/ingestion/tests/e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ─── Cache cargo target/ across runs ────────────────────────────────
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            src/backend/target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('src/backend/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-e2e-
+
+      # ─── Build / pull the runner image (BuildKit caches between PRs) ────
+      - name: Build runner image
+        run: ./e2e.sh build
+
+      # ─── Pre-pull data plane images in parallel with whatever else ──────
+      - name: Pre-pull ClickHouse + MariaDB
+        run: |
+          docker pull clickhouse/clickhouse-server:24.8.4.13 &
+          docker pull mariadb:11.4.4 &
+          wait
+
+      # ─── Run the suite inside the runner ────────────────────────────────
+      - name: Run E2E suite
+        run: ./e2e.sh test -n auto --tb=short -q
+
+      # ─── Diagnostics on failure ─────────────────────────────────────────
+      - name: Dump compose logs on failure
+        if: failure()
+        run: |
+          echo "::group::clickhouse logs"
+          ./e2e.sh logs clickhouse || true
+          echo "::endgroup::"
+          echo "::group::mariadb logs"
+          ./e2e.sh logs mariadb || true
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always()
+        run: ./e2e.sh down || true
