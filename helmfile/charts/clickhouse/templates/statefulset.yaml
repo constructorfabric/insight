@@ -58,6 +58,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
+            {{- if .Values.systemLogsTtl.enabled }}
+            - name: system-logs-ttl
+              mountPath: /etc/clickhouse-server/config.d/system-logs-ttl.xml
+              subPath: system-logs-ttl.xml
+              readOnly: true
+            {{- end }}
           # Database provisioning happens out-of-band from the umbrella's
           # clickhouse-init-svcdbs-job.yaml post-install Hook against
           # `clickhouse.host` (works for bundled or external). The
@@ -89,6 +95,12 @@ spec:
             periodSeconds:       {{ .Values.readinessProbe.periodSeconds       | default 10 }}
             timeoutSeconds:      {{ .Values.readinessProbe.timeoutSeconds      | default 3  }}
             failureThreshold:    {{ .Values.readinessProbe.failureThreshold    | default 3  }}
+      {{- if .Values.systemLogsTtl.enabled }}
+      volumes:
+        - name: system-logs-ttl
+          configMap:
+            name: {{ include "clickhouse.fullname" . }}-system-logs-ttl
+      {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: data
