@@ -57,6 +57,16 @@ builder.Services.AddSingleton<IPersonsReader>(sp => sp.GetRequiredService<Person
 builder.Services.AddSingleton<PersonLookupService>();
 builder.Services.AddSingleton<ProfileLookupService>();
 
+// #346 step 1: read-only access to the visibility / roles / person_roles
+// tables. The services that use these ports (VisibilityService, the
+// admin-role authz filter, CRUD endpoints) land in later steps; the
+// readers exist now so the migrations stay paired with their consumers.
+builder.Services.AddSingleton<VisibilityRepository>();
+builder.Services.AddSingleton<IVisibilityReader>(sp => sp.GetRequiredService<VisibilityRepository>());
+builder.Services.AddSingleton<RolesRepository>();
+builder.Services.AddSingleton<IRolesReader>(sp => sp.GetRequiredService<RolesRepository>());
+builder.Services.AddSingleton<IPersonRolesReader>(sp => sp.GetRequiredService<RolesRepository>());
+
 // FluentValidation — Phase 2 POST /v1/profiles body. Scans the Api
 // assembly for AbstractValidator<T> implementations.
 builder.Services.AddValidatorsFromAssemblyContaining<Insight.Identity.Api.Validation.ResolveProfileCommandValidator>();
