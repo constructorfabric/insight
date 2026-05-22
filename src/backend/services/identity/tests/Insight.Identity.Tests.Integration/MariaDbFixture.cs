@@ -37,6 +37,30 @@ public sealed class MariaDbFixture : IAsyncLifetime
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();
 
+    /// <summary>
+    /// Insert a whole-tenant visibility grant (viewer = given person,
+    /// viewed_person_id IS NULL) so the caller can see every row in
+    /// the tenant. Called from endpoint-test InitializeAsync after
+    /// <see cref="ResetAsync"/> so existing happy-path scenarios still
+    /// pass through the visibility gate that #346 step 3 added.
+    /// </summary>
+    public async Task SeedWholeTenantVisibilityAsync(Guid tenantId, Guid viewerPersonId)
+    {
+        await using var conn = new MySqlConnection(ConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+        const string sql = """
+            INSERT INTO visibility
+                (visibility_id, insight_tenant_id, viewer_person_id, viewed_person_id,
+                 valid_from, valid_to, author_person_id, reason)
+            VALUES (@id, @tenant, @viewer, NULL, '2020-01-01 00:00:00', NULL, @viewer, NULL)
+            """;
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@id",     Guid.NewGuid().ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@tenant", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@viewer", viewerPersonId.ToByteArray(bigEndian: true));
+        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
     public async Task ResetAsync()
     {
         await using var conn = new MySqlConnection(ConnectionString);

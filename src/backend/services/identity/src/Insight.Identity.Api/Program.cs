@@ -66,6 +66,7 @@ builder.Services.AddSingleton<IVisibilityReader>(sp => sp.GetRequiredService<Vis
 builder.Services.AddSingleton<RolesRepository>();
 builder.Services.AddSingleton<IRolesReader>(sp => sp.GetRequiredService<RolesRepository>());
 builder.Services.AddSingleton<IPersonRolesReader>(sp => sp.GetRequiredService<RolesRepository>());
+builder.Services.AddSingleton<VisibilityService>();
 
 // FluentValidation — Phase 2 POST /v1/profiles body. Scans the Api
 // assembly for AbstractValidator<T> implementations.

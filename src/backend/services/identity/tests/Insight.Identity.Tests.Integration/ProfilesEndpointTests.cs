@@ -17,12 +17,13 @@ namespace Insight.Identity.Tests.Integration;
 [Collection(MariaDbCollection.Name)]
 public sealed class ProfilesEndpointTests : IAsyncLifetime
 {
-    private static readonly Guid TenantId      = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-    private static readonly Guid BambooSourceId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
-    private static readonly Guid SlackSourceId  = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
-    private static readonly Guid AlicePersonId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
-    private static readonly Guid SecondPersonId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
-    private static readonly Guid AuthorPersonId = Guid.Empty;
+    private static readonly Guid TenantId        = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static readonly Guid BambooSourceId  = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    private static readonly Guid SlackSourceId   = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+    private static readonly Guid AlicePersonId   = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+    private static readonly Guid SecondPersonId  = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+    private static readonly Guid CallerPersonId  = Guid.Parse("ddddddd0-0000-0000-0000-000000000003");
+    private static readonly Guid AuthorPersonId  = Guid.Empty;
 
     private readonly MariaDbFixture _fixture;
     private TestApplicationFactory? _app;
@@ -32,7 +33,8 @@ public sealed class ProfilesEndpointTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _fixture.ResetAsync().ConfigureAwait(false);
-        _app = new TestApplicationFactory(_fixture.ConnectionString, TenantId);
+        _app = new TestApplicationFactory(_fixture.ConnectionString, TenantId, defaultCallerPersonId: CallerPersonId);
+        await _fixture.SeedWholeTenantVisibilityAsync(TenantId, CallerPersonId).ConfigureAwait(false);
     }
 
     public Task DisposeAsync()
@@ -220,7 +222,8 @@ public sealed class ProfilesEndpointTests : IAsyncLifetime
     [Fact]
     public async Task Returns_400_when_no_tenant_resolved()
     {
-        using var noTenantApp = new TestApplicationFactory(_fixture.ConnectionString, defaultTenantId: null);
+        using var noTenantApp = new TestApplicationFactory(
+            _fixture.ConnectionString, defaultTenantId: null, defaultCallerPersonId: CallerPersonId);
         var client = noTenantApp.CreateClient();
         client.DefaultRequestHeaders.Remove(HeaderTenantContext.HeaderName);
 
@@ -230,6 +233,21 @@ public sealed class ProfilesEndpointTests : IAsyncLifetime
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var doc = await response.Content.ReadFromJsonAsync<JsonElement>().ConfigureAwait(false);
         doc.GetProperty("type").GetString().Should().Be("urn:insight:error:tenant_unresolved");
+    }
+
+    [Fact]
+    public async Task Returns_401_when_no_caller_resolved()
+    {
+        using var noCallerApp = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: null);
+        var client = noCallerApp.CreateClient();
+
+        var body = new ResolveProfileCommandModel("email", "alice@x.com", null, null);
+        var response = await client.PostAsJsonAsync(new Uri("/v1/profiles", UriKind.Relative), body)
+            .ConfigureAwait(false);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>().ConfigureAwait(false);
+        doc.GetProperty("type").GetString().Should().Be("urn:insight:error:caller_unresolved");
     }
 
     // ── Seed helpers ─────────────────────────────────────────────────

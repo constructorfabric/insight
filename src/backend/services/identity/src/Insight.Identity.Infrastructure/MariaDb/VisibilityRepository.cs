@@ -50,4 +50,22 @@ public sealed class VisibilityRepository : IVisibilityReader
         }
         return list;
     }
+
+    public async Task<bool> IsTargetInVisibleSetAsync(
+        Guid tenantId,
+        Guid viewerPersonId,
+        Guid targetPersonId,
+        string orgChartSourceType,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(orgChartSourceType);
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(SqlVisibility.IsTargetInVisibleSet, conn);
+        cmd.Parameters.AddWithValue("@tenant_id",        tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@viewer_person_id", viewerPersonId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@target_person_id", targetPersonId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@org_source_type",  orgChartSourceType);
+        var raw = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return Convert.ToBoolean(raw, System.Globalization.CultureInfo.InvariantCulture);
+    }
 }

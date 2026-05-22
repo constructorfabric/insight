@@ -22,7 +22,9 @@ public static class PersonsEndpoints
             string email,
             HttpContext http,
             ITenantContext tenants,
+            ICallerContext callers,
             PersonLookupService lookup,
+            VisibilityService visibility,
             IOptions<AppOptions> options,
             CancellationToken cancellationToken) =>
         {
@@ -32,6 +34,17 @@ public static class PersonsEndpoints
             // response so existing integrations notice without action.
             http.Response.Headers["Deprecation"] = "true";
             http.Response.Headers.Append("Link", "</v1/profiles>; rel=\"successor-version\"");
+
+            var callerPersonId = callers.Resolve(http);
+            if (callerPersonId is null)
+            {
+                return Results.Json(new ProblemResponse(
+                    Type: "urn:insight:error:caller_unresolved",
+                    Title: "Unauthorized",
+                    Status: StatusCodes.Status401Unauthorized,
+                    Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
 
             var tenantId = tenants.Resolve(http);
             if (tenantId is null)
@@ -50,12 +63,18 @@ public static class PersonsEndpoints
                 .ConfigureAwait(false);
             if (person is null)
             {
-                return Results.Json(new ProblemResponse(
-                    Type: "urn:insight:error:person_not_found",
-                    Title: "Not Found",
-                    Status: StatusCodes.Status404NotFound,
-                    Detail: $"person with email '{email}' not found"),
-                    statusCode: StatusCodes.Status404NotFound);
+                return NotFoundByEmail(email);
+            }
+
+            var canSee = await visibility.CanSeeAsync(
+                    tenantId.Value, callerPersonId.Value, person.PersonId,
+                    lookupOptions.OrgChartSourceType, cancellationToken)
+                .ConfigureAwait(false);
+            if (!canSee)
+            {
+                // Deny → 404 (same shape as not-found) to avoid leaking
+                // the target's existence to a caller without visibility.
+                return NotFoundByEmail(email);
             }
 
             return Results.Ok(PersonResponse.From(person));
@@ -65,11 +84,24 @@ public static class PersonsEndpoints
             ResolveProfileCommandModel body,
             HttpContext http,
             ITenantContext tenants,
+            ICallerContext callers,
             ProfileLookupService lookup,
+            VisibilityService visibility,
             IValidator<ResolveProfileCommandModel> validator,
             IOptions<AppOptions> options,
             CancellationToken cancellationToken) =>
         {
+            var callerPersonId = callers.Resolve(http);
+            if (callerPersonId is null)
+            {
+                return Results.Json(new ProblemResponse(
+                    Type: "urn:insight:error:caller_unresolved",
+                    Title: "Unauthorized",
+                    Status: StatusCodes.Status401Unauthorized,
+                    Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
             var tenantId = tenants.Resolve(http);
             if (tenantId is null)
             {
@@ -104,27 +136,32 @@ public static class PersonsEndpoints
 
             var lookupOptions = BuildLookupOptions(options.Value);
             var result = await lookup.ResolveAsync(tenantId.Value, query, lookupOptions, cancellationToken).ConfigureAwait(false);
-            return result switch
+            switch (result)
             {
-                ProfileLookupResult.Found f => Results.Ok(ProfileResponse.From(f.Profile)),
-                ProfileLookupResult.NotFound => Results.Json(new ProblemResponse(
-                        Type: "urn:insight:error:person_not_found",
-                        Title: "Not Found",
-                        Status: StatusCodes.Status404NotFound,
-                        Detail: body.ValueType == "email"
-                            ? $"no current observation matches email '{body.Value}' for the tenant"
-                            : $"no current observation matches value_type='id' value='{body.Value}' within the given source instance"),
-                    statusCode: StatusCodes.Status404NotFound),
-                ProfileLookupResult.Ambiguous a => Results.Json(new AmbiguousProfileProblemResponse(
-                        Type: "urn:insight:error:ambiguous_profile",
-                        Title: "Data Invariant Violated",
-                        Status: StatusCodes.Status422UnprocessableEntity,
-                        Detail: $"lookup matched {a.PersonIds.Count} distinct person_ids; invariant requires exactly 1",
-                        Lookup: body,
-                        PersonIds: a.PersonIds),
-                    statusCode: StatusCodes.Status422UnprocessableEntity),
-                _ => Results.Problem("unexpected lookup result", statusCode: StatusCodes.Status500InternalServerError),
-            };
+                case ProfileLookupResult.Found f:
+                    var canSee = await visibility.CanSeeAsync(
+                            tenantId.Value, callerPersonId.Value, f.Profile.PersonId,
+                            lookupOptions.OrgChartSourceType, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (!canSee)
+                    {
+                        return ProfileNotFound(body);
+                    }
+                    return Results.Ok(ProfileResponse.From(f.Profile));
+                case ProfileLookupResult.NotFound:
+                    return ProfileNotFound(body);
+                case ProfileLookupResult.Ambiguous a:
+                    return Results.Json(new AmbiguousProfileProblemResponse(
+                            Type: "urn:insight:error:ambiguous_profile",
+                            Title: "Data Invariant Violated",
+                            Status: StatusCodes.Status422UnprocessableEntity,
+                            Detail: $"lookup matched {a.PersonIds.Count} distinct person_ids; invariant requires exactly 1",
+                            Lookup: body,
+                            PersonIds: a.PersonIds),
+                        statusCode: StatusCodes.Status422UnprocessableEntity);
+                default:
+                    return Results.Problem("unexpected lookup result", statusCode: StatusCodes.Status500InternalServerError);
+            }
         });
 
         app.MapGet("/health", async (PersonsRepository repo, CancellationToken cancellationToken) =>
@@ -146,4 +183,22 @@ public static class PersonsEndpoints
             ExpandSubordinates: config.ExpandSubordinates,
             MaxDepth: config.MaxSubordinateDepth,
             OrgChartSourceType: config.OrgChartSourceType);
+
+    private static IResult NotFoundByEmail(string email) =>
+        Results.Json(new ProblemResponse(
+            Type: "urn:insight:error:person_not_found",
+            Title: "Not Found",
+            Status: StatusCodes.Status404NotFound,
+            Detail: $"person with email '{email}' not found"),
+            statusCode: StatusCodes.Status404NotFound);
+
+    private static IResult ProfileNotFound(ResolveProfileCommandModel body) =>
+        Results.Json(new ProblemResponse(
+            Type: "urn:insight:error:person_not_found",
+            Title: "Not Found",
+            Status: StatusCodes.Status404NotFound,
+            Detail: body.ValueType == "email"
+                ? $"no current observation matches email '{body.Value}' for the tenant"
+                : $"no current observation matches value_type='id' value='{body.Value}' within the given source instance"),
+            statusCode: StatusCodes.Status404NotFound);
 }

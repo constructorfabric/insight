@@ -11,10 +11,11 @@ namespace Insight.Identity.Tests.Integration;
 [Collection(MariaDbCollection.Name)]
 public sealed class PersonsEndpointTests : IAsyncLifetime
 {
-    private static readonly Guid TenantId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-    private static readonly Guid SourceId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
-    private static readonly Guid AlicePersonId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
-    private static readonly Guid AuthorPersonId = Guid.Empty;
+    private static readonly Guid TenantId         = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static readonly Guid SourceId         = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    private static readonly Guid AlicePersonId    = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+    private static readonly Guid CallerPersonId   = Guid.Parse("ddddddd0-0000-0000-0000-000000000001");
+    private static readonly Guid AuthorPersonId   = Guid.Empty;
 
     private readonly MariaDbFixture _fixture;
     private TestApplicationFactory? _app;
@@ -24,7 +25,8 @@ public sealed class PersonsEndpointTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _fixture.ResetAsync().ConfigureAwait(false);
-        _app = new TestApplicationFactory(_fixture.ConnectionString, TenantId);
+        _app = new TestApplicationFactory(_fixture.ConnectionString, TenantId, defaultCallerPersonId: CallerPersonId);
+        await _fixture.SeedWholeTenantVisibilityAsync(TenantId, CallerPersonId).ConfigureAwait(false);
     }
 
     public Task DisposeAsync()
@@ -68,9 +70,10 @@ public sealed class PersonsEndpointTests : IAsyncLifetime
     [Fact]
     public async Task Returns_400_when_no_tenant_resolved()
     {
-        // No header sent and no default tenant configured → composite
-        // resolver returns null → endpoint must respond 400.
-        using var noTenantApp = new TestApplicationFactory(_fixture.ConnectionString, defaultTenantId: null);
+        // Caller present (via header), no default tenant configured,
+        // no X-Insight-Tenant-Id header → tenant resolver null → 400.
+        using var noTenantApp = new TestApplicationFactory(
+            _fixture.ConnectionString, defaultTenantId: null, defaultCallerPersonId: CallerPersonId);
         var client = noTenantApp.CreateClient();
         client.DefaultRequestHeaders.Remove(HeaderTenantContext.HeaderName);
 
@@ -80,14 +83,31 @@ public sealed class PersonsEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Returns_401_when_no_caller_resolved()
+    {
+        // Caller header missing → endpoint short-circuits with 401
+        // before even looking at the tenant.
+        using var noCallerApp = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: null);
+        var client = noCallerApp.CreateClient();
+
+        var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
+            .ConfigureAwait(false);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
     public async Task Resolves_tenant_from_jwt_insight_tenant_id_claim()
     {
         // Proves the JwtBearer middleware wires the bearer payload into
         // `HttpContext.User` so `JwtTenantContext` can read the claim.
         // No X-Insight-Tenant-Id header, no config default — the only
-        // path to a tenant is the JWT.
+        // path to a tenant is the JWT. Caller still comes via header
+        // and gets seeded as whole-tenant viewer.
         await SeedAliceAsync().ConfigureAwait(false);
-        using var jwtApp = new TestApplicationFactory(_fixture.ConnectionString, defaultTenantId: null);
+        using var jwtApp = new TestApplicationFactory(
+            _fixture.ConnectionString, defaultTenantId: null, defaultCallerPersonId: CallerPersonId);
+        await _fixture.SeedWholeTenantVisibilityAsync(TenantId, CallerPersonId).ConfigureAwait(false);
         var client = jwtApp.CreateClient();
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", BuildUnverifiedJwt(TenantId));

@@ -20,6 +20,22 @@ public interface IVisibilityReader
         Guid tenantId,
         Guid viewerPersonId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// "Is the target in the viewer's visible set?" Runs a single
+    /// recursive CTE that unions the viewer with the active
+    /// `viewed_person_id`s of their grants (and the target itself
+    /// when a whole-tenant grant exists), then walks <c>org_chart</c>
+    /// descents filtered to <paramref name="orgChartSourceType"/>.
+    /// Self check (viewer == target) is callers' responsibility — see
+    /// <see cref="VisibilityService"/>.
+    /// </summary>
+    Task<bool> IsTargetInVisibleSetAsync(
+        Guid tenantId,
+        Guid viewerPersonId,
+        Guid targetPersonId,
+        string orgChartSourceType,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
