@@ -783,3 +783,34 @@ kind = "PRD"
 path = "docs/domain/metric-catalog/specs/PRD.md"
 name = "Metric Catalog PRD"
 traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Bronze-to-API E2E Tests"
+slug = "bronze-to-api-e2e"
+kit = "sdlc"
+codebase = ["docs/domain/bronze-to-api-e2e", "src/ingestion/tests/e2e"]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/bronze-to-api-e2e/specs/PRD.md"
+name = "Bronze-to-API E2E Tests PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/bronze-to-api-e2e/specs/DESIGN.md"
+name = "Bronze-to-API E2E Tests Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/domain/bronze-to-api-e2e/specs/DECOMPOSITION.md"
+name = "Bronze-to-API E2E Tests Decomposition"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/bronze-to-api-e2e/specs/feature-csv-rig/FEATURE.md"
+name = "Bronze-to-API E2E Tests — CSV Rig Feature"
+traceability = "FULL"
