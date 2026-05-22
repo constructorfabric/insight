@@ -147,10 +147,19 @@ var app = builder.Build();
 // own SchemaVersions table; safe to re-run.
 {
     var factory = app.Services.GetRequiredService<MariaDbConnectionFactory>();
-    var migrationLogger = app.Services
-        .GetRequiredService<ILoggerFactory>()
-        .CreateLogger("Insight.Identity.Migrations");
+    var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+    var migrationLogger = loggerFactory.CreateLogger("Insight.Identity.Migrations");
     MigrationRunner.Run(factory.ConnectionString, migrationLogger);
+
+    // Bootstrap admin — chicken-and-egg seed for the OrgChart Visibility tables.
+    // Idempotent: only inserts when no active assignment for the
+    // configured (tenant, person, admin-role) triple exists.
+    var bootstrapLogger = loggerFactory.CreateLogger("Insight.Identity.Bootstrap");
+    var appOptions = app.Services
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<AppOptions>>().Value;
+    await BootstrapAdminRunner.RunAsync(
+        factory, appOptions.TenantDefaultId, appOptions.BootstrapAdminPersonId, bootstrapLogger)
+        .ConfigureAwait(false);
 }
 
 // Request-logging redaction (PRD NFR-3). The default

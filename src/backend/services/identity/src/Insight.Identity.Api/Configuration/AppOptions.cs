@@ -46,4 +46,14 @@ public sealed class AppOptions
     /// </summary>
     [ConfigurationKeyName("org_chart_source_type")]
     public string OrgChartSourceType { get; init; } = "bamboohr";
+
+    /// <summary>
+    /// First admin (<c>person_id</c>) to seed into <c>person_roles</c>
+    /// on startup so the CRUD endpoints have at least one caller who
+    /// can mint further grants. <c>null</c> = skip the bootstrap step.
+    /// Idempotent: only inserts when no active assignment exists for
+    /// <c>(tenant_default_id, this person, Roles.Admin)</c>.
+    /// </summary>
+    [ConfigurationKeyName("bootstrap_admin_person_id")]
+    public Guid? BootstrapAdminPersonId { get; init; }
 }
