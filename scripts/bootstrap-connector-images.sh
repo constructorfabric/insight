@@ -279,6 +279,29 @@ for e in json.load(sys.stdin):
   PATCHED_DESCRIPTORS+=("${connector_dir}/descriptor.yaml")
 done
 
+# After all image patches, bump descriptor.version (minor) once per
+# affected connector. Mirrors the CI bump-descriptors job. Read patched
+# descriptors from git status to handle the subshell-variable lifetime
+# issue (the same trick the summary step below uses).
+BUMP_SCRIPT="${REPO_ROOT}/.github/workflows/scripts/bump-descriptor-version.py"
+if [[ -x "${BUMP_SCRIPT}" ]]; then
+  PATCHED_FOR_BUMP="$(git status --porcelain src/ingestion/connectors/*/*/descriptor.yaml 2>/dev/null \
+    | awk '{print $2}')"
+  if [[ -n "${PATCHED_FOR_BUMP}" ]]; then
+    echo
+    echo "─── Bumping descriptor.version (minor) for each patched connector ───"
+    echo "${PATCHED_FOR_BUMP}" | while IFS= read -r desc; do
+      [[ -n "${desc}" ]] || continue
+      python3 "${BUMP_SCRIPT}" --descriptor "${desc}" || {
+        echo "FAIL: version bump for ${desc}" >&2
+        FAILED+=("${desc}:version-bump")
+      }
+    done
+  fi
+else
+  echo "WARN: ${BUMP_SCRIPT} not found or not executable — skipping version bump" >&2
+fi
+
 # NOTE: subshell variables don't propagate out of the `while ... < pipe` —
 # we re-derive PATCHED_DESCRIPTORS for the summary from git status.
 
@@ -298,7 +321,7 @@ fi
 echo
 echo "Next steps:"
 echo "  1. Review the patched descriptors:    git diff src/ingestion/connectors/"
-echo "  2. Commit them:                       git add -p && git commit -m \"chore(descriptors): bootstrap-bump image refs to ${BUILD_TAG}\""
+echo "  2. Commit them:                       git add -p && git commit -m \"chore(descriptors): bootstrap-bump image refs + version (minor) to ${BUILD_TAG}\""
 echo "  3. Push to main (or open a PR).       After push, CI's toolbox + publish-chart"
 echo "     jobs will produce the umbrella chart with these patched descriptors baked in."
 echo "  4. Verify GHCR has the pushed images: gh api /user/packages?package_type=container | jq '.[].name'"

@@ -905,14 +905,19 @@ The system **MUST** set `dbt_full_refresh=true` on the auto-triggered one-shot s
 
 The system **MUST** source every connector image — CDK source images and enrich sidecar images alike — from the map-style `descriptor.yaml.images:` block exclusively (per ADR-0016). The Helm chart **MUST NOT** provide a chart-level default for any connector image; per-connector WorkflowTemplate input parameters carrying image refs (e.g. `tt-enrich-jira-run`'s `jira_enrich_image`) **MUST** be required without a default. Reconcile **MUST** read `images.cdk.image` for CDK source registration and `images.enrich.image` for enrich workflow submission, and propagate both through the rendered `ingestion-pipeline` submission — re-read from the descriptor on every submission, never baked at Helm time. No descriptor **MAY** carry top-level `cdk_image:` or `enrich_image:` fields.
 
+CI **MUST** keep `images.<key>.image` and `descriptor.version` in lock-step: after a successful image push the `bump-descriptors` job patches the `image` field with the new full ref AND bumps `descriptor.version` by one minor increment (X.Y.Z → X.(Y+1).0; strict semver, fail loud on non-semver values). Both edits land in the same commit (no `[skip ci]`). A descriptor with N image entries gets exactly ONE minor version bump per CI run, not N. The bump makes reconcile classify the diff as `bump_kind: minor` per ADR-0015 — catalog re-discovery runs on the next deploy, without dispatching `dbt --full-refresh`.
+
 **Implements**:
 - `cpt-insightspec-flow-reconcile-run-reconcile-v2`
 - `cpt-insightspec-algo-reconcile-render-sync-trigger`
+- `cpt-insightspec-algo-reconcile-classify-bump` (consumes the minor bump that bump-descriptors writes)
 
 **Touches**:
 - `descriptor.yaml.images.cdk.image` (required for `type: cdk` connectors; empty string `""` allowed for not-yet-published images — reconcile WARN+skips on empty)
 - `descriptor.yaml.images.enrich.image` (required for connectors with an enrich step; absent for connectors without one)
+- `descriptor.yaml.version` (strict semver MAJOR.MINOR.PATCH; CI auto-bumps the minor part on each image rebuild)
 - `tt-enrich-jira-run` WorkflowTemplate parameter `jira_enrich_image`
+- `.github/workflows/scripts/bump-descriptor-version.py` (CI helper; rejects non-semver fail loud)
 
 **Test scenario**:
 1. jira `descriptor.yaml.images.enrich.image` carries a non-empty full image reference; the top-level `enrich_image:` field is absent.
@@ -920,6 +925,8 @@ The system **MUST** source every connector image — CDK source images and enric
 3. hubspot `descriptor.yaml.images.cdk.image` carries a non-empty full image reference; reconcile registers the Airbyte source definition with that image.
 4. A connector without an enrich step has no `images.enrich` entry and does not invoke `tt-enrich-*-run`.
 5. `grep -RIn "^cdk_image\|^enrich_image" src/ingestion/connectors/` returns 0 hits.
+6. A trivial Dockerfile edit on hubspot produces a commit A whose diff contains both `images.cdk.image` (new tag) AND `version` (incremented by one minor) for `src/ingestion/connectors/crm/hubspot/descriptor.yaml`; reconcile classifies the resulting diff as `bump_kind: minor` on the next deploy and re-discovers the source catalog without `dbt --full-refresh`.
+7. A descriptor with a non-semver `version` value (legacy `2026.05.04` or two-segment `1.0`) causes the CI `bump-descriptors` job to fail loud with a clear error citing the descriptor path; operator fixes the version manually and re-runs.
 
 ### Dry-Run Is Non-Destructive
 

@@ -470,6 +470,27 @@ jobs:
             yq -i ".images.\"$key\".image = \"$ref\"" "$desc"
           done
 
+      - name: Bump descriptor.version (minor) for each patched connector
+        env:
+          MATRIX: ${{ needs.discover-images.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          # Every connector whose image was rebuilt this run gets its
+          # descriptor.version bumped by one minor increment (X.Y.Z → X.(Y+1).0).
+          # Reconcile then classifies this as `bump_kind: minor` on the next
+          # deploy (per ADR-0015) and re-discovers the source catalog without
+          # dispatching a `dbt --full-refresh` — the new image is a continuation
+          # of the same connector contract, not a breaking change.
+          #
+          # Dedupe by connector_dir: a single descriptor with multiple image
+          # entries gets exactly ONE minor bump per CI run, not one per entry.
+          echo "$MATRIX" | jq -r '.[].connector_dir' | sort -u \
+            | while IFS= read -r connector_dir; do
+              desc="$connector_dir/descriptor.yaml"
+              echo "Bumping $desc version (minor):"
+              .github/workflows/scripts/bump-descriptor-version.py --descriptor "$desc"
+            done
+
       - name: Commit descriptor patches (no [skip ci])
         id: commit
         env:
@@ -504,7 +525,7 @@ jobs:
           # Intentionally NO [skip ci]: the push must re-trigger this
           # workflow so toolbox rebuilds with the patched descriptors and
           # publish-chart produces the umbrella bump.
-          git commit -m "chore(descriptors): bump ${MODIFIED} image refs to ${BUILD_TAG}"
+          git commit -m "chore(descriptors): bump ${MODIFIED} image refs + version (minor) to ${BUILD_TAG}"
 
           # Push, with one rebase-retry to absorb a race against
           # origin/${GITHUB_REF_NAME} advancing between job start and now.

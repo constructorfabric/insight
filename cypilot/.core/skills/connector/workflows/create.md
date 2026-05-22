@@ -422,7 +422,7 @@ If a connector has both `images.cdk` (`context: .`) and `images.enrich` (`contex
 
 ### 3. bump-descriptors invocation (typically no skill action needed)
 
-The `bump-descriptors` job uses the same `discover` output to know which descriptors to patch and which keys to update. Patching is universal:
+The `bump-descriptors` job uses the same `discover` output to know which descriptors to patch and which keys to update. Patching is universal: for every entry that built this run, it (1) patches `images.<key>.image` with the new full ref AND (2) bumps `descriptor.version` by one minor increment (X.Y.Z → X.(Y+1).0).
 
 ```bash
 # pseudo-code; the actual implementation lives in build-images.yml
@@ -430,9 +430,18 @@ for entry in discover.matrix:
   if entry.built_in_this_run:
     yq -i ".images.${entry.key}.image = \"${IMAGE_PREFIX}/${entry.name}:${BUILD_TAG}\"" \
       "${entry.connector_dir}/descriptor.yaml"
+
+# then dedupe by connector_dir and bump version once per descriptor:
+for connector_dir in unique(discover.matrix[].connector_dir):
+  python3 .github/workflows/scripts/bump-descriptor-version.py \
+    --descriptor "${connector_dir}/descriptor.yaml"
 ```
 
-No per-connector wiring in `bump-descriptors` itself. Your descriptor declaring `images:` IS your wiring.
+The minor version bump makes reconcile classify the diff as `bump_kind: minor` per ADR-0015 → catalog re-discovery on the next deploy, no `dbt --full-refresh`.
+
+**Strict-semver gate (FATAL)**: `bump-descriptor-version.py` rejects values that aren't strict semver `MAJOR.MINOR.PATCH` — no leading zeros, no `v` prefix, no pre-release suffix, no two-segment forms. Date-style legacy values like `2026.05.04` and two-segment like `1.0` fail loud, halting the CI job. Your descriptor's `version:` MUST be on-spec before the first CI run; the `cpt validate` rule `connector-images-triad` covers this. If it slips through, the operator fixes the version manually and re-pushes.
+
+No per-connector wiring in `bump-descriptors` itself. Your descriptor declaring `images:` plus a strict-semver `version:` IS your wiring.
 
 ### Doneness validation
 

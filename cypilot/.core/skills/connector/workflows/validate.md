@@ -131,6 +131,14 @@ Read connector package files and verify each item:
 - If `images.cdk` is present but `image` is empty: reconcile WARN+skips registration (acceptable for not-yet-built connectors).
 - If `images.enrich` is present: at least one workflow template under `charts/insight/templates/ingestion/` MUST reference `<connector>_enrich_image` as a parameter (so reconcile's render step can propagate it).
 
+**Check 5 — Strict semver `version:` (CI bump precondition)**
+
+- Because the CI `bump-descriptors` job bumps `descriptor.version` by one minor every time an image rebuilds (per ADR-0016 + ADR-0015), the field MUST be on strict-semver form `MAJOR.MINOR.PATCH` from day one. The matcher is `python3 .github/workflows/scripts/bump-descriptor-version.py --descriptor <path> --print-only` succeeding (exit 0).
+- Each of MAJOR, MINOR, PATCH MUST be `0` or a non-zero digit followed by more digits (no leading zeros — semver.org §2).
+- NO `v` prefix, NO pre-release suffix, NO build metadata.
+- Examples that PASS: `1.0.0`, `0.1.0`, `10.20.30`, `100.0.0`.
+- Examples that FAIL: `2026.05.04` (leading zeros), `1.0` (two segments), `v1.0.0` (prefix), `1.0.0-rc1` (pre-release), `1.0` (any non-three-segment form).
+
 **Output on failure** (one bullet per missing check):
 
 - `Connector <name>: missing descriptor.images: block (must be a map with at least one key) — see ADR-0016.`
@@ -139,6 +147,7 @@ Read connector package files and verify each item:
 - `Connector <name>: images.<key>.dockerfile/<context> does not resolve to an existing file/directory.`
 - `Connector <name>: paths-filter for <slug> does not exclude descriptor.yaml; descriptor-bump commit will infinite-loop.`
 - `Connector <name>: images.enrich present but no chart workflow template references <connector>_enrich_image parameter.`
+- `Connector <name>: descriptor.version is not strict semver MAJOR.MINOR.PATCH — CI bump-descriptors will fail loud on next image rebuild. Got: '<value>'. Fix to e.g. "1.0.0".`
 
 ### dbt Models
 - [ ] Model name follows `<connector>__<domain>.sql` pattern

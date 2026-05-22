@@ -89,7 +89,7 @@ Other keys (`bootstrap`, `migrator`, …) are allowed but have no runtime consum
 | Reconcile source-definition registration | `images.cdk.image` (via TSV) | When creating/updating Airbyte CDK source definitions. Empty string → fail loud. |
 | Enrich workflow runner (e.g. `tt-enrich-jira-run`) | `images.enrich.image` (via reconcile passing it as a Workflow parameter) | Each workflow submission. The image ref is **re-read from the descriptor on every submission** — no Helm-time bake. |
 | `.github/workflows/build-images.yml` | All `images:` entries via dynamic discovery on every CI run | Discovery step scans `src/ingestion/connectors/**/descriptor.yaml`, builds a matrix `[(connector_dir, key, name, dockerfile, context)]`, filters by which entries' `context` matched a changed path, fan-out builds each. |
-| CI bump step | Patches `images.<key>.image` in descriptor.yaml | After a successful image push. Commits in a separate commit (no `[skip ci]`) that triggers the next workflow run, which rebuilds toolbox with the patched descriptor and publishes the chart. |
+| CI bump step | Patches `images.<key>.image` in descriptor.yaml AND bumps `descriptor.version` by one minor increment (X.Y.Z → X.(Y+1).0) | After a successful image push. Both edits land in the same commit (no `[skip ci]`) that triggers the next workflow run, which rebuilds toolbox with the patched descriptor and publishes the chart. The version bump makes reconcile classify the diff as `bump_kind: minor` per ADR-0015 — catalog re-discovery without `dbt --full-refresh`. Dedupe by connector: a single descriptor with multiple image entries gets exactly ONE minor bump per CI run, not one per entry. |
 | `/connector create` skill | Required output | Skill emits an `images:` block with one entry per Dockerfile the connector ships. Validated by `cpt validate` rule `connector-images-triad`. |
 | Helm chart | Does NOT read `images:` directly. Reads `ingestion.toolboxImage` for toolbox only. Connector image refs travel inside the toolbox image (descriptor baked at build time). | At deploy. |
 
@@ -107,8 +107,9 @@ Other keys (`bootstrap`, `migrator`, …) are allowed but have no runtime consum
 
 - `grep -RIn "^cdk_image\|^enrich_image" src/ingestion/connectors/` returns 0 hits (except for commented placeholders inside the `images:` block's leading explanatory comment, which is informational).
 - Every connector directory containing a Dockerfile has a non-empty `images:` block in its `descriptor.yaml`. Verified by `find src/ingestion/connectors -name Dockerfile | xargs -I{} dirname {} | xargs -I{} yq '.images | length' {}/descriptor.yaml` returning ≥ 1 per directory.
+- Every descriptor that declares an `images:` block has `version` set to strict semver `MAJOR.MINOR.PATCH` (no leading zeros, no pre-release, no build metadata). The CI bump step (`.github/workflows/scripts/bump-descriptor-version.py`) fails loud on non-semver values; descriptors found in violation MUST be fixed manually before CI can advance them.
 - Reconcile's 7-field TSV's columns 5 and 6 match `images.cdk.image` and `images.enrich.image` when read directly from each descriptor.
-- A trivial Dockerfile change pushes through two CI runs (image build + descriptor bump → toolbox rebuild + chart publish) ending with a new umbrella chart on GHCR.
+- A trivial Dockerfile change pushes through two CI runs (image build + descriptor patch + minor version bump → toolbox rebuild + chart publish) ending with a new umbrella chart on GHCR; the affected descriptor's `version` field advances by one minor increment.
 
 ## Pros and Cons of the Options
 
