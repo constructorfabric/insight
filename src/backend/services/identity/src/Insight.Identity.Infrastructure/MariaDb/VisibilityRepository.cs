@@ -4,9 +4,9 @@ using MySqlConnector;
 namespace Insight.Identity.Infrastructure.MariaDb;
 
 /// <summary>
-/// MariaDB-backed <see cref="IVisibilityReader"/>. Step 1 of #346 ships
-/// only the seed query that lists a viewer's active grants; the
-/// recursive `can_see` predicate lands later with `VisibilityService`.
+/// MariaDB-backed <see cref="IVisibilityReader"/>. Lists a viewer's
+/// active grants; the recursive `can_see` predicate is composed on top
+/// of this reader by <c>VisibilityService</c>.
 /// </summary>
 public sealed class VisibilityRepository : IVisibilityReader
 {

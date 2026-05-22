@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS person_roles (
 
     PRIMARY KEY (person_role_id),
 
+    -- Reject backward intervals (see same constraint on `visibility`).
+    CONSTRAINT chk_person_roles_interval
+        CHECK (valid_to IS NULL OR valid_from <= valid_to),
+
     -- Hot path: "is person A an admin in tenant T?" — single bounded
     -- lookup with role_id pinned to the seeded admin UUID.
     INDEX idx_person_current (insight_tenant_id, person_id, role_id, valid_to),

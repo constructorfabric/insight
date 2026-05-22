@@ -85,14 +85,34 @@ public sealed class VisibilityRolesSchemaTests : IAsyncLifetime
         // Active row for Alice.
         var aliceActiveId = Guid.NewGuid();
         await InsertPersonRoleAsync(aliceActiveId, AlicePersonId, Roles.Admin, validTo: null).ConfigureAwait(false);
-        // Revoked row for Alice — same role, but with valid_to set.
+        // Revoked row for Alice — same role, valid_to in the past.
         var aliceRevokedId = Guid.NewGuid();
-        await InsertPersonRoleAsync(aliceRevokedId, AlicePersonId, Roles.Admin, validTo: DateTime.UtcNow.AddMinutes(-5)).ConfigureAwait(false);
+        await InsertPersonRoleAsync(aliceRevokedId, AlicePersonId, Roles.Admin, validTo: new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc)).ConfigureAwait(false);
         // Different person — must not appear.
         await InsertPersonRoleAsync(Guid.NewGuid(), BobPersonId, Roles.Admin, validTo: null).ConfigureAwait(false);
 
         var active = await _roles!.GetActiveByPersonAsync(TenantId, AlicePersonId, CancellationToken.None);
         active.Should().ContainSingle().Which.PersonRoleId.Should().Be(aliceActiveId);
+    }
+
+    [Fact]
+    public async Task GetActiveByPerson_returns_multiple_distinct_roles()
+    {
+        // Forward-looking: today there is only the seeded `admin` role,
+        // so to exercise the "person holds two roles at once" code path
+        // we seed an extra role row directly. When the table is extended
+        // (auditor / hr_admin / ...) this assertion stays valid and the
+        // ad-hoc seed below should be replaced by referencing the new
+        // production role constants.
+        var auditorRoleId = Guid.Parse("a4d11000-0000-4000-8000-000000000099");
+        await SeedExtraRoleAsync(auditorRoleId, "test_auditor").ConfigureAwait(false);
+
+        await InsertPersonRoleAsync(Guid.NewGuid(), AlicePersonId, Roles.Admin, validTo: null).ConfigureAwait(false);
+        await InsertPersonRoleAsync(Guid.NewGuid(), AlicePersonId, auditorRoleId, validTo: null).ConfigureAwait(false);
+
+        var active = await _roles!.GetActiveByPersonAsync(TenantId, AlicePersonId, CancellationToken.None);
+        active.Should().HaveCount(2);
+        active.Select(a => a.RoleId).Should().BeEquivalentTo(new[] { Roles.Admin, auditorRoleId });
     }
 
     // ── visibility ──────────────────────────────────────────────────
@@ -124,10 +144,28 @@ public sealed class VisibilityRolesSchemaTests : IAsyncLifetime
         var activeId = Guid.NewGuid();
         var revokedId = Guid.NewGuid();
         await InsertVisibilityAsync(activeId, AlicePersonId, viewedPersonId: BobPersonId, validTo: null).ConfigureAwait(false);
-        await InsertVisibilityAsync(revokedId, AlicePersonId, viewedPersonId: BobPersonId, validTo: DateTime.UtcNow.AddMinutes(-1)).ConfigureAwait(false);
+        await InsertVisibilityAsync(revokedId, AlicePersonId, viewedPersonId: BobPersonId, validTo: new DateTime(2021, 6, 1, 0, 0, 0, DateTimeKind.Utc)).ConfigureAwait(false);
 
         var grants = await _visibility!.GetActiveGrantsByViewerAsync(TenantId, AlicePersonId, CancellationToken.None);
         grants.Should().ContainSingle().Which.VisibilityId.Should().Be(activeId);
+    }
+
+    [Fact]
+    public async Task GetActiveGrantsByViewer_excludes_grants_with_future_valid_to()
+    {
+        // SCD2 edge case: a row with valid_to in the future is "already
+        // revoked" from the query's point of view — only valid_to IS NULL
+        // counts as active. This guards against a future maintainer
+        // misreading the SQL as "active = valid_to > now()".
+        var futureRevokedId = Guid.NewGuid();
+        await InsertVisibilityAsync(
+            futureRevokedId,
+            AlicePersonId,
+            viewedPersonId: BobPersonId,
+            validTo: DateTime.UtcNow.AddHours(1)).ConfigureAwait(false);
+
+        var grants = await _visibility!.GetActiveGrantsByViewerAsync(TenantId, AlicePersonId, CancellationToken.None);
+        grants.Should().BeEmpty();
     }
 
     [Fact]
@@ -142,12 +180,19 @@ public sealed class VisibilityRolesSchemaTests : IAsyncLifetime
 
     // ── Seed helpers ────────────────────────────────────────────────
 
+    // Fixed reference point well in the past so revoked rows (valid_to
+    // in the past) can be inserted without ever violating the schema-
+    // level `valid_from <= valid_to` CHECK — see migration 006/008.
+    private static readonly DateTime FixedPastValidFrom =
+        new(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
     private async Task InsertVisibilityAsync(
         Guid visibilityId,
         Guid viewerPersonId,
         Guid? viewedPersonId,
         DateTime? validTo,
-        Guid? tenantId = null)
+        Guid? tenantId = null,
+        DateTime? validFrom = null)
     {
         await using var conn = new MySqlConnection(_fixture.ConnectionString);
         await conn.OpenAsync().ConfigureAwait(false);
@@ -155,13 +200,14 @@ public sealed class VisibilityRolesSchemaTests : IAsyncLifetime
             INSERT INTO visibility
                 (visibility_id, insight_tenant_id, viewer_person_id, viewed_person_id,
                  valid_from, valid_to, author_person_id, reason)
-            VALUES (@id, @tenant, @viewer, @viewed, UTC_TIMESTAMP(6), @valid_to, @author, '')
+            VALUES (@id, @tenant, @viewer, @viewed, @valid_from, @valid_to, @author, '')
             """;
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@id", visibilityId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@tenant", (tenantId ?? TenantId).ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@viewer", viewerPersonId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@viewed", viewedPersonId is { } v ? v.ToByteArray(bigEndian: true) : (object)DBNull.Value);
+        cmd.Parameters.AddWithValue("@valid_from", validFrom ?? FixedPastValidFrom);
         cmd.Parameters.AddWithValue("@valid_to", validTo is { } t ? t : (object)DBNull.Value);
         cmd.Parameters.AddWithValue("@author", AuthorPersonId.ToByteArray(bigEndian: true));
         await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
@@ -171,7 +217,8 @@ public sealed class VisibilityRolesSchemaTests : IAsyncLifetime
         Guid personRoleId,
         Guid personId,
         Guid roleId,
-        DateTime? validTo)
+        DateTime? validTo,
+        DateTime? validFrom = null)
     {
         await using var conn = new MySqlConnection(_fixture.ConnectionString);
         await conn.OpenAsync().ConfigureAwait(false);
@@ -179,13 +226,14 @@ public sealed class VisibilityRolesSchemaTests : IAsyncLifetime
             INSERT INTO person_roles
                 (person_role_id, insight_tenant_id, person_id, role_id,
                  valid_from, valid_to, author_person_id, reason)
-            VALUES (@id, @tenant, @person, @role, UTC_TIMESTAMP(6), @valid_to, @author, '')
+            VALUES (@id, @tenant, @person, @role, @valid_from, @valid_to, @author, '')
             """;
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@id", personRoleId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@tenant", TenantId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@person", personId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@role", roleId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@valid_from", validFrom ?? FixedPastValidFrom);
         cmd.Parameters.AddWithValue("@valid_to", validTo is { } t ? t : (object)DBNull.Value);
         cmd.Parameters.AddWithValue("@author", AuthorPersonId.ToByteArray(bigEndian: true));
         await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
@@ -202,6 +250,21 @@ public sealed class VisibilityRolesSchemaTests : IAsyncLifetime
             """;
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@id", personRoleId.ToByteArray(bigEndian: true));
+        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    private async Task SeedExtraRoleAsync(Guid roleId, string name)
+    {
+        await using var conn = new MySqlConnection(_fixture.ConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+        const string sql = """
+            INSERT INTO roles (role_id, name)
+            VALUES (@id, @name)
+            ON DUPLICATE KEY UPDATE name = VALUES(name)
+            """;
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@id", roleId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@name", name);
         await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 }

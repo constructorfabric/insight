@@ -1,10 +1,9 @@
 namespace Insight.Identity.Infrastructure.MariaDb;
 
 /// <summary>
-/// SQL for the `visibility` table. Step 1 of #346 ships only the seed
-/// query that fetches a viewer's active grants — the recursive CTE that
-/// joins these with `org_chart` to compute the full visible set lands
-/// with the `VisibilityService` (step 3 in the breakdown).
+/// SQL for the `visibility` table. The seed query fetches a viewer's
+/// active grants; the recursive CTE that joins these with `org_chart`
+/// to compute the full visible set lives in <c>VisibilityService</c>.
 /// </summary>
 internal static class SqlVisibility
 {

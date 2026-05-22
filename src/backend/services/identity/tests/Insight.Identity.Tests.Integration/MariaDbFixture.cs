@@ -48,13 +48,19 @@ public sealed class MariaDbFixture : IAsyncLifetime
             await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
         await using (var cmd = new MySqlCommand("DELETE FROM persons", conn))
             await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-        // #346 step-1 RBAC tables. `roles` is NOT cleared here — the
+        // #346 step-1 RBAC tables. `roles` is mostly NOT cleared — the
         // admin seed row is part of the schema-bootstrap contract and
-        // every test depends on it being there. Per-test rows go into
-        // `visibility` and `person_roles`.
+        // every test depends on it being there — but any ad-hoc role a
+        // multi-role test inserts is wiped so it doesn't bleed into
+        // siblings. Per-test rows in `visibility` and `person_roles`
+        // are always cleared.
         await using (var cmd = new MySqlCommand("DELETE FROM visibility", conn))
             await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
         await using (var cmd = new MySqlCommand("DELETE FROM person_roles", conn))
+            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+        await using (var cmd = new MySqlCommand(
+            "DELETE FROM roles WHERE role_id <> UNHEX(REPLACE('a4d11000-0000-4000-8000-000000000001', '-', ''))",
+            conn))
             await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
@@ -120,7 +126,10 @@ public sealed class MariaDbFixture : IAsyncLifetime
             reason            VARCHAR(500) NOT NULL DEFAULT '',
             created_at        DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
             PRIMARY KEY (visibility_id),
-            INDEX idx_viewer_current (insight_tenant_id, viewer_person_id, valid_to)
+            CONSTRAINT chk_visibility_interval
+                CHECK (valid_to IS NULL OR valid_from <= valid_to),
+            INDEX idx_viewer_current
+                (insight_tenant_id, viewer_person_id, valid_to, viewed_person_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """;
 
@@ -145,6 +154,8 @@ public sealed class MariaDbFixture : IAsyncLifetime
             reason            VARCHAR(500) NOT NULL DEFAULT '',
             created_at        DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
             PRIMARY KEY (person_role_id),
+            CONSTRAINT chk_person_roles_interval
+                CHECK (valid_to IS NULL OR valid_from <= valid_to),
             INDEX idx_person_current (insight_tenant_id, person_id, role_id, valid_to),
             INDEX idx_role_current   (insight_tenant_id, role_id, valid_to)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

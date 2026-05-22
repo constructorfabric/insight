@@ -28,8 +28,18 @@ CREATE TABLE IF NOT EXISTS visibility (
 
     PRIMARY KEY (visibility_id),
 
+    -- Reject backward intervals at schema level: a row with
+    -- valid_to < valid_from would be silently invisible to the
+    -- "active = valid_to IS NULL" query, masking caller-side bugs.
+    CONSTRAINT chk_visibility_interval
+        CHECK (valid_to IS NULL OR valid_from <= valid_to),
+
     -- Hot path: "what are A's active grants?" — drives the visibility
-    -- CTE seed list when checking can_see(A, B). The valid_to suffix
-    -- lets the index also serve historical queries (valid_to <= @as_of).
-    INDEX idx_viewer_current (insight_tenant_id, viewer_person_id, valid_to)
+    -- CTE seed list when checking can_see(A, B). `viewed_person_id` is
+    -- a covering column so the index satisfies the SELECT shape from
+    -- `Sql.Visibility.cs::ActiveGrantsByViewer` without a back-lookup
+    -- into the clustered index. The valid_to suffix lets the index
+    -- also serve historical queries (valid_to <= @as_of).
+    INDEX idx_viewer_current
+        (insight_tenant_id, viewer_person_id, valid_to, viewed_person_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

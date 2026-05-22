@@ -18,11 +18,13 @@ CREATE TABLE IF NOT EXISTS roles (
     UNIQUE KEY uk_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Deterministic UUIDv4 seeded for `admin` so application code can
--- reference the role by a fixed constant (DomainModel `Roles.Admin`)
--- without a runtime SELECT round-trip on every authz check. Generated
--- once with `uuidgen` and pinned forever — DO NOT regenerate, as
--- person_roles rows reference this exact value.
+-- Hand-crafted deterministic seed UUID for `admin` so application
+-- code can reference the role by a fixed constant
+-- (`Insight.Identity.Domain.Services.Roles.Admin`) without a runtime
+-- SELECT round-trip on every authz check. The shape "a4d1…0001" is
+-- intentionally recognisable as the admin seed and is NOT the output
+-- of `uuidgen`. DO NOT change this value — person_roles rows
+-- reference it exactly.
 INSERT INTO roles (role_id, name)
 VALUES (UNHEX(REPLACE('a4d11000-0000-4000-8000-000000000001', '-', '')), 'admin')
 ON DUPLICATE KEY UPDATE name = name;
