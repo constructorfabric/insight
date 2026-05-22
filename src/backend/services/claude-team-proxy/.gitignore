@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Local env (sessionKey, ORG_ID — secrets)
+.env
+.env.local
+
+# Playwright artifacts
+playwright-report/
+test-results/
+*.har
+
+# Build output (later phases)
+dist/
+*.tsbuildinfo

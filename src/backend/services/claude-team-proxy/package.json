@@ -1,0 +1,19 @@
+{
+  "name": "claude-team-proxy",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Headless Chromium proxy for claude.ai web API (Cloudflare bypass via Playwright + stealth). See docs/components/connectors/ai/claude-team/specs/DESIGN.md.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "install:chromium": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
