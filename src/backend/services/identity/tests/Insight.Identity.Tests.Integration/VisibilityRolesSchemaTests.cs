@@ -15,10 +15,11 @@ namespace Insight.Identity.Tests.Integration;
 [Collection(MariaDbCollection.Name)]
 public sealed class VisibilityRolesSchemaTests : IAsyncLifetime
 {
-    private static readonly Guid TenantId       = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-    private static readonly Guid AlicePersonId  = Guid.Parse("11111111-1111-1111-1111-111111111111");
-    private static readonly Guid BobPersonId    = Guid.Parse("22222222-2222-2222-2222-222222222222");
-    private static readonly Guid AuthorPersonId = Guid.Empty;
+    private static readonly Guid TenantId           = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static readonly Guid AlicePersonId      = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid BobPersonId        = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid AuthorPersonId     = Guid.Empty;
+    private static readonly Guid TestAuditorRoleId  = Guid.Parse("a4d11000-0000-4000-8000-000000000099");
 
     private readonly MariaDbFixture _fixture;
     private VisibilityRepository? _visibility;
@@ -104,15 +105,14 @@ public sealed class VisibilityRolesSchemaTests : IAsyncLifetime
         // (auditor / hr_admin / ...) this assertion stays valid and the
         // ad-hoc seed below should be replaced by referencing the new
         // production role constants.
-        var auditorRoleId = Guid.Parse("a4d11000-0000-4000-8000-000000000099");
-        await SeedExtraRoleAsync(auditorRoleId, "test_auditor").ConfigureAwait(false);
+        await SeedExtraRoleAsync(TestAuditorRoleId, "test_auditor").ConfigureAwait(false);
 
         await InsertPersonRoleAsync(Guid.NewGuid(), AlicePersonId, Roles.Admin, validTo: null).ConfigureAwait(false);
-        await InsertPersonRoleAsync(Guid.NewGuid(), AlicePersonId, auditorRoleId, validTo: null).ConfigureAwait(false);
+        await InsertPersonRoleAsync(Guid.NewGuid(), AlicePersonId, TestAuditorRoleId, validTo: null).ConfigureAwait(false);
 
         var active = await _roles!.GetActiveByPersonAsync(TenantId, AlicePersonId, CancellationToken.None);
         active.Should().HaveCount(2);
-        active.Select(a => a.RoleId).Should().BeEquivalentTo(new[] { Roles.Admin, auditorRoleId });
+        active.Select(a => a.RoleId).Should().BeEquivalentTo(new[] { Roles.Admin, TestAuditorRoleId });
     }
 
     // ── visibility ──────────────────────────────────────────────────
