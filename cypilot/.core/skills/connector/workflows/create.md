@@ -367,6 +367,85 @@ def parse_response(self, response, **kwargs):
 #### 3.5 `Dockerfile`
 #### 3.6 Same descriptor.yaml, K8s Secret example, README.md, dbt/ as nocode
 
+## Phase 3.7: Image-bearing connector requirements (CRITICAL when Dockerfile present)
+
+If your connector ships at least one `Dockerfile` under its connector directory (CDK source, enrich sidecar, future bootstrap or migrator container), you MUST declare every such image in your `descriptor.yaml.images:` block. CI uses **dynamic discovery** — it scans every descriptor on every run and builds whatever is declared. Adding a new connector with images is a descriptor edit; CI follows automatically.
+
+See [ADR-0016 — Descriptor `images:` Block](../../../../docs/components/airbyte-toolkit/specs/ADR/0016-descriptor-images-block.md) for the rationale.
+
+### 1. Descriptor `images:` block (REQUIRED for every Dockerfile)
+
+In `descriptor.yaml`, after `workflow:` and before `dbt_select:`, add a map-style `images:` block. The map's keys are free-form identifiers; the **reserved** keys `cdk` and `enrich` have runtime semantics (reconcile and the enrich workflow read them respectively).
+
+```yaml
+images:
+  cdk:                                              # reserved key for CDK source images
+    name: source-<connector>-insight                # GHCR image short name (no registry prefix, no tag)
+    dockerfile: ./Dockerfile                        # leading "./" mandatory
+    context: .                                      # build context relative to connector dir
+    image: ""                                       # full ref; empty until first CI build
+  enrich:                                           # reserved key for enrich sidecars
+    name: insight-<connector>-enrich
+    dockerfile: ./enrich/Dockerfile
+    context: ./enrich
+    image: ""
+```
+
+**Field semantics:**
+- `name` — pushed to `${IMAGE_PREFIX}/<name>`.
+- `dockerfile` — path RELATIVE to connector directory, with leading `./`.
+- `context` — build context path, RELATIVE to connector directory, with leading `./` (`./` alone means connector root).
+- `image` — full image reference. CI patches this field on every successful push. Empty string `""` is allowed for not-yet-published images.
+
+**No top-level `cdk_image:` or `enrich_image:` fields.** ADR-0011 and ADR-0014 are SUPERSEDED; CI rejects any descriptor that carries these legacy fields.
+
+### 2. CI build wiring (paths-trigger only — NO per-image job)
+
+Build identity (`name`, `dockerfile`, `context`) is read from your descriptor at job time. You do NOT add a per-image job to `.github/workflows/build-images.yml` — the workflow's `discover` step finds your connector automatically.
+
+What you DO need to add:
+
+- In the workflow's `on.push.paths` and `on.pull_request.paths` lists, ensure `src/ingestion/connectors/<category>/<name>/**` is covered (typically already covered by `src/ingestion/**`).
+- In the `changes` job's paths-filter, add a per-connector flag that ALSO excludes `descriptor.yaml` (recursion prevention — the bump-descriptors commit patches descriptor.yaml and the flag must NOT re-fire on it):
+
+  ```yaml
+  <slug>:
+    - 'src/ingestion/connectors/<category>/<name>/**'
+    - '!src/ingestion/connectors/<category>/<name>/descriptor.yaml'
+  ```
+
+  The `<slug>` is the connector's snake_case identifier.
+
+- In the `discover` step's filter logic, ensure your connector's `images[].context` paths are evaluated against the changed-file list — `discover` builds the matrix only for entries whose `context` directory had changes.
+
+If a connector has both `images.cdk` (`context: .`) and `images.enrich` (`context: ./enrich`), a change inside `enrich/**` rebuilds only the enrich image; a change elsewhere in the connector dir rebuilds only the cdk image; a change touching both areas rebuilds both. `discover` handles this with no per-connector code.
+
+### 3. bump-descriptors invocation (typically no skill action needed)
+
+The `bump-descriptors` job uses the same `discover` output to know which descriptors to patch and which keys to update. Patching is universal:
+
+```bash
+# pseudo-code; the actual implementation lives in build-images.yml
+for entry in discover.matrix:
+  if entry.built_in_this_run:
+    yq -i ".images.${entry.key}.image = \"${IMAGE_PREFIX}/${entry.name}:${BUILD_TAG}\"" \
+      "${entry.connector_dir}/descriptor.yaml"
+```
+
+No per-connector wiring in `bump-descriptors` itself. Your descriptor declaring `images:` IS your wiring.
+
+### Doneness validation
+
+After your descriptor edit lands, run:
+
+```bash
+cpt --json validate --artifact src/ingestion/connectors/<category>/<name>/descriptor.yaml
+yq '.images' src/ingestion/connectors/<category>/<name>/descriptor.yaml   # confirm block present
+yq '.cdk_image, .enrich_image' src/ingestion/connectors/<category>/<name>/descriptor.yaml   # MUST return null (no top-level legacy fields)
+```
+
+The deterministic rule `connector-images-triad` (see `cypilot/.core/skills/connector/workflows/validate.md`) checks the descriptor and the paths-filter together.
+
 ## Phase 4: Validate Package Structure
 
 After creating all files, run:
@@ -546,6 +625,18 @@ Completed:
   ✓ Credentials checked against API
   ✓ Streams discovered, schema generated from real data
   ✓ Data read locally — all mandatory fields present
+
+If your connector ships a Dockerfile (CDK or enrich sidecar), also verify
+the descriptor + CI wiring (per Phase 3.7 and ADR-0016):
+  ✓ `images:` map-style block added to descriptor.yaml (key per Dockerfile,
+       4 fields each: name/dockerfile/context/image)
+  ✓ NO top-level `cdk_image:` or `enrich_image:` fields in descriptor.yaml
+       (these were removed by ADR-0016 superseding ADR-0011 and ADR-0014)
+  ✓ paths-filter for the connector slug in .github/workflows/build-images.yml
+       excludes `descriptor.yaml` (recursion prevention)
+  ✓ Build, push, bump, chart-publish all done by the workflow's shared
+       discover/build/bump-descriptors jobs — NO per-connector job edits
+       in the workflow YAML
 
 Next: /connector deploy <name>
 ```

@@ -1,9 +1,19 @@
 name: hubspot
 version: "1.0.0"
-cdk_image: "ghcr.io/cyberfabric/source-hubspot-insight:2026.05.08.18.01-d035edb"
 type: cdk
 schedule: "0 6 * * *"
 workflow: sync
+
+# CI build metadata + runtime image refs (ADR-0016). CI scans `images:`
+# via dynamic discovery on every run; reconcile reads images.cdk.image
+# when registering the Airbyte CDK source definition.
+images:
+  cdk:
+    name: source-hubspot-insight
+    dockerfile: ./Dockerfile
+    context: .
+    image: "ghcr.io/cyberfabric/source-hubspot-insight:2026.05.22.13.03-5cdda7c"
+
 dbt_select: "tag:hubspot+"
 
 connection:

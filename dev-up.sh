@@ -340,19 +340,19 @@ fi
 # templates nor need these images.
 #
 # The jira-enrich image tag is read from the jira descriptor's
-# `enrich_image` field — the same value reconcile will hand to the
-# WorkflowTemplate at runtime — and the build script tags + kind-loads
-# that exact ref. Because `tt-enrich-jira-run.yaml` uses
+# `images.enrich.image` field (per ADR-0016) — the same value reconcile
+# will hand to the WorkflowTemplate at runtime — and the build script
+# tags + kind-loads that exact ref. Because `tt-enrich-jira-run.yaml` uses
 # `imagePullPolicy: IfNotPresent`, the pod uses the locally-cached image
 # without contacting the remote registry. To run a different binary
-# locally, edit `enrich_image` in the descriptor and rerun dev-up.
+# locally, edit `images.enrich.image` in the descriptor and rerun dev-up.
 TOOLBOX_IMAGE_REF="${INGESTION_TOOLBOX_IMAGE:-insight-toolbox:local}"
 JIRA_DESCRIPTOR="$ROOT_DIR/src/ingestion/connectors/task-tracking/jira/descriptor.yaml"
 JIRA_ENRICH_IMAGE_REF="$(python3 \
   "$ROOT_DIR/src/ingestion/reconcile-connectors/python/parse_descriptor.py" \
-  --descriptor "$JIRA_DESCRIPTOR" --field enrich_image)"
+  --descriptor "$JIRA_DESCRIPTOR" --field images.enrich.image)"
 [[ -n "$JIRA_ENRICH_IMAGE_REF" ]] || {
-  echo "ERROR: enrich_image missing from $JIRA_DESCRIPTOR — set it before running dev-up." >&2
+  echo "ERROR: images.enrich.image missing from $JIRA_DESCRIPTOR — set it before running dev-up." >&2
   exit 1
 }
 if [[ "$COMPONENT" == "all" || "$COMPONENT" == "ingestion" ]] && [[ "$BUILD_IMAGES" == "true" ]]; then

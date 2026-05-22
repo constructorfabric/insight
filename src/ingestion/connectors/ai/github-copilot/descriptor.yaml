@@ -5,6 +5,16 @@ type: cdk
 schedule: "0 2 * * *"   # daily at 02:00 UTC (data for day D available ~24h after end-of-day D UTC)
 workflow: sync
 
+# CI build metadata + runtime image refs (ADR-0016). images.cdk.image is
+# empty until first CI build from .github/workflows/build-images.yml,
+# which patches this field via the bump-descriptors job.
+images:
+  cdk:
+    name: source-github-copilot-insight
+    dockerfile: ./Dockerfile
+    context: .
+    image: "ghcr.io/cyberfabric/source-github-copilot-insight:2026.05.22.13.03-5cdda7c"
+
 # Silver routing: `copilot__ai_dev_usage` feeds class_ai_dev_usage with
 # tool='copilot' (active). `copilot__ai_org_usage` is deferred until
 # class_ai_org_usage is created — it ships with `enabled=false` and is

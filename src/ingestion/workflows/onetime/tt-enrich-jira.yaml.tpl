@@ -4,8 +4,8 @@
 # Variables resolved by run-tt-enrich-jira.sh and rendered via envsubst:
 #   NAMESPACE, TENANT, TENANT_DASHED, SOURCE_ID, JIRA_ENRICH_IMAGE
 #
-# Per ADR-0014 the JIRA_ENRICH_IMAGE comes from the jira descriptor.yaml,
-# not from Helm values.
+# Per ADR-0016 the JIRA_ENRICH_IMAGE comes from the jira
+# descriptor.yaml.images.enrich.image, not from Helm values.
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:

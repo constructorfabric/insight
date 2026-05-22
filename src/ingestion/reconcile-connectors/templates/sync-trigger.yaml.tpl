@@ -12,8 +12,8 @@
 #   ${DBT_SELECT_STAGING}   — only set for jira; empty otherwise
 #   ${DBT_FULL_REFRESH}     — "true" iff bump_kind == "major" on this run
 #                              (per ADR-0015); else "false". One-shot only.
-#   ${JIRA_ENRICH_IMAGE}    — descriptor.enrich_image for jira connector
-#                              (per ADR-0014). Empty for non-jira; the
+#   ${JIRA_ENRICH_IMAGE}    — descriptor.images.enrich.image for jira (per
+#                              ADR-0016). Empty for non-jira; the
 #                              tt-enrich-jira-run task is only invoked when
 #                              DATA_SOURCE == "jira" anyway.
 #   ${INSIGHT_NAMESPACE}    — release namespace

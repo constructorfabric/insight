@@ -13,7 +13,8 @@
 #   CLUSTER_NAME     Kind cluster name for local-dev load (default: insight)
 #
 # Image reference:
-#   The full Docker image reference is read verbatim from descriptor.cdk_image
+#   The full Docker image reference is read verbatim from
+#   descriptor.images.cdk.image per ADR-0016
 #   (e.g. `ghcr.io/cyberfabric/source-foo-insight:v1.2.3` for push, or
 #   `source-foo-insight:dev` for local-only). No registry derivation.
 #
@@ -137,9 +138,9 @@ cdk_build() {
 
   local image
   image="$(python3 "${_CDK_PY_DIR}/parse_descriptor.py" \
-    --descriptor "${descriptor}" --field cdk_image 2>/dev/null || true)"
+    --descriptor "${descriptor}" --field images.cdk.image 2>/dev/null || true)"
   if [[ -z "${image}" ]]; then
-    printf 'ERROR: descriptor.cdk_image is required for type=cdk (got empty) at %s\n' \
+    printf 'ERROR: descriptor.images.cdk.image is required for type=cdk (got empty) at %s\n' \
       "${descriptor}" >&2
     return 1
   fi

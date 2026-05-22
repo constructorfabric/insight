@@ -426,21 +426,30 @@ A major-bump full-refresh on connector A **MUST NOT** cause any Airbyte API call
 **Actor**: `cpt-insightspec-actor-platform-engineer`
 **Rationale**: Bronze is append-only and silver dedups via `unique_key`; cross-source consistency holds without resyncing B. Cascading would multiply rate-limit and load on unrelated sources for no data benefit.
 
-#### 5.6.17 Enrich image sourced from descriptor
+#### 5.6.17 Descriptor `images:` block as sole source of truth for connector images
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-enrich-image-from-descriptor`
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-descriptor-images-block`
 
-For connectors that run an enrich sidecar (today: jira; planned: youtrack), the image reference **MUST** be sourced exclusively from `descriptor.yaml.enrich_image`. The Helm chart **MUST NOT** carry an `ingestion.<connector>EnrichImage` value or a WorkflowTemplate default for the image; the `tt-enrich-<connector>-run` WorkflowTemplate input parameter `<connector>_enrich_image` **MUST** be required (no default), and reconcile **MUST** pass the descriptor value to the rendered `ingestion-pipeline` submission.
+Every connector directory that ships at least one `Dockerfile` **MUST** declare each such image under a map-style `images:` block in its `descriptor.yaml`. The block is a YAML map keyed by free-form `<key>` strings (e.g. `cdk`, `enrich`, `bootstrap`); each entry has `name` (GHCR image short name, no registry prefix or tag), `dockerfile` (path relative to connector dir, with leading `./`), `context` (path relative to connector dir, with leading `./`), and `image` (full registry/repo:tag, or empty string `""` for not-yet-published images).
+
+**Reserved keys with runtime semantics:**
+- `cdk` — reconcile reads `images.cdk.image` to determine the CDK source image when registering an Airbyte source definition; an empty value fails loud.
+- `enrich` — the enrich workflow runner reads `images.enrich.image` at workflow submission time, via reconcile passing it as a parameter. The image reference is re-read from the descriptor on EVERY submission; no Helm-time bake.
+
+The descriptor **MUST NOT** carry top-level `cdk_image:` or `enrich_image:` fields. CI **MUST** consume the `images:` block via dynamic discovery (scan all `descriptor.yaml` files, build a matrix of `(connector_dir, key, name, dockerfile, context)`, fan-out one build per entry). After a successful image push, CI patches `images.<key>.image` in the descriptor and commits in a separate commit without `[skip ci]`, triggering the toolbox rebuild and chart publication on the next workflow run.
+
+The Helm chart **MUST NOT** carry per-connector image values (e.g. `ingestion.<connector>EnrichImage`); the connector image refs travel inside the toolbox image (descriptor baked at toolbox build time).
 
 **Actor**: `cpt-insightspec-actor-platform-engineer`, `cpt-insightspec-actor-ci-pipeline`
-**Rationale**: A connector's complete deployment surface (manifest version, source-image, enrich-image, schedule, dbt scope) must be visible in one file. Splitting the enrich image into chart values hides the linkage from operators and PR reviewers.
+**Rationale**: One file is the answer to "what images does this connector ship, where are their Dockerfiles, which tag is deployed". Adding a new image kind is a descriptor edit; no new top-level field, no new ADR, no Helm wiring per kind. CI has shared build logic — no per-image-job copypaste.
 
 #### Changelog
 
 - 2026-05-05 — v1.1 — Added §5.6.7…§5.6.12 (cron-self-run, name-based-connection-resolve, auto-trigger-sync-on-data-change, file-persistent-logs, cascade-delete-cronworkflow, leak-free-loop) for Phase 2 of the reconcile refactor.
 - 2026-05-06 — v1.1 — Added §5.2 connector-lifecycle namespace + nocode registration path (per ADR-0009 / ADR-0010).
-- 2026-05-07 — v1.1 — Extended §5.2 connector-lifecycle paragraph with CDK pre-built ghcr images path (per ADR-0011).
-- 2026-05-13 — v1.2 — Added §5.6.13…§5.6.17 (semver-version-format, catalog-refresh-on-bump, full-refresh-on-major-bump, no-cross-connector-cascade, enrich-image-from-descriptor) per ADR-0014 + ADR-0015.
+- 2026-05-07 — v1.1 — Extended §5.2 connector-lifecycle paragraph with CDK pre-built ghcr images path (per ADR-0011 — now SUPERSEDED by ADR-0016).
+- 2026-05-13 — v1.2 — Added §5.6.13…§5.6.16 (semver-version-format, catalog-refresh-on-bump, full-refresh-on-major-bump, no-cross-connector-cascade) per ADR-0015. Added §5.6.17 enrich-image-from-descriptor per ADR-0014 (both ADR-0014 and §5.6.17 in this form now SUPERSEDED by ADR-0016 / new §5.6.17 below).
+- 2026-05-21 — v1.3 — Replaced §5.6.17 (enrich-image-from-descriptor) and §5.6.18 (additive descriptor-images-block) with a single §5.6.17 declaring the map-style `images:` block as the sole source of truth for connector image identity, per ADR-0016. Top-level `cdk_image:` / `enrich_image:` fields removed from all descriptors; ADR-0011 and ADR-0014 marked SUPERSEDED.
 
 ## 6. Non-Functional Requirements
 

@@ -214,10 +214,10 @@ reconcile_classify_change() {
 #     update_active_manifest.
 #
 # For cdk connectors: image drift via ab_set_definition_image_tag, driven by
-# descriptor.cdk_image (a full Docker image reference; NOT descriptor.version).
+# descriptor.images.cdk.image (a full Docker image reference; NOT descriptor.version).
 # The reference is split via python/split_docker_image_ref.py into
-# dockerRepository + dockerImageTag (digest or tag). When cdk_image is empty
-# for type=cdk, WARN+skip until the image is published.
+# dockerRepository + dockerImageTag (digest or tag). When the image field is
+# empty for type=cdk, WARN+skip until the image is published.
 #
 # Output: TSV `<action>\t<bump_kind>\t<definition_id>` on stdout where
 #   action     ∈ {republish, noop}
@@ -308,10 +308,11 @@ for d in json.load(sys.stdin):
     fi
     # @cpt-begin:cpt-insightspec-algo-reconcile-create-cdk-definition:p1
     # @cpt-flow:cpt-insightspec-flow-reconcile-publish-cdk-definition:p1
-    # type=cdk first-publish path (per ADR-0011): register pre-built image as
-    # custom source_definition. Reconcile never runs `docker build`. The full
-    # image reference comes verbatim from descriptor.cdk_image and is split
-    # into dockerRepository + dockerImageTag via split_docker_image_ref.py.
+    # type=cdk first-publish path (per ADR-0016, supersedes ADR-0011): register
+    # pre-built image as custom source_definition. Reconcile never runs
+    # `docker build`. The full image reference comes verbatim from
+    # descriptor.images.cdk.image and is split into dockerRepository +
+    # dockerImageTag via split_docker_image_ref.py.
     local docker_repo docker_tag
     IFS=$'\t' read -r docker_repo docker_tag \
       < <(python3 "${_RECONCILE_PY_DIR}/split_docker_image_ref.py" "${cdk_image}")

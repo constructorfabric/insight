@@ -70,7 +70,7 @@ cpt:
   - [Catalog Refreshed on Version Bump](#catalog-refreshed-on-version-bump)
   - [Full-Refresh Dispatched on Major Bump](#full-refresh-dispatched-on-major-bump)
   - [No Cross-Connector Cascade](#no-cross-connector-cascade)
-  - [Enrich Image Sourced From Descriptor](#enrich-image-sourced-from-descriptor)
+  - [Connector Images Sourced From Descriptor](#connector-images-sourced-from-descriptor)
   - [Dry-Run Is Non-Destructive](#dry-run-is-non-destructive)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
@@ -87,7 +87,7 @@ The reconcile feature drives Airbyte resources (definitions, sources, connection
 
 This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that supersedes the legacy fan of scripts (`connect.sh`, `register.sh`, `cleanup.sh`, `sync-state.sh`, `reset-connector.sh`, `update-connectors.sh`, `update-connections.sh`). One entrypoint, deterministic outcomes, no silent state drift.
 
-**Requirements**: `cpt-insightspec-fr-version-driven-reconcile`, `cpt-insightspec-fr-adopt-legacy-resources`, `cpt-insightspec-fr-orphan-gc`, `cpt-insightspec-fr-state-preserved-on-breaking-change`, `cpt-insightspec-fr-secret-validation`, `cpt-insightspec-fr-cli-surface`, `cpt-insightspec-fr-cron-self-run`, `cpt-insightspec-fr-name-based-connection-resolve`, `cpt-insightspec-fr-auto-trigger-sync-on-data-change`, `cpt-insightspec-fr-file-persistent-logs`, `cpt-insightspec-fr-cascade-delete-cronworkflow`, `cpt-insightspec-fr-leak-free-loop`, `cpt-insightspec-fr-semver-version-format`, `cpt-insightspec-fr-catalog-refresh-on-bump`, `cpt-insightspec-fr-full-refresh-on-major-bump`, `cpt-insightspec-fr-no-cross-connector-cascade`, `cpt-insightspec-fr-enrich-image-from-descriptor`
+**Requirements**: `cpt-insightspec-fr-version-driven-reconcile`, `cpt-insightspec-fr-adopt-legacy-resources`, `cpt-insightspec-fr-orphan-gc`, `cpt-insightspec-fr-state-preserved-on-breaking-change`, `cpt-insightspec-fr-secret-validation`, `cpt-insightspec-fr-cli-surface`, `cpt-insightspec-fr-cron-self-run`, `cpt-insightspec-fr-name-based-connection-resolve`, `cpt-insightspec-fr-auto-trigger-sync-on-data-change`, `cpt-insightspec-fr-file-persistent-logs`, `cpt-insightspec-fr-cascade-delete-cronworkflow`, `cpt-insightspec-fr-leak-free-loop`, `cpt-insightspec-fr-semver-version-format`, `cpt-insightspec-fr-catalog-refresh-on-bump`, `cpt-insightspec-fr-full-refresh-on-major-bump`, `cpt-insightspec-fr-no-cross-connector-cascade`, `cpt-insightspec-fr-descriptor-images-block`
 
 **Principles**: `cpt-insightspec-adr-version-driven-reconcile`, `cpt-insightspec-adr-adoption-of-existing-resources`, `cpt-insightspec-adr-credential-rotation-no-env`, `cpt-insightspec-adr-cluster-config-via-configmap`
 
@@ -307,7 +307,7 @@ First-time publish of a nocode connector via builder/create + builder/publish. T
 **Trigger**: reconcile sees a descriptor with `type=cdk` whose definition does not exist in Airbyte (custom:true filter applied per ADR-0009).
 
 **Steps**:
-1. [ ] - `p2` - Read `descriptor.cdk_image` (full image reference; e.g. `ghcr.io/cyberfabric/source-bitbucket-cloud-insight:2026.04.21.16.10-b36cf42`) - `inst-pcd-read-image`
+1. [ ] - `p2` - Read `descriptor.images.cdk.image` (full image reference; e.g. `ghcr.io/cyberfabric/source-bitbucket-cloud-insight:2026.04.21.16.10-b36cf42`) - `inst-pcd-read-image`
 2. [ ] - `p2` - **CALL** `cpt-insightspec-algo-reconcile-create-cdk-definition` → sourceDefinitionId - `inst-pcd-create`
 3. [ ] - `p2` - **RETURN** sourceDefinitionId - `inst-pcd-return`
 
@@ -358,7 +358,7 @@ First-time publish of a nocode connector via builder/create + builder/publish. T
 
 > **Type-specific comparison anchors**:
 > - For `type=nocode`: compare `descriptor.version` vs `definition.declarativeManifest.description`. Bump-kind classification applies.
-> - For `type=cdk`: compare `descriptor.cdk_image` vs the recomposed `${definition.dockerRepository}:${definition.dockerImageTag}` from the Airbyte API response. Per ADR-0015 §Bump-kind storage scope, semver bump-kind classification does NOT apply to CDK in this iteration — `bump_kind` is forced to `patch` on any republish so re-discover still runs but full-refresh is never dispatched.
+> - For `type=cdk`: compare `descriptor.images.cdk.image` vs the recomposed `${definition.dockerRepository}:${definition.dockerImageTag}` from the Airbyte API response. Per ADR-0015 §Bump-kind storage scope, semver bump-kind classification does NOT apply to CDK in this iteration — `bump_kind` is forced to `patch` on any republish so re-discover still runs but full-refresh is never dispatched.
 >
 > **Version format (per ADR-0015)**: `descriptor.version` (target) MUST be strict semver `MAJOR.MINOR.PATCH` matching regex `^\d+\.\d+\.\d+$`. Non-semver targets are rejected with a clear error. The Airbyte-side `current` value MAY be a legacy non-semver string (e.g. `2026.05.04`, `1.0`) for backward compatibility — see `bump_kind: migration` below.
 >
@@ -687,11 +687,11 @@ When iterating definitions, skip those with `custom != true`. Insight namespace 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-create-cdk-definition`
 
-**Inputs**: `workspace_id`, `connector` (slug), `cdk_image` (full image reference from `descriptor.cdk_image`, e.g. `ghcr.io/cyberfabric/source-bitbucket-cloud-insight:2026.04.21.16.10-b36cf42`)
+**Inputs**: `workspace_id`, `connector` (slug), `cdk_image` (full image reference from `descriptor.images.cdk.image`, e.g. `ghcr.io/cyberfabric/source-bitbucket-cloud-insight:2026.04.21.16.10-b36cf42`)
 **Outputs**: `sourceDefinitionId` (UUID), or WARN+skip if `cdk_image` missing
 
 **Steps**:
-1. [ ] - `p1` - **IF** `descriptor.cdk_image` is empty **RETURN** WARN+skip (image not declared) - `inst-ccd-skip-if-no-image`
+1. [ ] - `p1` - **IF** `descriptor.images.cdk.image` is missing or empty **RETURN** WARN+skip (image not declared) - `inst-ccd-skip-if-no-image`
 2. [ ] - `p1` - Split `cdk_image` into `(docker_repo, docker_tag)` per Docker reference grammar: if `@sha256:` present split on `@` first; else the last `:` AFTER the last `/` separates repo from tag; if no such `:` treat as `:latest` - `inst-ccd-split-image`
 3. [ ] - `p1` - API: POST `/api/v1/source_definitions/create_custom` with `{workspaceId, sourceDefinition: {name, dockerRepository: docker_repo, dockerImageTag: docker_tag, documentationUrl}}` - `inst-ccd-post`
 4. [ ] - `p1` - **RETURN** response.sourceDefinitionId - `inst-ccd-return`
@@ -724,7 +724,7 @@ When iterating definitions, skip those with `custom != true`. Insight namespace 
 The system **MUST** propagate a definition drift to Airbyte on the next reconcile invocation, without recreating dependent sources or connections. The trigger differs by connector type:
 
 - **NoCode** — `descriptor.yaml.version` change → `definition.declarativeManifest.description` updated via `declarative_source_definitions/create_manifest` (with `setAsActiveManifest: true`). The legacy `connector_builder_projects/update_active_manifest` endpoint was retired in Airbyte 1.7+.
-- **CDK** — `descriptor.yaml.cdk_image` change (the full image reference, per ADR-0011) → `definition.dockerRepository` + `definition.dockerImageTag` updated via `source_definitions/update`. `descriptor.yaml.version` is the Insight semantic-version label and does NOT drive the CDK image; it stays for audit / Argo labels.
+- **CDK** — `descriptor.yaml.images.cdk.image` change (the full image reference, per ADR-0016) → `definition.dockerRepository` + `definition.dockerImageTag` updated via `source_definitions/update`. `descriptor.yaml.version` is the Insight semantic-version label and does NOT drive the CDK image; it stays for audit / Argo labels.
 
 **Implements**:
 - `cpt-insightspec-flow-reconcile-run-reconcile-v2`
@@ -841,9 +841,9 @@ The system **MUST** preserve Airbyte sync state across a connection recreate tri
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-cdk-image-required`
 
-**Statement**: Every `connectors/*/*/descriptor.yaml` with `type: cdk` MUST declare a non-empty top-level field `cdk_image` carrying the full Docker image reference (registry + repository + tag). The matcher is `python3 python/parse_descriptor.py --descriptor <path> --field cdk_image` returning a non-empty string. Missing field → reconcile logs WARN ("type=cdk but cdk_image missing — skip") and skips that connector for the run; reconcile exit code is unaffected (per `cpt-insightspec-dod-reconcile-dry-run-non-destructive`'s "isolated failure" pattern).
+**Statement**: Every `connectors/*/*/descriptor.yaml` with `type: cdk` MUST declare a non-empty `images.cdk.image` field carrying the full Docker image reference (registry + repository + tag). The matcher is `yq -r '.images.cdk.image' <descriptor>` returning a non-empty string. Missing or empty `image` → reconcile logs WARN ("type=cdk but images.cdk.image missing/empty — skip") and skips that connector for the run; reconcile exit code is unaffected (per `cpt-insightspec-dod-reconcile-dry-run-non-destructive`'s "isolated failure" pattern). The first CI build from `build-images.yml` populates the `image` field on the first push; descriptors of not-yet-built connectors carry `images.cdk.image: ""`.
 
-**DoD test**: `tools/audit-cdk-image.sh` is **advisory** — it greps `connectors/*/*/descriptor.yaml`, exits **0** unconditionally, and prints the list of `type=cdk` descriptors lacking `cdk_image` for review awareness. CI does NOT fail on missing `cdk_image`.
+**DoD test**: `tools/audit-cdk-image.sh` is **advisory** — it greps `connectors/*/*/descriptor.yaml`, exits **0** unconditionally, and prints the list of `type=cdk` descriptors whose `images.cdk.image` is missing or empty for review awareness. CI does NOT fail on missing `images.cdk.image`.
 
 ### Catalog Refreshed on Version Bump
 
@@ -899,24 +899,27 @@ The system **MUST** set `dbt_full_refresh=true` on the auto-triggered one-shot s
 
 **Test scenario**: Snapshot `kubectl get sources,connections,definitions -A` and `argo list workflows -A` before reconcile. Major-bump connector A. Run reconcile. Diff snapshot: only connector A's resources changed; connector B's are byte-identical (same UUIDs, same tags, same connectionId).
 
-### Enrich Image Sourced From Descriptor
+### Connector Images Sourced From Descriptor
 
-- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-enrich-image-from-descriptor`
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-descriptor-images-block`
 
-The system **MUST** source the enrich sidecar image (today: jira-enrich; planned: youtrack-enrich) from `descriptor.yaml.enrich_image` exclusively (per ADR-0014). The Helm chart **MUST NOT** provide a chart-level default for the image; the WorkflowTemplate `tt-enrich-jira-run` **MUST** require `jira_enrich_image` as an input parameter without a default; reconcile **MUST** read the field from the connector's descriptor and propagate it through the rendered `ingestion-pipeline` submission.
+The system **MUST** source every connector image — CDK source images and enrich sidecar images alike — from the map-style `descriptor.yaml.images:` block exclusively (per ADR-0016). The Helm chart **MUST NOT** provide a chart-level default for any connector image; per-connector WorkflowTemplate input parameters carrying image refs (e.g. `tt-enrich-jira-run`'s `jira_enrich_image`) **MUST** be required without a default. Reconcile **MUST** read `images.cdk.image` for CDK source registration and `images.enrich.image` for enrich workflow submission, and propagate both through the rendered `ingestion-pipeline` submission — re-read from the descriptor on every submission, never baked at Helm time. No descriptor **MAY** carry top-level `cdk_image:` or `enrich_image:` fields.
 
 **Implements**:
 - `cpt-insightspec-flow-reconcile-run-reconcile-v2`
 - `cpt-insightspec-algo-reconcile-render-sync-trigger`
 
 **Touches**:
-- `descriptor.yaml.enrich_image` (optional field; required for connectors with an enrich step)
+- `descriptor.yaml.images.cdk.image` (required for `type: cdk` connectors; empty string `""` allowed for not-yet-published images — reconcile WARN+skips on empty)
+- `descriptor.yaml.images.enrich.image` (required for connectors with an enrich step; absent for connectors without one)
 - `tt-enrich-jira-run` WorkflowTemplate parameter `jira_enrich_image`
 
 **Test scenario**:
-1. jira `descriptor.yaml` contains a non-empty `enrich_image` field with a full image reference.
-2. Triggered jira sync's `enrich` task runs with `image:` equal to `descriptor.enrich_image`.
-3. A connector without an enrich step (any non-jira) has no `enrich_image` field and does not invoke `tt-enrich-*-run`.
+1. jira `descriptor.yaml.images.enrich.image` carries a non-empty full image reference; the top-level `enrich_image:` field is absent.
+2. Triggered jira sync's `enrich` task runs with `image:` equal to `descriptor.images.enrich.image` (read fresh on submission).
+3. hubspot `descriptor.yaml.images.cdk.image` carries a non-empty full image reference; reconcile registers the Airbyte source definition with that image.
+4. A connector without an enrich step has no `images.enrich` entry and does not invoke `tt-enrich-*-run`.
+5. `grep -RIn "^cdk_image\|^enrich_image" src/ingestion/connectors/` returns 0 hits.
 
 ### Dry-Run Is Non-Destructive
 

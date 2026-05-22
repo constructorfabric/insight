@@ -126,11 +126,11 @@ airbyte:
 # operator-pinned version. NO `:latest` defaults — the validator refuses
 # to render when `templates.enabled=true` and this field is empty.
 #
-# Enrich sidecar images (jira-enrich, future youtrack-enrich) are NOT in
-# values.yaml — per ADR-0014 their version lives exclusively in the
-# connector's descriptor.yaml.enrich_image and is propagated to the
-# tt-enrich-*-run WorkflowTemplate via the rendered ingestion-pipeline
-# submission.
+# Connector images (CDK sources + enrich sidecars) are NOT in values.yaml —
+# per ADR-0016 each connector's image refs live exclusively in
+# `descriptor.yaml.images.<key>.image` (keys: `cdk`, `enrich`, …) and are
+# propagated to the source-definition / enrich WorkflowTemplate / ingestion-
+# pipeline submission via reconcile reading them on every run.
 ingestion:
   # PREREQUISITE: when `templates.enabled=true`, the rendered Argo
   # `WorkflowTemplate` objects pin `serviceAccountName: argo-workflow`.

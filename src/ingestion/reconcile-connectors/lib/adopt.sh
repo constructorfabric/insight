@@ -56,9 +56,9 @@ adopt_warn_orphan() {
 # adopt_match_definition <definition_id> <version> <type> \
 #                        <connector_name> <connector_dir> [<cdk_image>]
 # Idempotent: align the right Airbyte field per type:
-#   - cdk: dockerImageTag <- tag/digest portion of descriptor.cdk_image
-#     (NOT descriptor.version). When cdk_image is empty -> WARN+skip
-#     (image not yet published).
+#   - cdk: dockerImageTag <- tag/digest portion of descriptor.images.cdk.image
+#     (NOT descriptor.version). When the image field is empty -> WARN+skip
+#     (image not yet published; CI's first build will stamp it).
 #   - nocode: builder.active_manifest.description <- descriptor.version
 #     via update_active_manifest (ADR-0010).
 # The underlying ab_* helpers are themselves idempotent at the API level

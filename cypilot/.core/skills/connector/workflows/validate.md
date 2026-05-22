@@ -95,6 +95,51 @@ Read connector package files and verify each item:
 - [ ] No `streams` block (streams are owned by Airbyte connector, discovered via `airbyte discover`)
 - [ ] No `silver_targets` block (Silver targets are determined by dbt model tags via `dbt_select`)
 
+### Rule: `connector-images-block` (FATAL — when Dockerfile present)
+
+**Applies to**: every connector directory under `src/ingestion/connectors/**/` that contains at least one `Dockerfile`. Nocode connectors (no Dockerfile) are exempt.
+
+**Severity**: FATAL — failing this rule means the connector image will silently never be rebuilt in CI, OR reconcile will fail to register the connector. Validate exits 2 on failure.
+
+**Check 1 — `descriptor.yaml.images:` is well-formed (map-style per ADR-0016)**
+
+- `descriptor.yaml` MUST contain an `images:` block that is a YAML map (NOT a list).
+- The map MUST have at least one key. Keys are free-form identifiers; the reserved keys `cdk` and `enrich` have runtime semantics.
+- Each entry MUST have all four fields: `name`, `dockerfile`, `context`, `image`.
+- `dockerfile` and `context` paths, joined to the connector directory, MUST resolve to a real file (`dockerfile`) and a real directory (`context`) on disk.
+- `image` MUST be a string; empty string `""` is allowed for not-yet-published images. If non-empty, MUST be a full image reference (`registry/repo:tag` or `registry/repo@sha256:...`).
+
+**Check 2 — No top-level legacy fields**
+
+- `descriptor.yaml` MUST NOT contain top-level `cdk_image:` or `enrich_image:` keys. These were SUPERSEDED by ADR-0016. `yq -r '.cdk_image, .enrich_image' <descriptor>` MUST return `null` on both.
+
+**Check 3 — paths-filter exclusion in CI**
+
+- `.github/workflows/build-images.yml` `changes` job's paths-filter MUST contain an entry for the connector's snake_case slug whose includes match the connector dir AND explicitly exclude `descriptor.yaml`:
+
+  ```yaml
+  <slug>:
+    - 'src/ingestion/connectors/<category>/<name>/**'
+    - '!src/ingestion/connectors/<category>/<name>/descriptor.yaml'
+  ```
+
+  Without the exclusion, the descriptor-bump commit re-triggers the image build and the workflow loops forever.
+
+**Check 4 — Reserved-key runtime requirements**
+
+- If `images.cdk` is present and `image` is non-empty: reconcile reads it; no further action required.
+- If `images.cdk` is present but `image` is empty: reconcile WARN+skips registration (acceptable for not-yet-built connectors).
+- If `images.enrich` is present: at least one workflow template under `charts/insight/templates/ingestion/` MUST reference `<connector>_enrich_image` as a parameter (so reconcile's render step can propagate it).
+
+**Output on failure** (one bullet per missing check):
+
+- `Connector <name>: missing descriptor.images: block (must be a map with at least one key) — see ADR-0016.`
+- `Connector <name>: top-level cdk_image:/enrich_image: still present — must be removed (ADR-0011/0014 SUPERSEDED).`
+- `Connector <name>: images.<key> missing required field (name|dockerfile|context|image).`
+- `Connector <name>: images.<key>.dockerfile/<context> does not resolve to an existing file/directory.`
+- `Connector <name>: paths-filter for <slug> does not exclude descriptor.yaml; descriptor-bump commit will infinite-loop.`
+- `Connector <name>: images.enrich present but no chart workflow template references <connector>_enrich_image parameter.`
+
 ### dbt Models
 - [ ] Model name follows `<connector>__<domain>.sql` pattern
 - [ ] `materialized='incremental'`

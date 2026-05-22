@@ -1,9 +1,19 @@
 name: salesforce
 version: "2.0.0"
-# cdk_image: <not yet published — add full ghcr.io reference when image is built>
 type: cdk
 schedule: "0 5 * * *"
 workflow: sync
+
+# CI build metadata + runtime image refs (ADR-0016). images.cdk.image is
+# empty until first CI build from .github/workflows/build-images.yml,
+# which patches this field via the bump-descriptors job.
+images:
+  cdk:
+    name: source-salesforce-insight
+    dockerfile: ./Dockerfile
+    context: .
+    image: "ghcr.io/cyberfabric/source-salesforce-insight:2026.05.22.13.03-5cdda7c"
+
 dbt_select: "tag:salesforce+"
 
 connection:

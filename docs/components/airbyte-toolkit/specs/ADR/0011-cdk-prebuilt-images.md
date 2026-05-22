@@ -1,8 +1,12 @@
 ---
-status: accepted
+status: superseded
 date: 2026-05-07
+superseded-date: 2026-05-21
+superseded-by: cpt-insightspec-adr-descriptor-images-block
 decision-makers: platform-engineering
 ---
+
+> **SUPERSEDED 2026-05-21 by ADR-0016 (`cpt-insightspec-adr-descriptor-images-block`).** The top-level `descriptor.yaml.cdk_image:` field is removed; CDK image references now live under `descriptor.yaml.images.cdk.image` per the map-style schema. The principle of "descriptor is the single source of truth for the CDK image; reconcile never builds at runtime" is preserved and tightened in ADR-0016. This file is retained for historical context.
 
 # ADR-0011: CDK connector images are pre-built; descriptor carries the full image reference, reconcile never builds at runtime
 

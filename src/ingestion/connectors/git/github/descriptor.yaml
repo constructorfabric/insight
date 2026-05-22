@@ -1,6 +1,9 @@
 name: github
 version: "2026.05.04"
-# cdk_image: <not yet published — add full ghcr.io reference when image is built>
+# Legacy github connector — superseded by git/github-v2 (separate descriptor).
+# No `images:` block declared; no CI build, no Dockerfile in this directory.
+# Out of scope for the descriptor.images: migration (ADR-0016) per user
+# decision 2026-05-21.
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync

@@ -28,10 +28,11 @@ _DISC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # disc_load_descriptors
 # Walks ${CONNECTORS_DIR}/*/*/descriptor.yaml and emits TSV per descriptor:
 #   name<TAB>connector_dir<TAB>version<TAB>type<TAB>cdk_image<TAB>enrich_image<TAB>dbt_select
-#     (type = nocode|cdk; cdk_image is the full Docker reference for
-#      type=cdk, empty for nocode or absent; enrich_image is the full Docker
-#      reference for connectors with an enrich sidecar, empty otherwise;
-#      dbt_select is the dbt selector passed to the ingestion-pipeline.)
+#     (type = nocode|cdk; cdk_image is the full Docker reference sourced from
+#      `descriptor.images.cdk.image` per ADR-0016, empty for nocode or absent;
+#      enrich_image is sourced from `descriptor.images.enrich.image`, empty
+#      otherwise; dbt_select is the dbt selector passed to the
+#      ingestion-pipeline.)
 # This is the single bash-side reader of descriptor.yaml — every other lib /
 # python helper consumes values via this TSV rather than re-reading the file.
 # Skips files missing `name` or `version`; logs a WARN to stderr per skip.
@@ -53,8 +54,13 @@ except Exception as exc:  # noqa: BLE001
 name = d.get("name")
 version = d.get("version")
 ctype = d.get("type", "nocode")
-cdk_image = d.get("cdk_image", "") or ""
-enrich_image = d.get("enrich_image", "") or ""
+# Image refs are sourced from the map-style images: block per ADR-0016;
+# legacy top-level cdk_image / enrich_image fields no longer exist.
+images = d.get("images") or {}
+cdk_entry = images.get("cdk") or {}
+enrich_entry = images.get("enrich") or {}
+cdk_image = (cdk_entry.get("image") or "") if isinstance(cdk_entry, dict) else ""
+enrich_image = (enrich_entry.get("image") or "") if isinstance(enrich_entry, dict) else ""
 dbt_select = d.get("dbt_select", "") or ""
 if not name:
     sys.stderr.write(f"WARN: descriptor missing name, skip: {path}\n"); sys.exit(0)

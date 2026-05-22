@@ -18,9 +18,9 @@ spec:
       inputs:
         parameters:
           - name: insight_source_id
-          # Image comes from the jira descriptor's enrich_image field via the
-          # submitter (reconcile sync-trigger or run-tt-enrich-jira.sh) — no
-          # chart-level default.
+          # Image comes from the jira descriptor's `images.enrich.image` field
+          # (per ADR-0016) via the submitter (reconcile sync-trigger or
+          # run-tt-enrich-jira.sh) — no chart-level default.
           - name: jira_enrich_image
           - name: clickhouse_host
             default: {{ include "insight.clickhouse.fqdn" . | quote }}

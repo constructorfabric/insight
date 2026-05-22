@@ -490,19 +490,25 @@ traceability = "DOCS-ONLY"
 [[systems.artifacts]]
 kind = "ADR"
 path = "docs/components/airbyte-toolkit/specs/ADR/0011-cdk-prebuilt-images.md"
-name = "ADR-0011: CDK connectors use pre-built ghcr.io images, reconcile never builds at runtime"
+name = "ADR-0011 (SUPERSEDED by ADR-0016): CDK connectors use pre-built ghcr.io images, reconcile never builds at runtime — image location moved from top-level descriptor.cdk_image to descriptor.images.cdk.image per ADR-0016"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "ADR"
 path = "docs/components/airbyte-toolkit/specs/ADR/0014-enrich-image-in-descriptor.md"
-name = "ADR-0014: Enrich sidecar image (jira-enrich, future youtrack-enrich) sourced from descriptor.yaml.enrich_image, not from Helm values"
+name = "ADR-0014 (SUPERSEDED by ADR-0016): Enrich sidecar image sourced from descriptor.yaml.enrich_image — replaced by the map-style images: block per ADR-0016 (image now at descriptor.yaml.images.enrich.image)"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "ADR"
 path = "docs/components/airbyte-toolkit/specs/ADR/0015-semver-and-full-refresh.md"
 name = "ADR-0015: Strict semver MAJOR.MINOR.PATCH; any bump re-discovers catalog; major bump dispatches one-shot dbt --full-refresh; no cross-connector cascade"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0016-descriptor-images-block.md"
+name = "ADR-0016: map-style descriptor.yaml.images: block as SOLE source of truth for connector image identity (supersedes ADR-0011 and ADR-0014); CI uses dynamic discovery to build all entries; reconcile reads images.cdk.image and images.enrich.image; no top-level cdk_image: / enrich_image: fields"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]

@@ -1,8 +1,21 @@
 name: jira
-version: "2026.05.04"
-enrich_image: "ghcr.io/cyberfabric/insight-jira-enrich:2026.05.20.16.41-a5a9495"
+version: "1.0.0"
 schedule: "0 3 * * *"
 workflow: sync
+
+# CI build metadata + runtime image refs (ADR-0016). The `images:` block is
+# the sole source of truth: CI scans it via dynamic discovery to know what
+# to build, and reconcile reads images.enrich.image to pass to the
+# tt-enrich-jira-run workflow on each submission. Keys with runtime
+# semantics: `cdk` (CDK source image — absent for jira; jira is nocode/
+# manifest-based and served by Airbyte's first-party source-jira image),
+# `enrich` (jira-enrich Rust sidecar).
+images:
+  enrich:
+    name: insight-jira-enrich
+    dockerfile: ./enrich/Dockerfile
+    context: ./enrich
+    image: "ghcr.io/cyberfabric/insight-jira-enrich:2026.05.22.13.03-5cdda7c"
 
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
 # package, not by this connector. The pipeline runs the jira-rust path:

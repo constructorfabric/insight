@@ -8,7 +8,7 @@ CLI:
     --tenant SLUG
     --insight-source-id SLUG     # secret annotation insight.cyberfabric.com/source-id
     --dbt-select SEL             # descriptor.dbt_select (may be empty)
-    --enrich-image REF           # descriptor.enrich_image (may be empty)
+    --enrich-image REF           # descriptor.images.enrich.image (may be empty)
     --bump-kind KIND             # none|patch|minor|major|migration (default: none)
     --tpl PATH
 

@@ -1,8 +1,12 @@
 ---
-status: accepted
+status: superseded
 date: 2026-05-13
+superseded-date: 2026-05-21
+superseded-by: cpt-insightspec-adr-descriptor-images-block
 decision-makers: platform-engineering
 ---
+
+> **SUPERSEDED 2026-05-21 by ADR-0016 (`cpt-insightspec-adr-descriptor-images-block`).** The top-level `descriptor.yaml.enrich_image:` field is removed; the enrich sidecar image reference now lives under `descriptor.yaml.images.enrich.image` per the map-style schema. The principle — "enrich image is sourced from the descriptor, never from Helm values" — is preserved in ADR-0016 (the workflow reads `images.enrich.image` at submission time via reconcile). This file is retained for historical context.
 
 # ADR-0014: Enrich Sidecar Image in Descriptor
 
@@ -111,4 +115,4 @@ A `enrich_image: <full ref>` field, optional, declared next to `cdk_image` / `ve
 
 This decision addresses:
 
-- `cpt-insightspec-fr-enrich-image-from-descriptor` — new functional requirement: enrich sidecar image version is sourced exclusively from `descriptor.yaml.enrich_image`.
+- `cpt-insightspec-fr-descriptor-images-block` — at the time of this ADR the requirement was scoped narrowly to `descriptor.yaml.enrich_image`; ADR-0016 broadened it to the map-style `descriptor.yaml.images:` block (sole source of truth for every connector image kind), at which point the FR was renamed.

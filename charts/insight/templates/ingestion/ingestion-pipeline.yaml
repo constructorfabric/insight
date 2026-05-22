@@ -33,8 +33,8 @@ spec:
             default: "false"
           - name: toolbox_image
             default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
-          # Sourced from the jira descriptor's enrich_image field by the
-          # submitter; required when data_source == "jira".
+          # Sourced from the jira descriptor's `images.enrich.image` field
+          # (per ADR-0016) by the submitter; required when data_source == "jira".
           - name: jira_enrich_image
           - name: airbyte_url
             default: {{ include "insight.airbyte.url" . | quote }}

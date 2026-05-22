@@ -8,6 +8,7 @@ on:
       - "src/ingestion/**"
       - "charts/insight/**"
       - ".github/workflows/build-images.yml"
+      - ".github/workflows/scripts/discover-image-matrix.py"
   pull_request:
     branches: [main]
     paths:
@@ -15,6 +16,7 @@ on:
       - "src/ingestion/**"
       - "charts/insight/**"
       - ".github/workflows/build-images.yml"
+      - ".github/workflows/scripts/discover-image-matrix.py"
   workflow_dispatch:
     inputs:
       # Cross-repo dispatch hook: cyberfabric/cyber-insight-front's CI sends
@@ -22,7 +24,8 @@ on:
       # bumps the frontend subchart appVersion to match. When set, ALL
       # backend image-build jobs are skipped (the dispatch carries no
       # backend code change), and publish-chart runs to bump + republish.
-      # Leave empty for a manual full-rebuild dispatch (legacy behaviour).
+      # Leave empty for a manual full-rebuild dispatch (legacy behaviour) —
+      # in that mode discover-images emits ALL connector image entries.
       frontend_tag:
         description: "Frontend image tag to pin (e.g. 2026.05.14.10.00-abc1234). Empty = full manual rebuild."
         required: false
@@ -44,20 +47,17 @@ permissions:
   packages: write   # publish-chart pushes the umbrella chart to GHCR
 
 jobs:
+  # ─── Backend / chart change detection ──────────────────────────────────────
+  # Per-service filters so a single-service code change only rebuilds that one
+  # image. Connector image builds are NOT handled here — see discover-images,
+  # which scans every descriptor.yaml's `images:` block (ADR-0016).
   changes:
     runs-on: ubuntu-latest
     outputs:
-      # Per-service filters so a single-service code change only rebuilds
-      # that one image. The Rust services share a Cargo workspace, so a
-      # workspace-root Cargo.toml / Cargo.lock change is treated as a
-      # cross-cutting trigger for both api-gateway and analytics-api.
-      # The .NET identity service is self-contained (no Cargo workspace
-      # membership) — only its own folder triggers a rebuild.
       api_gateway:   ${{ steps.filter.outputs.api_gateway }}
       analytics_api: ${{ steps.filter.outputs.analytics_api }}
       identity:      ${{ steps.filter.outputs.identity }}
       toolbox:       ${{ steps.filter.outputs.toolbox }}
-      jira_enrich:   ${{ steps.filter.outputs.jira_enrich }}
       umbrella:      ${{ steps.filter.outputs.umbrella }}
       build_tag:     ${{ steps.tag.outputs.build_tag }}
     steps:
@@ -78,16 +78,14 @@ jobs:
               - 'src/backend/services/identity/**'
             toolbox:
               - 'src/ingestion/**'
-            jira_enrich:
-              - 'src/ingestion/connectors/task-tracking/jira/enrich/**'
             umbrella:
               - 'charts/insight/**'
 
-      # Compute the canonical build tag once for the whole workflow so every
-      # downstream job (image builds + chart publish) tags with the SAME
-      # string. metadata-action's {{date}} would otherwise drift by up to a
-      # minute across parallel matrix steps, and subchart appVersion bumps
-      # would point at images that don't exist.
+      # Compute the canonical build tag once per workflow run so every
+      # downstream job (backend builds + matrix connector builds + toolbox +
+      # chart publish) tags with the SAME string. metadata-action's {{date}}
+      # would otherwise drift by up to a minute across parallel steps, and
+      # subchart appVersion bumps would point at images that don't exist.
       - name: Compute build tag
         id: tag
         run: |
@@ -95,11 +93,91 @@ jobs:
           echo "build_tag=${BUILD_TAG}" >> "$GITHUB_OUTPUT"
           echo "Build tag for this run: ${BUILD_TAG}"
 
-  # Per-service backend builds. Split from a single matrix job so that a
-  # change touching only one service rebuilds only that image — and only
-  # that subchart's `appVersion` gets bumped downstream. This is what
-  # makes per-service granularity actually work in the gitops promotion
-  # flow (see publish-chart for the appVersion logic).
+  # ─── Connector image discovery (ADR-0016) ──────────────────────────────────
+  # Scan every src/ingestion/connectors/*/*/descriptor.yaml's `images:` map
+  # and produce a matrix of {connector_dir, key, name, dockerfile, context,
+  # image} entries to build in this run.
+  #
+  # An entry fires when at least one changed path lives under
+  # `<connector_dir>/<context>/` AND is NOT the connector's descriptor.yaml.
+  # The descriptor exclusion is the recursion-break: bump-descriptors patches
+  # `images.<key>.image` in descriptor.yaml on every successful push without
+  # `[skip ci]`, and that push re-triggers this workflow. If the descriptor
+  # itself fired image rebuilds, we'd loop forever.
+  #
+  # `workflow_dispatch` with empty `frontend_tag` (legacy full-rebuild) emits
+  # every entry; PR runs use the same path-filter logic as push runs.
+  discover-images:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.scan.outputs.matrix }}
+      any:    ${{ steps.scan.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need parent commit for the changed-paths diff.
+          fetch-depth: 0
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+      - name: Scan descriptors and filter by changed paths
+        id: scan
+        env:
+          EVENT_BEFORE:       ${{ github.event.before }}
+          PR_BASE_SHA:        ${{ github.event.pull_request.base.sha }}
+          GITHUB_EVENT_NAME:  ${{ github.event_name }}
+          FRONTEND_TAG_INPUT: ${{ inputs.frontend_tag }}
+        run: |
+          set -euo pipefail
+          # Determine base for the changed-paths diff:
+          # - push: github.event.before (parent before the push)
+          # - pull_request: base sha of the PR
+          # - workflow_dispatch: HEAD~1 (single-commit lookback fallback)
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            BASE="$PR_BASE_SHA"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ -n "$EVENT_BEFORE" ] \
+               && [ "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            BASE="$EVENT_BEFORE"
+          else
+            BASE="HEAD~1"
+          fi
+
+          # Legacy full-rebuild semantics on workflow_dispatch with no
+          # frontend_tag: emit every image entry regardless of changed paths.
+          ALL_FLAG=""
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -z "$FRONTEND_TAG_INPUT" ]; then
+            ALL_FLAG="--all"
+          fi
+
+          if ! git rev-parse "$BASE" >/dev/null 2>&1; then
+            echo "WARN: base $BASE not resolvable; treating as no changes (matrix may be empty)" >&2
+            : > /tmp/changed.txt
+          else
+            git diff --name-only "$BASE" "$GITHUB_SHA" > /tmp/changed.txt || true
+          fi
+          echo "--- changed paths vs $BASE ---"
+          cat /tmp/changed.txt
+          echo "--- end ---"
+
+          MATRIX="$(python3 .github/workflows/scripts/discover-image-matrix.py \
+            --connectors-root src/ingestion/connectors \
+            --changed /tmp/changed.txt \
+            $ALL_FLAG)"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          LEN="$(echo "$MATRIX" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')"
+          if [ "$LEN" -gt 0 ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "discovered $LEN image entries"
+          echo "$MATRIX" | python3 -m json.tool || true
+
+  # ─── Backend per-service builds ────────────────────────────────────────────
+  # Split from a single matrix job so that a change touching only one service
+  # rebuilds only that image — and only that subchart's `appVersion` gets
+  # bumped downstream. This is what makes per-service granularity actually
+  # work in the gitops promotion flow (see publish-chart for the appVersion
+  # logic).
 
   backend-api-gateway:
     needs: changes
@@ -199,6 +277,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ─── Toolbox build (with dbt parse smoke) ──────────────────────────────────
+  # Toolbox is special — it bakes every connector's descriptor.yaml and dbt
+  # project at build time, so a descriptor-only change (commit A from
+  # bump-descriptors) MUST re-trigger it. paths-filter for `toolbox` matches
+  # `src/ingestion/**` (which includes descriptor.yaml).
   toolbox:
     needs: changes
     if: |
@@ -281,41 +364,161 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
 
-  jira-enrich:
-    needs: changes
-    if: |
-      needs.changes.outputs.jira_enrich == 'true'
-      || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
+  # ─── Connector image build (matrix-driven, descriptor-discovered) ──────────
+  # One matrix leg per `descriptor.yaml.images.<key>` entry that fires this
+  # run (see discover-images for the firing rule). Build identity (`name`,
+  # `dockerfile`, `context`) is read from the matrix entry — there is no
+  # per-connector hardcode in this workflow.
+  build-image:
+    needs: [changes, discover-images]
+    if: needs.discover-images.outputs.any == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ env.IMAGE_PREFIX }}/insight-jira-enrich
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}
           tags: |
             type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
-
       - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
-          context: src/ingestion/connectors/task-tracking/jira/enrich
-          file: src/ingestion/connectors/task-tracking/jira/enrich/Dockerfile
-          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
+          file:    ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
+          push:    ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          tags:    ${{ steps.meta.outputs.tags }}
+          labels:  ${{ steps.meta.outputs.labels }}
+          # Scope cache per image name so unrelated connectors don't evict
+          # each other's layer cache.
+          cache-from: type=gha,scope=${{ matrix.entry.name }}
+          cache-to:   type=gha,mode=max,scope=${{ matrix.entry.name }}
+
+  # ─── Connector descriptor bump ─────────────────────────────────────────────
+  # After build-image succeeds on every matrix leg, patch each connector's
+  # `descriptor.yaml.images.<key>.image` with the freshly pushed tag, then
+  # commit + push WITHOUT [skip ci]. That push re-triggers this workflow:
+  # paths-filter sees src/ingestion/** changes and toolbox rebuilds with the
+  # patched descriptors baked in; publish-chart in the follow-up run produces
+  # the umbrella version bump with [skip ci].
+  #
+  # The matrix is the universal source of truth for what to patch — every
+  # entry that BUILT in this run gets its image field updated. Skipped
+  # entries (the matrix was empty or the build job didn't run) → commit
+  # short-circuits via the `committed=false` output.
+  #
+  # See ADR-0016 (descriptor.images: schema) and ADR-0001 (chart-publishing).
+  bump-descriptors:
+    needs: [changes, discover-images, build-image]
+    if: |
+      always()
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.discover-images.outputs.any == 'true'
+      && needs.build-image.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      # `committed` is set to 'true' when this job actually pushed a
+      # descriptor-bump commit. publish-chart reads it to skip itself in
+      # THIS run when bump-descriptors made changes — the descriptor commit's
+      # push re-triggers the workflow, and publish-chart fires canonically in
+      # that follow-up run with toolbox already rebuilt against the patched
+      # descriptors. This avoids a double umbrella publish (one with stale
+      # toolbox content, one with fresh).
+      committed: ${{ steps.commit.outputs.committed }}
+    steps:
+      - name: Mint chart-release App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.INSIGHT_RELEASE_APP_ID }}
+          private-key: ${{ secrets.INSIGHT_RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Patch images.<key>.image refs from matrix
+        env:
+          BUILD_TAG:    ${{ needs.changes.outputs.build_tag }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+          MATRIX:       ${{ needs.discover-images.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          # Iterate every matrix entry (every built image this run) and patch
+          # `descriptor.yaml.images.<key>.image` with the new full ref.
+          # `field`/`repo` are not hardcoded in this workflow — they live in
+          # the descriptor. Multi-image connectors patch multiple keys.
+          echo "$MATRIX" | jq -c '.[]' | while IFS= read -r entry; do
+            desc="$(echo "$entry" | jq -r '.connector_dir')/descriptor.yaml"
+            key="$(echo "$entry"  | jq -r '.key')"
+            name="$(echo "$entry" | jq -r '.name')"
+            ref="$IMAGE_PREFIX/$name:$BUILD_TAG"
+            echo "Patching $desc: images.$key.image = $ref"
+            yq -i ".images.\"$key\".image = \"$ref\"" "$desc"
+          done
+
+      - name: Commit descriptor patches (no [skip ci])
+        id: commit
+        env:
+          MATRIX:    ${{ needs.discover-images.outputs.matrix }}
+          BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          git config user.email "ci@cyberfabric.local"
+          git config user.name  "insight-ci"
+
+          # Stage every descriptor.yaml that was patched. `sort -u` because
+          # multi-image connectors appear once per image entry in the matrix.
+          echo "$MATRIX" \
+            | jq -r '.[].connector_dir + "/descriptor.yaml"' \
+            | sort -u \
+            | xargs -r git add
+
+          if git diff --staged --quiet; then
+            echo "no descriptor changes to commit"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+
+          # Connector slugs (basename of each connector_dir) — surface in
+          # the commit subject so a reader of `git log` sees what shipped
+          # without opening the diff.
+          MODIFIED="$(echo "$MATRIX" \
+            | jq -r '.[].connector_dir' \
+            | sed 's|.*/||' | sort -u | paste -sd, -)"
+
+          # Intentionally NO [skip ci]: the push must re-trigger this
+          # workflow so toolbox rebuilds with the patched descriptors and
+          # publish-chart produces the umbrella bump.
+          git commit -m "chore(descriptors): bump ${MODIFIED} image refs to ${BUILD_TAG}"
+
+          # Push, with one rebase-retry to absorb a race against
+          # origin/${GITHUB_REF_NAME} advancing between job start and now.
+          # Mirrors publish-chart's policy: rebase once, fail loud on
+          # second failure.
+          if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            echo "push failed; rebasing onto refreshed origin/${GITHUB_REF_NAME} and retrying"
+            if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
+              echo "rebase failed (conflict on patched descriptors?); aborting"
+              git rebase --abort 2>/dev/null || true
+              exit 1
+            fi
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
 
   # ─── Umbrella chart publish ────────────────────────────────────────────────
   # Per merge to main: bump subchart appVersions for whichever services were
@@ -323,14 +526,23 @@ jobs:
   # Chart.lock, package, push to oci://ghcr.io/cyberfabric/charts/insight,
   # and commit the bumps back to main with [skip ci] so we don't recurse.
   #
-  # Runs only on push-to-main (not on PRs) and only when at least one bucket
-  # actually rebuilt or the umbrella's own files changed. PR runs validate
-  # the workflow itself by passing through changes/build jobs, then stop.
+  # Skipped in this run when bump-descriptors committed (`committed=true`):
+  # the descriptor commit's push re-triggers the workflow, and publish-chart
+  # runs canonically in that follow-up run with toolbox already rebuilt
+  # against the patched descriptors.
   #
   # See ADR-0001 (docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md)
   # and the gitops SPEC §2.4 for the contract.
   publish-chart:
-    needs: [changes, backend-api-gateway, backend-analytics-api, backend-identity, toolbox, jira-enrich]
+    needs:
+      - changes
+      - discover-images
+      - backend-api-gateway
+      - backend-analytics-api
+      - backend-identity
+      - toolbox
+      - build-image
+      - bump-descriptors
     if: |
       always()
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -339,14 +551,15 @@ jobs:
       && (needs.backend-analytics-api.result == 'success' || needs.backend-analytics-api.result == 'skipped')
       && (needs.backend-identity.result      == 'success' || needs.backend-identity.result      == 'skipped')
       && (needs.toolbox.result               == 'success' || needs.toolbox.result               == 'skipped')
-      && (needs.jira-enrich.result           == 'success' || needs.jira-enrich.result           == 'skipped')
+      && (needs.build-image.result           == 'success' || needs.build-image.result           == 'skipped')
+      && (needs.bump-descriptors.result      == 'success' || needs.bump-descriptors.result      == 'skipped')
+      && needs.bump-descriptors.outputs.committed != 'true'
       && (
         needs.changes.outputs.api_gateway   == 'true'
         || needs.changes.outputs.analytics_api == 'true'
-        || needs.changes.outputs.identity   == 'true'
-        || needs.changes.outputs.toolbox     == 'true'
-        || needs.changes.outputs.jira_enrich == 'true'
-        || needs.changes.outputs.umbrella    == 'true'
+        || needs.changes.outputs.identity     == 'true'
+        || needs.changes.outputs.toolbox      == 'true'
+        || needs.changes.outputs.umbrella     == 'true'
         || inputs.frontend_tag != ''
       )
     runs-on: ubuntu-latest
@@ -383,10 +596,6 @@ jobs:
       # only if the matching image was rebuilt this run. Services whose
       # source didn't change keep their previous appVersion → their image
       # tag in the published chart still resolves to an image that exists.
-      # This is what makes per-service granularity work in the deploy path
-      # (subchart deployment templates default `image.tag` to
-      # `.Chart.AppVersion`, which is the SUBCHART's appVersion, not the
-      # umbrella's).
       - name: Bump per-service subchart appVersions
         env:
           BUILD_TAG:     ${{ needs.changes.outputs.build_tag }}
@@ -412,9 +621,7 @@ jobs:
       # cyberfabric/cyber-insight-front and builds its own image; on
       # publish-to-main its CI dispatches THIS workflow with frontend_tag
       # set to the just-built tag. We mirror that into the frontend
-      # subchart's appVersion so the deploy path resolves the right image
-      # (subchart deployment templates default image.tag to
-      # .Chart.AppVersion, which is the SUBCHART's appVersion).
+      # subchart's appVersion so the deploy path resolves the right image.
       - name: Bump frontend subchart appVersion (cross-repo dispatch)
         if: inputs.frontend_tag != ''
         env:
@@ -424,44 +631,32 @@ jobs:
           echo "Bumping frontend subchart appVersion → $FRONTEND_TAG"
           yq -i ".appVersion = \"$FRONTEND_TAG\"" src/frontend/helm/Chart.yaml
 
-      - name: Bump ingestion image refs
+      - name: Bump ingestion toolbox image ref
         env:
           BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
           TOOLBOX: ${{ needs.changes.outputs.toolbox }}
-          JIRA_ENRICH: ${{ needs.changes.outputs.jira_enrich }}
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
         run: |
           set -euo pipefail
-          # Ingestion images are pinned in the umbrella values.yaml as full
-          # image refs, not as subchart appVersions, because they have no
-          # subchart of their own (they run as Argo Workflow steps).
+          # toolbox is the only ingestion image still pinned in
+          # charts/insight/values.yaml — connector image refs travel inside
+          # the toolbox image's baked descriptors (ADR-0016). Connector
+          # descriptors are patched by `bump-descriptors` in a separate
+          # commit (without [skip ci]) BEFORE this run.
           if [ "$TOOLBOX" = "true" ]; then
             REF="$IMAGE_PREFIX/insight-toolbox:$BUILD_TAG"
             echo "Setting ingestion.toolboxImage → $REF"
             yq -i ".ingestion.toolboxImage = \"$REF\"" charts/insight/values.yaml
-          fi
-          if [ "$JIRA_ENRICH" = "true" ]; then
-            REF="$IMAGE_PREFIX/insight-jira-enrich:$BUILD_TAG"
-            # The jira connector's enrich_image field is the single
-            # declared location for this image; reconcile picks it up
-            # from there on the next deploy.
-            DESC="src/ingestion/connectors/task-tracking/jira/descriptor.yaml"
-            echo "Setting $DESC enrich_image → $REF"
-            yq -i ".enrich_image = \"$REF\"" "$DESC"
           fi
 
       # Umbrella `version` always patch-bumps (semver, per-publish contract).
       # Umbrella `appVersion` is DISPLAY-ONLY in the deploy path — the actual
       # image.tag for each pod is resolved inside that pod's subchart from
       # the SUBCHART's appVersion. We set the umbrella appVersion to the MAX
-      # of the three backend subchart appVersions so it summarises "the
-      # newest image tag bundled in this chart artifact". `sort -V` handles
-      # the YYYY.MM.DD.HH.MM-shortsha format correctly because the date
-      # prefix is lexicographically sortable.
-      #
-      # If no backend subchart advanced this run (e.g. chart-only PR), the
-      # max stays at the previous value — the umbrella appVersion never
-      # races ahead of an image that doesn't exist.
+      # of the four subchart appVersions so it summarises "the newest image
+      # tag bundled in this chart artifact". `sort -V` handles the
+      # YYYY.MM.DD.HH.MM-shortsha format correctly because the date prefix
+      # is lexicographically sortable.
       - name: Bump umbrella version
         id: umbrella
         run: |
@@ -479,10 +674,7 @@ jobs:
           yq -i ".appVersion = \"$NEW_APP\""  charts/insight/Chart.yaml
           # Mirror the new chart version into the sample gitops starter
           # at docs/deploy/.insight-version so external operators tracking
-          # `main` pick up new chart releases on the next `git pull`. The
-          # file lives in the public repo as a starter only; gitops repos
-          # downstream of it carry their own .insight-version that bumps
-          # on their own promotion cadence.
+          # `main` pick up new chart releases on the next `git pull`.
           if [ -f docs/deploy/.insight-version ]; then
             echo "$NEXT" > docs/deploy/.insight-version
           fi
@@ -541,12 +733,9 @@ jobs:
           git commit -m "chore(release): umbrella ${UMBRELLA_VERSION} (build ${BUILD_TAG}) [skip ci]"
 
           # Push, with one rebase-retry to absorb a race against
-          # origin/${GITHUB_REF_NAME} advancing between job start and
-          # now. The workflow concurrency group narrows but does not
-          # eliminate this window — a manual push, an unrelated
-          # workflow's push, or a force-push could all advance the
-          # branch tip. Mirrors the gitops poller's policy: rebase
-          # once, fail loud on second failure.
+          # origin/${GITHUB_REF_NAME} advancing between job start and now.
+          # Mirrors the gitops poller's policy: rebase once, fail loud on
+          # second failure.
           if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
             echo "push failed; rebasing onto refreshed origin/${GITHUB_REF_NAME} and retrying"
             if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then

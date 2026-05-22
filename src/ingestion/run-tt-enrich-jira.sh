@@ -10,8 +10,9 @@ set -euo pipefail
 # Infrastructure parameters (toolbox_image, clickhouse_*, batch_size) come
 # from WorkflowTemplate defaults baked at helm-install time — see
 # charts/insight/templates/ingestion/{dbt-run,tt-enrich-jira-run}.yaml. The
-# enrich image comes from the jira descriptor's enrich_image field; this
-# script reads it and passes it to the workflow as jira_enrich_image.
+# enrich image comes from the jira descriptor's images.enrich.image field
+# (per ADR-0016); this script reads it and passes it to the workflow as
+# jira_enrich_image.
 #
 # Required env:
 #   KUBECONFIG          path to the insight cluster kubeconfig
@@ -56,9 +57,9 @@ TENANT_DASHED="${TENANT//_/-}"
 JIRA_DESCRIPTOR="$SCRIPT_DIR/connectors/task-tracking/jira/descriptor.yaml"
 if ! JIRA_ENRICH_IMAGE="$(python3 \
       "$SCRIPT_DIR/reconcile-connectors/python/parse_descriptor.py" \
-      --descriptor "$JIRA_DESCRIPTOR" --field enrich_image)" \
+      --descriptor "$JIRA_DESCRIPTOR" --field images.enrich.image)" \
    || [[ -z "$JIRA_ENRICH_IMAGE" ]]; then
-  echo "ERROR: descriptor.yaml.enrich_image missing or empty at $JIRA_DESCRIPTOR" >&2
+  echo "ERROR: descriptor.yaml.images.enrich.image missing or empty at $JIRA_DESCRIPTOR" >&2
   echo "       Set it before running tt-enrich." >&2
   exit 1
 fi

@@ -86,7 +86,7 @@ Evidence: `docs/CONNECTORS_REFERENCE.md:347`
 
 ## Connector Descriptor Schema
 
-Every connector at `connectors/<area>/<name>/descriptor.yaml` must follow the formal schema below. `version` and `cdk_image` are independent fields (see ADR-0011): `version` is the Insight semantic version (manifest config / dbt contract / audit); `cdk_image` carries the full Docker image reference for `type=cdk` and is absent for `type=nocode`.
+Every connector at `connectors/<area>/<name>/descriptor.yaml` must follow the formal schema below. `version` is the Insight semantic version (manifest config / dbt contract / audit). All connector images — CDK source images, enrich sidecars, future bootstrap/migrator containers — are declared under the map-style `images:` block per ADR-0016 (which supersedes ADR-0011 and ADR-0014). Top-level `cdk_image:` / `enrich_image:` fields are NOT allowed.
 
 ```yaml
 name: <slug>                           # required, must equal directory name
@@ -94,12 +94,20 @@ type: nocode | cdk                     # required
 version: "<semver-or-date>"            # required, Insight semantic version
                                        # for nocode: → declarativeManifest.description
                                        # for cdk:    metadata-only (audit, Argo labels)
-cdk_image: "<registry>/<path>:<tag>"   # required for type=cdk; ABSENT for type=nocode
-                                       # full Docker image reference, no derivation
-                                       # examples:
-                                       #   ghcr.io/cyberfabric/source-foo-insight:2026.04.21.16.10-b36cf42
-                                       #   registry.internal.example.com:5000/team-a/conn-007:v1.2.3
-                                       # missing → reconcile WARN+skip (advisory audit only)
+images:                                # required when the connector ships ANY Dockerfile
+                                       # map keyed by free-form ID; reserved keys with
+                                       # runtime semantics: `cdk` (read by reconcile when
+                                       # registering Airbyte CDK sources), `enrich` (read
+                                       # by enrich workflow at submission time).
+  <key>:                               # e.g. cdk, enrich, bootstrap
+    name: <ghcr-short-name>            # GHCR image name without registry prefix or tag
+    dockerfile: ./<path>               # path under connector dir, leading "./"
+    context:    ./<path>               # build context under connector dir, leading "./"
+    image:      "<full registry/repo:tag>"
+                                       # full Docker image reference. May be empty string
+                                       # "" for not-yet-published images (reconcile WARN+
+                                       # skips when type=cdk and images.cdk.image is empty;
+                                       # CI's first build patches the field).
 schedule: "<cron>"                     # required
 dbt_select: "<dbt selector>"           # required
 workflow: "<sync|...>"                 # required
