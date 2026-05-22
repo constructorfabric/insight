@@ -79,6 +79,48 @@ public sealed class PersonsEndpointTests : IAsyncLifetime
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    [Fact]
+    public async Task Resolves_tenant_from_jwt_insight_tenant_id_claim()
+    {
+        // Proves the JwtBearer middleware wires the bearer payload into
+        // `HttpContext.User` so `JwtTenantContext` can read the claim.
+        // No X-Insight-Tenant-Id header, no config default — the only
+        // path to a tenant is the JWT.
+        await SeedAliceAsync().ConfigureAwait(false);
+        using var jwtApp = new TestApplicationFactory(_fixture.ConnectionString, defaultTenantId: null);
+        var client = jwtApp.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", BuildUnverifiedJwt(TenantId));
+
+        var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
+            .ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            throw new InvalidOperationException($"Expected 200, got {(int)response.StatusCode}. Body: {body}");
+        }
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>().ConfigureAwait(false);
+        doc.GetProperty("email").GetString().Should().Be("alice@example.com");
+    }
+
+    private static string BuildUnverifiedJwt(Guid tenantId)
+    {
+        // Hand-crafted token: parse-only middleware ignores the signature
+        // segment so we can omit a real signing key. `alg=HS256` keeps
+        // the header shape conventional; the third segment is a
+        // non-empty placeholder (`AAAA`) — `JsonWebToken` requires three
+        // dot-separated segments and tolerates an opaque signature when
+        // the SignatureValidator short-circuits.
+        static string B64Url(string raw)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(raw);
+            return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+        var header = B64Url("{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
+        var payload = B64Url($"{{\"insight_tenant_id\":\"{tenantId:D}\"}}");
+        return $"{header}.{payload}.AAAA";
+    }
+
     private async Task SeedAliceAsync()
     {
         await using var conn = new MySqlConnection(_fixture.ConnectionString);

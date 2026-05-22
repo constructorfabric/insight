@@ -3,10 +3,12 @@ using Microsoft.AspNetCore.Http;
 namespace Insight.Identity.Api.Auth;
 
 /// <summary>
-/// Phase 1.5 stub. Once the api-gateway issues the cookie/JWT pair the
-/// service will receive a forwarded principal bearing an
-/// <c>insight_tenant_id</c> claim; this resolver hooks that path in
-/// without rewiring the composite chain.
+/// Tenant resolver that reads the <c>insight_tenant_id</c> claim from
+/// the bearer token decoded by the JwtBearer middleware (see
+/// <c>Program.cs</c> auth wiring). Returns <c>null</c> when no claim is
+/// present so the composite chain can fall through to the next
+/// resolver. Validation of the token itself is owned by api-gateway;
+/// this service runs parse-only until #346 pins per-env IdP config.
 /// </summary>
 public sealed class JwtTenantContext : ITenantContext
 {

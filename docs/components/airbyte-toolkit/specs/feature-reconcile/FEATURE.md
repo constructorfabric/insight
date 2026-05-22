@@ -48,6 +48,8 @@ cpt:
   - [Orphan Definition Recovery](#orphan-definition-recovery)
   - [Discover Schema](#discover-schema)
   - [Normalize Catalog Append-Only](#normalize-catalog-append-only)
+  - [Refresh Catalog on Republish](#refresh-catalog-on-republish)
+  - [Dispatch Full-Refresh on Major Bump](#dispatch-full-refresh-on-major-bump)
   - [Create Connection With Tags](#create-connection-with-tags)
   - [Filter Custom Definitions](#filter-custom-definitions)
   - [Create CDK Definition](#create-cdk-definition)
@@ -65,6 +67,10 @@ cpt:
   - [Cascade Delete Removes CronWorkflow](#cascade-delete-removes-cronworkflow)
   - [Required Fields Validated from Descriptor](#required-fields-validated-from-descriptor)
   - [CDK Image Required](#cdk-image-required)
+  - [Catalog Refreshed on Version Bump](#catalog-refreshed-on-version-bump)
+  - [Full-Refresh Dispatched on Major Bump](#full-refresh-dispatched-on-major-bump)
+  - [No Cross-Connector Cascade](#no-cross-connector-cascade)
+  - [Enrich Image Sourced From Descriptor](#enrich-image-sourced-from-descriptor)
   - [Dry-Run Is Non-Destructive](#dry-run-is-non-destructive)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
@@ -81,7 +87,7 @@ The reconcile feature drives Airbyte resources (definitions, sources, connection
 
 This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that supersedes the legacy fan of scripts (`connect.sh`, `register.sh`, `cleanup.sh`, `sync-state.sh`, `reset-connector.sh`, `update-connectors.sh`, `update-connections.sh`). One entrypoint, deterministic outcomes, no silent state drift.
 
-**Requirements**: `cpt-insightspec-fr-version-driven-reconcile`, `cpt-insightspec-fr-adopt-legacy-resources`, `cpt-insightspec-fr-orphan-gc`, `cpt-insightspec-fr-state-preserved-on-breaking-change`, `cpt-insightspec-fr-secret-validation`, `cpt-insightspec-fr-cli-surface`, `cpt-insightspec-fr-cron-self-run`, `cpt-insightspec-fr-name-based-connection-resolve`, `cpt-insightspec-fr-auto-trigger-sync-on-data-change`, `cpt-insightspec-fr-file-persistent-logs`, `cpt-insightspec-fr-cascade-delete-cronworkflow`, `cpt-insightspec-fr-leak-free-loop`
+**Requirements**: `cpt-insightspec-fr-version-driven-reconcile`, `cpt-insightspec-fr-adopt-legacy-resources`, `cpt-insightspec-fr-orphan-gc`, `cpt-insightspec-fr-state-preserved-on-breaking-change`, `cpt-insightspec-fr-secret-validation`, `cpt-insightspec-fr-cli-surface`, `cpt-insightspec-fr-cron-self-run`, `cpt-insightspec-fr-name-based-connection-resolve`, `cpt-insightspec-fr-auto-trigger-sync-on-data-change`, `cpt-insightspec-fr-file-persistent-logs`, `cpt-insightspec-fr-cascade-delete-cronworkflow`, `cpt-insightspec-fr-leak-free-loop`, `cpt-insightspec-fr-semver-version-format`, `cpt-insightspec-fr-catalog-refresh-on-bump`, `cpt-insightspec-fr-full-refresh-on-major-bump`, `cpt-insightspec-fr-no-cross-connector-cascade`, `cpt-insightspec-fr-enrich-image-from-descriptor`
 
 **Principles**: `cpt-insightspec-adr-version-driven-reconcile`, `cpt-insightspec-adr-adoption-of-existing-resources`, `cpt-insightspec-adr-credential-rotation-no-env`, `cpt-insightspec-adr-cluster-config-via-configmap`
 
@@ -109,6 +115,8 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 - **ADR-0009**: [Airbyte Workspace as Namespace](../ADR/0009-airbyte-workspace-as-namespace.md)
 - **ADR-0010**: [NoCode via Builder Projects](../ADR/0010-nocode-via-builder-projects.md)
 - **ADR-0011**: [CDK Pre-built Images](../ADR/0011-cdk-prebuilt-images.md)
+- **ADR-0014**: [Enrich Sidecar Image in Descriptor](../ADR/0014-enrich-image-in-descriptor.md)
+- **ADR-0015**: [Strict Semver and Major-Bump Full-Refresh](../ADR/0015-semver-and-full-refresh.md)
 - **Sequences**: `cpt-insightspec-seq-resolve-connection-by-name`, `cpt-insightspec-seq-render-and-apply-cronworkflow`, `cpt-insightspec-seq-sync-trigger-on-change` (DESIGN §3.6)
 - **Dependencies**: None (this feature is the new entrypoint; replaces legacy)
 
@@ -153,16 +161,19 @@ The reconcile feature explicitly does NOT cover:
 3. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-discover-secrets-v2` to build desired state - `inst-rr-discover`
 4. [ ] - `p1` - API: GET source_definitions/list, sources/list, connections/list (filter `tagIds=insight`) - `inst-rr-list-actual`
 5. [ ] - `p1` - **FOR EACH** connector_name in desired_state.connectors - `inst-rr-loop`
-   1. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-diff-definition-version` - `inst-rr-diff-def`
+   1. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-diff-definition-version` → `{action, bump_kind, definition_id}` - `inst-rr-diff-def`
    2. [ ] - `p1` - **IF** definition_diff.action == `republish` - `inst-rr-if-republish`
-      1. [ ] - `p1` - API: connector_builder_projects/update_active_manifest (description=descriptor.version) - `inst-rr-republish-call`
+      1. [ ] - `p1` - API: connector_builder_projects/update_active_manifest (description=descriptor.version) for nocode, OR source_definitions/update (dockerImageTag) for cdk - `inst-rr-republish-call`
    3. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-diff-source-config` - `inst-rr-diff-src`
    4. [ ] - `p1` - **IF** source_diff.action == `update` - `inst-rr-if-src-update`
       1. [ ] - `p1` - API: PUT /api/public/v1/sources/{id} (configuration=secret.data) - `inst-rr-src-update-call`
    5. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-diff-connection-tags` - `inst-rr-diff-tags`
    6. [ ] - `p1` - **IF** tag_diff.action == `patch_tags` - `inst-rr-if-tags-patch`
       1. [ ] - `p1` - API: PATCH /api/public/v1/connections/{id} (tags=[insight, cfg-hash:&lt;hash&gt;]) - `inst-rr-tags-patch-call`
-   7. [ ] - `p1` - **IF** catalog drift is breaking - `inst-rr-if-breaking`
+   7. [ ] - `p1` - **IF** definition_diff.action == `republish` AND connection exists - `inst-rr-if-refresh-catalog`
+      1. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-refresh-catalog-on-republish` (per ADR-0015) - `inst-rr-refresh-catalog`
+   8. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-dispatch-full-refresh-on-major-bump` (bump_kind) → `dbt_full_refresh` - `inst-rr-dispatch-fr`
+   9. [ ] - `p1` - **IF** catalog drift is breaking (PK/cursor changed) - `inst-rr-if-breaking`
       1. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-export-import-state-on-recreate` - `inst-rr-recreate-with-state`
 6. [ ] - `p1` - **IF** flag `--no-gc` not set - `inst-rr-if-gc`
    1. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-gc-orphans` - `inst-rr-gc-call`
@@ -342,21 +353,33 @@ First-time publish of a nocode connector via builder/create + builder/publish. T
 
 - [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-diff-definition-version`
 
-**Input**: connector_name, descriptor_version, descriptor_cdk_image (cdk only), descriptor_type, list of Airbyte source_definitions (filtered by name)
-**Output**: `{action: republish|noop, definition_id?}`
+**Input**: connector_name, descriptor_version (target), descriptor_cdk_image (cdk only), descriptor_type, list of Airbyte source_definitions (filtered by name)
+**Output**: `{action: republish|noop, bump_kind: none|patch|minor|major|migration, definition_id?}`
 
 > **Type-specific comparison anchors**:
-> - For `type=nocode`: compare `descriptor.version` vs `definition.declarativeManifest.description`.
-> - For `type=cdk`: compare `descriptor.cdk_image` vs the recomposed `${definition.dockerRepository}:${definition.dockerImageTag}` from the Airbyte API response (NOT `descriptor.version` — version is metadata-only for cdk). If equal → noop. If only the tag differs → call `ab_set_definition_image_tag`. If `dockerRepository` itself drifted, that path requires a recreate-with-state — out of scope here; document as operator-invoked manual recreate.
+> - For `type=nocode`: compare `descriptor.version` vs `definition.declarativeManifest.description`. Bump-kind classification applies.
+> - For `type=cdk`: compare `descriptor.cdk_image` vs the recomposed `${definition.dockerRepository}:${definition.dockerImageTag}` from the Airbyte API response. Per ADR-0015 §Bump-kind storage scope, semver bump-kind classification does NOT apply to CDK in this iteration — `bump_kind` is forced to `patch` on any republish so re-discover still runs but full-refresh is never dispatched.
+>
+> **Version format (per ADR-0015)**: `descriptor.version` (target) MUST be strict semver `MAJOR.MINOR.PATCH` matching regex `^\d+\.\d+\.\d+$`. Non-semver targets are rejected with a clear error. The Airbyte-side `current` value MAY be a legacy non-semver string (e.g. `2026.05.04`, `1.0`) for backward compatibility — see `bump_kind: migration` below.
+>
+> **bump_kind classification**:
+> - `none` if `target == current` (string-equal).
+> - `migration` if `current` is not parseable as semver (legacy value) AND `target` is semver AND `target != current`. Treated like `patch` by downstream consumers — no full-refresh.
+> - `patch` if `current` and `target` are both semver AND `target.major == current.major` AND `target.minor == current.minor` AND `target.patch > current.patch`.
+> - `minor` if both semver AND `target.major == current.major` AND `target.minor > current.minor`.
+> - `major` if both semver AND `target.major > current.major`.
+> - A target that does NOT strictly dominate `current` (e.g. operator downgraded) is treated as `patch` for action purposes (republish + re-discover) but emits a WARN; `bump_kind` returned in that case is `patch`.
 
 **Steps**:
-1. [ ] - `p1` - **IF** no definition with name == connector_name - `inst-ddv-if-none`
-   1. [ ] - `p1` - **RETURN** `{action: "republish", definition_id: null}` - `inst-ddv-return-publish`
-2. [ ] - `p1` - **IF** multiple definitions with name == connector_name - `inst-ddv-if-multi`
+1. [ ] - `p1` - **VALIDATE** target is `^\d+\.\d+\.\d+$`; FAIL with clear error otherwise - `inst-ddv-validate-target`
+2. [ ] - `p1` - **IF** no definition with name == connector_name - `inst-ddv-if-none`
+   1. [ ] - `p1` - **RETURN** `{action: "republish", bump_kind: "major", definition_id: null}` (first publish is treated as a major bump so the first sync is full-refresh; see ADR-0015) - `inst-ddv-return-publish`
+3. [ ] - `p1` - **IF** multiple definitions with name == connector_name - `inst-ddv-if-multi`
    1. [ ] - `p1` - Pick the one referenced by an existing source (others are duplicates handled by adopt) - `inst-ddv-pick-active`
-3. [ ] - `p1` - **IF** active_definition.declarativeManifest.description != descriptor_version - `inst-ddv-if-mismatch`
-   1. [ ] - `p1` - **RETURN** `{action: "republish", definition_id: active_definition.id}` - `inst-ddv-return-mismatch`
-4. [ ] - `p1` - **RETURN** `{action: "noop", definition_id: active_definition.id}` - `inst-ddv-return-noop`
+4. [ ] - `p1` - **IF** active_definition.declarativeManifest.description != descriptor_version (nocode) or active_definition.dockerImageTag != descriptor_cdk_image.tag (cdk) - `inst-ddv-if-mismatch`
+   1. [ ] - `p1` - **CALL** semver classification per the table above → `bump_kind` - `inst-ddv-bump-kind`
+   2. [ ] - `p1` - **RETURN** `{action: "republish", bump_kind, definition_id: active_definition.id}` - `inst-ddv-return-mismatch`
+5. [ ] - `p1` - **RETURN** `{action: "noop", bump_kind: "none", definition_id: active_definition.id}` - `inst-ddv-return-noop`
 
 ### Diff Source Config
 
@@ -587,15 +610,50 @@ On detecting a `custom: true` definition without a linked builder project, recon
 - [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-normalize-catalog-append-only`
 
 **Inputs**: discovered catalog (from `sources/discover_schema`)
-**Outputs**: `syncCatalog` JSON suitable for `connections/create`, with every stream forced to `destinationSyncMode=append`
+**Outputs**: `syncCatalog` JSON suitable for `connections/create` or `connections/update`, with every stream forced to `destinationSyncMode=append` and every stream/field selected.
 
 Per `cpt-dataflow-constraint-airbyte-append`: append at destination avoids OOMs from `append_dedup` buffering and survives mid-stream pod kills. Dedup happens in silver via `unique_key`.
+
+Per ADR-0015 (catalog refresh on bump): this algorithm is the canonical sync-catalog builder used **both** at first-time connection creation and on every version-bump-driven re-discover. Every stream the source advertises is enabled (`selected: true`); every field within each stream's JSON schema is enabled (`fieldSelectionEnabled: false`, i.e. no exclusion list). Operators have no per-field opt-out; the contract is "everything the source advertises lands in bronze, dedup happens in silver".
 
 1. [ ] - `p1` - **FOR EACH** stream in catalog.streams - `inst-ncao-loop`
    1. [ ] - `p1` - **IF** stream supports incremental AND has `default_cursor_field` or `source_defined_cursor` **THEN** syncMode=incremental ELSE full_refresh - `inst-ncao-syncmode`
    2. [ ] - `p1` - destinationSyncMode = "append" (always) - `inst-ncao-dest`
-   3. [ ] - `p1` - selected = true - `inst-ncao-select`
+   3. [ ] - `p1` - selected = true (stream-level) - `inst-ncao-select`
+   4. [ ] - `p1` - fieldSelectionEnabled = false (i.e. ALL fields under `stream.jsonSchema.properties` are implicitly selected; no `selectedFields` exclusion list emitted) - `inst-ncao-fields-all`
 2. [ ] - `p1` - **RETURN** `{streams:[{stream, config}, ...]}` - `inst-ncao-return`
+
+### Refresh Catalog on Republish
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-refresh-catalog-on-republish`
+
+**Inputs**: `source_id`, `connection_id`, `bump_kind` (from Diff Definition Version)
+**Outputs**: ok (Airbyte connection's `sync_catalog` updated to current discovered schema)
+
+> Called whenever `cpt-insightspec-algo-reconcile-diff-definition-version` emits `action=republish` AND an existing connection_id is found for the source. Applies to **both** nocode and cdk types — the contract is identical (per ADR-0015). On `bump_kind == migration` the catalog is also refreshed so legacy connectors pick up streams added during the period when version drift went undetected.
+
+**Steps**:
+1. [ ] - `p1` - **IF** connection_id is null (first-time bootstrap path) **RETURN** noop — initial `Create Connection With Tags` already discovers - `inst-rcor-bootstrap-skip`
+2. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-discover-schema` (source_id) → discovered_catalog - `inst-rcor-discover`
+3. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-normalize-catalog-append-only` (discovered_catalog) → sync_catalog - `inst-rcor-normalize`
+4. [ ] - `p1` - API: POST `/api/v1/connections/update` body `{connectionId, syncCatalog}` (no cursor reset; existing per-stream state survives the PATCH because Airbyte keeps state keyed on `(connectionId, streamName)`) - `inst-rcor-update`
+5. [ ] - `p1` - **RETURN** ok - `inst-rcor-return`
+
+### Dispatch Full-Refresh on Major Bump
+
+- [ ] `p1` - **ID**: `cpt-insightspec-algo-reconcile-dispatch-full-refresh-on-major-bump`
+
+**Inputs**: `bump_kind` (from Diff Definition Version), the data-affecting-change set (per ADR-0008)
+**Outputs**: side effect — sets `dbt_full_refresh=true` on the one-shot auto-trigger sync workflow IFF `bump_kind == "major"`. Default is `false`.
+
+> Per ADR-0015 §"No cross-connector cascade": the flag is set ONLY on the auto-trigger for the connector whose major bump caused it. It is NEVER propagated to other connectors, even ones whose silver models join the affected connector. The flag rides on the single one-shot sync workflow submission and is not persisted on Airbyte connection, K8s annotation, or anywhere else — the next scheduled CronWorkflow tick starts a normal incremental dbt run.
+
+**Steps**:
+1. [ ] - `p1` - **IF** `bump_kind != "major"` **RETURN** `dbt_full_refresh=false` - `inst-dfr-not-major`
+2. [ ] - `p1` - **IF** auto-trigger is not scheduled this run (no data-affecting change accumulated) **RETURN** ok (no-op; the operator may need to invoke `reconcile-connectors.sh trigger-sync` separately) - `inst-dfr-no-trigger`
+3. [ ] - `p1` - Set `dbt_full_refresh=true` as an input parameter on the rendered `Render Sync Trigger` Workflow - `inst-dfr-set-flag`
+4. [ ] - `p1` - log_line INFO "major bump on ${connector}: dispatching one-shot dbt --full-refresh for scope ${descriptor.dbt_select}" - `inst-dfr-log`
+5. [ ] - `p1` - **RETURN** ok - `inst-dfr-return`
 
 ### Create Connection With Tags
 
@@ -786,6 +844,79 @@ The system **MUST** preserve Airbyte sync state across a connection recreate tri
 **Statement**: Every `connectors/*/*/descriptor.yaml` with `type: cdk` MUST declare a non-empty top-level field `cdk_image` carrying the full Docker image reference (registry + repository + tag). The matcher is `python3 python/parse_descriptor.py --descriptor <path> --field cdk_image` returning a non-empty string. Missing field → reconcile logs WARN ("type=cdk but cdk_image missing — skip") and skips that connector for the run; reconcile exit code is unaffected (per `cpt-insightspec-dod-reconcile-dry-run-non-destructive`'s "isolated failure" pattern).
 
 **DoD test**: `tools/audit-cdk-image.sh` is **advisory** — it greps `connectors/*/*/descriptor.yaml`, exits **0** unconditionally, and prints the list of `type=cdk` descriptors lacking `cdk_image` for review awareness. CI does NOT fail on missing `cdk_image`.
+
+### Catalog Refreshed on Version Bump
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-catalog-refreshed-on-version-bump`
+
+The system **MUST** re-discover and update the connection's `sync_catalog` on every `descriptor.yaml.version` bump (any `bump_kind != none`, including `migration`), for **both** nocode and cdk connectors. Newly-advertised streams MUST appear `selected: true` in the connection; newly-added fields on existing streams MUST be present in `sync_catalog.streams[].stream.jsonSchema.properties` with no field-level exclusion (`fieldSelectionEnabled: false`).
+
+**Implements**:
+- `cpt-insightspec-flow-reconcile-run-reconcile-v2`
+- `cpt-insightspec-algo-reconcile-refresh-catalog-on-republish`
+- `cpt-insightspec-algo-reconcile-normalize-catalog-append-only`
+
+**Touches**:
+- API: `POST /api/v1/sources/discover_schema`, `POST /api/v1/connections/update`
+- Entities: `connection.sync_catalog`
+
+**Test scenario**: Author adds a new stream `foo` to a nocode `connector.yaml` and bumps `descriptor.version` patch component. Run reconcile. Inspect Airbyte connection's `sync_catalog`: must contain `foo` with `selected: true`. Next scheduled sync emits rows into `bronze_<connector>.foo`. No cursor reset on other streams.
+
+### Full-Refresh Dispatched on Major Bump
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-full-refresh-on-major-bump`
+
+The system **MUST** set `dbt_full_refresh=true` on the auto-triggered one-shot sync workflow IFF `bump_kind == "major"` (per ADR-0015). On `minor`, `patch`, `migration`, and `none`, the flag MUST be `false`. The flag MUST NOT be propagated to any other connector's pipeline submission — full-refresh is scoped to the bumped connector's `descriptor.dbt_select`.
+
+> **Scope note**: bump-kind classification — and therefore the `major` outcome — applies to **nocode** connectors only in this iteration (per ADR-0015 §Bump-kind storage scope). CDK connectors emit `bump_kind == "patch"` on any republish; operators dispatch CDK full-refresh through an explicit out-of-band invocation.
+
+**Implements**:
+- `cpt-insightspec-flow-reconcile-run-reconcile-v2`
+- `cpt-insightspec-algo-reconcile-dispatch-full-refresh-on-major-bump`
+- `cpt-insightspec-algo-reconcile-render-sync-trigger`
+
+**Touches**:
+- Sync trigger Workflow input parameter `dbt_full_refresh`
+- Argo `ingestion-pipeline` WorkflowTemplate `dbt_full_refresh` input → `--full-refresh` flag on the dbt-run step
+
+**Test scenario**:
+1. With current `descriptor.version=1.2.3` in Airbyte, edit descriptor to `1.2.4` → reconcile → inspect the one-shot Workflow YAML: `dbt_full_refresh` parameter == `"false"`.
+2. Edit descriptor to `2.0.0` → reconcile → inspect Workflow YAML: `dbt_full_refresh` == `"true"`.
+3. Confirm the next CronWorkflow-scheduled run does NOT carry `dbt_full_refresh=true`; the flag is one-shot.
+4. With a second connector `B` whose silver model joins `A`: bumping `A` major does NOT set `dbt_full_refresh` on B's pipeline; B's bronze is not re-synced.
+
+### No Cross-Connector Cascade
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-no-cross-connector-cascade`
+
+**Invariant**: A `bump_kind == "major"` on connector A MUST NOT cause any API call to be issued for connector B's source, connection, or definition, regardless of whether downstream silver/gold models depend on both. Reconcile's blast radius is `descriptor.dbt_select` of the bumped connector and nothing else.
+
+**Implements**:
+- `cpt-insightspec-algo-reconcile-dispatch-full-refresh-on-major-bump`
+
+**Touches**:
+- None for connector B (the invariant is the absence of touches)
+
+**Test scenario**: Snapshot `kubectl get sources,connections,definitions -A` and `argo list workflows -A` before reconcile. Major-bump connector A. Run reconcile. Diff snapshot: only connector A's resources changed; connector B's are byte-identical (same UUIDs, same tags, same connectionId).
+
+### Enrich Image Sourced From Descriptor
+
+- [ ] `p1` - **ID**: `cpt-insightspec-dod-reconcile-enrich-image-from-descriptor`
+
+The system **MUST** source the enrich sidecar image (today: jira-enrich; planned: youtrack-enrich) from `descriptor.yaml.enrich_image` exclusively (per ADR-0014). The Helm chart **MUST NOT** provide a chart-level default for the image; the WorkflowTemplate `tt-enrich-jira-run` **MUST** require `jira_enrich_image` as an input parameter without a default; reconcile **MUST** read the field from the connector's descriptor and propagate it through the rendered `ingestion-pipeline` submission.
+
+**Implements**:
+- `cpt-insightspec-flow-reconcile-run-reconcile-v2`
+- `cpt-insightspec-algo-reconcile-render-sync-trigger`
+
+**Touches**:
+- `descriptor.yaml.enrich_image` (optional field; required for connectors with an enrich step)
+- `tt-enrich-jira-run` WorkflowTemplate parameter `jira_enrich_image`
+
+**Test scenario**:
+1. jira `descriptor.yaml` contains a non-empty `enrich_image` field with a full image reference.
+2. Triggered jira sync's `enrich` task runs with `image:` equal to `descriptor.enrich_image`.
+3. A connector without an enrich step (any non-jira) has no `enrich_image` field and does not invoke `tt-enrich-*-run`.
 
 ### Dry-Run Is Non-Destructive
 

@@ -442,8 +442,12 @@ jobs:
           fi
           if [ "$JIRA_ENRICH" = "true" ]; then
             REF="$IMAGE_PREFIX/insight-jira-enrich:$BUILD_TAG"
-            echo "Setting ingestion.jiraEnrichImage → $REF"
-            yq -i ".ingestion.jiraEnrichImage = \"$REF\"" charts/insight/values.yaml
+            # The jira connector's enrich_image field is the single
+            # declared location for this image; reconcile picks it up
+            # from there on the next deploy.
+            DESC="src/ingestion/connectors/task-tracking/jira/descriptor.yaml"
+            echo "Setting $DESC enrich_image → $REF"
+            yq -i ".enrich_image = \"$REF\"" "$DESC"
           fi
 
       # Umbrella `version` always patch-bumps (semver, per-publish contract).

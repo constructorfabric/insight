@@ -36,6 +36,18 @@ access
 # Cypilot plans (local working state)
 cypilot/.plans/
 
+# Codex App local config — hooks + agent shims installed per-developer
+# when the Codex App scans the project. Not part of project source.
+.codex/
+
+# Codex App writes its own SKILL.md shims under .agents/skills/*/ when
+# scanning the project. The canonical content lives in .claude/skills/
+# and cypilot/.core/; the .agents/ scope is per-developer noise that
+# would duplicate-track skill definitions across agent surfaces.
+# Project files inside .agents/skills/<name>/ other than SKILL.md
+# are NOT ignored — the directories themselves stay normal.
+.agents/skills/*/SKILL.md
+
 # Helm packaged dependencies (resolved by `helm dependency update`)
 # Chart.lock IS committed for reproducibility — only the resolved tarballs are ignored.
 charts/*/charts/*.tgz
@@ -43,3 +55,4 @@ charts/*/Chart.lock
 
 # dbt logs
 logs/
+cypilot/.plans/.archive/

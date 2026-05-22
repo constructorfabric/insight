@@ -1,0 +1,12 @@
+name: zulip-proxy
+version: "1.0.0"
+schedule: 0 3 * * *
+dbt_select: tag:zulip_proxy+
+workflow: sync
+connection:
+  namespace: bronze_zulip_proxy
+secret:
+  required_fields:
+    - zulip_proxy_base_url
+    - zulip_proxy_api_key
+    - zulip_proxy_start_date

@@ -213,6 +213,21 @@ path = "docs/components/connectors/collaboration/zoom/specs/DESIGN.md"
 name = "Zoom Connector Design"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/collaboration/zulip-proxy/specs/PRD.md"
+name = "Zulip-Proxy Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/collaboration/zulip-proxy/specs/DESIGN.md"
+name = "Zulip-Proxy Connector Design"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/components/connectors/collaboration/zulip-proxy/specs/FEATURE.md"
+name = "Zulip-Proxy Connector Bring-up Feature"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/connectors/zulip.md"
 name = "Zulip Connector Specification"
@@ -491,6 +506,18 @@ traceability = "DOCS-ONLY"
 kind = "ADR"
 path = "docs/components/airbyte-toolkit/specs/ADR/0011-cdk-prebuilt-images.md"
 name = "ADR-0011: CDK connectors use pre-built ghcr.io images, reconcile never builds at runtime"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0014-enrich-image-in-descriptor.md"
+name = "ADR-0014: Enrich sidecar image (jira-enrich, future youtrack-enrich) sourced from descriptor.yaml.enrich_image, not from Helm values"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0015-semver-and-full-refresh.md"
+name = "ADR-0015: Strict semver MAJOR.MINOR.PATCH; any bump re-discovers catalog; major bump dispatches one-shot dbt --full-refresh; no cross-connector cascade"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
@@ -782,6 +809,12 @@ children = []
 kind = "PRD"
 path = "docs/domain/metric-catalog/specs/PRD.md"
 name = "Metric Catalog PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/metric-catalog/specs/DESIGN.md"
+name = "Metric Catalog DESIGN"
 traceability = "DOCS-ONLY"
 
 [[systems]]

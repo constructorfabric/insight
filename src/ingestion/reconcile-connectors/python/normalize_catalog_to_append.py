@@ -40,7 +40,14 @@ def normalize(discover_response: dict) -> dict:
         cfg = {
             "syncMode": sync_mode,
             "destinationSyncMode": "append",
+            # Per ADR-0015: every stream the source advertises is enabled.
             "selected": True,
+            # Per ADR-0015: every field in jsonSchema is enabled. Explicit
+            # `fieldSelectionEnabled: false` (no selectedFields list) means
+            # Airbyte syncs all advertised properties; emitted explicitly so
+            # an update PATCH does not inherit a stale exclusion list from a
+            # prior connection state.
+            "fieldSelectionEnabled": False,
         }
         cursor = stream.get("default_cursor_field") or []
         if sync_mode == "incremental" and cursor:

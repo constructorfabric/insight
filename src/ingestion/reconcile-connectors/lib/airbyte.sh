@@ -584,6 +584,55 @@ ab_discover_schema() {
 }
 
 # ---------------------------------------------------------------------------
+# ab_get_connection <connection_id>
+# POST /api/v1/connections/get — returns the full connection object.
+# Used by ab_update_connection_sync_catalog to fetch the existing body so
+# only sync_catalog is overwritten.
+# ---------------------------------------------------------------------------
+ab_get_connection() {
+  local connection_id="$1"
+  local body
+  body=$(printf '{"connectionId":"%s"}' "${connection_id}")
+  ab__curl POST /api/v1/connections/get "${body}"
+}
+
+# ---------------------------------------------------------------------------
+# ab_update_connection_sync_catalog <connection_id> <sync_catalog_json>
+# POST /api/v1/connections/update with the existing connection body but the
+# new sync_catalog merged in. Per ADR-0015: called on every republish to
+# pick up new streams/fields the connector advertises. State (per-stream
+# cursors) is preserved by Airbyte across `connections/update` since state
+# is keyed on (connectionId, streamName) — only sync_catalog shape changes,
+# not the connection identity.
+# ---------------------------------------------------------------------------
+ab_update_connection_sync_catalog() {
+  local connection_id="$1"
+  local sync_catalog_json="$2"
+  local current body
+  if ! current="$(ab_get_connection "${connection_id}")"; then
+    return 1
+  fi
+  body=$(SYNC_CATALOG_ENV="${sync_catalog_json}" python3 -c '
+import sys, os, json
+conn = json.load(sys.stdin)
+conn["syncCatalog"] = json.loads(os.environ["SYNC_CATALOG_ENV"])
+# /connections/update accepts a subset; keep only the fields Airbyte
+# requires for the update call. Forwarding the full response body works on
+# current versions but pruning to the documented update schema is safer.
+allowed = {
+  "connectionId", "syncCatalog", "schedule", "scheduleData", "scheduleType",
+  "status", "name", "namespaceDefinition", "namespaceFormat", "prefix",
+  "operationIds", "resourceRequirements", "sourceCatalogId",
+  "geography", "notifySchemaChanges", "notifySchemaChangesByEmail",
+  "nonBreakingChangesPreference", "backfillPreference", "tags",
+}
+payload = {k: v for k, v in conn.items() if k in allowed}
+print(json.dumps(payload))
+' <<<"${current}")
+  ab__curl POST /api/v1/connections/update "${body}"
+}
+
+# ---------------------------------------------------------------------------
 # ab_destination_definition_id_by_name <name>
 # Looks up a built-in destination_definition by name (e.g. "Clickhouse",
 # "Postgres"). Returns the UUID or empty + non-zero exit if not found.

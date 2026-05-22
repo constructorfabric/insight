@@ -90,7 +90,7 @@ A ConfigMap in the `data` namespace mirroring `state.yaml`, hydrated by the tool
 
 ### Option C — `descriptor.yaml.version` mirrored to Airbyte
 
-A semver-like string in `descriptor.yaml` (baseline `2026.05.04`); on publish, the toolkit writes the value to `definition.declarativeManifest.description` for nocode connectors or includes it in `dockerImageTag` for CDK connectors. Reconcile reads the value from Airbyte and compares to the file.
+A strict semver `MAJOR.MINOR.PATCH` string in `descriptor.yaml`; on publish, the toolkit writes the value to `definition.declarativeManifest.description` for nocode connectors or includes it in `dockerImageTag` for CDK connectors. Reconcile reads the value from Airbyte and compares to the file. See ADR-0015 for the strict-semver format and bump-kind semantics (major bumps dispatch a one-shot dbt `--full-refresh` for that connector's downstream models).
 
 - Good, because Airbyte is already the storage of record for definitions; reusing it means one less store to manage.
 - Good, because `description` and `dockerImageTag` are already mutable per the Airbyte API; updates do not invalidate dependent resources.
@@ -113,6 +113,8 @@ A semver-like string in `descriptor.yaml` (baseline `2026.05.04`); on publish, t
   - `cpt-insightspec-adr-airbyte-workspace-as-namespace` (ADR-0009) — Insight-namespace identification (`custom: true`) within a single workspace; reconcile filters on this when iterating definitions.
   - `cpt-insightspec-adr-nocode-via-builder-projects` (ADR-0010) — nocode registration and version-bump path moved to `connector_builder_projects`; the version-bump algorithm here is unchanged, only the API endpoint differs.
   - `cpt-insightspec-adr-cdk-prebuilt-images` (ADR-0011) — CDK image identity carried verbatim in `descriptor.cdk_image`; reconcile splits and applies; never builds at runtime.
+  - `cpt-insightspec-adr-enrich-image-in-descriptor` (ADR-0014) — same single-source-of-truth principle extended to enrich sidecar images (jira-enrich, future youtrack-enrich).
+  - `cpt-insightspec-adr-semver-and-full-refresh` (ADR-0015) — strict semver `MAJOR.MINOR.PATCH` format; any bump triggers catalog re-discover so new streams/fields are auto-enabled; major bump additionally dispatches a one-shot `dbt --full-refresh` for that connector's `dbt_select` scope. No cross-connector cascade.
 - Background — original investigation against virtuozzo cluster (2026-05-04): `state.yaml` `definitions.{connector}.id` did not match any source's `sourceDefinitionId` for 8 of 9 connectors; clear evidence the parallel-store approach had failed.
 
 ## Traceability

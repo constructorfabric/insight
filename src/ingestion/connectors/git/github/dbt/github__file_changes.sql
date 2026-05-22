@@ -15,8 +15,18 @@ SELECT
     COALESCE(repo_name, '') AS repo_slug,
     COALESCE(commit_hash, '') AS commit_hash,
     COALESCE(filename, '') AS file_path,
+    -- File extension: last segment after the final '.', empty when none.
+    -- Earlier shape (issue #494) used `position('.', filename) > 0` as the
+    -- guard — but ClickHouse `position` is function-style
+    -- `position(haystack, needle)`, so this asked "is the string `filename`
+    -- present inside the single character '.'?" — always false. Result:
+    -- `file_extension` was empty for 100% of rows. Length check on the
+    -- split array is more robust than a fixed `position(filename, '.') > 0`
+    -- swap because it correctly returns '' for extensionless paths like
+    -- `Makefile` (where the position-based guard would also fire 0 by
+    -- accident, but the array-length guard is the explicit predicate).
     if(
-        position('.', COALESCE(filename, '')) > 0,
+        length(splitByChar('.', COALESCE(filename, ''))) > 1,
         arrayElement(splitByChar('.', COALESCE(filename, '')), -1),
         ''
     ) AS file_extension,

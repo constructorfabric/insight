@@ -35,3 +35,25 @@ resources:
 # comment for rationale. Empty {} means "use template defaults".
 livenessProbe: {}
 readinessProbe: {}
+
+# TTL for system.*_log tables. Without this, query_log/trace_log/etc.
+# grow unbounded — observed 55 GB in 2 weeks of dev-cluster activity,
+# ballooned WSL2 VHDX to 336 GB. See ADR-0008. Existing tables retain
+# their schema; apply ALTER TABLE MODIFY TTL on running clusters once.
+systemLogsTtl:
+  enabled: true
+  # Must be >= 1. Setting `0` is syntactically valid but semantically
+  # destructive — every row would be evicted on the next merge.
+  days: 1
+  logs:
+    - query_log
+    - query_thread_log
+    - query_metric_log
+    - trace_log
+    - part_log
+    - metric_log
+    - asynchronous_metric_log
+    - text_log
+    - processors_profile_log
+    - latency_log
+    - error_log

@@ -13,6 +13,10 @@
 #   ${DBT_SELECT}           — descriptor.dbt_select, e.g. `tag:ms-entra+`
 #   ${DBT_SELECT_STAGING}   — only set for jira (data_source==jira); empty
 #                              otherwise — the pipeline guards on data_source
+#   ${JIRA_ENRICH_IMAGE}    — descriptor.enrich_image for the jira connector;
+#                              empty for connectors without an enrich step
+#                              (the pipeline only invokes tt-enrich-jira-run
+#                              when data_source == "jira")
 #   ${INSIGHT_NAMESPACE}    — defaults to "insight" (resolved by env.sh / Helm)
 #   ${ARGO_INSTANCE_ID}     — required: must match the Argo controller's
 #                              `instanceID:` config, otherwise the controller
@@ -55,3 +59,5 @@ spec:
           value: "${DBT_SELECT}"
         - name: dbt_select_staging
           value: "${DBT_SELECT_STAGING}"
+        - name: jira_enrich_image
+          value: "${JIRA_ENRICH_IMAGE}"

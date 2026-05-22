@@ -8,6 +8,9 @@ mod m20260429_000001_task_delivery_silver_rewrite;
 mod m20260430_000001_update_git_bullet;
 mod m20260507_000001_seed_crm_metrics;
 mod m20260515_000001_task_delivery_bullet_rewrite;
+mod m20260518_000001_collab_bullet_rewrite;
+mod m20260519_000001_ai_bullet_rewrite;
+mod m20260520_000001_code_quality_bullet_rewrite;
 
 use sea_orm_migration::prelude::*;
 
@@ -25,6 +28,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260430_000001_update_git_bullet::Migration),
             Box::new(m20260507_000001_seed_crm_metrics::Migration),
             Box::new(m20260515_000001_task_delivery_bullet_rewrite::Migration),
+            Box::new(m20260518_000001_collab_bullet_rewrite::Migration),
+            Box::new(m20260519_000001_ai_bullet_rewrite::Migration),
+            Box::new(m20260520_000001_code_quality_bullet_rewrite::Migration),
         ]
     }
 }

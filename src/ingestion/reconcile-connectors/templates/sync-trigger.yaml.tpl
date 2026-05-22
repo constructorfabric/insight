@@ -10,6 +10,12 @@
 #                              connector slug
 #   ${DBT_SELECT}           — descriptor.dbt_select
 #   ${DBT_SELECT_STAGING}   — only set for jira; empty otherwise
+#   ${DBT_FULL_REFRESH}     — "true" iff bump_kind == "major" on this run
+#                              (per ADR-0015); else "false". One-shot only.
+#   ${JIRA_ENRICH_IMAGE}    — descriptor.enrich_image for jira connector
+#                              (per ADR-0014). Empty for non-jira; the
+#                              tt-enrich-jira-run task is only invoked when
+#                              DATA_SOURCE == "jira" anyway.
 #   ${INSIGHT_NAMESPACE}    — release namespace
 #   ${ARGO_INSTANCE_ID}     — controller-instanceid label (optional;
 #                              empty drops the label)
@@ -47,3 +53,7 @@ spec:
         value: "${DBT_SELECT}"
       - name: dbt_select_staging
         value: "${DBT_SELECT_STAGING}"
+      - name: dbt_full_refresh
+        value: "${DBT_FULL_REFRESH}"
+      - name: jira_enrich_image
+        value: "${JIRA_ENRICH_IMAGE}"

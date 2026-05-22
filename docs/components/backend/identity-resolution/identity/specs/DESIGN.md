@@ -584,6 +584,72 @@ DbUp's tracker table. Created automatically on first
 `PerformUpgrade()` if absent; the service does not interact with it
 directly. Provides idempotency for pod restarts.
 
+### 3.8 Schema + Naming Conventions
+
+- [ ] `p1` - **ID**: `cpt-insightspec-design-identity-conventions`
+
+Conventions locked during PR #517 for the Identity Resolution
+service. Newly added tables and Domain types MUST follow them; an
+existing table that violates a convention is migrated at the next
+touch (per the project-wide "consistency over scope" rule).
+
+#### SQL columns
+
+1. **Audit datetime columns** use `DATETIME(6) NOT NULL DEFAULT (UTC_TIMESTAMP(6))`.
+   `UTC_TIMESTAMP` forces UTC regardless of session `time_zone`;
+   `CURRENT_TIMESTAMP` would defer to session config and silently
+   drift under multi-region deploys. MariaDB 10.2+ requires
+   expression DEFAULTs to be parenthesised — `DEFAULT (UTC_TIMESTAMP(6))`,
+   not `DEFAULT UTC_TIMESTAMP(6)`. `TIMESTAMP` as a column type is
+   not used in new tables; it auto-converts to session timezone
+   on read.
+
+2. **`valid_from` / `valid_to` SCD2 columns** are `DATETIME(6) NOT NULL`
+   (no default — filled at INSERT with `UTC_TIMESTAMP(6)`). `valid_to`
+   is NULL for the currently-active row; the schema enforces the
+   sane interval order via `CHECK (valid_to IS NULL OR valid_from <= valid_to)`.
+
+3. **Optional free-text columns** (`reason`, comment-style audit) are
+   `VARCHAR(N) NULL` or `TEXT NULL`. NULL == "no value provided",
+   distinct from explicit `''`. Existing tables that historically
+   used `NOT NULL DEFAULT ''` are migrated to NULL at the next
+   touch.
+
+4. **Boolean existence probes** use `SELECT EXISTS (SELECT 1 FROM …)`,
+   not `SELECT 1 … LIMIT 1` + null-check. EXISTS returns 0/1
+   (never NULL), short-circuits at the planner, and reads as
+   `Convert.ToBoolean(scalar)` in C#.
+
+5. **BINARY(16) UUID round-trip** uses big-endian RFC 4122 wire
+   order: `guid.ToByteArray(bigEndian: true)` when binding, and
+   `new Guid(bytes, bigEndian: true)` when reading. Established
+   by the persons table (see ADR-0002) and mirrored everywhere.
+
+#### Domain entity naming
+
+The Domain record/entity name is the **singular** form of the
+table name. Examples:
+
+| Table | Domain entity |
+|---|---|
+| `visibility` | `Visibility` |
+| `roles` | `Role` |
+| `person_roles` | `PersonRole` (junction; RBAC: "a Role-as-held-by-a-Person", mirrors ALMS3 `UserRole`) |
+
+**Exception — observation log / append-only event tables:** when
+the table is a log/event-stream AND there's a separate aggregate
+that consolidates many rows, the row-entity carries an explicit
+suffix to disambiguate. Examples:
+
+| Table | Row entity | Aggregate |
+|---|---|---|
+| `persons` (observation log per ADR-0003) | `PersonObservation` | `Person` |
+| `org_chart` (SCD2 cache of parent→child edges) | `OrgChartEdge` | n/a |
+
+If a future table is unambiguously an entity table (one row =
+one identity), use the strict rule. If it's an event log + has a
+separate aggregate concept, use the suffix exception.
+
 ## 4. Additional context
 
 ### 4.1 Configuration surface

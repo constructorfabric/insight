@@ -1,0 +1,64 @@
+version: 2
+
+sources:
+  - name: bronze_zulip_proxy
+    schema: bronze_zulip_proxy
+    tables:
+      - name: users
+      - name: messages
+
+models:
+  - name: zulip_proxy__bronze_promoted
+    description: >
+      Bootstrap model that promotes `bronze_zulip_proxy.users` and
+      `bronze_zulip_proxy.messages` from plain `MergeTree` (as written by
+      Airbyte) to `ReplacingMergeTree(_airbyte_extracted_at)` ordered by
+      `(unique_key)` on the first dbt run. Idempotent — see ADR-0002.
+
+  - name: zulip_proxy__users_snapshot
+    description: >
+      SCD2 snapshot of the Zulip user directory. Appends a new row when any
+      of `full_name`, `email`, `is_active`, `role`, `recipient_id`, `uuid`
+      changes for a given user.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+
+  - name: zulip_proxy__users_fields_history
+    description: >
+      Field-level change log derived from the users snapshot. One row per
+      changed field per version transition.
+
+  - name: zulip_proxy__identity_inputs
+    description: >
+      Identity Manager input rows emitted from the user fields-history.
+      Contributes `email` and `full_name` value types plus the canonical
+      `id` binding row. Deactivation triggered when `is_active=false`.
+
+  - name: zulip_proxy__collab_chat_activity
+    description: >
+      `class_collab_chat_activity` daily roll-up per (tenant, source,
+      sender email, date). Joins messages to users on `sender_id = id`
+      using FINAL to collapse the RMT bronze of the user directory.
+      Drops senders without a resolvable email (anonymous / bots) because
+      Silver identity needs a stable join key. Per-channel splits
+      (direct/group/channel) are NULL — the proxy only exposes aggregated
+      totals per sender per bucket.
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: person_key
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null

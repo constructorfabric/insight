@@ -1,0 +1,359 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - users
+
+definitions:
+  linked:
+    HttpRequester:
+      request_headers:
+        Accept: application/json
+
+streams:
+  - type: DeclarativeStream
+    name: users
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url: "{{ config['zulip_proxy_base_url'] }}/users"
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['zulip_proxy_api_key'] }}"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        error_handler:
+          type: CompositeErrorHandler
+          error_handlers:
+            - type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: FAIL
+                  http_codes:
+                    - 401
+                  error_message: >-
+                    Zulip-proxy returned 401 Unauthorized — rotate the Bearer
+                    token in the K8s Secret for connector=zulip-proxy
+                    source_id={{ config['insight_source_id'] }}.
+            - type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: RATE_LIMITED
+                  http_codes:
+                    - 429
+                    - 503
+              backoff_strategies:
+                - type: WaitTimeFromHeader
+                  header: Retry-After
+            - type: DefaultErrorHandler
+              max_retries: 5
+              response_filters:
+                - type: HttpResponseFilter
+                  action: RETRY
+                  http_codes:
+                    - 500
+                    - 502
+                    - 504
+              backoff_strategies:
+                - type: ExponentialBackoffStrategy
+                  factor: 5
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          field_name: limit
+          inject_into: request_parameter
+        page_token_option:
+          type: RequestOption
+          field_name: offset
+          inject_into: request_parameter
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: 100
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - users
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type:
+              - number
+              - "null"
+          uuid:
+            type:
+              - string
+              - "null"
+          email:
+            type:
+              - string
+              - "null"
+          full_name:
+            type:
+              - string
+              - "null"
+          role:
+            type:
+              - number
+              - "null"
+          is_active:
+            type:
+              - boolean
+              - "null"
+          recipient_id:
+            type:
+              - number
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  - type: DeclarativeStream
+    name: messages
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url: "{{ config['zulip_proxy_base_url'] }}/messages"
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['zulip_proxy_api_key'] }}"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        request_parameters:
+          throttle: "{{ config.get('zulip_proxy_throttle_ms', 5000) }}"
+        error_handler:
+          type: CompositeErrorHandler
+          error_handlers:
+            - type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: FAIL
+                  http_codes:
+                    - 401
+                  error_message: >-
+                    Zulip-proxy returned 401 Unauthorized — rotate the Bearer
+                    token in the K8s Secret for connector=zulip-proxy
+                    source_id={{ config['insight_source_id'] }}.
+            - type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: RATE_LIMITED
+                  http_codes:
+                    - 429
+                    - 503
+              backoff_strategies:
+                - type: WaitTimeFromHeader
+                  header: Retry-After
+            - type: DefaultErrorHandler
+              max_retries: 5
+              response_filters:
+                - type: HttpResponseFilter
+                  action: RETRY
+                  http_codes:
+                    - 500
+                    - 502
+                    - 504
+              backoff_strategies:
+                - type: ExponentialBackoffStrategy
+                  factor: 5
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestOption
+          field_name: cursor
+          inject_into: request_parameter
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('nextCursor') }}"
+          stop_condition: "{{ not response.get('nextCursor') }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - messages
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: created_at
+      is_data_feed: true
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['zulip_proxy_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          uniq:
+            type: string
+          sender_id:
+            type:
+              - number
+              - "null"
+          count:
+            type:
+              - number
+              - "null"
+          created_at:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        required:
+          - unique_key
+          - created_at
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['uniq'] }}
+
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 1
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - zulip_proxy_base_url
+      - zulip_proxy_api_key
+      - zulip_proxy_start_date
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Insight tenant identifier stamped onto every emitted record.
+        order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        description: Insight source-instance identifier stamped onto every emitted record.
+        order: 1
+      zulip_proxy_base_url:
+        type: string
+        title: Zulip-Proxy Base URL
+        description: >-
+          Root URL of the Zulip-aggregating proxy. Must include scheme + host +
+          API root (e.g. http://10.0.0.1:9999/api). No trailing slash.
+        examples:
+          - http://10.0.0.1:9999/api
+          - https://zulip-proxy.internal.tenant.example/api
+        order: 2
+      zulip_proxy_api_key:
+        type: string
+        title: Zulip-Proxy Bearer Token
+        description: >-
+          Opaque Bearer token minted by the proxy operator. Rotated
+          independently of upstream Zulip credentials; a 401 response from the
+          proxy means this token must be rotated.
+        airbyte_secret: true
+        order: 3
+      zulip_proxy_start_date:
+        type: string
+        title: Backfill Start Date
+        description: >-
+          Earliest `created_at` to request from the proxy on the very first
+          sync. Subsequent syncs resume from the persisted cursor and ignore
+          this anchor.
+        format: date
+        examples:
+          - "2024-01-01"
+        order: 4
+      zulip_proxy_throttle_ms:
+        type: string
+        title: Throttle Hint (ms)
+        description: >-
+          Server-side pacing hint forwarded to the proxy as the `throttle`
+          query parameter on /messages requests. Controls the proxy's
+          aggregation cadence, not the connector's client-side timer.
+          Declared as string because K8s Secret stringData is always string;
+          the proxy parses the value as an integer on its side.
+        default: "5000"
+        examples:
+          - "5000"
+        order: 5
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    users: true
+    messages: true

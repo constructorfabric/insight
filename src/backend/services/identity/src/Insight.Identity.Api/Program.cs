@@ -5,6 +5,7 @@ using Insight.Identity.Api.Endpoints;
 using Insight.Identity.Domain.Services;
 using Insight.Identity.Infrastructure;
 using Insight.Identity.Infrastructure.MariaDb;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
@@ -14,6 +15,8 @@ using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 using MySqlConnector;
 using Serilog;
 using Serilog.Formatting.Compact;
@@ -54,11 +57,21 @@ builder.Services.AddSingleton<IPersonsReader>(sp => sp.GetRequiredService<Person
 builder.Services.AddSingleton<PersonLookupService>();
 builder.Services.AddSingleton<ProfileLookupService>();
 
+// #346 step 1: read-only access to the visibility / roles / person_roles
+// tables. The services that use these ports (VisibilityService, the
+// admin-role authz filter, CRUD endpoints) land in later steps; the
+// readers exist now so the migrations stay paired with their consumers.
+builder.Services.AddSingleton<VisibilityRepository>();
+builder.Services.AddSingleton<IVisibilityReader>(sp => sp.GetRequiredService<VisibilityRepository>());
+builder.Services.AddSingleton<RolesRepository>();
+builder.Services.AddSingleton<IRolesReader>(sp => sp.GetRequiredService<RolesRepository>());
+builder.Services.AddSingleton<IPersonRolesReader>(sp => sp.GetRequiredService<RolesRepository>());
+
 // FluentValidation — Phase 2 POST /v1/profiles body. Scans the Api
 // assembly for AbstractValidator<T> implementations.
 builder.Services.AddValidatorsFromAssemblyContaining<Insight.Identity.Api.Validation.ResolveProfileCommandValidator>();
 
-// Composite tenant resolver: header → JWT (stub) → config default.
+// Composite tenant resolver: header → JWT → config default.
 builder.Services.AddSingleton<HeaderTenantContext>();
 builder.Services.AddSingleton<JwtTenantContext>();
 builder.Services.AddSingleton<ConfigTenantContext>();
@@ -68,6 +81,48 @@ builder.Services.AddSingleton<ITenantContext>(sp => new CompositeTenantContext(n
     sp.GetRequiredService<JwtTenantContext>(),
     sp.GetRequiredService<ConfigTenantContext>(),
 }));
+
+// JWT bearer authentication — parse-only mode. The api-gateway already
+// validates the token upstream (issuer, audience, signature, lifetime)
+// before forwarding the request, so this service treats the JWT as a
+// context-bearing envelope: the middleware decodes the payload into a
+// ClaimsPrincipal that downstream resolvers (JwtTenantContext, and the
+// upcoming caller-id resolver tracked under #346) can read. No
+// endpoint enforces authentication in this PR — anonymous requests
+// still pass through unchanged.
+//
+// TODO(#346): switch to full validation once the IdP authority is
+// pinned per environment. The block below is the swap-in skeleton —
+// every line must flip together. The `SignatureValidator = null` line
+// is load-bearing: without it the no-op below keeps short-circuiting
+// signature checks even with `ValidateIssuerSigningKey = true`, which
+// would also silently accept `alg=none` tokens.
+//     options.Authority = configuration["identity:auth_authority"];
+//     options.Audience  = configuration["identity:auth_audience"];
+//     options.TokenValidationParameters.ValidateIssuer            = true;
+//     options.TokenValidationParameters.ValidateAudience          = true;
+//     options.TokenValidationParameters.ValidateLifetime          = true;
+//     options.TokenValidationParameters.ValidateIssuerSigningKey  = true;
+//     options.TokenValidationParameters.RequireSignedTokens       = true;
+//     options.TokenValidationParameters.SignatureValidator        = null;
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.RequireHttpsMetadata = false;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateLifetime = false,
+            ValidateIssuerSigningKey = false,
+            RequireSignedTokens = false,
+            // Accept any token shape; do not enforce signature. Returning
+            // a parsed JsonWebToken short-circuits the default signature
+            // verifier and lets the claim pipeline run.
+            SignatureValidator = (token, _) => new JsonWebToken(token),
+        };
+    });
 
 builder.Services.AddRouting();
 
@@ -151,6 +206,12 @@ app.UseExceptionHandler(handler =>
         await context.Response.WriteAsJsonAsync(problem).ConfigureAwait(false);
     });
 });
+
+// Populate HttpContext.User from a Bearer token when present. No
+// UseAuthorization() — endpoints stay anonymous (#346 will add the
+// caller-id check on top once visibility lands).
+app.UseAuthentication();
+
 app.MapPersonsEndpoints();
 
 await app.RunAsync().ConfigureAwait(false);
