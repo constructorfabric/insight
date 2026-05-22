@@ -23,8 +23,12 @@
 #
 # Prerequisites (verified at startup):
 #   - docker
-#   - python3 with stdlib + PyYAML (the latter is needed by discover-image-matrix.py;
-#     check `python3 -c 'import yaml'` — if missing, install via brew/pipx)
+#   - python3 with stdlib + PyYAML (needed by discover-image-matrix.py;
+#     `python3 -c 'import yaml'` — install via brew/pipx if missing)
+#   - mikefarah/yq v4+ (NOT python-yq); used for descriptor read + version
+#     bump. `brew install yq` — if you have python-yq, swap it.
+#   - jq (matrix iteration)
+#   - sed (line-replacement; ships with macOS + every Linux)
 #   - gh (authenticated with `write:packages` scope; verified via gh auth status)
 #   - git (working dir must be the repo root or any subdirectory under it)
 #
@@ -75,6 +79,9 @@ command -v docker  >/dev/null 2>&1 || prereq_fail docker
 command -v python3 >/dev/null 2>&1 || prereq_fail python3
 command -v gh      >/dev/null 2>&1 || prereq_fail gh
 command -v git     >/dev/null 2>&1 || prereq_fail git
+command -v jq      >/dev/null 2>&1 || prereq_fail jq
+command -v yq      >/dev/null 2>&1 || prereq_fail yq
+command -v sed     >/dev/null 2>&1 || prereq_fail sed
 
 # PyYAML — needed by discover-image-matrix.py
 if ! python3 -c 'import yaml' 2>/dev/null; then
@@ -85,9 +92,14 @@ if ! python3 -c 'import yaml' 2>/dev/null; then
   echo "         python3 -m pip install --user --break-system-packages pyyaml" >&2
   exit 1
 fi
-# Descriptor patching uses stdlib regex (no ruamel.yaml dependency) so the
-# script runs on any Python 3 without extra installs. The patcher targets
-# the exact format we control in descriptor.yaml — see patch_image() below.
+
+# mikefarah/yq v4 (not python-yq) — needed by the descriptor patch + version
+# bump steps below, mirroring the CI workflow.
+if ! yq --version 2>&1 | grep -qE 'mikefarah|yq.*v?[4-9]\.'; then
+  echo "ERROR: mikefarah/yq (v4+) is required; you appear to have python-yq." >&2
+  echo "       brew uninstall python-yq && brew install yq" >&2
+  exit 1
+fi
 
 if ! gh auth status >/dev/null 2>&1; then
   echo "ERROR: gh is not authenticated. Run: gh auth login --scopes write:packages" >&2
@@ -155,84 +167,61 @@ if [[ "${DRY_RUN}" == "true" ]]; then
   exit 0
 fi
 
-# ─── Descriptor patcher (stdlib regex — preserves comments + formatting) ──
-# Replaces just the `image: "..."` line under `  <key>:` under `images:`.
-# Indentation is fixed (2-space images, 4-space sub-fields) per ADR-0016
-# schema and the format we author. NO ruamel.yaml / PyYAML round-trip,
-# so all comments and blank lines survive byte-for-byte except the one line.
+# ─── Descriptor patcher (sed line-replacement) ────────────────────────────
+# Replaces just the `image: "..."` line under `<key>:` under `images:`. The
+# read side uses yq (validates the descriptor is parseable YAML and that
+# `images.<key>` exists); the write side is `sed -i` line-substitution
+# because mikefarah/yq's `-i` strips blank lines (issue #515) and we want
+# byte-for-byte preservation across every bump.
 
-PATCH_PY="$(mktemp -t patch-descriptor.XXXXXX.py)"
-trap 'rm -f "${PATCH_PY}"' EXIT
+patch_image_in_descriptor () {
+  local desc="$1" key="$2" new_image="$3"
+  # Sanity: confirm images.<key>.image actually exists before patching.
+  local current
+  current="$(yq -r ".images.\"${key}\".image // \"__missing__\"" "${desc}")"
+  if [[ "${current}" == "__missing__" ]]; then
+    echo "ERROR: ${desc}: no \`images.${key}.image\` field" >&2
+    return 1
+  fi
+  # The descriptor format we author always indents `image:` four spaces under
+  # the two-space `<key>:` under `images:` at column 0. Anchor the match on
+  # that exact shape to avoid touching unrelated `image:` lines elsewhere.
+  # We use awk for the in-block-only substitution because sed can't easily
+  # express "replace the image: line inside the matching <key>: block".
+  local tmp
+  tmp="$(mktemp -t patch-descriptor.XXXXXX)"
+  awk -v key="${key}" -v new="${new_image}" '
+    BEGIN { in_images = 0; in_key = 0 }
+    /^images:[[:space:]]*$/         { in_images = 1; print; next }
+    in_images && /^[^[:space:]#]/   { in_images = 0; in_key = 0 }
+    in_images && match($0, "^  "key":[[:space:]]*$") { in_key = 1;  print; next }
+    in_images && /^  [^[:space:]]/  { in_key = 0 }
+    in_key && match($0, "^    image:[[:space:]]") {
+      print "    image: \"" new "\""; next
+    }
+    { print }
+  ' "${desc}" > "${tmp}" && mv "${tmp}" "${desc}"
 
-cat > "${PATCH_PY}" <<'PY'
-"""patch <descriptor.yaml> <key> <new_image_ref>
-
-Targets:
-    images:
-      <key>:
-        ...
-        image: "<old>"
-
-Replaces just the `    image: ...` line; leaves everything else byte-identical.
-"""
-import re
-import sys
-
-descriptor, key, new_image = sys.argv[1], sys.argv[2], sys.argv[3]
-text = open(descriptor).read()
-
-# Find images: block at column 0.
-m = re.search(r'(?m)^images:\s*$', text)
-if not m:
-    sys.exit(f"ERROR: {descriptor}: no `images:` block")
-images_start = m.end()
-
-# Find the key: line at indent 2 within the images block.
-# The images block ends at the next column-0, non-blank, non-comment line.
-images_end_re = re.compile(r'(?m)^(?:[^\s#].*)$')
-end_match = images_end_re.search(text, images_start)
-images_end = end_match.start() if end_match else len(text)
-images_block = text[images_start:images_end]
-
-key_re = re.compile(rf'(?m)^  {re.escape(key)}:\s*$')
-km = key_re.search(images_block)
-if not km:
-    sys.exit(f"ERROR: {descriptor}: no `images.{key}:` sub-block")
-sub_start_abs = images_start + km.end()
-
-# Within the <key>: sub-block, find the first `    image: ...` line at indent 4.
-# Sub-block ends at the next `  <something>:` (indent 2) or end of images block.
-next_key_re = re.compile(r'(?m)^  \S')
-nk = next_key_re.search(text, sub_start_abs)
-sub_end_abs = nk.start() if nk and nk.start() < images_end else images_end
-sub_block = text[sub_start_abs:sub_end_abs]
-
-img_re = re.compile(r'(?m)^    image:\s.*$')
-im = img_re.search(sub_block)
-if not im:
-    sys.exit(f"ERROR: {descriptor}: no `image:` field under `images.{key}:`")
-img_start_abs = sub_start_abs + im.start()
-img_end_abs   = sub_start_abs + im.end()
-
-new_line = f'    image: "{new_image}"'
-patched = text[:img_start_abs] + new_line + text[img_end_abs:]
-
-with open(descriptor, "w") as f:
-    f.write(patched)
-print(f"  patched {descriptor}: images.{key}.image = {new_image}")
-PY
+  # Sanity: yq re-reads the patched value; if awk somehow corrupted the
+  # YAML the read fails and we surface a clear error.
+  local actual
+  actual="$(yq -r ".images.\"${key}\".image" "${desc}")"
+  if [[ "${actual}" != "${new_image}" ]]; then
+    echo "ERROR: ${desc}: patch did not stick (read back '${actual}', expected '${new_image}')" >&2
+    return 1
+  fi
+  echo "  patched ${desc}: images.${key}.image = ${new_image}"
+}
 
 # ─── Iterate matrix: build + push + patch ──────────────────────────────────
 
 FAILED=()
-PATCHED_DESCRIPTORS=()
 
 echo
-echo "${MATRIX_JSON}" | python3 -c "
-import json, sys
-for e in json.load(sys.stdin):
-    print('\t'.join([e['connector_dir'], e['key'], e['name'], e['dockerfile'], e['context']]))
-" | while IFS=$'\t' read -r connector_dir key name dockerfile context; do
+# Stream matrix as TSV via jq; each line is one image-entry to build.
+echo "${MATRIX_JSON}" \
+  | jq -r '.[] | [.connector_dir, .key, .name, .dockerfile, .context] | @tsv' \
+  | while IFS=$'\t' read -r connector_dir key name dockerfile context; do
   slug="$(basename "${connector_dir}")"
   ref="${IMAGE_PREFIX}/${name}:${BUILD_TAG}"
   ref_latest="${IMAGE_PREFIX}/${name}:latest"
@@ -271,19 +260,17 @@ for e in json.load(sys.stdin):
 
   # Patch descriptor.yaml.images.<key>.image with the new full ref.
   # This mirrors the CI bump-descriptors job exactly.
-  if ! python3 "${PATCH_PY}" "${connector_dir}/descriptor.yaml" "${key}" "${ref}"; then
-    echo "FAIL: patch ${connector_dir}/descriptor.yaml" >&2
+  if ! patch_image_in_descriptor "${connector_dir}/descriptor.yaml" "${key}" "${ref}"; then
     FAILED+=("${slug}/${key}:patch")
     continue
   fi
-  PATCHED_DESCRIPTORS+=("${connector_dir}/descriptor.yaml")
 done
 
 # After all image patches, bump descriptor.version (minor) once per
 # affected connector. Mirrors the CI bump-descriptors job. Read patched
 # descriptors from git status to handle the subshell-variable lifetime
 # issue (the same trick the summary step below uses).
-BUMP_SCRIPT="${REPO_ROOT}/.github/workflows/scripts/bump-descriptor-version.py"
+BUMP_SCRIPT="${REPO_ROOT}/.github/workflows/scripts/bump-descriptor-version.sh"
 if [[ -x "${BUMP_SCRIPT}" ]]; then
   PATCHED_FOR_BUMP="$(git status --porcelain src/ingestion/connectors/*/*/descriptor.yaml 2>/dev/null \
     | awk '{print $2}')"
@@ -292,7 +279,7 @@ if [[ -x "${BUMP_SCRIPT}" ]]; then
     echo "─── Bumping descriptor.version (minor) for each patched connector ───"
     echo "${PATCHED_FOR_BUMP}" | while IFS= read -r desc; do
       [[ -n "${desc}" ]] || continue
-      python3 "${BUMP_SCRIPT}" --descriptor "${desc}" || {
+      "${BUMP_SCRIPT}" --descriptor "${desc}" || {
         echo "FAIL: version bump for ${desc}" >&2
         FAILED+=("${desc}:version-bump")
       }

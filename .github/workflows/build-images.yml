@@ -163,14 +163,14 @@ jobs:
             --changed /tmp/changed.txt \
             $ALL_FLAG)"
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          LEN="$(echo "$MATRIX" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')"
+          LEN="$(echo "$MATRIX" | jq 'length')"
           if [ "$LEN" -gt 0 ]; then
             echo "any=true" >> "$GITHUB_OUTPUT"
           else
             echo "any=false" >> "$GITHUB_OUTPUT"
           fi
           echo "discovered $LEN image entries"
-          echo "$MATRIX" | python3 -m json.tool || true
+          echo "$MATRIX" | jq . || true
 
   # ─── Backend per-service builds ────────────────────────────────────────────
   # Split from a single matrix job so that a change touching only one service
@@ -488,7 +488,7 @@ jobs:
             | while IFS= read -r connector_dir; do
               desc="$connector_dir/descriptor.yaml"
               echo "Bumping $desc version (minor):"
-              .github/workflows/scripts/bump-descriptor-version.py --descriptor "$desc"
+              .github/workflows/scripts/bump-descriptor-version.sh --descriptor "$desc"
             done
 
       - name: Commit descriptor patches (no [skip ci])
