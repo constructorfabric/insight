@@ -55,3 +55,4 @@ charts/*/Chart.lock
 
 # dbt logs
 logs/
+cypilot/.plans/.archive/

@@ -810,3 +810,9 @@ kind = "PRD"
 path = "docs/domain/metric-catalog/specs/PRD.md"
 name = "Metric Catalog PRD"
 traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/metric-catalog/specs/DESIGN.md"
+name = "Metric Catalog DESIGN"
+traceability = "DOCS-ONLY"
