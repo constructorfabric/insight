@@ -1,0 +1,16 @@
+# Test-specific metric overrides.
+#
+# Inserted into MariaDB.metrics AFTER the analytics-api binary's SeaORM
+# auto-migrations seed prod metrics. Use these for fixtures that need a
+# narrow metric not in the prod catalog (e.g. a direct read of insight.people
+# without the heavier joins of "Team Members").
+#
+# Each row uses Uuid::nil() as insight_tenant_id to match the auth-stub
+# context (analytics-api/src/auth.rs returns nil tenant).
+
+overrides:
+  - id: 00000000-0000-0000-0000-0000face0001
+    name: Smoke — insight.people direct
+    description: Reads insight.people directly, no joins. Used by people_smoke fixture.
+    query_ref: SELECT person_id, display_name, job_title, status FROM insight.people
+    is_enabled: true

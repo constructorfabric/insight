@@ -1,0 +1,63 @@
+# Compose override: adds the `runner` service (python+rust+deps), and
+# attaches CH+MariaDB to the same network without publishing ports — every
+# component reaches the others via service names (clickhouse, mariadb).
+#
+# Used in tandem with docker-compose.yml. Activate via:
+#   docker compose -f compose/docker-compose.yml -f compose/docker-compose.runner.yml ...
+# (the wrapper script ../e2e.sh does this for you).
+
+services:
+  # Override: when running via the runner, we don't need host port-forwards.
+  # Compose will keep the in-network endpoints (clickhouse:8123, mariadb:3306).
+  clickhouse:
+    ports: !reset []
+  mariadb:
+    ports: !reset []
+
+  runner:
+    build:
+      # Resolved by ../e2e.sh; CI workflow also exports this. We use an
+      # absolute path because compose resolves `context:` relative to the
+      # project directory, not the file location.
+      context: ${INSIGHT_REPO_ROOT:-../../../..}
+      dockerfile: src/ingestion/tests/e2e/compose/Dockerfile.runner
+    image: insight-e2e-runner:latest
+    container_name: insight-e2e-runner
+    working_dir: /workspace/src/ingestion/tests/e2e
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      mariadb:
+        condition: service_healthy
+    environment:
+      # Service names on the insight-e2e network — overrides the localhost
+      # defaults in e2e_lib/config.py. The session-rig honors these in
+      # E2E_RUN_MODE=docker.
+      E2E_RUN_MODE: docker
+      E2E_CH_HOST: clickhouse
+      E2E_CH_HTTP_PORT: "8123"
+      E2E_MARIADB_HOST: mariadb
+      E2E_MARIADB_PORT: "3306"
+      # Credentials must match what compose.yml seeds via env_file.
+      E2E_CH_USER: ${CLICKHOUSE_USER:-insight}
+      E2E_CH_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      E2E_MARIADB_USER: ${MARIADB_USER:-insight}
+      E2E_MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      E2E_MARIADB_DATABASE: ${MARIADB_DATABASE:-analytics}
+      RUST_BACKTRACE: "1"
+    volumes:
+      # Absolute path resolved by ../e2e.sh (and the CI workflow). Compose
+      # resolves relative volume paths against the project dir, which is
+      # the compose/ directory here — using ${INSIGHT_REPO_ROOT} sidesteps
+      # the level-counting question entirely.
+      - ${INSIGHT_REPO_ROOT}:/workspace
+      # Persistent caches across container restarts — first run cold-builds
+      # cargo (3-5 min), subsequent runs are incremental (<30s).
+      - cargo-cache:/usr/local/cargo/registry
+      - cargo-target:/workspace/src/backend/target
+    networks:
+      - insight-e2e
+
+volumes:
+  cargo-cache:
+  cargo-target:

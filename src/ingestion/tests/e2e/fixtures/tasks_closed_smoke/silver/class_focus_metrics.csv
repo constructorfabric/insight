@@ -1,0 +1,2 @@
+insight_tenant_id,email,day,unique_key,meetings_count,meeting_hours,working_hours_per_day,focus_time_pct,dev_time_h,_version
+00000000-0000-0000-0000-000000000000,alice@example.com,2026-01-15,alice-2026-01-15,2,1.0,8.0,75.0,6.0,1

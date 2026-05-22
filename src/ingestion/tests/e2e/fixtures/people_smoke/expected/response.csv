@@ -1,0 +1,4 @@
+person_id,display_name,job_title,status
+alice@example.com,Alice Alpha,Senior Software Engineer,Active
+bob@example.com,Bob Beta,Engineering Manager,Active
+carol@example.com,Carol Gamma,Junior Designer,Active

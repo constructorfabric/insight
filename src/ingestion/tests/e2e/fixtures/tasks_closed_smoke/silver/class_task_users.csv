@@ -1,0 +1,2 @@
+insight_tenant_id,insight_source_id,user_id,email,unique_key,_version
+00000000-0000-0000-0000-000000000000,jira-test,alice-jira-acct,alice@example.com,jira-test-alice-jira-acct,1

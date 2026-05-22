@@ -1,0 +1,23 @@
+spec_version: 1
+description: >
+  End-to-end smoke against insight.people: three employees in
+  bronze_bamboohr.employees → API returns matching person rows.
+
+# Metric "Smoke — insight.people direct" injected by seed/metrics.yaml.
+# query_ref: SELECT person_id, display_name, job_title, status FROM insight.people
+metric_id: 00000000-0000-0000-0000-0000face0001
+endpoint: /v1/metrics/{metric_id}/query
+method: POST
+
+request_body:
+  $top: 50
+  $orderby: person_id
+
+# insight.people is a VIEW directly over bronze_bamboohr.employees — no dbt
+# model is involved on the read path. Omitting dbt_selector skips the dbt
+# step entirely.
+
+key_columns:
+  - person_id
+
+float_tolerance: 1.0e-6

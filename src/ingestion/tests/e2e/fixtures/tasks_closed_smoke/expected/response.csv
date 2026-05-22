@@ -1,0 +1,2 @@
+person_id,tasks_closed,ai_loc_share_pct,ai_sessions,bugs_fixed,build_success_pct,focus_time_pct,loc,pr_cycle_time_h,prs_merged
+alice@example.com,2.0,0.0,0.0,0.0,,75.0,0.0,,0.0

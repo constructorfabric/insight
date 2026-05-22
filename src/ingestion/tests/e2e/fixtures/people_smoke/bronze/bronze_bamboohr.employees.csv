@@ -1,0 +1,4 @@
+id,status,firstName,lastName,displayName,workEmail,department,division,jobTitle,supervisorEmail,supervisor
+e001,Active,Alice,Alpha,Alice Alpha,alice@example.com,Engineering,Product,Senior Software Engineer,bob@example.com,Bob Beta
+e002,Active,Bob,Beta,Bob Beta,bob@example.com,Engineering,Product,Engineering Manager,,
+e003,Active,Carol,Gamma,Carol Gamma,carol@example.com,Design,Product,Junior Designer,bob@example.com,Bob Beta

@@ -1,0 +1,26 @@
+spec_version: 1
+description: >
+  Exercise the IC_KPIS metric end-to-end against synthetic Jira task history.
+  Alice closes 2 tasks on 2026-01-15 → tasks_closed = 2.
+
+  Bypasses the Rust jira-enrich step by seeding silver.class_task_field_history
+  directly (see ../../HOW-TO-ADD-FIXTURE.md "silver seeding"). The downstream
+  chain (insight.task_issue_current_state MV → insight.jira_closed_tasks
+  view → insight.ic_kpis view → /v1/metrics/IC_KPIS/query) is fully tested.
+
+# IC_KPIS metric, UUID per insight-front/src/screensets/insight/api/metricRegistry.ts
+metric_id: 00000000-0000-0000-0001-000000000010
+endpoint: /v1/metrics/{metric_id}/query
+method: POST
+
+# IC_KPIS aggregates GROUP BY person_id → one row per person.
+# $orderby MUST be a column in the aggregated SELECT (no metric_date here).
+request_body:
+  $top: 50
+  $filter: "person_id eq 'alice@example.com'"
+  $orderby: person_id
+
+key_columns:
+  - person_id
+
+float_tolerance: 0.01

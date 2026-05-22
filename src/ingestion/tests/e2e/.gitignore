@@ -1,0 +1,12 @@
+# Generated per session
+compose/.env
+
+# Python virtualenvs
+.venv/
+__pycache__/
+
+# Build artifacts
+*.egg-info/
+
+# pytest cache
+.pytest_cache/
