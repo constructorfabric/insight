@@ -575,10 +575,23 @@ Read paths in Phase 1:
   `WHERE parent_person_id=@p AND valid_to IS NULL` against
   `idx_current_children`.
 
-Phase 2 callers will project these onto the `/v1/persons` and
+Phase 2 callers project these onto the `/v1/persons` and
 `/v1/profiles` response shapes (designated-source supervisor +
 per-source detail). Phase 3 (`/v1/subchart/{person_id}?depth=N`,
-issue #348) walks the table via a depth-bounded recursive CTE.
+issue #348) walks the table via a depth-bounded recursive CTE in a
+single round-trip — `SqlSubchart.GetSubchart` joins a recursive
+`subtree` CTE rooted at `@root_person_id` (depth-bounded by the
+optional `@max_depth` parameter; null = unbounded, capped by
+MariaDB's `cte_max_recursion_depth = 1000`) against a derived
+`latest_obs` CTE that picks the latest `(person, value_type)`
+observation per partition via `ROW_NUMBER() OVER (...)`. Tenant +
+source-type scoping is bound on both CTEs. The result is a flat
+row set ordered by depth; the C# service layer (`SubchartService`)
+assembles the tree by indexing on `parent_person_id`. Visibility is
+applied via `VisibilityService.CanSeeAsync` on the root only — the
+visibility CTE is closed under `org_chart` descent, so once the
+viewer can see the root every descendant is already in their
+visible set.
 
 #### Table: `SchemaVersions` (MariaDB, DbUp-managed)
 

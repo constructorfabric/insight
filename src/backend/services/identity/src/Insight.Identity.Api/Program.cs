@@ -68,6 +68,11 @@ builder.Services.AddSingleton<IRolesReader>(sp => sp.GetRequiredService<RolesRep
 builder.Services.AddSingleton<IPersonRolesReader>(sp => sp.GetRequiredService<RolesRepository>());
 builder.Services.AddSingleton<VisibilityService>();
 
+// #348 Phase 3: depth-bounded subchart endpoint.
+builder.Services.AddSingleton<SubchartRepository>();
+builder.Services.AddSingleton<ISubchartReader>(sp => sp.GetRequiredService<SubchartRepository>());
+builder.Services.AddSingleton<SubchartService>();
+
 // FluentValidation — Phase 2 POST /v1/profiles body. Scans the Api
 // assembly for AbstractValidator<T> implementations.
 builder.Services.AddValidatorsFromAssemblyContaining<Insight.Identity.Api.Validation.ResolveProfileCommandValidator>();
@@ -246,6 +251,7 @@ app.MapPersonsEndpoints();
 app.MapVisibilityEndpoints();
 app.MapRoleEndpoints();
 app.MapPersonRoleEndpoints();
+app.MapSubchartEndpoints();
 
 await app.RunAsync().ConfigureAwait(false);
 

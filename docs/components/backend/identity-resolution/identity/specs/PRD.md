@@ -1021,13 +1021,71 @@ GET /healthz
 ok
 ```
 
-#### Future endpoints (#348 Phase 3)
+#### `GET /v1/subchart/{person_id}?depth=N` (Phase 3 — #348)
 
-`GET /v1/subchart/{person_id}?depth=N` — recursive subchart walk via a
-depth-bounded MariaDB CTE over `org_chart`. Tracked separately under
-the #348 Phase 3 work; the contract will land in a follow-up PR and
-the endpoint will share the same `OrgChartSourceType` config knob as
-this section's endpoints.
+Depth-bounded recursive walk of `org_chart` rooted at `{person_id}`,
+returning the subtree as a nested JSON tree. Single MariaDB recursive
+CTE — one round-trip, no N+1 hydration.
+
+**Request**: `GET /v1/subchart/{person_id}?depth=<n>`. The path
+parameter is a UUID; the optional `depth` query parameter is a
+non-negative integer. **`depth=0`** returns only the root,
+**`depth=1`** root + direct reports, etc. **Omitting `depth`** means
+unbounded — MariaDB's `cte_max_recursion_depth` (default 1000) is the
+ceiling, and the `org_chart` is acyclic by construction (the rebuild
+step in the Python seeder emits a WARN on any 2-hop cycle), so the
+CTE terminates without an explicit app-level cap. DoS protection via
+payload size is a gateway-layer concern, not this endpoint's.
+
+**Response**:
+
+```json
+{
+  "root": {
+    "person_id": "...",
+    "email": "...",
+    "display_name": "...",
+    "job_title": "...",
+    "status": "...",
+    "subordinates": [ /* recursive same shape */ ]
+  }
+}
+```
+
+Each text field may be `null` when no current observation of that
+`value_type` exists for the node. The shape is deliberately leaner
+than `PersonResponse` — no `supervisor_*` / `parent_*` (the parent is
+the position in the tree) and no `department`/`division` (added via
+rollforward if a real consumer asks).
+
+**Authentication**: `X-Insight-Person-Id` header required. Caller is
+not required to hold the admin role.
+
+**Visibility**: gated by the same `VisibilityService.CanSeeAsync`
+that protects `/v1/persons/{email}` and `POST /v1/profiles`. If the
+caller cannot see the root, the response is **404
+`urn:insight:error:person_not_found`** in the same shape as
+"target does not exist" so existence does not leak. Per-node filtering
+is intentionally not applied — the visibility CTE is closed under
+`org_chart` descent, so once the caller can see the root, every
+descendant is already in their visible set. Matches the Phase-2
+behaviour of `subordinates[]` on `/v1/persons`.
+
+**Tenant scoping**: via the same `ITenantContext` composite chain as
+the other endpoints (header → JWT → config default). The
+`org_chart.insight_source_type` filter is pinned to
+`IDENTITY__identity__org_chart_source_type`, identical to the Phase-2
+endpoints.
+
+**Errors**:
+
+- **`401 urn:insight:error:caller_unresolved`** — missing
+  `X-Insight-Person-Id` header.
+- **`400 urn:insight:error:tenant_unresolved`** — no tenant header
+  and no `tenant_default_id` configured.
+- **`400 urn:insight:error:invalid_depth`** — `depth < 0`.
+- **`404 urn:insight:error:person_not_found`** — root does not exist
+  in the tenant OR caller cannot see it.
 
 ### 7.2 External Integration Contracts
 
