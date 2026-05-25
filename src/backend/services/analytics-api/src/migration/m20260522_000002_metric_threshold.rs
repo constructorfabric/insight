@@ -9,6 +9,13 @@
 //!   not nullable. SQL treats NULLs as distinct, which would let duplicate
 //!   `product-default` rows past the UNIQUE composite — sentinels make the
 //!   composite actually unique. See DESIGN §3.7 lines 1011-1012, 1029.
+//! - `tenant_id` is the same story: NULL-tenant `product-default` rows would
+//!   otherwise duplicate under the UNIQUE composite. We can't make `tenant_id`
+//!   itself NOT NULL (DESIGN intentionally distinguishes NULL = "product
+//!   default" from "<all-zero> = some tenant"). Mirror it through a STORED
+//!   generated `tenant_id_sentinel` column (all-zero bytes when NULL) and use
+//!   that in the UNIQUE composite. Same mechanism `is_locked_persisted` uses
+//!   for partial-index emulation.
 //! - `is_locked_persisted` is a STORED generated mirror of `is_locked`. MariaDB
 //!   has no native partial indexes; the lock-enforcer's "find broader-scope
 //!   locked row" lookup uses `(tenant_id, metric_key, scope, is_locked_persisted)`
@@ -159,9 +166,25 @@ impl MigrationTrait for Migration {
 
         let conn = manager.get_connection();
 
-        // Generated column added separately — sea-orm 1.1's column builder doesn't
+        // Generated columns added separately — sea-orm 1.1's column builder doesn't
         // emit MariaDB's `GENERATED ALWAYS AS (...) STORED` cleanly with the
         // NOT-NULL position we need. Raw SQL keeps the produced DDL unambiguous.
+        //
+        // `tenant_id_sentinel`: all-zero 16-byte BINARY when `tenant_id IS NULL`,
+        // otherwise mirrors `tenant_id`. Folded into the UNIQUE composite below
+        // so NULL-tenant `product-default` rows actually deduplicate (SQL's
+        // NULL-is-distinct semantics on raw `tenant_id` would let dupes
+        // through). The `0x` literal is 16 zero bytes — same width as
+        // `BINARY(16)`, no padding ambiguity. UUIDv7 has no all-zero generator
+        // bits so this sentinel cannot collide with a real tenant id.
+        conn.execute_unprepared(
+            "ALTER TABLE metric_threshold \
+             ADD COLUMN tenant_id_sentinel BINARY(16) \
+             GENERATED ALWAYS AS (COALESCE(tenant_id, 0x00000000000000000000000000000000)) \
+             STORED NOT NULL",
+        )
+        .await?;
+
         conn.execute_unprepared(
             "ALTER TABLE metric_threshold \
              ADD COLUMN is_locked_persisted BOOLEAN \
@@ -170,20 +193,16 @@ impl MigrationTrait for Migration {
         .await?;
 
         // UNIQUE composite doubles as the resolver lookup index (§3.7 line 1040).
-        manager
-            .create_index(
-                Index::create()
-                    .name("uq_metric_threshold_scope_target")
-                    .table(MetricThreshold::Table)
-                    .col(MetricThreshold::TenantId)
-                    .col(MetricThreshold::MetricKey)
-                    .col(MetricThreshold::Scope)
-                    .col(MetricThreshold::RoleSlug)
-                    .col(MetricThreshold::TeamId)
-                    .unique()
-                    .to_owned(),
-            )
-            .await?;
+        // Built via raw SQL so we can lead with `tenant_id_sentinel` (a generated
+        // column not declared in the SeaORM `Iden` enum) instead of the raw
+        // nullable `tenant_id` — the latter would let two NULL-tenant
+        // product-default rows past the constraint.
+        conn.execute_unprepared(
+            "CREATE UNIQUE INDEX uq_metric_threshold_scope_target \
+             ON metric_threshold \
+             (tenant_id_sentinel, metric_key, scope, role_slug, team_id)",
+        )
+        .await?;
 
         // Lock-enforcer hot-path index (partial-index emulation via the generated
         // column — §3.7 line 1041). Built via raw SQL so we can reference the
@@ -194,9 +213,13 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
+        // `{name}` is backtick-quoted defensively. Both `name` and `predicate`
+        // come from the compile-time `CHECK_CLAUSES` const above — no
+        // injection vector today — but the backticks make a future entry
+        // whose name happens to be a MariaDB reserved word still parse.
         for (name, predicate) in CHECK_CLAUSES {
             conn.execute_unprepared(&format!(
-                "ALTER TABLE metric_threshold ADD CONSTRAINT {name} CHECK ({predicate})"
+                "ALTER TABLE metric_threshold ADD CONSTRAINT `{name}` CHECK ({predicate})"
             ))
             .await?;
         }
@@ -204,17 +227,9 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 
-    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // DROP TABLE cascades to CHECK constraints, indexes, and the generated
-        // `is_locked_persisted` column — all of which we added via raw SQL after
-        // `create_table`. Keep this in sync if a future migration adds FKs
-        // *into* metric_threshold (e.g., a role_catalog FK on `role_slug`):
-        // the drop will start failing and you'll need an explicit ALTER ...
-        // DROP FOREIGN KEY first.
-        manager
-            .drop_table(Table::drop().table(MetricThreshold::Table).to_owned())
-            .await?;
-        Ok(())
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        // we have only forward migrations
+        Err(DbErr::Custom("we have only forward migrations".to_owned()))
     }
 }
 
@@ -235,10 +250,12 @@ enum MetricThreshold {
     LockedBy,
     LockedAt,
     LockReason,
-    // Generated mirror of `IsLocked`; added via raw SQL after table creation
-    // (see comment near the ALTER TABLE call). Listed here so it shows up in
-    // grep / IDE refactors even though no in-crate code currently references
-    // it through SeaORM.
+    // Generated columns added via raw SQL after table creation (see the
+    // ALTER TABLE block above). Listed here so they show up in grep / IDE
+    // refactors even though no in-crate code currently references them
+    // through SeaORM.
+    #[allow(dead_code)]
+    TenantIdSentinel,
     #[allow(dead_code)]
     IsLockedPersisted,
     CreatedAt,

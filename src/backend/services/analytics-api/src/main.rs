@@ -113,6 +113,14 @@ async fn run_migrate(cfg: config::AppConfig) -> anyhow::Result<()> {
     tracing::info!("running migrations");
     let db = infra::db::connect(&cfg.database_url).await?;
     infra::db::run_migrations(&db).await?;
+
+    // Same probe as `run_server`. An operator running `analytics-api migrate`
+    // after a schema rollback wants the integrity signal too — the typical
+    // recovery path is `migrate` first, restart the service second, and
+    // dropping the probe here would silently re-greenlight a DB that's
+    // missing a CHECK the application relies on.
+    infra::db::check_probe::assert_required_checks(&db).await?;
+
     tracing::info!("migrations complete");
     Ok(())
 }

@@ -63,3 +63,60 @@ pub const REQUIRED_CHECKS_BY_TABLE: &[(&str, &[&str])] = &[
         m20260522_000003_threshold_lock_audit::REQUIRED_CHECKS,
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Guards against a developer adding a new catalog migration but
+    /// forgetting to register its `REQUIRED_CHECKS` in
+    /// [`REQUIRED_CHECKS_BY_TABLE`]. Catches the "silent probe degradation"
+    /// failure mode where a missing CHECK at runtime would never be
+    /// reported because the probe iterates this list.
+    ///
+    /// This test pins the catalog scope only — adding a non-catalog
+    /// migration (e.g., another `analytics.metrics` rewrite) does not need
+    /// a `REQUIRED_CHECKS_BY_TABLE` entry, so we don't enumerate all
+    /// migrations. Tighten this test (or extract a per-migration
+    /// `REQUIRED_CHECKS` registry trait) the day a fourth catalog
+    /// migration lands.
+    #[test]
+    fn required_checks_by_table_covers_every_catalog_table() {
+        // Wire each catalog migration's REQUIRED_CHECKS by its own const
+        // pointer so renaming the const on one side fails compilation here
+        // first — there is no string-matching slop in this comparison.
+        let expected: &[(&str, &[&str])] = &[
+            (
+                "metric_catalog",
+                m20260522_000001_metric_catalog::REQUIRED_CHECKS,
+            ),
+            (
+                "metric_threshold",
+                m20260522_000002_metric_threshold::REQUIRED_CHECKS,
+            ),
+            (
+                "threshold_lock_audit",
+                m20260522_000003_threshold_lock_audit::REQUIRED_CHECKS,
+            ),
+        ];
+
+        for &(table, checks) in expected {
+            let Some(&(_, registered)) =
+                REQUIRED_CHECKS_BY_TABLE.iter().find(|&&(t, _)| t == table)
+            else {
+                panic!(
+                    "catalog table `{table}` is not registered in \
+                     REQUIRED_CHECKS_BY_TABLE — the startup probe will \
+                     silently skip its CHECKs"
+                );
+            };
+            assert_eq!(
+                registered.as_ptr(),
+                checks.as_ptr(),
+                "REQUIRED_CHECKS_BY_TABLE entry for `{table}` points at a \
+                 different REQUIRED_CHECKS slice than the migration module \
+                 exports — keep them in sync"
+            );
+        }
+    }
+}

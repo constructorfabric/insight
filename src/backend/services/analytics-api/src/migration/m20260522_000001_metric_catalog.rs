@@ -162,9 +162,13 @@ impl MigrationTrait for Migration {
             .await?;
 
         let conn = manager.get_connection();
+        // `{name}` is backtick-quoted defensively. Both `name` and
+        // `predicate` come from the compile-time `CHECK_CLAUSES` const above
+        // — no injection vector today — but the backticks make a future
+        // entry whose name happens to be a MariaDB reserved word still parse.
         for (name, predicate) in CHECK_CLAUSES {
             conn.execute_unprepared(&format!(
-                "ALTER TABLE metric_catalog ADD CONSTRAINT {name} CHECK ({predicate})"
+                "ALTER TABLE metric_catalog ADD CONSTRAINT `{name}` CHECK ({predicate})"
             ))
             .await?;
         }
@@ -172,11 +176,9 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 
-    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .drop_table(Table::drop().table(MetricCatalog::Table).to_owned())
-            .await?;
-        Ok(())
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        // we have only forward migrations
+        Err(DbErr::Custom("we have only forward migrations".to_owned()))
     }
 }
 

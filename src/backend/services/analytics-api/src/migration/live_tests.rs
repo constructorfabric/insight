@@ -54,9 +54,12 @@ async fn drop_catalog_tables(db: &DatabaseConnection) -> Result<(), sea_orm::DbE
     }
     // Strip the matching `seaql_migrations` rows so Migrator::up reruns the
     // catalog migrations cleanly without thinking they've already applied.
+    // Propagate any error (a swallowed `.ok()` here used to mask
+    // `seaql_migrations` cleanup failures and produce misleading downstream
+    // assertion failures when the probe saw migration rows out of sync with
+    // the actual schema).
     db.execute_unprepared("DELETE FROM seaql_migrations WHERE version LIKE 'm20260522_%'")
-        .await
-        .ok();
+        .await?;
     Ok(())
 }
 
@@ -71,8 +74,15 @@ async fn catalog_schema_end_to_end() -> anyhow::Result<()> {
     // Setup errors are hard failures — no point continuing if migrations
     // can't even apply. Per-assertion failures further down accumulate so a
     // single live-DB run surfaces every signal.
+    //
+    // `None` (apply every pending migration) is robust to a future fourth
+    // catalog migration landing: `drop_catalog_tables` deletes only the
+    // `m20260522_*` rows from `seaql_migrations`, so the catalog migrations
+    // are the only ones pending — but if we hardcoded `Some(3)` it would
+    // either skip the new one or step into a later non-catalog migration
+    // depending on registration order. `None` removes that landmine.
     drop_catalog_tables(&db).await?;
-    Migrator::up(&db, Some(3)).await?;
+    Migrator::up(&db, None).await?;
 
     let mut failures: Vec<String> = Vec::new();
 
@@ -190,6 +200,26 @@ async fn catalog_schema_end_to_end() -> anyhow::Result<()> {
                 .to_owned(),
         );
     }
+    // Pin the positive case for a single-character segment. The regex
+    // `^[a-z][a-z0-9_]*[.][a-z][a-z0-9_]*$` accepts segments of length ≥ 1
+    // (the `*` quantifier), so `a.b` is valid. This is intentional —
+    // ClickHouse permits single-character identifiers and DESIGN §3.7 line
+    // 206 only specifies `table_name.column_name` form, not a minimum
+    // segment length. If a future revision tightens this to ≥ 2 chars
+    // (`*` → `+`), this test will start failing — flip it then.
+    let good_short_segments = db
+        .execute_unprepared(
+            "INSERT INTO metric_catalog \
+             (id, tenant_id, metric_key, label, higher_is_better, is_member_scale, source_tags, is_enabled) \
+             VALUES (UNHEX(REPLACE(UUID(),'-','')), NULL, 'a.b', 'Single-char segments', TRUE, FALSE, JSON_ARRAY('jira'), TRUE)",
+        )
+        .await;
+    if let Err(e) = good_short_segments {
+        failures.push(format!(
+            "single-char segments like `a.b` MUST be accepted by \
+             chk_metric_catalog_metric_key_shape; got: {e}"
+        ));
+    }
 
     // ── invariant 7: probe rejects a DB where a CHECK has been dropped ──
     db.execute_unprepared(
@@ -209,11 +239,19 @@ async fn catalog_schema_end_to_end() -> anyhow::Result<()> {
         }
     }
 
-    // ── invariant 8: round-trip down then back up ────────────────────
+    // ── invariant 8: drop-and-re-up round-trip ───────────────────────
+    //
+    // Migrations are forward-only (`down()` returns an error in every
+    // catalog migration on purpose), so this isn't a `Migrator::down →
+    // Migrator::up` round-trip. We drop the catalog tables via raw DDL,
+    // strip the matching `seaql_migrations` rows, and re-run `up`. Catches
+    // non-idempotency in the `up()` bodies (e.g., a CHECK whose name no
+    // longer drops cleanly with the table, leaving a phantom entry that
+    // makes the second up() fail).
     if let Err(e) = drop_catalog_tables(&db).await {
         failures.push(format!("teardown after probe test failed: {e}"));
     }
-    if let Err(e) = Migrator::up(&db, Some(3)).await {
+    if let Err(e) = Migrator::up(&db, None).await {
         failures.push(format!("second-time migration up (round-trip) failed: {e}"));
     }
     if let Err(e) = check_probe::assert_required_checks(&db).await {

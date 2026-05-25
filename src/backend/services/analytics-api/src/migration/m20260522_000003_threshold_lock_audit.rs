@@ -133,11 +133,9 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 
-    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .drop_table(Table::drop().table(ThresholdLockAudit::Table).to_owned())
-            .await?;
-        Ok(())
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        // we have only forward migrations
+        Err(DbErr::Custom("we have only forward migrations".to_owned()))
     }
 }
 
