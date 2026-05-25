@@ -121,7 +121,7 @@ flow ScheduledSyncRun
               HTTP GET proxy_url + stream.path with stream.params
               proxy executes page.evaluate(fetch(claude.ai/...))
               records extracted per stream.record_selector
-              records stamped with tenant_id/insight_source_id/collected_at/data_source
+              records stamped with tenant_id/source_id/unique_key/collected_at/data_source
               records shipped to ClickHouse destination
     4. ClickHouse destination upserts/truncates per stream.destinationSyncMode
     5. job status flips to 'succeeded' (or 'failed' on hard error)
@@ -245,9 +245,17 @@ process ConnectorPerStreamReadLoop
          OffsetIncrement: next offset = current + page_size, same stop condition
          (no paginator for members / invites)
     6. for each record:
-         apply transformations:
-           - tenant_id_injection (all 4 streams)
-           - metric_date injection (code_metrics only, from cursor's start_time)
+         apply transformations (inline AddFields per stream — validate-strict forbids
+         the whole-object $ref pattern, so each stream carries its own copy):
+           - tenant_id          = config.insight_tenant_id
+           - source_id          = config.insight_source_id
+           - unique_key         = '{tenant_id}-{source_id}-{<natural-key>}'
+                                  (natural-key differs per stream: account.uuid for
+                                  members, uuid for invites, account_uuid for
+                                  overage_spend, metric_date+email for code_metrics)
+           - collected_at       = now_utc()
+           - data_source        = 'insight_claude_team'
+           - metric_date        = cursor.start_time (code_metrics only)
          schema validation (informational; type-coerce or warn)
          ship to destination
     7. loop pagination until paginator says stop
@@ -353,7 +361,9 @@ The repo includes these files under `src/ingestion/connectors/ai/claude-team/`:
   namespace, required secret fields).
 - `connector.yaml` — Airbyte v7.0.4 DeclarativeSource with 4 streams (`claude_team_members`,
   `claude_team_invites`, `claude_team_overage_spend`, `claude_team_code_metrics`), spec
-  block, and tenant_id_injection definition.
+  block, and inline AddFields transformations (one per stream — `validate-strict` rejects
+  whole-object `$ref` definitions, so the attribution injection is duplicated rather than
+  shared).
 
 And under `src/ingestion/secrets/connectors/`:
 
@@ -432,8 +442,8 @@ Against a kind cluster with proxy deployed:
   touching the connector or its Secret; the next scheduled sync succeeds.
 - `descriptor.yaml.version` is `1.1.0` (initial release with 4 streams) and passes the
   strict-semver validator.
-- Every row in every Bronze table carries `tenant_id`, `insight_source_id`, `collected_at`,
-  `data_source: insight_claude_team`.
+- Every row in every Bronze table carries `tenant_id`, `source_id`, `unique_key`,
+  `collected_at`, `data_source: insight_claude_team`.
 
 ## 7. Traceability
 
@@ -444,7 +454,7 @@ Against a kind cluster with proxy deployed:
 | PRD §5.3 overage_spend + 403 grace | `connector.yaml` streams[2].retriever.requester.error_handler | manual: trigger sync with billing-incapable sessionKey, expect green job + empty table |
 | PRD §5.4 code_metrics + cursor | `connector.yaml` streams[3].incremental_sync | `bronze_claude_team.claude_team_code_metrics` per-day distribution check |
 | PRD §5.5 CF bypass | `src/transport/playwright.js` `init()` | `curl proxy:3000/health` returns 200 within 60s of pod start |
-| PRD §5.6 tenant attribution | `connector.yaml` definitions.tenant_id_injection | sample row inspection: 4 attribution fields non-null |
+| PRD §5.6 tenant attribution | `connector.yaml` inline `AddFields` transformations on each of streams[0..3] | sample row inspection: 5 attribution fields (`tenant_id`, `source_id`, `unique_key`, `collected_at`, `data_source`) non-null |
 | DESIGN §3.2 component model — AuthedTransport seam | `src/transport/index.js` | swap test (mock transport): `createTransport({kind: 'mock'})` returns mock without code changes elsewhere — future work |
 | DESIGN §3.8 deployment topology | `helm/templates/*.yaml`, `secrets/connectors/claude-team.yaml.example` | `kubectl get all -n insight -l app.kubernetes.io/name=claude-team-proxy` matches diagram |
 | FEATURE OperatorDeploysProxyAndConnector | Operator runbook in `README.md` (TBD) | manual: walk through; first sync succeeds |

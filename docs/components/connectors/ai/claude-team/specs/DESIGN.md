@@ -74,7 +74,7 @@ overrides (`start_date`, `proxy_url`, `insight_source_id`).
 - Tolerate the most common failure mode (`HTTP 403 billing:view`) without failing the whole
   sync — operator can rotate to a permission-capable session later without code changes.
 - Carry tenant and source stamps onto every emitted row so the universal `(tenant_id,
-  insight_source_id, …)` join scope holds with sibling connectors.
+  source_id, unique_key)` join scope holds with sibling connectors.
 
 #### NFR Allocation
 
@@ -161,7 +161,11 @@ All four extended with the standard attribution columns:
 
 ```
 tenant_id           — Insight tenant UUID, from config
-insight_source_id   — Optional source instance id, from Secret annotation
+source_id           — Source instance id, from config (resolved by reconcile from the
+                       insight.cyberfabric.com/source-id Secret annotation)
+unique_key          — Per-row composite: '{tenant_id}-{source_id}-{<natural-key>}', where
+                       <natural-key> is account.uuid for members, uuid for invites,
+                       account_uuid for overage_spend, and date+email for code_metrics
 collected_at        — ISO timestamp of sync run
 data_source         — constant 'insight_claude_team'
 ```
@@ -333,7 +337,8 @@ emitted by the ClickHouse destination (`_airbyte_raw_id`, `_airbyte_extracted_at
 | Column | Type | Source |
 |--------|------|--------|
 | `tenant_id` | `String` | injected from config |
-| `insight_source_id` | `String` | injected from Secret annotation |
+| `source_id` | `String` | injected from config |
+| `unique_key` | `String` | composite `{tenant_id}-{source_id}-{account.uuid}` |
 | `collected_at` | `String` (ISO) | injected at sync time |
 | `data_source` | `String` ('insight_claude_team') | injected |
 | `account` | `Nullable(JSON)` | upstream — nested object with uuid, tagged_id, full_name, email_address |
@@ -346,7 +351,8 @@ emitted by the ClickHouse destination (`_airbyte_raw_id`, `_airbyte_extracted_at
 
 | Column | Type | Source |
 |--------|------|--------|
-| `tenant_id` / `insight_source_id` / `collected_at` / `data_source` | as above | injected |
+| `tenant_id` / `source_id` / `collected_at` / `data_source` | as above | injected |
+| `unique_key` | `String` | composite `{tenant_id}-{source_id}-{uuid}` |
 | `uuid` | `String` | upstream |
 | `email_address` | `Nullable(String)` | upstream |
 | `role` | `Nullable(String)` | upstream |
@@ -358,7 +364,8 @@ emitted by the ClickHouse destination (`_airbyte_raw_id`, `_airbyte_extracted_at
 
 | Column | Type | Source |
 |--------|------|--------|
-| `tenant_id` / `insight_source_id` / `collected_at` / `data_source` | as above | injected |
+| `tenant_id` / `source_id` / `collected_at` / `data_source` | as above | injected |
+| `unique_key` | `String` | composite `{tenant_id}-{source_id}-{account_uuid}` |
 | `account_uuid` | `String` | upstream |
 | `account_email` | `Nullable(String)` | upstream |
 | `account_name` | `Nullable(String)` | upstream |
@@ -373,7 +380,8 @@ Empty unless the `sessionKey` user has `billing:view`.
 
 | Column | Type | Source |
 |--------|------|--------|
-| `tenant_id` / `insight_source_id` / `collected_at` / `data_source` | as above | injected |
+| `tenant_id` / `source_id` / `collected_at` / `data_source` | as above | injected |
+| `unique_key` | `String` | composite `{tenant_id}-{source_id}-{metric_date}-{email}` |
 | `metric_date` | `String` (YYYY-MM-DD) | injected from cursor's `start_time` |
 | `email` | `String` | upstream |
 | `api_key_name` | `Nullable(String)` | upstream |
