@@ -1,6 +1,8 @@
 name: claude-team
-# Strict semver per ADR-0015. Initial release at 1.0.0.
-version: "1.0.0"
+# Strict semver per ADR-0015. 1.1.0: added 3 streams (invites,
+# overage_spend, code_metrics). MINOR bump per ADR-0015 — new
+# streams added, no breaking changes to existing members stream.
+version: "1.1.0"
 # Daily at 04:00 UTC — off-peak vs other connectors. The claude.ai
 # proxy has a single browser instance, so we want to avoid scheduling
 # claude-team next to anything else that may also hit it once we
