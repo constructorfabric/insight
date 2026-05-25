@@ -25,21 +25,6 @@ check:
   stream_names:
     - claude_team_members
 
-definitions:
-  # Tenant + source attribution injected into every Bronze record.
-  # Mirrors claude-admin / claude-enterprise / cursor.
-  tenant_id_injection:
-    type: AddFields
-    fields:
-      - path: [tenant_id]
-        value: "{{ config['insight_tenant_id'] }}"
-      - path: [insight_source_id]
-        value: "{{ config.get('insight_source_id', '') }}"
-      - path: [collected_at]
-        value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-      - path: [data_source]
-        value: insight_claude_team
-
 streams:
   # ── Stream 1: claude_team_members ───────────────────────────────────
   # Full snapshot of the organisation roster. The endpoint returns a
@@ -57,7 +42,8 @@ streams:
         additionalProperties: true
         properties:
           tenant_id: { type: string }
-          insight_source_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
           collected_at: { type: string }
           data_source: { type: string }
           account:
@@ -84,7 +70,23 @@ streams:
           type: DpathExtractor
           field_path: []
     transformations:
-      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account']['uuid'] }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_claude_team
 
   # ── Stream 2: claude_team_invites ───────────────────────────────────
   # Pending invites (accepted / expired ones drop from the response —
@@ -102,7 +104,8 @@ streams:
         additionalProperties: true
         properties:
           tenant_id: { type: string }
-          insight_source_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
           collected_at: { type: string }
           data_source: { type: string }
           uuid: { type: string }
@@ -124,7 +127,23 @@ streams:
           type: DpathExtractor
           field_path: []
     transformations:
-      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['uuid'] }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_claude_team
 
   # ── Stream 3: claude_team_overage_spend ─────────────────────────────
   # Current spend state per seat. Endpoint requires `billing:view`
@@ -149,7 +168,8 @@ streams:
         additionalProperties: true
         properties:
           tenant_id: { type: string }
-          insight_source_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
           collected_at: { type: string }
           data_source: { type: string }
           account_uuid: { type: string }
@@ -173,7 +193,8 @@ streams:
         error_handler:
           type: DefaultErrorHandler
           response_filters:
-            - http_codes: [403]
+            - type: HttpResponseFilter
+              http_codes: [403]
               action: IGNORE
               error_message: "claude.ai returned 403 — sessionKey lacks billing:view permission. Stream skipped, sync continues."
       record_selector:
@@ -196,7 +217,23 @@ streams:
           field_name: per_page
           inject_into: request_parameter
     transformations:
-      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account_uuid'] }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_claude_team
 
   # ── Stream 4: claude_team_code_metrics ──────────────────────────────
   # Per-user, per-day Claude Code metrics. The endpoint is the most
@@ -235,7 +272,8 @@ streams:
         additionalProperties: true
         properties:
           tenant_id: { type: string }
-          insight_source_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
           collected_at: { type: string }
           data_source: { type: string }
           metric_date: { type: string }
@@ -313,14 +351,31 @@ streams:
         field_name: end_date
         inject_into: request_parameter
     transformations:
-      - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_claude_team
       # Inject the cursor's current value as `metric_date` on every
       # row. The API does not include the date in per-user objects;
       # without this, all rows from different days would collide on the
       # primary key.
       - type: AddFields
         fields:
-          - path: [metric_date]
+          - type: AddedFieldDefinition
+            path: [metric_date]
             value: "{{ stream_interval.start_time }}"
 
 spec:
@@ -330,6 +385,7 @@ spec:
     type: object
     required:
       - insight_tenant_id
+      - insight_source_id
       - claude_org_id
     properties:
       insight_tenant_id:
