@@ -132,8 +132,10 @@ not a connector-secret update.
   `billing:view` permission.
 - Pull per-user-per-day Claude Code metrics (`claude_team_code_metrics`) over a configurable
   date window — incremental by day, offset-paginated within day.
-- Stamp every Bronze row with `tenant_id`, `insight_source_id`, `collected_at`, and
-  `data_source: insight_claude_team`.
+- Stamp every Bronze row with `tenant_id`, `source_id`, `unique_key`, `collected_at`, and
+  `data_source: insight_claude_team`. `unique_key` is a per-row composite of
+  `tenant_id`-`source_id`-`<natural-key>` (e.g. `account.uuid` for members) — the universal
+  join scope across all connectors.
 
 ### 1.4 Glossary
 
@@ -216,7 +218,7 @@ component holds only what it needs.
   operator's session lacks `billing:view`.
 - Date-range incremental walking for `claude_team_code_metrics` (one request per day,
   configurable backfill anchor).
-- All four streams stamped with `tenant_id`, `insight_source_id`, `collected_at`,
+- All four streams stamped with `tenant_id`, `source_id`, `unique_key`, `collected_at`,
   `data_source: insight_claude_team`.
 
 ### 4.2 Out of Scope
@@ -251,8 +253,9 @@ on every sync run and persist every returned row to `bronze_claude_team.claude_t
 - Each member object has an `account` sub-object with `uuid`, `tagged_id`, `full_name`,
   `email_address`. The connector preserves the `account` nesting as-is in Bronze; Silver flattens.
 - The connector **MUST** use `account.uuid` as the primary key.
-- The connector **MUST** stamp every row with `tenant_id`, `insight_source_id`, `collected_at`,
-  `data_source`.
+- The connector **MUST** stamp every row with `tenant_id`, `source_id`, `unique_key`,
+  `collected_at`, `data_source`. `unique_key` for members is built as
+  `{tenant_id}-{source_id}-{account.uuid}`.
 
 ### 5.2 Pending Invite Collection
 
@@ -475,8 +478,8 @@ automatically with no code change.
   connector or its Secret; the next scheduled sync succeeds against the new cookie.
 - The connector descriptor passes the strict-semver check per ADR-0015 (`version` matches
   `^\d+\.\d+\.\d+$`).
-- Connector adds the standard tenant attribution fields (`tenant_id`, `insight_source_id`,
-  `collected_at`, `data_source`) to every Bronze record.
+- Connector adds the standard tenant attribution fields (`tenant_id`, `source_id`,
+  `unique_key`, `collected_at`, `data_source`) to every Bronze record.
 
 ## 10. Dependencies
 
