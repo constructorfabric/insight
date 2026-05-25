@@ -1,0 +1,153 @@
+# Airbyte Declarative Source for claude-team — issue #458.
+#
+# Talks to the in-cluster `claude-team-proxy` Service, NOT to claude.ai
+# directly. The proxy is a headless Chromium that holds the sessionKey
+# cookie and presents the claude.ai web API as a plain HTTP service.
+# See src/backend/services/claude-team-proxy/ for the proxy
+# implementation and docs/components/connectors/ai/claude-team/ for
+# the architecture document.
+#
+# Phase 4 (this commit): one stream — `claude_team_members`.
+# Phase 5 will add: invites, overage_spend_limits, code_metrics.
+
+version: "7.0.4"
+type: DeclarativeSource
+
+# `check` runs at Source-create time. Members is the cheapest / most
+# reliable endpoint — always returns ≥1 row (the owner), no permission
+# gates, no date-range complications.
+check:
+  type: CheckStream
+  stream_names:
+    - claude_team_members
+
+definitions:
+  # Tenant + source attribution injected into every Bronze record.
+  # Mirrors the pattern used by claude-admin / claude-enterprise /
+  # cursor etc. — gives Silver layer a stable per-record provenance.
+  tenant_id_injection:
+    type: AddFields
+    fields:
+      - path: [tenant_id]
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [insight_source_id]
+        value: "{{ config.get('insight_source_id', '') }}"
+      - path: [collected_at]
+        value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      - path: [data_source]
+        value: insight_claude_team
+
+streams:
+  # ── Stream 1: claude_team_members ───────────────────────────────────
+  # Full snapshot of the organisation roster. Endpoint returns a plain
+  # JSON array (no pagination wrapper), so the extractor's field_path
+  # is [] — i.e. "the top-level array IS the records".
+  #
+  # Members have nested `account` sub-object — Bronze stores the whole
+  # nested structure as-is; Silver flattens later.
+  - type: DeclarativeStream
+    name: claude_team_members
+    primary_key:
+      - account/uuid
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id:
+            type: string
+          insight_source_id:
+            type: string
+          collected_at:
+            type: string
+          data_source:
+            type: string
+          account:
+            type: object
+            properties:
+              uuid:
+                type: string
+              tagged_id:
+                type:
+                  - string
+                  - "null"
+              full_name:
+                type:
+                  - string
+                  - "null"
+              email_address:
+                type: string
+          role:
+            type: string
+          seat_tier:
+            type:
+              - string
+              - "null"
+          created_at:
+            type: string
+          updated_at:
+            type: string
+
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['proxy_url'] }}"
+        path: "/api/organizations/{{ config['claude_org_id'] }}/members"
+        http_method: GET
+        # No authenticator — proxy handles auth at the upstream boundary.
+        # No request_headers required — proxy injects what's needed.
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []   # top-level array is the record list
+      # No paginator — endpoint returns the full list in one response.
+
+    transformations:
+      - $ref: "#/definitions/tenant_id_injection"
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required:
+      - insight_tenant_id
+      - claude_org_id
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Tenant isolation identifier (UUID), injected as `tenant_id` field into every record
+        order: 0
+      claude_org_id:
+        type: string
+        title: Claude.ai Organisation UUID
+        description: |
+          UUID of the claude.ai organisation to read from. Find it via
+          DevTools console on claude.ai: `fetch('/api/organizations').then(r=>r.json()).then(console.table)`.
+          Single string, e.g. `6a34097f-e430-474d-8ac6-09aa335fe912`.
+        order: 1
+      proxy_url:
+        type: string
+        title: Proxy URL
+        description: |
+          Base URL of the claude-team-proxy service. Defaults to the
+          in-cluster DNS name; override only when proxy lives elsewhere
+          (e.g. local port-forward for development).
+        default: "http://claude-team-proxy.insight.svc.cluster.local:3000"
+        order: 2
+      insight_source_id:
+        type: string
+        title: Source Instance ID
+        description: Optional connector instance identifier for multi-instance deployments. Set by the reconcile loop from the K8s Secret annotation `insight.cyberfabric.com/source-id`.
+        default: ""
+        order: 3
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    claude_team_members: true

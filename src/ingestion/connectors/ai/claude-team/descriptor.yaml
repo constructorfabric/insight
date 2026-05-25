@@ -1,0 +1,29 @@
+name: claude-team
+# Strict semver per ADR-0015. Initial release at 1.0.0.
+version: "1.0.0"
+# Daily at 04:00 UTC — off-peak vs other connectors. The claude.ai
+# proxy has a single browser instance, so we want to avoid scheduling
+# claude-team next to anything else that may also hit it once we
+# expand to multiple streams in Phase 5.
+schedule: '0 4 * * *'
+workflow: sync
+
+# No dbt selector yet — Silver transformations are out of scope for
+# this MVP (Phase 6+). Once silver models land they'll be tagged
+# 'claude-team' and selected here as `tag:claude-team+`.
+dbt_select: ''
+
+connection:
+  namespace: bronze_claude_team
+
+# Required secret fields (carried in the K8s Secret stringData):
+#   - claude_org_id: UUID of the claude.ai organisation to scrape
+#
+# Note: NO API key here. Auth (sessionKey) lives on the claude-team-proxy
+# Helm chart Secret, not on the connector. Operator manages sessionKey
+# rotation via `helm upgrade --set sessionKey=...` against the proxy
+# release; the connector is credential-less and points at the proxy by
+# in-cluster DNS.
+secret:
+  required_fields:
+    - claude_org_id
