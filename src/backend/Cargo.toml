@@ -76,6 +76,7 @@ modkit-http = { package = "cf-modkit-http", version = "=0.6.2" }
 modkit-security = { package = "cf-modkit-security", version = "=0.6.2" }
 modkit-macros = { package = "cf-modkit-macros", version = "=0.6.2" }
 modkit-errors = { package = "cf-modkit-errors", version = "=0.6.2" }
+modkit-canonical-errors = { package = "cf-modkit-canonical-errors", version = "=0.7.3", features = ["axum", "sea-orm"] }
 
 # cyberfabric-core SDKs (crates.io)
 authn-resolver-sdk = { package = "cf-authn-resolver-sdk", version = "0.3.8" }

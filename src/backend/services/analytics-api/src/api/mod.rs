@@ -1,5 +1,6 @@
 //! HTTP API layer — routes and handlers.
 
+mod error;
 mod handlers;
 
 use axum::{Router, middleware};

@@ -149,6 +149,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "cf-modkit-canonical-errors",
  "chrono",
  "clap",
  "figment",
@@ -879,6 +880,33 @@ dependencies = [
  "url",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "cf-modkit-canonical-errors"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4744fbabb7651e264b83b21085072748c7408824705128086748b0a0080bfaad"
+dependencies = [
+ "axum",
+ "cf-modkit-canonical-errors-macro",
+ "http",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "cf-modkit-canonical-errors-macro"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5cd2c4573fb82c4dd2e30f7f3fa8859036826e037631c46356a3cea74709413"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
