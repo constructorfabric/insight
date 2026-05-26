@@ -859,20 +859,14 @@ pub async fn create_threshold(
 ) -> Result<impl IntoResponse, CanonicalError> {
     find_enabled_metric(&state, ctx.insight_tenant_id, metric_id).await?;
 
-    // Per-field validation so the envelope tells the client exactly which
-    // input is wrong. Same pattern `update_threshold` uses below — checks
-    // operator and level independently, accumulating both violations when
-    // both are bad. (The builder's typestate transitions from
-    // `NeedsFieldViolation` to `HasFieldViolations` on the first call, so
-    // we chain via `match` rather than reassigning across types.)
     let bad_operator = !threshold::VALID_OPERATORS.contains(&req.operator.as_str());
     let bad_level = !threshold::VALID_LEVELS.contains(&req.level.as_str());
     if bad_operator || bad_level {
         let first_field = if bad_operator { "operator" } else { "level" };
         let first_msg = if bad_operator {
-            "operator must be one of: gt, ge, lt, le, eq"
+            threshold::INVALID_OPERATOR_MSG
         } else {
-            "level must be one of: good, warning, critical"
+            threshold::INVALID_LEVEL_MSG
         };
         let mut err = ThresholdError::invalid_argument().with_field_violation(
             first_field,
@@ -880,11 +874,7 @@ pub async fn create_threshold(
             "INVALID",
         );
         if bad_operator && bad_level {
-            err = err.with_field_violation(
-                "level",
-                "level must be one of: good, warning, critical",
-                "INVALID",
-            );
+            err = err.with_field_violation("level", threshold::INVALID_LEVEL_MSG, "INVALID");
         }
         return Err(err.create());
     }
@@ -944,30 +934,42 @@ pub async fn update_threshold(
                 .create()
         })?;
 
+    let bad_operator = req
+        .operator
+        .as_deref()
+        .is_some_and(|op| !threshold::VALID_OPERATORS.contains(&op));
+    let bad_level = req
+        .level
+        .as_deref()
+        .is_some_and(|lv| !threshold::VALID_LEVELS.contains(&lv));
+    if bad_operator || bad_level {
+        let first_field = if bad_operator { "operator" } else { "level" };
+        let first_msg = if bad_operator {
+            threshold::INVALID_OPERATOR_MSG
+        } else {
+            threshold::INVALID_LEVEL_MSG
+        };
+        let mut err = ThresholdError::invalid_argument()
+            .with_resource(tid.to_string())
+            .with_field_violation(first_field, first_msg, "INVALID");
+        if bad_operator && bad_level {
+            err = err.with_field_violation("level", threshold::INVALID_LEVEL_MSG, "INVALID");
+        }
+        return Err(err.create());
+    }
+
     let mut model: entities::thresholds::ActiveModel = existing.into();
 
     if let Some(field_name) = req.field_name {
         model.field_name = Set(field_name);
     }
     if let Some(operator) = req.operator {
-        if !threshold::VALID_OPERATORS.contains(&operator.as_str()) {
-            return Err(ThresholdError::invalid_argument()
-                .with_resource(tid.to_string())
-                .with_field_violation("operator", "invalid operator", "INVALID")
-                .create());
-        }
         model.operator = Set(operator);
     }
     if let Some(value) = req.value {
         model.value = Set(value);
     }
     if let Some(level) = req.level {
-        if !threshold::VALID_LEVELS.contains(&level.as_str()) {
-            return Err(ThresholdError::invalid_argument()
-                .with_resource(tid.to_string())
-                .with_field_violation("level", "invalid level", "INVALID")
-                .create());
-        }
         model.level = Set(level);
     }
     model.updated_at = Set(chrono::Utc::now());

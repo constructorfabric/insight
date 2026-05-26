@@ -44,6 +44,9 @@ pub struct UpdateThresholdRequest {
 pub const VALID_OPERATORS: &[&str] = &["gt", "ge", "lt", "le", "eq"];
 pub const VALID_LEVELS: &[&str] = &["good", "warning", "critical"];
 
+pub const INVALID_OPERATOR_MSG: &str = "operator must be one of: gt, ge, lt, le, eq";
+pub const INVALID_LEVEL_MSG: &str = "level must be one of: good, warning, critical";
+
 /// Evaluate a numeric value against a threshold condition.
 #[allow(dead_code)] // will be called by query engine when threshold evaluation is wired
 pub fn threshold_matches(value: f64, operator: &str, threshold: f64) -> bool {
