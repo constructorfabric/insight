@@ -86,7 +86,8 @@ internal static class SqlRoles
     public const string PersonRoleById = $"""
         SELECT {PersonRoleColumnList}
         FROM person_roles
-        WHERE person_role_id = @person_role_id
+        WHERE insight_tenant_id = @tenant_id
+          AND person_role_id    = @person_role_id
         LIMIT 1
         """;
 

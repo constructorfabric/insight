@@ -92,6 +92,16 @@ public sealed class JwtCallerResolveTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Resolves_caller_from_jwt_upn_when_email_and_preferred_username_absent()
+    {
+        // upn is the last email-shaped fallback before the resolver gives up.
+        var response = await CallSelfLookupAsync(BuildJwt(
+            ("insight_tenant_id", TenantId.ToString("D")),
+            ("upn", EmailValue))).ConfigureAwait(false);
+        await AssertResolvedAsync(response).ConfigureAwait(false);
+    }
+
+    [Fact]
     public async Task Header_caller_overrides_jwt_when_both_present()
     {
         // Header points at one person, JWT at another. The resolver

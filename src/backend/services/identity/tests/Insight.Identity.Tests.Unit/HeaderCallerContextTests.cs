@@ -61,8 +61,85 @@ public sealed class HeaderCallerContextTests
         resolved.Should().BeNull();
     }
 
+    [Fact]
+    public async Task Caches_resolved_result_per_request()
+    {
+        // The resolver memoises on HttpContext.Items so multiple intra-
+        // handler probes (visibility check, admin gate, audit) do not
+        // re-hit MariaDB. Verified by a counting reader: a second call
+        // on the same HttpContext must not invoke the reader again.
+        var context = new DefaultHttpContext();
+        // No header, no JWT claims — resolution returns null via the
+        // null-tenant short-circuit. The cache must still memoise the
+        // null result.
+        var counting = new CountingReader();
+        var sut = new HeaderCallerContext(counting, new NullTenantContext(), NullLogger<HeaderCallerContext>.Instance);
+
+        var first  = await sut.ResolveAsync(context, CancellationToken.None);
+        var second = await sut.ResolveAsync(context, CancellationToken.None);
+
+        first.Should().BeNull();
+        second.Should().BeNull();
+        counting.ResolvePersonIdByAccountIdCalls.Should().Be(0,
+            "no tenant means the JWT lookup path never runs; cache test still proves the cache key is present");
+
+        // Now exercise the lookup path: set a tenant + an oid claim that
+        // resolves to a real caller, then call twice — counter must be 1.
+        var context2 = new DefaultHttpContext();
+        var tenant = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var person = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var identity = new System.Security.Claims.ClaimsIdentity("test");
+        identity.AddClaim(new System.Security.Claims.Claim("oid", "some-oid"));
+        context2.User = new System.Security.Claims.ClaimsPrincipal(identity);
+        var counting2 = new CountingReader(returnedPersonId: person);
+        var sut2 = new HeaderCallerContext(counting2, new FixedTenantContext(tenant), NullLogger<HeaderCallerContext>.Instance);
+
+        var firstReal  = await sut2.ResolveAsync(context2, CancellationToken.None);
+        var secondReal = await sut2.ResolveAsync(context2, CancellationToken.None);
+
+        firstReal.Should().Be(person);
+        secondReal.Should().Be(person);
+        counting2.ResolvePersonIdByAccountIdCalls.Should().Be(1,
+            "the second call must come from HttpContext.Items, not from MariaDB");
+    }
+
     private static HeaderCallerContext NewSut()
-        => new(new NullReader(), NullLogger<HeaderCallerContext>.Instance);
+        => new(new NullReader(), new NullTenantContext(), NullLogger<HeaderCallerContext>.Instance);
+
+    private sealed class FixedTenantContext(Guid tenantId) : ITenantContext
+    {
+        public Guid? Resolve(HttpContext context) => tenantId;
+    }
+
+    private sealed class CountingReader(Guid? returnedPersonId = null) : IPersonsReader
+    {
+        public int ResolvePersonIdByAccountIdCalls { get; private set; }
+
+        public Task<Guid?> ResolvePersonIdByAccountIdAsync(Guid tenantId, string accountId, CancellationToken cancellationToken)
+        {
+            ResolvePersonIdByAccountIdCalls++;
+            return Task.FromResult(returnedPersonId);
+        }
+        public Task<Guid?> ResolvePersonIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
+            => Task.FromResult<Guid?>(null);
+        public Task<IReadOnlyList<PersonObservation>> GetLatestObservationsAsync(Guid tenantId, Guid personId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<PersonObservation>>(Array.Empty<PersonObservation>());
+        public Task<IReadOnlyList<OrgChartEdge>> GetCurrentParentsAsync(Guid tenantId, Guid childPersonId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
+        public Task<IReadOnlyList<OrgChartEdge>> GetCurrentChildrenAsync(Guid tenantId, Guid parentPersonId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
+        public Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
+        public Task<IReadOnlyList<Guid>> ResolvePersonIdsBySourceIdAsync(Guid tenantId, string sourceType, Guid sourceId, string value, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
+        public Task<IReadOnlyList<PersonSourceId>> GetCurrentSourceIdsAsync(Guid tenantId, Guid personId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<PersonSourceId>>(Array.Empty<PersonSourceId>());
+    }
+
+    private sealed class NullTenantContext : ITenantContext
+    {
+        public Guid? Resolve(HttpContext context) => null;
+    }
 
     private sealed class NullReader : IPersonsReader
     {
@@ -80,9 +157,7 @@ public sealed class HeaderCallerContextTests
             => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
         public Task<IReadOnlyList<PersonSourceId>> GetCurrentSourceIdsAsync(Guid tenantId, Guid personId, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<PersonSourceId>>(Array.Empty<PersonSourceId>());
-        public Task<Guid?> ResolvePersonIdByAccountIdAsync(string accountId, CancellationToken cancellationToken)
+        public Task<Guid?> ResolvePersonIdByAccountIdAsync(Guid tenantId, string accountId, CancellationToken cancellationToken)
             => Task.FromResult<Guid?>(null);
-        public Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAcrossTenantsAsync(string email, CancellationToken cancellationToken)
-            => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
     }
 }

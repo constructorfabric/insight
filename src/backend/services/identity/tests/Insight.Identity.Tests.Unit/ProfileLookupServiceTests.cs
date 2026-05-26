@@ -121,10 +121,7 @@ public sealed class ProfileLookupServiceTests
         public Task<IReadOnlyList<OrgChartEdge>> GetCurrentChildrenAsync(Guid tenantId, Guid parentPersonId, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
 
-        public Task<Guid?> ResolvePersonIdByAccountIdAsync(string accountId, CancellationToken cancellationToken)
+        public Task<Guid?> ResolvePersonIdByAccountIdAsync(Guid tenantId, string accountId, CancellationToken cancellationToken)
             => Task.FromResult<Guid?>(null);
-
-        public Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAcrossTenantsAsync(string email, CancellationToken cancellationToken)
-            => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
     }
 }

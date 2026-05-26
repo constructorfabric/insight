@@ -27,15 +27,17 @@ public sealed class CallerAdminCheck
     public async Task<AdminCheckResult> CheckAsync(HttpContext context, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
-        var personId = await _caller.ResolveAsync(context, cancellationToken).ConfigureAwait(false);
-        if (personId is null)
-        {
-            return AdminCheckResult.NoCaller;
-        }
+        // Tenant first so the caller resolver (which itself needs the
+        // tenant for its DB lookups) only runs when tenant is in scope.
         var tenantId = _tenant.Resolve(context);
         if (tenantId is null)
         {
             return AdminCheckResult.NoTenant;
+        }
+        var personId = await _caller.ResolveAsync(context, cancellationToken).ConfigureAwait(false);
+        if (personId is null)
+        {
+            return AdminCheckResult.NoCaller;
         }
         var hasAdmin = await _personRoles
             .HasActiveRoleAsync(tenantId.Value, personId.Value, Roles.Admin, cancellationToken)

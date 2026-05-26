@@ -48,10 +48,11 @@ public sealed class VisibilityRepository : IVisibilityReader
         return Convert.ToBoolean(raw, CultureInfo.InvariantCulture);
     }
 
-    public async Task<Visibility?> GetByIdAsync(Guid visibilityId, CancellationToken cancellationToken)
+    public async Task<Visibility?> GetByIdAsync(Guid tenantId, Guid visibilityId, CancellationToken cancellationToken)
     {
         await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var cmd = new MySqlCommand(SqlVisibility.GetById, conn);
+        cmd.Parameters.AddWithValue("@tenant_id",     tenantId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@visibility_id", visibilityId.ToByteArray(bigEndian: true));
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -112,10 +113,11 @@ public sealed class VisibilityRepository : IVisibilityReader
         return visibilityId;
     }
 
-    public async Task<int> SoftDeleteAsync(Guid visibilityId, string? reason, CancellationToken cancellationToken)
+    public async Task<int> SoftDeleteAsync(Guid tenantId, Guid visibilityId, string? reason, CancellationToken cancellationToken)
     {
         await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var cmd = new MySqlCommand(SqlVisibility.SoftDelete, conn);
+        cmd.Parameters.AddWithValue("@tenant_id",     tenantId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@visibility_id", visibilityId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@reason",        reason is null ? (object)DBNull.Value : reason);
         return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

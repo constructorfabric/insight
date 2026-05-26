@@ -49,7 +49,7 @@ public static class PersonRolesEndpoints
                 ("person_id", body.PersonId),
                 ("role_id", body.RoleId),
                 ("author_person_id", callerPersonId));
-            var created = await repo.GetPersonRoleByIdAsync(id, ct).ConfigureAwait(false);
+            var created = await repo.GetPersonRoleByIdAsync(tenantId, id, ct).ConfigureAwait(false);
             return Results.Created($"/v1/person-roles/{id:D}", PersonRoleResponse.From(created!));
         });
 
@@ -90,7 +90,8 @@ public static class PersonRolesEndpoints
             // tenant); not part of the guard. The atomic UPDATE below
             // owns the last-admin check — two concurrent admin revokes
             // can no longer both slip past a separate COUNT query.
-            var existing = await repo.GetPersonRoleByIdAsync(id, ct).ConfigureAwait(false);
+            var tenantId = EndpointHelpers.ResolveTenant(http)!.Value;
+            var existing = await repo.GetPersonRoleByIdAsync(tenantId, id, ct).ConfigureAwait(false);
             if (existing is null || existing.ValidTo is not null)
             {
                 return EndpointHelpers.NotFound("person_role", id);
@@ -113,7 +114,7 @@ public static class PersonRolesEndpoints
             // rowsAffected == 0: either the row was revoked between
             // pre-fetch and UPDATE (treat as 404) or the last-admin
             // guard fired (422). A second read tells us which.
-            var refetched = await repo.GetPersonRoleByIdAsync(id, ct).ConfigureAwait(false);
+            var refetched = await repo.GetPersonRoleByIdAsync(tenantId, id, ct).ConfigureAwait(false);
             if (refetched is null || refetched.ValidTo is not null)
             {
                 return EndpointHelpers.NotFound("person_role", id);

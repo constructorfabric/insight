@@ -119,10 +119,11 @@ public sealed class RolesRepository : IRolesReader, IPersonRolesReader
         return await ReadPersonRolesAsync(cmd, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<PersonRole?> GetPersonRoleByIdAsync(Guid personRoleId, CancellationToken cancellationToken)
+    public async Task<PersonRole?> GetPersonRoleByIdAsync(Guid tenantId, Guid personRoleId, CancellationToken cancellationToken)
     {
         await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var cmd = new MySqlCommand(SqlRoles.PersonRoleById, conn);
+        cmd.Parameters.AddWithValue("@tenant_id",      tenantId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@person_role_id", personRoleId.ToByteArray(bigEndian: true));
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))

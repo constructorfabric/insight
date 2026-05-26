@@ -37,8 +37,12 @@ public interface IVisibilityReader
         string orgChartSourceType,
         CancellationToken cancellationToken);
 
-    /// <summary>One row by <c>visibility_id</c>, or <c>null</c>.</summary>
-    Task<Visibility?> GetByIdAsync(Guid visibilityId, CancellationToken cancellationToken);
+    /// <summary>
+    /// One row by <c>visibility_id</c> within the tenant, or
+    /// <c>null</c>. Tenant scoping is part of the predicate so a
+    /// caller in tenant A cannot read a row from tenant B by id.
+    /// </summary>
+    Task<Visibility?> GetByIdAsync(Guid tenantId, Guid visibilityId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Paged list of visibility rows in a tenant, newest first. Use

@@ -31,17 +31,6 @@ public static class SubchartEndpoints
             int? depth,
             CancellationToken ct) =>
         {
-            var callerPersonId = await callers.ResolveAsync(http, ct).ConfigureAwait(false);
-            if (callerPersonId is null)
-            {
-                return Results.Json(new ProblemResponse(
-                    Type: "urn:insight:error:caller_unresolved",
-                    Title: "Unauthorized",
-                    Status: StatusCodes.Status401Unauthorized,
-                    Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
-                    statusCode: StatusCodes.Status401Unauthorized);
-            }
-
             var tenantId = tenants.Resolve(http);
             if (tenantId is null)
             {
@@ -51,6 +40,17 @@ public static class SubchartEndpoints
                     Status: StatusCodes.Status400BadRequest,
                     Detail: $"Tenant not provided. Send the {HeaderTenantContext.HeaderName} header or configure identity.tenant_default_id."),
                     statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var callerPersonId = await callers.ResolveAsync(http, ct).ConfigureAwait(false);
+            if (callerPersonId is null)
+            {
+                return Results.Json(new ProblemResponse(
+                    Type: "urn:insight:error:caller_unresolved",
+                    Title: "Unauthorized",
+                    Status: StatusCodes.Status401Unauthorized,
+                    Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
+                    statusCode: StatusCodes.Status401Unauthorized);
             }
 
             if (depth is < 0)

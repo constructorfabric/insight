@@ -29,8 +29,12 @@ public interface IPersonRolesReader
         Guid personId,
         CancellationToken cancellationToken);
 
-    /// <summary>One row by <c>person_role_id</c>, or <c>null</c>.</summary>
-    Task<PersonRole?> GetPersonRoleByIdAsync(Guid personRoleId, CancellationToken cancellationToken);
+    /// <summary>
+    /// One row by <c>person_role_id</c> within the tenant, or
+    /// <c>null</c>. Tenant scoping is part of the predicate so a
+    /// caller in tenant A cannot read a row from tenant B by id.
+    /// </summary>
+    Task<PersonRole?> GetPersonRoleByIdAsync(Guid tenantId, Guid personRoleId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Paged list, newest first. Filters: <paramref name="filterByPerson"/>

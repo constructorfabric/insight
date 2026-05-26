@@ -97,22 +97,13 @@ public interface IPersonsReader
 
     /// <summary>
     /// Returns the <c>person_id</c> bound to a source-native account
-    /// id (active <c>account_person_map</c> row only). Used for
-    /// caller resolution from JWT id claims; not scoped to a tenant.
-    /// Returns <c>null</c> when no active binding matches.
+    /// id within the tenant (active <c>account_person_map</c> row
+    /// only). Used for caller resolution from JWT id claims (oid /
+    /// sub). Returns <c>null</c> when no active binding matches.
     /// </summary>
     Task<Guid?> ResolvePersonIdByAccountIdAsync(
+        Guid tenantId,
         string accountId,
-        CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Distinct <c>person_id</c>s whose current email observation
-    /// equals <paramref name="email"/> across all tenants. Same as
-    /// <see cref="ResolvePersonIdsByEmailAsync"/> but without the
-    /// tenant filter; used for caller resolution from JWT email claims.
-    /// </summary>
-    Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAcrossTenantsAsync(
-        string email,
         CancellationToken cancellationToken);
 }
 

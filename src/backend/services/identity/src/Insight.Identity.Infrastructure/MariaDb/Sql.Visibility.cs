@@ -57,7 +57,8 @@ internal static class SqlVisibility
     public const string GetById = $"""
         SELECT {ColumnList}
         FROM visibility
-        WHERE visibility_id = @visibility_id
+        WHERE insight_tenant_id = @tenant_id
+          AND visibility_id     = @visibility_id
         LIMIT 1
         """;
 
@@ -80,7 +81,8 @@ internal static class SqlVisibility
         UPDATE visibility
         SET valid_to = UTC_TIMESTAMP(6),
             reason   = COALESCE(@reason, reason)
-        WHERE visibility_id = @visibility_id
+        WHERE insight_tenant_id = @tenant_id
+          AND visibility_id     = @visibility_id
           AND valid_to IS NULL
         """;
 }
