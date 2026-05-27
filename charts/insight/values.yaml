@@ -417,6 +417,16 @@ analyticsApi:
   # ANALYTICS__* env var filled in from the auto-generated credentials
   # (see templates/secrets.yaml). The subchart consumes it via envFrom.
   existingSecret: "insight-analytics-api-config"
+  # Single-tenant fallback for the Metric Catalog (DESIGN §2.2
+  # `cpt-metric-cat-constraint-tenant-default`). Empty string disables the
+  # config-default resolver entirely; tenant-less requests then return 400
+  # `application/problem+json` with `field_violations[{field: "tenant_id",
+  # reason: "TENANT_UNRESOLVED"}]`. Set to a UUID for single-tenant installs
+  # (local dev, on-prem one-tenant deployments, the helmfile dev cluster).
+  # The session-bound tenant ALWAYS wins over this default — it is a
+  # fallback, never an override. Mirrors `identity.tenantDefaultId` so
+  # operators see the same single-tenant ergonomic across Insight services.
+  tenantDefaultId: ""
 # ─── Identity (.NET 9) ───────────────────────────────────────────────────
 # The persons-store API. Reads from MariaDB `persons` written by the seed
 # pipeline (src/backend/services/identity/seed/seed-persons-from-identity-input.py)

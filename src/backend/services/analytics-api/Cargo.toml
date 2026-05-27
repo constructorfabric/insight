@@ -40,3 +40,9 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 figment = { workspace = true }
+
+[dev-dependencies]
+# `tower::ServiceExt::oneshot` for driving the Axum router in
+# `api::tenant_resolution_tests` (Refs #522). Same dev-dep pattern as
+# api-gateway's proxy tests.
+tower = { version = "0.5", features = ["util"] }

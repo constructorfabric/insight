@@ -17,8 +17,12 @@ mod domain;
 mod infra;
 mod migration;
 
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
+
+use crate::domain::auth::ConfigTenantAuthorization;
 
 /// Analytics API service.
 #[derive(Parser)]
@@ -95,6 +99,12 @@ async fn run_server(cfg: config::AppConfig) -> anyhow::Result<()> {
     // startup pass.
     let validator = domain::schema_validator::SchemaValidator::new(db.clone(), ch.clone());
 
+    // Catalog auth-trait (Refs #522). Today only `resolve_tenant` is wired
+    // — `is_tenant_admin` / `actor_subject` arrive with #524 / #525.
+    let tenant_auth = Arc::new(ConfigTenantAuthorization::new(
+        cfg.metric_catalog.tenant_default_id,
+    ));
+
     // Build app state
     let state = api::AppState {
         db,
@@ -102,6 +112,7 @@ async fn run_server(cfg: config::AppConfig) -> anyhow::Result<()> {
         identity,
         config: cfg.clone(),
         validator: validator.clone(),
+        tenant_auth,
     };
 
     // Build router

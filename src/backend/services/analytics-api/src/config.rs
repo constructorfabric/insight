@@ -3,6 +3,7 @@
 use figment::Figment;
 use figment::providers::{Env, Format, Yaml};
 use serde::Deserialize;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
@@ -39,6 +40,31 @@ pub struct AppConfig {
     #[serde(default)]
     #[allow(dead_code)] // will be used when caching layer is implemented
     pub redis_url: String,
+
+    /// Metric Catalog configuration (DESIGN §3.5).
+    #[serde(default)]
+    pub metric_catalog: MetricCatalogConfig,
+}
+
+/// Configuration consumed by `cpt-metric-cat-component-auth-trait` and the rest
+/// of the catalog stack (DESIGN §3.5). Currently carries only the single-tenant
+/// fallback per `cpt-metric-cat-constraint-tenant-default`; future catalog
+/// knobs (cache TTL, etc.) land here too.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MetricCatalogConfig {
+    /// Single-tenant fallback. When set, requests without a session-bound
+    /// tenant resolve to this UUID; when unset (multi-tenant install), such
+    /// requests are rejected with a canonical `invalid_argument` envelope
+    /// carrying `field_violations[{field: "tenant_id", reason:
+    /// "TENANT_UNRESOLVED"}]`. Mirrors `IDENTITY__identity__tenant_default_id`
+    /// in the identity service so operators see the same single-tenant
+    /// ergonomic across Insight services. The session-bound tenant ALWAYS
+    /// wins over this default (security invariant — see
+    /// `domain::auth::TenantAuthorization`).
+    ///
+    /// Env: `ANALYTICS__metric_catalog__tenant_default_id`.
+    #[serde(default)]
+    pub tenant_default_id: Option<Uuid>,
 }
 
 fn default_bind_addr() -> String {

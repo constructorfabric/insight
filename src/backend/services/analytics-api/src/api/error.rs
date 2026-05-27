@@ -20,6 +20,14 @@ pub struct ThresholdError;
 #[resource_error("gts.cf.insight.analytics_api.person.v1~")]
 pub struct PersonError;
 
+/// Resource namespace for tenant-resolution failures
+/// (`cpt-metric-cat-constraint-tenant-default`). The middleware surfaces an
+/// `invalid_argument` envelope with `field_violations[{field: "tenant_id",
+/// reason: "TENANT_UNRESOLVED"}]` when neither a session tenant nor a
+/// configured default is present.
+#[resource_error("gts.cf.insight.analytics_api.tenant.v1~")]
+pub struct TenantError;
+
 #[cfg(test)]
 mod tests {
     //! Wire-shape contract for analytics-api error responses.

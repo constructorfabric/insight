@@ -1,7 +1,10 @@
 //! HTTP API layer — routes and handlers.
 
-mod error;
+pub(crate) mod error;
 mod handlers;
+
+#[cfg(test)]
+mod tenant_resolution_tests;
 
 use axum::{Router, middleware};
 use sea_orm::DatabaseConnection;
@@ -9,6 +12,7 @@ use std::sync::Arc;
 
 use crate::auth;
 use crate::config::AppConfig;
+use crate::domain::auth::TenantAuthorization;
 use crate::domain::schema_validator::SchemaValidator;
 use crate::infra::identity::IdentityClient;
 
@@ -25,13 +29,19 @@ pub struct AppState {
     /// write. Not currently consumed by any handler in this PR.
     #[allow(dead_code)] // wired in #525; #521 only exposes the function
     pub validator: SchemaValidator,
+    /// Catalog auth-trait (Refs #522). Resolves session-bound tenant against
+    /// the operator-configured single-tenant fallback per
+    /// `cpt-metric-cat-constraint-tenant-default`. Consumed by
+    /// `auth::tenant_middleware`; #524 / #525 will consume it directly for
+    /// `is_tenant_admin` / `actor_subject` (out of scope here).
+    pub tenant_auth: Arc<dyn TenantAuthorization>,
 }
 
 /// Build the Axum router with all routes.
 pub fn router(state: AppState) -> Router {
     let state = Arc::new(state);
 
-    Router::new()
+    let router = Router::new()
         // Metric CRUD
         .route("/v1/metrics", axum::routing::get(handlers::list_metrics))
         .route("/v1/metrics", axum::routing::post(handlers::create_metric))
@@ -82,8 +92,19 @@ pub fn router(state: AppState) -> Router {
             axum::routing::get(handlers::list_columns_for_table),
         )
         // Health
-        .route("/health", axum::routing::get(handlers::health))
-        // Auth middleware on all routes
-        .layer(middleware::from_fn(auth::auth_middleware))
+        .route("/health", axum::routing::get(handlers::health));
+
+    // The tenant-resolution middleware uses just the auth-trait — not full
+    // `AppState` — as its layer state, so the integration tests in
+    // `tenant_resolution_tests` can mount it without standing up a
+    // `DatabaseConnection`. The `Arc<dyn TenantAuthorization>` is cloned
+    // here and again handed to the route state via `AppState`.
+    let tenant_auth = state.tenant_auth.clone();
+
+    router
+        .layer(middleware::from_fn_with_state(
+            tenant_auth,
+            auth::tenant_middleware,
+        ))
         .with_state(state)
 }
