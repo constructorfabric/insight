@@ -1,0 +1,9 @@
+apiVersion: v2
+name: insight-claude-team-proxy
+description: |
+  Headless Chromium proxy for claude.ai web API (issue #458). Fronts a
+  Playwright-managed browser session so downstream connectors can speak
+  HTTP without dealing with Cloudflare bot management.
+version: 0.1.0
+appVersion: "0.0.1"
+type: application

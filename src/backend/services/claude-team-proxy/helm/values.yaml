@@ -1,0 +1,66 @@
+# Default values for insight-claude-team-proxy.
+# Override locally via `helm install -f override.yaml` or `--set key=val`.
+
+replicaCount: 1
+
+image:
+  repository: claude-team-proxy
+  tag: dev                       # operator override in prod
+  pullPolicy: IfNotPresent        # IfNotPresent honours `kind load`; in prod registry-based deployments would use Always
+
+service:
+  type: ClusterIP
+  port: 3000
+
+# Chromium is the heavy spender here. 400MB idle, can burst to 1.5GB
+# under CF challenge. Pin requests/limits so the pod gets predictable
+# scheduling and doesn't OOM under load.
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1500Mi
+
+# Probes. Readiness blocks Service traffic until /health returns 200,
+# which only happens AFTER Cloudflare clearance (~10-30s). initialDelay
+# is generous to skip the first few "init" 503s without restarting.
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 60   # don't kill during slow init
+  periodSeconds: 30
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5    # probe early — early 503s are fine
+  periodSeconds: 5
+  failureThreshold: 3       # 3 * 5s grace before Service drops us
+
+# How long k8s waits for graceful shutdown after SIGTERM before SIGKILL.
+# Matches SHUTDOWN_GRACE_MS in src/index.js (30000ms).
+terminationGracePeriodSeconds: 35
+
+# The claude.ai sessionKey value. MUST be provided at install time —
+# no default. Stored in a Secret created by this chart.
+#
+#   helm install ... --set sessionKey="sk-ant-sid02-..."
+#
+# Setting it via --set is fine for local dev; for prod the umbrella
+# chart should resolve it from a SealedSecret / ExternalSecret instead.
+sessionKey: ""
+
+# Override base URL only when testing against a mock server. Default
+# (empty string) means the service uses its own default of
+# https://claude.ai.
+upstreamBaseUrl: ""
+
+# Whether the browser runs headless. Always true in k8s (no display
+# server). Exposed only because `npm start` locally may set it to
+# false for debugging.
+headless: true

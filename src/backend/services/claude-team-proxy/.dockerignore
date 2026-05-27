@@ -1,0 +1,17 @@
+# Local dev artefacts that must not bloat the build context.
+node_modules
+.env
+.env.local
+*.har
+playwright-report
+test-results
+dist
+.git
+.gitignore
+.dockerignore
+Dockerfile
+
+# Editor / OS junk
+.DS_Store
+.vscode
+.idea
