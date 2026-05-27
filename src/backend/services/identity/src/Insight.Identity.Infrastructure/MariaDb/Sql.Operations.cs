@@ -69,7 +69,10 @@ internal static class SqlOperations
     /// <summary>
     /// Mark all <c>queued</c>/<c>running</c> rows older than the cutoff
     /// as failed. Run once at service startup so a pod restart cannot
-    /// leave a row stuck in <c>running</c> forever.
+    /// leave a row stuck in <c>running</c> forever. Intentionally NOT
+    /// tenant-scoped (unlike every other query here): the single-process
+    /// worker owns all in-flight operations across tenants, so the
+    /// startup sweep reclaims every orphan regardless of tenant.
     /// </summary>
     public const string SweepZombies = """
         UPDATE operations

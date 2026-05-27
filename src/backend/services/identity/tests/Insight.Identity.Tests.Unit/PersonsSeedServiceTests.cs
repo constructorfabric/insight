@@ -31,8 +31,7 @@ public sealed class PersonsSeedServiceTests
         summary.ObservationsInserted.Should().Be(2);
         store.Inserted.Should().OnlyContain(r => r.PersonId == Minted);
         store.Inserted.Should().OnlyContain(r => r.Reason == string.Empty); // minted → blank reason
-        store.RebuiltAccountMap.Should().BeTrue();
-        store.RebuiltOrgChart.Should().BeTrue();
+        store.Applied.Should().BeTrue();
     }
 
     [Fact]
@@ -128,8 +127,7 @@ public sealed class PersonsSeedServiceTests
         public Dictionary<SourceAccountKey, Guid> KnownAccounts { get; } = new();
         public Dictionary<string, Guid> EmailToPerson { get; } = new(StringComparer.Ordinal);
         public List<PersonObservationRow> Inserted { get; } = new();
-        public bool RebuiltAccountMap { get; private set; }
-        public bool RebuiltOrgChart { get; private set; }
+        public bool Applied { get; private set; }
 
         public Task<IReadOnlyDictionary<SourceAccountKey, Guid>> GetKnownAccountBindingsAsync(Guid tenantId, CancellationToken ct)
             => Task.FromResult<IReadOnlyDictionary<SourceAccountKey, Guid>>(KnownAccounts);
@@ -137,22 +135,11 @@ public sealed class PersonsSeedServiceTests
         public Task<IReadOnlyDictionary<string, Guid>> GetLatestEmailToPersonAsync(Guid tenantId, CancellationToken ct)
             => Task.FromResult<IReadOnlyDictionary<string, Guid>>(EmailToPerson);
 
-        public Task<int> BulkInsertObservationsAsync(IReadOnlyList<PersonObservationRow> rows, CancellationToken ct)
+        public Task<SeedApplyResult> ApplyAsync(Guid tenantId, IReadOnlyList<PersonObservationRow> rows, CancellationToken ct)
         {
+            Applied = true;
             Inserted.AddRange(rows);
-            return Task.FromResult(rows.Count);
-        }
-
-        public Task RebuildAccountPersonMapAsync(Guid tenantId, CancellationToken ct)
-        {
-            RebuiltAccountMap = true;
-            return Task.CompletedTask;
-        }
-
-        public Task<int> RebuildOrgChartAsync(Guid tenantId, CancellationToken ct)
-        {
-            RebuiltOrgChart = true;
-            return Task.FromResult(0);
+            return Task.FromResult(new SeedApplyResult(rows.Count, OrgChartEdgesRebuilt: 0));
         }
     }
 }

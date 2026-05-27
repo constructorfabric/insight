@@ -89,8 +89,7 @@ public static class PersonsSeedEndpoints
             var created = await operations.GetByIdAsync(tenantId, operationId, ct).ConfigureAwait(false);
             return Results.Json(
                 PersonsSeedOperationResponse.From(created!),
-                statusCode: StatusCodes.Status202Accepted,
-                contentType: "application/json");
+                statusCode: StatusCodes.Status202Accepted);
         });
 
         app.MapGet("/v1/persons-seed/{id}", async (

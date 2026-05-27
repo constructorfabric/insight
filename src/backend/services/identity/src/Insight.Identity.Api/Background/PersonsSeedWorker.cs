@@ -17,7 +17,12 @@ namespace Insight.Identity.Api.Background;
 public sealed class PersonsSeedWorker : BackgroundService
 {
     // Operations older than this still in queued/running on startup are
-    // assumed orphaned by a pod restart.
+    // assumed orphaned by a pod restart. Edge case: a job queued just
+    // before a restart (row only minutes old) is younger than the cutoff
+    // and so is NOT swept — its in-memory channel entry is gone, so it
+    // sits in `queued` until a later restart occurs after the 1h window
+    // elapses. Accepted trade-off of the in-memory queue; a durable queue
+    // would remove it (see follow-up).
     private static readonly TimeSpan ZombieCutoff = TimeSpan.FromHours(1);
 
     private static readonly JsonSerializerOptions SummaryJsonOptions = new()

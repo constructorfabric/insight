@@ -72,7 +72,12 @@ public sealed record PersonObservationRow(
 
 /// <summary>
 /// Counters returned by a completed <c>persons-seed</c> run, serialised
-/// into <c>operations.summary_json</c>.
+/// into <c>operations.summary_json</c>. The <c>Accounts*</c> counters
+/// are per-account (a profile in a group counts once), not per-person.
+/// <see cref="ObservationsInserted"/> is NET-NEW only — rows the
+/// INSERT IGNORE actually wrote; duplicates already present are not
+/// counted, so a pure re-seed reports 0 even though every account was
+/// processed.
 /// </summary>
 public sealed record PersonsSeedSummary(
     int AccountsRead,

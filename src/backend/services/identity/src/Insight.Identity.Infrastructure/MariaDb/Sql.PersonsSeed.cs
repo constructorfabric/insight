@@ -219,9 +219,11 @@ internal static class SqlPersonsSeed
         ),
         email_to_person AS (
             SELECT
-                p.insight_tenant_id, p.value_id, p.person_id,
+                p.insight_tenant_id,
+                LOWER(TRIM(p.value_id)) AS value_id,
+                p.person_id,
                 ROW_NUMBER() OVER (
-                    PARTITION BY p.insight_tenant_id, p.value_id
+                    PARTITION BY p.insight_tenant_id, LOWER(TRIM(p.value_id))
                     ORDER BY p.created_at DESC, p.id DESC
                 ) AS rn
             FROM persons p

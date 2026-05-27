@@ -5,9 +5,10 @@ namespace Insight.Identity.Infrastructure.MariaDb;
 
 /// <summary>
 /// MariaDB-backed <see cref="IPersonsSeedStore"/>. Reads feed the C#
-/// resolver; <see cref="BulkInsertObservationsAsync"/> applies the
-/// resolved observations; the two rebuilds refresh the derived caches
-/// tenant-scoped inside a transaction.
+/// resolver; <see cref="ApplyAsync"/> writes the resolved observations
+/// and rebuilds both derived caches inside a single transaction so a
+/// crash or cancellation can never leave the tenant's caches
+/// cross-inconsistent.
 /// </summary>
 public sealed class PersonsSeedRepository : IPersonsSeedStore
 {
@@ -56,23 +57,42 @@ public sealed class PersonsSeedRepository : IPersonsSeedStore
         return result;
     }
 
-    public async Task<int> BulkInsertObservationsAsync(
+    public async Task<SeedApplyResult> ApplyAsync(
+        Guid tenantId,
         IReadOnlyList<PersonObservationRow> rows,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(rows);
+
+        var tenantBin = tenantId.ToByteArray(bigEndian: true);
+
+        // One connection + one transaction for the whole apply: observation
+        // inserts, then both cache rebuilds. Either all of it commits or
+        // none does — a crash or cancellation rolls back, so the tenant's
+        // account_person_map / org_chart are never left cross-inconsistent.
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var tx = await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        var inserted = await InsertObservationsAsync(conn, tx, rows, cancellationToken).ConfigureAwait(false);
+        await RebuildAccountPersonMapAsync(conn, tx, tenantBin, cancellationToken).ConfigureAwait(false);
+        var edges = await RebuildOrgChartAsync(conn, tx, tenantBin, cancellationToken).ConfigureAwait(false);
+
+        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new SeedApplyResult(inserted, edges);
+    }
+
+    private static async Task<int> InsertObservationsAsync(
+        MySqlConnection conn, MySqlTransaction tx,
+        IReadOnlyList<PersonObservationRow> rows, CancellationToken cancellationToken)
+    {
         if (rows.Count == 0)
         {
             return 0;
         }
 
-        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var tx = await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
-        // One reused command inside the transaction. Per-row execute on a
-        // single session is fast enough for a background operation;
-        // multi-row VALUES batching is a future optimisation if seed
-        // wallclock becomes a concern.
+        // One reused command. Per-row execute on a single session is fast
+        // enough for a background operation; multi-row VALUES batching is a
+        // future optimisation if seed wallclock becomes a concern.
         await using var cmd = new MySqlCommand(SqlPersonsSeed.InsertObservation, conn, tx);
         var pValueType = cmd.Parameters.Add("@value_type", MySqlDbType.VarChar);
         var pSourceType = cmd.Parameters.Add("@source_type", MySqlDbType.VarChar);
@@ -87,6 +107,9 @@ public sealed class PersonsSeedRepository : IPersonsSeedStore
         var pCreatedAt = cmd.Parameters.Add("@created_at", MySqlDbType.DateTime);
         await cmd.PrepareAsync(cancellationToken).ConfigureAwait(false);
 
+        // INSERT IGNORE returns 1 for a freshly-written row and 0 for a
+        // duplicate suppressed by the unique key, so this sum is the
+        // NET-NEW count — a pure re-seed yields 0.
         var inserted = 0;
         foreach (var row in rows)
         {
@@ -104,46 +127,36 @@ public sealed class PersonsSeedRepository : IPersonsSeedStore
             pCreatedAt.Value = row.CreatedAt;
             inserted += await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
-
-        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
         return inserted;
     }
 
-    public async Task RebuildAccountPersonMapAsync(Guid tenantId, CancellationToken cancellationToken)
+    private static async Task RebuildAccountPersonMapAsync(
+        MySqlConnection conn, MySqlTransaction tx, byte[] tenantBin, CancellationToken cancellationToken)
     {
-        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var tx = await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
         await using (var del = new MySqlCommand(SqlPersonsSeed.DeleteAccountPersonMapForTenant, conn, tx))
         {
-            del.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+            del.Parameters.AddWithValue("@tenant_id", tenantBin);
             await del.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
         await using (var ins = new MySqlCommand(SqlPersonsSeed.InsertAccountPersonMapForTenant, conn, tx))
         {
-            ins.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+            ins.Parameters.AddWithValue("@tenant_id", tenantBin);
             await ins.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
-        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<int> RebuildOrgChartAsync(Guid tenantId, CancellationToken cancellationToken)
+    private static async Task<int> RebuildOrgChartAsync(
+        MySqlConnection conn, MySqlTransaction tx, byte[] tenantBin, CancellationToken cancellationToken)
     {
-        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var tx = await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
         await using (var del = new MySqlCommand(SqlPersonsSeed.DeleteOrgChartForTenant, conn, tx))
         {
-            del.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+            del.Parameters.AddWithValue("@tenant_id", tenantBin);
             await del.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
-        int edges;
         await using (var ins = new MySqlCommand(SqlPersonsSeed.InsertOrgChartForTenant, conn, tx))
         {
-            ins.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
-            edges = await ins.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            ins.Parameters.AddWithValue("@tenant_id", tenantBin);
+            return await ins.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
-        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return edges;
     }
 }

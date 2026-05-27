@@ -91,10 +91,11 @@ public sealed class PersonsSeedEndToEndTests : IAsyncLifetime
         var svc2 = new PersonsSeedService(new FakeInputs(
             Row("100", "email", "boss@x.io"),
             Row("100", "display_name", "Boss Person")), _store);
-        await svc2.RunAsync(Tenant, Author, default);
+        var second = await svc2.RunAsync(Tenant, Author, default);
         var afterSecond = await CountAsync("SELECT COUNT(*) FROM persons WHERE insight_tenant_id=@t");
 
         afterSecond.Should().Be(afterFirst, "INSERT IGNORE on the unique key makes a re-seed a no-op for persons");
+        second.ObservationsInserted.Should().Be(0, "the re-seed inserted no NET-NEW rows — all were duplicates");
     }
 
     [Fact]

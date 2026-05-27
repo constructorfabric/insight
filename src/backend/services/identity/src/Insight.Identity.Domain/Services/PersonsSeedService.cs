@@ -52,11 +52,9 @@ public sealed class PersonsSeedService
         var emailToPerson = await _store.GetLatestEmailToPersonAsync(tenantId, cancellationToken).ConfigureAwait(false);
         var resolved = PersonAssignmentResolver.Resolve(groups, known, emailToPerson, _mintPersonId);
 
-        // ── Phase 3: apply ─────────────────────────────────────────────
+        // ── Phase 3: apply (one transaction) ───────────────────────────
         var rows = BuildObservationRows(resolved.Assignments, tenantId, authorPersonId);
-        var inserted = await _store.BulkInsertObservationsAsync(rows, cancellationToken).ConfigureAwait(false);
-        await _store.RebuildAccountPersonMapAsync(tenantId, cancellationToken).ConfigureAwait(false);
-        var edges = await _store.RebuildOrgChartAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        var applied = await _store.ApplyAsync(tenantId, rows, cancellationToken).ConfigureAwait(false);
 
         return new PersonsSeedSummary(
             AccountsRead:          accountsRead,
@@ -65,8 +63,8 @@ public sealed class PersonsSeedService
             AccountsMintedNew:     resolved.MintedNew,
             AccountsSkippedClosed: resolved.SkippedClosed,
             AccountsSkippedNoEmail: resolved.SkippedNoEmail,
-            ObservationsInserted:  inserted,
-            OrgChartEdgesRebuilt:  edges);
+            ObservationsInserted:  applied.ObservationsInserted,
+            OrgChartEdgesRebuilt:  applied.OrgChartEdgesRebuilt);
     }
 
     private async Task<IReadOnlyList<SeedProfile>> BuildProfilesAsync(

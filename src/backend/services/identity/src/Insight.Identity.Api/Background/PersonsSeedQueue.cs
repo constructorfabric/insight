@@ -27,7 +27,9 @@ public sealed class PersonsSeedQueue
 
     /// <summary>
     /// Enqueue a job. Returns <c>false</c> if the queue is full (caller
-    /// maps that to 503). Does not block.
+    /// maps that to 503) — <c>TryWrite</c> never blocks the request
+    /// thread, so the channel's <c>FullMode</c> (which only governs the
+    /// blocking <c>WriteAsync</c> path) does not apply here.
     /// </summary>
     public bool TryEnqueue(PersonsSeedJob job) => _channel.Writer.TryWrite(job);
 
