@@ -48,7 +48,11 @@ public sealed class PersonsSeedRepository : IPersonsSeedStore
         await using var cmd = new MySqlCommand(SqlPersonsSeed.LatestEmailToPerson, conn);
         cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
 
-        var result = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        // Case-insensitive keys mirror the utf8mb4_unicode_ci collation
+        // (ADR-0011): the SQL returns raw emails and the resolver looks
+        // up by the source-cased email, so the dict must match case-
+        // insensitively.
+        var result = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {

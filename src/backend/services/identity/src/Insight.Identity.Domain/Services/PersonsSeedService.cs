@@ -171,7 +171,11 @@ public sealed class PersonsSeedService
                 && LatestEmail is null
                 && !string.IsNullOrWhiteSpace(row.Value))
             {
-                LatestEmail = row.Value.Trim().ToLowerInvariant();
+                // Store the email as-is (no lower/trim). Case-insensitive
+                // matching is the comparer's job downstream
+                // (StringComparer.OrdinalIgnoreCase in the resolvers,
+                // utf8mb4_unicode_ci collation in SQL) — see ADR-0011.
+                LatestEmail = row.Value;
             }
             // DELETE rows are signal only — they never become persons rows.
             if (!row.IsDelete)

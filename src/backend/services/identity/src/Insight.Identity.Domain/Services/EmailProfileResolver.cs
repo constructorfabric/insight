@@ -12,14 +12,18 @@ namespace Insight.Identity.Domain.Services;
 public static class EmailProfileResolver
 {
     /// <summary>
-    /// Group profiles by normalised current email. Profiles without an
-    /// email each become their own singleton group.
+    /// Group profiles by current email, case-insensitively. Profiles
+    /// without an email each become their own singleton group. The
+    /// email value is not mutated — case-insensitivity comes from the
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/> dictionary, mirroring
+    /// the <c>utf8mb4_unicode_ci</c> collation used on the SQL side
+    /// (ADR-0011).
     /// </summary>
     public static IReadOnlyList<ProfileGroup> Group(IReadOnlyList<SeedProfile> profiles)
     {
         ArgumentNullException.ThrowIfNull(profiles);
 
-        var byEmail = new Dictionary<string, List<SeedProfile>>(StringComparer.Ordinal);
+        var byEmail = new Dictionary<string, List<SeedProfile>>(StringComparer.OrdinalIgnoreCase);
         var noEmail = new List<ProfileGroup>();
 
         foreach (var profile in profiles)

@@ -33,6 +33,23 @@ public sealed class EmailProfileResolverTests
     }
 
     [Fact]
+    public void Groups_emails_case_insensitively()
+    {
+        // Same email in different case must land in one group — the
+        // value is not normalised, the comparer is case-insensitive.
+        var profiles = new[]
+        {
+            Profile("acc-1", "Boss@X.io"),
+            Profile("acc-2", "boss@x.io"),
+        };
+
+        var groups = EmailProfileResolver.Group(profiles);
+
+        groups.Should().ContainSingle();
+        groups[0].Profiles.Should().HaveCount(2);
+    }
+
+    [Fact]
     public void No_email_profiles_become_singletons()
     {
         var profiles = new[]

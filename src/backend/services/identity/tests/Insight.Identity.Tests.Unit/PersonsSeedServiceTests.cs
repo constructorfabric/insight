@@ -125,7 +125,7 @@ public sealed class PersonsSeedServiceTests
     private sealed class FakeStore : IPersonsSeedStore
     {
         public Dictionary<SourceAccountKey, Guid> KnownAccounts { get; } = new();
-        public Dictionary<string, Guid> EmailToPerson { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, Guid> EmailToPerson { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<PersonObservationRow> Inserted { get; } = new();
         public bool Applied { get; private set; }
 

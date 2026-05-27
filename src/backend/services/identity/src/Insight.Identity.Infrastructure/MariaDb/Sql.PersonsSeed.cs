@@ -40,18 +40,21 @@ internal static class SqlPersonsSeed
         """;
 
     /// <summary>
-    /// Current normalised-email → person_id map: the latest
-    /// <c>value_type='email'</c> observation per (tenant, normalised
-    /// email). One person per email — corrupted multi-person emails
-    /// resolve to the most recently observed person.
+    /// Current email → person_id map: the latest
+    /// <c>value_type='email'</c> observation per (tenant, email). One
+    /// person per email — corrupted multi-person emails resolve to the
+    /// most recently observed person. Case-insensitivity is handled by
+    /// the <c>utf8mb4_unicode_ci</c> collation on <c>value_id</c>
+    /// (ADR-0011): the <c>PARTITION BY value_id</c> collapses
+    /// case-variants into one partition, so no LOWER/TRIM is applied.
     /// </summary>
     public const string LatestEmailToPerson = """
         WITH ranked AS (
             SELECT
-                LOWER(TRIM(value_id)) AS email,
+                value_id AS email,
                 person_id,
                 ROW_NUMBER() OVER (
-                    PARTITION BY insight_tenant_id, LOWER(TRIM(value_id))
+                    PARTITION BY insight_tenant_id, value_id
                     ORDER BY created_at DESC, id DESC
                 ) AS rn
             FROM persons
@@ -219,11 +222,9 @@ internal static class SqlPersonsSeed
         ),
         email_to_person AS (
             SELECT
-                p.insight_tenant_id,
-                LOWER(TRIM(p.value_id)) AS value_id,
-                p.person_id,
+                p.insight_tenant_id, p.value_id, p.person_id,
                 ROW_NUMBER() OVER (
-                    PARTITION BY p.insight_tenant_id, LOWER(TRIM(p.value_id))
+                    PARTITION BY p.insight_tenant_id, p.value_id
                     ORDER BY p.created_at DESC, p.id DESC
                 ) AS rn
             FROM persons p
@@ -267,7 +268,7 @@ internal static class SqlPersonsSeed
         FROM pe_periods pe
         INNER JOIN email_to_person parent
             ON parent.insight_tenant_id = pe.insight_tenant_id
-           AND parent.value_id          = LOWER(TRIM(pe.parent_email))
+           AND parent.value_id          = pe.parent_email
            AND parent.rn                = 1
         INNER JOIN all_active ai
             ON ai.insight_tenant_id   = pe.insight_tenant_id
