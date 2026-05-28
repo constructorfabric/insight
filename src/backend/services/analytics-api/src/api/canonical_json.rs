@@ -55,7 +55,7 @@
 
 use axum::Json;
 use axum::extract::{FromRequest, Request, rejection::JsonRejection};
-use axum::http::{StatusCode, header};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use modkit_canonical_errors::Problem;
 use serde::de::DeserializeOwned;
@@ -149,9 +149,13 @@ fn invalid_body_response(description: &'static str) -> Response {
     problem.into_response()
 }
 
-/// 415 `unsupported_media_type` envelope.
+/// 415 `unsupported_media_type` envelope. `Problem::into_response()` picks
+/// the HTTP status from `problem.status`, serializes with
+/// `application/problem+json` content-type, and falls back to a canonical
+/// 500 envelope on serialization failure — same path every other
+/// canonical error in the system uses.
 fn unsupported_media_type_response() -> Response {
-    let problem = Problem {
+    Problem {
         problem_type: UNSUPPORTED_MEDIA_TYPE_TYPE.to_owned(),
         title: "Unsupported Media Type".to_owned(),
         status: StatusCode::UNSUPPORTED_MEDIA_TYPE.as_u16(),
@@ -167,24 +171,8 @@ fn unsupported_media_type_response() -> Response {
                 }
             ]
         }),
-    };
-    // Manual response build — the `IntoResponse` impl on `Problem` uses
-    // `self.status` for the HTTP status, so this is equivalent to
-    // `problem.into_response()`. Kept explicit so the 415 status is
-    // grep-able alongside the rest of the wire-shape code.
-    let body = serde_json::to_vec(&problem).unwrap_or_else(|e| {
-        // Serializing a `Problem` with a `json!` context cannot fail in
-        // practice; fall back to a minimal envelope so we never serve a
-        // garbled 415.
-        tracing::error!(error = %e, "canonical_json: failed to serialize 415; using fallback");
-        br#"{"type":"gts://gts.cf.core.errors.err.v1~cf.core.err.unsupported_media_type.v1~","title":"Unsupported Media Type","status":415,"detail":"Content-Type: application/json required","context":{}}"#.to_vec()
-    });
-    (
-        StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        [(header::CONTENT_TYPE, "application/problem+json")],
-        body,
-    )
-        .into_response()
+    }
+    .into_response()
 }
 
 #[cfg(test)]
