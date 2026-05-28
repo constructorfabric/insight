@@ -33,7 +33,7 @@ public static class PersonAssignmentResolver
 
     /// <param name="groups">Resolver output.</param>
     /// <param name="knownAccounts">Current <c>source_account_id → person_id</c> bindings from <c>persons</c> (value_type='id').</param>
-    /// <param name="emailToPerson">Current latest <c>email → person_id</c> map from <c>persons</c> (value_type='email'). Keys are normalised (lower+trim).</param>
+    /// <param name="emailToPerson">Current latest <c>email → person_id</c> map from <c>persons</c> (value_type='email'). Keys are raw emails; the dictionary MUST use a case-insensitive comparer (e.g. <see cref="StringComparer.OrdinalIgnoreCase"/>) — emails are stored as-is and matched case-insensitively per ADR-0011.</param>
     /// <param name="mintPersonId">Factory for a fresh person_id (injected so tests are deterministic).</param>
     public static Result Resolve(
         IReadOnlyList<ProfileGroup> groups,

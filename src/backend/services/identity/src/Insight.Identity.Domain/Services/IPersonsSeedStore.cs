@@ -18,8 +18,12 @@ public interface IPersonsSeedStore
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Current normalised-email → person_id map in the tenant (latest
-    /// email observation per email). Feeds the email-link branch of
+    /// Current email → person_id map in the tenant (latest email
+    /// observation per email). Emails are returned raw — the dictionary
+    /// uses a case-insensitive comparer
+    /// (<see cref="StringComparer.OrdinalIgnoreCase"/>) so matching
+    /// mirrors the <c>utf8mb4_unicode_ci</c> collation (ADR-0011) rather
+    /// than any value normalisation. Feeds the email-link branch of
     /// <see cref="PersonAssignmentResolver"/>.
     /// </summary>
     Task<IReadOnlyDictionary<string, Guid>> GetLatestEmailToPersonAsync(

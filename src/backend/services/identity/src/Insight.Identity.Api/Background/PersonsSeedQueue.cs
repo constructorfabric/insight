@@ -18,6 +18,10 @@ public sealed class PersonsSeedQueue
 {
     // Bounded so a misbehaving caller cannot enqueue unbounded work.
     // Seed runs are rare (admin-triggered); 100 in-flight is generous.
+    // FullMode is moot here: only TryWrite is used (see TryEnqueue), and
+    // TryWrite returns false on a full channel regardless of FullMode —
+    // it never drops or blocks. Wait is just the harmless default; the
+    // 503-on-full path relies on the false return, not on this setting.
     private readonly Channel<PersonsSeedJob> _channel =
         Channel.CreateBounded<PersonsSeedJob>(new BoundedChannelOptions(100)
         {

@@ -20,23 +20,24 @@ internal static class SqlPersonsSeed
     /// <c>(source_type, source_id, value_id)</c> in the tenant.
     /// </summary>
     public const string KnownAccountBindings = """
-        SELECT
-            p.insight_source_type,
-            p.insight_source_id,
-            p.value_id AS source_account_id,
-            p.person_id
-        FROM persons p
-        WHERE p.value_type = 'id'
-          AND p.value_id IS NOT NULL
-          AND p.insight_tenant_id = @tenant_id
-          AND p.created_at = (
-              SELECT MAX(p2.created_at) FROM persons p2
-              WHERE p2.insight_tenant_id   = p.insight_tenant_id
-                AND p2.insight_source_type = p.insight_source_type
-                AND p2.insight_source_id   = p.insight_source_id
-                AND p2.value_id            = p.value_id
-                AND p2.value_type          = 'id'
-          )
+        WITH ranked AS (
+            SELECT
+                insight_source_type,
+                insight_source_id,
+                value_id AS source_account_id,
+                person_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, value_id
+                    ORDER BY created_at DESC, id DESC
+                ) AS rn
+            FROM persons
+            WHERE value_type = 'id'
+              AND value_id IS NOT NULL
+              AND insight_tenant_id = @tenant_id
+        )
+        SELECT insight_source_type, insight_source_id, source_account_id, person_id
+        FROM ranked
+        WHERE rn = 1
         """;
 
     /// <summary>

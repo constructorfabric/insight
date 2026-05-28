@@ -40,6 +40,24 @@ public sealed record PersonsSeedOperationResponse(
         StartedAt:       op.StartedAt,
         CompletedAt:     op.CompletedAt);
 
+    /// <summary>
+    /// The just-enqueued shape for the <c>202 Accepted</c> body, built
+    /// from the fields the POST handler already holds — avoids a second
+    /// round-trip to re-read the row that was just inserted.
+    /// </summary>
+    public static PersonsSeedOperationResponse Queued(
+        Guid operationId, Guid tenantId, Guid authorPersonId, string? requestJson, DateTime startedAt) => new(
+        OperationId:     operationId,
+        OperationType:   OperationTypes.PersonsSeed,
+        Status:          StatusToString(OperationStatus.Queued),
+        InsightTenantId: tenantId,
+        AuthorPersonId:  authorPersonId,
+        Request:         ParseOrNull(requestJson),
+        Summary:         null,
+        ErrorMessage:    null,
+        StartedAt:       startedAt,
+        CompletedAt:     null);
+
     private static JsonElement? ParseOrNull(string? json)
     {
         if (string.IsNullOrEmpty(json))
