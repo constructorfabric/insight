@@ -1,31 +1,20 @@
-//! Repository — SeaORM CRUD against `metric_threshold` + the joined
+//! Repository — SQL access against `metric_threshold` + the joined
 //! `metric_catalog.schema_*` read.
 //!
-//! Owns the SQL the gauntlet needs:
-//!
-//! - `find_metric_catalog(metric_id)` — referential-integrity check at the
-//!   start of every write. Returns `(metric_key, is_enabled)` so the
-//!   gauntlet can reject unknown / disabled metrics with a structured
-//!   `invalid_argument` before touching `metric_threshold`.
-//! - `find_threshold(id)` — GET-by-id + the "row's `tenant_id` vs caller's
-//!   tenant" check.
-//! - `list_thresholds(tenant_id, filters)` — list with the in-spec filter
-//!   set (`metric_id`, `scope`, `role_slug`, `team_id`); `tenant_id` is
-//!   ALWAYS derived from `SecurityContext`.
-//! - `insert_threshold` / `update_threshold` / `delete_threshold` — write
-//!   paths. The lock-transition writes are run inside the caller's TX so
-//!   `audit_emitter::emit_lock_transition_in_tx` can atomically attach
-//!   the audit row.
-//!
-//! Every UUID bind uses `Value::Bytes(uuid.as_bytes().to_vec())` so the
-//! BINARY(16) tenant / id columns hit the existing index plans (same
-//! convention as `domain/catalog/resolver.rs::bulk_fetch`).
+//! All SELECTs use raw SQL with `CAST(... AS DOUBLE)` for the DECIMAL
+//! threshold columns. sea-orm 1.1.20's entity decoder refuses to read
+//! `DECIMAL` into `f64` (rejects with `mismatched types; Rust type
+//! Option<f64> ... not compatible with SQL type DECIMAL`); the
+//! resolver's `bulk_fetch` already takes this same approach
+//! (`CAST(t.good AS DOUBLE) AS good`). Inserts/updates use the typed
+//! `ActiveModel` for encoding-side safety, but the post-write read for
+//! the response payload always goes through the raw-SQL `select_by_id`
+//! so we don't trip the same decoder path.
 
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    DatabaseTransaction, EntityTrait, FromQueryResult, QueryFilter, Statement, TransactionTrait,
-    Value,
+    ActiveValue, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    FromQueryResult, Statement, TransactionTrait, Value,
 };
 use uuid::Uuid;
 
@@ -112,32 +101,74 @@ pub struct CatalogJoinRow {
     pub schema_error_code: Option<String>,
 }
 
+/// Row shape returned by every `metric_threshold` SELECT in this module.
+/// Numeric columns are `CAST(... AS DOUBLE)` server-side so the decoder
+/// reads them straight into `f64` without sea-orm's
+/// DECIMAL→f64-rejection (see module doc).
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct ThresholdRow {
+    pub id: Uuid,
+    pub tenant_id: Option<Uuid>,
+    pub metric_key: String,
+    pub scope: String,
+    pub role_slug: String,
+    pub team_id: String,
+    pub good: f64,
+    pub warn: f64,
+    pub alert_trigger: Option<f64>,
+    pub alert_bad: Option<f64>,
+    pub is_locked: bool,
+    pub locked_by: Option<String>,
+    pub locked_at: Option<DateTime<Utc>>,
+    pub lock_reason: Option<String>,
+}
+
+/// Common SELECT body — every per-id / list query in this module joins
+/// the same column projection.
+const THRESHOLD_SELECT_COLS: &str = "SELECT \
+    id                                 AS id, \
+    tenant_id                          AS tenant_id, \
+    metric_key                         AS metric_key, \
+    scope                              AS scope, \
+    role_slug                          AS role_slug, \
+    team_id                            AS team_id, \
+    CAST(good          AS DOUBLE)      AS good, \
+    CAST(warn          AS DOUBLE)      AS warn, \
+    CAST(alert_trigger AS DOUBLE)      AS alert_trigger, \
+    CAST(alert_bad     AS DOUBLE)      AS alert_bad, \
+    is_locked                          AS is_locked, \
+    locked_by                          AS locked_by, \
+    locked_at                          AS locked_at, \
+    lock_reason                        AS lock_reason \
+    FROM metric_threshold";
+
 /// Fetch a threshold row by id. Returns `Ok(None)` when missing —
 /// caller emits `not_found`.
 ///
 /// # Errors
 ///
 /// Surfaces SeaORM connection / decode errors.
-pub async fn find_threshold(
-    db: &DatabaseConnection,
+pub async fn find_threshold<C: ConnectionTrait>(
+    conn: &C,
     id: Uuid,
-) -> Result<Option<metric_threshold::Model>, sea_orm::DbErr> {
-    metric_threshold::Entity::find_by_id(id).one(db).await
+) -> Result<Option<ThresholdRow>, sea_orm::DbErr> {
+    let backend = conn.get_database_backend();
+    let stmt = Statement::from_sql_and_values(
+        backend,
+        format!("{THRESHOLD_SELECT_COLS} WHERE id = ?"),
+        [Value::Bytes(Some(Box::new(id.as_bytes().to_vec())))],
+    );
+    ThresholdRow::find_by_statement(stmt).one(conn).await
 }
 
-/// List threshold rows for `tenant_id`, applying the in-spec filter set.
-///
-/// The shape of the query is parameterized — we build the WHERE
-/// dynamically from the optional filters but ALWAYS bind `tenant_id`
-/// against the `tenant_id_sentinel` generated column (so
-/// `product-default` rows whose `tenant_id IS NULL` also match the
-/// sentinel-zero bind when the caller wants to see them).
+/// List threshold rows for `tenant_id`, applying the in-spec filter
+/// set. Filters are bound by name not by position — we render the
+/// dynamic WHERE in Rust based on which filters are present.
 ///
 /// **`product-default` rows are NOT listed for tenant callers.** DESIGN
-/// §3.3 lists are scoped to "the caller's tenant"; product-default rows
-/// are global. The list intentionally excludes them — operators query
-/// `product-default` via the seed-migration source of truth, not the
-/// admin surface.
+/// §3.3 lists are scoped to "the caller's tenant"; product-default
+/// rows have `tenant_id IS NULL` and are intentionally excluded by
+/// the `tenant_id = ?` predicate.
 ///
 /// # Errors
 ///
@@ -146,11 +177,10 @@ pub async fn list_thresholds(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     filters: &ListFilters,
-) -> Result<Vec<metric_threshold::Model>, sea_orm::DbErr> {
-    // If `metric_id` is set, resolve it to a `metric_key` first; the
-    // threshold rows live by string `metric_key`, no FK. An unknown
-    // `metric_id` yields zero rows rather than an error — same
-    // behavior as filtering by a `metric_key` that doesn't exist.
+) -> Result<Vec<ThresholdRow>, sea_orm::DbErr> {
+    // `metric_id` filter resolves to a `metric_key` first; if the id
+    // doesn't exist, the list is empty (consistent with filtering on
+    // a non-existent key).
     let metric_key_filter = match filters.metric_id {
         Some(mid) => match find_metric_catalog(db, mid).await? {
             Some(cat) => Some(cat.metric_key),
@@ -159,26 +189,37 @@ pub async fn list_thresholds(
         None => None,
     };
 
-    let mut q =
-        metric_threshold::Entity::find().filter(metric_threshold::Column::TenantId.eq(tenant_id));
+    let mut where_clauses: Vec<&'static str> = vec!["tenant_id = ?"];
+    let mut values: Vec<Value> = vec![Value::Bytes(Some(Box::new(tenant_id.as_bytes().to_vec())))];
+
     if let Some(mk) = metric_key_filter {
-        q = q.filter(metric_threshold::Column::MetricKey.eq(mk));
+        where_clauses.push("metric_key = ?");
+        values.push(Value::from(mk));
     }
     if let Some(scope) = filters.scope {
-        q = q.filter(metric_threshold::Column::Scope.eq(scope.as_db_str()));
+        where_clauses.push("scope = ?");
+        values.push(Value::from(scope.as_db_str()));
     }
     if let Some(role_slug) = filters.role_slug.as_deref() {
-        q = q.filter(metric_threshold::Column::RoleSlug.eq(role_slug));
+        where_clauses.push("role_slug = ?");
+        values.push(Value::from(role_slug));
     }
     if let Some(team_id) = filters.team_id.as_deref() {
-        q = q.filter(metric_threshold::Column::TeamId.eq(team_id));
+        where_clauses.push("team_id = ?");
+        values.push(Value::from(team_id));
     }
-    q.all(db).await
+
+    let where_sql = where_clauses.join(" AND ");
+    let sql =
+        format!("{THRESHOLD_SELECT_COLS} WHERE {where_sql} ORDER BY scope, role_slug, team_id");
+    let stmt = Statement::from_sql_and_values(db.get_database_backend(), sql, values);
+    ThresholdRow::find_by_statement(stmt).all(db).await
 }
 
-/// Insert a new row inside `tx`. The caller is in the same transaction
-/// the audit-emitter writes to on `lock_set`, so a TX rollback handles
-/// the atomic-with-write contract.
+/// Insert a new row inside `tx`. Returns the persisted row via a
+/// follow-up `select_by_id` so the caller has the same `ThresholdRow`
+/// shape it gets from list / get reads (avoids sea-orm's
+/// `exec_with_returning` SELECT path, which trips the DECIMAL decoder).
 ///
 /// # Errors
 ///
@@ -201,7 +242,7 @@ pub async fn insert_threshold(
     locked_by: Option<String>,
     locked_at: Option<DateTime<Utc>>,
     lock_reason: Option<String>,
-) -> Result<metric_threshold::Model, sea_orm::DbErr> {
+) -> Result<ThresholdRow, sea_orm::DbErr> {
     let now = Utc::now();
     let model = metric_threshold::ActiveModel {
         id: ActiveValue::Set(id),
@@ -221,16 +262,21 @@ pub async fn insert_threshold(
         created_at: ActiveValue::Set(now),
         updated_at: ActiveValue::Set(now),
     };
-    let res = metric_threshold::Entity::insert(model)
-        .exec_with_returning(tx)
-        .await?;
-    Ok(res)
+    // `.exec()` returns the affected-row count + last-insert-id; no
+    // SELECT happens here, so the DECIMAL decoder isn't reached.
+    metric_threshold::Entity::insert(model).exec(tx).await?;
+    // Follow-up read through our CAST-based SELECT so the caller gets
+    // the same `ThresholdRow` shape as list / get paths.
+    find_threshold(tx, id).await?.ok_or_else(|| {
+        sea_orm::DbErr::RecordNotFound(format!("metric_threshold {id} (post-insert)"))
+    })
 }
 
 /// Update the mutable fields of an existing row. `scope` / `role_slug`
 /// / `team_id` are immutable post-create — the gauntlet rejects PUTs
-/// that change them BEFORE this is called, so the values from the
-/// existing row are passed back verbatim for the row's update.
+/// that change them BEFORE this is called, so they're not parameters.
+/// Uses raw SQL `UPDATE` so the SELECT-side DECIMAL decoder isn't
+/// reached.
 ///
 /// # Errors
 ///
@@ -247,34 +293,58 @@ pub async fn update_threshold(
     locked_by: Option<String>,
     locked_at: Option<DateTime<Utc>>,
     lock_reason: Option<String>,
-) -> Result<metric_threshold::Model, sea_orm::DbErr> {
-    let existing = metric_threshold::Entity::find_by_id(id)
-        .one(tx)
-        .await?
-        .ok_or_else(|| sea_orm::DbErr::RecordNotFound(format!("metric_threshold {id}")))?;
-    let mut am: metric_threshold::ActiveModel = existing.into();
-    am.good = ActiveValue::Set(good);
-    am.warn = ActiveValue::Set(warn);
-    am.alert_trigger = ActiveValue::Set(alert_trigger);
-    am.alert_bad = ActiveValue::Set(alert_bad);
-    am.is_locked = ActiveValue::Set(is_locked);
-    am.locked_by = ActiveValue::Set(locked_by);
-    am.locked_at = ActiveValue::Set(locked_at);
-    am.lock_reason = ActiveValue::Set(lock_reason);
-    // `updated_at` has `ON UPDATE CURRENT_TIMESTAMP` in the schema so we
-    // don't set it here — the DB stamps it on its own.
-    let updated = am.update(tx).await?;
-    Ok(updated)
+) -> Result<ThresholdRow, sea_orm::DbErr> {
+    // `updated_at` has `ON UPDATE CURRENT_TIMESTAMP` in the schema so
+    // we don't set it here — the DB stamps it on its own. The five
+    // mutable columns + the four lock columns plus the PK bind.
+    let sql = "UPDATE metric_threshold SET \
+                 good          = ?, \
+                 warn          = ?, \
+                 alert_trigger = ?, \
+                 alert_bad     = ?, \
+                 is_locked     = ?, \
+                 locked_by     = ?, \
+                 locked_at     = ?, \
+                 lock_reason   = ? \
+               WHERE id = ?";
+    let values: Vec<Value> = vec![
+        Value::Double(Some(good)),
+        Value::Double(Some(warn)),
+        Value::Double(alert_trigger),
+        Value::Double(alert_bad),
+        Value::Bool(Some(is_locked)),
+        Value::String(locked_by.map(Box::new)),
+        Value::ChronoDateTimeUtc(locked_at.map(Box::new)),
+        Value::String(lock_reason.map(Box::new)),
+        Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))),
+    ];
+    let stmt = Statement::from_sql_and_values(tx.get_database_backend(), sql, values);
+    let result = tx.execute(stmt).await?;
+    if result.rows_affected() == 0 {
+        return Err(sea_orm::DbErr::RecordNotFound(format!(
+            "metric_threshold {id}"
+        )));
+    }
+    find_threshold(tx, id).await?.ok_or_else(|| {
+        sea_orm::DbErr::RecordNotFound(format!("metric_threshold {id} (post-update)"))
+    })
 }
 
 /// Delete by id. Returns the number of rows deleted (0 ⇒ not found).
+/// Raw SQL for symmetry with insert/update; sea-orm's `delete_by_id`
+/// would work but going through one path keeps the rollback story
+/// identical.
 ///
 /// # Errors
 ///
 /// Surfaces SeaORM transport / query errors.
 pub async fn delete_threshold(tx: &DatabaseTransaction, id: Uuid) -> Result<u64, sea_orm::DbErr> {
-    let res = metric_threshold::Entity::delete_by_id(id).exec(tx).await?;
-    Ok(res.rows_affected)
+    let stmt = Statement::from_sql_and_values(
+        tx.get_database_backend(),
+        "DELETE FROM metric_threshold WHERE id = ?",
+        [Value::Bytes(Some(Box::new(id.as_bytes().to_vec())))],
+    );
+    Ok(tx.execute(stmt).await?.rows_affected())
 }
 
 /// Begin a transaction. Thin wrapper so the service code doesn't import
@@ -287,10 +357,10 @@ pub async fn begin_tx(db: &DatabaseConnection) -> Result<DatabaseTransaction, se
     db.begin().await
 }
 
-/// Project a `metric_threshold::Model` + the joined `metric_catalog` row
-/// into the wire shape. `role_slug` / `team_id` empty-string sentinels
-/// collapse to `None` so the JSON carries `null` instead of `""` (FE
-/// "is this set?" predicates work cleanly).
+/// Project a `ThresholdRow` + the joined `metric_catalog` row into the
+/// wire shape. `role_slug` / `team_id` empty-string sentinels collapse
+/// to `None` on the wire so the JSON carries `null` instead of `""`
+/// (FE "is this set?" predicates work cleanly).
 ///
 /// # Errors
 ///
@@ -298,8 +368,8 @@ pub async fn begin_tx(db: &DatabaseConnection) -> Result<DatabaseTransaction, se
 /// value — schema drift the caller surfaces as a 5xx (`get_one`) or
 /// skip+log (`list`). Silently coercing to `ProductDefault` would put a
 /// misleading scope on the wire.
-pub fn view_from_model(
-    row: &metric_threshold::Model,
+pub fn view_from_row(
+    row: &ThresholdRow,
     catalog: &CatalogJoinRow,
 ) -> Result<ThresholdView, sea_orm::DbErr> {
     let scope = Scope::from_db_str(&row.scope).ok_or_else(|| {

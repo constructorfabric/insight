@@ -52,7 +52,6 @@ use crate::domain::admin_threshold::repository;
 use crate::domain::auth::TenantAuthorization;
 use crate::domain::schema_validator::SchemaValidator;
 use crate::infra::cache::catalog_cache::{CatalogCache, InvalidateMode};
-use crate::infra::db::entities::metric_threshold;
 
 /// Maximum `lock_reason` length — matches the DB CHECK
 /// `chk_metric_threshold_lock_reason_length` and the DESIGN §3.7 line
@@ -135,7 +134,7 @@ impl AdminThresholdService {
                 catalog_cache.insert(row.metric_key.clone(), c.clone());
                 c
             };
-            match repository::view_from_model(&row, &cat) {
+            match repository::view_from_row(&row, &cat) {
                 Ok(view) => items.push(view),
                 Err(e) => {
                     // Schema drift: skip the row so one bad apple doesn't
@@ -146,7 +145,7 @@ impl AdminThresholdService {
                     tracing::error!(
                         error = %e,
                         threshold_id = %row.id,
-                        "admin-crud list: view_from_model failed (schema drift); skipping row"
+                        "admin-crud list: view_from_row failed (schema drift); skipping row"
                     );
                 }
             }
@@ -193,7 +192,7 @@ impl AdminThresholdService {
                     row.metric_key, id
                 )))
             })?;
-        repository::view_from_model(&row, &cat).map_err(|e| internal_error_response(&e))
+        repository::view_from_row(&row, &cat).map_err(|e| internal_error_response(&e))
     }
 
     // ── Create ────────────────────────────────────────────────────
@@ -380,7 +379,7 @@ impl AdminThresholdService {
             schema_status: cat.schema_status,
             schema_error_code: cat.schema_error_code,
         };
-        repository::view_from_model(&inserted, &cat_join).map_err(|e| internal_error_response(&e))
+        repository::view_from_row(&inserted, &cat_join).map_err(|e| internal_error_response(&e))
     }
 
     // ── Update ────────────────────────────────────────────────────
@@ -604,7 +603,7 @@ impl AdminThresholdService {
                     existing.metric_key, id
                 )))
             })?;
-        repository::view_from_model(&updated, &cat).map_err(|e| internal_error_response(&e))
+        repository::view_from_row(&updated, &cat).map_err(|e| internal_error_response(&e))
     }
 
     // ── Delete ────────────────────────────────────────────────────
@@ -703,7 +702,7 @@ impl AdminThresholdService {
 /// admin-write purposes — admin CRUD on `product-default` is out of
 /// scope (DESIGN §3.2 admin-crud: seed-migration owns `product-default`
 /// writes).
-fn row_belongs_to_tenant(row: &metric_threshold::Model, caller_tenant: Uuid) -> bool {
+fn row_belongs_to_tenant(row: &repository::ThresholdRow, caller_tenant: Uuid) -> bool {
     row.tenant_id == Some(caller_tenant)
 }
 
@@ -880,7 +879,7 @@ mod tests {
 
     #[test]
     fn product_default_row_does_not_belong_to_any_tenant() {
-        let row = metric_threshold::Model {
+        let row = repository::ThresholdRow {
             id: Uuid::nil(),
             tenant_id: None,
             metric_key: "k".to_owned(),
@@ -895,8 +894,6 @@ mod tests {
             locked_by: None,
             locked_at: None,
             lock_reason: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
         };
         let some_tenant = Uuid::from_u128(0x1111_1111_1111_1111_1111_1111_1111_1111_u128);
         assert!(!row_belongs_to_tenant(&row, some_tenant));

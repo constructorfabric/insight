@@ -49,6 +49,15 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
         eprintln!("skipping: {ENV_VAR} not set");
         return None;
     };
+    // Best-effort tracing init for `--nocapture` runs so the service's
+    // internal-error logs surface on the test console.
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug")),
+        )
+        .try_init();
     let mut opts = ConnectOptions::new(url);
     opts.max_connections(4).sqlx_logging(false);
     match Database::connect(opts).await {
@@ -472,10 +481,20 @@ async fn lock_set_without_reason_rejected() {
 #[ignore = "requires INTEGRATION_TESTS_MARIADB_URL"]
 async fn db_check_violations_map_to_canonical_4xx() {
     // End-to-end pin that a CHECK violation surfaces through the mapper
-    // rather than as a bare 500. The gauntlet's app-layer validation
-    // catches most of these BEFORE the DB write — to drive a real CHECK
-    // we bypass the gauntlet and issue an INSERT directly against the
-    // DB with a value that violates `chk_metric_threshold_lock_reason_length`.
+    // rather than as a bare 500. The gauntlet catches most of these
+    // BEFORE the DB write — to drive a real CHECK we bypass the
+    // gauntlet and INSERT a row with `is_locked = TRUE` and
+    // `lock_reason = NULL`, which trips
+    // `chk_metric_threshold_lock_reason_when_locked`.
+    //
+    // The length CHECK `chk_metric_threshold_lock_reason_length` cannot
+    // be provoked from outside the gauntlet here — MariaDB's
+    // VARCHAR(512) column-length check (error 1406, "Data too long")
+    // fires before the CHECK in the driver's evaluation order. The
+    // gauntlet's `validate_lock_reason` is the canonical layer that
+    // catches the 600-char case; the DB CHECK exists as a backstop for
+    // direct-SQL writes that bypass the gauntlet entirely (e.g.,
+    // migrations).
     let Some(db) = connect_or_skip().await else {
         return;
     };
@@ -486,7 +505,6 @@ async fn db_check_violations_map_to_canonical_4xx() {
         .await
         .unwrap_or_else(|e| panic!("migrate: {e}"));
 
-    let oversized: String = "a".repeat(600);
     let row_id = Uuid::now_v7();
     let result = db
         .execute(Statement::from_sql_and_values(
@@ -494,17 +512,15 @@ async fn db_check_violations_map_to_canonical_4xx() {
             "INSERT INTO metric_threshold \
              (id, tenant_id, metric_key, scope, role_slug, team_id, good, warn, \
               is_locked, lock_reason, created_at, updated_at) \
-             VALUES (?, NULL, 't.c', 'product-default', '', '', 10, 5, FALSE, ?, \
+             VALUES (?, NULL, 't.c', 'product-default', '', '', 10, 5, TRUE, NULL, \
               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            [
-                Value::Bytes(Some(Box::new(row_id.as_bytes().to_vec()))),
-                Value::from(oversized.as_str()),
-            ],
+            [Value::Bytes(Some(Box::new(row_id.as_bytes().to_vec())))],
         ))
         .await;
     let Err(err) = result else {
         panic!(
-            "DB MUST reject lock_reason > 512 chars via chk_metric_threshold_lock_reason_length"
+            "DB MUST reject is_locked=TRUE without lock_reason via \
+             chk_metric_threshold_lock_reason_when_locked"
         );
     };
     let mapped = crate::api::admin::error_map::map_db_err(&err, None);
