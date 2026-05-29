@@ -125,16 +125,18 @@ def analytics_api(ch_migrations_applied: SessionConfig):
     """Build + spawn the analytics-api binary. Its SeaORM migrations run on startup;
     we then upsert any test-specific metrics from seed/metrics.yaml.
 
-    If `cargo build` fails (e.g. cargo < 1.92 lacks edition2024), every test
-    that requires this fixture is skipped — the rest of the framework still
-    runs against the data plane.
+    If `cargo build` fails, this is a hard FAIL — identical locally and in CI.
+    A skip here would make the whole transformation suite silently green while
+    testing nothing (e.g. when the runner's toolchain drifts behind the version
+    src/backend/Cargo.toml requires). If the binary can't build, the bronze→API
+    tests cannot run, so the only honest result is red.
     """
     cfg = ch_migrations_applied
     from e2e_lib.analytics_api import ApiSpawnError  # local import to keep top clean
     try:
         binary = build(cfg)
     except ApiSpawnError as e:
-        pytest.skip(f"analytics-api binary not buildable: {e}")
+        pytest.fail(f"analytics-api binary not buildable: {e}", pytrace=False)
     port = find_free_port()
     proc = AnalyticsApiProcess(cfg, binary, port)
     proc.start()

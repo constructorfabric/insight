@@ -30,8 +30,35 @@ from e2e_lib.fixture_loader import Fixture
 LOG = logging.getLogger("e2e.api")
 
 
-MIN_CARGO_MAJOR = 1
-MIN_CARGO_MINOR = 92  # src/backend/Cargo.toml requires `edition = "2024"`
+def _required_cargo_version(repo_root: Path) -> tuple[int, int] | None:
+    """Read the required toolchain version from the single source of truth:
+    `[workspace.package].rust-version` in src/backend/Cargo.toml.
+
+    A hardcoded constant here silently drifts behind the real requirement (it
+    was pinned at 1.92 while the crates moved to 1.95), which let a broken build
+    masquerade as "version OK". Reading Cargo.toml keeps the precheck honest.
+
+    Returns None if it can't be determined — the `cargo build` itself remains
+    the hard gate (it fails loudly), so the precheck is only for a nicer message.
+    """
+    cargo_toml = repo_root / "src/backend/Cargo.toml"
+    try:
+        import tomllib
+
+        data = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ImportError):
+        return None
+    ver = (
+        data.get("workspace", {}).get("package", {}).get("rust-version")
+        or data.get("package", {}).get("rust-version")
+    )
+    if not ver:
+        return None
+    nums = str(ver).split(".")
+    try:
+        return int(nums[0]), int(nums[1])
+    except (IndexError, ValueError):
+        return None
 
 
 def _cargo_version_at_least(cargo: str, *, major: int, minor: int) -> tuple[bool, str]:
@@ -139,13 +166,15 @@ def build(cfg: SessionConfig) -> Path:
             "cargo executable not found on PATH or in standard rustup locations. "
             "Install via `rustup` and ensure ~/.cargo/bin is on PATH (or set CARGO_HOME)."
         )
-    ok, version = _cargo_version_at_least(cargo, major=MIN_CARGO_MAJOR, minor=MIN_CARGO_MINOR)
-    if not ok:
-        raise ApiSpawnError(
-            f"cargo {version} is too old — src/backend/Cargo.toml requires "
-            f"edition2024 (cargo ≥ {MIN_CARGO_MAJOR}.{MIN_CARGO_MINOR}). "
-            f"Run `rustup update stable` and retry."
-        )
+    required = _required_cargo_version(cfg.repo_root)
+    if required is not None:
+        ok, version = _cargo_version_at_least(cargo, major=required[0], minor=required[1])
+        if not ok:
+            raise ApiSpawnError(
+                f"cargo {version} is too old — src/backend/Cargo.toml requires "
+                f"rust-version ≥ {required[0]}.{required[1]}. "
+                f"Run `rustup update stable` and retry."
+            )
     LOG.info("cargo build --release -p analytics-api  (cargo=%s, version=%s)", cargo, version)
     try:
         result = subprocess.run(

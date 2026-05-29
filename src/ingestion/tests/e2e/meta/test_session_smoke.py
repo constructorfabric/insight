@@ -50,8 +50,8 @@ def test_migrations_create_insight_database(
 def test_analytics_api_health(analytics_api: AnalyticsApiProcess) -> None:
     """analytics-api responds 200 on /health.
 
-    Requires `cargo ≥ 1.92` (edition2024). Older toolchains fail at build time
-    with `feature 'edition2024' is required` — run `rustup update stable`.
+    Requires a cargo/rustc satisfying `rust-version` in src/backend/Cargo.toml.
+    An older toolchain now FAILS (not skips) — run `rustup update stable`.
     """
     with analytics_api.client() as c:
         r = c.get("/health")

@@ -40,7 +40,7 @@ If you prefer to develop on the host (faster iteration on the test code itself),
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-rustup update stable        # ≥ 1.92 required for edition2024
+rustup update stable        # must satisfy rust-version in src/backend/Cargo.toml
 
 pytest -k people_smoke -v   # session-rig brings compose up automatically
 ```
