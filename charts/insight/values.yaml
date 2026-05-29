@@ -98,6 +98,24 @@ global:
     # list. We use bitnamilegacy (see mariadb.image / redis.image) so we
     # have to allow "insecure" images — otherwise the chart refuses to deploy.
     allowInsecureImages: true
+  # Single-tenant default UUID — ONE source of truth for the three places
+  # the chart pins a tenant id:
+  #   1. api-gateway `single-tenant-tr-plugin.tenants[0].id` (the value
+  #      the gateway emits as `X-Insight-Tenant-Id` when the JWT has no
+  #      tenant claim).
+  #   2. `IDENTITY__identity__tenant_default_id` env var on the identity
+  #      service (its ConfigTenantContext fallback).
+  #   3. `ANALYTICS__metric_catalog__tenant_default_id` env var on the
+  #      analytics-api (Metric Catalog single-tenant fallback).
+  # Set this to the UUID your `persons` / `account_person_map` /
+  # `org_chart` data was seeded under (i.e. the
+  # `insight_tenant_id` value in ClickHouse `identity_inputs`). Empty =
+  # multi-tenant mode: the api-gateway falls back to the chart's hard
+  # default; identity and analytics-api leave the resolver strict and
+  # return 400 tenant_unresolved for header-less callers. Visible to all
+  # subcharts (Helm propagates `global.*` automatically), so subchart
+  # templates read `.Values.global.tenantDefaultId` directly.
+  tenantDefaultId: ""
 # ═══════════════════════════════════════════════════════════════════════════
 #  EXTERNAL — Airbyte (installed as a separate Helm release, SAME namespace)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -418,16 +436,11 @@ analyticsApi:
   # ANALYTICS__* env var filled in from the auto-generated credentials
   # (see templates/secrets.yaml). The subchart consumes it via envFrom.
   existingSecret: "insight-analytics-api-config"
-  # Single-tenant fallback for the Metric Catalog (DESIGN §2.2
-  # `cpt-metric-cat-constraint-tenant-default`). Empty string disables the
-  # config-default resolver entirely; tenant-less requests then return 400
-  # `application/problem+json` with `field_violations[{field: "tenant_id",
-  # reason: "TENANT_UNRESOLVED"}]`. Set to a UUID for single-tenant installs
-  # (local dev, on-prem one-tenant deployments, the helmfile dev cluster).
-  # The session-bound tenant ALWAYS wins over this default — it is a
-  # fallback, never an override. Mirrors `identity.tenantDefaultId` so
-  # operators see the same single-tenant ergonomic across Insight services.
-  tenantDefaultId: ""
+  # Metric Catalog single-tenant fallback comes from
+  # `global.tenantDefaultId` (DESIGN §2.2 cpt-metric-cat-constraint-tenant-
+  # default). The session-bound tenant from the gateway ALWAYS wins; this
+  # global default fires only on header-less callers. Empty global value =
+  # strict mode (400 tenant_unresolved on header-less requests).
 # ─── Identity (.NET 9) ───────────────────────────────────────────────────
 # The persons-store API. Reads from MariaDB `persons` written by the seed
 # pipeline (src/backend/services/identity/seed/seed-persons-from-identity-input.py)
@@ -448,11 +461,10 @@ identity:
   # migrations (src/backend/services/identity/src/Insight.Identity.Infrastructure/Migrations/)
   # at startup against this database — see ADR-0006 (service-owned migrations).
   databaseName: "identity"
-  # Default tenant pinned at config level. Empty string disables the
-  # config-default resolver entirely; callers then MUST send
+  # Default tenant comes from `global.tenantDefaultId`. Empty global value
+  # disables the config-default resolver entirely; callers then MUST send
   # `X-Insight-Tenant-Id` or the API returns 400
   # `urn:insight:error:tenant_unresolved`.
-  tenantDefaultId: ""
   # Which `org_chart.insight_source_type` drives the supervisor /
   # subordinates projection on /v1/persons and /v1/profiles. Empty
   # string falls back to the appsettings default `bamboohr`; set

@@ -111,7 +111,12 @@ data:
           vendor: "hyperspot"
           priority: 20
           tenants:
-            - id: "00000000-df51-5b42-9538-d2b56b7ee953"
+            # ID sourced from the umbrella's `global.tenantDefaultId` so
+            # this gateway, the identity service, and the analytics-api
+            # all agree on one tenant UUID. Falls back to a fixed UUID
+            # for standalone-subchart users who don't go through the
+            # umbrella (and therefore don't see `global.*`).
+            - id: {{ (default dict .Values.global).tenantDefaultId | default "00000000-df51-5b42-9538-d2b56b7ee953" | quote }}
               name: "default"
               parent_id: null
               status: active
