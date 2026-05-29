@@ -30,7 +30,28 @@ public sealed class SubchartRepository : ISubchartReader
         cmd.Parameters.AddWithValue("@root_person_id", rootPersonId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@source_type",    orgChartSourceType);
         cmd.Parameters.AddWithValue("@max_depth",      (object?)maxDepth ?? DBNull.Value);
+        return await ReadFlatAsync(cmd, cancellationToken).ConfigureAwait(false);
+    }
 
+    public async Task<IReadOnlyList<SubchartFlatNode>> GetForestAsync(
+        Guid tenantId,
+        Guid viewerPersonId,
+        string orgChartSourceType,
+        int? maxDepth,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(SqlSubchart.GetForest, conn);
+        cmd.Parameters.AddWithValue("@tenant_id",        tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@viewer_person_id", viewerPersonId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@source_type",      orgChartSourceType);
+        cmd.Parameters.AddWithValue("@max_depth",        (object?)maxDepth ?? DBNull.Value);
+        return await ReadFlatAsync(cmd, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<IReadOnlyList<SubchartFlatNode>> ReadFlatAsync(
+        MySqlCommand cmd, CancellationToken cancellationToken)
+    {
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         var list = new List<SubchartFlatNode>();
         var idxParent  = reader.GetOrdinal("parent_person_id");

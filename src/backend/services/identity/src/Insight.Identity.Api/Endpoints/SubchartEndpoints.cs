@@ -10,16 +10,76 @@ using Microsoft.Extensions.Options;
 namespace Insight.Identity.Api.Endpoints;
 
 /// <summary>
+/// <para>
 /// <c>GET /v1/subchart/{person_id}?depth=N</c> — depth-bounded org
 /// subtree rooted at a person, gated by the same
 /// <see cref="VisibilityService"/> that protects <c>/v1/persons</c> and
 /// <c>POST /v1/profiles</c>. #348 Phase 3.
+/// </para>
+/// <para>
+/// <c>GET /v1/subchart?depth=N</c> — forest variant (#344 follow-up):
+/// returns every root the caller can see (one tree per visible top of
+/// the source's org chart), filtered by their visibility grants.
+/// Singleton orphans are dropped from the response.
+/// </para>
 /// </summary>
 public static class SubchartEndpoints
 {
     public static IEndpointRouteBuilder MapSubchartEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
+
+        app.MapGet("/v1/subchart", async (
+            HttpContext http,
+            ITenantContext tenants,
+            ICallerContext callers,
+            SubchartService subchart,
+            IOptions<AppOptions> options,
+            int? depth,
+            CancellationToken ct) =>
+        {
+            var tenantId = tenants.Resolve(http);
+            if (tenantId is null)
+            {
+                return Results.Json(new ProblemResponse(
+                    Type: "urn:insight:error:tenant_unresolved",
+                    Title: "Bad Request",
+                    Status: StatusCodes.Status400BadRequest,
+                    Detail: $"Tenant not provided. Send the {HeaderTenantContext.HeaderName} header or configure identity.tenant_default_id."),
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var callerPersonId = await callers.ResolveAsync(http, ct).ConfigureAwait(false);
+            if (callerPersonId is null)
+            {
+                return Results.Json(new ProblemResponse(
+                    Type: "urn:insight:error:caller_unresolved",
+                    Title: "Unauthorized",
+                    Status: StatusCodes.Status401Unauthorized,
+                    Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            if (depth is < 0)
+            {
+                return Results.Json(new ProblemResponse(
+                    Type: "urn:insight:error:invalid_depth",
+                    Title: "Bad Request",
+                    Status: StatusCodes.Status400BadRequest,
+                    Detail: $"depth must be >= 0; got {depth}"),
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var sourceType = options.Value.OrgChartSourceType;
+            // Open to every authenticated caller — visibility decides
+            // what the forest looks like. Empty visible set / empty
+            // in-source membership → empty roots array, 200 not 404.
+            var roots = await subchart
+                .GetForestAsync(tenantId.Value, callerPersonId.Value, sourceType, depth, ct)
+                .ConfigureAwait(false);
+            return Results.Ok(new SubchartForestResponse(
+                roots.Select(SubchartNodeResponse.From).ToList()));
+        });
 
         app.MapGet("/v1/subchart/{personId:guid}", async (
             Guid personId,

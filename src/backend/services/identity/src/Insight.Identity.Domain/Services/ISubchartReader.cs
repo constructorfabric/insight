@@ -23,6 +23,22 @@ public interface ISubchartReader
         string orgChartSourceType,
         int? maxDepth,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Flat list of nodes in the FOREST visible to
+    /// <paramref name="viewerPersonId"/> (#344 follow-up). One row per
+    /// (root ∪ descendants of every root in the caller's visible_set).
+    /// Roots surface with <c>ParentPersonId == null</c> regardless of
+    /// their actual org_chart row, so the service can group by parent
+    /// the same way it does for the single-root subchart. Depth bound
+    /// matches <see cref="GetSubchartAsync"/>.
+    /// </summary>
+    Task<IReadOnlyList<SubchartFlatNode>> GetForestAsync(
+        Guid tenantId,
+        Guid viewerPersonId,
+        string orgChartSourceType,
+        int? maxDepth,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>

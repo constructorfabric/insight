@@ -129,12 +129,23 @@ internal static class SqlPersonsSeed
         """;
 
     /// <summary>
-    /// Rebuild the tenant's parent→child edges from <c>persons</c>.
-    /// Ported verbatim from the Python seeder step 9 (active-interval
-    /// computation + two-source priority) with an
-    /// <c>insight_tenant_id = @tenant_id</c> filter added to every
-    /// <c>persons</c> read. Source 1 (resolved parent_person_id) wins
-    /// over Source 2 (parent_email→email JOIN) via the NOT EXISTS guard.
+    /// Rebuild the tenant's <c>org_chart</c> from <c>persons</c>. Two
+    /// kinds of rows are written:
+    /// <list type="bullet">
+    ///   <item><b>Edges</b> (<c>parent_person_id</c> non-NULL) — ported
+    ///   from the Python seeder step 9 (active-interval computation +
+    ///   two-source priority): Source 1 (resolved parent_person_id)
+    ///   wins over Source 2 (parent_email→email JOIN) via the
+    ///   <c>NOT EXISTS</c> guard.</item>
+    ///   <item><b>No-parent rows</b> (<c>parent_person_id IS NULL</c>) —
+    ///   the path-B redesign (#344 follow-up): every source-instance
+    ///   member who never appears as a child in the edge set gets a
+    ///   current-state row with NULL parent. This includes
+    ///   tree-roots (parents who are no one's child) and singletons
+    ///   (members with no parent_email and no children). Lets
+    ///   "find all tops" be a single-column predicate.</item>
+    /// </list>
+    /// All reads carry an <c>insight_tenant_id = @tenant_id</c> filter.
     /// </summary>
     public const string InsertOrgChartForTenant = """
         INSERT INTO org_chart
@@ -232,61 +243,143 @@ internal static class SqlPersonsSeed
             WHERE p.value_type = 'email'
               AND p.value_id IS NOT NULL
               AND p.insight_tenant_id = @tenant_id
+        ),
+        existing_edges AS (
+            SELECT
+                insight_tenant_id, insight_source_type, insight_source_id,
+                person_id                                       AS child_person_id,
+                UNHEX(REPLACE(value_id, '-', ''))               AS parent_person_id,
+                author_person_id, reason,
+                created_at                                      AS valid_from,
+                LEAD(created_at) OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type,
+                                 insight_source_id, person_id
+                    ORDER BY created_at
+                )                                               AS valid_to
+            FROM persons
+            WHERE value_type = 'parent_person_id'
+              AND value_id IS NOT NULL
+              AND insight_tenant_id = @tenant_id
+              AND value_id REGEXP '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+              AND HEX(person_id) <> REPLACE(value_id, '-', '')
+
+            UNION ALL
+
+            SELECT
+                pe.insight_tenant_id, pe.insight_source_type, pe.insight_source_id,
+                pe.child_person_id,
+                parent.person_id                                AS parent_person_id,
+                pe.author_person_id, pe.reason,
+                GREATEST(pe.pe_from, ai.interval_start)         AS valid_from,
+                CASE
+                    WHEN pe.pe_to IS NULL AND ai.interval_end IS NULL THEN NULL
+                    WHEN pe.pe_to        IS NULL                      THEN ai.interval_end
+                    WHEN ai.interval_end IS NULL                      THEN pe.pe_to
+                    ELSE LEAST(pe.pe_to, ai.interval_end)
+                END                                             AS valid_to
+            FROM pe_periods pe
+            INNER JOIN email_to_person parent
+                ON parent.insight_tenant_id = pe.insight_tenant_id
+               AND parent.value_id          = pe.parent_email
+               AND parent.rn                = 1
+            INNER JOIN all_active ai
+                ON ai.insight_tenant_id   = pe.insight_tenant_id
+               AND ai.insight_source_type = pe.insight_source_type
+               AND ai.insight_source_id   = pe.insight_source_id
+               AND ai.person_id           = pe.child_person_id
+               AND ai.interval_start < COALESCE(pe.pe_to, '9999-12-31 23:59:59.999999')
+               AND COALESCE(ai.interval_end, '9999-12-31 23:59:59.999999') > pe.pe_from
+            WHERE parent.person_id <> pe.child_person_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM persons ppi
+                  WHERE ppi.insight_tenant_id   = pe.insight_tenant_id
+                    AND ppi.person_id           = pe.child_person_id
+                    AND ppi.insight_source_type = pe.insight_source_type
+                    AND ppi.insight_source_id   = pe.insight_source_id
+                    AND ppi.value_type          = 'parent_person_id'
+                    AND ppi.value_id IS NOT NULL
+              )
+        ),
+        source_member_latest_active AS (
+            -- Path B anchor (#344 follow-up). One row per
+            -- (tenant, source-instance, person) carrying:
+            --   first_obs    — earliest observation in this source-instance
+            --                  (becomes valid_from of the no-parent row).
+            --   interval_end — end of the LATEST active interval, NULL if
+            --                  currently active or if the person has no
+            --                  status observations at all (default-active).
+            --                  Becomes valid_to of the no-parent row, so
+            --                  Inactive persons get an SCD2-historical row
+            --                  spanning their active lifetime, not a row
+            --                  that pretends they're still active.
+            -- Persons with status observations who were NEVER active are
+            -- excluded — they have no active lifetime to record.
+            -- The no-parent row's author is the seed operation's author
+            -- (@author_person_id), NOT the observation's author — these
+            -- rows are computed by the rebuild itself, not derived from
+            -- any source row.
+            SELECT
+                m.insight_tenant_id, m.insight_source_type, m.insight_source_id, m.person_id,
+                m.first_obs,
+                latest.interval_end
+            FROM (
+                SELECT
+                    insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                    MIN(created_at) AS first_obs,
+                    MAX(CASE WHEN value_type = 'status' THEN 1 ELSE 0 END) AS has_status
+                FROM persons
+                WHERE insight_tenant_id = @tenant_id
+                GROUP BY insight_tenant_id, insight_source_type, insight_source_id, person_id
+            ) m
+            LEFT JOIN (
+                SELECT
+                    insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                    interval_end,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY insight_tenant_id, insight_source_type,
+                                     insight_source_id, person_id
+                        ORDER BY interval_start DESC,
+                                 COALESCE(interval_end, '9999-12-31 23:59:59.999999') DESC
+                    ) AS rn
+                FROM active_intervals
+            ) latest
+                ON latest.insight_tenant_id   = m.insight_tenant_id
+               AND latest.insight_source_type = m.insight_source_type
+               AND latest.insight_source_id   = m.insight_source_id
+               AND latest.person_id           = m.person_id
+               AND latest.rn                  = 1
+            WHERE m.has_status = 0
+               OR latest.person_id IS NOT NULL
         )
 
-        SELECT
-            insight_tenant_id, insight_source_type, insight_source_id,
-            person_id                                       AS child_person_id,
-            UNHEX(REPLACE(value_id, '-', ''))               AS parent_person_id,
-            author_person_id, reason,
-            created_at                                      AS valid_from,
-            LEAD(created_at) OVER (
-                PARTITION BY insight_tenant_id, insight_source_type,
-                             insight_source_id, person_id
-                ORDER BY created_at
-            )                                               AS valid_to
-        FROM persons
-        WHERE value_type = 'parent_person_id'
-          AND value_id IS NOT NULL
-          AND insight_tenant_id = @tenant_id
-          AND value_id REGEXP '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-          AND HEX(person_id) <> REPLACE(value_id, '-', '')
+        -- 1) Historical/current edges, unchanged from the Python port.
+        SELECT * FROM existing_edges
 
         UNION ALL
 
+        -- 2) Path B: one row per (tenant, source-instance, person) who
+        -- never appears as a child in existing_edges. Includes
+        -- tree-roots (parents who are no one's child) and singletons
+        -- (members with no parent_email and no children). Lets
+        -- "find all tops" be `WHERE parent_person_id IS NULL AND valid_to IS NULL`.
+        -- valid_to mirrors the person's active lifetime end (NULL if
+        -- still active), keeping Inactive persons out of "current"
+        -- queries while preserving their history for as-of-date queries.
         SELECT
-            pe.insight_tenant_id, pe.insight_source_type, pe.insight_source_id,
-            pe.child_person_id,
-            parent.person_id                                AS parent_person_id,
-            pe.author_person_id, pe.reason,
-            GREATEST(pe.pe_from, ai.interval_start)         AS valid_from,
-            CASE
-                WHEN pe.pe_to IS NULL AND ai.interval_end IS NULL THEN NULL
-                WHEN pe.pe_to        IS NULL                      THEN ai.interval_end
-                WHEN ai.interval_end IS NULL                      THEN pe.pe_to
-                ELSE LEAST(pe.pe_to, ai.interval_end)
-            END                                             AS valid_to
-        FROM pe_periods pe
-        INNER JOIN email_to_person parent
-            ON parent.insight_tenant_id = pe.insight_tenant_id
-           AND parent.value_id          = pe.parent_email
-           AND parent.rn                = 1
-        INNER JOIN all_active ai
-            ON ai.insight_tenant_id   = pe.insight_tenant_id
-           AND ai.insight_source_type = pe.insight_source_type
-           AND ai.insight_source_id   = pe.insight_source_id
-           AND ai.person_id           = pe.child_person_id
-           AND ai.interval_start < COALESCE(pe.pe_to, '9999-12-31 23:59:59.999999')
-           AND COALESCE(ai.interval_end, '9999-12-31 23:59:59.999999') > pe.pe_from
-        WHERE parent.person_id <> pe.child_person_id
-          AND NOT EXISTS (
-              SELECT 1 FROM persons ppi
-              WHERE ppi.insight_tenant_id   = pe.insight_tenant_id
-                AND ppi.person_id           = pe.child_person_id
-                AND ppi.insight_source_type = pe.insight_source_type
-                AND ppi.insight_source_id   = pe.insight_source_id
-                AND ppi.value_type          = 'parent_person_id'
-                AND ppi.value_id IS NOT NULL
+            sm.insight_tenant_id, sm.insight_source_type, sm.insight_source_id,
+            sm.person_id                                    AS child_person_id,
+            CAST(NULL AS BINARY(16))                        AS parent_person_id,
+            @author_person_id                               AS author_person_id,
+            ''                                              AS reason,
+            sm.first_obs                                    AS valid_from,
+            sm.interval_end                                 AS valid_to
+        FROM source_member_latest_active sm
+        WHERE NOT EXISTS (
+              SELECT 1 FROM existing_edges e
+              WHERE e.insight_tenant_id   = sm.insight_tenant_id
+                AND e.insight_source_type = sm.insight_source_type
+                AND e.insight_source_id   = sm.insight_source_id
+                AND e.child_person_id     = sm.person_id
           )
         """;
 }

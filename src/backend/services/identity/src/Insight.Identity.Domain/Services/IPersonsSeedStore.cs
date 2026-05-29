@@ -40,6 +40,7 @@ public interface IPersonsSeedStore
     /// </summary>
     Task<SeedApplyResult> ApplyAsync(
         Guid tenantId,
+        Guid authorPersonId,
         IReadOnlyList<PersonObservationRow> rows,
         CancellationToken cancellationToken);
 }

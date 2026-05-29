@@ -69,10 +69,15 @@ public sealed class PersonsSeedEndToEndTests : IAsyncLifetime
         (await CountAsync("SELECT COUNT(*) FROM persons WHERE value_type='email' AND insight_tenant_id=@t"))
             .Should().Be(2);
 
-        // org_chart: one edge, alice(200)'s person → boss(100)'s person.
-        var edges = await CountAsync("SELECT COUNT(*) FROM org_chart WHERE insight_tenant_id=@t AND valid_to IS NULL");
+        // org_chart current state under path-B: ONE edge
+        // (alice → boss via parent_email) and ONE no-parent row for boss
+        // himself (he is a top of the source — parent NULL).
+        var edges = await CountAsync("SELECT COUNT(*) FROM org_chart WHERE insight_tenant_id=@t AND valid_to IS NULL AND parent_person_id IS NOT NULL");
         edges.Should().Be(1);
-        summary.OrgChartEdgesRebuilt.Should().Be(1);
+        var noParent = await CountAsync("SELECT COUNT(*) FROM org_chart WHERE insight_tenant_id=@t AND valid_to IS NULL AND parent_person_id IS NULL");
+        noParent.Should().Be(1);
+        // Summary counts all rebuilt rows (edges + no-parent rows).
+        summary.OrgChartEdgesRebuilt.Should().Be(2);
     }
 
     [Fact]

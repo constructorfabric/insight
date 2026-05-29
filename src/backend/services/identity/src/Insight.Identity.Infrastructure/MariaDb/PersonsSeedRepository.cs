@@ -63,12 +63,14 @@ public sealed class PersonsSeedRepository : IPersonsSeedStore
 
     public async Task<SeedApplyResult> ApplyAsync(
         Guid tenantId,
+        Guid authorPersonId,
         IReadOnlyList<PersonObservationRow> rows,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(rows);
 
         var tenantBin = tenantId.ToByteArray(bigEndian: true);
+        var authorBin = authorPersonId.ToByteArray(bigEndian: true);
 
         // One connection + one transaction for the whole apply: observation
         // inserts, then both cache rebuilds. Either all of it commits or
@@ -79,7 +81,7 @@ public sealed class PersonsSeedRepository : IPersonsSeedStore
 
         var inserted = await InsertObservationsAsync(conn, tx, rows, cancellationToken).ConfigureAwait(false);
         await RebuildAccountPersonMapAsync(conn, tx, tenantBin, cancellationToken).ConfigureAwait(false);
-        var edges = await RebuildOrgChartAsync(conn, tx, tenantBin, cancellationToken).ConfigureAwait(false);
+        var edges = await RebuildOrgChartAsync(conn, tx, tenantBin, authorBin, cancellationToken).ConfigureAwait(false);
 
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new SeedApplyResult(inserted, edges);
@@ -150,7 +152,7 @@ public sealed class PersonsSeedRepository : IPersonsSeedStore
     }
 
     private static async Task<int> RebuildOrgChartAsync(
-        MySqlConnection conn, MySqlTransaction tx, byte[] tenantBin, CancellationToken cancellationToken)
+        MySqlConnection conn, MySqlTransaction tx, byte[] tenantBin, byte[] authorBin, CancellationToken cancellationToken)
     {
         await using (var del = new MySqlCommand(SqlPersonsSeed.DeleteOrgChartForTenant, conn, tx))
         {
@@ -160,6 +162,11 @@ public sealed class PersonsSeedRepository : IPersonsSeedStore
         await using (var ins = new MySqlCommand(SqlPersonsSeed.InsertOrgChartForTenant, conn, tx))
         {
             ins.Parameters.AddWithValue("@tenant_id", tenantBin);
+            // Author of the no-parent rows = the seed operation's author
+            // (not pulled from a random source observation). The
+            // existing-edge rows still take author from persons rows
+            // they're derived from.
+            ins.Parameters.AddWithValue("@author_person_id", authorBin);
             return await ins.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
     }

@@ -40,3 +40,12 @@ public sealed record SubchartNodeResponse(
 /// with sibling fields (e.g. depth-cap echoes, pagination hints).
 /// </summary>
 public sealed record SubchartResponse(SubchartNodeResponse Root);
+
+/// <summary>
+/// Forest response for <c>GET /v1/subchart?depth=N</c> (no person id) —
+/// #344 follow-up. Returns the trees the caller can see; the array is
+/// empty when the caller has no visible-in-source members. Orphans
+/// (root with zero subordinates) are filtered out at the service layer
+/// per team decision.
+/// </summary>
+public sealed record SubchartForestResponse(IReadOnlyList<SubchartNodeResponse> Roots);
