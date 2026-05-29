@@ -117,8 +117,11 @@ reconcile_resolve_destination_id() {
   # insight.clickhouse.url helper makes the same assumption); the chart
   # injects RECONCILE_DEST_CLICKHOUSE_PROTOCOL explicitly.
   local config_json
+  # ClickHouse destination v2.0+ spec: port is a string, protocol is
+  # required ("http"/"https"). The old ssl+schema fields are gone.
   config_json="$(python3 -c '
 import os, json
+ssl = os.environ.get("RECONCILE_DEST_CLICKHOUSE_SSL", "false").lower() in ("1", "true", "yes")
 print(json.dumps({
   "host":        os.environ["RECONCILE_DEST_CLICKHOUSE_HOST"],
   "port":        os.environ["RECONCILE_DEST_CLICKHOUSE_PORT"],

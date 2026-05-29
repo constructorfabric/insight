@@ -1,0 +1,460 @@
+# Airbyte Declarative Source for claude-team — issue #458.
+#
+# Talks to a customer-deployed `claude-team-proxy` HTTP endpoint, NOT to
+# claude.ai directly. The proxy is a headless-Chromium bridge that holds
+# the customer's sessionKey cookie inside the customer's environment and
+# presents the claude.ai web API as a plain HTTP service. Insight
+# authenticates with a shared bearer token (`proxy_auth_token`); the
+# cookie itself never leaves the customer.
+#
+# Proxy source code + Dockerfile + deployment docs:
+#   https://gitlab.constr.dev/insight/secure-enclave → proxies/claude_team/
+#
+# Four streams (this commit completes the Phase 5 MVP set):
+#   1. claude_team_members     — full snapshot, no pagination
+#   2. claude_team_invites     — full snapshot, no pagination
+#   3. claude_team_overage_spend — page-paginated; gracefully tolerates
+#                                  HTTP 403 (missing billing:view scope)
+#   4. claude_team_code_metrics — per-day, offset-paginated; uses a
+#                                  DatetimeBasedCursor to walk a
+#                                  configurable backfill window
+
+version: "7.0.4"
+type: DeclarativeSource
+
+# `check` uses members — cheapest endpoint, always returns ≥1 row
+# (the owner), no permission gates, no date-range complications.
+check:
+  type: CheckStream
+  stream_names:
+    - claude_team_members
+
+streams:
+  # ── Stream 1: claude_team_members ───────────────────────────────────
+  # Full snapshot of the organisation roster. The endpoint returns a
+  # plain JSON array (no envelope), so the extractor's field_path is []
+  # (the array IS the record list).
+  - type: DeclarativeStream
+    name: claude_team_members
+    primary_key:
+      - account/uuid
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          account:
+            type: object
+            properties:
+              uuid: { type: string }
+              tagged_id: { type: [string, "null"] }
+              full_name: { type: [string, "null"] }
+              email_address: { type: string }
+          role: { type: string }
+          seat_tier: { type: [string, "null"] }
+          created_at: { type: string }
+          updated_at: { type: string }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['proxy_url'] }}"
+        path: "/api/organizations/{{ config['claude_org_id'] }}/members"
+        http_method: GET
+        request_headers:
+          Authorization: "Bearer {{ config['proxy_auth_token'] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account']['uuid'] }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_claude_team
+
+  # ── Stream 2: claude_team_invites ───────────────────────────────────
+  # Pending invites (accepted / expired ones drop from the response —
+  # we cannot reconstruct historical invite events from this endpoint,
+  # only the current pending set). Same shape as members: plain array.
+  - type: DeclarativeStream
+    name: claude_team_invites
+    primary_key:
+      - uuid
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          uuid: { type: string }
+          email_address: { type: string }
+          role: { type: string }
+          status: { type: string }
+          created_at: { type: string }
+          expires_at: { type: string }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['proxy_url'] }}"
+        path: "/api/organizations/{{ config['claude_org_id'] }}/invites"
+        http_method: GET
+        request_headers:
+          Authorization: "Bearer {{ config['proxy_auth_token'] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['uuid'] }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_claude_team
+
+  # ── Stream 3: claude_team_overage_spend ─────────────────────────────
+  # Current spend state per seat. Endpoint requires `billing:view`
+  # permission — not every operator's sessionKey has it (issue #458
+  # decision: graceful skip, no failure). When the proxy returns
+  # HTTP 403, the error_handler IGNOREs the response and the stream
+  # commits zero records for that sync. Once the operator obtains
+  # a billing-capable sessionKey (rotate via the proxy Helm release)
+  # the next sync starts populating rows automatically.
+  #
+  # Response is envelope-shaped: `{items: [...], page, per_page,
+  # total, total_pages}`. PageIncrement paginator walks 1..total_pages.
+  - type: DeclarativeStream
+    name: claude_team_overage_spend
+    primary_key:
+      - account_uuid
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          account_uuid: { type: string }
+          account_email: { type: string }
+          account_name: { type: string }
+          seat_tier: { type: [string, "null"] }
+          is_enabled: { type: boolean }
+          monthly_credit_limit: { type: [number, "null"] }
+          used_credits: { type: number }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['proxy_url'] }}"
+        path: "/api/organizations/{{ config['claude_org_id'] }}/overage_spend_limits"
+        http_method: GET
+        request_headers:
+          Authorization: "Bearer {{ config['proxy_auth_token'] }}"
+        # Tolerate the most common failure mode for this stream — the
+        # sessionKey lacks billing:view. Mark the response as "no
+        # records" instead of failing the whole sync. Sync stays GREEN
+        # while the stream stays empty.
+        error_handler:
+          type: DefaultErrorHandler
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [403]
+              action: IGNORE
+              error_message: "claude.ai returned 403 — sessionKey lacks billing:view permission. Stream skipped, sync continues."
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [items]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: 100
+          start_from_page: 1
+        page_token_option:
+          type: RequestOption
+          field_name: page
+          inject_into: request_parameter
+        page_size_option:
+          type: RequestOption
+          field_name: per_page
+          inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account_uuid'] }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_claude_team
+
+  # ── Stream 4: claude_team_code_metrics ──────────────────────────────
+  # Per-user, per-day Claude Code metrics. The endpoint is the most
+  # expensive of the four (~3-13s per page on the upstream side, due
+  # to API-side aggregation).
+  #
+  # Date semantics: the API requires both start_date and end_date
+  # query params and treats them as INCLUSIVE single-day filters
+  # (start_date=X, end_date=X returns one day's data). We walk one
+  # day per request via DatetimeBasedCursor + P1D step, injecting
+  # the cursor value into BOTH params.
+  #
+  # Stop condition for backfill: lower bound `min_datetime: 2025-11-24`
+  # matches data_collector's observed earliest-data date for this org
+  # — going further back returns empty arrays.
+  #
+  # Pagination within a day: limit=100 / offset=N. `has_next` in the
+  # response signals more pages but OffsetIncrement also stops when
+  # a response returns < page_size rows.
+  #
+  # Extras dropped: the response also carries `pr_attribution`,
+  # `top_users_by_prs`, `top_users_by_lines_of_code` — empty in the
+  # test org and not per-user. If they become populated later they
+  # warrant a separate stream rather than denormalisation into every
+  # user row.
+  - type: DeclarativeStream
+    name: claude_team_code_metrics
+    primary_key:
+      - metric_date
+      - email
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          metric_date: { type: string }
+          email: { type: string }
+          api_key_name: { type: [string, "null"] }
+          status: { type: string }
+          # Note: avg_cost_per_day and total_cost come back as strings
+          # from the API (decimal-as-string convention). Kept as string
+          # in bronze — Silver layer can cast.
+          avg_cost_per_day: { type: string }
+          avg_lines_accepted_per_day: { type: number }
+          total_cost: { type: string }
+          total_lines_accepted: { type: number }
+          total_sessions: { type: number }
+          last_active: { type: string }
+          prs_with_cc: { type: number }
+          total_prs: { type: number }
+          prs_with_cc_percentage: { type: number }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['proxy_url'] }}"
+        path: "/api/claude_code/metrics_aggs/users"
+        http_method: GET
+        request_headers:
+          Authorization: "Bearer {{ config['proxy_auth_token'] }}"
+        request_parameters:
+          organization_uuid: "{{ config['claude_org_id'] }}"
+          customer_type: "claude_ai"
+          subscription_type: "team"
+          sort_by: "total_lines_accepted"
+          sort_order: "desc"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [users]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: 100
+        page_token_option:
+          type: RequestOption
+          field_name: offset
+          inject_into: request_parameter
+        page_size_option:
+          type: RequestOption
+          field_name: limit
+          inject_into: request_parameter
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: metric_date
+      cursor_datetime_formats:
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%d"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-7, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+        # Earliest data point observed in data_collector audit for this
+        # org. Going earlier returns empty pages.
+        min_datetime: "2025-11-24"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-1, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: P1D
+      start_time_option:
+        type: RequestOption
+        field_name: start_date
+        inject_into: request_parameter
+      end_time_option:
+        type: RequestOption
+        field_name: end_date
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_claude_team
+      # Inject the cursor's current value as `metric_date` on every
+      # row. The API does not include the date in per-user objects;
+      # without this, all rows from different days would collide on the
+      # primary key.
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [metric_date]
+            value: "{{ stream_interval.start_time }}"
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - claude_org_id
+      - proxy_url
+      - proxy_auth_token
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Tenant isolation identifier (UUID), injected as `tenant_id` field into every record
+        order: 0
+      claude_org_id:
+        type: string
+        title: Claude.ai Organisation UUID
+        description: |
+          UUID of the claude.ai organisation to read from. Find it via
+          DevTools console on claude.ai: `fetch('/api/organizations').then(r=>r.json()).then(console.table)`.
+        order: 1
+      proxy_url:
+        type: string
+        title: Proxy URL
+        description: |
+          Base URL of the customer-deployed claude-team-proxy
+          (https://gitlab.constr.dev/insight/secure-enclave →
+          proxies/claude_team). The customer hosts this proxy themselves
+          and exposes it over the network to Insight. No default —
+          operator MUST set per installation.
+        order: 2
+      proxy_auth_token:
+        type: string
+        title: Proxy Auth Token
+        airbyte_secret: true
+        description: |
+          Shared bearer token used by Insight to authenticate to the
+          customer-hosted proxy. Sent as `Authorization: Bearer <token>`
+          on every request. Matches the proxy's PROXY_AUTH_TOKEN env var.
+        order: 3
+      insight_source_id:
+        type: string
+        title: Source Instance ID
+        description: Optional connector instance identifier for multi-instance deployments. Set by the reconcile loop from the K8s Secret annotation `insight.cyberfabric.com/source-id`.
+        default: ""
+        order: 4
+      start_date:
+        type: string
+        title: Start Date (code_metrics only)
+        description: |
+          Earliest date to backfill `claude_team_code_metrics` from
+          (YYYY-MM-DD). Default: 7 days ago. Set to "2025-11-24" for a
+          full historical backfill (the earliest observed data point
+          for the test organisation). Has no effect on the other three
+          streams which are full-snapshot.
+        default: ""
+        order: 5
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    claude_team_members: true
+    claude_team_invites: true
+    claude_team_overage_spend: true
+    claude_team_code_metrics: true

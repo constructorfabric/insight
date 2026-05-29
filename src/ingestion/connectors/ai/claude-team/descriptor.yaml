@@ -1,0 +1,34 @@
+name: claude-team
+# Strict semver per ADR-0015. 1.2.0: split the proxy out of this repo into
+# a customer-deployed Docker container (secure-enclave/proxies/claude_team).
+# Connector now requires `proxy_url` (no default) and `proxy_auth_token`
+# (bearer token Insight uses to authenticate to the customer's proxy).
+# MINOR bump per ADR-0015 — Spec gains required fields; existing
+# deployments must add the new Secret keys before next reconcile.
+version: "1.2.0"
+# Daily at 04:00 UTC — off-peak vs other connectors. The customer's
+# proxy runs a single browser instance, so we avoid scheduling
+# claude-team next to anything else that may also hit it.
+schedule: '0 4 * * *'
+workflow: sync
+
+dbt_select: 'tag:claude-team+'
+
+connection:
+  namespace: bronze_claude_team
+
+# Required secret fields (carried in the K8s Secret stringData):
+#   - claude_org_id     — UUID of the claude.ai organisation to read from
+#   - proxy_url         — base URL of the customer-deployed claude-team-proxy
+#                         (e.g. https://claude-team-proxy.customer.example.com)
+#   - proxy_auth_token  — bearer token; must match PROXY_AUTH_TOKEN on the proxy
+#
+# Note: NO claude.ai sessionKey here. It lives ONLY on the customer's
+# proxy container and is installed via the proxy's
+# `POST /admin/session-key` endpoint. Rotation is the customer's
+# responsibility — Insight never sees the cookie.
+secret:
+  required_fields:
+    - claude_org_id
+    - proxy_url
+    - proxy_auth_token

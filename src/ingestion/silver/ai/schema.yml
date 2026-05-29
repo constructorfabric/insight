@@ -69,9 +69,10 @@ models:
         tests:
           - not_null
       - name: lines_removed
-        description: "Lines removed / accepted-to-remove from AI."
-        tests:
-          - not_null
+        description: >
+          Lines removed / accepted-to-remove from AI. NULL for sources that
+          do not expose AI-removed lines (Claude Team, Claude Admin). Zero
+          is not used — NULL-policy: structural absence = NULL, not 0.
       - name: total_lines_added
         description: >
           Total lines added by the user that day (AI-accepted + manual keystrokes).
@@ -111,8 +112,23 @@ models:
           other tools that do not expose git-level attribution.
       - name: pull_requests_count
         description: >
-          Pull requests attributed to Claude Code sessions. Populated for
-          Claude Enterprise only (code_pull_request_count). NULL for Cursor.
+          Pull requests attributed to Claude Code sessions.
+          Claude Enterprise only: code_pull_request_count.
+          NULL for Claude Team (Team-plan PR counts go into prs_total_count),
+          Cursor, and Copilot.
+      - name: prs_with_cc_count
+        description: >
+          PRs where Claude Code was active at least once in the measurement
+          window. Populated for Claude Team only (prs_with_cc from the web
+          API; requires Anthropic GitHub-app to be connected — NULL / 0 on
+          orgs without it). NULL for all other sources.
+      - name: prs_total_count
+        description: >
+          Total PRs in the measurement window. Populated for Claude Team only
+          (total_prs from the web API). Denominator for prs_with_cc_percentage
+          Gold metric. ⚠️ May be a period-aggregate (cumulative across the
+          billing window), not a daily count — verify against a tenant with
+          the Anthropic GitHub-app connected. NULL for all other sources.
       - name: tool_action_breakdown_json
         description: >
           Raw JSON breakdown of tool actions per tool type.
@@ -121,12 +137,12 @@ models:
           Copilot: activity flags {"used_chat": bool, "used_agent": bool, "used_cli": bool}.
           NULL for Cursor (Cursor does not expose per-tool-type breakdown at daily grain).
       - name: source
-        description: "Staging-model discriminator: 'cursor' | 'claude_admin' | 'claude_enterprise' | 'copilot' | future sources"
+        description: "Staging-model discriminator: 'cursor' | 'claude_admin' | 'claude_enterprise' | 'claude_team' | 'claude_playwright' | 'copilot' | future sources"
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ['cursor', 'claude_admin', 'claude_enterprise', 'claude_playwright', 'copilot', 'windsurf', 'codex']
+                values: ['cursor', 'claude_admin', 'claude_enterprise', 'claude_team', 'claude_playwright', 'copilot', 'windsurf', 'codex']
       - name: data_source
         description: "Framework source discriminator — 'insight_cursor' / 'insight_claude_admin' / etc."
         tests:
