@@ -23,7 +23,8 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use crate::domain::auth::ConfigTenantAuthorization;
-use crate::infra::cache::catalog_cache::{CatalogCache, NoopCatalogCache};
+use crate::domain::catalog::{CatalogReader, ThresholdResolver};
+use crate::infra::cache::catalog_cache::{CatalogCache, NoopCatalogCache, RedisCatalogCache};
 
 /// Analytics API service.
 #[derive(Parser)]
@@ -91,15 +92,52 @@ async fn run_server(cfg: config::AppConfig) -> anyhow::Result<()> {
     // DESIGN §3.6 + `cpt-metric-cat-fr-tenant-thresholds`.
     infra::db::product_default_probe::assert_product_default_present(&db).await?;
 
+    // Catalog cache (Refs #524). Use Redis when `redis_url` is configured;
+    // otherwise fall back to the no-op stub for single-replica dev installs.
+    // The Redis-mode boot path is best-effort — if Redis is unreachable at
+    // startup, we degrade to the no-op rather than refusing to serve. The
+    // alternative ("refuse to boot until Redis is up") would make a Redis
+    // outage gate every analytics-api deploy, which is precisely the kind
+    // of upstream-availability coupling DESIGN §3.5 keeps swappable.
+    let catalog_cache: Arc<dyn CatalogCache> = if cfg.redis_url.is_empty() {
+        tracing::info!(
+            "catalog_cache: redis_url not configured; using no-op stub. \
+             Multi-replica deploys MUST configure redis_url per \
+             cpt-metric-cat-nfr-cross-replica-invalidation."
+        );
+        Arc::new(NoopCatalogCache::default())
+    } else {
+        match RedisCatalogCache::connect(&cfg.redis_url).await {
+            Ok(c) => {
+                tracing::info!(
+                    redis_url = %cfg.redis_url,
+                    "catalog_cache: Redis backend connected"
+                );
+                Arc::new(c)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    redis_url = %cfg.redis_url,
+                    "catalog_cache: Redis connection failed at boot; \
+                     degrading to no-op stub. Cross-replica invalidation \
+                     NFR will not hold until Redis is restored."
+                );
+                Arc::new(NoopCatalogCache::default())
+            }
+        }
+    };
+
     // Flush the catalog cache so newly seeded rows are visible on the
     // next `POST /catalog/get_metrics` read without waiting for the TTL.
-    // v1 is a no-op stub (#523); #524 swaps in the real `cat:v1:*` Redis
-    // prefix purge. The flush is best-effort — a Redis blip MUST NOT
-    // gate service boot, so failures are logged and ignored.
-    let catalog_cache: Arc<dyn CatalogCache> = Arc::new(NoopCatalogCache);
+    // Best-effort — a Redis blip MUST NOT gate service boot.
     if let Err(e) = catalog_cache.flush_all().await {
         tracing::warn!(error = %e, "catalog_cache: flush_all failed at boot; continuing");
     }
+
+    // Threshold resolver + reader (Refs #524).
+    let catalog_reader =
+        CatalogReader::new(catalog_cache.clone(), ThresholdResolver::new(db.clone()));
 
     // Connect to ClickHouse
     let mut ch_config =
@@ -132,6 +170,7 @@ async fn run_server(cfg: config::AppConfig) -> anyhow::Result<()> {
         config: cfg.clone(),
         validator: validator.clone(),
         tenant_auth,
+        catalog_reader,
     };
 
     // Build router
@@ -178,10 +217,23 @@ async fn run_migrate(cfg: config::AppConfig) -> anyhow::Result<()> {
     // migrate` as a standalone step (e.g., a one-shot Kubernetes Job, a
     // post-deploy hook) need the same flush — otherwise the seed lands
     // and the cache stays stale until something triggers a server boot.
-    // No-op today; activates with the Redis impl from #524. Best-effort
-    // per the same rationale as `run_server` — never block migrate on a
-    // Redis blip.
-    let catalog_cache: Arc<dyn CatalogCache> = Arc::new(NoopCatalogCache);
+    // Best-effort per the same rationale as `run_server` — never block
+    // migrate on a Redis blip.
+    let catalog_cache: Arc<dyn CatalogCache> = if cfg.redis_url.is_empty() {
+        Arc::new(NoopCatalogCache::default())
+    } else {
+        match RedisCatalogCache::connect(&cfg.redis_url).await {
+            Ok(c) => Arc::new(c),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "catalog_cache: Redis connection failed during migrate; \
+                     skipping flush (next server boot will retry)"
+                );
+                Arc::new(NoopCatalogCache::default())
+            }
+        }
+    };
     if let Err(e) = catalog_cache.flush_all().await {
         tracing::warn!(error = %e, "catalog_cache: flush_all failed after migrate; continuing");
     }

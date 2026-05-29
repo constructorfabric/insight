@@ -14,3 +14,6 @@
 // 3. Redis adds deployment complexity for MVP
 
 pub mod catalog_cache;
+
+#[cfg(test)]
+mod live_tests;

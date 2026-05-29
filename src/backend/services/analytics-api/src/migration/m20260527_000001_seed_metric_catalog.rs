@@ -1084,11 +1084,17 @@ const SEEDS: &[SeedRow] = &[
     },
 ];
 
+// `source_tags` is JSON-typed. MariaDB stores JSON as a LONGTEXT alias and
+// rejects the explicit `CAST(? AS JSON)` syntax that MySQL accepts (the
+// parser breaks at the `JSON)` token on 11.8.7). A bare string bind works
+// — the JSON-shape invariant is enforced by the CHECK on `source_tags` plus
+// `every_seed_has_nonempty_source_tags` at the SEEDS-list level. See
+// MDEV-13252 for the MariaDB stance on CAST AS JSON. Refs #523.
 const INSERT_CATALOG_SQL: &str = "\
     INSERT INTO metric_catalog \
         (id, tenant_id, metric_key, label, sublabel, description, unit, format, \
          higher_is_better, is_member_scale, source_tags, is_enabled) \
-    VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), TRUE) \
+    VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE) \
     ON DUPLICATE KEY UPDATE \
         label = VALUES(label), \
         sublabel = VALUES(sublabel), \

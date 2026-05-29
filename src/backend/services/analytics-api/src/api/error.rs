@@ -20,6 +20,23 @@ pub struct ThresholdError;
 #[resource_error("gts.cf.insight.analytics_api.person.v1~")]
 pub struct PersonError;
 
+/// Resource namespace for the metric-catalog domain (Refs #524, #525).
+///
+/// Distinct from [`MetricError`] (which scopes the legacy `/v1/metrics` CRUD
+/// surface) so catalog endpoints see the catalog's own GTS namespace per
+/// DESIGN §3.3 ("Resource GTS namespaces introduced for the catalog …
+/// `gts.cf.insight.metric_catalog.metric.v1~`").
+///
+/// `POST /catalog/get_metrics` doesn't currently use this — its body-parse
+/// errors flow through [`super::canonical_json::CanonicalJson`], which emits a
+/// resource-less envelope because body parse failures fire before the
+/// request's target resource is known. Admin-crud (#525) will use this for
+/// `not_found` / `permission_denied` / `failed_precondition` on threshold
+/// rows, where the resource IS knowable.
+#[allow(dead_code)] // first consumer lands with admin-crud (#525)
+#[resource_error("gts.cf.insight.metric_catalog.metric.v1~")]
+pub struct MetricCatalogError;
+
 /// Resource namespace for tenant-resolution failures
 /// (`cpt-metric-cat-constraint-tenant-default`). The middleware surfaces an
 /// `invalid_argument` envelope with `field_violations[{field: "tenant_id",

@@ -36,9 +36,13 @@ pub struct AppConfig {
     #[serde(default)]
     pub identity_url: String,
 
-    /// Redis URL for caching (e.g., `redis://localhost:6379`).
+    /// Redis URL for caching (e.g., `redis://localhost:6379`). Backs
+    /// `cpt-metric-cat-component-cache-layer`. Leave empty in single-replica
+    /// dev installs — the cache layer degrades to a no-op stub. Multi-replica
+    /// deploys MUST configure this; the cross-replica-invalidation NFR
+    /// (`cpt-metric-cat-nfr-cross-replica-invalidation`) cannot be satisfied
+    /// by purely in-process state.
     #[serde(default)]
-    #[allow(dead_code)] // will be used when caching layer is implemented
     pub redis_url: String,
 
     /// Metric Catalog configuration (DESIGN §3.5).

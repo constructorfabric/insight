@@ -1,5 +1,7 @@
 //! HTTP API layer — routes and handlers.
 
+pub(crate) mod canonical_json;
+mod catalog;
 pub(crate) mod error;
 mod handlers;
 
@@ -13,6 +15,7 @@ use std::sync::Arc;
 use crate::auth;
 use crate::config::AppConfig;
 use crate::domain::auth::TenantAuthorization;
+use crate::domain::catalog::CatalogReader;
 use crate::domain::schema_validator::SchemaValidator;
 use crate::infra::identity::IdentityClient;
 
@@ -32,9 +35,12 @@ pub struct AppState {
     /// Catalog auth-trait (Refs #522). Resolves session-bound tenant against
     /// the operator-configured single-tenant fallback per
     /// `cpt-metric-cat-constraint-tenant-default`. Consumed by
-    /// `auth::tenant_middleware`; #524 / #525 will consume it directly for
+    /// `auth::tenant_middleware`; #525 will consume it directly for
     /// `is_tenant_admin` / `actor_subject` (out of scope here).
     pub tenant_auth: Arc<dyn TenantAuthorization>,
+    /// Catalog read pipeline (Refs #524) — cache + resolver wired together.
+    /// Cheap to clone (internally `Arc`s the cache + resolver).
+    pub catalog_reader: CatalogReader,
 }
 
 /// Build the Axum router with all routes.
@@ -90,6 +96,15 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/columns/{table}",
             axum::routing::get(handlers::list_columns_for_table),
+        )
+        // Metric catalog read (Refs #524) — DESIGN §3.3 "Catalog Read".
+        // POST chosen so request-context fields (role_slug, team_id) never
+        // appear in HTTP access logs / proxy captures, and so HTTP / CDN
+        // intermediaries cannot cache the response (server-side cache is the
+        // single canonical cache layer per `cpt-metric-cat-principle-server-cache`).
+        .route(
+            "/catalog/get_metrics",
+            axum::routing::post(catalog::get_metrics),
         )
         // Health
         .route("/health", axum::routing::get(handlers::health));

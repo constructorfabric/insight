@@ -34,9 +34,15 @@ const CHECK_CLAUSES: &[(&str, &str)] = &[
     // `NO_BACKSLASH_ESCAPES` set, the two backslashes survive into the regex
     // and `\\.` would silently start meaning "backslash + any char", rejecting
     // every legitimate metric_key. `[.]` sidesteps the whole escape question.
+    //
+    // `REGEXP BINARY` forces case-sensitive matching against the lowercase
+    // class `[a-z]`. MariaDB 11.x defaults to a case-insensitive
+    // `utf8mb4_uca1400_ai_ci` collation, under which `[a-z]` silently matches
+    // uppercase too — making `UPPER.case` pass a check meant to reject it.
+    // `BINARY` compares bytes, so `[a-z]` is the byte range 0x61..0x7a only.
     (
         "chk_metric_catalog_metric_key_shape",
-        "metric_key REGEXP '^[a-z][a-z0-9_]*[.][a-z][a-z0-9_]*$'",
+        "metric_key REGEXP BINARY '^[a-z][a-z0-9_]*[.][a-z][a-z0-9_]*$'",
     ),
     (
         "chk_metric_catalog_schema_status_enum",
@@ -242,6 +248,14 @@ mod tests {
             "do NOT use `\\.` — collapses unsafely under sql_mode=NO_BACKSLASH_ESCAPES"
         );
         assert!(predicate.contains("[a-z0-9_]*$"));
+        // `REGEXP BINARY` enforces case-sensitivity; MariaDB 11.x defaults to
+        // a case-insensitive collation under which `[a-z]` silently matches
+        // uppercase. Without `BINARY`, `UPPER.case` passes the check.
+        assert!(
+            predicate.contains("REGEXP BINARY"),
+            "CHECK must use `REGEXP BINARY` for case-sensitive matching on \
+             MariaDB 11+ collations; got: {predicate}"
+        );
     }
 
     #[test]

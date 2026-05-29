@@ -1,10 +1,10 @@
 //! Live MariaDB integration tests for the metric-catalog schema (Refs #519).
 //!
 //! All tests in this module are `#[ignore]`d by default and skip silently
-//! when the `MARIADB_URL` env var is unset, so `cargo test` and even
+//! when the `INTEGRATION_TESTS_MARIADB_URL` env var is unset, so `cargo test` and even
 //! `cargo test -- --ignored` are green on a stock dev machine. Set
-//! `MARIADB_URL=mysql://root:pass@127.0.0.1:3306/insight_test` against a
-//! throwaway MariaDB 10.3+ to exercise them.
+//! `INTEGRATION_TESTS_MARIADB_URL=mysql://root:pass@127.0.0.1:3306/insight_test` against a
+//! throwaway MariaDB 11+ to exercise them.
 //!
 //! Coverage map vs the Definition of Done:
 //! - `DoD` #1 (round-trip up + down): [`catalog_schema_end_to_end`].
@@ -24,7 +24,7 @@ use sea_orm_migration::MigratorTrait;
 use super::{Migrator, REQUIRED_CHECKS_BY_TABLE};
 use crate::infra::db::{check_probe, product_default_probe};
 
-const ENV_VAR: &str = "MARIADB_URL";
+const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
 const TEST_METRIC_KEY: &str = "analytics_metrics.tasks_closed";
 
 /// Expected catalog row count produced by `m20260527_000001_seed_metric_catalog`.
@@ -76,7 +76,7 @@ async fn drop_catalog_tables(db: &DatabaseConnection) -> Result<(), sea_orm::DbE
 }
 
 #[tokio::test]
-#[ignore = "requires live MariaDB 10.3+; set MARIADB_URL to enable"]
+#[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 #[allow(clippy::too_many_lines)] // one big test fn by design — see module docs
 async fn catalog_schema_end_to_end() -> anyhow::Result<()> {
     let Some(db) = connect_or_skip().await else {
@@ -401,7 +401,7 @@ async fn insert_product_default_threshold(
 ///    message names the orphaned `metric_key` (so an operator can find
 ///    and fix it from the log line).
 #[tokio::test]
-#[ignore = "requires live MariaDB 10.3+; set MARIADB_URL to enable"]
+#[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 #[allow(clippy::too_many_lines)]
 async fn seed_migration_and_product_default_probe_end_to_end() -> anyhow::Result<()> {
     let Some(db) = connect_or_skip().await else {
