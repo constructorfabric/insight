@@ -136,13 +136,48 @@ streams:
         inject_into: request_parameter
     transformations:
       - type: AddFields
-        fields:
-          <<: *standard_fields
+        fields: *standard_fields
       - type: AddFields
         fields:
           - type: AddedFieldDefinition
             path: [ticket_id]
             value: "{{ record['id'] | string }}"
+          - type: AddedFieldDefinition
+            path: [assignee_id]
+            value: "{{ record['assignee_id'] | string if record.get('assignee_id') else '' }}"
+          - type: AddedFieldDefinition
+            path: [requester_id]
+            value: "{{ record['requester_id'] | string if record.get('requester_id') else '' }}"
+          - type: AddedFieldDefinition
+            path: [group_id]
+            value: "{{ record['group_id'] | string if record.get('group_id') else '' }}"
+          - type: AddedFieldDefinition
+            path: [organization_id]
+            value: "{{ record['organization_id'] | string if record.get('organization_id') else '' }}"
+          - type: AddedFieldDefinition
+            path: [tags]
+            value: "{{ record.get('tags', []) | join(',') }}"
+          - type: AddedFieldDefinition
+            # solved_at lives in the embedded metric_set object; null when unresolved
+            path: [solved_at]
+            value: "{{ record.get('metric_set', {}).get('solved_at') or none }}"
+          - type: AddedFieldDefinition
+            # Business-hours first-reply time: metric_set.reply_time_in_minutes.business × 60
+            # Returns integer seconds or None (null in Bronze) when no reply yet.
+            path: [first_reply_time_seconds]
+            value: "{% set v = (record.get('metric_set') or {}).get('reply_time_in_minutes', {}).get('business') %}{{ (v * 60) | int if v is not none else none }}"
+          - type: AddedFieldDefinition
+            # Calendar-hours first-reply time: metric_set.reply_time_in_minutes.calendar × 60
+            path: [first_reply_time_calendar_seconds]
+            value: "{% set v = (record.get('metric_set') or {}).get('reply_time_in_minutes', {}).get('calendar') %}{{ (v * 60) | int if v is not none else none }}"
+          - type: AddedFieldDefinition
+            # Business-hours full-resolution time: metric_set.full_resolution_time_in_minutes.business × 60
+            path: [full_resolution_time_seconds]
+            value: "{% set v = (record.get('metric_set') or {}).get('full_resolution_time_in_minutes', {}).get('business') %}{{ (v * 60) | int if v is not none else none }}"
+          - type: AddedFieldDefinition
+            # Calendar-hours full-resolution time
+            path: [full_resolution_time_calendar_seconds]
+            value: "{% set v = (record.get('metric_set') or {}).get('full_resolution_time_in_minutes', {}).get('calendar') %}{{ (v * 60) | int if v is not none else none }}"
           - type: AddedFieldDefinition
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
@@ -184,9 +219,11 @@ streams:
       type: SimpleRetriever
       requester:
         <<: *base_requester
-        path: "users"
+        # role[]=agent&role[]=admin — CDK request_parameters doesn't support
+        # duplicate keys, so we embed the role filter directly in the path.
+        # This fetches agents, light_agents, and admins in one pass.
+        path: "users?role%5B%5D=agent&role%5B%5D=admin"
         request_parameters:
-          "role[]": ["agent", "admin"]
           per_page: "100"
       record_selector:
         type: RecordSelector
@@ -203,14 +240,11 @@ streams:
           type: RequestOption
           field_name: "page[after]"
           inject_into: request_parameter
-        page_size_option:
-          type: RequestOption
-          field_name: per_page
-          inject_into: request_parameter
+        # page_size_option removed — CursorPagination has no page_size;
+        # per_page=100 is set statically in request_parameters above.
     transformations:
       - type: AddFields
-        fields:
-          <<: *standard_fields
+        fields: *standard_fields
       - type: AddFields
         fields:
           - type: AddedFieldDefinition
@@ -221,13 +255,14 @@ streams:
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - type: AddedFieldDefinition
             path: [group_id]
-            value: "{{ record.get('default_group_id') | string if record.get('default_group_id') else None }}"
+            value: "{{ record['default_group_id'] | string if record.get('default_group_id') else '' }}"
           - type: AddedFieldDefinition
+            # group_name resolved in Phase 2 via CustomTransformation (GET /api/v2/groups lookup)
             path: [group_name]
-            value: null   # TODO: resolve from groups lookup
+            value: ""
           - type: AddedFieldDefinition
             path: [is_active]
-            value: "{{ 0 if record.get('suspended') else 1 }}"
+            value: "{{ '0' if record.get('suspended') else '1' }}"
 
   # ── Stream 3: zendesk_satisfaction_ratings ──────────────────────────
   # Separate incremental stream for CSAT ratings. Stored independently
@@ -302,8 +337,7 @@ streams:
         inject_into: request_parameter
     transformations:
       - type: AddFields
-        fields:
-          <<: *standard_fields
+        fields: *standard_fields
       - type: AddFields
         fields:
           - type: AddedFieldDefinition
