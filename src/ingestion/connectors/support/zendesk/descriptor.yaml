@@ -1,0 +1,32 @@
+# Zendesk connector descriptor — INSIGHT-459.
+#
+# Loaded by insight-toolbox at reconcile time to create/update the Airbyte
+# connection for this connector.
+#
+# Phase 1 streams: support_tickets, support_agents, zendesk_satisfaction_ratings.
+# Phase 2: support_ticket_events, zendesk_ticket_ext (schemas locked in zendesk.md).
+
+name: zendesk
+version: "1.0.0"
+type: declarative
+schedule: "0 5 * * *"       # 05:00 UTC daily
+workflow: sync               # Argo workflow template: ingestion-pipeline
+
+images:
+  declarative:
+    image: ""                # no custom Docker image — uses platform declarative runner
+
+# dbt_select is empty until Silver models are added (Phase 2).
+# When Silver models land, tag them "zendesk" and set: "tag:zendesk+"
+dbt_select: ""
+
+connection:
+  namespace: "bronze_zendesk"
+
+secret:
+  required_fields:
+    - zendesk_subdomain
+    - zendesk_email
+    - zendesk_api_token
+  optional_fields:
+    - start_date
