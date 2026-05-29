@@ -1,0 +1,391 @@
+# Airbyte Declarative Source for zendesk — INSIGHT-459.
+#
+# Phase 1 (this file): three streams:
+#   1. support_tickets              — incremental, DatetimeBasedCursor on updated_at
+#   2. support_agents               — full refresh
+#   3. zendesk_satisfaction_ratings — incremental, DatetimeBasedCursor on updated_at
+#
+# Phase 2 (not yet implemented — schemas locked in zendesk.md):
+#   4. support_ticket_events        — per-ticket audit log (SubstreamPartitionRouter)
+#   5. zendesk_ticket_ext           — custom field key-value pairs
+#
+# Auth: HTTP Basic Auth, username = "{email}/token", password = "{api_token}"
+# API base: https://{subdomain}.zendesk.com/api/v2/
+
+version: "7.0.4"
+type: DeclarativeSource
+
+definitions:
+  base_requester: &base_requester
+    type: HttpRequester
+    url_base: "https://{{ config['zendesk_subdomain'] }}.zendesk.com/api/v2/"
+    authenticator:
+      type: BasicHttpAuthenticator
+      username: "{{ config['zendesk_email'] }}/token"
+      password: "{{ config['zendesk_api_token'] }}"
+
+  standard_fields: &standard_fields
+    - type: AddedFieldDefinition
+      path: [tenant_id]
+      value: "{{ config['insight_tenant_id'] }}"
+    - type: AddedFieldDefinition
+      path: [source_id]
+      value: "{{ config['insight_source_id'] }}"
+    - type: AddedFieldDefinition
+      path: [collected_at]
+      value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+    - type: AddedFieldDefinition
+      path: [data_source]
+      value: insight_zendesk
+
+# `check` uses GET /api/v2/users/me — cheapest endpoint, single record,
+# confirms credentials are valid without pagination or rate limit impact.
+check:
+  type: CheckStream
+  stream_names:
+    - support_agents
+
+streams:
+  # ── Stream 1: support_tickets ──────────────────────────────────────
+  # Incremental ticket export via Zendesk's bulk cursor endpoint.
+  # Sideloads metric_sets to get timing fields (first_reply, full_resolution)
+  # in the same response — avoids N+1 per-ticket calls.
+  #
+  # Both business-hours and calendar-hours timing variants are extracted.
+  # satisfaction_score is NULL in Phase 1 (ratings live in stream 3).
+  #
+  # TODO(INSIGHT-459): implement metric_set sideload merging via
+  # CustomTransformation — Zendesk returns metric_sets as a parallel
+  # array keyed by ticket ID; needs a join step before field extraction.
+  - type: DeclarativeStream
+    name: support_tickets
+    primary_key:
+      - ticket_id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          ticket_id: { type: string }
+          subject: { type: ["string", "null"] }
+          status: { type: string }
+          priority: { type: ["string", "null"] }
+          ticket_type: { type: ["string", "null"] }
+          assignee_id: { type: ["string", "null"] }
+          group_id: { type: ["string", "null"] }
+          requester_id: { type: ["string", "null"] }
+          organization_id: { type: ["string", "null"] }
+          created_at: { type: string }
+          updated_at: { type: string }
+          solved_at: { type: ["string", "null"] }
+          first_reply_time_seconds: { type: ["integer", "null"] }
+          first_reply_time_calendar_seconds: { type: ["integer", "null"] }
+          full_resolution_time_seconds: { type: ["integer", "null"] }
+          full_resolution_time_calendar_seconds: { type: ["integer", "null"] }
+          satisfaction_score: { type: ["string", "null"] }
+          tags: { type: ["string", "null"] }
+          metadata: { type: string }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "incremental/tickets.json"
+        request_parameters:
+          include: "metric_sets"
+          per_page: "1000"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [tickets]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('after_cursor', '') }}"
+          stop_condition: "{{ response.get('end_of_stream', False) == True }}"
+        page_token_option:
+          type: RequestOption
+          field_name: after_cursor
+          inject_into: request_parameter
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-90, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_time_option:
+        type: RequestOption
+        field_name: start_time
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields:
+          <<: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [ticket_id]
+            value: "{{ record['id'] | string }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [metadata]
+            value: "{{ record | tojson }}"
+
+  # ── Stream 2: support_agents ────────────────────────────────────────
+  # Full refresh — agent roster is small; Zendesk has no reliable
+  # incremental user endpoint on all plan tiers.
+  # Group names resolved via startup GET /api/v2/groups lookup.
+  #
+  # TODO(INSIGHT-459): add CustomTransformation for group_name resolution
+  # (requires startup groups fetch; currently group_name is NULL).
+  - type: DeclarativeStream
+    name: support_agents
+    primary_key:
+      - agent_id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          agent_id: { type: string }
+          email: { type: string }
+          display_name: { type: ["string", "null"] }
+          role: { type: ["string", "null"] }
+          group_id: { type: ["string", "null"] }
+          group_name: { type: ["string", "null"] }
+          is_active: { type: integer }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "users"
+        request_parameters:
+          "role[]": ["agent", "admin"]
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [users]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('meta', {}).get('after_cursor', '') }}"
+          stop_condition: "{{ response.get('meta', {}).get('has_more', False) == False }}"
+        page_token_option:
+          type: RequestOption
+          field_name: "page[after]"
+          inject_into: request_parameter
+        page_size_option:
+          type: RequestOption
+          field_name: per_page
+          inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields:
+          <<: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [agent_id]
+            value: "{{ record['id'] | string }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [group_id]
+            value: "{{ record.get('default_group_id') | string if record.get('default_group_id') else None }}"
+          - type: AddedFieldDefinition
+            path: [group_name]
+            value: null   # TODO: resolve from groups lookup
+          - type: AddedFieldDefinition
+            path: [is_active]
+            value: "{{ 0 if record.get('suspended') else 1 }}"
+
+  # ── Stream 3: zendesk_satisfaction_ratings ──────────────────────────
+  # Separate incremental stream for CSAT ratings. Stored independently
+  # of support_tickets — preserves full rating history and avoids
+  # overwriting support_tickets on each rating update.
+  - type: DeclarativeStream
+    name: zendesk_satisfaction_ratings
+    primary_key:
+      - rating_id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          rating_id: { type: string }
+          ticket_id: { type: string }
+          requester_id: { type: ["string", "null"] }
+          assignee_id: { type: ["string", "null"] }
+          group_id: { type: ["string", "null"] }
+          score: { type: ["string", "null"] }
+          comment: { type: ["string", "null"] }
+          reason: { type: ["string", "null"] }
+          created_at: { type: string }
+          updated_at: { type: string }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "satisfaction_ratings"
+        request_parameters:
+          sort_by: "updated_at"
+          sort_order: "asc"
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [satisfaction_ratings]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('next_page', '') }}"
+          stop_condition: "{{ response.get('next_page') is none }}"
+        page_token_option:
+          type: RequestPath
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
+      datetime_format: "%s"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-90, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_time_option:
+        type: RequestOption
+        field_name: start_time
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields:
+          <<: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [rating_id]
+            value: "{{ record['id'] | string }}"
+          - type: AddedFieldDefinition
+            path: [ticket_id]
+            value: "{{ record['ticket_id'] | string }}"
+          - type: AddedFieldDefinition
+            path: [requester_id]
+            value: "{{ record.get('requester_id') | string if record.get('requester_id') else None }}"
+          - type: AddedFieldDefinition
+            path: [assignee_id]
+            value: "{{ record.get('assignee_id') | string if record.get('assignee_id') else None }}"
+          - type: AddedFieldDefinition
+            path: [group_id]
+            value: "{{ record.get('group_id') | string if record.get('group_id') else None }}"
+          - type: AddedFieldDefinition
+            path: [reason]
+            value: "{{ record.get('reason') or record.get('reason_code') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - zendesk_subdomain
+      - zendesk_email
+      - zendesk_api_token
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Tenant isolation identifier, injected as `tenant_id` on every record.
+        order: 0
+      insight_source_id:
+        type: string
+        title: Source Instance ID
+        description: Connector instance identifier (e.g. `zendesk-main`). Set by the reconcile loop from the K8s Secret annotation `insight.cyberfabric.com/source-id`.
+        default: ""
+        order: 1
+      zendesk_subdomain:
+        type: string
+        title: Zendesk Subdomain
+        description: |
+          Your Zendesk subdomain — the `{subdomain}` part of `{subdomain}.zendesk.com`.
+          Example: if your Zendesk URL is `acme.zendesk.com`, enter `acme`.
+        order: 2
+      zendesk_email:
+        type: string
+        title: Agent Email
+        description: |
+          Email of the Zendesk agent or admin associated with the API token.
+          Used as the Basic Auth username in the form `{email}/token`.
+        order: 3
+      zendesk_api_token:
+        type: string
+        title: API Token
+        airbyte_secret: true
+        description: |
+          Zendesk API token. Created under Admin → Apps & Integrations → Zendesk API.
+          Requires Token Access to be enabled on the account.
+        order: 4
+      start_date:
+        type: string
+        title: Start Date
+        description: |
+          Earliest date for historical backfill (YYYY-MM-DD). Default: 90 days ago.
+          First run fetches all tickets and ratings updated since this date.
+          Example: "2024-01-01" for a full 2024+ backfill.
+        default: ""
+        order: 5
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    support_tickets: true
+    support_agents: true
+    zendesk_satisfaction_ratings: true
