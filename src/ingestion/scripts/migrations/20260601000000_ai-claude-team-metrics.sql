@@ -28,9 +28,12 @@
 -- Shape change: Branch 3 grows from 5 to 8 metric_keys emitted per
 -- (person, date) row via ARRAY JOIN. Branches 1 and 2 are unchanged.
 --
--- Paired backend migration: m2026XXXX_ai_claude_team_metrics.rs updates
--- the query_ref for Team Bullet AI and IC Bullet AI to read the three
--- new metric_keys via sumIf and expose them in the response.
+-- Paired backend migrations:
+--   m20260601_000001_ai_claude_team_metrics.rs — updates query_ref for Team
+--     Bullet AI and IC Bullet AI to read the three new metric_keys via sumIf.
+--   m20260601_000002_seed_claude_team_metrics_catalog.rs — seeds
+--     metric_catalog + product-default metric_threshold rows for the three
+--     new keys (label / unit / higher_is_better / good / warn).
 --
 -- Idempotent: DROP VIEW IF EXISTS + CREATE VIEW.
 -- =====================================================================
