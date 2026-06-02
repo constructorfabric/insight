@@ -782,7 +782,7 @@ streams:
           - type: ParentStreamConfig
             stream:
               type: DeclarativeStream
-              name: jira_project_keys
+              name: jira_project_discovery
               primary_key: []
               retriever:
                 type: SimpleRetriever

@@ -26,9 +26,9 @@ date: 2026-04-23
 **ID**: `cpt-insightspec-adr-youtrack-no-whitelist`
 ## Context and Problem Statement
 
-The Jira connector accepts a `jira_project_keys` K8s Secret field that restricts ingestion to a specific list of projects. This was driven by Jira-side requirements (Phase 1 customer instances often had hundreds of projects, of which only a handful were relevant for analytics).
+Originally the Jira connector accepted a `jira_project_keys` K8s Secret field that restricted ingestion to a specific list of projects. That field has since been removed (see Jira ADR-001 — auto-discovery via SubstreamPartitionRouter); Jira and YouTrack now converge on the same full-ingestion approach.
 
-For YouTrack, we have to decide whether to mirror this — adding a `youtrack_project_short_names` K8s Secret field that restricts the manifest's JQL-equivalent query and the project-fan-out streams — or to ingest everything the permanent token can reach.
+For YouTrack, we have to decide whether to add a `youtrack_project_short_names` K8s Secret field that restricts the manifest's JQL-equivalent query and the project-fan-out streams — or to ingest everything the permanent token can reach.
 
 The decision affects:
 
@@ -49,7 +49,7 @@ The decision affects:
 ## Considered Options
 
 1. **No whitelist** — ingest every project the token can reach.
-2. **Project-allowlist via K8s Secret** — mirror Jira's `jira_project_keys`.
+2. **Project-allowlist via K8s Secret** — add a `youtrack_project_short_names` field (Jira previously had this as `jira_project_keys`, but removed it in ADR-001).
 3. **Tenant-side scoping only** — operators create a service-account token restricted to specific projects in YouTrack; the connector trusts the token's scope.
 
 ## Decision Outcome
@@ -98,8 +98,8 @@ Decision is confirmed when:
 
 ### Option 2 — Project allowlist via K8s Secret
 
-- **Pros**: Symmetric with Jira; per-source operator UX consistent.
-- **Cons**: Duplicates token permission boundary; allowlist can drift from token scope without warning; adds maintenance burden as projects are added / archived.
+- **Pros**: Per-source operator UX: explicit scope list.
+- **Cons**: Duplicates token permission boundary; allowlist can drift from token scope without warning; adds maintenance burden as projects are added / archived. (Note: Jira previously had this option and removed it — see ADR-001.)
 
 ### Option 3 — Tenant-side scoping only (token permissions)
 
@@ -109,11 +109,11 @@ Decision is confirmed when:
 ## More Information
 
 - YouTrack permanent token permission model: <https://www.jetbrains.com/help/youtrack/devportal/Manage-Permanent-Token.html>.
-- Equivalent decision in Jira (allowlist retained): `docs/components/connectors/task-tracking/jira/specs/PRD.md` §3.1 `jira_project_keys`.
+- Jira converged on the same approach (ADR-001): `docs/components/connectors/task-tracking/jira/specs/ADR/ADR-001-auto-project-discovery.md`.
 - 6-month revisit horizon: Insight platform engineering review (Q3 2026 retrospective).
 
 ## Traceability
 
 - Implements DESIGN `cpt-insightspec-constraint-youtrack-no-whitelist`.
 - Pairs with Connector ADR-001 (project-scoped custom fields) — the per-project substream fans out across every project the token reaches.
-- Differs from the equivalent Jira decision (which kept a `jira_project_keys` allowlist) — documented divergence under PRD `cpt-insightspec-principle-youtrack-symmetry-with-jira`.
+- Jira ADR-001 documents the same decision for Jira (converged from the prior `jira_project_keys` allowlist approach).
