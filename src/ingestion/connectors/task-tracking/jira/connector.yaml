@@ -37,7 +37,7 @@ definitions:
               - 404
       request_parameters:
         jql: >-
-          project IN ({{ config['jira_project_keys'] }}) AND updated >= "{{
+          project = "{{ stream_slice.project_key }}" AND updated >= "{{
           stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time
           }}" ORDER BY updated ASC
         expand: names
@@ -776,6 +776,51 @@ streams:
         request_parameters:
           $ref: "#/definitions/linked/HttpRequester/request_parameters"
         url: "{{ config['jira_instance_url'] }}/rest/api/3/search/jql"
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            stream:
+              type: DeclarativeStream
+              name: jira_project_keys
+              primary_key: []
+              retriever:
+                type: SimpleRetriever
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - values
+                paginator:
+                  $ref: "#/definitions/linked/SimpleRetriever/paginator"
+                requester:
+                  type: HttpRequester
+                  http_method: GET
+                  authenticator:
+                    $ref: "#/definitions/linked/HttpRequester/authenticator"
+                  error_handler:
+                    $ref: "#/definitions/linked/HttpRequester/error_handler"
+                  url: "{{ config['jira_instance_url'] }}/rest/api/3/project/search"
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path:
+                        - project_key
+                      value: "{{ record['key'] }}"
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  properties:
+                    project_key:
+                      type:
+                        - string
+                        - "null"
+                  additionalProperties: true
+            parent_key: project_key
+            partition_field: project_key
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated
@@ -7903,7 +7948,6 @@ spec:
       - jira_api_token
       - insight_tenant_id
       - insight_source_id
-      - jira_project_keys
     properties:
       jira_instance_url:
         type: string
@@ -7930,13 +7974,6 @@ spec:
         description: Instance discriminator (e.g., jira-team-alpha)
         title: Source Instance ID
         order: 4
-      jira_project_keys:
-        type: string
-        description: >-
-          Comma-separated project keys to sync (e.g., TC,TNG). Required — Jira
-          Cloud does not allow unbounded queries.
-        title: Project Keys
-        order: 5
       jira_start_date:
         type: string
         description: "Earliest date to sync issues from (YYYY-MM-DD). Default: 2020-01-01"
