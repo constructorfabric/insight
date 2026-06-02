@@ -7,7 +7,7 @@
 //!   exactly one bulk SQL fetch per request, then an in-memory most-specific-wins
 //!   walk over `{ product-default, tenant, role, team, team+role }`. Halts on
 //!   the first locked broader-scope row and surfaces `bounded_by_lock = true`.
-//! - [`response`] — wire shape for `POST /catalog/get_metrics`. Crucially carries
+//! - [`response`] — wire shape for `POST /v1/catalog/get_metrics`. Crucially carries
 //!   `id` (UUIDv7) and NOT `metric_key`: the latter is `<table>.<column>` form
 //!   and stays backend-internal so consumers can't couple to ClickHouse
 //!   source-schema names.

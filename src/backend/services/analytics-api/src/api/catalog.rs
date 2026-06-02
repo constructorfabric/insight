@@ -1,4 +1,4 @@
-//! `POST /catalog/get_metrics` HTTP handler (Refs #524).
+//! `POST /v1/catalog/get_metrics` HTTP handler (Refs #524).
 //!
 //! Implements `cpt-metric-cat-component-catalog-reader`'s HTTP surface per
 //! DESIGN §3.3 "Catalog Read":
@@ -26,7 +26,7 @@ use super::canonical_json::CanonicalJson;
 use crate::auth::SecurityContext;
 use crate::domain::catalog::response::GetMetricsRequest;
 
-/// `POST /catalog/get_metrics` handler.
+/// `POST /v1/catalog/get_metrics` handler.
 ///
 /// # Errors
 ///

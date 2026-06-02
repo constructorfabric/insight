@@ -130,7 +130,7 @@ async fn run_server(cfg: config::AppConfig) -> anyhow::Result<()> {
     };
 
     // Flush the catalog cache so newly seeded rows are visible on the
-    // next `POST /catalog/get_metrics` read without waiting for the TTL.
+    // next `POST /v1/catalog/get_metrics` read without waiting for the TTL.
     // Best-effort — a Redis blip MUST NOT gate service boot.
     if let Err(e) = catalog_cache.flush_all().await {
         tracing::warn!(error = %e, "catalog_cache: flush_all failed at boot; continuing");

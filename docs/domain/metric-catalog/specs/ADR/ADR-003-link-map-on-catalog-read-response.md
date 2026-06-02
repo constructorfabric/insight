@@ -3,7 +3,7 @@ status: accepted
 date: 2026-06-01
 ---
 
-# Surface the `metric_query_catalog` link map as a top-level `links` array on the `POST /catalog/get_metrics` response
+# Surface the `metric_query_catalog` link map as a top-level `links` array on the `POST /v1/catalog/get_metrics` response
 
 **ID**: `cpt-metric-cat-adr-link-map-on-catalog-read`
 
@@ -33,7 +33,7 @@ Without an authoritative wire shape, the FE would have to derive the mapping by 
 
 ## Considered Options
 
-- **Option A — Top-level `links: [{ query_id, catalog_metric_ids: [...] }]` array on the existing `POST /catalog/get_metrics` response.**
+- **Option A — Top-level `links: [{ query_id, catalog_metric_ids: [...] }]` array on the existing `POST /v1/catalog/get_metrics` response.**
 - **Option B — Embed `query_ids: [Uuid]` on each `metrics[i]` row** (the catalog row carries the list of queries that produce it).
 - **Option C — Separate endpoint `POST /catalog/get_query_links`** returning just the junction.
 - **Option D — Reverse-direction embed: `catalog_metric_ids: [Uuid]` on each `metrics[]` query row** — but the existing `metrics` array in the response is catalog rows, not query rows, so this would force a new top-level `queries[]` array anyway.

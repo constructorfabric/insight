@@ -3,7 +3,7 @@ status: accepted
 date: 2026-06-01
 ---
 
-# Surface `metric_key` on the `POST /catalog/get_metrics` response for the FE-bridge transitional release
+# Surface `metric_key` on the `POST /v1/catalog/get_metrics` response for the FE-bridge transitional release
 
 **ID**: `cpt-metric-cat-adr-metric-key-on-wire`
 

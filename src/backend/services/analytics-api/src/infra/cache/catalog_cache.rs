@@ -1,6 +1,6 @@
 //! Catalog cache layer (`cpt-metric-cat-component-cache-layer`).
 //!
-//! Server-side cache front for `POST /catalog/get_metrics` per DESIGN §3.2 /
+//! Server-side cache front for `POST /v1/catalog/get_metrics` per DESIGN §3.2 /
 //! §3.6 (`cpt-metric-cat-seq-catalog-read`). Carries the read-latency hit-path
 //! NFR and the cross-replica invalidation NFR.
 //!

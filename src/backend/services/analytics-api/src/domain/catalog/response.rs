@@ -1,4 +1,4 @@
-//! Wire shape for `POST /catalog/get_metrics` (DESIGN §3.3 "Catalog Read").
+//! Wire shape for `POST /v1/catalog/get_metrics` (DESIGN §3.3 "Catalog Read").
 //!
 //! Three invariants pinned by tests:
 //!
@@ -25,7 +25,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Request body for `POST /catalog/get_metrics`.
+/// Request body for `POST /v1/catalog/get_metrics`.
 ///
 /// `tenant_id` is intentionally NOT accepted here — it is resolved server-side
 /// from the session by `tenant_middleware` (Refs #522 auth-trait). Allowing a

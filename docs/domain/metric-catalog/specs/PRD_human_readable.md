@@ -43,7 +43,7 @@ The catalog replaces that story:
 
 **API:**
 
-- `POST /catalog/get_metrics` (JSON body: optional `role_slug`, `team_id`) — returns the catalog with resolved thresholds for the caller's `(tenant, role, team)` context. One call hydrates the frontend for an entire session. POST keeps role/team out of HTTP access logs. Server-side cacheable for 5 minutes with cross-replica invalidation.
+- `POST /v1/catalog/get_metrics` (JSON body: optional `role_slug`, `team_id`) — returns the catalog with resolved thresholds for the caller's `(tenant, role, team)` context. One call hydrates the frontend for an entire session. POST keeps role/team out of HTTP access logs. Server-side cacheable for 5 minutes with cross-replica invalidation.
 - `POST/PUT/DELETE /v1/admin/metric-thresholds` — tenant-admin CRUD on thresholds. Validates scope shape, numeric sanity (`warn ≤ good` where `higher_is_better = true`, etc.), and refuses writes shadowed by a broader lock.
 
 **Migration from today:**
@@ -62,7 +62,7 @@ A compliance team at Acme wants a stricter focus-time target than the product de
 
 1. Admin hits `POST /v1/admin/metric-thresholds` with `{ tenant_id: "acme", metric_key: "focus_time_pct", scope: "tenant", good: 75, warn: 60 }`.
 2. API checks that the admin is a tenant admin for Acme, that the metric exists and is enabled, that `warn ≤ good`. Persists the row.
-3. The tenant's cache is invalidated across all replicas. Next `POST /catalog/get_metrics` from anyone in Acme returns the new values.
+3. The tenant's cache is invalidated across all replicas. Next `POST /v1/catalog/get_metrics` from anyone in Acme returns the new values.
 4. Bullet charts across the product re-render with the new color policy on the next page load. No deploy.
 
 ### Scenario 2 — Team lead has a different bar
@@ -186,6 +186,6 @@ These were in earlier drafts and deliberately deferred:
 
 ## Changelog of this companion
 
-- **v1.2** (2026-05-21): Aligned with canonical PRD v1.11. Read endpoint switched to `POST /catalog/get_metrics` with JSON body (keeps `role_slug` / `team_id` out of HTTP access logs; cache is now explicitly server-side). Removed implicit assumption that metric labels are i18n-key references — v1 stores plain-English `label` / `sublabel` / `description`; i18n is out of v1 scope and lands additively later.
+- **v1.2** (2026-05-21): Aligned with canonical PRD v1.11. Read endpoint switched to `POST /v1/catalog/get_metrics` with JSON body (keeps `role_slug` / `team_id` out of HTTP access logs; cache is now explicitly server-side). Removed implicit assumption that metric labels are i18n-key references — v1 stores plain-English `label` / `sublabel` / `description`; i18n is out of v1 scope and lands additively later.
 - **v1.1** (2026-04-24): Aligned with canonical PRD v1.10. Reframed the tenant-custom story from "cross-layer, needs its own PRD" to "schema slot ships in v1 (nullable `tenant_id` column, CHECK forces NULL), behavior ships in a follow-on additively". Updated architectural-decisions section to describe the product/tenant split as *product owns global, tenants extend with their own rows, tenants tune thresholds on any row*.
 - **v1.0** (2026-04-24): Initial companion. Matches canonical PRD v1.9 (adds the tenant-specific-custom-metrics clarification in "What v1 does not do").
