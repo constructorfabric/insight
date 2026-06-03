@@ -16,5 +16,5 @@
 -- depends_on: {{ ref('ms_entra__to_class_people') }}
 
 SELECT * FROM (
-    {{ union_by_tag('silver:class_people') }}
+    {{ union_by_tag('silver:class_people', dedup_version_col=none) }}
 )

@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('openai__bronze_promoted') }}
 -- Bronze → Silver step 1: OpenAI costs → class_ai_cost
 -- Maps per-line-item, per-project daily cost data.
 -- bucket_start_time is Unix seconds — converted to date for report_date.

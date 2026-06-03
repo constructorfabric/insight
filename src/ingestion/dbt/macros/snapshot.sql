@@ -29,7 +29,12 @@ WITH source_data AS (
             ''
             {% endif %}
         ) AS _row_hash
-    FROM {{ source_ref }}
+    -- FINAL dedups the RMT bronze source to one row per unique_key (latest
+    -- version) BEFORE hashing. Without it, transient pre-merge duplicates
+    -- (e.g. an erroneous Airbyte full_refresh|append re-appending every row)
+    -- are each compared to the snapshot high-water mark and written as spurious
+    -- SCD2 history versions — data corruption, not just dupes. See ADR-0001.
+    FROM {{ source_ref }} FINAL
 )
 
 {% if is_incremental() %}

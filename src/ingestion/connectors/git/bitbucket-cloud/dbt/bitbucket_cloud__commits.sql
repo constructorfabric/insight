@@ -29,7 +29,7 @@ SELECT
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     c._airbyte_extracted_at
-FROM {{ source('bronze_bitbucket_cloud', 'commits') }} AS c
+FROM {{ source('bronze_bitbucket_cloud', 'commits') }} AS c FINAL
 LEFT JOIN (
     SELECT
         tenant_id,
@@ -39,7 +39,10 @@ LEFT JOIN (
         count() AS files_changed,
         SUM(COALESCE(additions, 0)) AS lines_added,
         SUM(COALESCE(deletions, 0)) AS lines_removed
-    FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }}
+    -- FINAL: dedup file_changes before count()/SUM, else bronze dupes inflate
+    -- files_changed / lines_added / lines_removed (baked into one row, RMT
+    -- downstream cannot undo it). See ADR-0001.
+    FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }} FINAL
     GROUP BY tenant_id, workspace, repo_slug, sha
 ) AS fc ON fc.sha = c.hash
     AND fc.tenant_id = c.tenant_id

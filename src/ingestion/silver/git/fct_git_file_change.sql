@@ -1,7 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
-    incremental_strategy='append',
+    incremental_strategy='delete+insert',
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
@@ -35,11 +35,11 @@ SELECT
     fc.data_source,
     fc._version,
     fc._airbyte_extracted_at
-FROM {{ ref('class_git_file_changes') }} AS fc
+FROM {{ ref('class_git_file_changes') }} AS fc FINAL
 -- INNER JOIN: a file change without a matching commit cannot be attributed
 -- to a person/week and has no usable downstream role. Enforcing correspondence
 -- here avoids silent NULL-propagation through WHERE filters in metric models.
-INNER JOIN {{ ref('fct_git_commit') }} AS c
+INNER JOIN {{ ref('fct_git_commit') }} AS c FINAL
     ON  c.tenant_id   = fc.tenant_id
     AND c.source_id   = fc.source_id
     AND c.project_key = fc.project_key
