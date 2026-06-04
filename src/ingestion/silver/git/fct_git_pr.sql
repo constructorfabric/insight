@@ -9,6 +9,23 @@
     tags=['silver']
 ) }}
 
+WITH author_email_xwalk AS (
+    SELECT
+        tenant_id,
+        name_key,
+        argMax(email, (n, email)) AS email
+    FROM (
+        SELECT
+            tenant_id,
+            lower(author_name)  AS name_key,
+            lower(author_email) AS email,
+            count()             AS n
+        FROM {{ ref('fct_git_commit') }} FINAL
+        WHERE author_email != '' AND author_name != ''
+        GROUP BY tenant_id, name_key, email
+    )
+    GROUP BY tenant_id, name_key
+)
 SELECT
     pr.tenant_id,
     pr.source_id,
@@ -22,7 +39,11 @@ SELECT
     lower(pr.state) AS state_norm,
     pr.author_name,
     pr.author_email,
-    if(pr.author_email != '', lower(pr.author_email), lower(pr.author_name)) AS person_key,
+    if(
+        pr.author_email != '',
+        lower(pr.author_email),
+        coalesce(nullif(xw.email, ''), lower(pr.author_name))
+    ) AS person_key,
     pr.source_branch,
     pr.destination_branch,
     pr.created_on,
@@ -46,6 +67,9 @@ SELECT
     pr._version,
     pr._airbyte_extracted_at
 FROM {{ ref('class_git_pull_requests') }} AS pr FINAL
+LEFT JOIN author_email_xwalk AS xw
+    ON xw.tenant_id = pr.tenant_id
+   AND xw.name_key = lower(pr.author_name)
 {% if is_incremental() %}
 WHERE pr._version > (SELECT max(_version) FROM {{ this }})
 {% endif %}
