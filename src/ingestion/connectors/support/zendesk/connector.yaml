@@ -54,9 +54,9 @@ streams:
   # Both business-hours and calendar-hours timing variants are extracted.
   # satisfaction_score is NULL in Phase 1 (ratings live in stream 3).
   #
-  # TODO(INSIGHT-459): implement metric_set sideload merging via
-  # CustomTransformation — Zendesk returns metric_sets as a parallel
-  # array keyed by ticket ID; needs a join step before field extraction.
+  # Note: on the incremental export endpoint, ?include=metric_sets embeds the
+  # metric set per-ticket as record.metric_set (singular) — no parallel-array
+  # join is needed; field extraction reads it directly below.
   - type: DeclarativeStream
     name: support_tickets
     primary_key:
@@ -155,6 +155,10 @@ streams:
             path: [organization_id]
             value: "{{ record['organization_id'] | string if record.get('organization_id') else '' }}"
           - type: AddedFieldDefinition
+            # Zendesk ticket `type`: question / incident / problem / task; null if not set
+            path: [ticket_type]
+            value: "{{ record.get('type') or none }}"
+          - type: AddedFieldDefinition
             path: [tags]
             value: "{{ record.get('tags', []) | join(',') }}"
           - type: AddedFieldDefinition
@@ -250,6 +254,10 @@ streams:
           - type: AddedFieldDefinition
             path: [agent_id]
             value: "{{ record['id'] | string }}"
+          - type: AddedFieldDefinition
+            # display_name from Zendesk user `name`; null if absent
+            path: [display_name]
+            value: "{{ record.get('name') or none }}"
           - type: AddedFieldDefinition
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
