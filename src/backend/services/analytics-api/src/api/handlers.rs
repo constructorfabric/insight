@@ -643,6 +643,10 @@ fn process_select(inner: &str, where_clause: &str) -> (String, bool) {
         let rebuilt = format!("{} FROM {}{}", &inner[..from_pos], new_inner_from, rest);
         (rebuilt, nested_did)
     } else {
+        let leaf_table = after_trim.split_whitespace().next().unwrap_or("");
+        if leaf_table.starts_with("bronze_") {
+            return (inner.to_string(), false);
+        }
         // Leaf: inject WHERE before GROUP BY (or at end).
         let gb_pos = find_at_depth_zero(&inner_upper, " GROUP BY ");
         let existing_where = find_at_depth_zero(&inner_upper, " WHERE ");
@@ -1434,24 +1438,39 @@ mod tests {
     }
 
     #[test]
-    fn inject_after_prewrap_injects_into_bare_table_first_join()
+    fn inject_skips_bare_bronze_table_without_metric_date()
     -> Result<(), Box<dyn std::error::Error>> {
         let from = "bronze_bamboohr.employees e \
                     LEFT JOIN insight.people p ON e.workEmail = p.email";
         let where_clause = " WHERE metric_date >= '2026-04-01'";
 
         let normalised = ensure_subquery_from(from);
+        assert!(
+            inject_date_filter_into_subqueries(&normalised, where_clause).is_none(),
+            "bronze leaf must be skipped (no metric_date column)"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inject_after_prewrap_injects_into_bare_fact_table()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let from = "insight.team_member m \
+                    LEFT JOIN insight.people p ON m.person_id = p.person_id";
+        let where_clause = " WHERE metric_date >= '2026-04-01'";
+
+        let normalised = ensure_subquery_from(from);
         let output = inject_date_filter_into_subqueries(&normalised, where_clause)
-            .ok_or("pre-wrap must make injection possible for bare-table FROMs")?;
+            .ok_or("pre-wrap must make injection possible for bare fact-table FROMs")?;
 
         assert!(
             output.contains(
-                "(SELECT * FROM bronze_bamboohr.employees WHERE metric_date >= '2026-04-01') e"
+                "(SELECT * FROM insight.team_member WHERE metric_date >= '2026-04-01') m"
             ),
-            "WHERE must land inside the wrapped first table; got:\n{output}"
+            "WHERE must land inside the wrapped fact table; got:\n{output}"
         );
         assert!(
-            output.contains("LEFT JOIN insight.people p ON e.workEmail = p.email"),
+            output.contains("LEFT JOIN insight.people p ON m.person_id = p.person_id"),
             "JOIN tail must be preserved verbatim; got:\n{output}"
         );
         Ok(())
