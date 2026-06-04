@@ -12,13 +12,11 @@ type: declarative
 schedule: "0 5 * * *"       # 05:00 UTC daily
 workflow: sync               # Argo workflow template: ingestion-pipeline
 
-images:
-  declarative:
-    image: ""                # no custom Docker image — uses platform declarative runner
-
-# dbt_select is empty until Silver models are added (Phase 2).
-# When Silver models land, tag them "zendesk" and set: "tag:zendesk+"
-dbt_select: ""
+# Scope the dbt step to this connector's models (and their downstream) so the
+# Silver run never touches other connectors' models. No models are tagged
+# `zendesk` yet (Phase 1 ships Bronze only), so this selects nothing — a
+# correct no-op — until Phase 2 Silver models land tagged `zendesk`.
+dbt_select: "tag:zendesk+"
 
 connection:
   namespace: "bronze_zendesk"
