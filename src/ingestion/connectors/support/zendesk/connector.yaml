@@ -38,8 +38,9 @@ definitions:
       path: [data_source]
       value: insight_zendesk
 
-# `check` uses GET /api/v2/users/me — cheapest endpoint, single record,
-# confirms credentials are valid without pagination or rate limit impact.
+# `check` runs a CheckStream against support_agents: the CDK fetches the first
+# page of GET /api/v2/users?role[]=agent&role[]=admin and reports SUCCEEDED if
+# credentials are valid. (There is no dedicated /users/me stream to point at.)
 check:
   type: CheckStream
   stream_names:

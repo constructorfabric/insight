@@ -177,7 +177,6 @@ The Zendesk connector closes this gap by ingesting support activity into the sam
 - Incremental ticket extraction using Zendesk's bulk export endpoint (`GET /api/v2/incremental/tickets.json`)
 - Extraction of satisfaction ratings as a separate incremental stream (`zendesk_satisfaction_ratings`)
 - Extraction of the agent directory (agents and admins) for identity resolution
-- Group name resolution via `GET /api/v2/groups` at collection startup
 - Connector execution monitoring via `support_collection_runs` stream
 - K8s Secret-based credential management following the Insight connector secret format
 - Bronze-layer table schemas for all Phase 1 streams
@@ -189,6 +188,7 @@ The Zendesk connector closes this gap by ingesting support activity into the sam
 - Silver/Gold layer transformations (`class_support_activity`) — responsibility of the support domain pipeline
 - Silver step 2 (identity resolution: `email` → `person_id`) — responsibility of the Identity Manager
 - Backfilling `support_tickets.satisfaction_score` from `zendesk_satisfaction_ratings` — Silver layer responsibility in Phase 2
+- `group_name` resolution on `support_agents` via `GET /api/v2/groups` — `group_name` is NULL in Phase 1 (FR `cpt-zendeskspec-fr-group-name-resolution` is `p2`)
 
 ### 4.3 Permanently Out of Scope
 
@@ -248,7 +248,7 @@ The connector **MUST** store the full Zendesk ticket API response as a JSON stri
 
 - [ ] `p1` - **ID**: `cpt-zendeskspec-fr-agent-extraction`
 
-The connector **MUST** extract all users with `role = "agent"`, `role = "admin"`, and `role = "light_agent"` from `GET /api/v2/users?role[]=agent&role[]=admin`. For each agent, the connector **MUST** store: agent ID, email, display name, role, primary group ID, group name, and active status.
+The connector **MUST** extract all users with `role = "agent"`, `role = "admin"`, and `role = "light_agent"` from `GET /api/v2/users?role[]=agent&role[]=admin`. For each agent, the connector **MUST** store: agent ID, email, display name, role, primary group ID, and active status. (`group_name` resolution is deferred to Phase 2 — see `cpt-zendeskspec-fr-group-name-resolution`; NULL in Phase 1.)
 
 **Rationale**: The agent directory is the identity anchor for all support analytics. Email is the cross-system key for `person_id` resolution. Group assignment enables team-level metric aggregation.
 
@@ -418,7 +418,7 @@ The Zendesk connector does not expose a public library interface. It is consumed
 2. Operator applies the Secret: `kubectl apply -f zendesk-secret.yaml`
 3. Reconcile loop discovers the Secret, creates an Airbyte connection with the correct parameters
 4. Operator triggers a manual sync to verify connectivity
-5. Connector performs a `check` connection using `GET /api/v2/users/me` — success confirms credentials are valid
+5. Connector performs a `check` connection (CheckStream against `support_agents`, i.e. the first page of `GET /api/v2/users`) — success confirms credentials are valid
 
 **Postconditions**: Airbyte connection exists and `support_agents` has data after first sync.
 

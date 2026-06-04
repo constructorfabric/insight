@@ -117,7 +117,7 @@ Maps to the unified `support_tickets` table defined in `docs/connectors/support/
 
 Identity anchor for support analytics. Maps to `person_id` via Identity Manager.
 
-**API**: `GET /api/v2/users?role[]=agent&role[]=admin` — returns both agent-tier users. Paginate with `page[after]` cursor (cursor-based pagination). Use `?include=groups` to retrieve group memberships without extra calls.
+**API**: `GET /api/v2/users?role[]=agent&role[]=admin` — returns both agent-tier users. Paginate with `page[after]` cursor (cursor-based pagination). Group-name enrichment (via `GET /api/v2/groups`) is deferred to Phase 2.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -127,7 +127,7 @@ Identity anchor for support analytics. Maps to `person_id` via Identity Manager.
 | `display_name` | String | `user.name` |
 | `role` | String | `user.role` — `agent` / `admin` / `light_agent` |
 | `group_id` | String | `user.default_group_id` — numeric primary group ID; NULL if not set |
-| `group_name` | String | Display name of the group at `default_group_id`; NULL if not set — fetched via `GET /api/v2/groups` |
+| `group_name` | String | **Phase 2** — NULL in Phase 1. Display name of the group at `default_group_id`; resolved via `GET /api/v2/groups` once group-name resolution is implemented |
 | `is_active` | Int64 | `user.active` — 1 if active; 0 if suspended (`user.suspended = true`) |
 | `collected_at` | DateTime64(3) | Collection timestamp |
 | `data_source` | String | `"insight_zendesk"` |
@@ -139,7 +139,7 @@ Identity anchor for support analytics. Maps to `person_id` via Identity Manager.
 
 **Note on `role`**: Zendesk has three agent-tier roles — `agent` (standard), `admin` (full access), `light_agent` (read-only with comment access). All three are returned by the combined role query. Fetch admins separately with `?role=admin` if the `role[]` array param is not supported by the account's plan tier.
 
-**Note on `group_name`**: `default_group_id` references a Zendesk Group. Group names are fetched via `GET /api/v2/groups` at startup and joined at collection time to populate `group_name`.
+**Note on `group_name`**: `default_group_id` references a Zendesk Group. Group-name resolution is **deferred to Phase 2** — Phase 1 stores NULL. When implemented, group names are fetched via `GET /api/v2/groups` at startup and joined at collection time to populate `group_name`.
 
 ---
 
