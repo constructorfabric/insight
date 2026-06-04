@@ -27,7 +27,7 @@ WITH commits AS (
         person_key,
         week,
         count() AS commits
-    FROM {{ ref('fct_git_commit') }}
+    FROM {{ ref('fct_git_commit') }} FINAL
     WHERE is_merge_commit = 0
       AND person_key != ''
       AND date IS NOT NULL
@@ -40,7 +40,7 @@ loc AS (
         week,
         SUM(if(file_category = 'code', lines_added, 0)) AS code_loc,
         SUM(if(file_category = 'spec', lines_added, 0)) AS spec_lines
-    FROM {{ ref('fct_git_file_change') }}
+    FROM {{ ref('fct_git_file_change') }} FINAL
     WHERE is_merge_commit = 0
       AND person_key != ''
       AND week IS NOT NULL
@@ -52,8 +52,8 @@ prs AS (
         pr.person_key,
         coalesce(mc.week, toStartOfWeek(pr.closed_on, 1)) AS week,
         count() AS prs_merged
-    FROM {{ ref('fct_git_pr') }} AS pr
-    LEFT JOIN {{ ref('fct_git_commit') }} AS mc
+    FROM {{ ref('fct_git_pr') }} AS pr FINAL
+    LEFT JOIN {{ ref('fct_git_commit') }} AS mc FINAL
         ON  mc.tenant_id   = pr.tenant_id
         AND mc.source_id   = pr.source_id
         AND mc.project_key = pr.project_key

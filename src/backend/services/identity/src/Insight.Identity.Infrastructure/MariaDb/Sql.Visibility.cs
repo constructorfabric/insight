@@ -19,6 +19,13 @@ internal static class SqlVisibility
           AND valid_to IS NULL
         """;
 
+    /// <summary>
+    /// Predicate "can @viewer_person_id see @target_person_id"?
+    /// Takes an optional <c>@valid_at</c> (DateTime or NULL) so the
+    /// answer reflects the org and visibility state as of that moment.
+    /// NULL means "right now" — equivalent to <c>valid_to IS NULL</c>
+    /// on our data (no future-dated rows exist).
+    /// </summary>
     public const string IsTargetInVisibleSet = """
         WITH RECURSIVE visible_set (person_id) AS (
             SELECT @viewer_person_id
@@ -28,7 +35,8 @@ internal static class SqlVisibility
             WHERE insight_tenant_id = @tenant_id
               AND viewer_person_id  = @viewer_person_id
               AND viewed_person_id  IS NOT NULL
-              AND valid_to IS NULL
+              AND valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+              AND (valid_to IS NULL OR valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
             UNION
             SELECT @target_person_id
             WHERE EXISTS (
@@ -36,7 +44,8 @@ internal static class SqlVisibility
                 WHERE insight_tenant_id = @tenant_id
                   AND viewer_person_id  = @viewer_person_id
                   AND viewed_person_id  IS NULL
-                  AND valid_to IS NULL
+                  AND valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+                  AND (valid_to IS NULL OR valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
             )
             UNION
             SELECT oc.child_person_id
@@ -45,7 +54,8 @@ internal static class SqlVisibility
               ON  oc.parent_person_id    = vs.person_id
               AND oc.insight_tenant_id   = @tenant_id
               AND oc.insight_source_type = @org_source_type
-              AND oc.valid_to IS NULL
+              AND oc.valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+              AND (oc.valid_to IS NULL OR oc.valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
         )
         SELECT EXISTS (SELECT 1 FROM visible_set WHERE person_id = @target_person_id)
         """;

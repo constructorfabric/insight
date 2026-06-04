@@ -19,13 +19,27 @@ import json
 import sys
 
 
+def _field(stream: dict, *keys):
+    # The /sources/discover_schema API response serialises AirbyteStream in
+    # camelCase (supportedSyncModes, sourceDefinedCursor, defaultCursorField);
+    # the protocol/stored catalog uses snake_case. Read camelCase first, fall
+    # back to snake_case so this is robust across Airbyte versions. Reading
+    # only snake_case (the original bug) silently made EVERY stream
+    # full_refresh because the camelCase keys never matched.
+    for k in keys:
+        v = stream.get(k)
+        if v is not None:
+            return v
+    return None
+
+
 def _stream_supports_incremental(stream: dict) -> bool:
-    modes = stream.get("supported_sync_modes") or []
+    modes = _field(stream, "supportedSyncModes", "supported_sync_modes") or []
     if "incremental" not in modes:
         return False
-    if stream.get("source_defined_cursor") is True:
+    if _field(stream, "sourceDefinedCursor", "source_defined_cursor") is True:
         return True
-    if stream.get("default_cursor_field"):
+    if _field(stream, "defaultCursorField", "default_cursor_field"):
         return True
     return False
 
@@ -49,7 +63,7 @@ def normalize(discover_response: dict) -> dict:
             # prior connection state.
             "fieldSelectionEnabled": False,
         }
-        cursor = stream.get("default_cursor_field") or []
+        cursor = _field(stream, "defaultCursorField", "default_cursor_field") or []
         if sync_mode == "incremental" and cursor:
             cfg["cursorField"] = cursor
         out_streams.append({"stream": stream, "config": cfg})

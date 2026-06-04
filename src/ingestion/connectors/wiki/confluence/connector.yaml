@@ -17,11 +17,19 @@ definitions:
   # and §3.6 (rows 530-534): 401/403 halt the run; 429 honours Retry-After; 503
   # is also rate-limit on Atlassian, retry with backoff; other 5xx retry with
   # exponential backoff.
+  #
+  # max_waiting_time_in_seconds caps the Retry-After honoured by the backoff: if
+  # Atlassian returns a wait larger than this, stop the stream instead of
+  # sleeping. Without it a single oversized Retry-After silently blocks the
+  # source for that whole duration (observed ~22min hang mid-sync, job stuck
+  # "running" with no progress and no error). 600s tolerates normal throttling
+  # while turning a pathological wait into a fast, visible failure.
   error_handler:
     type: DefaultErrorHandler
     backoff_strategies:
       - type: WaitTimeFromHeader
         header: Retry-After
+        max_waiting_time_in_seconds: 600
     response_filters:
       - type: HttpResponseFilter
         action: RETRY

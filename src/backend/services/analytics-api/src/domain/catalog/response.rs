@@ -1,21 +1,31 @@
-//! Wire shape for `POST /catalog/get_metrics` (DESIGN §3.3 "Catalog Read").
+//! Wire shape for `POST /v1/catalog/get_metrics` (DESIGN §3.3 "Catalog Read").
 //!
-//! Two invariants pinned by tests:
+//! Three invariants pinned by tests:
 //!
-//! 1. **`metric_key` is NEVER in the response.** It is `<table_name>.<column_name>`
-//!    backend form; surfacing it would couple consumers to internal source-schema
-//!    naming. Consumers identify metrics by `id` (UUIDv7) and render `label`.
+//! 1. **`metric_key` IS on the wire as the transitional FE-bridge identifier**
+//!    (ADR-002). The hard "never surface `metric_key`" rule was narrowed in v1.12:
+//!    `id` (UUIDv7) is still the stable lookup key consumers MUST use; `metric_key`
+//!    is additive and exists so the FE can align its compiled-in `BULLET_DEFS`
+//!    constants to wire rows during the catalog-hydration transitional release
+//!    (cyberfabric/cyber-insight-front#66). Once the FE deletes those constants,
+//!    `metric_key` keeps the documented additive-field stability contract.
 //! 2. **`bounded_by_lock` is a separate field from `resolved_from`.** `resolved_from`
 //!    names the row that won the walk; `bounded_by_lock` is `true` iff the walk
 //!    halted on a locked broader-scope row before reaching the most-specific
 //!    candidate. The two signals together let admin tooling explain "why was
 //!    this team-scope override ignored" without a second request.
+//! 3. **`links` exposes the `metric_query_catalog` junction (ADR-003).** Each
+//!    `(query_id, catalog_metric_ids)` pair tells a consumer which catalog rows
+//!    a `metrics.query_ref` will emit. The mapping is time- and filter-invariant
+//!    — the same query emits the same set of catalog ids regardless of (period,
+//!    person, org) — so consumers can cache this Layer-2 map once per session/TTL
+//!    instead of recomputing it on every value request.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Request body for `POST /catalog/get_metrics`.
+/// Request body for `POST /v1/catalog/get_metrics`.
 ///
 /// `tenant_id` is intentionally NOT accepted here — it is resolved server-side
 /// from the session by `tenant_middleware` (Refs #522 auth-trait). Allowing a
@@ -41,17 +51,46 @@ pub struct GetMetricsRequest {
 /// Top-level response body. `tenant_id` is echoed for client-side cache
 /// reasoning AND re-asserted on cache hydrate as defense in depth against a
 /// misconfigured cache backend serving a sibling tenant's payload.
+///
+/// `links` carries the `metric_query_catalog` M:N mapping per ADR-003. The
+/// mapping is time/filter-invariant, so consumers cache it for the same TTL as
+/// the catalog itself; see [`MetricQueryLink`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CatalogResponse {
     pub tenant_id: Uuid,
     pub generated_at: DateTime<Utc>,
     pub metrics: Vec<MetricView>,
+    pub links: Vec<MetricQueryLink>,
 }
 
-/// One catalog metric on the wire. `metric_key` is deliberately absent.
+/// One link row from `metric_query_catalog`. Tells a consumer which catalog
+/// rows a `metrics.query_ref` emits when executed — the M:N answer ADR-001
+/// added at the DB layer, surfaced here so consumers don't have to derive it
+/// by joining on backend-internal `metric_key` strings.
+///
+/// `catalog_metric_ids` is the set of `metric_catalog.id` UUIDs the query
+/// produces. The set is empty only when the linked catalog rows are all
+/// `is_enabled = false` (filtered out of the `metrics` array) — consumers
+/// degrade gracefully on empty.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MetricQueryLink {
+    /// `metrics.id` — the ClickHouse `query_ref` row this link is FROM.
+    pub query_id: Uuid,
+    /// `metric_catalog.id` UUIDs this query emits. Sorted ascending so the
+    /// wire payload is byte-stable for cache + diff tooling.
+    pub catalog_metric_ids: Vec<Uuid>,
+}
+
+/// One catalog metric on the wire. `metric_key` is surfaced per ADR-002 as the
+/// transitional FE-bridge identifier; consumers MUST still key lookups by `id`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MetricView {
     pub id: Uuid,
+    /// Backend's `<table_name>.<column_name>` identifier. Surfaced per ADR-002
+    /// so the FE can align compiled-in `BULLET_DEFS` constants to wire rows
+    /// during the catalog-hydration transitional release; the stable lookup
+    /// key remains `id`.
+    pub metric_key: String,
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sublabel: Option<String>,
@@ -107,6 +146,7 @@ mod tests {
     fn sample_metric() -> MetricView {
         MetricView {
             id: Uuid::nil(),
+            metric_key: "ic_kpis.tasks_closed".to_owned(),
             label: "Tasks Closed".to_owned(),
             sublabel: Some("Jira".to_owned()),
             description: None,
@@ -129,17 +169,79 @@ mod tests {
     }
 
     #[test]
-    fn metric_view_does_not_serialize_metric_key() -> Result<(), serde_json::Error> {
-        // Wire-shape regression guard: `metric_key` MUST stay backend-internal.
-        // If a future refactor adds a `metric_key` field to `MetricView` without
-        // a `#[serde(skip_serializing)]`, this test catches it before consumers
-        // start coupling to source-schema names.
+    fn metric_view_serializes_metric_key_for_fe_bridge() -> Result<(), serde_json::Error> {
+        // ADR-002 narrowed the original "never surface metric_key" rule:
+        // `metric_key` IS on the wire as the transitional FE-bridge
+        // identifier so dashboards can align their compiled-in `BULLET_DEFS`
+        // constants to wire rows during the catalog-hydration release. `id`
+        // remains the stable lookup key. If a future refactor drops the
+        // field, this test catches it before the FE breaks.
         let m = sample_metric();
-        let s = serde_json::to_string(&m)?;
-        assert!(
-            !s.contains("metric_key"),
-            "metric_key MUST NOT appear in the wire response; got: {s}"
+        let v: serde_json::Value = serde_json::to_value(&m)?;
+        assert_eq!(
+            v.get("metric_key").and_then(serde_json::Value::as_str),
+            Some("ic_kpis.tasks_closed"),
+            "metric_key MUST appear on the wire per ADR-002"
         );
+        assert!(
+            v.get("id").is_some(),
+            "id remains the stable lookup key alongside metric_key"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn response_carries_links_for_query_to_catalog_mapping() -> Result<(), serde_json::Error> {
+        // ADR-003: the M:N `metric_query_catalog` mapping is surfaced as a
+        // top-level `links` array. Field must exist even when empty so
+        // consumers can rely on its shape without defensive null checks.
+        let r = CatalogResponse {
+            tenant_id: Uuid::nil(),
+            generated_at: chrono::Utc::now(),
+            metrics: vec![],
+            links: vec![MetricQueryLink {
+                query_id: Uuid::from_u128(0x11),
+                catalog_metric_ids: vec![Uuid::from_u128(0xaa), Uuid::from_u128(0xbb)],
+            }],
+        };
+        let v: serde_json::Value = serde_json::to_value(&r)?;
+        let links = v
+            .get("links")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("links must serialize as an array; got: {v}"));
+        assert_eq!(links.len(), 1, "expected exactly one link row");
+        assert!(
+            links[0].get("query_id").is_some(),
+            "link row must expose query_id"
+        );
+        let ids = links[0]
+            .get("catalog_metric_ids")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("catalog_metric_ids must serialize as an array"));
+        assert_eq!(ids.len(), 2, "expected the two ids we constructed");
+        Ok(())
+    }
+
+    #[test]
+    fn response_links_array_is_empty_not_omitted_when_no_mappings() -> Result<(), serde_json::Error>
+    {
+        // Defensive: `links` is a real field, not `skip_serializing_if`.
+        // Consumers degrade on empty array; null/absent forces a defensive
+        // shape check FE-side and breaks the byte-stable wire contract.
+        let r = CatalogResponse {
+            tenant_id: Uuid::nil(),
+            generated_at: chrono::Utc::now(),
+            metrics: vec![],
+            links: vec![],
+        };
+        let v: serde_json::Value = serde_json::to_value(&r)?;
+        let links = v
+            .get("links")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| {
+                panic!("links must be an array even when empty (not null / absent); got: {v}")
+            });
+        assert_eq!(links.len(), 0, "empty array, not null");
         Ok(())
     }
 
@@ -152,6 +254,7 @@ mod tests {
             tenant_id: Uuid::nil(),
             generated_at: chrono::Utc::now(),
             metrics: vec![],
+            links: vec![],
         };
         let v: serde_json::Value = serde_json::to_value(&r)?;
         assert!(v.get("tenant_id").is_some(), "tenant_id must serialize");

@@ -27,7 +27,10 @@ internal static class SqlSubchart
     ///   one shot.</item>
     /// </list>
     /// Parameters: <c>@tenant_id</c>, <c>@viewer_person_id</c>,
-    /// <c>@source_type</c>, <c>@max_depth</c>. Result columns mirror
+    /// <c>@source_type</c>, <c>@max_depth</c>,
+    /// <c>@valid_at</c> (DateTime or NULL — NULL means "right now",
+    /// which on our data is equivalent to <c>valid_to IS NULL</c>).
+    /// Result columns mirror
     /// <see cref="GetSubchart"/>; ROOTS surface with
     /// <c>parent_person_id IS NULL</c> regardless of their actual
     /// org_chart row, so the service layer can group by parent.
@@ -42,7 +45,8 @@ internal static class SqlSubchart
             WHERE insight_tenant_id = @tenant_id
               AND viewer_person_id  = @viewer_person_id
               AND viewed_person_id  IS NOT NULL
-              AND valid_to IS NULL
+              AND valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+              AND (valid_to IS NULL OR valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
             UNION
             -- Wildcard grant (viewed_person_id IS NULL) expands the
             -- visible_set to every person in the tenant — caller is a
@@ -55,7 +59,8 @@ internal static class SqlSubchart
                   WHERE insight_tenant_id = @tenant_id
                     AND viewer_person_id  = @viewer_person_id
                     AND viewed_person_id  IS NULL
-                    AND valid_to IS NULL
+                    AND valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+                    AND (valid_to IS NULL OR valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
               )
             UNION
             SELECT oc.child_person_id
@@ -64,7 +69,8 @@ internal static class SqlSubchart
               ON  oc.parent_person_id    = vs.person_id
               AND oc.insight_tenant_id   = @tenant_id
               AND oc.insight_source_type = @source_type
-              AND oc.valid_to IS NULL
+              AND oc.valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+              AND (oc.valid_to IS NULL OR oc.valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
         ),
         in_source AS (
             -- Visible persons that have a CURRENT org_chart row for the
@@ -76,7 +82,8 @@ internal static class SqlSubchart
               ON  oc.child_person_id     = vs.person_id
               AND oc.insight_tenant_id   = @tenant_id
               AND oc.insight_source_type = @source_type
-              AND oc.valid_to IS NULL
+              AND oc.valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+              AND (oc.valid_to IS NULL OR oc.valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
         ),
         roots AS (
             -- A root in the caller's view: a visible-in-source person
@@ -93,7 +100,8 @@ internal static class SqlSubchart
               ON  oc.child_person_id     = i.person_id
               AND oc.insight_tenant_id   = @tenant_id
               AND oc.insight_source_type = @source_type
-              AND oc.valid_to IS NULL
+              AND oc.valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+              AND (oc.valid_to IS NULL OR oc.valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
             WHERE (oc.parent_person_id IS NULL
                 OR NOT EXISTS (
                     SELECT 1 FROM in_source i2
@@ -104,7 +112,8 @@ internal static class SqlSubchart
                   WHERE c2.parent_person_id    = i.person_id
                     AND c2.insight_tenant_id   = @tenant_id
                     AND c2.insight_source_type = @source_type
-                    AND c2.valid_to IS NULL
+                    AND c2.valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+                    AND (c2.valid_to IS NULL OR c2.valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
               )
         ),
         subtree (person_id, parent_person_id, depth) AS (
@@ -118,7 +127,8 @@ internal static class SqlSubchart
               ON  oc.parent_person_id    = s.person_id
               AND oc.insight_tenant_id   = @tenant_id
               AND oc.insight_source_type = @source_type
-              AND oc.valid_to IS NULL
+              AND oc.valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+              AND (oc.valid_to IS NULL OR oc.valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
             WHERE @max_depth IS NULL OR s.depth < @max_depth
         ),
         latest_obs AS (
@@ -134,6 +144,9 @@ internal static class SqlSubchart
             WHERE p.insight_tenant_id = @tenant_id
               AND p.person_id IN (SELECT person_id FROM subtree)
               AND p.value_type IN ('email', 'display_name', 'job_title', 'status')
+              -- Only observations that already existed at @valid_at
+              -- (or right now when @valid_at IS NULL).
+              AND p.created_at <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
         )
         SELECT
             s.person_id,
@@ -158,6 +171,10 @@ internal static class SqlSubchart
     ///   <item><c>@source_type</c> — string (e.g. <c>bamboohr</c>).</item>
     ///   <item><c>@max_depth</c> — int or NULL. NULL = unbounded
     ///   (constrained by MariaDB's <c>cte_max_recursion_depth</c>).</item>
+    ///   <item><c>@valid_at</c> — DateTime or NULL. NULL means "right
+    ///   now" (current state); a value lets the subchart reflect the
+    ///   org as it looked at that moment, using the bitemporal
+    ///   <c>valid_from</c>/<c>valid_to</c> intervals on <c>org_chart</c>.</item>
     /// </list>
     /// Result columns: <c>person_id</c>, <c>parent_person_id</c>
     /// (NULL on root), <c>depth</c>, <c>email</c>, <c>display_name</c>,
@@ -175,7 +192,8 @@ internal static class SqlSubchart
               ON  oc.insight_tenant_id   = @tenant_id
               AND oc.parent_person_id    = s.person_id
               AND oc.insight_source_type = @source_type
-              AND oc.valid_to IS NULL
+              AND oc.valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+              AND (oc.valid_to IS NULL OR oc.valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
             WHERE @max_depth IS NULL OR s.depth < @max_depth
         ),
         latest_obs AS (
@@ -191,6 +209,9 @@ internal static class SqlSubchart
             WHERE p.insight_tenant_id = @tenant_id
               AND p.person_id IN (SELECT person_id FROM subtree)
               AND p.value_type IN ('email', 'display_name', 'job_title', 'status')
+              -- Only observations that already existed at @valid_at
+              -- (or right now when @valid_at IS NULL).
+              AND p.created_at <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
         )
         SELECT
             s.person_id,

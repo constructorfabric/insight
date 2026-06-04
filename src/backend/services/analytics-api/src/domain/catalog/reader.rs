@@ -266,6 +266,7 @@ mod tests {
             tenant_id,
             generated_at: Utc::now(),
             metrics: vec![],
+            links: vec![],
         }
     }
 

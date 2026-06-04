@@ -68,7 +68,7 @@ public static class PersonsEndpoints
 
             var canSee = await visibility.CanSeeAsync(
                     tenantId.Value, callerPersonId.Value, person.PersonId,
-                    lookupOptions.OrgChartSourceType, cancellationToken)
+                    lookupOptions.OrgChartSourceType, validAt: null, cancellationToken)
                 .ConfigureAwait(false);
             if (!canSee)
             {
@@ -141,7 +141,7 @@ public static class PersonsEndpoints
                 case ProfileLookupResult.Found f:
                     var canSee = await visibility.CanSeeAsync(
                             tenantId.Value, callerPersonId.Value, f.Profile.PersonId,
-                            lookupOptions.OrgChartSourceType, cancellationToken)
+                            lookupOptions.OrgChartSourceType, validAt: null, cancellationToken)
                         .ConfigureAwait(false);
                     if (!canSee)
                     {

@@ -118,9 +118,9 @@ SELECT
     -- from rejected, so this is the closest mappable signal.
     toUInt32(coalesce(m.code_generation_activity_count, 0))                AS tool_use_offered,
     toUInt32(coalesce(m.code_acceptance_activity_count, 0))                AS tool_use_accepted,
-    -- completions_count := accepted code suggestions. Same value as
-    -- tool_use_accepted — Claude Enterprise uses the same convention.
-    toUInt32(coalesce(m.code_acceptance_activity_count, 0))                AS completions_count,
+    -- #262: `completions_count` dropped from class_ai_dev_usage — it was numerically identical
+    -- to tool_use_accepted (code_acceptance_activity_count). Same drop applied to cursor and
+    -- claude_enterprise in PR #262; copilot now aligned.
     -- Boolean → activity-marker mapping: 1 marks a day where the user
     -- engaged with the surface; downstream uses these as flags, not
     -- absolute counters.
@@ -133,6 +133,12 @@ SELECT
     -- without joining to a separate identity source. NULL for now.
     CAST(NULL AS Nullable(UInt32))                                         AS commits_count,
     CAST(NULL AS Nullable(UInt32))                                         AS pull_requests_count,
+    -- prs_with_cc_count / prs_total_count: Claude Team-only (Anthropic GitHub-app attribution).
+    -- Copilot exposes org-level PR metrics in copilot_org_metrics.pull_requests but not at
+    -- user grain without a separate identity join. Structural NULL — column required for
+    -- UNION ALL parity with claude_team__ai_dev_usage.
+    CAST(NULL AS Nullable(UInt32))                                         AS prs_with_cc_count,
+    CAST(NULL AS Nullable(UInt32))                                         AS prs_total_count,
     -- Activity-flag breakdown packed as JSON. Captures `used_cli` (no
     -- column slot) and re-surfaces the chat/agent flags for downstream
     -- consumers that want raw boolean state rather than the marker

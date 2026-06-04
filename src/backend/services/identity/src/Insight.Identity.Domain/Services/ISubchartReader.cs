@@ -22,6 +22,7 @@ public interface ISubchartReader
         Guid rootPersonId,
         string orgChartSourceType,
         int? maxDepth,
+        DateTime? validAt,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -38,6 +39,7 @@ public interface ISubchartReader
         Guid viewerPersonId,
         string orgChartSourceType,
         int? maxDepth,
+        DateTime? validAt,
         CancellationToken cancellationToken);
 }
 

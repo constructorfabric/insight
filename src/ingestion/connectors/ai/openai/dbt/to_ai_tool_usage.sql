@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('openai__bronze_promoted') }}
 -- Bronze → Silver step 1: OpenAI completions usage → class_ai_tool_usage
 -- Maps per-user, per-model, per-project daily completion metrics.
 -- bucket_start_time is Unix seconds — converted to date for report_date.

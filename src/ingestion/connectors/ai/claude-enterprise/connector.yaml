@@ -493,83 +493,83 @@ streams:
           - type: AddedFieldDefinition
             path:
               - user_id
-            value: "{{ record.get('user', {}).get('id') }}"
+            value: "{{ (record.get('user') or {}).get('id') }}"
           - type: AddedFieldDefinition
             path:
               - user_email
-            value: "{{ record.get('user', {}).get('email_address') }}"
+            value: "{{ (record.get('user') or {}).get('email_address') }}"
           - type: AddedFieldDefinition
             path:
               - chat_conversation_count
-            value: "{{ record.get('chat_metrics', {}).get('distinct_conversation_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('distinct_conversation_count') }}"
           - type: AddedFieldDefinition
             path:
               - chat_message_count
-            value: "{{ record.get('chat_metrics', {}).get('message_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('message_count') }}"
           - type: AddedFieldDefinition
             path:
               - chat_projects_created_count
-            value: "{{ record.get('chat_metrics', {}).get('distinct_projects_created_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('distinct_projects_created_count') }}"
           - type: AddedFieldDefinition
             path:
               - chat_projects_used_count
-            value: "{{ record.get('chat_metrics', {}).get('distinct_projects_used_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('distinct_projects_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - chat_files_uploaded_count
-            value: "{{ record.get('chat_metrics', {}).get('distinct_files_uploaded_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('distinct_files_uploaded_count') }}"
           - type: AddedFieldDefinition
             path:
               - chat_artifacts_created_count
-            value: "{{ record.get('chat_metrics', {}).get('distinct_artifacts_created_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('distinct_artifacts_created_count') }}"
           - type: AddedFieldDefinition
             path:
               - chat_thinking_message_count
-            value: "{{ record.get('chat_metrics', {}).get('thinking_message_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('thinking_message_count') }}"
           - type: AddedFieldDefinition
             path:
               - chat_skills_used_count
-            value: "{{ record.get('chat_metrics', {}).get('distinct_skills_used_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('distinct_skills_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - chat_connectors_used_count
-            value: "{{ record.get('chat_metrics', {}).get('connectors_used_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('connectors_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - code_commit_count
-            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('commit_count') }}"
+            value: "{{ ((record.get('claude_code_metrics') or {}).get('core_metrics') or {}).get('commit_count') }}"
           - type: AddedFieldDefinition
             path:
               - code_pull_request_count
-            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('pull_request_count') }}"
+            value: "{{ ((record.get('claude_code_metrics') or {}).get('core_metrics') or {}).get('pull_request_count') }}"
           - type: AddedFieldDefinition
             path:
               - code_lines_added
-            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('lines_of_code', {}).get('added_count') }}"
+            value: "{{ (((record.get('claude_code_metrics') or {}).get('core_metrics') or {}).get('lines_of_code') or {}).get('added_count') }}"
           - type: AddedFieldDefinition
             path:
               - code_lines_removed
-            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('lines_of_code', {}).get('removed_count') }}"
+            value: "{{ (((record.get('claude_code_metrics') or {}).get('core_metrics') or {}).get('lines_of_code') or {}).get('removed_count') }}"
           - type: AddedFieldDefinition
             path:
               - code_session_count
-            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('distinct_session_count') }}"
+            value: "{{ ((record.get('claude_code_metrics') or {}).get('core_metrics') or {}).get('distinct_session_count') }}"
           - type: AddedFieldDefinition
             path:
               - code_tool_accepted_count
             value: >-
-              {{ (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('edit_tool', {}).get('accepted_count', 0) or 0)
-                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('multi_edit_tool', {}).get('accepted_count', 0) or 0)
-                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('write_tool', {}).get('accepted_count', 0) or 0)
-                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('notebook_edit_tool', {}).get('accepted_count', 0) or 0) }}
+              {{ ((((record.get('claude_code_metrics') or {}).get('tool_actions') or {}).get('edit_tool') or {}).get('accepted_count', 0) or 0)
+                + ((((record.get('claude_code_metrics') or {}).get('tool_actions') or {}).get('multi_edit_tool') or {}).get('accepted_count', 0) or 0)
+                + ((((record.get('claude_code_metrics') or {}).get('tool_actions') or {}).get('write_tool') or {}).get('accepted_count', 0) or 0)
+                + ((((record.get('claude_code_metrics') or {}).get('tool_actions') or {}).get('notebook_edit_tool') or {}).get('accepted_count', 0) or 0) }}
           - type: AddedFieldDefinition
             path:
               - code_tool_rejected_count
             value: >-
-              {{ (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('edit_tool', {}).get('rejected_count', 0) or 0)
-                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('multi_edit_tool', {}).get('rejected_count', 0) or 0)
-                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('write_tool', {}).get('rejected_count', 0) or 0)
-                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('notebook_edit_tool', {}).get('rejected_count', 0) or 0) }}
+              {{ ((((record.get('claude_code_metrics') or {}).get('tool_actions') or {}).get('edit_tool') or {}).get('rejected_count', 0) or 0)
+                + ((((record.get('claude_code_metrics') or {}).get('tool_actions') or {}).get('multi_edit_tool') or {}).get('rejected_count', 0) or 0)
+                + ((((record.get('claude_code_metrics') or {}).get('tool_actions') or {}).get('write_tool') or {}).get('rejected_count', 0) or 0)
+                + ((((record.get('claude_code_metrics') or {}).get('tool_actions') or {}).get('notebook_edit_tool') or {}).get('rejected_count', 0) or 0) }}
           - type: AddedFieldDefinition
             path:
               - web_search_count
@@ -577,39 +577,39 @@ streams:
           - type: AddedFieldDefinition
             path:
               - excel_session_count
-            value: "{{ record.get('office_metrics', {}).get('excel', {}).get('distinct_session_count') }}"
+            value: "{{ ((record.get('office_metrics') or {}).get('excel') or {}).get('distinct_session_count') }}"
           - type: AddedFieldDefinition
             path:
               - excel_message_count
-            value: "{{ record.get('office_metrics', {}).get('excel', {}).get('message_count') }}"
+            value: "{{ ((record.get('office_metrics') or {}).get('excel') or {}).get('message_count') }}"
           - type: AddedFieldDefinition
             path:
               - powerpoint_session_count
-            value: "{{ record.get('office_metrics', {}).get('powerpoint', {}).get('distinct_session_count') }}"
+            value: "{{ ((record.get('office_metrics') or {}).get('powerpoint') or {}).get('distinct_session_count') }}"
           - type: AddedFieldDefinition
             path:
               - powerpoint_message_count
-            value: "{{ record.get('office_metrics', {}).get('powerpoint', {}).get('message_count') }}"
+            value: "{{ ((record.get('office_metrics') or {}).get('powerpoint') or {}).get('message_count') }}"
           - type: AddedFieldDefinition
             path:
               - cowork_session_count
-            value: "{{ record.get('cowork_metrics', {}).get('distinct_session_count') }}"
+            value: "{{ (record.get('cowork_metrics') or {}).get('distinct_session_count') }}"
           - type: AddedFieldDefinition
             path:
               - cowork_message_count
-            value: "{{ record.get('cowork_metrics', {}).get('message_count') }}"
+            value: "{{ (record.get('cowork_metrics') or {}).get('message_count') }}"
           - type: AddedFieldDefinition
             path:
               - cowork_action_count
-            value: "{{ record.get('cowork_metrics', {}).get('action_count') }}"
+            value: "{{ (record.get('cowork_metrics') or {}).get('action_count') }}"
           - type: AddedFieldDefinition
             path:
               - cowork_dispatch_turn_count
-            value: "{{ record.get('cowork_metrics', {}).get('dispatch_turn_count') }}"
+            value: "{{ (record.get('cowork_metrics') or {}).get('dispatch_turn_count') }}"
           - type: AddedFieldDefinition
             path:
               - cowork_skills_used_count
-            value: "{{ record.get('cowork_metrics', {}).get('distinct_skills_used_count') }}"
+            value: "{{ (record.get('cowork_metrics') or {}).get('distinct_skills_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - chat_metrics_json
@@ -632,7 +632,7 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ stream_interval['start_time'][:10] }}-{{
-              record.get('user', {}).get('id') }}
+              (record.get('user') or {}).get('id') }}
 
   # ─────────────────────────────────────────────────────────────────────────
   # Stream 3: claude_enterprise_chat_projects (incremental, 1-day step)
@@ -779,11 +779,11 @@ streams:
           - type: AddedFieldDefinition
             path:
               - created_by_id
-            value: "{{ record.get('created_by', {}).get('id') }}"
+            value: "{{ (record.get('created_by') or {}).get('id') }}"
           - type: AddedFieldDefinition
             path:
               - created_by_email
-            value: "{{ record.get('created_by', {}).get('email_address') }}"
+            value: "{{ (record.get('created_by') or {}).get('email_address') }}"
           - type: AddedFieldDefinition
             path:
               - unique_key
@@ -936,23 +936,23 @@ streams:
           - type: AddedFieldDefinition
             path:
               - chat_conversation_skill_used_count
-            value: "{{ record.get('chat_metrics', {}).get('distinct_conversation_skill_used_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('distinct_conversation_skill_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - code_session_skill_used_count
-            value: "{{ record.get('claude_code_metrics', {}).get('distinct_session_skill_used_count') }}"
+            value: "{{ (record.get('claude_code_metrics') or {}).get('distinct_session_skill_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - excel_session_skill_used_count
-            value: "{{ record.get('office_metrics', {}).get('excel', {}).get('distinct_session_skill_used_count') }}"
+            value: "{{ ((record.get('office_metrics') or {}).get('excel') or {}).get('distinct_session_skill_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - powerpoint_session_skill_used_count
-            value: "{{ record.get('office_metrics', {}).get('powerpoint', {}).get('distinct_session_skill_used_count') }}"
+            value: "{{ ((record.get('office_metrics') or {}).get('powerpoint') or {}).get('distinct_session_skill_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - cowork_session_skill_used_count
-            value: "{{ record.get('cowork_metrics', {}).get('distinct_session_skill_used_count') }}"
+            value: "{{ (record.get('cowork_metrics') or {}).get('distinct_session_skill_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - surface_metrics_json
@@ -1113,23 +1113,23 @@ streams:
           - type: AddedFieldDefinition
             path:
               - chat_conversation_connector_used_count
-            value: "{{ record.get('chat_metrics', {}).get('distinct_conversation_connector_used_count') }}"
+            value: "{{ (record.get('chat_metrics') or {}).get('distinct_conversation_connector_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - code_session_connector_used_count
-            value: "{{ record.get('claude_code_metrics', {}).get('distinct_session_connector_used_count') }}"
+            value: "{{ (record.get('claude_code_metrics') or {}).get('distinct_session_connector_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - excel_session_connector_used_count
-            value: "{{ record.get('office_metrics', {}).get('excel', {}).get('distinct_session_connector_used_count') }}"
+            value: "{{ ((record.get('office_metrics') or {}).get('excel') or {}).get('distinct_session_connector_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - powerpoint_session_connector_used_count
-            value: "{{ record.get('office_metrics', {}).get('powerpoint', {}).get('distinct_session_connector_used_count') }}"
+            value: "{{ ((record.get('office_metrics') or {}).get('powerpoint') or {}).get('distinct_session_connector_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - cowork_session_connector_used_count
-            value: "{{ record.get('cowork_metrics', {}).get('distinct_session_connector_used_count') }}"
+            value: "{{ (record.get('cowork_metrics') or {}).get('distinct_session_connector_used_count') }}"
           - type: AddedFieldDefinition
             path:
               - surface_metrics_json

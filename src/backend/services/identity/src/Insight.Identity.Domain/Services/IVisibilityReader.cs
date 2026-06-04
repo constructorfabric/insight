@@ -35,6 +35,7 @@ public interface IVisibilityReader
         Guid viewerPersonId,
         Guid targetPersonId,
         string orgChartSourceType,
+        DateTime? validAt,
         CancellationToken cancellationToken);
 
     /// <summary>

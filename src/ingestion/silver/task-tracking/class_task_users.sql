@@ -1,7 +1,8 @@
 -- depends_on: {{ ref('jira__task_users') }}
 {{ config(
     materialized='incremental',
-    incremental_strategy='append',
+    incremental_strategy='delete+insert',
+    unique_key='unique_key',
     schema='silver',
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],

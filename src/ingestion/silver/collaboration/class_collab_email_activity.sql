@@ -2,7 +2,7 @@
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
-    incremental_strategy='append',
+    incremental_strategy='delete+insert',
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},

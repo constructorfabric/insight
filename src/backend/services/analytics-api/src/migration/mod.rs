@@ -16,6 +16,11 @@ mod m20260522_000002_metric_threshold;
 mod m20260522_000003_threshold_lock_audit;
 mod m20260527_000001_seed_metric_catalog;
 mod m20260527_000002_seed_metric_views;
+mod m20260529_000001_metric_query_catalog_link;
+mod m20260601_000001_ai_claude_team_metrics;
+mod m20260601_000002_seed_claude_team_metrics_catalog;
+mod m20260603_000001_seed_crm_metric_catalog;
+mod m20260603_000002_link_crm_query_catalog;
 
 #[cfg(test)]
 mod live_tests;
@@ -44,6 +49,11 @@ impl MigratorTrait for Migrator {
             Box::new(m20260522_000003_threshold_lock_audit::Migration),
             Box::new(m20260527_000001_seed_metric_catalog::Migration),
             Box::new(m20260527_000002_seed_metric_views::Migration),
+            Box::new(m20260529_000001_metric_query_catalog_link::Migration),
+            Box::new(m20260601_000001_ai_claude_team_metrics::Migration),
+            Box::new(m20260601_000002_seed_claude_team_metrics_catalog::Migration),
+            Box::new(m20260603_000001_seed_crm_metric_catalog::Migration),
+            Box::new(m20260603_000002_link_crm_query_catalog::Migration),
         ]
     }
 }

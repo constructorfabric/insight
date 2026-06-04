@@ -1,7 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
-    incremental_strategy='append',
+    incremental_strategy='delete+insert',
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
@@ -45,7 +45,7 @@ SELECT
     pr.data_source,
     pr._version,
     pr._airbyte_extracted_at
-FROM {{ ref('class_git_pull_requests') }} AS pr
+FROM {{ ref('class_git_pull_requests') }} AS pr FINAL
 {% if is_incremental() %}
 WHERE pr._version > (SELECT max(_version) FROM {{ this }})
 {% endif %}

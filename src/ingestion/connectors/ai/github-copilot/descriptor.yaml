@@ -1,5 +1,5 @@
 name: github-copilot
-version: "1.0.0"
+version: "2.0.0"
 type: cdk
 
 schedule: "0 2 * * *"   # daily at 02:00 UTC (data for day D available ~24h after end-of-day D UTC)

@@ -10,5 +10,5 @@
 -- depends_on: {{ ref('bamboohr__working_hours') }}
 
 SELECT * FROM (
-    {{ union_by_tag('silver:class_hr_working_hours') }}
+    {{ union_by_tag('silver:class_hr_working_hours', dedup_version_col=none) }}
 )

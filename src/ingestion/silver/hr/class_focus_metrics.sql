@@ -1,7 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
-    incremental_strategy='append',
+    incremental_strategy='delete+insert',
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
@@ -56,8 +56,8 @@ SELECT
         4
     )                                                               AS dev_time_h,
     toUnixTimestamp64Milli(now64())                                 AS _version
-FROM {{ ref('class_collab_meeting_activity') }} ma
-LEFT JOIN {{ ref('class_hr_working_hours') }} wh
+FROM {{ ref('class_collab_meeting_activity') }} ma FINAL
+LEFT JOIN {{ ref('class_hr_working_hours') }} wh FINAL
     ON ma.person_key = lower(wh.email)
    AND ma.tenant_id = wh.insight_tenant_id
 WHERE ma.person_key != ''

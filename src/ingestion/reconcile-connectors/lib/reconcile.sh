@@ -471,6 +471,7 @@ for d in json.load(sys.stdin):
 reconcile_sources() {
   local connector_name="$1" target_cfg_json="$2" secret_cfg_hash="$3"
   local definition_id="$4" expected_source_name="$5"
+  local namespace_format="${6:?reconcile_sources: namespace_format (arg 6) required — from descriptor.connection.namespace, no fallback}"
   local workspace_id sources_json source_id current_cfg_json action change_class
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-source-config:p1:inst-dsc-name
@@ -518,7 +519,7 @@ for s in json.load(sys.stdin):
         local recreate_result new_src_id
         if ! recreate_result="$(reconcile_recreate_with_state "" "${source_id}" "${definition_id}" \
               "${expected_source_name}" "${target_cfg_json}" "${secret_cfg_hash}" \
-              "${connector_name}")"; then
+              "${connector_name}" "${namespace_format}")"; then
           reconcile__log ERROR "${connector_name}" \
             "reconcile_recreate_with_state failed for source ${source_id}"
           return 1
@@ -564,6 +565,7 @@ for s in json.load(sys.stdin):
 # ---------------------------------------------------------------------------
 reconcile_connections() {
   local connector_name="$1" source_id="$2" secret_cfg_hash="$3"
+  local namespace_format="${4:?reconcile_connections: namespace_format (arg 4) required — from descriptor.connection.namespace, no fallback}"
   local workspace_id connections_json filtered
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-find-tag
@@ -620,10 +622,10 @@ reconcile_connections() {
     conn_name="$(reconcile_compute_connection_name "${connector_name}")"
     local new_conn_json new_conn_id
     # RECONCILE_DRY_RUN guarded by short-circuit at top of bootstrap branch.
-    # Per-connector ClickHouse schema: bronze_<connector>. Reconcile owns
-    # this convention so dbt downstream can target predictable schemas;
-    # without it, all connectors' streams collide in destination.database.
-    local namespace_format="bronze_${connector_name}"
+    # Per-connector ClickHouse schema comes ONLY from
+    # descriptor.connection.namespace (passed in as namespace_format) — no
+    # bronze_<connector> fallback: a hyphenated slug would otherwise produce an
+    # invalid/mismatched DB name (e.g. bronze_bitbucket-cloud).
     if ! new_conn_json="$(ab_create_connection "${workspace_id}" "${source_id}" \
               "${destination_id}" "${conn_name}" "${schedule_json}" \
               "${tags_json}" "${sync_catalog}" "${namespace_format}")"; then
@@ -735,7 +737,8 @@ reconcile_refresh_catalog() {
 reconcile_recreate_with_state() {
   local connection_id="$1" source_id="$2" definition_id="$3"
   local source_name="$4" target_cfg_json="$5" cfg_hash="$6"
-  local connector_name="${7:?reconcile_recreate_with_state: connector_name (arg 7) is required for bronze_<connector> namespace}"
+  local connector_name="${7:?reconcile_recreate_with_state: connector_name (arg 7) is required}"
+  local namespace_format="${8:?reconcile_recreate_with_state: namespace_format (arg 8) required — from descriptor.connection.namespace, no fallback}"
   local workspace_id
 
   workspace_id="$(ab_workspace_id)"
@@ -801,7 +804,6 @@ reconcile_recreate_with_state() {
   # Airbyte v1 schemas require Tag objects on connection create/patch.
   tags_json="$(ab_resolve_tags "${workspace_id}" "${tag_names_json}")"
   local new_conn_json new_connection_id
-  local namespace_format="bronze_${connector_name}"
   # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
   new_conn_json="$(ab_create_connection "${workspace_id}" "${new_source_id}" \
                     "${destination_id}" "${source_name}-conn" "${schedule_json}" \
@@ -1015,9 +1017,21 @@ d["insight_source_id"] = os.environ["INSIGHT_SOURCE_ID_VAL"]
 print(json.dumps(d))
 ' <<<"${secret_data_json}")"
 
+  # Destination ClickHouse schema (bronze namespace) comes ONLY from
+  # descriptor.connection.namespace — no bronze_<slug> fallback. Missing/empty
+  # → WARN + skip (a hyphenated slug would otherwise create a mismatched DB,
+  # e.g. bronze_bitbucket-cloud vs the descriptor's bronze_bitbucket_cloud).
+  local ns_format
+  ns_format="$(python3 "${_RECONCILE_PY_DIR}/parse_descriptor.py" --descriptor "${connector_dir}/descriptor.yaml" --field connection.namespace 2>/dev/null)"
+  if [[ -z "${ns_format}" ]]; then
+    reconcile__log WARN "${name}" "descriptor connection.namespace is missing/empty — skipping connector (no bronze_<slug> fallback). Set connection.namespace in ${connector_dir}/descriptor.yaml."
+    _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
+    return 1
+  fi
+
   local src_result src_id src_action
   if ! src_result="$(reconcile_sources "${name}" "${source_cfg_json}" "${cfg_hash}" \
-                "${def_id}" "${expected_source_name}")"; then
+                "${def_id}" "${expected_source_name}" "${ns_format}")"; then
     log_line ERROR "${name}: failed to reconcile source"
     return 1
   fi
@@ -1043,7 +1057,7 @@ print(json.dumps(d))
   #      genuine reason to re-sync (the new credentials may scope to a
   #      different account / dataset).
   local conn_result conn_action conn_id
-  if ! conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}")"; then
+  if ! conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}" "${ns_format}")"; then
     log_line ERROR "${name}: failed to reconcile connection"
     _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
     return 1

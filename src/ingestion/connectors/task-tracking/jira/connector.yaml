@@ -226,15 +226,15 @@ streams:
           - type: AddedFieldDefinition
             path:
               - schema_type
-            value: "{{ record.get('schema', {}).get('type') }}"
+            value: "{{ (record.get('schema') or {}).get('type') }}"
           - type: AddedFieldDefinition
             path:
               - schema_items
-            value: "{{ record.get('schema', {}).get('items') }}"
+            value: "{{ (record.get('schema') or {}).get('items') }}"
           - type: AddedFieldDefinition
             path:
               - schema_custom
-            value: "{{ record.get('schema', {}).get('custom') }}"
+            value: "{{ (record.get('schema') or {}).get('custom') }}"
           - type: AddedFieldDefinition
             path:
               - collected_at
@@ -426,7 +426,7 @@ streams:
           - type: AddedFieldDefinition
             path:
               - lead_account_id
-            value: "{{ record.get('lead', {}).get('accountId') }}"
+            value: "{{ (record.get('lead') or {}).get('accountId') }}"
           - type: AddedFieldDefinition
             path:
               - project_type
@@ -763,7 +763,7 @@ streams:
           field_name: nextPageToken
         pagination_strategy:
           type: CursorPagination
-          page_size: 50
+          page_size: 100
           cursor_value: "{{ response.get('nextPageToken', '') }}"
           stop_condition: "{{ not response.get('nextPageToken') }}"
       requester:
@@ -876,63 +876,61 @@ streams:
           - type: AddedFieldDefinition
             path:
               - project_key
-            value: "{{ (record.get('fields', {}).get('project') or {}).get('key') }}"
+            value: "{{ ((record.get('fields') or {}).get('project') or {}).get('key') }}"
           - type: AddedFieldDefinition
             path:
               - status_id
-            value: "{{ (record.get('fields', {}).get('status') or {}).get('id') }}"
+            value: "{{ ((record.get('fields') or {}).get('status') or {}).get('id') }}"
           - type: AddedFieldDefinition
             path:
               - priority_id
-            value: "{{ (record.get('fields', {}).get('priority') or {}).get('id') }}"
+            value: "{{ ((record.get('fields') or {}).get('priority') or {}).get('id') }}"
           - type: AddedFieldDefinition
             path:
               - issuetype_id
-            value: "{{ (record.get('fields', {}).get('issuetype') or {}).get('id') }}"
+            value: "{{ ((record.get('fields') or {}).get('issuetype') or {}).get('id') }}"
           - type: AddedFieldDefinition
             path:
               - resolution_id
-            value: "{{ (record.get('fields', {}).get('resolution') or {}).get('id') }}"
+            value: "{{ ((record.get('fields') or {}).get('resolution') or {}).get('id') }}"
           - type: AddedFieldDefinition
             path:
               - assignee_id
             value: >-
-              {{ (record.get('fields', {}).get('assignee') or
+              {{ ((record.get('fields') or {}).get('assignee') or
               {}).get('accountId') }}
           - type: AddedFieldDefinition
             path:
               - reporter_id
             value: >-
-              {{ (record.get('fields', {}).get('reporter') or
+              {{ ((record.get('fields') or {}).get('reporter') or
               {}).get('accountId') }}
           - type: AddedFieldDefinition
             path:
               - parent_id
-            value: "{{ (record.get('fields', {}).get('parent') or {}).get('key') }}"
+            value: "{{ ((record.get('fields') or {}).get('parent') or {}).get('key') }}"
           - type: AddedFieldDefinition
             path:
               - labels_csv
-            value: "{{ (record.get('fields', {}).get('labels') or []) | join(',') }}"
+            value: "{{ ((record.get('fields') or {}).get('labels') or []) | join(',') }}"
           - type: AddedFieldDefinition
             path:
               - story_points
             value: >-
-              {{ record.get('fields',
-              {}).get(config.get('jira_story_points_field_id',
-              'customfield_10016')) or record.get('fields',
-              {}).get('story_points') }}
+              {{ (record.get('fields') or {}).get(config.get('jira_story_points_field_id',
+              'customfield_10016')) or (record.get('fields') or {}).get('story_points') }}
           - type: AddedFieldDefinition
             path:
               - due_date
-            value: "{{ record.get('fields', {}).get('duedate') }}"
+            value: "{{ (record.get('fields') or {}).get('duedate') }}"
           - type: AddedFieldDefinition
             path:
               - created
-            value: "{{ record.get('fields', {}).get('created') }}"
+            value: "{{ (record.get('fields') or {}).get('created') }}"
           - type: AddedFieldDefinition
             path:
               - updated
-            value: "{{ record.get('fields', {}).get('updated') }}"
+            value: "{{ (record.get('fields') or {}).get('updated') }}"
           - type: AddedFieldDefinition
             path:
               - custom_fields_json
@@ -6416,7 +6414,7 @@ streams:
           - type: AddedFieldDefinition
             path:
               - author_account_id
-            value: "{{ record.get('author', {}).get('accountId') }}"
+            value: "{{ (record.get('author') or {}).get('accountId') }}"
           - type: AddedFieldDefinition
             path:
               - changelog_id
@@ -6638,7 +6636,7 @@ streams:
           - type: AddedFieldDefinition
             path:
               - author_account_id
-            value: "{{ record.get('author', {}).get('accountId') }}"
+            value: "{{ (record.get('author') or {}).get('accountId') }}"
           - type: AddedFieldDefinition
             path:
               - created
@@ -7038,7 +7036,7 @@ streams:
           - type: AddedFieldDefinition
             path:
               - author_account_id
-            value: "{{ record.get('author', {}).get('accountId') }}"
+            value: "{{ (record.get('author') or {}).get('accountId') }}"
           - type: AddedFieldDefinition
             path:
               - started
@@ -7488,11 +7486,11 @@ streams:
           - type: AddedFieldDefinition
             path:
               - category_id
-            value: "{{ record.get('statusCategory', {}).get('id') }}"
+            value: "{{ (record.get('statusCategory') or {}).get('id') }}"
           - type: AddedFieldDefinition
             path:
               - category_name
-            value: "{{ record.get('statusCategory', {}).get('name') }}"
+            value: "{{ (record.get('statusCategory') or {}).get('name') }}"
           - type: AddedFieldDefinition
             path:
               - collected_at
@@ -7986,14 +7984,6 @@ spec:
         title: Start Date
         default: "2020-01-01"
         order: 6
-      jira_page_size:
-        type: integer
-        description: Page size for JQL search (default 50, max 100)
-        title: Page Size
-        default: 50
-        minimum: 1
-        maximum: 100
-        order: 7
       jira_story_points_field_id:
         type: string
         description: >-

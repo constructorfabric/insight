@@ -31,7 +31,9 @@ use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult, Statement, Value};
 use uuid::Uuid;
 
-use crate::domain::catalog::response::{CatalogResponse, MetricView, ThresholdView};
+use crate::domain::catalog::response::{
+    CatalogResponse, MetricQueryLink, MetricView, ThresholdView,
+};
 
 /// Ordered broad→narrow. The walk halts on the first locked row in this order
 /// (with `bounded_by_lock = true` on the result). Otherwise the most-specific
@@ -106,12 +108,40 @@ impl ThresholdResolver {
         role_slug: &str,
         team_id: &str,
     ) -> Result<CatalogResponse, sea_orm::DbErr> {
+        // Two small round-trips: bulk catalog+threshold fetch, then the
+        // junction-table fetch for `links`. A single combined SELECT would
+        // force a Cartesian product against `metric_query_catalog`; the
+        // separate fetch is O(junction rows) ≈ O(metrics × queries-per-metric),
+        // which is small (≤ ~70 rows in v1 seed) and indexed by both directions.
+        //
+        // ## Link map is derived FROM the surfaced metric set, not queried in isolation
+        //
+        // `walk_all` can drop a row even when `is_enabled = TRUE` — `walk_one`
+        // returns `None` when a catalog row has no threshold chain (a seed
+        // bug; the resolver logs and skips). A naive
+        // `fetch_links WHERE is_enabled = TRUE` query would still surface the
+        // dropped row's links and produce phantom `catalog_metric_ids` that
+        // don't appear in `metrics[]`.
+        //
+        // The same hole opens up the moment per-tenant variation enters the
+        // catalog (per-tenant disable per PRD §13 OQ, or the tenant-custom
+        // follow-on that lifts the `tenant_id IS NULL` CHECK): a global JOIN
+        // on `metric_catalog` would no longer match what `walk_all` returned
+        // for this caller's tenant.
+        //
+        // Filtering `fetch_links` by the actual surfaced ids closes both
+        // failure modes structurally — the link map references only ids
+        // that appear in `metrics[]`, by construction. Performance cost is
+        // negligible: surfaced ids are ≤ ~200 in v1, indexed lookup.
         let rows = bulk_fetch(&self.db, tenant_id, role_slug, team_id).await?;
         let metrics = walk_all(rows);
+        let surfaced_ids: Vec<Uuid> = metrics.iter().map(|m| m.id).collect();
+        let links = fetch_links(&self.db, &surfaced_ids).await?;
         Ok(CatalogResponse {
             tenant_id,
             generated_at: Utc::now(),
             metrics,
+            links,
         })
     }
 }
@@ -124,6 +154,7 @@ impl ThresholdResolver {
 struct ResolverRow {
     // Catalog columns (repeat per row — denormalized for one round-trip).
     metric_id: Uuid,
+    metric_key: String,
     label: String,
     sublabel: Option<String>,
     description: Option<String>,
@@ -173,6 +204,7 @@ async fn bulk_fetch(
     let sql = "\
         SELECT \
             c.id                        AS metric_id, \
+            c.metric_key                AS metric_key, \
             c.label                     AS label, \
             c.sublabel                  AS sublabel, \
             c.description               AS description, \
@@ -224,6 +256,85 @@ async fn bulk_fetch(
     ))
     .all(db)
     .await
+}
+
+/// One junction row from `metric_query_catalog`. The two ids identify the
+/// `(metrics.query_ref, metric_catalog.metric_key)` pair the junction
+/// represents — both are BINARY(16) UUIDs in MariaDB.
+#[derive(Debug, Clone, FromQueryResult)]
+struct LinkRow {
+    query_id: Uuid,
+    catalog_id: Uuid,
+}
+
+/// Fetch the `metric_query_catalog` mapping restricted to the catalog ids
+/// the resolver actually surfaced, and roll it up into one
+/// [`MetricQueryLink`] per `metrics.id`.
+///
+/// **Why filter by `surfaced_ids` instead of `WHERE is_enabled = TRUE`:**
+/// `walk_all` can drop a row even when `is_enabled = TRUE` (no threshold
+/// chain found — `walk_one` returns `None`), and future per-tenant
+/// catalog variation (per PRD §13 OQs) means a global `is_enabled` join
+/// won't match what the resolver returned for this specific tenant.
+/// Passing the surfaced ids in guarantees `catalog_metric_ids` references
+/// only ids that appear in `metrics[]`, by construction. See `resolve`'s
+/// doc comment for the full rationale.
+///
+/// Time/filter invariance per ADR-003: the mapping is the same for any
+/// `(period, person, org)` tuple within one tenant's session, so consumers
+/// cache it for the same TTL as the catalog itself rather than recomputing
+/// it per value request. The `surfaced_ids` filter does NOT break that
+/// invariance — it varies only with the catalog set, which is itself
+/// TTL-bounded.
+async fn fetch_links(
+    db: &DatabaseConnection,
+    surfaced_ids: &[Uuid],
+) -> Result<Vec<MetricQueryLink>, sea_orm::DbErr> {
+    // Empty surfaced set ⇒ empty link map. Guards against the
+    // `IN ()` syntax error MariaDB rejects, and short-circuits the
+    // network round-trip when the tenant has no catalog rows at all.
+    if surfaced_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let backend = db.get_database_backend();
+    // Parameterized IN-list — `surfaced_ids.len()` placeholders, one
+    // bind per id. Bound as BINARY(16) (matches the column type).
+    // Sort at the DB layer so the rollup is deterministic without an
+    // in-process sort; the junction-table size is bounded by
+    // `O(surfaced × queries-per-metric)`, small in v1 (≤ ~70 rows).
+    let placeholders = vec!["?"; surfaced_ids.len()].join(",");
+    let sql = format!(
+        "SELECT \
+            j.metrics_id        AS query_id, \
+            j.metric_catalog_id AS catalog_id \
+         FROM metric_query_catalog j \
+         WHERE j.metric_catalog_id IN ({placeholders}) \
+         ORDER BY j.metrics_id, j.metric_catalog_id"
+    );
+
+    let values: Vec<Value> = surfaced_ids
+        .iter()
+        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .collect();
+
+    let rows = LinkRow::find_by_statement(Statement::from_sql_and_values(backend, sql, values))
+        .all(db)
+        .await?;
+
+    let mut grouped: Vec<MetricQueryLink> = Vec::new();
+    for r in rows {
+        match grouped.last_mut() {
+            Some(prev) if prev.query_id == r.query_id => {
+                prev.catalog_metric_ids.push(r.catalog_id);
+            }
+            _ => grouped.push(MetricQueryLink {
+                query_id: r.query_id,
+                catalog_metric_ids: vec![r.catalog_id],
+            }),
+        }
+    }
+    Ok(grouped)
 }
 
 /// Group rows by metric and run the per-metric walk. Drops metrics that have
@@ -278,6 +389,7 @@ fn walk_one(rows: &mut [ResolverRow]) -> Option<MetricView> {
     // Pull immutable metric metadata from the first row (same across the bucket).
     let head = rows.first()?;
     let metric_id = head.metric_id;
+    let metric_key = head.metric_key.clone();
     let label = head.label.clone();
     let sublabel = head.sublabel.clone();
     let description = head.description.clone();
@@ -341,6 +453,7 @@ fn walk_one(rows: &mut [ResolverRow]) -> Option<MetricView> {
 
     Some(MetricView {
         id: metric_id,
+        metric_key,
         label,
         sublabel,
         description,
@@ -395,6 +508,7 @@ mod tests {
     fn row(scope: Option<&str>, is_locked: bool, good: f64, warn: f64) -> ResolverRow {
         ResolverRow {
             metric_id: Uuid::nil(),
+            metric_key: "test.metric".to_owned(),
             label: "L".to_owned(),
             sublabel: None,
             description: None,

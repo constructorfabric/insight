@@ -22,15 +22,15 @@
 
 WITH all_keys AS (
     SELECT tenant_id, person_key
-    FROM {{ ref('fct_git_pr') }}
+    FROM {{ ref('fct_git_pr') }} FINAL
     WHERE person_key != ''
     UNION DISTINCT
     SELECT tenant_id, person_key
-    FROM {{ ref('fct_git_commit') }}
+    FROM {{ ref('fct_git_commit') }} FINAL
     WHERE is_merge_commit = 0 AND person_key != ''
     UNION DISTINCT
     SELECT tenant_id, person_key
-    FROM {{ ref('fct_git_file_change') }}
+    FROM {{ ref('fct_git_file_change') }} FINAL
     WHERE is_merge_commit = 0
       AND file_category = 'code'
       AND person_key != ''
@@ -42,7 +42,7 @@ prs AS (
         count()                                                AS prs_created,
         countIf(state_norm = 'merged')                         AS prs_merged,
         avgIf(cycle_time_h, cycle_time_h IS NOT NULL)          AS avg_pr_cycle_time_h
-    FROM {{ ref('fct_git_pr') }}
+    FROM {{ ref('fct_git_pr') }} FINAL
     WHERE person_key != ''
     GROUP BY tenant_id, person_key
 ),
@@ -52,7 +52,7 @@ commits AS (
         person_key,
         count()                           AS commits,
         SUM(lines_added + lines_removed)  AS loc
-    FROM {{ ref('fct_git_commit') }}
+    FROM {{ ref('fct_git_commit') }} FINAL
     WHERE is_merge_commit = 0
       AND person_key != ''
     GROUP BY tenant_id, person_key
@@ -62,7 +62,7 @@ clean AS (
         tenant_id,
         person_key,
         SUM(lines_added) AS clean_loc
-    FROM {{ ref('fct_git_file_change') }}
+    FROM {{ ref('fct_git_file_change') }} FINAL
     WHERE is_merge_commit = 0
       AND file_category = 'code'
       AND person_key != ''

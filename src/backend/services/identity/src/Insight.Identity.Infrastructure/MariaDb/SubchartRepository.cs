@@ -22,6 +22,7 @@ public sealed class SubchartRepository : ISubchartReader
         Guid rootPersonId,
         string orgChartSourceType,
         int? maxDepth,
+        DateTime? validAt,
         CancellationToken cancellationToken)
     {
         await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -30,6 +31,7 @@ public sealed class SubchartRepository : ISubchartReader
         cmd.Parameters.AddWithValue("@root_person_id", rootPersonId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@source_type",    orgChartSourceType);
         cmd.Parameters.AddWithValue("@max_depth",      (object?)maxDepth ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@valid_at",       (object?)validAt ?? DBNull.Value);
         return await ReadFlatAsync(cmd, cancellationToken).ConfigureAwait(false);
     }
 
@@ -38,6 +40,7 @@ public sealed class SubchartRepository : ISubchartReader
         Guid viewerPersonId,
         string orgChartSourceType,
         int? maxDepth,
+        DateTime? validAt,
         CancellationToken cancellationToken)
     {
         await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -46,6 +49,7 @@ public sealed class SubchartRepository : ISubchartReader
         cmd.Parameters.AddWithValue("@viewer_person_id", viewerPersonId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@source_type",      orgChartSourceType);
         cmd.Parameters.AddWithValue("@max_depth",        (object?)maxDepth ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@valid_at",         (object?)validAt ?? DBNull.Value);
         return await ReadFlatAsync(cmd, cancellationToken).ConfigureAwait(false);
     }
 

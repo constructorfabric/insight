@@ -210,6 +210,251 @@ public sealed class SubchartEndpointTests : IAsyncLifetime
         doc.GetProperty("type").GetString().Should().Be("urn:insight:error:invalid_depth");
     }
 
+    // ── valid_at temporal parameter (#582) ──────────────────────────────
+
+    [Fact]
+    public async Task Subchart_at_past_date_returns_historical_parent_and_observation()
+    {
+        // SCD2: Dave reported to Bob until 2026-03-01, then to a new
+        // manager Erin from 2026-03-01 onward. The fixture's current
+        // edge Dave→Bob (added by InitializeAsync) is closed off at
+        // that boundary and a new edge Dave→Erin opens. valid_at picks
+        // the moment, so the same query yields Bob OR Erin.
+        //
+        // Dave's job_title also moves: "Junior" historically (created
+        // pre-T2), "Senior" current (created post-T2). The temporal
+        // filter on `persons.created_at` in latest_obs is exercised
+        // here — past query must pick the historical title.
+        var erin = Guid.Parse("88888888-8888-8888-8888-888888888888");
+        var t1   = new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc);
+        var t2   = new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+        await SeedPersonAsync(erin, "erin@example.com", "Erin Park").ConfigureAwait(false);
+        await InsertObservationHistoricalAsync(DavePersonId, "job_title", "Junior Engineer",
+            new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)).ConfigureAwait(false);
+        await InsertObservationHistoricalAsync(DavePersonId, "job_title", "Senior Engineer",
+            new DateTime(2026, 4, 1, 0, 0, 0, DateTimeKind.Utc)).ConfigureAwait(false);
+        await CloseEdgeAsync(child: DavePersonId, parent: BobPersonId, validTo: t2).ConfigureAwait(false);
+        await InsertEdgeHistoricalAsync(child: DavePersonId, parent: erin, validFrom: t2, validTo: null).ConfigureAwait(false);
+
+        using var app = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: CarolPersonId);
+        var client = app.CreateClient();
+
+        // At T1 (Feb 2026) Dave still reports to Bob AND his title is "Junior Engineer".
+        var past = await client.GetAsync($"/v1/subchart/{BobPersonId:D}?depth=1&valid_at={t1:O}").ConfigureAwait(false);
+        past.StatusCode.Should().Be(HttpStatusCode.OK);
+        var pastDoc = await past.ReadJsonAsync<JsonElement>().ConfigureAwait(false);
+        var pastReports = pastDoc.GetProperty("root").GetProperty("subordinates").EnumerateArray().ToArray();
+        var pastDave = pastReports.Single(s => s.GetProperty("person_id").GetGuid() == DavePersonId);
+        pastDave.GetProperty("job_title").GetString().Should().Be("Junior Engineer");
+
+        // Now Dave is no longer Bob's child AND his title is "Senior Engineer".
+        var now = await client.GetAsync($"/v1/subchart/{BobPersonId:D}?depth=1").ConfigureAwait(false);
+        now.StatusCode.Should().Be(HttpStatusCode.OK);
+        var nowDoc = await now.ReadJsonAsync<JsonElement>().ConfigureAwait(false);
+        var nowChildren = nowDoc.GetProperty("root").GetProperty("subordinates").EnumerateArray()
+            .Select(s => s.GetProperty("person_id").GetGuid()).ToArray();
+        nowChildren.Should().NotContain(DavePersonId);
+    }
+
+    [Fact]
+    public async Task Subchart_valid_at_boundary_inclusive_at_valid_from_exclusive_at_valid_to()
+    {
+        // SCD2 invariants for the temporal predicate (#582 T2):
+        //   valid_at == valid_from  → row INCLUDED (closed-left).
+        //   valid_at == valid_to    → row EXCLUDED (open-right).
+        var t2 = new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+        var erin = Guid.Parse("8888aaaa-8888-aaaa-8888-aaaa88880001");
+        await SeedPersonAsync(erin, "erin-boundary@example.com", "Erin B").ConfigureAwait(false);
+        await CloseEdgeAsync(child: DavePersonId, parent: BobPersonId, validTo: t2).ConfigureAwait(false);
+        await InsertEdgeHistoricalAsync(child: DavePersonId, parent: erin, validFrom: t2, validTo: null).ConfigureAwait(false);
+
+        using var app = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: CarolPersonId);
+        var client = app.CreateClient();
+
+        // Query exactly at t2 — old Dave→Bob edge is now CLOSED (valid_to == t2,
+        // predicate requires valid_to > t2); new Dave→Erin edge is OPEN
+        // (valid_from == t2, predicate requires valid_from <= t2).
+        var atBoundary = await client.GetAsync($"/v1/subchart/{BobPersonId:D}?depth=1&valid_at={t2:O}").ConfigureAwait(false);
+        atBoundary.StatusCode.Should().Be(HttpStatusCode.OK);
+        var boundaryDoc = await atBoundary.ReadJsonAsync<JsonElement>().ConfigureAwait(false);
+        var boundaryChildren = boundaryDoc.GetProperty("root").GetProperty("subordinates").EnumerateArray()
+            .Select(s => s.GetProperty("person_id").GetGuid()).ToArray();
+        boundaryChildren.Should().NotContain(DavePersonId, "valid_to=t2 means edge ended AT t2, exclusive");
+
+        // One microsecond before t2: old edge still open.
+        var justBefore = t2.AddTicks(-1);
+        var beforeDoc = (await (await client.GetAsync($"/v1/subchart/{BobPersonId:D}?depth=1&valid_at={justBefore:O}").ConfigureAwait(false))
+            .ReadJsonAsync<JsonElement>().ConfigureAwait(false));
+        var beforeChildren = beforeDoc.GetProperty("root").GetProperty("subordinates").EnumerateArray()
+            .Select(s => s.GetProperty("person_id").GetGuid()).ToArray();
+        beforeChildren.Should().Contain(DavePersonId, "valid_at strictly before valid_to means edge still active");
+    }
+
+    [Fact]
+    public async Task Forest_at_past_date_reflects_past_tree_shape()
+    {
+        // Two snapshots of the bamboohr forest:
+        //   Until T2 — Carol's root row open; Erin not yet in the org.
+        //   From T2 — Erin gets her own no-parent row; she becomes a
+        //   second root in the forest.
+        var erin = Guid.Parse("99999999-9999-9999-9999-999999999999");
+        var t1   = new DateTime(2026, 2, 15, 0, 0, 0, DateTimeKind.Utc);
+        var t2   = new DateTime(2026, 3, 15, 0, 0, 0, DateTimeKind.Utc);
+        var dirk = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        await SeedPersonAsync(erin, "erin2@example.com", "Erin Park").ConfigureAwait(false);
+        await SeedPersonAsync(dirk, "dirk@example.com", "Dirk Holt").ConfigureAwait(false);
+        await InsertNoParentRowAsync(CarolPersonId).ConfigureAwait(false);
+        await InsertEdgeHistoricalAsync(child: dirk, parent: erin, validFrom: t2, validTo: null).ConfigureAwait(false);
+        await InsertNoParentRowHistoricalAsync(erin, validFrom: t2).ConfigureAwait(false);
+        await InsertVisibilityAsync(viewer: CarolPersonId, viewed: null).ConfigureAwait(false);
+
+        using var app = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: CarolPersonId);
+        var client = app.CreateClient();
+
+        // Past (T1): only Carol's tree visible — Erin hasn't joined yet.
+        var past = await client.GetAsync($"/v1/subchart?valid_at={t1:O}").ConfigureAwait(false);
+        past.StatusCode.Should().Be(HttpStatusCode.OK);
+        var pastRoots = (await past.ReadJsonAsync<JsonElement>().ConfigureAwait(false))
+            .GetProperty("roots").EnumerateArray()
+            .Select(r => r.GetProperty("person_id").GetGuid()).ToArray();
+        pastRoots.Should().BeEquivalentTo(new[] { CarolPersonId });
+
+        // Now: Carol + Erin both surface.
+        var now = await client.GetAsync("/v1/subchart").ConfigureAwait(false);
+        now.StatusCode.Should().Be(HttpStatusCode.OK);
+        var nowRoots = (await now.ReadJsonAsync<JsonElement>().ConfigureAwait(false))
+            .GetProperty("roots").EnumerateArray()
+            .Select(r => r.GetProperty("person_id").GetGuid()).ToArray();
+        nowRoots.Should().BeEquivalentTo(new[] { CarolPersonId, erin });
+    }
+
+    [Fact]
+    public async Task Subchart_future_valid_at_returns_400()
+    {
+        using var app = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: BobPersonId);
+        var client = app.CreateClient();
+        var future = DateTime.UtcNow.AddDays(1).ToString("O");
+
+        var response = await client.GetAsync($"/v1/subchart/{BobPersonId:D}?valid_at={future}").ConfigureAwait(false);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var doc = await response.ReadJsonAsync<JsonElement>().ConfigureAwait(false);
+        doc.GetProperty("type").GetString().Should().Be("urn:insight:error:invalid_valid_at");
+    }
+
+    [Fact]
+    public async Task Forest_future_valid_at_returns_400()
+    {
+        using var app = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: BobPersonId);
+        var client = app.CreateClient();
+        var future = DateTime.UtcNow.AddDays(1).ToString("O");
+
+        var response = await client.GetAsync($"/v1/subchart?valid_at={future}").ConfigureAwait(false);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var doc = await response.ReadJsonAsync<JsonElement>().ConfigureAwait(false);
+        doc.GetProperty("type").GetString().Should().Be("urn:insight:error:invalid_valid_at");
+    }
+
+    private async Task InsertObservationHistoricalAsync(Guid personId, string valueType, string value, DateTime createdAt)
+    {
+        // Helper for #582 T1: seed a `persons` observation with an
+        // explicit historical `created_at`, so the temporal filter
+        // `p.created_at <= COALESCE(@valid_at, UTC_TIMESTAMP(6))` in
+        // latest_obs gets exercised by an assertion-level test.
+        var col = valueType switch
+        {
+            "email" or "id" or "username" => "value_id",
+            "display_name" or "job_title" or "status" or "department" => "value_full_text",
+            _ => "value",
+        };
+        await using var conn = new MySqlConnection(_fixture.ConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+        var sql = $"""
+            INSERT INTO persons
+                (value_type, insight_source_type, insight_source_id, insight_tenant_id,
+                 {col},
+                 person_id, author_person_id, reason, created_at)
+            VALUES
+                (@vt, 'bamboohr', @src, @tenant,
+                 @val,
+                 @person, @author, '', @createdAt)
+            """;
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@vt",        valueType);
+        cmd.Parameters.AddWithValue("@src",       BambooSourceId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@tenant",    TenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@val",       value);
+        cmd.Parameters.AddWithValue("@person",    personId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@author",    AuthorPersonId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@createdAt", createdAt);
+        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    private async Task CloseEdgeAsync(Guid child, Guid parent, DateTime validTo)
+    {
+        await using var conn = new MySqlConnection(_fixture.ConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+        const string sql = """
+            UPDATE org_chart SET valid_to = @vto
+            WHERE insight_tenant_id = @t AND insight_source_type = 'bamboohr'
+              AND child_person_id = @c AND parent_person_id = @p AND valid_to IS NULL
+            """;
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@t",   TenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@c",   child.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@p",   parent.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@vto", validTo);
+        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    private async Task InsertEdgeHistoricalAsync(Guid child, Guid parent, DateTime validFrom, DateTime? validTo)
+    {
+        await using var conn = new MySqlConnection(_fixture.ConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+        const string sql = """
+            INSERT INTO org_chart
+                (insight_tenant_id, insight_source_type, insight_source_id,
+                 child_person_id, parent_person_id, author_person_id, reason,
+                 valid_from, valid_to)
+            VALUES (@t, 'bamboohr', @sid, @c, @p, @a, '', @vf, @vto)
+            """;
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@t",   TenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@sid", BambooSourceId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@c",   child.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@p",   parent.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@a",   AuthorPersonId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@vf",  validFrom);
+        cmd.Parameters.AddWithValue("@vto", (object?)validTo ?? DBNull.Value);
+        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    private async Task InsertNoParentRowHistoricalAsync(Guid child, DateTime validFrom)
+    {
+        await using var conn = new MySqlConnection(_fixture.ConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+        const string sql = """
+            INSERT INTO org_chart
+                (insight_tenant_id, insight_source_type, insight_source_id,
+                 child_person_id, parent_person_id, author_person_id, reason,
+                 valid_from, valid_to)
+            VALUES (@t, 'bamboohr', @sid, @c, NULL, @a, '', @vf, NULL)
+            """;
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@t",   TenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@sid", BambooSourceId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@c",   child.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@a",   AuthorPersonId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@vf",  validFrom);
+        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
     // ── Forest variant: GET /v1/subchart (no person_id) (#344) ──────────
 
     [Fact]
@@ -407,10 +652,11 @@ public sealed class SubchartEndpointTests : IAsyncLifetime
 
     private async Task InsertNoParentRowAsync(Guid child)
     {
-        // Path-B no-parent row helper: same shape as InsertEdgeAsync
+        // Parent-less row helper (#579): same shape as InsertEdgeAsync
         // but with parent_person_id = NULL. Mirrors what
         // SqlPersonsSeed.InsertOrgChartForTenant writes for tops and
-        // singletons.
+        // singletons. valid_from anchored at 2020-01-01 so temporal
+        // tests can pick valid_at in the past and still see the row.
         await using var conn = new MySqlConnection(_fixture.ConnectionString);
         await conn.OpenAsync().ConfigureAwait(false);
         const string sql = """
@@ -418,7 +664,7 @@ public sealed class SubchartEndpointTests : IAsyncLifetime
                 (insight_tenant_id, insight_source_type, insight_source_id,
                  child_person_id, parent_person_id, author_person_id, reason,
                  valid_from, valid_to)
-            VALUES (@t, 'bamboohr', @sid, @c, NULL, @a, '', UTC_TIMESTAMP(6), NULL)
+            VALUES (@t, 'bamboohr', @sid, @c, NULL, @a, '', '2020-01-01 00:00:00', NULL)
             """;
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@t",   TenantId.ToByteArray(bigEndian: true));
@@ -469,6 +715,10 @@ public sealed class SubchartEndpointTests : IAsyncLifetime
 
     private async Task InsertEdgeAsync(Guid child, Guid parent)
     {
+        // valid_from anchored at 2020-01-01 so the row is active under
+        // any reasonable past valid_at value tests pick (#582 temporal
+        // scenarios). The temporal predicate at the SQL layer still
+        // includes the row at "now" because valid_to IS NULL.
         await using var conn = new MySqlConnection(_fixture.ConnectionString);
         await conn.OpenAsync().ConfigureAwait(false);
         const string sql = """
@@ -476,7 +726,7 @@ public sealed class SubchartEndpointTests : IAsyncLifetime
                 (insight_tenant_id, insight_source_type, insight_source_id,
                  child_person_id, parent_person_id, author_person_id, reason,
                  valid_from, valid_to)
-            VALUES (@t, 'bamboohr', @sid, @c, @p, @a, '', UTC_TIMESTAMP(6), NULL)
+            VALUES (@t, 'bamboohr', @sid, @c, @p, @a, '', '2020-01-01 00:00:00', NULL)
             """;
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@t",   TenantId.ToByteArray(bigEndian: true));

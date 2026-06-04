@@ -46,12 +46,13 @@ public sealed class SubchartService
         Guid rootPersonId,
         string orgChartSourceType,
         int? maxDepth,
+        DateTime? validAt,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(orgChartSourceType);
 
         var canSeeRoot = await _visibility
-            .CanSeeAsync(tenantId, viewerPersonId, rootPersonId, orgChartSourceType, cancellationToken)
+            .CanSeeAsync(tenantId, viewerPersonId, rootPersonId, orgChartSourceType, validAt, cancellationToken)
             .ConfigureAwait(false);
         if (!canSeeRoot)
         {
@@ -59,7 +60,7 @@ public sealed class SubchartService
         }
 
         var flat = await _reader
-            .GetSubchartAsync(tenantId, rootPersonId, orgChartSourceType, maxDepth, cancellationToken)
+            .GetSubchartAsync(tenantId, rootPersonId, orgChartSourceType, maxDepth, validAt, cancellationToken)
             .ConfigureAwait(false);
         if (flat.Count == 0)
         {
@@ -129,12 +130,13 @@ public sealed class SubchartService
         Guid viewerPersonId,
         string orgChartSourceType,
         int? maxDepth,
+        DateTime? validAt,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(orgChartSourceType);
 
         var flat = await _reader
-            .GetForestAsync(tenantId, viewerPersonId, orgChartSourceType, maxDepth, cancellationToken)
+            .GetForestAsync(tenantId, viewerPersonId, orgChartSourceType, maxDepth, validAt, cancellationToken)
             .ConfigureAwait(false);
         if (flat.Count == 0)
         {

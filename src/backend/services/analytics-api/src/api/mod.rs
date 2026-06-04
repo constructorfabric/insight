@@ -111,7 +111,7 @@ pub fn router(state: AppState) -> Router {
         // intermediaries cannot cache the response (server-side cache is the
         // single canonical cache layer per `cpt-metric-cat-principle-server-cache`).
         .route(
-            "/catalog/get_metrics",
+            "/v1/catalog/get_metrics",
             axum::routing::post(catalog::get_metrics),
         )
         // Admin threshold CRUD (Refs #525) — DESIGN §3.2 admin-crud.

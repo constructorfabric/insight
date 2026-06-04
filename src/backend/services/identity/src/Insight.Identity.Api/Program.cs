@@ -36,7 +36,14 @@ builder.Host.UseSerilog((context, services, config) =>
         .ReadFrom.Configuration(context.Configuration)
         .Enrich.FromLogContext()
         .Enrich.WithProperty("service", "identity")
-        .WriteTo.Console(new CompactJsonFormatter());
+        // RenderedCompactJsonFormatter emits the `@m` field with all
+        // placeholders substituted (e.g. "HTTP GET /healthz responded
+        // 200 in 0.2 ms"), in addition to the structured properties
+        // (RequestMethod, RequestPath, …) and the source template via
+        // `@mt`. The bare CompactJsonFormatter omits `@m`, leaving log
+        // viewers that fall back to `@mt` showing placeholders
+        // (`HTTP {RequestMethod} {RequestPath} …`) instead of values.
+        .WriteTo.Console(new RenderedCompactJsonFormatter());
 });
 
 builder.Services

@@ -65,7 +65,10 @@ pub async fn list_metrics(
     Extension(ctx): Extension<SecurityContext>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let rows = entities::metrics::Entity::find()
-        .filter(entities::metrics::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .filter(
+            entities::metrics::Column::InsightTenantId
+                .is_in([ctx.insight_tenant_id, GLOBAL_TENANT]),
+        )
         .filter(entities::metrics::Column::IsEnabled.eq(true))
         .all(&state.db)
         .await
@@ -900,14 +903,27 @@ fn is_valid_ident(s: &str) -> bool {
 
 // ── Shared helpers ──────────────────────────────────────────
 
-/// Find an enabled metric by ID and tenant. Returns 404 if missing or disabled.
+/// Product/global tenant. Platform metric *definitions* are seeded once under
+/// the nil UUID (see the `m20260507_*` / `m20260527_*` seed migrations, all of
+/// which use `ZERO_TENANT`) and are visible to every tenant — the request
+/// tenant only overlays per-tenant *thresholds*, never the definition itself.
+///
+/// Resolution rule: a metric is visible to a request when its
+/// `insight_tenant_id` is either the request's resolved tenant (a future
+/// tenant-specific custom metric) OR this global tenant. The request tenant is
+/// never `nil` (the auth layer rejects nil headers and filters a nil configured
+/// default — see `domain::auth`), so this never collapses into "match anything".
+const GLOBAL_TENANT: Uuid = Uuid::nil();
+
+/// Find an enabled metric by ID, visible to `tenant_id` or to the global
+/// (product) tenant. Returns 404 if missing or disabled.
 async fn find_enabled_metric(
     state: &AppState,
     tenant_id: Uuid,
     metric_id: Uuid,
 ) -> Result<entities::metrics::Model, CanonicalError> {
     entities::metrics::Entity::find_by_id(metric_id)
-        .filter(entities::metrics::Column::InsightTenantId.eq(tenant_id))
+        .filter(entities::metrics::Column::InsightTenantId.is_in([tenant_id, GLOBAL_TENANT]))
         .filter(entities::metrics::Column::IsEnabled.eq(true))
         .one(&state.db)
         .await

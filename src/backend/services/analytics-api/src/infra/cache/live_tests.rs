@@ -77,6 +77,7 @@ fn sample_payload(tenant_id: Uuid) -> CatalogResponse {
         generated_at: Utc::now(),
         metrics: vec![MetricView {
             id: Uuid::now_v7(),
+            metric_key: "ic_kpis.tasks_closed".to_owned(),
             label: "Tasks Closed".to_owned(),
             sublabel: None,
             description: None,
@@ -96,6 +97,7 @@ fn sample_payload(tenant_id: Uuid) -> CatalogResponse {
                 bounded_by_lock: false,
             },
         }],
+        links: vec![],
     }
 }
 

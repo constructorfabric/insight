@@ -33,7 +33,7 @@
 
 Metric Catalog is a backend-owned registry over MariaDB that resolves two facts about every metric Insight surfaces to users: **what it means** (label, sublabel, description, unit, format, source connectors, enable flag) and **what "good" looks like for each tenant** (per-scope thresholds for bullet colors and alert evaluation). It replaces today's drift-prone split where metric metadata lives in a frontend TypeScript file (`thresholdConfig.ts`) while the metric query lives in the backend (`analytics.metrics.query_ref`). The catalog sits at the gold / consumer layer; it names metrics and carries display + threshold metadata, but it is **agnostic** to how a metric is computed — `analytics.metrics.query_ref` remains the authoritative source for that in v1 (see PRD §1.1 layer boundary).
 
-The read path is a single `POST /catalog/get_metrics` endpoint that returns, for the caller's `(tenant, role, team)` context, every enabled catalog row joined with its resolved threshold. The endpoint is POST (not GET) so request-context fields stay out of HTTP access logs; that choice forces caching to be **server-side** (Redis or pub-sub-coordinated in-process), which is also the only shape that satisfies the cross-replica invalidation NFR. The resolver executes a canonical most-specific-wins walk over scopes `product-default → tenant → role → team → team+role`, lock-bounded: a row with `is_locked = true` at any scope stops the walk and that row is returned. Resolution lives in the catalog so every consumer agrees on which row won; the read endpoint surfaces `resolved_from` per metric so admin tooling can explain the choice without a second request.
+The read path is a single `POST /v1/catalog/get_metrics` endpoint that returns, for the caller's `(tenant, role, team)` context, every enabled catalog row joined with its resolved threshold. The endpoint is POST (not GET) so request-context fields stay out of HTTP access logs; that choice forces caching to be **server-side** (Redis or pub-sub-coordinated in-process), which is also the only shape that satisfies the cross-replica invalidation NFR. The resolver executes a canonical most-specific-wins walk over scopes `product-default → tenant → role → team → team+role`, lock-bounded: a row with `is_locked = true` at any scope stops the walk and that row is returned. Resolution lives in the catalog so every consumer agrees on which row won; the read endpoint surfaces `resolved_from` per metric so admin tooling can explain the choice without a second request.
 
 The write path is tenant-admin CRUD over `metric_threshold` (5 endpoints under `/v1/admin/metric-thresholds`). Catalog metadata is migration-only in v1 — there is no runtime endpoint to rename or relabel a product-owned metric, because metadata is product-level contract and per-tenant edits would shatter cross-tenant comparability. Locks turn the catalog from a config store into a compliance mechanism: tenant admins can pin a metric at `tenant` scope with a required `lock_reason`, and every lock-set, lock-clear, and lock-bypass attempt lands in a dedicated `threshold_lock_audit` MariaDB table plus the structured log stream — retention defined canonically on the table (§3.7). The product/tenant axis is symmetric to thresholds: product owns the global metadata baseline; tenants overlay thresholds; tenant-custom metrics land later via the same nullable-`tenant_id` slot that ships dead-with-CHECK in v1.
 
@@ -50,7 +50,7 @@ The write path is tenant-admin CRUD over `metric_threshold` (5 endpoints under `
 | `cpt-metric-cat-fr-threshold-storage` | `metric_threshold` table with scope enum, unique on `(tenant_id, metric_key, scope, role_slug, team_id)`, lock + audit columns. CHECK constraints enforce v1 invariants. |
 | `cpt-metric-cat-fr-tenant-thresholds` | `product-default` seeded per metric; resolver walk never returns null for an enabled metric. |
 | `cpt-metric-cat-fr-scoped-thresholds` | ThresholdResolver — canonical in-memory walk after one bulk fetch per request; lock-bounded; surfaces `resolved_from`. |
-| `cpt-metric-cat-fr-read-endpoint` | `POST /catalog/get_metrics` with JSON body `{ role_slug?, team_id? }`; returns catalog + resolved thresholds + `resolved_from`. |
+| `cpt-metric-cat-fr-read-endpoint` | `POST /v1/catalog/get_metrics` with JSON body `{ role_slug?, team_id? }`; returns catalog + resolved thresholds + `resolved_from`. |
 | `cpt-metric-cat-fr-cache` | Server-side cache (`CacheLayer` component); per-`(tenant, role, team)` key; 5-min default TTL; invalidated on admin write. |
 | `cpt-metric-cat-fr-threshold-crud` | `AdminCRUD` component owns 5 admin endpoints; enforces auth + DB CHECK + app-layer scope/sanity validation. |
 | `cpt-metric-cat-fr-threshold-lock` | `LockEnforcer` checks broader-scope locks on every write; emits a canonical `permission_denied` envelope (HTTP 403, `context.reason = "threshold_locked"`, `blocking_scope` / `blocking_row_id` / `locked_at`) per §3.3. |
@@ -74,7 +74,7 @@ The write path is tenant-admin CRUD over `metric_threshold` (5 endpoints under `
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  HTTP API   POST /catalog/get_metrics  /v1/admin/metric-thresholds │
+│  HTTP API   POST /v1/catalog/get_metrics  /v1/admin/metric-thresholds │
 ├──────────────────────────────────────────────────────────────┤
 │  Application   catalog-reader · admin-crud · lock-enforcer · audit-emitter │
 ├──────────────────────────────────────────────────────────────┤
@@ -99,7 +99,7 @@ The write path is tenant-admin CRUD over `metric_threshold` (5 endpoints under `
 
 - [ ] `p2` - **ID**: `cpt-metric-cat-principle-ssot`
 
-The catalog is the authoritative store for every metric's display metadata and threshold values. Frontend and other consumers MUST hydrate from `POST /catalog/get_metrics` and MUST NOT hardcode label, unit, or threshold values. Drift between frontend and backend metadata caused the original support pain; v1 deletes that drift surface entirely.
+The catalog is the authoritative store for every metric's display metadata and threshold values. Frontend and other consumers MUST hydrate from `POST /v1/catalog/get_metrics` and MUST NOT hardcode label, unit, or threshold values. Drift between frontend and backend metadata caused the original support pain; v1 deletes that drift surface entirely.
 
 **ADRs**: _no ADRs in v1; rationale lives in PRD §1.2._
 
@@ -261,7 +261,7 @@ The catalog has four first-class types. Three are persisted (`Metric`, `Threshol
 
 #### ResolvedThreshold
 
-- **Purpose**: Read-side value object returned per metric in `POST /catalog/get_metrics`. Constructed by `cpt-metric-cat-component-threshold-resolver` from one or more `Threshold` rows; never persisted.
+- **Purpose**: Read-side value object returned per metric in `POST /v1/catalog/get_metrics`. Constructed by `cpt-metric-cat-component-threshold-resolver` from one or more `Threshold` rows; never persisted.
 - **Fields**:
 
 | Column | Type | Notes |
@@ -310,7 +310,7 @@ The catalog has four first-class types. Three are persisted (`Metric`, `Threshol
 - **Metric 1 — N AuditEvent** by `metric_key`. Loose pointer; same no-FK rationale; CRUD does not validate metric existence on audit emits (audit must succeed even if a metric is later disabled).
 - **Threshold 0 — N AuditEvent** by `blocking_row_id` (`bypass_attempt`) and / or by the row whose lock toggled (`lock_set`, `lock_cleared`). Loose UUID reference — no FK; the audit row survives deletion of the threshold row.
 - **Threshold 1 — 1 ResolvedThreshold** per (metric, request-context) walk. `ResolvedThreshold` is ephemeral, constructed from one or more `Threshold` candidate rows; never stored.
-- **Metric ↔ `analytics.metrics.query_ref`** by `metric_key`. Loose pointer; no FK; opacity preserved (catalog never opens `query_ref`) per PRD §1.1 layer boundary.
+- **Metric ↔ `analytics.metrics.query_ref`** by `metric_key`. The string-level pointer is unchanged: catalog still never opens, parses, or stores `query_ref`, so opacity per PRD §1.1 layer boundary is preserved. A separate **referential** link exists via the `metric_query_catalog` junction table (§3.7) — it carries M:N FKs `(metrics.id, metric_catalog.id)` so the question "which catalog rows does this query emit" / "which queries back this catalog row" has a structurally enforced answer. The junction adds referential integrity only; neither side gains a column that reveals the other's payload.
 
 ### 3.2 Component Model
 
@@ -319,7 +319,7 @@ All components live within `analytics-api`. The diagram below shows logical stru
 ```mermaid
 flowchart LR
     subgraph HTTP["HTTP (Axum)"]
-        R[POST /catalog/get_metrics]
+        R[POST /v1/catalog/get_metrics]
         A1[GET/POST/PUT/DELETE /v1/admin/metric-thresholds]
     end
 
@@ -375,7 +375,7 @@ flowchart LR
 
 ##### Why this component exists
 
-Owns the request-handler surface for `POST /catalog/get_metrics` and the response-shape contract that consumers depend on. Satisfies `cpt-metric-cat-fr-read-endpoint`, applies `cpt-metric-cat-fr-enable-flag` filtering, and is the throughput-shaping entry point for `cpt-metric-cat-nfr-read-latency`.
+Owns the request-handler surface for `POST /v1/catalog/get_metrics` and the response-shape contract that consumers depend on. Satisfies `cpt-metric-cat-fr-read-endpoint`, applies `cpt-metric-cat-fr-enable-flag` filtering, and is the throughput-shaping entry point for `cpt-metric-cat-nfr-read-latency`.
 
 ##### Responsibility scope
 
@@ -635,7 +635,7 @@ Owns the one-shot import of frontend-hardcoded metadata (`BULLET_DEFS`, `IC_KPI_
 
 #### Error Envelope (applies to every endpoint in §3.3)
 
-Every 4xx / 5xx response across `POST /catalog/get_metrics` and `/v1/admin/metric-thresholds/*` is an **RFC 9457 Problem Details** payload served with `Content-Type: application/problem+json`. The catalog follows the cyberfabric canonical error contract (DNA `REST/API.md §7` + `REST/STATUS_CODES.md`) implemented by the `modkit-canonical-errors` Rust crate. Per-handler error mapping uses the crate's `CanonicalError` enum and its `#[resource_error("gts.cf.insight.metric_catalog.<resource>.v1~")]` macro to scope context to the metric-catalog domain.
+Every 4xx / 5xx response across `POST /v1/catalog/get_metrics` and `/v1/admin/metric-thresholds/*` is an **RFC 9457 Problem Details** payload served with `Content-Type: application/problem+json`. The catalog follows the cyberfabric canonical error contract (DNA `REST/API.md §7` + `REST/STATUS_CODES.md`) implemented by the `modkit-canonical-errors` Rust crate. Per-handler error mapping uses the crate's `CanonicalError` enum and its `#[resource_error("gts.cf.insight.metric_catalog.<resource>.v1~")]` macro to scope context to the metric-catalog domain.
 
 **Envelope shape**:
 
@@ -683,13 +683,13 @@ Fields `type`, `title`, `status`, `detail`, `context` are always present; `insta
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| POST | `/catalog/get_metrics` | Returns every `is_enabled = true` catalog row for the caller's tenant, joined with its `ResolvedThreshold` per the canonical walk. | stable |
+| POST | `/v1/catalog/get_metrics` | Returns every `is_enabled = true` catalog row for the caller's tenant, joined with its `ResolvedThreshold` per the canonical walk. | stable |
 
 **Request body (model-level)**: `{ role_slug?: string, team_id?: string }`. Both fields are optional; empty `{}` resolves at the `tenant` / `product-default` chain only. The verb is POST (not GET) so request-context fields never appear in HTTP access logs, proxy logs, or third-party query-string captures — and so HTTP / CDN intermediaries cannot cache the response, which leaves the server-side `cpt-metric-cat-component-cache-layer` as the single canonical cache (per `cpt-metric-cat-principle-server-cache`).
 
 **Tenant resolution**: `tenant_id` is NEVER accepted from the request body; it is resolved by `cpt-metric-cat-component-auth-trait` from the session, or — for single-tenant deployments — from the configured `tenantDefaultId` per `cpt-metric-cat-constraint-tenant-default`. If neither resolves, the endpoint returns `400 invalid_argument` (see error contract below).
 
-**Response body (model-level)**: `{ tenant_id, generated_at, metrics: [{ id, label, sublabel, description, unit, format, higher_is_better, is_member_scale, source_tags: [string], schema_status, schema_error_code?, thresholds: { good, warn, alert_trigger?, alert_bad?, resolved_from, bounded_by_lock } }] }`. Each metric carries `id` (UUIDv7) as its stable wire identifier; the backend-internal `metric_key` (`table_name.column_name`) is intentionally omitted so consumers cannot couple to source-schema names. `schema_status` is `"ok" | "error" | "unchecked"` — populated by `cpt-metric-cat-component-schema-validator` per `cpt-metric-cat-constraint-schema-validation` so consumers can mark broken metrics; `schema_error_code` (only present when status is `"error"`) is a canonical code from the set `{ table_not_found, column_not_found, clickhouse_unreachable, unknown }` — raw ClickHouse error text NEVER reaches consumers. `resolved_from` is one of `"team+role" | "team" | "role" | "tenant" | "product-default"` per `cpt-metric-cat-fr-scoped-thresholds`; `bounded_by_lock` is a boolean indicating whether the walk halted on a locked broader-scope row before reaching the most-specific candidate (separate signal from `resolved_from`, which always names the row that won).
+**Response body (model-level)**: `{ tenant_id, generated_at, metrics: [{ id, metric_key, label, sublabel, description, unit, format, higher_is_better, is_member_scale, source_tags: [string], schema_status, schema_error_code?, thresholds: { good, warn, alert_trigger?, alert_bad?, resolved_from, bounded_by_lock } }], links: [{ query_id, catalog_metric_ids: [Uuid] }] }`. Each metric carries `id` (UUIDv7) as its **stable wire lookup identifier — consumers MUST key metadata lookups by `id`**. `metric_key` (`table_name.column_name`) is additionally surfaced per **ADR-002** as the FE-bridge identifier so the FE catalog-hydration migration (cyberfabric/cyber-insight-front#66) can align compile-in `BULLET_DEFS` constants to wire rows during the transitional release; consumers SHOULD NOT use `metric_key` as their primary lookup key — that contract belongs to `id`. The top-level `links` array surfaces the `metric_query_catalog` M:N mapping (junction introduced by ADR-001) per **ADR-003** so consumers cache the time/filter-invariant `(query_id → catalog_metric_ids)` map separately from per-request value time-series; `catalog_metric_ids` is sorted ascending for byte-stable wire output and only references ids present in `metrics[]` (disabled catalog rows are filtered out of both arrays consistently). `schema_status` is `"ok" | "error" | "unchecked"` — populated by `cpt-metric-cat-component-schema-validator` per `cpt-metric-cat-constraint-schema-validation` so consumers can mark broken metrics; `schema_error_code` (only present when status is `"error"`) is a canonical code from the set `{ table_not_found, column_not_found, clickhouse_unreachable, unknown }` — raw ClickHouse error text NEVER reaches consumers. `resolved_from` is one of `"team+role" | "team" | "role" | "tenant" | "product-default"` per `cpt-metric-cat-fr-scoped-thresholds`; `bounded_by_lock` is a boolean indicating whether the walk halted on a locked broader-scope row before reaching the most-specific candidate (separate signal from `resolved_from`, which always names the row that won).
 
 #### Admin Threshold CRUD
 
@@ -711,7 +711,7 @@ Fields `type`, `title`, `status`, `detail`, `context` are always present; `insta
 
 **Authorization**: caller MUST be a tenant admin for the target tenant (resolved through `cpt-metric-cat-component-auth-trait`). Cross-tenant writes are rejected before validation runs.
 
-**Authentication / CSRF model**: admin endpoints accept **bearer tokens only** (`Authorization: Bearer …`); cookie-based auth is NOT honored on this surface. Combined with the `Content-Type: application/json` requirement (form encodings are rejected with 415), this eliminates the cross-site-request-forgery vector — no in-browser cross-origin form post can reach the admin write surface. The read endpoint (`POST /catalog/get_metrics`) follows the same bearer-only convention.
+**Authentication / CSRF model**: admin endpoints accept **bearer tokens only** (`Authorization: Bearer …`); cookie-based auth is NOT honored on this surface. Combined with the `Content-Type: application/json` requirement (form encodings are rejected with 415), this eliminates the cross-site-request-forgery vector — no in-browser cross-origin form post can reach the admin write surface. The read endpoint (`POST /v1/catalog/get_metrics`) follows the same bearer-only convention.
 
 **Error contract (model-level)** — all responses follow the canonical envelope defined at the top of §3.3. Status / category / context for each catalog-specific failure:
 
@@ -761,7 +761,7 @@ Fields `type`, `title`, `status`, `detail`, `context` are always present; `insta
 - **Location**: in this DESIGN — full FEATURE-level spec lands later
 - **Stability**: stable
 
-Consumers (frontend dashboards, downstream services, the future admin UI) MUST hydrate the catalog by calling `POST /catalog/get_metrics` once per session — or once per cache-TTL window (default 5 minutes) — and key all metric-metadata lookups by the `id` (UUIDv7) returned per row. Consumers MUST render the `label` field for display; the backend-internal `metric_key` is not surfaced and MUST NOT be reverse-engineered from any other field. Consumers MUST degrade gracefully when a previously-seen `id` is absent from a later response (a disabled metric resolves as missing metadata, never as an error).
+Consumers (frontend dashboards, downstream services, the future admin UI) MUST hydrate the catalog by calling `POST /v1/catalog/get_metrics` once per session — or once per cache-TTL window (default 5 minutes) — and key all metric-metadata lookups by the `id` (UUIDv7) returned per row. Consumers MUST render the `label` field for display. Per **ADR-002**, the response additionally surfaces `metric_key` (`<table_name>.<column_name>`) as the FE-bridge identifier for the catalog-hydration transitional release (cyberfabric/cyber-insight-front#66) and as a human-meaningful debug join key — but consumers SHOULD NOT use it as their primary lookup key, because `id` is the stable wire-identifier contract. Per **ADR-003**, the top-level `links: [{ query_id, catalog_metric_ids: [Uuid] }]` array exposes the time/filter-invariant `metric_query_catalog` mapping (ADR-001 junction); consumers cache this Layer-2 map for the same TTL as the catalog itself rather than re-deriving it per value request. Consumers MUST degrade gracefully when a previously-seen `id` is absent from a later response (a disabled metric resolves as missing metadata, never as an error).
 
 Consumers handle `schema_status` as follows: `"ok"` → render normally; `"error"` → render with a "broken metric" indicator (still show the label so admins can identify it; suppress threshold-based coloring); `"unchecked"` → render normally as if `"ok"` (the validator simply hasn't run yet — typically right after deploy). The same rule applies on admin endpoints, where `schema_status` is also surfaced before the operator submits POST / PUT.
 
@@ -788,8 +788,8 @@ All nine components live inside the `analytics-api` crate; the catalog has no in
 | Dependency | Interface | Purpose |
 |------------|-----------|---------|
 | MariaDB (10.3+) | SeaORM (migrations + entities) | Persistence for `metric_catalog`, `metric_threshold`, and `threshold_lock_audit`; 10.3+ is required for reliable CHECK enforcement (`cpt-metric-cat-constraint-mariadb-check`) — a startup probe asserts the CHECKs exist via `INFORMATION_SCHEMA.CHECK_CONSTRAINTS`. |
-| Cache backend (Redis OR in-process LRU + pub-sub) | `CacheLayer` trait (`cpt-metric-cat-component-cache-layer`) | Server-side cache for `POST /catalog/get_metrics` and the carrier of cross-replica invalidation; concrete mechanism is `cpt-metric-cat-design-oq-cache-mechanism`. |
-| `analytics.metrics` table | Read-only (loose pointer) | Holds the existing `query_ref` rows; `metric_catalog.metric_key` aligns loosely with the metric keys it emits. No FK; opacity preserved per PRD §1.1 layer boundary. |
+| Cache backend (Redis OR in-process LRU + pub-sub) | `CacheLayer` trait (`cpt-metric-cat-component-cache-layer`) | Server-side cache for `POST /v1/catalog/get_metrics` and the carrier of cross-replica invalidation; concrete mechanism is `cpt-metric-cat-design-oq-cache-mechanism`. |
+| `analytics.metrics` table | Read-only (string pointer) + M:N referential link | Holds the existing `query_ref` rows; `metric_catalog.metric_key` aligns by string with the metric keys each query emits. A separate `metric_query_catalog` junction table (§3.7) carries M:N FKs `(metrics.id, metric_catalog.id)` to make "which catalog rows does this query emit" structurally enforced. Catalog still never opens `query_ref`; opacity per PRD §1.1 layer boundary is preserved (the junction carries only IDs, not the SQL payload). |
 | ClickHouse `system.columns` | Read-only schema introspection | Used by `cpt-metric-cat-component-schema-validator` to confirm each metric's `table.column` reference exists; result is cached on `metric_catalog.schema_status` so reads never hit ClickHouse on the request path. |
 | `modkit-canonical-errors` (cyberfabric-core Rust crate) | `CanonicalError` enum + RFC 9457 `Problem` serializer + `#[resource_error]` macro | Every 4xx / 5xx response across catalog endpoints is constructed through this crate per the §3.3 error envelope. Aligns the catalog's wire shape with DNA `REST/API.md §7` and other cyberfabric services so a shared client error handler works across the platform. |
 | analytics-api Helm chart (`src/backend/services/analytics-api/helm/values.yaml`) | `tenantDefaultId` (UUID, optional) → env var `ANALYTICS__metric_catalog__tenant_default_id` → Rust config `metric_catalog.tenant_default_id` | Single-tenant fallback consumed by `cpt-metric-cat-component-auth-trait.resolve_tenant` per `cpt-metric-cat-constraint-tenant-default`. Multi-tenant installs leave it unset. Mirrors `IDENTITY__identity__tenant_default_id` in the identity service. |
@@ -815,7 +815,7 @@ The four sequences below cover the catalog's hot paths: the cached read, the sta
 
 ```mermaid
 sequenceDiagram
-    Consumer ->> CatalogReader: POST /catalog/get_metrics { role_slug, team_id }
+    Consumer ->> CatalogReader: POST /v1/catalog/get_metrics { role_slug, team_id }
     CatalogReader ->> CacheLayer: get(tenant_id, role_slug, team_id)
     alt cache hit
         CacheLayer -->> CatalogReader: cached response
@@ -902,7 +902,7 @@ sequenceDiagram
     SeedMigration ->> CacheLayer: flush_all() (prefix purge: cat:v1:*)
     CacheLayer -->> SeedMigration: ack
     Note over SeedMigration: Legacy analytics.thresholds DROP ships in a follow-on migration ≥1 release later
-    Consumer ->> CatalogReader: POST /catalog/get_metrics (next request)
+    Consumer ->> CatalogReader: POST /v1/catalog/get_metrics (next request)
     CatalogReader -->> Consumer: catalog with new metric
 ```
 
@@ -1094,6 +1094,37 @@ The catalog owns three MariaDB tables. v1 invariants are enforced at both the DB
 |----|------------|----------|-----------|------------|-----------------|----------------|-----------------|----------|
 | `a1...` | `lock_set` | `u-alice` | `t-acme` | `tasks_closed` | NULL | NULL | NULL | 2026-05-12 14:02:11Z |
 | `b2...` | `bypass_attempt` | `u-bob` | `t-acme` | `tasks_closed` | role | tenant | `7af...` | 2026-05-13 09:18:33Z |
+
+#### Table: metric_query_catalog
+
+- **Purpose**: Junction table that records the M:N referential link between `metrics` rows (each one a single ClickHouse `query_ref`) and the `metric_catalog` rows whose `metric_key` values that query emits. Answers two structurally otherwise-unanswerable questions: "given a query, which catalog rows does it emit?" and "given a catalog row, which query backs it?". Adds referential integrity only — neither side gains a column that reveals the other's payload, so PRD §1.1 layer-boundary opacity is preserved (the catalog still never opens `query_ref`).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | BINARY(16) PK | UUIDv7 generated in Rust at backfill time. Stable identity for the junction row itself. |
+| `metrics_id` | BINARY(16) NOT NULL | FK → `metrics(id)` ON DELETE CASCADE. Removal of a query row tears down its junction rows; the surviving catalog rows are unaffected. |
+| `metric_catalog_id` | BINARY(16) NOT NULL | FK → `metric_catalog(id)` ON DELETE CASCADE. Removal of a catalog row tears down its junction rows; the surviving query rows are unaffected (their `query_ref` may still emit the same `metric_key` — the next catalog re-seed re-establishes the link). |
+| `created_at` | TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP | Backfill / re-seed audit. Never mutated (no ON UPDATE). |
+
+**Constraints**:
+- UNIQUE composite on `(metrics_id, metric_catalog_id)` — a pair appears at most once. Doubles as the supporting index for "given a query, list its catalog rows" (leftmost-prefix).
+- No CHECK constraints in v1 (the FKs carry the referential-integrity invariant). Listed in `REQUIRED_CHECKS_BY_TABLE` as an empty slice so the startup-probe-coverage test in `migration/mod.rs` doesn't grow a special case.
+
+**Indexes**:
+- Primary index on `id`.
+- UNIQUE `(metrics_id, metric_catalog_id)` (above).
+- Index on `metric_catalog_id` — supports the reverse direction ("given a catalog row, list backing queries") and lets the FK constraint check on `metric_catalog` deletes avoid a full junction scan.
+
+**Owned by**: `cpt-metric-cat-component-seed-migration` (backfill in `m20260529_000001_metric_query_catalog_link`); catalog-reader (future read path — out of v1 scope; the table is queryable for diagnostics but no read endpoint is wired in v1).
+
+**Example**:
+
+| id | metrics_id | metric_catalog_id | created_at |
+|----|------------|-------------------|------------|
+| `c3...` | `…0003` (Team Bullet Task Delivery) | `…tasks_completed` | 2026-05-29 11:00:00Z |
+| `c4...` | `…0011` (IC Bullet Task Delivery)   | `…tasks_completed` | 2026-05-29 11:00:00Z |
+
+Both rows point at the same catalog row because both queries pivot the same `task_delivery_bullet_rows` storage table.
 
 ### 3.8 Deployment Topology
 

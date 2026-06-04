@@ -58,6 +58,11 @@ SELECT
     -- CE-specific columns — NULL for Cursor (Cursor does not expose git-level attribution)
     CAST(NULL AS Nullable(UInt32))                  AS commits_count,
     CAST(NULL AS Nullable(UInt32))                  AS pull_requests_count,
+    -- prs_with_cc_count / prs_total_count: Claude Team-only (Anthropic GitHub-app attribution).
+    -- Cursor does not expose PR-level attribution at user grain.
+    -- Structural NULL per Silver NULL-policy (presence of column required for UNION ALL parity).
+    CAST(NULL AS Nullable(UInt32))                  AS prs_with_cc_count,
+    CAST(NULL AS Nullable(UInt32))                  AS prs_total_count,
     CAST(NULL AS Nullable(String))                  AS tool_action_breakdown_json,
     'cursor'                                        AS source,
     'insight_cursor'                                AS data_source,

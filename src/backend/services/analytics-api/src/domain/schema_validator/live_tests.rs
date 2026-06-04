@@ -72,12 +72,22 @@ fn connect_clickhouse() -> Option<insight_clickhouse::Client> {
 }
 
 async fn reset_catalog(db: &DatabaseConnection) -> anyhow::Result<()> {
-    for table in ["threshold_lock_audit", "metric_threshold", "metric_catalog"] {
+    // `metric_query_catalog` (ADR-001, m20260529) FKs into `metric_catalog`
+    // with `ON DELETE CASCADE` — drop it first to avoid MariaDB error 1451.
+    for table in [
+        "metric_query_catalog",
+        "threshold_lock_audit",
+        "metric_threshold",
+        "metric_catalog",
+    ] {
         db.execute_unprepared(&format!("DROP TABLE IF EXISTS {table}"))
             .await?;
     }
-    db.execute_unprepared("DELETE FROM seaql_migrations WHERE version LIKE 'm20260522_%'")
-        .await?;
+    db.execute_unprepared(
+        "DELETE FROM seaql_migrations \
+         WHERE version LIKE 'm20260522_%' OR version LIKE 'm20260529_%'",
+    )
+    .await?;
     Migrator::up(db, None).await?;
     Ok(())
 }

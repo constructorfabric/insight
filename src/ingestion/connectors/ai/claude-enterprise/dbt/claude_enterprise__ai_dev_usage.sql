@@ -79,6 +79,12 @@ SELECT
     -- Enterprise exposes commit and PR counts per user per day via core_metrics.
     toUInt32(coalesce(code_commit_count, 0))                           AS commits_count,
     toUInt32(coalesce(code_pull_request_count, 0))                     AS pull_requests_count,
+    -- prs_with_cc_count / prs_total_count: Claude Team-only (Anthropic GitHub-app attribution).
+    -- Enterprise exposes code_pull_request_count (above, → pull_requests_count) but not the
+    -- GitHub-app split between "PRs with CC active" and "total PRs in window".
+    -- Structural NULL per Silver NULL-policy (column required for UNION ALL parity).
+    CAST(NULL AS Nullable(UInt32))                                     AS prs_with_cc_count,
+    CAST(NULL AS Nullable(UInt32))                                     AS prs_total_count,
     -- Full tool-action breakdown (edit/write/multi_edit/notebook_edit accepted+rejected).
     -- Stored as-is from Bronze for downstream analytics without re-aggregation.
     claude_code_metrics_json                                           AS tool_action_breakdown_json,

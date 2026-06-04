@@ -35,7 +35,7 @@ SELECT
         u.tenant_id, '-',
         u.source_id, '-',
         coalesce(u.user_id, ''), '-',
-        toString(toDate(parseDateTimeBestEffort(u.date)))
+        toString(toDate(parseDateTimeBestEffortOrNull(u.date)))
     )) AS unique_key,
     u.user_id,
     coalesce(u.email_address, '') AS user_name,
@@ -43,7 +43,7 @@ SELECT
     if(coalesce(u.email_address, '') != '',
        lower(u.email_address),
        lower(u.user_id)) AS person_key,
-    toDate(parseDateTimeBestEffort(u.date)) AS date,
+    toDate(parseDateTimeBestEffortOrNull(u.date)) AS date,
     CAST(NULL AS Nullable(Int64)) AS direct_messages,
     CAST(NULL AS Nullable(Int64)) AS group_chat_messages,
     -- #266: total - channel = DMs + MPIMs (everything posted outside channels).
@@ -62,9 +62,10 @@ SELECT
 FROM {{ source('bronze_slack', 'users_details') }} AS u
 WHERE u.user_id IS NOT NULL
   AND u.user_id != ''
+  AND parseDateTimeBestEffortOrNull(u.date) IS NOT NULL
 {% if is_incremental() %}
   AND (
     (SELECT max(date) FROM {{ this }}) IS NULL
-    OR toDate(parseDateTimeBestEffort(u.date)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    OR toDate(parseDateTimeBestEffortOrNull(u.date)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
   )
 {% endif %}

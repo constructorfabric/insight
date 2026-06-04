@@ -27,7 +27,7 @@ pub struct PersonError;
 /// DESIGN §3.3 ("Resource GTS namespaces introduced for the catalog …
 /// `gts.cf.insight.metric_catalog.metric.v1~`").
 ///
-/// `POST /catalog/get_metrics` doesn't currently use this — its body-parse
+/// `POST /v1/catalog/get_metrics` doesn't currently use this — its body-parse
 /// errors flow through [`super::canonical_json::CanonicalJson`], which emits a
 /// resource-less envelope because body parse failures fire before the
 /// request's target resource is known. Admin-crud (#525) uses

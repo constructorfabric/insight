@@ -36,7 +36,7 @@ SELECT
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     pr._airbyte_extracted_at
-FROM {{ source('bronze_bitbucket_cloud', 'pull_requests') }} AS pr
+FROM {{ source('bronze_bitbucket_cloud', 'pull_requests') }} AS pr FINAL
 LEFT JOIN (
     SELECT
         prc.tenant_id,
@@ -46,8 +46,10 @@ LEFT JOIN (
         count() AS files_changed,
         SUM(COALESCE(fc_raw.additions, 0)) AS lines_added,
         SUM(COALESCE(fc_raw.deletions, 0)) AS lines_removed
-    FROM {{ source('bronze_bitbucket_cloud', 'pull_request_commits') }} AS prc
-    INNER JOIN {{ source('bronze_bitbucket_cloud', 'file_changes') }} AS fc_raw
+    -- FINAL on both: dedup before count()/SUM so bronze dupes don't inflate
+    -- the per-PR file/line aggregates (baked into one row). See ADR-0001.
+    FROM {{ source('bronze_bitbucket_cloud', 'pull_request_commits') }} AS prc FINAL
+    INNER JOIN {{ source('bronze_bitbucket_cloud', 'file_changes') }} AS fc_raw FINAL
         ON fc_raw.sha = prc.hash
         AND fc_raw.tenant_id = prc.tenant_id
         AND fc_raw.workspace = prc.workspace

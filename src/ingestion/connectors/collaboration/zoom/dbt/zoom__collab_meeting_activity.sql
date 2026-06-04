@@ -79,7 +79,7 @@ SELECT
         p.tenant_id, '-',
         p.source_id, '-',
         lower(p.email), '-',
-        toString(toDate(parseDateTimeBestEffort(p.join_time)))
+        toString(toDate(parseDateTimeBestEffortOrNull(p.join_time)))
     )) AS unique_key,
     p.email AS user_id,
     -- Pick one display name when the same email surfaces under multiple
@@ -90,7 +90,7 @@ SELECT
     coalesce(any(p.user_name), '') AS user_name,
     p.email AS email,
     lower(p.email) AS person_key,
-    toDate(parseDateTimeBestEffort(p.join_time)) AS date,
+    toDate(parseDateTimeBestEffortOrNull(p.join_time)) AS date,
     CAST(NULL AS Nullable(Int64)) AS calls_count,
     CAST(NULL AS Nullable(Int64)) AS meetings_organized,
     -- uniqExact over logical_meeting_id collapses host-drop rejoins into one.
@@ -104,7 +104,7 @@ SELECT
     CAST(NULL AS Nullable(Int64)) AS scheduled_meetings_attended,
     toInt64(sum(
         if(p.join_time IS NOT NULL AND p.leave_time IS NOT NULL,
-           dateDiff('second', parseDateTimeBestEffort(p.join_time), parseDateTimeBestEffort(p.leave_time)),
+           dateDiff('second', parseDateTimeBestEffortOrNull(p.join_time), parseDateTimeBestEffortOrNull(p.leave_time)),
            0)
     )) AS audio_duration_seconds,
     -- #263: gate by per-participant `camera` device name (NULL/'' means
@@ -114,13 +114,13 @@ SELECT
     -- session).
     toInt64(sumIf(
         if(p.join_time IS NOT NULL AND p.leave_time IS NOT NULL,
-           dateDiff('second', parseDateTimeBestEffort(p.join_time), parseDateTimeBestEffort(p.leave_time)),
+           dateDiff('second', parseDateTimeBestEffortOrNull(p.join_time), parseDateTimeBestEffortOrNull(p.leave_time)),
            0),
         p.camera IS NOT NULL AND p.camera != ''
     )) AS video_duration_seconds,
     toInt64(sumIf(
         if(p.join_time IS NOT NULL AND p.leave_time IS NOT NULL,
-           dateDiff('second', parseDateTimeBestEffort(p.join_time), parseDateTimeBestEffort(p.leave_time)),
+           dateDiff('second', parseDateTimeBestEffortOrNull(p.join_time), parseDateTimeBestEffortOrNull(p.leave_time)),
            0),
         coalesce(p.share_desktop, false)
         OR coalesce(p.share_application, false)
@@ -137,7 +137,7 @@ FROM (
     -- inflated by the re-emit factor.
     SELECT *
     FROM {{ source('bronze_zoom', 'participants') }}
-    WHERE join_time IS NOT NULL
+    WHERE parseDateTimeBestEffortOrNull(join_time) IS NOT NULL
       AND email IS NOT NULL AND email != ''
     ORDER BY _airbyte_extracted_at DESC
     LIMIT 1 BY meeting_uuid, participant_uuid, join_time
@@ -149,11 +149,11 @@ LEFT JOIN {{ ref('zoom__meeting_sessions') }} AS ml FINAL
 {% if is_incremental() %}
 WHERE (
     (SELECT max(date) FROM {{ this }}) IS NULL
-    OR toDate(parseDateTimeBestEffort(p.join_time)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    OR toDate(parseDateTimeBestEffortOrNull(p.join_time)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
 )
 {% endif %}
 GROUP BY
     p.tenant_id,
     p.source_id,
     p.email,
-    toDate(parseDateTimeBestEffort(p.join_time))
+    toDate(parseDateTimeBestEffortOrNull(p.join_time))

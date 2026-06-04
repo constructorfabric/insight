@@ -37,13 +37,13 @@ SELECT
         m.tenant_id, '-',
         m.source_id, '-',
         lower(u.email), '-',
-        toString(toDate(parseDateTimeBestEffort(m.created_at)))
+        toString(toDate(parseDateTimeBestEffortOrNull(m.created_at)))
     )) AS unique_key,
     lower(u.email) AS user_id,
     coalesce(any(u.full_name), '') AS user_name,
     lower(u.email) AS email,
     lower(u.email) AS person_key,
-    toDate(parseDateTimeBestEffort(m.created_at)) AS date,
+    toDate(parseDateTimeBestEffortOrNull(m.created_at)) AS date,
     CAST(NULL AS Nullable(Int64)) AS direct_messages,
     CAST(NULL AS Nullable(Int64)) AS group_chat_messages,
     CAST(NULL AS Nullable(Int64)) AS direct_and_group_messages,
@@ -63,7 +63,7 @@ FROM (
     -- yet — pre-dedup by `uniq` (the proxy's primary key).
     SELECT *
     FROM {{ source('bronze_zulip_proxy', 'messages') }}
-    WHERE created_at IS NOT NULL
+    WHERE parseDateTimeBestEffortOrNull(created_at) IS NOT NULL
     ORDER BY _airbyte_extracted_at DESC
     LIMIT 1 BY tenant_id, source_id, uniq
 ) AS m
@@ -75,11 +75,11 @@ WHERE u.email IS NOT NULL AND u.email != ''
 {% if is_incremental() %}
   AND (
     (SELECT max(date) FROM {{ this }}) IS NULL
-    OR toDate(parseDateTimeBestEffort(m.created_at)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    OR toDate(parseDateTimeBestEffortOrNull(m.created_at)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
   )
 {% endif %}
 GROUP BY
     m.tenant_id,
     m.source_id,
     lower(u.email),
-    toDate(parseDateTimeBestEffort(m.created_at))
+    toDate(parseDateTimeBestEffortOrNull(m.created_at))

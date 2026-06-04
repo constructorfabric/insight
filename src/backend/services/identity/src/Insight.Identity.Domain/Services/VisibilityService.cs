@@ -21,12 +21,15 @@ public sealed class VisibilityService
     /// <paramref name="tenantId"/>. Identity case (viewer == target)
     /// short-circuits without a DB call; everything else goes through
     /// the visibility CTE bound to <paramref name="orgChartSourceType"/>.
+    /// <paramref name="validAt"/> is optional — pass it to ask the
+    /// question as of a past moment (#582). NULL means "right now".
     /// </summary>
     public Task<bool> CanSeeAsync(
         Guid tenantId,
         Guid viewerPersonId,
         Guid targetPersonId,
         string orgChartSourceType,
+        DateTime? validAt,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(orgChartSourceType);
@@ -35,6 +38,6 @@ public sealed class VisibilityService
             return Task.FromResult(true);
         }
         return _visibility.IsTargetInVisibleSetAsync(
-            tenantId, viewerPersonId, targetPersonId, orgChartSourceType, cancellationToken);
+            tenantId, viewerPersonId, targetPersonId, orgChartSourceType, validAt, cancellationToken);
     }
 }

@@ -35,6 +35,7 @@ public sealed class VisibilityRepository : IVisibilityReader
         Guid viewerPersonId,
         Guid targetPersonId,
         string orgChartSourceType,
+        DateTime? validAt,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(orgChartSourceType);
@@ -44,6 +45,7 @@ public sealed class VisibilityRepository : IVisibilityReader
         cmd.Parameters.AddWithValue("@viewer_person_id", viewerPersonId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@target_person_id", targetPersonId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@org_source_type",  orgChartSourceType);
+        cmd.Parameters.AddWithValue("@valid_at",         (object?)validAt ?? DBNull.Value);
         var raw = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToBoolean(raw, CultureInfo.InvariantCulture);
     }

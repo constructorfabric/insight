@@ -15,6 +15,7 @@ decision-makers: roman.mitasov
 - [Decision Outcome](#decision-outcome)
   - [Consequences](#consequences)
   - [Confirmation](#confirmation)
+- [Update (2026-06-03): silver moved to delete+insert](#update-2026-06-03-silver-moved-to-deleteinsert)
 - [Pros and Cons of the Options](#pros-and-cons-of-the-options)
   - [A. RMT(_version) + ORDER BY (unique_key) + read-time FINAL/argMax](#a-rmtversion--order-by-uniquekey--read-time-finalargmax)
   - [B. delete+insert + RMT (or plain MT)](#b-deleteinsert--rmt-or-plain-mt)
@@ -71,6 +72,48 @@ For all other models (event/append semantics): use `RMT(_version)` + `incrementa
 - `cpt validate` confirms code markers reference this ADR/DESIGN ID (audit trail)
 - Cypilot skill `/check-dbt-conventions` reads every `.sql` model and asserts engine + order_by are correct (correctness check, LLM-based)
 - Visual / grep audit: `grep -r "engine=" src/ingestion/silver/ | grep -v ReplacingMergeTree` should return only commented-out exceptions
+
+## Update (2026-06-03): silver moved to `delete+insert`
+
+**Trigger.** A misconfigured Airbyte sync ran `full_refresh | append` (instead of
+`incremental`) across all virtuozzo connectors for a period, re-appending every
+source row. Bronze accumulated many duplicates per key. RMT only collapses on
+background merge, so the duplicates were still live at query time and propagated
+through staging into silver. Because the read-time-`FINAL` discipline of option A
+is unenforced, a consumer that forgot `FINAL` — the gold view
+`insight.collab_bullet_rows` — double-counted rows and surfaced impossible
+metrics (e.g. Collaboration "Active days" = 42 days/month).
+
+**Decision change.** For **silver** models (`class_*`, `fct_*`, `identity_inputs`)
+that are `materialized='incremental'`, switch from `incremental_strategy='append'`
+to **`incremental_strategy='delete+insert'` keyed on `unique_key`**. The silver
+table is then physically at most one row per `unique_key`, so **any consumer
+(gold views, the product, ad-hoc queries) can read silver without `FINAL`** and
+never see duplicates. This is the property option A could not guarantee.
+
+**Scope and rationale.**
+- This is option **B applied to silver only**. The original "double-cost" argument
+  against B is moot here: silver write volumes are small (daily aggregates), and
+  correctness for un-disciplined consumers outweighs the extra delete cost.
+- **Staging stays RMT + `append`** (cheap). Silver reads staging through
+  `union_by_tag`, which now deduplicates the union to one row per `unique_key`
+  (`QUALIFY ROW_NUMBER() … ORDER BY _version DESC`, or `LIMIT 1 BY` for versionless
+  sources) — so transient staging duplicates never reach silver.
+- **Bronze stays RMT.** Models that **aggregate** over bronze (`count`/`sum`)
+  must still dedup the bronze read explicitly (`FINAL` for RMT-promoted bronze,
+  `LIMIT 1 BY unique_key` for non-promoted MergeTree bronze), because aggregation
+  bakes inflation into a single row that no downstream dedup can undo
+  (e.g. `bitbucket_cloud__commits`, `claude_admin__ai_dev_usage`).
+- The `snapshot()` macro now reads its bronze source with `FINAL`, so transient
+  duplicates do not create spurious SCD2 history versions.
+- `materialized='table'` silver models (`class_people`, `mtr_git_person_*`,
+  `class_hr_working_hours`) are rebuilt in full each run and already collapse to
+  one row per key via the `union_by_tag` dedup — left unchanged.
+
+**Enforcement.** `src/ingestion/dbt/audit_rmt_read_dedup.py` checks every RMT read
+across staging, silver, and the gold-view migrations and fails (exit≠0) on an
+un-deduped read — usable as a CI gate. One-time cleanup of already-accumulated
+duplicates: `dbt run --full-refresh --select tag:silver`.
 
 ## Pros and Cons of the Options
 

@@ -269,13 +269,23 @@ spec:
           last_progress_at = time.time()
           while True:
               # Token TTL is short (~minutes); re-mint per loop iteration.
-              token = oauth_token()
-              headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-              req = urllib.request.Request(
-                  f"{airbyte_url}/api/v1/jobs/get",
-                  data=json.dumps({"id": job_id}).encode(),
-                  headers=headers)
-              resp = json.load(urllib.request.urlopen(req, timeout=30))
+              # Wrap the network calls (token mint + jobs/get): a transient blip
+              # (token endpoint hiccup, timeout, 5xx) must retry the loop, not
+              # crash the watchdog. Previously an unhandled exception here exited
+              # 1 and killed the poll — so the idle-stuck-job detector below never
+              # ran, and a hung Airbyte job sat "running" indefinitely.
+              try:
+                  token = oauth_token()
+                  headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+                  req = urllib.request.Request(
+                      f"{airbyte_url}/api/v1/jobs/get",
+                      data=json.dumps({"id": job_id}).encode(),
+                      headers=headers)
+                  resp = json.load(urllib.request.urlopen(req, timeout=30))
+              except Exception as e:
+                  print(f"poll: transient error fetching job status: {e!r}; retrying in {poll_interval}s", flush=True)
+                  time.sleep(poll_interval)
+                  continue
               status = resp["job"]["status"]
               progress = attempt_progress(resp)
               now = time.time()
