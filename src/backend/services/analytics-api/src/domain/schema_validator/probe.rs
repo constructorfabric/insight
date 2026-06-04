@@ -34,7 +34,9 @@ use crate::domain::schema_validator::error_code::SchemaErrorCode;
 /// (first `bind` fills the first `?` left-to-right in the SQL string). Bind
 /// order is therefore `(column, database, table)` to match the SQL below.
 const PROBE_SQL: &str = "\
-    SELECT count() AS total_columns, countIf(name = ?) AS matching_columns \
+    SELECT count() AS total_columns, countIf(name = ?) AS matching_columns, \
+           countIf(name = ?) AS metric_key_columns, \
+           countIf(name = ?) AS metric_value_columns \
     FROM system.columns \
     WHERE database = ? AND table = ?";
 
@@ -48,6 +50,8 @@ pub enum ProbeOutcome {
 struct ProbeRow {
     total_columns: u64,
     matching_columns: u64,
+    metric_key_columns: u64,
+    metric_value_columns: u64,
 }
 
 /// Pure mapping from probed `(total_columns, matching_columns)` to a
@@ -57,6 +61,12 @@ struct ProbeRow {
 fn classify(row: &ProbeRow) -> ProbeOutcome {
     if row.total_columns == 0 {
         ProbeOutcome::Error(SchemaErrorCode::TableNotFound)
+    } else if row.metric_key_columns > 0 {
+        if row.metric_value_columns > 0 {
+            ProbeOutcome::Ok
+        } else {
+            ProbeOutcome::Error(SchemaErrorCode::ColumnNotFound)
+        }
     } else if row.matching_columns == 0 {
         ProbeOutcome::Error(SchemaErrorCode::ColumnNotFound)
     } else {
@@ -87,7 +97,12 @@ pub async fn probe(
     column: &str,
 ) -> Result<ProbeOutcome, ProbeError> {
     let mut query = ch.query(PROBE_SQL);
-    query = query.bind(column).bind(database).bind(table);
+    query = query
+        .bind(column)
+        .bind("metric_key")
+        .bind("metric_value")
+        .bind(database)
+        .bind(table);
     let row: ProbeRow = query.fetch_one().await.map_err(ProbeError::Unreachable)?;
     Ok(classify(&row))
 }
@@ -110,8 +125,8 @@ mod tests {
     #[test]
     fn sql_contains_only_bound_placeholders() {
         // Regression guard against accidental string-interpolation refactors —
-        // the only allowed values are the three `?` placeholders.
-        assert_eq!(PROBE_SQL.matches('?').count(), 3);
+        // the only allowed values are the five `?` placeholders.
+        assert_eq!(PROBE_SQL.matches('?').count(), 5);
         // No single-quoted literal anywhere in the SQL — every value lives in a bind.
         assert!(!PROBE_SQL.contains('\''));
         // Scoped to system.columns only.
@@ -128,23 +143,51 @@ mod tests {
         assert_eq!(
             classify(&ProbeRow {
                 total_columns: 0,
-                matching_columns: 0
+                matching_columns: 0,
+                metric_key_columns: 0,
+                metric_value_columns: 0
             }),
             ProbeOutcome::Error(SchemaErrorCode::TableNotFound)
         );
         assert_eq!(
             classify(&ProbeRow {
                 total_columns: 12,
-                matching_columns: 0
+                matching_columns: 0,
+                metric_key_columns: 0,
+                metric_value_columns: 0
             }),
             ProbeOutcome::Error(SchemaErrorCode::ColumnNotFound)
         );
         assert_eq!(
             classify(&ProbeRow {
                 total_columns: 12,
-                matching_columns: 1
+                matching_columns: 1,
+                metric_key_columns: 0,
+                metric_value_columns: 0
             }),
             ProbeOutcome::Ok
+        );
+    }
+
+    #[test]
+    fn classify_long_format_table_is_ok_without_metric_column() {
+        assert_eq!(
+            classify(&ProbeRow {
+                total_columns: 5,
+                matching_columns: 0,
+                metric_key_columns: 1,
+                metric_value_columns: 1
+            }),
+            ProbeOutcome::Ok
+        );
+        assert_eq!(
+            classify(&ProbeRow {
+                total_columns: 4,
+                matching_columns: 0,
+                metric_key_columns: 1,
+                metric_value_columns: 0
+            }),
+            ProbeOutcome::Error(SchemaErrorCode::ColumnNotFound)
         );
     }
 }
