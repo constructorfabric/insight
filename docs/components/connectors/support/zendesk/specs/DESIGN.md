@@ -64,7 +64,7 @@ Every emitted record includes `insight_tenant_id`, `insight_source_id`, `unique_
 | `cpt-zendeskspec-fr-ticket-extraction` | `DeclarativeStream support_tickets` with `DatetimeBasedCursor` on `updated_at`; `GET /api/v2/incremental/tickets.json` with `?include=metric_sets` |
 | `cpt-zendeskspec-fr-timing-both-variants` | `AddFields` transformations extract both `.business` and `.calendar` values from sideloaded `metric_set`; stored as four separate Int64 fields |
 | `cpt-zendeskspec-fr-ticket-metadata` | Full API response stored as `metadata` String field via `DpathExtractor` on the full record |
-| `cpt-zendeskspec-fr-agent-extraction` | `DeclarativeStream support_agents` with full refresh; `GET /api/v2/users?role[]=agent&role[]=admin`; `GET /api/v2/groups` fetched at startup for group name resolution |
+| `cpt-zendeskspec-fr-agent-extraction` | `DeclarativeStream support_agents` with full refresh; `GET /api/v2/users?role[]=agent&role[]=admin`. Group-name resolution (`GET /api/v2/groups`) deferred to Phase 2 — `group_name` is NULL in Phase 1 |
 | `cpt-zendeskspec-fr-ratings-extraction` | `DeclarativeStream zendesk_satisfaction_ratings` with `DatetimeBasedCursor` on `updated_at`; `GET /api/v2/satisfaction_ratings` |
 | `cpt-zendeskspec-fr-collection-runs` | Connector-generated stream; written via a custom Python component or deferred to platform sync logs |
 | `cpt-zendeskspec-fr-deduplication` | Primary keys defined per stream; ClickHouse `ReplacingMergeTree(_version)` handles upsert deduplication |
@@ -97,7 +97,7 @@ Every emitted record includes `insight_tenant_id`, `insight_source_id`, `unique_
 │  │       cursor: updated_at (DatetimeBasedCursor)                    │
 │  ├── support_agents stream                                           │
 │  │   └── full refresh: GET /api/v2/users?role[]=agent&role[]=admin   │
-│  │       group names: GET /api/v2/groups (startup lookup)            │
+│  │       group names: GET /api/v2/groups (Phase 2)                   │
 │  └── zendesk_satisfaction_ratings stream                             │
 │      └── incremental: GET /api/v2/satisfaction_ratings               │
 │          ?start_time={unix_ts}&sort_by=updated_at                    │
@@ -215,7 +215,7 @@ connector.yaml (Airbyte DeclarativeSource)
 └── metadata        — autoImportSchema flags per stream
 ```
 
-**Check stream rationale**: `GET /api/v2/users/me` is used as the check endpoint — cheapest call, always returns exactly one record for valid credentials, no pagination, no rate limit impact.
+**Check stream rationale**: `check` is a `CheckStream` against `support_agents` — the CDK fetches the first page of `GET /api/v2/users?role[]=agent&role[]=admin` and reports SUCCEEDED if credentials are valid. (A dedicated single-record `/users/me` check stream would be cheaper but is not currently defined.)
 
 ### 3.3 API Contracts
 
@@ -288,8 +288,8 @@ Argo CronWorkflow
   ├─ 1. Read Airbyte state from platform (cursor for tickets and ratings)
   │
   ├─ 2. support_agents stream (full refresh)
-  │      GET /api/v2/groups (startup)
   │      GET /api/v2/users?role[]=agent&role[]=admin (paginated)
+  │      [Phase 2] GET /api/v2/groups (startup) for group_name resolution
   │      → RECORD messages → ClickHouse support_agents
   │
   ├─ 3. support_tickets stream (incremental)
@@ -440,14 +440,14 @@ The incremental export endpoint (`/api/v2/incremental/tickets.json?start_time=`)
 | `zendesk_satisfaction_ratings` | Next-page link (`next_page` URL in response body) | 100 |
 | `groups` (startup lookup) | Offset-based (`page`, `per_page`) | 100 |
 
-#### group_name Resolution
+#### group_name Resolution — Phase 2
 
-`support_agents.default_group_id` is a numeric Zendesk group ID. To populate `group_name`, the connector:
-1. Fetches all groups via `GET /api/v2/groups` at stream initialization
-2. Builds an in-memory `{group_id: group_name}` map
-3. Applies a `CustomTransformation` (or `RecordTransformation`) to populate `group_name` from the map for each agent record
+`support_agents.default_group_id` is a numeric Zendesk group ID. **Phase 1 stores `group_name` as NULL.** Group-name resolution is deferred to Phase 2; when implemented, the connector will:
+1. Fetch all groups via `GET /api/v2/groups` at stream initialization
+2. Build an in-memory `{group_id: group_name}` map
+3. Apply a `CustomTransformation` (or `RecordTransformation`) to populate `group_name` from the map for each agent record
 
-If the groups endpoint returns HTTP 403 (insufficient scope), `group_name` is NULL for all agents — sync continues without failure.
+If the groups endpoint returns HTTP 403 (insufficient scope), `group_name` stays NULL for all agents — sync continues without failure.
 
 ### Field Mapping to Bronze Schema
 
@@ -475,7 +475,7 @@ If the groups endpoint returns HTTP 403 (insufficient scope), `group_name` is NU
 | `tags` | `ticket.tags` (array) | Joined as comma-separated string |
 | `metadata` | Full `ticket` object as JSON | Stored via `AddFields` from raw record |
 
-**Implementation note**: `metric_set` fields are nested under sideloaded `metric_set` objects. The Zendesk API returns metric sets as a separate `metric_sets` array keyed by ticket ID when using `?include=metric_sets`. The connector must join the metric set to its parent ticket at record extraction time. This is handled via a `CustomTransformation` that merges the sideloaded metric_set into the ticket record before field extraction.
+**Implementation note**: on the incremental export endpoint, `?include=metric_sets` embeds the metric set directly in each ticket as a singular `metric_set` object (verified against `constructor-tech.zendesk.com`). No separate-array join or `CustomTransformation` is required — the `AddFields` transformations read `record.metric_set.*` directly during field extraction.
 
 #### `zendesk_satisfaction_ratings` field mapping
 
@@ -612,7 +612,7 @@ Estimated API calls per run (steady state, daily incremental):
 | `cpt-zendeskspec-fr-timing-both-variants` | Four timing fields in Bronze DDL; extracted via `AddFields` | §3.7, §4.2 |
 | `cpt-zendeskspec-fr-ticket-metadata` | `metadata` String field stores full JSON | §3.7 |
 | `cpt-zendeskspec-fr-agent-extraction` | `DeclarativeStream support_agents` full refresh | §3.2, §3.3 |
-| `cpt-zendeskspec-fr-group-name-resolution` | Startup `GET /api/v2/groups` + `CustomTransformation` | §4.2 |
+| `cpt-zendeskspec-fr-group-name-resolution` | **Phase 2** — `group_name` NULL in Phase 1; startup `GET /api/v2/groups` + `CustomTransformation` when implemented | §4.2 |
 | `cpt-zendeskspec-fr-ratings-extraction` | `DeclarativeStream zendesk_satisfaction_ratings` incremental | §3.2, §3.3 |
 | `cpt-zendeskspec-fr-deduplication` | `ReplacingMergeTree(_version)` + primary keys | §3.7 |
 | `cpt-zendeskspec-fr-tenant-context` | `AddFields` transformation on every stream | §1.1 |
