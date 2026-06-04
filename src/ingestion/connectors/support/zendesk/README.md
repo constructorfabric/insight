@@ -84,7 +84,7 @@ Silver transformations for Phase 1 are planned as `dbt/` models tagged `zendesk`
 - `staging.zendesk__support_activity` — per-agent per-day metrics
 - `silver.class_support_activity` — unified support domain Silver table (Zendesk + JSM)
 
-`dbt_select` in `descriptor.yaml` is empty until Silver models are added.
+`dbt_select` in `descriptor.yaml` is scoped to `tag:zendesk+` — it selects nothing until Phase 2 Silver models are tagged `zendesk`, while keeping the Silver run from touching other connectors' models.
 
 ## Validation
 
