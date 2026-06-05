@@ -21,6 +21,16 @@ mod m20260601_000001_ai_claude_team_metrics;
 mod m20260601_000002_seed_claude_team_metrics_catalog;
 mod m20260603_000001_seed_crm_metric_catalog;
 mod m20260603_000002_link_crm_query_catalog;
+mod m20260604_000001_task_delivery_bullet_distribution;
+mod m20260604_000002_collab_bullet_distribution;
+mod m20260604_000003_ai_bullet_distribution;
+mod m20260604_000004_code_quality_bullet_distribution;
+mod m20260604_000005_git_bullet_distribution;
+mod m20260604_000006_ic_kpis_peer_median;
+mod m20260604_000007_drop_peer_cohort_stats_metric;
+mod m20260604_000008_drop_ic_kpi_peer_median_metric;
+mod m20260604_000009_member_metric_values;
+mod m20260605_000001_member_prs_metric;
 
 #[cfg(test)]
 mod live_tests;
@@ -54,6 +64,16 @@ impl MigratorTrait for Migrator {
             Box::new(m20260601_000002_seed_claude_team_metrics_catalog::Migration),
             Box::new(m20260603_000001_seed_crm_metric_catalog::Migration),
             Box::new(m20260603_000002_link_crm_query_catalog::Migration),
+            Box::new(m20260604_000001_task_delivery_bullet_distribution::Migration),
+            Box::new(m20260604_000002_collab_bullet_distribution::Migration),
+            Box::new(m20260604_000003_ai_bullet_distribution::Migration),
+            Box::new(m20260604_000004_code_quality_bullet_distribution::Migration),
+            Box::new(m20260604_000005_git_bullet_distribution::Migration),
+            Box::new(m20260604_000006_ic_kpis_peer_median::Migration),
+            Box::new(m20260604_000007_drop_peer_cohort_stats_metric::Migration),
+            Box::new(m20260604_000008_drop_ic_kpi_peer_median_metric::Migration),
+            Box::new(m20260604_000009_member_metric_values::Migration),
+            Box::new(m20260605_000001_member_prs_metric::Migration),
         ]
     }
 }
