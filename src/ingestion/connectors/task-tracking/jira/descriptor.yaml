@@ -1,5 +1,5 @@
 name: jira
-version: "1.1.1"
+version: "2.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 
@@ -31,4 +31,3 @@ secret:
     - jira_instance_url
     - jira_email
     - jira_api_token
-    - jira_project_keys

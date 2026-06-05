@@ -10,8 +10,8 @@ Extracts projects, users, issues, issue history (changelog), comments, worklogs,
 ## Prerequisites
 
 1. Generate an Atlassian API token at [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
-2. Use the email address of the Atlassian account that has **Browse Projects** on every target project.
-3. Identify the project keys to sync (e.g. `TC`, `TNG`) — visible in any issue URL as the prefix before the hyphen. Jira Cloud rejects unbounded JQL queries, so this is **required**.
+2. Use the email address of the Atlassian account that has **Browse Projects** on the target projects.
+3. **Scope the token via Jira permissions, not via connector config.** The connector automatically discovers all projects accessible to the token. If you want to limit ingestion to a subset of projects, restrict the token's Browse Projects permission in Jira to only those projects.
 
 ## K8s Secret
 
@@ -31,7 +31,6 @@ stringData:
   jira_instance_url: "https://myorg.atlassian.net"
   jira_email: "user@example.com"
   jira_api_token: "CHANGE_ME"
-  jira_project_keys: "PROJ1,PROJ2"
   # jira_start_date: "2024-01-01"   # optional, default = 2020-01-01
 ```
 
@@ -42,8 +41,9 @@ stringData:
 | `jira_instance_url` | Yes | Jira Cloud URL, no trailing slash (e.g. `https://myorg.atlassian.net`) |
 | `jira_email` | Yes | Atlassian account email for Basic Auth |
 | `jira_api_token` | Yes | Atlassian API token. Marked `airbyte_secret: true` — never logged |
-| `jira_project_keys` | Yes | Comma-separated project keys (e.g. `TC,TNG`). Jira Cloud rejects unbounded JQL queries |
 | `jira_start_date` | No | Earliest date to sync issues from, `YYYY-MM-DD`. Default `2020-01-01` |
+
+> **Project scope**: The connector discovers all projects accessible to the API token automatically (see ADR-001). To limit ingestion to specific projects, restrict the token's Browse Projects permission in Jira rather than configuring an allowlist here.
 
 ### Automatically injected
 
@@ -94,7 +94,7 @@ The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent f
 
 - **Auth**: Basic Auth with email + API token. Missing/invalid token → HTTP 401; Jira project-level permission failures → 403. Both halt the run.
 - **Rate limits**: Atlassian caps per-user and per-IP API calls. The connector honours `Retry-After` on HTTP 429 and 503 (both used by Atlassian for throttling) with backoff.
-- **JQL scope**: `jira_project_keys` is required; Jira Cloud rejects unbounded queries (`project != EMPTY`) with an error.
+- **JQL scope**: Projects are discovered automatically via `SubstreamPartitionRouter` (ADR-001). Each project is queried as `project = "<KEY>" AND updated >= "..."`. Scope is controlled through the API token's Browse Projects permissions in Jira.
 - **Custom fields**: all custom fields are preserved in `jira_issue.custom_fields_json` for downstream dbt extraction.
 
 ## Related

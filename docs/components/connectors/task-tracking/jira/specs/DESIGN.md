@@ -195,7 +195,7 @@ The connector writes only to Bronze tables. Cross-source unification, enum norma
 
 | Entity | Description | Maps To |
 |--------|-------------|---------|
-| `JiraInstance` | Connection configuration: URL, credentials, project scope | Connector config (spec section) |
+| `JiraInstance` | Connection configuration: URL, credentials | Connector config (spec section) |
 | `JiraIssue` | Issue with core fields: `id`, `key`, `project`, `issuetype`, `reporter`, `story_points`, `duedate`, `parent`, `created`, `updated` | `jira_issue` |
 | `JiraChangelog` | Per-issue changelog entries with `items[]` array; each item is a field change with `from`/`to` + display strings | `jira_issue_history` (one row per field change) |
 | `JiraWorklog` | Time entry: `id`, `issueKey`, `author`, `started`, `timeSpentSeconds`, `comment` | `jira_worklogs` |
@@ -400,7 +400,6 @@ In Phase 1, Atlassian Document Format (ADF) JSON from Jira Cloud REST API v3 com
 | `jira_api_token` | str (airbyte_secret) | Jira Cloud API token |
 | `insight_tenant_id` | str | Insight tenant identifier — injected into every record |
 | `insight_source_id` | str | Instance discriminator (e.g., `jira-team-alpha`) |
-| `jira_project_keys` | str | **Required.** Comma-separated project keys — Jira Cloud does not allow unbounded JQL queries |
 | `jira_start_date` | str | Earliest date to sync issues from, `YYYY-MM-DD` (default `2020-01-01`) |
 | `jira_page_size` | int | Page size for JQL search only (default 50, max 100). Passed as `request_parameters.maxResults` on the search stream. All other paginators use hardcoded `page_size` values optimized per endpoint API max: `paginator` 50 (projects, comments), `agile_paginator` 50 (boards, sprints), `child_paginator` 100 (changelog, worklogs), `user_paginator` 200 (user directory) |
 
@@ -592,8 +591,10 @@ All tables use `ReplacingMergeTree(_version)` with `_version = toUnixTimestamp64
 **JQL for Incremental Sync**:
 
 ```sql
-project IN ({project_keys}) AND updated >= "{last_cursor}" ORDER BY updated ASC
+project = "{project_key}" AND updated >= "{last_cursor}" ORDER BY updated ASC
 ```
+
+where `project_key` is supplied per-partition by the `SubstreamPartitionRouter` that discovers all accessible projects via `GET /rest/api/3/project/search` at the start of each sync (ADR-001). Scope is controlled by the API token's Browse Projects permission, not by connector config.
 
 The connector overlaps the cursor window by 1 hour (`lookback_window: PT1H`) to account for issues updated during the previous sync run. Deduplication at the storage level (`ReplacingMergeTree`) handles the overlap.
 

@@ -478,7 +478,7 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 1. Operator provides Jira instance URL and credentials
 2. System validates credentials against the Jira API
 3. System discovers available projects and their project styles (Classic/Next-gen)
-4. Operator selects project scope (all projects or specific project keys)
+4. Connector auto-discovers all projects accessible to the token via `GET /rest/api/3/project/search` — no operator input required (see ADR-001)
 5. System auto-detects the story points field: Next-gen projects use `customfield_10016`; Classic projects are scanned via the field metadata API
 6. If multiple candidate story points fields are found in Classic projects, system presents a selection list to the operator
 7. System initializes the connection with empty state
