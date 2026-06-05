@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: bronze_chatgpt_team
+    schema: bronze_chatgpt_team
+    tables:
+      - name: chatgpt_team_seats
+      - name: chatgpt_team_chat_activity
+      - name: chatgpt_team_codex_user_daily
+      - name: chatgpt_team_subscription_usage
+      - name: chatgpt_team_subscription_balance
+
+# Silver models (class_ai_tool_usage ← chat_activity, class_ai_dev_usage ←
+# codex_user_daily) are a follow-up — they depend on the unified Silver
+# schema decision (spec OQ-CGT-2) and on live-instance field verification
+# (OQ-CGT-3/6). Only the bronze→RMT promotion bootstrap exists today.

@@ -1,0 +1,38 @@
+name: chatgpt-team
+# Strict semver per ADR-0015. 1.0.0: initial MVP — browser-proxy
+# architecture (mirrors claude-team). Reads chatgpt.com web data via the
+# customer-deployed chatgpt-team-proxy; requires `proxy_url` (no default),
+# `proxy_auth_token`, and the workspace `chatgpt_account_id` / `chatgpt_org_id`.
+version: "1.0.0"
+# Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
+# instance, so we avoid scheduling chatgpt-team next to anything else that
+# may also hit it (same rationale as claude-team).
+schedule: '0 4 * * *'
+workflow: sync
+
+# Scopes the Silver dbt run to this connector. Only the bronze→RMT promotion
+# is tagged `chatgpt-team` today; class_ai_tool_usage / class_ai_dev_usage
+# Silver models are a follow-up (spec OQ-CGT-2).
+dbt_select: 'tag:chatgpt-team+'
+
+connection:
+  namespace: bronze_chatgpt_team
+
+# Required secret fields (carried in the K8s Secret stringData):
+#   - chatgpt_account_id — workspace account UUID (for /accounts/{id}/* endpoints)
+#   - chatgpt_org_id      — organization UUID (for /subscriptions/{org_id}/* endpoints)
+#   - proxy_url           — base URL of the customer-deployed chatgpt-team-proxy
+#   - proxy_auth_token    — bearer token; must match PROXY_AUTH_TOKEN on the proxy
+#
+# Note: NO chatgpt.com session here. It lives ONLY on the customer's proxy
+# container and is installed via the proxy's `POST /admin/session-key`.
+# The proxy also derives the short-lived access_token. Insight never sees
+# either — only proxy_url + proxy_auth_token.
+secret:
+  required_fields:
+    - chatgpt_account_id
+    - chatgpt_org_id
+    - proxy_url
+    - proxy_auth_token
+  optional_fields:
+    - start_date
