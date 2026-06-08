@@ -64,8 +64,17 @@ WHERE u.user_id IS NOT NULL
   AND u.user_id != ''
   AND parseDateTimeBestEffortOrNull(u.date) IS NOT NULL
 {% if is_incremental() %}
+  -- Watermark on the source EXTRACT time, not the business date (see zoom model header for
+  -- the backfill-strand failure mode this fixes — Slack chat had the same gap on virtuozzo,
+  -- bronze from Jan but staging only from late Mar). Re-pulled rows carry a fresh
+  -- `_airbyte_extracted_at`, so reprocess every business date touched by a recent extract.
   AND (
-    (SELECT max(date) FROM {{ this }}) IS NULL
-    OR toDate(parseDateTimeBestEffortOrNull(u.date)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    (SELECT count() FROM {{ this }}) = 0
+    OR toDate(parseDateTimeBestEffortOrNull(u.date)) IN (
+      SELECT DISTINCT toDate(parseDateTimeBestEffortOrNull(date))
+      FROM {{ source('bronze_slack', 'users_details') }}
+      WHERE _airbyte_extracted_at
+            > (SELECT max(_airbyte_extracted_at) FROM {{ source('bronze_slack', 'users_details') }}) - INTERVAL 3 DAY
+    )
   )
 {% endif %}

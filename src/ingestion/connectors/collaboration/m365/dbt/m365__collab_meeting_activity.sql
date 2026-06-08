@@ -43,8 +43,18 @@ FROM {{ source('bronze_m365', 'teams_activity') }}
 WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
 {% if is_incremental() %}
+  -- Watermark on the source EXTRACT time, not the business date: a forward-only
+  -- `reportRefreshDate > max(date) - 3d` filter permanently strands backfilled /
+  -- late-arriving history (older business dates never re-enter the model — see the
+  -- zoom model header). Re-pulled rows carry a fresh `_airbyte_extracted_at`, so we
+  -- reprocess every business date touched by a recent extract; cheap in steady state.
   AND (
-    (SELECT max(date) FROM {{ this }}) IS NULL
-    OR toDate(reportRefreshDate) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    (SELECT count() FROM {{ this }}) = 0
+    OR toDate(reportRefreshDate) IN (
+      SELECT DISTINCT toDate(reportRefreshDate)
+      FROM {{ source('bronze_m365', 'teams_activity') }}
+      WHERE _airbyte_extracted_at
+            > (SELECT max(_airbyte_extracted_at) FROM {{ source('bronze_m365', 'teams_activity') }}) - INTERVAL 3 DAY
+    )
   )
 {% endif %}
