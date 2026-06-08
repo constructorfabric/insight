@@ -104,7 +104,14 @@ mod tests {
             assert!(qr.contains("GROUP BY person_id"), "per-person rollup");
             // No cohort join / distribution columns — the team view colors
             // client-side, so these stay value-only.
-            for forbidden in ["LEFT JOIN", "company_median", "team_median", "_p25", "_p75", " AS median"] {
+            for forbidden in [
+                "LEFT JOIN",
+                "company_median",
+                "team_median",
+                "_p25",
+                "_p75",
+                " AS median",
+            ] {
                 assert!(!qr.contains(forbidden), "must NOT contain {forbidden:?}");
             }
         }

@@ -152,7 +152,10 @@ mod tests {
                 "missing department median column for {key}"
             );
         }
-        assert!(q.contains("uniqExact(person_id) AS peer_n"), "missing peer_n");
+        assert!(
+            q.contains("uniqExact(person_id) AS peer_n"),
+            "missing peer_n"
+        );
         assert!(
             q.contains("d.org_unit_id = k.org_unit_id"),
             "department cohort must join on org_unit_id"

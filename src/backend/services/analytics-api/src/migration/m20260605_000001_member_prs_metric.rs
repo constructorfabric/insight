@@ -55,7 +55,10 @@ mod tests {
     #[test]
     fn query_shape() {
         assert!(QUERY_REF.contains("FROM silver.mtr_git_person_weekly"));
-        assert!(QUERY_REF.contains("week AS metric_date"), "must normalize week for date-filter injection");
+        assert!(
+            QUERY_REF.contains("week AS metric_date"),
+            "must normalize week for date-filter injection"
+        );
         assert!(QUERY_REF.contains("sum(prs_merged)"));
         assert!(QUERY_REF.contains("GROUP BY person_id"));
         // Decoupled: must NOT read the IC dashboard view.

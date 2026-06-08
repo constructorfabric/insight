@@ -199,10 +199,7 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_metric_query_catalog_metrics")
-                            .from(
-                                MetricQueryCatalog::Table,
-                                MetricQueryCatalog::MetricsId,
-                            )
+                            .from(MetricQueryCatalog::Table, MetricQueryCatalog::MetricsId)
                             .to(Metrics::Table, Metrics::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )

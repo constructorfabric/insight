@@ -93,9 +93,7 @@ const SEEDS: &[SeedRow] = &[
     SeedRow {
         metric_key: "ai_bullet_rows.prs_with_cc",
         label: "PRs with Claude Code",
-        sublabel: Some(
-            "Claude Team GitHub-app \u{b7} PRs with CC attribution \u{b7} period total",
-        ),
+        sublabel: Some("Claude Team GitHub-app \u{b7} PRs with CC attribution \u{b7} period total"),
         description: Some(
             "Number of pull requests where Claude Code was active at least once \
              in the measurement window. Populated only on tenants with the \
@@ -112,9 +110,7 @@ const SEEDS: &[SeedRow] = &[
     SeedRow {
         metric_key: "ai_bullet_rows.prs_total",
         label: "Total PRs (CC window)",
-        sublabel: Some(
-            "Claude Team GitHub-app \u{b7} total PRs in window \u{b7} period total",
-        ),
+        sublabel: Some("Claude Team GitHub-app \u{b7} total PRs in window \u{b7} period total"),
         description: Some(
             "Total pull requests opened in the measurement window — denominator \
              for the prs_with_cc_pct ratio metric. Same availability caveat as \

@@ -69,18 +69,8 @@ mod tests {
     fn new_query_adds_distribution_stats() {
         let q = NEW_QUERY_REF;
 
-        for token in [
-            "team_p25",
-            "team_p75",
-            "team_n",
-            "AS p25",
-            "AS p75",
-            "AS n",
-        ] {
-            assert!(
-                q.contains(token),
-                "NEW_QUERY_REF must contain {token:?}"
-            );
+        for token in ["team_p25", "team_p75", "team_n", "AS p25", "AS p75", "AS n"] {
+            assert!(q.contains(token), "NEW_QUERY_REF must contain {token:?}");
         }
 
         assert!(
