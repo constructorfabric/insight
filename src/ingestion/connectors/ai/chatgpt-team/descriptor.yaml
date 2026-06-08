@@ -31,8 +31,10 @@ connection:
 secret:
   required_fields:
     - chatgpt_account_id
-    - chatgpt_org_id
     - proxy_url
     - proxy_auth_token
   optional_fields:
+    # Only needed by the subscription streams; blank for analytics-viewer
+    # accounts without billing visibility.
+    - chatgpt_org_id
     - start_date

@@ -123,6 +123,7 @@ streams:
           email: { type: string }
           name: { type: ["string", "null"] }
           role: { type: ["string", "null"] }
+          seat_type: { type: ["string", "null"] }
           added_at: { type: ["string", "null"] }
     retriever:
       type: SimpleRetriever
@@ -157,6 +158,10 @@ streams:
           - type: AddedFieldDefinition
             path: [user_id]
             value: "{{ record['id'] | string }}"
+          - type: AddedFieldDefinition
+            # The endpoint names the join date `created_time` (not `added_at`).
+            path: [added_at]
+            value: "{{ record.get('created_time') }}"
           - type: AddedFieldDefinition
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
@@ -430,7 +435,6 @@ spec:
       - insight_tenant_id
       - insight_source_id
       - chatgpt_account_id
-      - chatgpt_org_id
       - proxy_url
       - proxy_auth_token
     properties:
@@ -451,8 +455,12 @@ spec:
         type: string
         title: ChatGPT Organization ID
         description: |
-          ChatGPT organization UUID (e.g. `org-...`) — used by
-          `/subscriptions/{org_id}/*` endpoints.
+          ChatGPT organization UUID (e.g. `org-...`) — used ONLY by the
+          subscription streams (`/subscriptions/{org_id}/*`). Optional:
+          leave blank if the operator account lacks billing visibility
+          (e.g. an `analytics-viewer` role) — the subscription streams are
+          then skipped and the seat/chat/Codex streams still run.
+        default: ""
         order: 2
       proxy_url:
         type: string
