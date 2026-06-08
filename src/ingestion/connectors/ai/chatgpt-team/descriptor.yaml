@@ -3,7 +3,7 @@ name: chatgpt-team
 # architecture (mirrors claude-team). Reads chatgpt.com web data via the
 # customer-deployed chatgpt-team-proxy; requires `proxy_url` (no default),
 # `proxy_auth_token`, and the workspace `chatgpt_account_id` / `chatgpt_org_id`.
-version: "1.0.0"
+version: "1.0.1"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that
 # may also hit it (same rationale as claude-team).

@@ -85,13 +85,19 @@ definitions:
   # the session/account lacks billing visibility. Mark the response as
   # "no records" instead of failing the whole sync (mirrors claude-team's
   # overage_spend handling).
+  # The subscription streams need chatgpt_org_id. When it is blank (e.g. an
+  # analytics-viewer account with no billing visibility) the request hits
+  # /subscriptions//usage → 404; a billing-gated session returns 403. Both
+  # are benign here: IGNORE them so the stream commits zero records and the
+  # sync stays GREEN (the seat/chat/Codex streams are unaffected). A real
+  # org_id with billing access starts populating rows automatically.
   billing_error_handler: &billing_error_handler
     type: DefaultErrorHandler
     response_filters:
       - type: HttpResponseFilter
-        http_codes: [403]
+        http_codes: [403, 404]
         action: IGNORE
-        error_message: "chatgpt.com returned 403 — session lacks billing visibility. Stream skipped, sync continues."
+        error_message: "chatgpt.com returned 403/404 — billing not visible (or chatgpt_org_id blank). Subscription stream skipped, sync continues."
 
 check:
   type: CheckStream
