@@ -195,9 +195,7 @@ const SEEDS: &[SeedRow] = &[
     SeedRow {
         metric_key: "crm_bullet_rows.comms_per_won",
         label: "Comms / Won Deal",
-        sublabel: Some(
-            "Total comms \u{f7} deals won \u{b7} efficiency \u{b7} lower = better",
-        ),
+        sublabel: Some("Total comms \u{f7} deals won \u{b7} efficiency \u{b7} lower = better"),
         description: None,
         unit: None,
         format: None,
@@ -336,7 +334,10 @@ mod tests {
     /// `higher_is_better` must be `false` on both.
     #[test]
     fn lower_is_better_keys_are_marked() {
-        let lower_better = ["crm_bullet_rows.cycle_days", "crm_bullet_rows.comms_per_won"];
+        let lower_better = [
+            "crm_bullet_rows.cycle_days",
+            "crm_bullet_rows.comms_per_won",
+        ];
         for key in lower_better {
             let row = SEEDS
                 .iter()
