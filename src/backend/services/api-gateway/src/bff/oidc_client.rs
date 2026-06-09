@@ -208,7 +208,7 @@ impl OidcClient {
         let jwks = Arc::new(
             JwksKeyProvider::new(discovery.jwks_uri.clone())
                 .map_err(|e| BffError::Internal(anyhow::anyhow!("jwks provider: {e}")))?
-                .with_refresh_interval(Duration::from_secs(3600)),
+                .with_refresh_interval(Duration::from_hours(1)),
         );
         // Initial fetch — not fatal if it fails (the IdP may be briefly
         // unreachable at boot); on-demand refresh will retry.
@@ -394,8 +394,7 @@ fn unix_now() -> i64 {
     i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+            .map_or(0, |d| d.as_secs()),
     )
     .unwrap_or(0)
 }

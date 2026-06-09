@@ -440,18 +440,29 @@ mod tests {
         ));
         let store = SessionStore::new(shared);
 
+        // Use a fixed future epoch (2099-01-01) so EXPIREAT lands ahead
+        // of Redis's wall clock. With `now: 1` the key would be evicted
+        // immediately, making the round-trip read return None.
+        // Per-test random suffix so parallel `cargo test` runs don't
+        // collide on shared keys.
+        let suffix: String = crate::bff::secrets::new_session_id()
+            .chars()
+            .take(6)
+            .collect();
+        let user_id = format!("test-user-{suffix}");
+        let now: i64 = 4_070_908_800;
         let req = CreateSessionRequest {
-            user_id: "test-user-zzz",
+            user_id: &user_id,
             tenant_id: "test-tenant",
             idp_iss: "https://test-idp/",
-            idp_sub: "test-sub-zzz",
-            idp_sid: "test-isid-zzz",
+            idp_sub: &format!("test-sub-{suffix}"),
+            idp_sid: &format!("test-isid-{suffix}"),
             id_token: "irrelevant",
             email: "test@example.com",
             display_name: "Test",
             user_agent: "ua",
             ip: "127.0.0.1",
-            now: 1,
+            now,
             session_ttl_seconds: 60,
             absolute_lifetime_seconds: 3600,
             incoming_sid: None,
@@ -464,9 +475,9 @@ mod tests {
             .await
             .expect("get")
             .expect("present");
-        assert_eq!(read.user_id, "test-user-zzz");
+        assert_eq!(read.user_id, user_id);
         assert_eq!(read.email, "test@example.com");
-        assert_eq!(read.expires_at, 61);
+        assert_eq!(read.expires_at, now + 60);
 
         store.revoke_session(&sid).await.expect("revoke");
         let after = store.get_session(&sid).await.expect("get");
