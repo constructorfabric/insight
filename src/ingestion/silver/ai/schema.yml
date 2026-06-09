@@ -137,12 +137,12 @@ models:
           Copilot: activity flags {"used_chat": bool, "used_agent": bool, "used_cli": bool}.
           NULL for Cursor (Cursor does not expose per-tool-type breakdown at daily grain).
       - name: source
-        description: "Staging-model discriminator: 'cursor' | 'claude_admin' | 'claude_enterprise' | 'claude_team' | 'claude_playwright' | 'copilot' | future sources"
+        description: "Staging-model discriminator: 'cursor' | 'claude_admin' | 'claude_enterprise' | 'claude_team' | 'claude_playwright' | 'copilot' | 'chatgpt_team' | future sources"
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ['cursor', 'claude_admin', 'claude_enterprise', 'claude_team', 'claude_playwright', 'copilot', 'windsurf', 'codex']
+                values: ['cursor', 'claude_admin', 'claude_enterprise', 'claude_team', 'claude_playwright', 'copilot', 'windsurf', 'chatgpt_team']
       - name: data_source
         description: "Framework source discriminator — 'insight_cursor' / 'insight_claude_admin' / etc."
         tests:
@@ -360,12 +360,12 @@ models:
           cowork_metrics_json) for future field extraction without Bronze re-query.
           NULL for surface='cross'.
       - name: source
-        description: "Staging-model discriminator: 'claude_enterprise' | future sources"
+        description: "Staging-model discriminator: 'claude_enterprise' | 'chatgpt_team' | future sources"
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ['claude_enterprise']
+                values: ['claude_enterprise', 'chatgpt_team']
       - name: data_source
         description: "Framework source discriminator."
         tests:
