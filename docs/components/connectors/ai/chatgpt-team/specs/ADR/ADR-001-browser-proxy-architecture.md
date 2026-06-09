@@ -51,7 +51,7 @@ Concretely:
 This decision is confirmed when:
 
 - `connectors/ai/chatgpt-team/connector.yaml` sets `url_base: {{ config['proxy_url'] }}` and `Authorization: Bearer {{ config['proxy_auth_token'] }}` — and contains **no** `api.openai.com` host and **no** admin-key field.
-- `descriptor.yaml:secret.required_fields` lists `proxy_url` and `proxy_auth_token` (and `chatgpt_account_id` / `chatgpt_org_id`) — and does **not** list an OpenAI admin key.
+- `descriptor.yaml:secret.required_fields` lists `proxy_url`, `proxy_auth_token` and `chatgpt_account_id` (with `chatgpt_org_id` optional — only the subscription streams need it) — and does **not** list an OpenAI admin key.
 - A proxy exists at `secure-enclave/proxies/chatgpt_team` exposing `/api/*` (bearer) and `/admin/session-key`.
 - PRD §1 and DESIGN §1 describe the source as the customer-hosted proxy over `chatgpt.com`, not the OpenAI Admin API.
 

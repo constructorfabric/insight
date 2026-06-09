@@ -53,7 +53,7 @@ The connector is **not** the OpenAI Admin API connector (`openai`). It collects 
 | `proxy_url` | yes | K8s Secret | Base URL of the customer-hosted `chatgpt-team-proxy` (no default) |
 | `proxy_auth_token` | yes | K8s Secret | Shared bearer token; masked in logs |
 | `chatgpt_account_id` | yes | K8s Secret | ChatGPT workspace account UUID — used by `/accounts/{account_id}/*` endpoints |
-| `chatgpt_org_id` | yes | K8s Secret | ChatGPT organization UUID — used by `/subscriptions/{org_id}/*` and `/wham/*` endpoints |
+| `chatgpt_org_id` | no | K8s Secret | ChatGPT organization UUID — used ONLY by the subscription streams (`/subscriptions/{org_id}/*`). Optional: blank for `analytics-viewer` accounts without billing visibility → subscription streams skip (403/404 ignored). NOT used by `/wham/*` (usage-leaderboard takes no org in its path). |
 | `insight_tenant_id` | yes | reconcile loop | Tenant slug, injected as `tenant_id` |
 | `insight_source_id` | yes | Secret annotation | `insight.cyberfabric.com/source-id` |
 | `start_date` | no | K8s Secret | Earliest date for daily activity backfill (YYYY-MM-DD); default 7 days ago |
@@ -88,9 +88,9 @@ All streams emit Bronze rows with a common envelope: `tenant_id`, `source_id`, `
 | `chatgpt_team_seats` | `/accounts/{account_id}/users` | Full snapshot | offset/limit | PK `user_id` |
 | `chatgpt_team_chat_activity` | `/accounts/{account_id}/analytics/user_list` (`start_date`,`end_date`,`page_size`,`after_cursor`) | Incremental | cursor (`after_cursor`) | cursor `date`; PK (`date`,`email`) |
 | `chatgpt_team_codex_user_daily` | `/wham/analytics/usage-leaderboard` (`start_date`,`end_date`,`window_days`,`page`,`page_size`) | Incremental | page-number | cursor `date`; PK (`date`,`email`) |
-| `chatgpt_team_subscription_usage` | `/subscriptions/{org_id}/usage` (`start_date`,`end_date`) | Incremental (billing cycle) | none | PK (`date`,`model`) |
-| `chatgpt_team_subscription_balance` | `/subscriptions/{org_id}/usage` (`start_date`,`end_date`) | Snapshot per cycle | none | PK `date` |
-| `chatgpt_team_collection_runs` | connector-generated | — | — | PK `run_id` |
+| `chatgpt_team_subscription_usage` | `/subscriptions/{org_id}/usage` (`start_date`,`end_date`) | Full refresh (daily snapshot) | none | PK (`snapshot_date`,`model`); 403/404 ignored |
+| `chatgpt_team_subscription_balance` | `/subscriptions/{org_id}/usage` (`start_date`,`end_date`) | Full refresh (daily snapshot) | none | PK `snapshot_date`; 403/404 ignored |
+| `chatgpt_team_collection_runs` | connector-generated | — | — | **NOT implemented** — a declarative source cannot emit it; deferred / platform-side |
 
 Date-windowed streams use a `DatetimeBasedCursor` over `date` with `step: P1D` (or the largest window the endpoint supports), `start_datetime` from `start_date`, and a `min_datetime` floor at the earliest date the endpoint returns data — the same shape as `claude_team_code_metrics`. As with that stream, `date` is injected onto each row from the cursor interval because the per-user objects do not carry it.
 
@@ -109,13 +109,13 @@ Auxiliary endpoints seen in the prototype (`/wham/analytics/daily-sessions-messa
 | `user_id` | String | ChatGPT user ID (primary key) |
 | `email` | String | User email — cross-system identity key |
 | `name` | String | Display name |
-| `role` | String | `owner` / `admin` / `member` |
-| `status` | String | `active` / `inactive` / `pending` |
-| `seat_tier` | String | Seat type, if present |
-| `added_at` | DateTime64(3) | When the seat was assigned |
-| `last_active_at` | DateTime64(3) | Last recorded activity, if present |
+| `role` | String | e.g. `standard-user` / `account-admin` / `account-owner` (verified live) |
+| `seat_type` | String | Seat type, e.g. `default` (verified live) |
+| `added_at` | DateTime64(3) | When the seat was assigned — promoted from the API's `created_time` field (verified live) |
 
 One row per user. Current-state only — no versioning. `unique_key = {tenant}-{source}-{user_id}`.
+
+> Phase 1 promotes only the fields above. `status` / `last_active_at` are not surfaced by this endpoint and are not promoted (present only in the raw record if the API returns them).
 
 ### `chatgpt_team_chat_activity` — Daily chat usage per user
 
@@ -151,26 +151,28 @@ One row per user. Current-state only — no versioning. `unique_key = {tenant}-{
 
 `unique_key = {tenant}-{source}-{date}-{email}`. Feeds `class_ai_dev_usage` (parallel to `claude_team_code_metrics`).
 
-### `chatgpt_team_subscription_usage` — Subscription usage per model (billing cycle)
+### `chatgpt_team_subscription_usage` — Subscription usage per model (daily snapshot)
 
 | Field | Type | Description |
 |---|---|---|
-| `date` | Date | Usage date within the billing cycle |
+| `snapshot_date` | Date | Collection date (injected); daily snapshots accumulate |
 | `model` | String | Model / usage-detail label |
-| `amount` | Float64 | Spend amount |
+| `amount` | Float64 | Spend amount over the queried window |
 
-`unique_key = {tenant}-{source}-{date}-{model}`.
+`unique_key = {tenant}-{source}-{snapshot_date}-{model}`. Window = `[start_date or -30d, today]`; billing-cycle (14th) alignment is deferred. Requires `chatgpt_org_id`; 403/404 ignored when absent.
 
 ### `chatgpt_team_subscription_balance` — Current subscription balance
 
 | Field | Type | Description |
 |---|---|---|
-| `date` | Date | Snapshot date |
+| `snapshot_date` | Date | Collection date (injected) |
 | `current_balance` | Float64 | Current balance for the cycle |
 
-`unique_key = {tenant}-{source}-{date}`.
+`unique_key = {tenant}-{source}-{snapshot_date}`. Requires `chatgpt_org_id`; 403/404 ignored when absent.
 
 ### `chatgpt_team_collection_runs` — Connector execution log
+
+> **Not implemented in Phase 1.** A declarative Airbyte source cannot emit a connector-generated run-log stream — run/observability data comes from Airbyte job history instead. Schema kept for reference / a possible future custom component.
 
 | Field | Type | Description |
 |---|---|---|
