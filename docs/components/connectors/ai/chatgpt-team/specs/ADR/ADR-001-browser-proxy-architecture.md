@@ -41,7 +41,7 @@ Concretely:
 * Good, because the required conversational/seat/Codex data becomes reachable at all.
 * Good, because the session cookie never leaves the customer environment (only `proxy_url` + `proxy_auth_token` reach Insight).
 * Good, because it converges with `claude-team`: same proxy skeleton, same declarative + dbt shape, one operational runbook.
-* Good, because it cleanly separates from the `openai` (Admin-API) connector — no double counting; `class_ai_tool_usage` / `class_ai_dev_usage` vs `class_ai_api_usage`.
+* Good, because it cleanly separates from the `openai` (Admin-API) connector — no double counting; `class_ai_assistant_usage` / `class_ai_dev_usage` vs `class_ai_api_usage`.
 * Bad, because `chatgpt.com` auth is heavier than `claude.ai`: it needs the full session cookie **and** a short-lived bearer `access_token` (obtained via `GET /api/auth/session`) that must be refreshed — a token-exchange layer the `claude_team` proxy did not need. See risk below.
 * Bad, because two upstream identifiers (`account_id` and `org_id`) are used by different endpoints, vs the single `org_id` in `claude-team`.
 * Bad, because it inherits the browser-proxy fragility: Cloudflare/stealth churn, ~hourly access-token expiry, manual session bootstrap, one proxy per workspace.

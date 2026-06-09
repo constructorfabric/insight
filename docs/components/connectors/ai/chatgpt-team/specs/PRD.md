@@ -50,7 +50,7 @@ To reach `chatgpt.com` data without placing the customer's session cookie inside
 
 - Collect the complete seat roster and daily per-user chat, Codex, and subscription data from the ChatGPT Team workspace via the customer-hosted proxy.
 - Resolve user identity (`email`) to canonical `person_id` for cross-system analytics.
-- Feed `class_ai_tool_usage` (conversational) and `class_ai_dev_usage` (Codex/coding) Silver streams, unified with the equivalent Claude sources.
+- Feed `class_ai_assistant_usage` (conversational) and `class_ai_dev_usage` (Codex/coding) Silver streams, unified with the equivalent Claude sources.
 - Enable Gold-level metrics: active users, conversation/message volume, model & client breakdown, Codex adoption, seat utilization, subscription spend.
 - Keep the customer's `chatgpt.com` session out of Insight infrastructure.
 
@@ -67,7 +67,7 @@ To reach `chatgpt.com` data without placing the customer's session cookie inside
 | `access_token` | Short-lived bearer token derived from the session (via `GET /api/auth/session`) that some `backend-api` endpoints require |
 | `account_id` / `org_id` | Two distinct ChatGPT identifiers used by different `backend-api` endpoints |
 | `person_id` | Canonical cross-system person identifier resolved by the Identity Manager |
-| `class_ai_tool_usage` | Silver stream for conversational AI tool usage (ChatGPT Team chat + Claude web/mobile) |
+| `class_ai_assistant_usage` | Silver stream for conversational AI tool usage (ChatGPT Team chat + Claude web/mobile) |
 | `class_ai_dev_usage` | Silver stream for IDE/coding AI usage (ChatGPT Codex + Claude Code + Cursor) |
 | `class_ai_api_usage` | Silver stream for programmatic API usage — distinct; owned by the `openai` connector |
 
@@ -124,7 +124,7 @@ To reach `chatgpt.com` data without placing the customer's session cookie inside
 - **Subscription** usage (per-model spend) and balance for the workspace billing cycle.
 - Connector execution logging for monitoring and observability.
 - Identity resolution of `email` → `person_id` in the Silver step.
-- Feeding `class_ai_tool_usage` (chat) and `class_ai_dev_usage` (Codex) Silver streams.
+- Feeding `class_ai_assistant_usage` (chat) and `class_ai_dev_usage` (Codex) Silver streams.
 - A customer-hosted browser proxy as the transport (deployment owned by the customer; see DESIGN).
 
 ### 3.2 Out of Scope
@@ -252,11 +252,11 @@ The connector **MUST** treat `email` as the primary identity key for resolution.
 
 ### 4.7 Silver / Gold Pipeline
 
-#### Feed class_ai_tool_usage and class_ai_dev_usage
+#### Feed class_ai_assistant_usage and class_ai_dev_usage
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-chatgpt-team-silver-tool-usage`
 
-Daily chat activity **MUST** feed `class_ai_tool_usage` (unified with Claude web/mobile), and daily Codex activity **MUST** feed `class_ai_dev_usage` (unified with Claude Code / Cursor).
+Daily chat activity **MUST** feed `class_ai_assistant_usage` (unified with Claude web/mobile), and daily Codex activity **MUST** feed `class_ai_dev_usage` (unified with Claude Code / Cursor).
 
 **Rationale**: Unified adoption analytics require single Silver streams per usage class spanning all providers.
 **Actors**: `cpt-insightspec-actor-chatgpt-team-analytics-eng`
@@ -316,7 +316,7 @@ If a stream's endpoint is unavailable for the current session (e.g. missing perm
 
 ### OQ-CGT-1: ChatGPT Team vs OpenAI API for the same user
 
-**Status**: CLOSED. `class_ai_tool_usage`/`class_ai_dev_usage` (this connector) and `class_ai_api_usage` (the `openai` connector) are separate Silver streams; cross-stream analysis by `person_id` is done at Gold.
+**Status**: CLOSED. `class_ai_assistant_usage`/`class_ai_dev_usage` (this connector) and `class_ai_api_usage` (the `openai` connector) are separate Silver streams; cross-stream analysis by `person_id` is done at Gold.
 
 ### OQ-CGT-2: Unified Silver schema — explicit columns vs `extras`
 

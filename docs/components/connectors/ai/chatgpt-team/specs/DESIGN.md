@@ -202,8 +202,8 @@ Monitoring table — not an analytics source.
 | Bronze table | Silver target | Status |
 |---|---|---|
 | `chatgpt_team_seats` | *(seat roster reference)* | Available — feeds utilization context |
-| `chatgpt_team_chat_activity` | `class_ai_tool_usage` | Planned — unified with Claude web/mobile |
-| `chatgpt_team_codex_user_daily` | `class_ai_dev_usage` | Planned — unified with Claude Code / Cursor |
+| `chatgpt_team_chat_activity` | `class_ai_assistant_usage` | Implemented — `chatgpt_team__ai_assistant_usage` (tool='chatgpt', surface='chat') |
+| `chatgpt_team_codex_user_daily` | `class_ai_dev_usage` | Implemented — `chatgpt_team__ai_dev_usage` (tool='codex') |
 | `chatgpt_team_subscription_usage` / `_balance` | *(spend reference)* | Planned — billing context, no unified stream yet |
 
 Bronze→RMT promotion + `class_ai_*` staging follow the `claude-team` dbt pattern (`promote_bronze_to_rmt` + `ReplacingMergeTree(_version)` + `unique_key`, tagged `chatgpt-team`).
