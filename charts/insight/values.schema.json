@@ -124,7 +124,32 @@
 
     "analyticsApi":       { "$ref": "#/definitions/appService" },
     "identity":           { "$ref": "#/definitions/appService" },
-    "frontend":           { "$ref": "#/definitions/appService" }
+    "frontend":           { "$ref": "#/definitions/appService" },
+
+    "observability": {
+      "type": "object",
+      "properties": {
+        "mode": { "enum": ["none", "external", "bundled"] },
+        "logs": {
+          "type": "object",
+          "properties": {
+            "level":  { "enum": ["debug", "info", "warn", "error"] },
+            "format": { "enum": ["json", "text"] }
+          }
+        },
+        "traces": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "otlp": {
+          "type": "object",
+          "properties": {
+            "endpoint": { "type": "string" },
+            "protocol": { "enum": ["grpc", "http/protobuf"] }
+          }
+        }
+      }
+    }
   },
 
   "definitions": {

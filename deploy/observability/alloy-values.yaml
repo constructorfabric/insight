@@ -1,0 +1,85 @@
+##
+## Grafana Alloy — log collector for the bundled observability stack.
+##
+## Reference values consumed by BOTH deployment paths:
+##   - Local/dev     — deploy/scripts/install-observability.sh
+##   - Cluster (ops) — infra/insight-gitops:system/alloy/values.yaml (L2)
+##
+## ${NAMESPACE} is substituted by install-observability.sh (sed, same
+## pattern as deploy/argo/rbac.yaml) so the Loki push URL targets the
+## namespace this stack is installed into. The gitops copy hardcodes its
+## own namespace (insight-infra) instead.
+##
+## DaemonSet: one agent per node, tails every pod's stdout/stderr → Loki.
+## NO sidecars, NO app changes — services only write to stdout (JSON is
+## parsed below). Collects EVERYTHING on the node, incl. the chatty
+## namespace=airbyte sync pods (intentional for step 1; scope/retention
+## later).
+##
+
+controller:
+  type: daemonset
+
+alloy:
+  mounts:
+    varlog: true
+  configMap:
+    content: |-
+      // ── Discover pods scheduled on THIS node ───────────────────────────
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // ── Promote low-cardinality labels; map app.kubernetes.io/component →
+      //    `component` so reconcile / airbyte-sync / dbt separate cleanly.
+      //    Keep high-cardinality fields (trace_id, run_id) in the body.
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_component"]
+          target_label  = "component"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.process.parse.receiver]
+      }
+
+      // ── Normalize to the log contract: promote `level` to a label.
+      //    Our services put it at the top level; dbt nests it under
+      //    info.*, so a component-scoped match handles dbt's shape.
+      //    Non-JSON lines (raw Airbyte output) fall through untouched.
+      loki.process "parse" {
+        stage.json {
+          expressions = { level = "level" }
+        }
+        stage.match {
+          selector = "{component=\"dbt-run\"}"
+          stage.json {
+            expressions = { level = "info.level", event = "info.name" }
+          }
+        }
+        stage.labels {
+          values = { level = "" }
+        }
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.${NAMESPACE}.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }

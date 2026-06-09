@@ -3,6 +3,11 @@ Anchor `insight.validate` in a normal template so it runs under
 `helm lint` (which does not render NOTES.txt). The validator emits
 no output on success — `fail`s on missing required fields. */ -}}
 {{- include "insight.validate" . }}
+{{- $obs := default dict .Values.observability -}}
+{{- $obsLogs := default dict $obs.logs -}}
+{{- $obsOtlp := default dict $obs.otlp -}}
+{{- $obsTraces := default dict $obs.traces -}}
+{{- $obsMode := default "none" $obs.mode -}}
 {{/*
 Single ConfigMap that exposes all resolved infra coordinates.
 
@@ -55,3 +60,18 @@ data:
   INSIGHT_ANALYTICS_API_HOST: {{ include "insight.analyticsApi.host" . | quote }}
   INSIGHT_IDENTITY_HOST:      {{ include "insight.identity.host"     . | quote }}
   INSIGHT_FRONTEND_HOST:      {{ include "insight.frontend.host"     . | quote }}
+
+  # ─── Observability (logs & traces emission contract) ───
+  # JSON-to-stdout is always on; these tell each service its log level and,
+  # when a collector is configured (mode != none), where to export OTLP.
+  # Standard OTel env var names so any OTel SDK (.NET, Python) picks them up
+  # with zero custom glue. Each service still sets its OWN OTEL_SERVICE_NAME.
+  INSIGHT_OBSERVABILITY_MODE: {{ $obsMode | quote }}
+  INSIGHT_LOG_LEVEL:          {{ $obsLogs.level  | default "info" | quote }}
+  INSIGHT_LOG_FORMAT:         {{ $obsLogs.format | default "json" | quote }}
+  {{- if ne $obsMode "none" }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ include "insight.observability.otlpEndpoint" . | quote }}
+  OTEL_EXPORTER_OTLP_PROTOCOL: {{ $obsOtlp.protocol | default "grpc" | quote }}
+  OTEL_LOGS_EXPORTER:          "otlp"
+  OTEL_TRACES_EXPORTER:        {{ ternary "otlp" "none" (default false $obsTraces.enabled) | quote }}
+  {{- end }}

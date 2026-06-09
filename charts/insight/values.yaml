@@ -117,6 +117,49 @@ global:
   # templates read `.Values.global.tenantDefaultId` directly.
   tenantDefaultId: ""
 # ═══════════════════════════════════════════════════════════════════════════
+#  OBSERVABILITY — logs & traces EMISSION (the product contract)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Insight ALWAYS emits structured JSON to stdout — that is the product
+# contract and is not toggleable here. WHERE logs/traces are collected is
+# the host cluster's concern, modelled on the SAME bundled-vs-external
+# shape as the infra deps (clickhouse, mariadb, …):
+#
+#   mode: none      — services only write JSON to stdout; collection is
+#                     entirely the host cluster's job (its node agent
+#                     scrapes container stdout). SAFE DEFAULT for drops
+#                     into an unknown existing cluster — we install and
+#                     configure nothing.
+#   mode: external  — services additionally export OTLP to an operator-
+#                     supplied collector endpoint (the customer's existing
+#                     stack: their OTel Collector / Loki / Datadog / Splunk).
+#   mode: bundled   — a Loki/Alloy/Grafana stack is provided OUT OF BAND
+#                     (the gitops `system/` layer or an install script —
+#                     NOT a subchart of this umbrella, same model as
+#                     Airbyte / Argo). Services export to it in-cluster.
+#
+# The umbrella NEVER bundles the collector stack itself; like Airbyte and
+# Argo it is a separate release. This block only governs what services
+# EMIT and where they POINT. The resolved coordinates are published into
+# the `{release}-platform` ConfigMap as INSIGHT_LOG_*/OTEL_* env vars
+# (see templates/platform-config.yaml) so every pod that does `envFrom`
+# picks them up uniformly — no per-service wiring.
+observability:
+  mode: none # none | external | bundled
+  logs:
+    level: info # debug|info|warn|error — default level for all services
+    format: json # json|text (text only for local human debugging)
+  traces:
+    enabled: false # OTel trace export (Tempo). Off until the tracing phase.
+  otlp:
+    # REQUIRED when mode != none (the validator fails otherwise). For
+    # `bundled`, point at the in-cluster collector Service shipped by the
+    # gitops system layer, e.g.
+    #   http://alloy.insight-infra.svc.cluster.local:4317
+    # For `external`, the customer's OTLP endpoint. IGNORED when mode=none.
+    endpoint: ""
+    protocol: grpc # grpc | http/protobuf
+# ═══════════════════════════════════════════════════════════════════════════
 #  EXTERNAL — Airbyte (installed as a separate Helm release, SAME namespace)
 # ═══════════════════════════════════════════════════════════════════════════
 airbyte:

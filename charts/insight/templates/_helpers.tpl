@@ -158,6 +158,33 @@ App services are mandatory umbrella components — no deploy flag.
 
 {{/*
 ==============================================================================
+ OBSERVABILITY (logs & traces emission)
+==============================================================================
+Mirrors the infra `deploy=false → host required` contract:
+  - mode=none      → no collector; services log JSON to stdout only.
+  - mode=external  → operator-supplied OTLP endpoint (required).
+  - mode=bundled   → in-cluster collector endpoint (required; supplied by
+                     the gitops env values, pointing at system/alloy).
+The endpoint is NOT computed from the release name because the bundled
+collector lives in the infra namespace (a separate Helm release), not
+necessarily this chart's namespace — so it must be supplied explicitly.
+==============================================================================
+*/}}
+{{- define "insight.observability.mode" -}}
+{{- default "none" (default dict .Values.observability).mode -}}
+{{- end -}}
+
+{{- define "insight.observability.otlpEndpoint" -}}
+{{- $obs := default dict .Values.observability -}}
+{{- $otlp := default dict $obs.otlp -}}
+{{- $mode := default "none" $obs.mode -}}
+{{- if ne $mode "none" -}}
+{{- required (printf "observability.otlp.endpoint is required when observability.mode=%q" $mode) $otlp.endpoint -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+==============================================================================
  VALIDATORS
 ==============================================================================
 Fail-fast checks that run at helm template / install time.
@@ -261,6 +288,20 @@ Invoked from NOTES.txt so they fire on every install.
           {{- fail (printf "insight-db-creds.%s contains a URL-reserved character ( @ : / ? # %% ). These silently corrupt the embedded DSN — clients parse the password at the first reserved char and fail at runtime, not at install. Use a password from [A-Za-z0-9._~-] only, or delete the Secret to let the umbrella auto-generate a safe one." $k) -}}
         {{- end -}}
       {{- end -}}
+    {{- end -}}
+  {{- end -}}
+
+  {{- /* Observability mode + endpoint. Same contract as the infra deps:
+         `none` ships nothing (stdout-only, host cluster collects);
+         `external`/`bundled` MUST carry an OTLP collector endpoint. */ -}}
+  {{- $obs := default dict .Values.observability -}}
+  {{- $obsMode := default "none" $obs.mode -}}
+  {{- if not (has $obsMode (list "none" "external" "bundled")) -}}
+    {{- fail (printf "observability.mode=%q is invalid; expected one of: none, external, bundled" $obsMode) -}}
+  {{- end -}}
+  {{- if ne $obsMode "none" -}}
+    {{- if not (default dict $obs.otlp).endpoint -}}
+      {{- fail (printf "observability.otlp.endpoint is required when observability.mode=%q (bundled → in-cluster collector Service; external → operator's OTLP endpoint). Use mode=none for stdout-only collection by the host cluster." $obsMode) -}}
     {{- end -}}
   {{- end -}}
 {{- end -}}

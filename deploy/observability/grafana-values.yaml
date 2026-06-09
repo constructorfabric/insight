@@ -1,0 +1,55 @@
+##
+## Grafana — UI for the bundled observability stack. The only LGTM
+## component with a web face.
+##
+## Reference values consumed by BOTH deployment paths:
+##   - Local/dev     — deploy/scripts/install-observability.sh
+##   - Cluster (ops) — infra/insight-gitops:system/grafana/values.yaml (L2)
+##
+## ${NAMESPACE} is substituted by install-observability.sh so the Loki
+## datasource URL targets the install namespace.
+##
+## Reach it (dev): kubectl -n <ns> port-forward svc/grafana 3000:80
+## Then Explore → Loki → e.g.  {namespace="airbyte"}  /  {component=~".*dbt.*"}
+##
+
+persistence:
+  enabled: true
+  size: 5Gi
+
+# Loki wired as the default datasource so Explore works out of the box.
+# Tempo/Mimir get added here in the tracing/metrics phases; derivedFields
+# will then map `trace_id` → a Tempo link for log↔trace correlation.
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki.${NAMESPACE}.svc.cluster.local:3100
+        isDefault: true
+        jsonData:
+          maxLines: 1000
+
+# Admin credentials. Past a throwaway PoC, seal/provide a Secret and point
+# admin.existingSecret at it. Until then the chart generates a random admin
+# password into the `grafana` Secret:
+#   kubectl -n <ns> get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
+# admin:
+#   existingSecret: grafana-creds
+#   userKey: admin-user
+#   passwordKey: admin-password
+
+ingress:
+  enabled: false
+
+service:
+  type: ClusterIP
+
+# OIDC SSO via the existing insight-oidc app is a per-env overlay concern
+# (issuer/clientId differ per cluster).
+# grafana.ini:
+#   auth.generic_oauth:
+#     enabled: true
+#     ...
