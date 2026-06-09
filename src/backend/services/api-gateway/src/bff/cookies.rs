@@ -2,10 +2,16 @@
 //!
 //! Per `cpt-insightspec-nfr-bff-cookie-attrs` every session-cookie response
 //! MUST carry `__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Strict`,
-//! `Path=/`, no `Domain`. We hard-code those attributes here so any other
-//! call site has to go through these helpers.
+//! `Path=/`, no `Domain`. We build every `Set-Cookie` here via the typed
+//! `cookie` crate (re-exported by `axum-extra`) so the attribute set is
+//! constructed structurally rather than concatenated by hand. The
+//! snapshot tests below pin the exact rendered string so any
+//! crate-version drift fails CI explicitly instead of silently changing
+//! header bytes that browsers consume.
 
 use axum::http::HeaderValue;
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use time::Duration;
 
 /// Name of the BFF session cookie. The `__Host-` prefix tells the browser to:
 ///   * require Secure
@@ -16,16 +22,17 @@ pub const SESSION_COOKIE_NAME: &str = "__Host-sid";
 /// Build a `Set-Cookie` header value that establishes a fresh session.
 #[must_use]
 pub fn build_set_session(value: &str, max_age_seconds: i64) -> HeaderValue {
-    cookie_header(value, max_age_seconds)
+    render(&session_cookie(value, max_age_seconds))
 }
 
 /// Build a `Set-Cookie` header value that clears the session.
+///
+/// Empty value + `Max-Age=0` evicts the cookie. We still emit every
+/// other attribute identically to the live cookie so a buggy browser
+/// never ends up with a cookie carrying weaker attrs than the original.
 #[must_use]
 pub fn build_clear_session() -> HeaderValue {
-    // Empty value + Max-Age=0 evicts the cookie. We still set every other
-    // attribute identically to the live cookie so a buggy browser never
-    // ends up with a cookie that has weaker attrs than the original.
-    cookie_header("", 0)
+    render(&session_cookie("", 0))
 }
 
 /// Read the BFF session cookie value from a single `Cookie` header.
@@ -36,28 +43,25 @@ pub fn build_clear_session() -> HeaderValue {
 ///   * **more than one** `__Host-sid` cookie is present (RFC 6265bis
 ///     leaves duplicate handling undefined — we reject to avoid an
 ///     attacker-set duplicate masking the real cookie).
-///
-/// Strips an optional pair of surrounding double-quotes so a quoted
-/// cookie value `"abc"` matches the unquoted SID we generated.
 #[must_use]
 pub fn read_session_cookie(cookie_header: Option<&HeaderValue>) -> Option<String> {
     let raw = cookie_header?.to_str().ok()?;
     let mut found: Option<String> = None;
-    for pair in raw.split(';') {
-        let trimmed = pair.trim();
-        let Some((name, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if name.trim() != SESSION_COOKIE_NAME {
+    for parsed in Cookie::split_parse(raw) {
+        let Ok(c) = parsed else { continue };
+        if c.name() != SESSION_COOKIE_NAME {
             continue;
         }
-        let v = unquote(value.trim()).to_owned();
         if found.is_some() {
-            // Duplicate __Host-sid in the same Cookie header — refuse
+            // Duplicate `__Host-sid` in the same Cookie header — refuse
             // rather than guess which one is genuine.
             return None;
         }
-        found = Some(v);
+        // RFC 6265 allows a cookie value to be wrapped in double quotes;
+        // the `cookie` crate's parser preserves them verbatim. The
+        // SIDs we mint never contain quotes, so stripping a matching
+        // outer pair is a safe normalization.
+        found = Some(unquote(c.value()).to_owned());
     }
     found
 }
@@ -70,19 +74,30 @@ fn unquote(s: &str) -> &str {
     }
 }
 
-fn cookie_header(value: &str, max_age_seconds: i64) -> HeaderValue {
-    // RFC 6265 cookie attributes. Order is convention; all attributes are
-    // mandatory to keep `cpt-insightspec-nfr-bff-cookie-attrs` honest.
-    let raw = format!(
-        "{SESSION_COOKIE_NAME}={value}; Max-Age={max_age_seconds}; Path=/; Secure; HttpOnly; SameSite=Strict",
-    );
+/// Construct a `Cookie` carrying the full attribute set mandated by
+/// `cpt-insightspec-nfr-bff-cookie-attrs`. Owned here as the only path
+/// that builds session cookies — every caller goes through
+/// `build_set_session` / `build_clear_session`.
+fn session_cookie(value: &str, max_age_seconds: i64) -> Cookie<'static> {
+    Cookie::build((SESSION_COOKIE_NAME, value.to_owned()))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .max_age(Duration::seconds(max_age_seconds))
+        .build()
+}
+
+fn render(c: &Cookie<'_>) -> HeaderValue {
     // Inputs are: a fixed ASCII cookie name, an opaque base64url session
     // value (alphanumeric + `-_`) we generate ourselves in `secrets.rs`,
-    // and a signed integer. None can introduce non-ASCII bytes; the
-    // expect can never fire unless the program is rewritten to pass an
-    // attacker-controlled value here.
+    // and a signed integer Max-Age. None can introduce non-ASCII bytes,
+    // and the cookie crate's encoder rejects control characters at parse
+    // time, so this expect can only fire if the program is rewritten to
+    // pass an attacker-controlled value here.
     #[allow(clippy::expect_used)]
-    HeaderValue::from_str(&raw).expect("session cookie header must be ASCII by construction")
+    HeaderValue::from_str(&c.to_string())
+        .expect("session cookie header must be ASCII by construction")
 }
 
 #[cfg(test)]
@@ -94,7 +109,10 @@ mod tests {
         let v = build_set_session("opaque-value", 120);
         let s = v.to_str().expect("ascii");
 
-        assert!(s.starts_with("__Host-sid=opaque-value"), "name and value");
+        assert!(
+            s.starts_with("__Host-sid=opaque-value"),
+            "name and value first",
+        );
         assert!(s.contains("Max-Age=120"));
         assert!(s.contains("Path=/"));
         assert!(s.contains("Secure"));
@@ -119,13 +137,15 @@ mod tests {
 
     #[test]
     fn snapshot_set_session_120s() {
-        // Hard snapshot — if this changes, somebody touched cookie hardening.
-        // Anyone updating this needs to re-run the security review.
+        // Hard snapshot — if this changes, somebody touched cookie hardening
+        // (or bumped the `cookie` crate to a version that emits attributes
+        // in a different order). Either path needs a fresh security review
+        // before the snapshot is updated.
         let v = build_set_session("AAAA", 120);
         let s = v.to_str().expect("ascii");
         assert_eq!(
             s,
-            "__Host-sid=AAAA; Max-Age=120; Path=/; Secure; HttpOnly; SameSite=Strict"
+            "__Host-sid=AAAA; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=120",
         );
     }
 
@@ -135,7 +155,7 @@ mod tests {
         let s = v.to_str().expect("ascii");
         assert_eq!(
             s,
-            "__Host-sid=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict"
+            "__Host-sid=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0",
         );
     }
 

@@ -41,6 +41,7 @@ modkit-auth = { workspace = true }
 async-trait = { workspace = true }
 axum = "0.8"
 axum-extra = { workspace = true }
+time = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
