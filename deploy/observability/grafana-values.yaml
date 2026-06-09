@@ -2,12 +2,12 @@
 ## Grafana — UI for the bundled observability stack. The only LGTM
 ## component with a web face.
 ##
-## Reference values consumed by BOTH deployment paths:
-##   - Local/dev     — deploy/scripts/install-observability.sh
-##   - Cluster (ops) — infra/insight-gitops:system/grafana/values.yaml (L2)
+## Reference values. The cluster install consumes the gitops copy at
+## infra/insight-gitops:system/grafana/values.yaml (L2 system layer).
 ##
-## ${NAMESPACE} is substituted by install-observability.sh so the Loki
-## datasource URL targets the install namespace.
+## ${NAMESPACE} is a placeholder for the install namespace — substitute it
+## when applying these reference values (the gitops copy hardcodes it in
+## the Loki datasource URL).
 ##
 ## Reach it (dev): kubectl -n <ns> port-forward svc/grafana 3000:80
 ## Then Explore → Loki → e.g.  {namespace="airbyte"}  /  {component=~".*dbt.*"}

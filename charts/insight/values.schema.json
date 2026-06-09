@@ -129,7 +129,6 @@
     "observability": {
       "type": "object",
       "properties": {
-        "mode": { "enum": ["none", "external", "bundled"] },
         "logs": {
           "type": "object",
           "properties": {

@@ -1,10 +1,8 @@
 ##
 ## Loki — log store for the bundled observability stack (LGTM, logs first).
 ##
-## Reference values consumed by BOTH deployment paths (same model as
-## deploy/argo/values.yaml):
-##   - Local/dev     — deploy/scripts/install-observability.sh
-##   - Cluster (ops) — infra/insight-gitops:system/loki/values.yaml (L2)
+## Reference values. The cluster install consumes the gitops copy at
+## infra/insight-gitops:system/loki/values.yaml (L2 system layer).
 ##
 ## Namespace-agnostic: the push/query endpoint name (`loki`) is the same
 ## in whatever namespace this is installed; consumers reference it as

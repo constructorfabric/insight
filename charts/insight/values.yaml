@@ -121,42 +121,39 @@ global:
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # Insight ALWAYS emits structured JSON to stdout — that is the product
-# contract and is not toggleable here. WHERE logs/traces are collected is
-# the host cluster's concern, modelled on the SAME bundled-vs-external
-# shape as the infra deps (clickhouse, mariadb, …):
+# contract and is not toggleable here. WHETHER it ALSO exports OTLP, and
+# WHERE, is driven entirely by `otlp.endpoint`:
 #
-#   mode: none      — services only write JSON to stdout; collection is
-#                     entirely the host cluster's job (its node agent
-#                     scrapes container stdout). SAFE DEFAULT for drops
-#                     into an unknown existing cluster — we install and
-#                     configure nothing.
-#   mode: external  — services additionally export OTLP to an operator-
-#                     supplied collector endpoint (the customer's existing
-#                     stack: their OTel Collector / Loki / Datadog / Splunk).
-#   mode: bundled   — a Loki/Alloy/Grafana stack is provided OUT OF BAND
-#                     (the gitops `system/` layer or an install script —
-#                     NOT a subchart of this umbrella, same model as
-#                     Airbyte / Argo). Services export to it in-cluster.
+#   endpoint: ""   — stdout only. No OTEL_* vars are published, services
+#                    just log to stdout, and whoever runs the cluster
+#                    collects it — the host's own node agent, or our
+#                    bundled Loki/Alloy/Grafana installed via the gitops
+#                    `system/` layer. SAFE DEFAULT for a drop into an
+#                    unknown existing cluster: we configure nothing.
+#   endpoint: set  — services additionally export OTLP there. Point it at
+#                    the in-cluster collector for a bundled install
+#                    (http://alloy.insight-infra.svc.cluster.local:4317),
+#                    or at the customer's own collector (OTel Collector /
+#                    Datadog / Splunk) for an external one.
 #
 # The umbrella NEVER bundles the collector stack itself; like Airbyte and
-# Argo it is a separate release. This block only governs what services
+# Argo it is a separate release (installed via the gitops system layer —
+# gated there by inventory toggles). This block only governs what services
 # EMIT and where they POINT. The resolved coordinates are published into
 # the `{release}-platform` ConfigMap as INSIGHT_LOG_*/OTEL_* env vars
 # (see templates/platform-config.yaml) so every pod that does `envFrom`
 # picks them up uniformly — no per-service wiring.
 observability:
-  mode: none # none | external | bundled
   logs:
     level: info # debug|info|warn|error — default level for all services
     format: json # json|text (text only for local human debugging)
   traces:
     enabled: false # OTel trace export (Tempo). Off until the tracing phase.
   otlp:
-    # REQUIRED when mode != none (the validator fails otherwise). For
-    # `bundled`, point at the in-cluster collector Service shipped by the
-    # gitops system layer, e.g.
+    # Empty → stdout only (no OTLP export). Set → services export logs/
+    # traces here. Bundled install: the gitops system Alloy Service, e.g.
     #   http://alloy.insight-infra.svc.cluster.local:4317
-    # For `external`, the customer's OTLP endpoint. IGNORED when mode=none.
+    # External install: the customer's OTLP endpoint.
     endpoint: ""
     protocol: grpc # grpc | http/protobuf
 # ═══════════════════════════════════════════════════════════════════════════

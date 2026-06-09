@@ -1,14 +1,12 @@
 ##
 ## Grafana Alloy — log collector for the bundled observability stack.
 ##
-## Reference values consumed by BOTH deployment paths:
-##   - Local/dev     — deploy/scripts/install-observability.sh
-##   - Cluster (ops) — infra/insight-gitops:system/alloy/values.yaml (L2)
+## Reference values. The cluster install consumes the gitops copy at
+## infra/insight-gitops:system/alloy/values.yaml (L2 system layer).
 ##
-## ${NAMESPACE} is substituted by install-observability.sh (sed, same
-## pattern as deploy/argo/rbac.yaml) so the Loki push URL targets the
-## namespace this stack is installed into. The gitops copy hardcodes its
-## own namespace (insight-infra) instead.
+## ${NAMESPACE} is a placeholder for the install namespace — substitute it
+## when applying these reference values. The gitops copy hardcodes its own
+## namespace (insight-infra) in the Loki push URL instead.
 ##
 ## DaemonSet: one agent per node, tails every pod's stdout/stderr → Loki.
 ## NO sidecars, NO app changes — services only write to stdout (JSON is
