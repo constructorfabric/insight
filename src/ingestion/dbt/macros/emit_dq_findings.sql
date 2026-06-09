@@ -37,7 +37,7 @@
 -#}
 {% macro emit_dq_findings() %}
   {%- if execute and results -%}
-    {%- for r in results if r.node.resource_type == 'test' -%}
+    {%- for r in results if r.node.resource_type == 'test' and 'data_quality' in r.node.tags -%}
       {%- set meta = r.node.config.meta or {} -%}
       {%- set finding = {
           'event': 'data_quality_finding',

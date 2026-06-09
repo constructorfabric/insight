@@ -34,9 +34,5 @@ SELECT
     video_duration_seconds,
     screen_share_duration_seconds
 FROM silver.class_collab_meeting_activity FINAL
-WHERE audio_duration_seconds IS NOT NULL
-  AND audio_duration_seconds > 0
-  AND (
-       coalesce(video_duration_seconds, 0)        > audio_duration_seconds
-    OR coalesce(screen_share_duration_seconds, 0) > audio_duration_seconds
-  )
+WHERE coalesce(video_duration_seconds, 0)        > coalesce(audio_duration_seconds, 0)
+   OR coalesce(screen_share_duration_seconds, 0) > coalesce(audio_duration_seconds, 0)
