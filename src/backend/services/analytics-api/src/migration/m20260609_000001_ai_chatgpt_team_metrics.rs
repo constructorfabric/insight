@@ -217,3 +217,67 @@ impl MigrationTrait for Migration {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// All 22 FE-visible metric_keys must appear in the ARRAY JOIN unpivot
+    /// (19 from m20260601 + codex_lines / codex_sessions / chatgpt_active).
+    const EXPECTED_METRIC_KEYS: &[&str] = &[
+        "active_ai_members", "cursor_active", "cc_active", "cursor_completions",
+        "cursor_agents", "cursor_lines", "cc_sessions", "cc_lines", "cc_tool_accept",
+        "team_ai_loc", "cc_cost", "prs_with_cc", "prs_total", "cursor_acceptance",
+        "cc_tool_acceptance", "ai_loc_share2", "codex_active", "chatgpt", "claude_web",
+        "codex_lines", "codex_sessions", "chatgpt_active",
+    ];
+
+    #[test]
+    fn array_join_emits_all_22_keys() {
+        let kv = array_join_kv();
+        for key in EXPECTED_METRIC_KEYS {
+            assert!(kv.contains(&format!("('{key}',")), "ARRAY JOIN missing key {key}");
+        }
+        // Exactly 22 tuple entries — guards against an accidental extra/dropped key.
+        assert_eq!(kv.matches("('").count(), 22, "ARRAY JOIN must emit exactly 22 keys");
+        assert_eq!(EXPECTED_METRIC_KEYS.len(), 22);
+    }
+
+    /// chatgpt_active is a DAU marker → must be in ACTIVE_LIST (alongside
+    /// codex_active); the counters must NOT be.
+    #[test]
+    fn active_list_has_chatgpt_and_codex_markers() {
+        assert!(ACTIVE_LIST.contains("'codex_active'"), "codex_active must be active");
+        assert!(ACTIVE_LIST.contains("'chatgpt_active'"), "chatgpt_active must be active");
+        assert!(!ACTIVE_LIST.contains("'codex_lines'"), "codex_lines is a counter, not active");
+        assert!(!ACTIVE_LIST.contains("'chatgpt'"), "chatgpt is a counter, not active");
+    }
+
+    /// Markers use countIf; counters use sumIf. A typo here = silent NULL.
+    #[test]
+    fn wide_aggregate_uses_countif_for_markers_sumif_for_counters() {
+        let pp = wide_aggregate_pp();
+        // markers (un-stubbed codex_active + new chatgpt_active) via countIf
+        assert!(pp.contains("countIf(metric_key = 'codex_active') > 0"));
+        assert!(pp.contains("countIf(metric_key = 'chatgpt_active') > 0"));
+        // counters via sumIf
+        assert!(pp.contains("sumIf(metric_value, metric_key = 'chatgpt')"));
+        assert!(pp.contains("sumIf(metric_value, metric_key = 'codex_lines')"));
+        assert!(pp.contains("sumIf(metric_value, metric_key = 'codex_sessions')"));
+        // codex_active / chatgpt are no longer hardcoded NULL stubs
+        assert!(!pp.contains("CAST(NULL AS Nullable(Float64)) AS codex_active_v"));
+        assert!(!pp.contains("CAST(NULL AS Nullable(Float64)) AS chatgpt_v"));
+        // claude_web stays a NULL stub (not collected)
+        assert!(pp.contains("CAST(NULL AS Nullable(Float64)) AS claude_web_v"));
+    }
+
+    /// Both query_refs must embed the ACTIVE_LIST and the shared pp/kv.
+    #[test]
+    fn queries_reference_active_list_and_unpivot() {
+        for q in [team_query(), ic_query()] {
+            assert!(q.contains("chatgpt_active"), "query missing chatgpt_active");
+            assert!(q.contains("codex_lines"), "query missing codex_lines");
+            assert!(q.contains("ARRAY JOIN"), "query missing ARRAY JOIN unpivot");
+        }
+    }
+}
