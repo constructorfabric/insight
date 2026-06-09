@@ -9,6 +9,9 @@ pub mod me;
 
 use std::sync::Arc;
 
+use axum_extra::TypedHeader;
+use axum_extra::headers::CacheControl;
+
 use crate::bff::config::BffConfig;
 use crate::bff::oidc_client::OidcClient;
 use crate::bff::session_store::SessionStore;
@@ -22,6 +25,16 @@ pub struct BffState {
     pub oidc: Arc<OidcClient>,
     pub store: SessionStore,
     pub redis: Arc<RedisShared>,
+}
+
+/// `Cache-Control: no-store` for every `/auth/*` response.
+///
+/// All BFF responses carry auth-sensitive payloads (cookies, user data,
+/// id_token-hint URLs) that browsers, proxies, and shared caches must
+/// never store. Typed via `axum-extra` so the header value is built by
+/// the `headers` crate rather than hand-formatted in every handler.
+pub fn no_store() -> TypedHeader<CacheControl> {
+    TypedHeader(CacheControl::new().with_no_store())
 }
 
 /// Compute jittered `refresh_at = expires_at - safety_margin + uniform(±jitter/2)`.
@@ -71,5 +84,18 @@ mod tests {
         // past so the SPA refreshes immediately.
         let r = jittered_refresh_at(10, u64::MAX, 0);
         assert!(r < 0, "expected far-past refresh_at, got {r}");
+    }
+
+    #[test]
+    fn no_store_helper_encodes_to_cache_control_no_store() {
+        // Lock the helper's rendered value so any future bump of
+        // `axum-extra` / `headers` that changes encoding fails CI
+        // before it can silently change `Cache-Control` semantics.
+        use axum_extra::headers::Header;
+        let tv = no_store();
+        let mut values: Vec<axum::http::HeaderValue> = Vec::new();
+        tv.0.encode(&mut values);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].to_str().expect("ascii"), "no-store");
     }
 }

@@ -7,13 +7,13 @@
 use std::sync::Arc;
 
 use axum::extract::Query;
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::bff::audit::{AuthEvent, AuthEventKind};
 use crate::bff::errors::BffError;
-use crate::bff::handlers::BffState;
+use crate::bff::handlers::{BffState, no_store};
 use crate::bff::oidc_client::PkcePair;
 use crate::bff::secrets::{new_nonce, new_state};
 use crate::bff::session_store::login_state;
@@ -63,19 +63,14 @@ pub async fn login(
         },
     );
 
-    let mut resp = Response::builder()
-        .status(StatusCode::FOUND)
-        .header(axum::http::header::LOCATION, auth_url)
-        .body(axum::body::Body::empty())
-        .map_err(|e| BffError::Internal(anyhow::anyhow!("response builder: {e}")))?;
-
-    // Defensive: explicitly disable caching of the redirect.
-    resp.headers_mut().insert(
-        axum::http::header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store"),
-    );
-
-    Ok(resp.into_response())
+    let location = HeaderValue::from_str(&auth_url)
+        .map_err(|e| BffError::Internal(anyhow::anyhow!("authorize url not ASCII: {e}")))?;
+    Ok((
+        StatusCode::FOUND,
+        no_store(),
+        [(header::LOCATION, location)],
+    )
+        .into_response())
 }
 
 /// Reject anything that could turn into an absolute URL when the browser

@@ -11,13 +11,14 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
 use crate::bff::cookies::{build_clear_session, read_session_cookie};
 use crate::bff::errors::BffError;
-use crate::bff::handlers::{BffState, jittered_refresh_at};
+use crate::bff::handlers::{BffState, jittered_refresh_at, no_store};
 use crate::bff::session::{SessionView, TenantView, UserView};
 
 pub async fn me(
@@ -70,22 +71,14 @@ pub async fn me(
         csrf_token: record.csrf_token,
     };
 
-    let body = serde_json::to_vec(&view)
-        .map_err(|e| BffError::Internal(anyhow::anyhow!("serialize: {e}")))?;
-    let resp = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CACHE_CONTROL, "no-store")
-        .body(axum::body::Body::from(body))
-        .map_err(|e| BffError::Internal(anyhow::anyhow!("response builder: {e}")))?;
-
-    Ok(resp.into_response())
+    Ok((StatusCode::OK, no_store(), Json(view)).into_response())
 }
 
 fn unauthorized_clear_cookie() -> Response {
     let mut resp = (
         StatusCode::UNAUTHORIZED,
-        axum::Json(serde_json::json!({
+        no_store(),
+        Json(serde_json::json!({
             "type": "urn:insight:error:unauthorized",
             "title": "Unauthorized",
             "status": 401,
@@ -99,10 +92,6 @@ fn unauthorized_clear_cookie() -> Response {
     );
     resp.headers_mut()
         .append(header::SET_COOKIE, build_clear_session());
-    resp.headers_mut().insert(
-        header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store"),
-    );
     resp
 }
 

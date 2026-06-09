@@ -14,14 +14,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::bff::audit::{AuthEvent, AuthEventKind, hash_session_id};
 use crate::bff::cookies::{build_set_session, read_session_cookie};
 use crate::bff::errors::BffError;
-use crate::bff::handlers::BffState;
+use crate::bff::handlers::{BffState, no_store};
 use crate::bff::identity;
 use crate::bff::session_store::{CreateSessionRequest, login_state};
 
@@ -143,19 +143,17 @@ pub async fn callback(
 
     let max_age = i64::try_from(st.cfg.session.ttl_seconds).unwrap_or(i64::MAX);
     let set_cookie = build_set_session(&outcome.session_id, max_age);
-
-    let mut resp = Response::builder()
-        .status(StatusCode::FOUND)
-        .header(header::LOCATION, return_to)
-        .body(axum::body::Body::empty())
-        .map_err(|e| BffError::Internal(anyhow::anyhow!("response builder: {e}")))?;
-    resp.headers_mut().append(header::SET_COOKIE, set_cookie);
-    resp.headers_mut().insert(
-        header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store"),
-    );
-
-    Ok(resp.into_response())
+    let location = HeaderValue::from_str(&return_to)
+        .map_err(|e| BffError::Internal(anyhow::anyhow!("return_to not ASCII: {e}")))?;
+    Ok((
+        StatusCode::FOUND,
+        no_store(),
+        [
+            (header::LOCATION, location),
+            (header::SET_COOKIE, set_cookie),
+        ],
+    )
+        .into_response())
 }
 
 /// Sanitize an OAuth error code echoed from the IdP. RFC 6749 §4.1.2.1
