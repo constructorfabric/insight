@@ -46,12 +46,10 @@ on-run-start:
 on-run-end:
   - "{{ emit_dq_findings() }}"
 
-# Data-quality checks are ordinary dbt tests. Every test keeps its violating
-# rows (store_failures) for drill-down and is non-blocking by default
-# (severity=warn) so a finding never fails the ingestion pipeline. Escalate an
-# individual check to severity=error in its own config when a violation should
-# block.
+# Every test keeps its violating rows (store_failures) for drill-down. Severity
+# is NOT set project-wide: structural/generic tests keep dbt's default `error`
+# (build integrity stays strict), while data-quality checks opt into
+# `severity='warn'` individually in their own config so a finding never blocks.
 data_tests:
   ingestion:
     +store_failures: true
-    +severity: warn
