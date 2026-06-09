@@ -3,16 +3,22 @@ name: chatgpt-team
 # architecture (mirrors claude-team). Reads chatgpt.com web data via the
 # customer-deployed chatgpt-team-proxy; requires `proxy_url` (no default),
 # `proxy_auth_token`, and the workspace `chatgpt_account_id` / `chatgpt_org_id`.
-version: "1.0.1"
+# 1.0.1: tolerate 403/404 on subscription streams (blank org_id).
+# 1.1.0: add Silver dbt models (chatgpt_team__ai_dev_usage,
+#   chatgpt_team__ai_assistant_usage) — MINOR bump per ADR-0015 so reconcile
+#   re-runs the dbt step (tag:chatgpt-team+ now spans the new staging models
+#   and their downstream silver.class_ai_* unions).
+version: "1.1.0"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that
 # may also hit it (same rationale as claude-team).
 schedule: '0 4 * * *'
 workflow: sync
 
-# Scopes the Silver dbt run to this connector. Only the bronze→RMT promotion
-# is tagged `chatgpt-team` today; class_ai_tool_usage / class_ai_dev_usage
-# Silver models are a follow-up (spec OQ-CGT-2).
+# Scopes the dbt run to this connector: bronze→RMT promotion + Silver staging
+# models (chatgpt_team__ai_dev_usage → class_ai_dev_usage,
+# chatgpt_team__ai_assistant_usage → class_ai_assistant_usage) and their
+# downstream silver.class_ai_* unions.
 dbt_select: 'tag:chatgpt-team+'
 
 connection:
