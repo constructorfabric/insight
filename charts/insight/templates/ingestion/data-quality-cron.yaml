@@ -1,0 +1,53 @@
+{{- if and .Values.ingestion.templates.enabled .Values.ingestion.dataQuality.enabled }}
+{{- /* Argo CronWorkflow that runs the dbt data-quality test catalog on a
+       schedule, independent of the per-connector ingestion pipeline so a
+       finding can never block ingestion. Emits one JSON finding per check
+       (see macros/emit_dq_findings.sql) for the central log store. */}}
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ include "insight.fullname" . }}-data-quality
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: data-quality
+    {{- include "insight.labels" . | nindent 4 }}
+    {{- with .Values.ingestion.reconcile.argoInstanceId }}
+    workflows.argoproj.io/controller-instanceid: {{ . | quote }}
+    {{- end }}
+spec:
+  # `schedules:` (array) is the Argo Workflows >=3.5 schema; the legacy
+  # singular `schedule:` field is rejected by the new CRD. Value kept singular
+  # in values for ergonomics and rendered as a one-element array.
+  schedules:
+    - {{ required "ingestion.dataQuality.schedule is required" .Values.ingestion.dataQuality.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: {{ default 3 .Values.ingestion.dataQuality.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit:     {{ default 3 .Values.ingestion.dataQuality.failedJobsHistoryLimit }}
+  workflowSpec:
+    serviceAccountName: argo-workflow
+    entrypoint: run
+    activeDeadlineSeconds: 1800
+    ttlStrategy:
+      secondsAfterCompletion: {{ default 1800 .Values.ingestion.dataQuality.ttlSecondsAfterCompletion }}
+      secondsAfterSuccess:    {{ default 600  .Values.ingestion.dataQuality.ttlSecondsAfterSuccess }}
+      secondsAfterFailure:    {{ default 3600 .Values.ingestion.dataQuality.ttlSecondsAfterFailure }}
+    podGC:
+      strategy: OnPodCompletion
+    {{- with .Values.global.imagePullSecrets }}
+    imagePullSecrets:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    templates:
+      - name: run
+        steps:
+          - - name: test
+              templateRef:
+                name: dbt-test
+                template: run
+              arguments:
+                parameters:
+                  # Empty selector → whole catalog.
+                  - name: dbt_select
+                    value: {{ default "" .Values.ingestion.dataQuality.select | quote }}
+{{- end }}

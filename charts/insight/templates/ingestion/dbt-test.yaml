@@ -1,0 +1,89 @@
+{{- if .Values.ingestion.templates.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: dbt-test
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  serviceAccountName: argo-workflow
+  entrypoint: run
+  templates:
+    - name: run
+      # SECURITY:
+      #  Argo substitutes parameter refs as LITERAL TEXT at render time —
+      #  splicing them into shell, Python, or YAML source is a command-
+      #  injection sink. We pass every parameter via env vars and reference
+      #  them as `"$ENV_VAR"` in the shell, which is not parsed as code by
+      #  bash. Same convention as dbt-run.yaml.
+      inputs:
+        parameters:
+          # Empty selector runs the whole test catalog; pass e.g. "tag:silver"
+          # or a single test name to scope a run.
+          - name: dbt_select
+            default: ""
+          - name: toolbox_image
+            default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+          - name: clickhouse_host
+            default: {{ include "insight.clickhouse.fqdn" . | quote }}
+          - name: clickhouse_port
+            default: {{ include "insight.clickhouse.port" . | quote }}
+          - name: clickhouse_user
+            default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+      activeDeadlineSeconds: 1800
+      script:
+        image: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+        imagePullPolicy: IfNotPresent
+        command: [bash]
+        env:
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+          - name: DBT_SELECT
+            value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+          - name: CLICKHOUSE_HOST
+            value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+          - name: CLICKHOUSE_PORT
+            value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+          - name: CLICKHOUSE_USER
+            value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+        source: |
+          set -euo pipefail
+          cd /ingestion/dbt
+          # Write profiles.yml from env vars via python so no user input is ever
+          # spliced into YAML or shell text (same sink-closing pattern as dbt-run).
+          python3 - <<'PY'
+          import os, yaml
+          profile = {
+              "ingestion": {
+                  "target": "k8s",
+                  "outputs": {
+                      "k8s": {
+                          "type": "clickhouse",
+                          "host": os.environ["CLICKHOUSE_HOST"],
+                          "port": int(os.environ["CLICKHOUSE_PORT"]),
+                          "schema": "silver",
+                          "user": os.environ["CLICKHOUSE_USER"],
+                          "password": os.environ["CLICKHOUSE_PASSWORD"],
+                          "secure": False,
+                          "send_receive_timeout": 1500,
+                          "query_limit": 0,
+                          "connect_timeout": 30,
+                      }
+                  }
+              }
+          }
+          with open("profiles.yml", "w") as f:
+              yaml.safe_dump(profile, f)
+          PY
+          # Checks are non-blocking: every test is severity=warn (dbt_project.yml),
+          # so data findings exit 0 and only an operational error (e.g. ClickHouse
+          # unreachable) fails this step. --store-failures keeps the violating rows
+          # for drill-down; the on-run-end hook prints one JSON finding per check.
+          # ${VAR:+...} drops the flag entirely when DBT_SELECT is empty so the
+          # default run covers the whole catalog.
+          dbt test --profiles-dir . --store-failures ${DBT_SELECT:+--select "$DBT_SELECT"}
+{{- end }}

@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: gold
+    description: >
+      Read-only Gold-layer views in the `insight` database. These views are
+      created and maintained outside dbt. They are registered here only so
+      data-quality tests can reference them by the gold source name (rename-safe
+      and visible in the dbt lineage graph). Nothing here is materialised by dbt.
+    schema: insight
+    tables:
+      - name: ic_kpis
+        description: Per-person, per-date individual-contributor KPI view.
