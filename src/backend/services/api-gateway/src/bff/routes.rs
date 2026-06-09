@@ -15,7 +15,7 @@ use axum::response::IntoResponse;
 use modkit::api::{OpenApiRegistry, OperationBuilder};
 
 use crate::bff::errors::BffError;
-use crate::bff::handlers::{BffState, callback, login, me};
+use crate::bff::handlers::{BffState, callback, login, logout, me, refresh};
 
 pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry, state: Arc<BffState>) -> Router {
     let s = state.clone();
@@ -52,7 +52,7 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry, state: Arc<Bf
         )
         .register(router, openapi);
 
-    let s = state;
+    let s = state.clone();
     router = OperationBuilder::new(Method::GET, "/auth/me")
         .summary("Current session info")
         .description(
@@ -69,7 +69,48 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry, state: Arc<Bf
         })
         .register(router, openapi);
 
-    tracing::info!("BFF: registered /auth/login, /auth/callback, /auth/me");
+    let s = state.clone();
+    router = OperationBuilder::new(Method::POST, "/auth/refresh")
+        .summary("Rotate the session cookie and extend its TTL")
+        .description(
+            "Mints a fresh opaque SID, updates Redis indexes atomically, and \
+             invalidates the Router's cached gateway JWT for the old SID. Returns \
+             `{expires_at, refresh_at}` per DD-BFF-07; the SPA schedules its next \
+             refresh from `refresh_at`. A grace window absorbs benign multi-tab \
+             races (DD-BFF-10). 401 + clear cookie when the cookie is missing, \
+             unknown, or past the absolute lifetime cap.",
+        )
+        .public()
+        .json_response(StatusCode::OK, "Rotation succeeded")
+        .json_response(StatusCode::UNAUTHORIZED, "No or invalid session")
+        .handler(move |headers: HeaderMap| {
+            let s = s.clone();
+            async move { unify(refresh::refresh(State(s), headers).await) }
+        })
+        .register(router, openapi);
+
+    let s = state;
+    router = OperationBuilder::new(Method::POST, "/auth/logout")
+        .summary("Revoke the current session and clear the cookie")
+        .description(
+            "Deletes the session record, removes it from the per-user index, \
+             drops the IdP-sid index entry, and invalidates the Router's cached \
+             gateway JWT. Returns `{end_session_url}` for SPA-driven RP-initiated \
+             logout — `null` when the IdP did not advertise an end-session \
+             endpoint. Idempotent: a request without a cookie still returns 200 \
+             with a clear-cookie header.",
+        )
+        .public()
+        .json_response(StatusCode::OK, "Logout complete")
+        .handler(move |headers: HeaderMap| {
+            let s = s.clone();
+            async move { unify(logout::logout(State(s), headers).await) }
+        })
+        .register(router, openapi);
+
+    tracing::info!(
+        "BFF: registered /auth/login, /auth/callback, /auth/me, /auth/refresh, /auth/logout"
+    );
     router
 }
 

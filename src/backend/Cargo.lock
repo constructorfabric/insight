@@ -2822,7 +2822,7 @@ dependencies = [
  "clap",
  "hex",
  "oidc-authn-plugin",
- "rand 0.8.5",
+ "rand 0.8.6",
  "redis",
  "reqwest",
  "serde",

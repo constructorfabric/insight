@@ -5,7 +5,9 @@
 
 pub mod callback;
 pub mod login;
+pub mod logout;
 pub mod me;
+pub mod refresh;
 
 use std::sync::Arc;
 

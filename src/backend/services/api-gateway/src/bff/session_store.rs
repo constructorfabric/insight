@@ -6,7 +6,16 @@
 //!   * `get_session` — HGETALL of a session record.
 //!   * `revoke_session` — atomic delete + ZREM + SREM + cache invalidation.
 //!
-//! Refresh + revoke-all + back-channel revocation land in Phase 2/3.
+//! Phase 2 surface:
+//!   * `refresh_session` — rolling cookie rotation per DD-BFF-10. Uses
+//!     `SET bff:swap:{old_sid} NX PX grace_ms` as a stand-alone claim gate,
+//!     then runs the rest of the rotation atomically. The DESIGN diagram
+//!     shows everything inside one MULTI/EXEC, but MULTI/EXEC has no
+//!     "abort on NX miss" semantic — queued commands always execute. The
+//!     split here keeps loser racers out of the rotation while preserving
+//!     the spec's "winner does the work, loser uses the swap" contract.
+//!
+//! Revoke-all + back-channel revocation land in Phase 3.
 
 use std::sync::Arc;
 
@@ -50,6 +59,36 @@ pub struct CreateSessionOutcome {
     /// from this without touching Redis again.
     #[allow(dead_code)]
     pub record: SessionRecord,
+}
+
+/// Inputs to `refresh_session`.
+pub struct RefreshSessionRequest<'a> {
+    /// Opaque SID from the incoming `__Host-sid` cookie.
+    pub old_sid: &'a str,
+    pub now: i64,
+    pub session_ttl_seconds: u64,
+    pub refresh_grace_ms: u64,
+}
+
+/// Successful refresh outcome — either a fresh rotation or a grace-path
+/// resolution of a just-rotated SID.
+pub struct RefreshSessionOutcome {
+    pub new_sid: String,
+    pub expires_at: i64,
+    /// `user_id` for audit. Empty on the grace path when the resolved
+    /// session record happens to have lost that field — treat as best-effort.
+    pub user_id: String,
+    /// `false` for the normal rotation path; `true` when the caller arrived
+    /// with a just-rotated SID and we resolved it via `bff:swap:{old_sid}`.
+    pub graced: bool,
+}
+
+/// Refresh result. `Gone` collapses every "401 + clear cookie" reason
+/// (no session, no swap, or past absolute cap) so the handler has one
+/// branch to render.
+pub enum RefreshSessionResult {
+    Ok(RefreshSessionOutcome),
+    Gone,
 }
 
 /// Concrete session-store implementation backed by Redis.
@@ -157,6 +196,180 @@ impl SessionStore {
             .map_err(|e| BffError::StoreUnavailable(e.to_string()))?;
 
         Ok(CreateSessionOutcome { session_id, record })
+    }
+
+    /// Rolling cookie rotation per DD-BFF-10. Three terminal states:
+    ///
+    ///   * `Ok(Outcome{graced=false})` — normal path: we owned the rotation,
+    ///     wrote the swap key, RENAMEd the session, updated TTLs and indexes,
+    ///     and invalidated the Router's JWT cache for the old SID.
+    ///   * `Ok(Outcome{graced=true})` — grace path: caller arrived with a
+    ///     just-rotated SID (or lost the race against a concurrent refresh).
+    ///     We resolved `bff:swap:{old_sid}` to the current SID and did NOT
+    ///     rotate again.
+    ///   * `Gone` — no session, no swap, or past absolute cap. Caller must
+    ///     respond 401 + clear cookie.
+    pub async fn refresh_session(
+        &self,
+        req: RefreshSessionRequest<'_>,
+    ) -> Result<RefreshSessionResult, BffError> {
+        let mut conn = self.conn();
+        let old_session_key = redis_keys::session(req.old_sid);
+
+        // Read the four fields we need to rotate. HMGET with nil-tolerant
+        // tuple deserialization — a missing key gives all-None.
+        let (user_id_opt, idp_iss_opt, idp_sid_opt, abs_exp_opt): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = redis::cmd("HMGET")
+            .arg(&old_session_key)
+            .arg("user_id")
+            .arg("idp_iss")
+            .arg("idp_sid")
+            .arg("absolute_expires_at")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| BffError::StoreUnavailable(e.to_string()))?;
+
+        // No session under `old_sid` → maybe a just-rotated cookie within
+        // the grace window.
+        let Some(user_id) = user_id_opt else {
+            return self.try_grace(req.old_sid).await;
+        };
+
+        let idp_iss = idp_iss_opt.unwrap_or_default();
+        let idp_sid = idp_sid_opt.unwrap_or_default();
+        let abs_exp: i64 = abs_exp_opt
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        // Past the absolute cap — refresh refuses to extend regardless of
+        // remaining TTL. Spec §5.3: hard cap behaviour delegated to TTL,
+        // but mirrored here so we never re-extend a session that has
+        // already crossed `absolute_expires_at`.
+        if abs_exp <= req.now {
+            return Ok(RefreshSessionResult::Gone);
+        }
+
+        let proposed_exp = req
+            .now
+            .saturating_add(i64::try_from(req.session_ttl_seconds).unwrap_or(i64::MAX));
+        let new_exp = proposed_exp.min(abs_exp);
+        if new_exp <= req.now {
+            // Cap so close that the next TTL would not move forward.
+            return Ok(RefreshSessionResult::Gone);
+        }
+
+        // Claim the rotation slot. `SET ... PX <ms> NX` is atomic in
+        // Redis; the racer who sees nil falls into the grace path below.
+        let new_sid = new_session_id();
+        let swap_key = redis_keys::swap(req.old_sid);
+        let claim: Option<String> = redis::cmd("SET")
+            .arg(&swap_key)
+            .arg(&new_sid)
+            .arg("PX")
+            .arg(req.refresh_grace_ms)
+            .arg("NX")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| BffError::StoreUnavailable(e.to_string()))?;
+
+        if claim.is_none() {
+            // Someone else won the rotation. Resolve via the swap key
+            // they already wrote.
+            return self.try_grace(req.old_sid).await;
+        }
+
+        // We own the rotation. Run RENAME + index updates atomically.
+        let new_session_key = redis_keys::session(&new_sid);
+        let user_sessions_key = redis_keys::user_sessions(&user_id);
+
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        pipe.cmd("RENAME")
+            .arg(&old_session_key)
+            .arg(&new_session_key)
+            .ignore();
+        pipe.hset(&new_session_key, "expires_at", new_exp).ignore();
+        pipe.expire_at(&new_session_key, new_exp).ignore();
+        pipe.zrem(&user_sessions_key, req.old_sid).ignore();
+        pipe.zadd(&user_sessions_key, &new_sid, new_exp).ignore();
+        if !idp_iss.is_empty() && !idp_sid.is_empty() {
+            let sid_idx = redis_keys::sid_index(&idp_iss, &idp_sid);
+            pipe.srem(&sid_idx, req.old_sid).ignore();
+            pipe.sadd(&sid_idx, &new_sid).ignore();
+        }
+        pipe.del(redis_keys::router_jwt_cache(req.old_sid)).ignore();
+
+        let pipe_result: Result<(), redis::RedisError> = pipe.query_async(&mut conn).await;
+        if let Err(e) = pipe_result {
+            // Most common cause: a concurrent /auth/logout (or future
+            // /auth/sessions revoke) deleted the session between our
+            // HMGET and this atomic block, so RENAME aborts with
+            // "no such key". The swap key we already wrote points at a
+            // SID we never materialised; the next request from the same
+            // browser will resolve it via `try_grace` and get Gone.
+            //
+            // Surface that as 401 + clear cookie (Gone) rather than
+            // bubbling a 503 — the user's session is genuinely gone, not
+            // the store. A real Redis outage propagates from `try_grace`
+            // below as `StoreUnavailable` and reaches the handler.
+            tracing::warn!(
+                error = %e,
+                "refresh rotation pipeline failed after swap claim; falling back to grace",
+            );
+            return self.try_grace(req.old_sid).await;
+        }
+
+        Ok(RefreshSessionResult::Ok(RefreshSessionOutcome {
+            new_sid,
+            expires_at: new_exp,
+            user_id,
+            graced: false,
+        }))
+    }
+
+    /// Resolve a swap key set by a concurrent refresh into the current SID.
+    /// Returns `Gone` if no swap exists, or if the swap points at a session
+    /// record that no longer exists (rotation failed mid-flight, or the
+    /// session was revoked between the swap write and now).
+    async fn try_grace(&self, old_sid: &str) -> Result<RefreshSessionResult, BffError> {
+        let mut conn = self.conn();
+        let new_sid: Option<String> = redis::cmd("GET")
+            .arg(redis_keys::swap(old_sid))
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| BffError::StoreUnavailable(e.to_string()))?;
+        let Some(new_sid) = new_sid else {
+            return Ok(RefreshSessionResult::Gone);
+        };
+
+        let new_session_key = redis_keys::session(&new_sid);
+        let (expires_at_opt, user_id_opt): (Option<String>, Option<String>) = redis::cmd("HMGET")
+            .arg(&new_session_key)
+            .arg("expires_at")
+            .arg("user_id")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| BffError::StoreUnavailable(e.to_string()))?;
+
+        let Some(expires_at_s) = expires_at_opt else {
+            return Ok(RefreshSessionResult::Gone);
+        };
+        let expires_at: i64 = expires_at_s.parse().unwrap_or(0);
+        if expires_at <= 0 {
+            return Ok(RefreshSessionResult::Gone);
+        }
+
+        Ok(RefreshSessionResult::Ok(RefreshSessionOutcome {
+            new_sid,
+            expires_at,
+            user_id: user_id_opt.unwrap_or_default(),
+            graced: true,
+        }))
     }
 
     /// Revoke a session by SID. Idempotent: revoking a missing session is
@@ -440,18 +653,23 @@ mod tests {
         ));
         let store = SessionStore::new(shared);
 
+        // Unique IDs so parallel `cargo test` runs don't stomp on each
+        // other's keys when sharing the same Redis DB.
+        let s = test_suffix();
+        let user_id = format!("test-user-{s}");
+        let now = 4_070_908_800_i64;
         let req = CreateSessionRequest {
-            user_id: "test-user-zzz",
+            user_id: &user_id,
             tenant_id: "test-tenant",
             idp_iss: "https://test-idp/",
-            idp_sub: "test-sub-zzz",
-            idp_sid: "test-isid-zzz",
+            idp_sub: &format!("test-sub-{s}"),
+            idp_sid: &format!("test-isid-{s}"),
             id_token: "irrelevant",
             email: "test@example.com",
             display_name: "Test",
             user_agent: "ua",
             ip: "127.0.0.1",
-            now: 1,
+            now,
             session_ttl_seconds: 60,
             absolute_lifetime_seconds: 3600,
             incoming_sid: None,
@@ -464,12 +682,601 @@ mod tests {
             .await
             .expect("get")
             .expect("present");
-        assert_eq!(read.user_id, "test-user-zzz");
+        assert_eq!(read.user_id, user_id);
         assert_eq!(read.email, "test@example.com");
-        assert_eq!(read.expires_at, 61);
+        assert_eq!(read.expires_at, now + 60);
 
         store.revoke_session(&sid).await.expect("revoke");
         let after = store.get_session(&sid).await.expect("get");
         assert!(after.is_none(), "session should be gone after revoke");
+    }
+
+    // --- Phase 2: refresh + logout integration tests against real Redis ---
+    //
+    // Every test mints its own user/tenant/idp_sid suffix so parallel
+    // `cargo test` runs don't collide on shared keys. Each test cleans up
+    // its own keyspace at the end via `revoke_session` plus explicit
+    // deletes for grace + jwt_cache keys.
+
+    /// Open the shared Redis manager for #[ignore] tests, or `None` to
+    /// skip when `BFF_TEST_REDIS_URL` isn't set.
+    #[cfg(test)]
+    async fn open_test_store() -> Option<SessionStore> {
+        let url = std::env::var("BFF_TEST_REDIS_URL").ok()?;
+        let client = redis::Client::open(url).ok()?;
+        let manager = redis::aio::ConnectionManager::new(client).await.ok()?;
+        let shared = std::sync::Arc::new(crate::redis_client::RedisShared::__test_from_manager(
+            manager,
+        ));
+        Some(SessionStore::new(shared))
+    }
+
+    /// Test scaffold: returns (store, base_user_id, base_idp_sid).
+    /// Each test gets a distinct suffix so parallel runs don't stomp.
+    #[cfg(test)]
+    fn test_suffix() -> String {
+        // 6 chars of base64url from CSPRNG — plenty to disambiguate.
+        crate::bff::secrets::new_session_id()
+            .chars()
+            .take(6)
+            .collect()
+    }
+
+    /// Fixed "current" epoch for Redis tests: 2099-01-01T00:00:00Z. We need
+    /// a real-future timestamp because `EXPIREAT` with a past value (or any
+    /// value before Redis's wall clock) evicts the key immediately. Using a
+    /// fixed value keeps every assertion deterministic.
+    #[cfg(test)]
+    const TEST_NOW: i64 = 4_070_908_800;
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn refresh_session_rotates_sid_atomically_against_real_redis() {
+        let Some(store) = open_test_store().await else {
+            eprintln!("BFF_TEST_REDIS_URL not set; skipping");
+            return;
+        };
+        let s = test_suffix();
+        let user_id = format!("u-{s}");
+        let idp_sid = format!("isid-{s}");
+        let now = TEST_NOW;
+
+        let created = store
+            .create_session(CreateSessionRequest {
+                user_id: &user_id,
+                tenant_id: "t-1",
+                idp_iss: "https://idp/",
+                idp_sub: &format!("sub-{s}"),
+                idp_sid: &idp_sid,
+                id_token: "tok",
+                email: "a@b",
+                display_name: "A",
+                user_agent: "ua",
+                ip: "1.1.1.1",
+                now,
+                session_ttl_seconds: 120,
+                absolute_lifetime_seconds: 28_800,
+                incoming_sid: None,
+            })
+            .await
+            .expect("create");
+        let old_sid = created.session_id.clone();
+
+        let result = store
+            .refresh_session(RefreshSessionRequest {
+                old_sid: &old_sid,
+                now: now + 10,
+                session_ttl_seconds: 120,
+                refresh_grace_ms: 250,
+            })
+            .await
+            .expect("refresh");
+        let outcome = match result {
+            RefreshSessionResult::Ok(o) => o,
+            RefreshSessionResult::Gone => panic!("expected Ok, got Gone"),
+        };
+        assert!(!outcome.graced, "normal path must not be graced");
+        assert_ne!(outcome.new_sid, old_sid, "SID must rotate");
+        assert_eq!(outcome.user_id, user_id);
+        assert_eq!(outcome.expires_at, now + 130);
+
+        // Old session record is gone (RENAMEd away).
+        assert!(store.get_session(&old_sid).await.expect("get").is_none());
+
+        // New session record carries the rotated expiry.
+        let new_rec = store
+            .get_session(&outcome.new_sid)
+            .await
+            .expect("get")
+            .expect("present");
+        assert_eq!(new_rec.expires_at, now + 130);
+        assert_eq!(new_rec.user_id, user_id);
+
+        store
+            .revoke_session(&outcome.new_sid)
+            .await
+            .expect("cleanup");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn refresh_session_grace_path_resolves_swap_without_rotating() {
+        let Some(store) = open_test_store().await else {
+            return;
+        };
+        let s = test_suffix();
+        let now = TEST_NOW;
+        let created = store
+            .create_session(CreateSessionRequest {
+                user_id: &format!("u-{s}"),
+                tenant_id: "t",
+                idp_iss: "https://idp/",
+                idp_sub: &format!("sub-{s}"),
+                idp_sid: &format!("isid-{s}"),
+                id_token: "tok",
+                email: "a@b",
+                display_name: "A",
+                user_agent: "ua",
+                ip: "1.1.1.1",
+                now,
+                session_ttl_seconds: 120,
+                absolute_lifetime_seconds: 28_800,
+                incoming_sid: None,
+            })
+            .await
+            .expect("create");
+        let real_sid = created.session_id.clone();
+
+        // Simulate a just-rotated cookie: write swap pointing at the
+        // live session. Suffix the stale sid so parallel test runs don't
+        // step on each other's swap keys.
+        let stale_sid = format!("phantom-old-sid-{s}");
+        let mut conn = store.conn();
+        let _: () = redis::cmd("SET")
+            .arg(redis_keys::swap(&stale_sid))
+            .arg(&real_sid)
+            .arg("PX")
+            .arg(5_000_u64)
+            .query_async(&mut conn)
+            .await
+            .expect("seed swap");
+
+        let result = store
+            .refresh_session(RefreshSessionRequest {
+                old_sid: &stale_sid,
+                now: now + 10,
+                session_ttl_seconds: 120,
+                refresh_grace_ms: 250,
+            })
+            .await
+            .expect("refresh");
+        let outcome = match result {
+            RefreshSessionResult::Ok(o) => o,
+            RefreshSessionResult::Gone => panic!("expected grace, got Gone"),
+        };
+        assert!(
+            outcome.graced,
+            "stale cookie within grace must take grace path"
+        );
+        assert_eq!(outcome.new_sid, real_sid, "grace must resolve to live SID");
+        // Live session was created with new_exp = now + ttl(120).
+        assert_eq!(outcome.expires_at, now + 120);
+
+        // The swap key must NOT have been consumed (grace is read-only).
+        let still_there: Option<String> = redis::cmd("GET")
+            .arg(redis_keys::swap(&stale_sid))
+            .query_async(&mut conn)
+            .await
+            .expect("get swap");
+        assert_eq!(still_there.as_deref(), Some(real_sid.as_str()));
+
+        // Cleanup.
+        let _: () = redis::cmd("DEL")
+            .arg(redis_keys::swap(&stale_sid))
+            .query_async(&mut conn)
+            .await
+            .expect("cleanup swap");
+        store.revoke_session(&real_sid).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn refresh_session_returns_gone_when_no_session_and_no_swap() {
+        let Some(store) = open_test_store().await else {
+            return;
+        };
+        let bogus = format!("bogus-{}", test_suffix());
+        let result = store
+            .refresh_session(RefreshSessionRequest {
+                old_sid: &bogus,
+                now: TEST_NOW,
+                session_ttl_seconds: 120,
+                refresh_grace_ms: 250,
+            })
+            .await
+            .expect("refresh");
+        assert!(matches!(result, RefreshSessionResult::Gone));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn refresh_session_returns_gone_past_absolute_cap() {
+        let Some(store) = open_test_store().await else {
+            return;
+        };
+        let s = test_suffix();
+        let now = TEST_NOW;
+        // abs_lifetime = 3600 → abs_exp = now + 3600. Refresh at now + 5000
+        // is past the cap → Gone.
+        let created = store
+            .create_session(CreateSessionRequest {
+                user_id: &format!("u-{s}"),
+                tenant_id: "t",
+                idp_iss: "https://idp/",
+                idp_sub: &format!("sub-{s}"),
+                idp_sid: &format!("isid-{s}"),
+                id_token: "tok",
+                email: "a@b",
+                display_name: "A",
+                user_agent: "ua",
+                ip: "1.1.1.1",
+                now,
+                session_ttl_seconds: 120,
+                absolute_lifetime_seconds: 3_600,
+                incoming_sid: None,
+            })
+            .await
+            .expect("create");
+        let sid = created.session_id.clone();
+
+        let result = store
+            .refresh_session(RefreshSessionRequest {
+                old_sid: &sid,
+                now: now + 5_000, // > now + 3_600 (abs_exp)
+                session_ttl_seconds: 120,
+                refresh_grace_ms: 250,
+            })
+            .await
+            .expect("refresh");
+        assert!(matches!(result, RefreshSessionResult::Gone));
+
+        // Session is still there (refresh refused; it didn't revoke).
+        // We clean up so the test is hermetic.
+        store.revoke_session(&sid).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn refresh_session_caps_new_exp_at_absolute_cap() {
+        let Some(store) = open_test_store().await else {
+            return;
+        };
+        let s = test_suffix();
+        let now = TEST_NOW;
+        // abs_exp = now + 3_600. Refresh at now + 3_500 with ttl=200 would
+        // propose now + 3_700; must clamp to abs_exp (now + 3_600).
+        let created = store
+            .create_session(CreateSessionRequest {
+                user_id: &format!("u-{s}"),
+                tenant_id: "t",
+                idp_iss: "https://idp/",
+                idp_sub: &format!("sub-{s}"),
+                idp_sid: &format!("isid-{s}"),
+                id_token: "tok",
+                email: "a@b",
+                display_name: "A",
+                user_agent: "ua",
+                ip: "1.1.1.1",
+                now,
+                session_ttl_seconds: 120,
+                absolute_lifetime_seconds: 3_600,
+                incoming_sid: None,
+            })
+            .await
+            .expect("create");
+        let result = store
+            .refresh_session(RefreshSessionRequest {
+                old_sid: &created.session_id,
+                now: now + 3_500,
+                session_ttl_seconds: 200,
+                refresh_grace_ms: 250,
+            })
+            .await
+            .expect("refresh");
+        let outcome = match result {
+            RefreshSessionResult::Ok(o) => o,
+            RefreshSessionResult::Gone => panic!("expected Ok"),
+        };
+        assert_eq!(
+            outcome.expires_at,
+            now + 3_600,
+            "must clamp at absolute cap",
+        );
+        store
+            .revoke_session(&outcome.new_sid)
+            .await
+            .expect("cleanup");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn refresh_session_concurrent_races_into_one_winner_and_one_grace() {
+        let Some(store) = open_test_store().await else {
+            return;
+        };
+        let s = test_suffix();
+        let user_id = format!("u-{s}");
+        let now = TEST_NOW;
+        let created = store
+            .create_session(CreateSessionRequest {
+                user_id: &user_id,
+                tenant_id: "t",
+                idp_iss: "https://idp/",
+                idp_sub: &format!("sub-{s}"),
+                idp_sid: &format!("isid-{s}"),
+                id_token: "tok",
+                email: "a@b",
+                display_name: "A",
+                user_agent: "ua",
+                ip: "1.1.1.1",
+                now,
+                session_ttl_seconds: 120,
+                absolute_lifetime_seconds: 28_800,
+                incoming_sid: None,
+            })
+            .await
+            .expect("create");
+        let old_sid = created.session_id.clone();
+
+        // Fire two parallel refreshes on the same old_sid. Exactly one
+        // must rotate; the other must take the grace path. Both must
+        // succeed and converge on the same new SID.
+        let s1 = store.clone();
+        let old1 = old_sid.clone();
+        let h1 = tokio::spawn(async move {
+            s1.refresh_session(RefreshSessionRequest {
+                old_sid: &old1,
+                now: now + 10,
+                session_ttl_seconds: 120,
+                refresh_grace_ms: 2_000, // generous grace so the loser hits it
+            })
+            .await
+        });
+        let s2 = store.clone();
+        let old2 = old_sid.clone();
+        let h2 = tokio::spawn(async move {
+            s2.refresh_session(RefreshSessionRequest {
+                old_sid: &old2,
+                now: now + 10,
+                session_ttl_seconds: 120,
+                refresh_grace_ms: 2_000,
+            })
+            .await
+        });
+        let r1 = h1.await.expect("join").expect("refresh1");
+        let r2 = h2.await.expect("join").expect("refresh2");
+        let o1 = match r1 {
+            RefreshSessionResult::Ok(o) => o,
+            RefreshSessionResult::Gone => panic!("r1 gone"),
+        };
+        let o2 = match r2 {
+            RefreshSessionResult::Ok(o) => o,
+            RefreshSessionResult::Gone => panic!("r2 gone"),
+        };
+
+        let graced_count = u8::from(o1.graced) + u8::from(o2.graced);
+        assert_eq!(graced_count, 1, "exactly one of the two must be graced");
+        assert_eq!(o1.new_sid, o2.new_sid, "both must converge on same new SID");
+
+        // Only one entry in user_sessions ZSET (the new sid).
+        let mut conn = store.conn();
+        let members: Vec<String> = redis::cmd("ZRANGE")
+            .arg(redis_keys::user_sessions(&user_id))
+            .arg(0_i64)
+            .arg(-1_i64)
+            .query_async(&mut conn)
+            .await
+            .expect("zrange");
+        assert_eq!(members, vec![o1.new_sid.clone()]);
+
+        store.revoke_session(&o1.new_sid).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn refresh_session_invalidates_router_jwt_cache_on_rotate() {
+        let Some(store) = open_test_store().await else {
+            return;
+        };
+        let s = test_suffix();
+        let now = TEST_NOW;
+        let created = store
+            .create_session(CreateSessionRequest {
+                user_id: &format!("u-{s}"),
+                tenant_id: "t",
+                idp_iss: "https://idp/",
+                idp_sub: &format!("sub-{s}"),
+                idp_sid: &format!("isid-{s}"),
+                id_token: "tok",
+                email: "a@b",
+                display_name: "A",
+                user_agent: "ua",
+                ip: "1.1.1.1",
+                now,
+                session_ttl_seconds: 120,
+                absolute_lifetime_seconds: 28_800,
+                incoming_sid: None,
+            })
+            .await
+            .expect("create");
+        let old_sid = created.session_id.clone();
+
+        let mut conn = store.conn();
+        let _: () = redis::cmd("SET")
+            .arg(redis_keys::router_jwt_cache(&old_sid))
+            .arg("dummy-jwt")
+            .query_async(&mut conn)
+            .await
+            .expect("seed jwt cache");
+
+        let result = store
+            .refresh_session(RefreshSessionRequest {
+                old_sid: &old_sid,
+                now: now + 10,
+                session_ttl_seconds: 120,
+                refresh_grace_ms: 250,
+            })
+            .await
+            .expect("refresh");
+        let outcome = match result {
+            RefreshSessionResult::Ok(o) => o,
+            RefreshSessionResult::Gone => panic!("Gone"),
+        };
+
+        let cached: Option<String> = redis::cmd("GET")
+            .arg(redis_keys::router_jwt_cache(&old_sid))
+            .query_async(&mut conn)
+            .await
+            .expect("get cache");
+        assert!(
+            cached.is_none(),
+            "stale jwt cache must be dropped on rotate"
+        );
+
+        store
+            .revoke_session(&outcome.new_sid)
+            .await
+            .expect("cleanup");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn refresh_session_skips_sid_index_when_idp_sid_empty() {
+        let Some(store) = open_test_store().await else {
+            return;
+        };
+        let s = test_suffix();
+        let user_id = format!("u-{s}");
+        let now = TEST_NOW;
+        // No idp_sid → no sid_index entry on create, and refresh must
+        // not error on the missing SREM/SADD pair.
+        let created = store
+            .create_session(CreateSessionRequest {
+                user_id: &user_id,
+                tenant_id: "t",
+                idp_iss: "https://idp/",
+                idp_sub: &format!("sub-{s}"),
+                idp_sid: "",
+                id_token: "tok",
+                email: "a@b",
+                display_name: "A",
+                user_agent: "ua",
+                ip: "1.1.1.1",
+                now,
+                session_ttl_seconds: 120,
+                absolute_lifetime_seconds: 28_800,
+                incoming_sid: None,
+            })
+            .await
+            .expect("create");
+        let result = store
+            .refresh_session(RefreshSessionRequest {
+                old_sid: &created.session_id,
+                now: now + 10,
+                session_ttl_seconds: 120,
+                refresh_grace_ms: 250,
+            })
+            .await
+            .expect("refresh must succeed with empty idp_sid");
+        let outcome = match result {
+            RefreshSessionResult::Ok(o) => o,
+            RefreshSessionResult::Gone => panic!("Gone"),
+        };
+        assert!(!outcome.graced);
+        store
+            .revoke_session(&outcome.new_sid)
+            .await
+            .expect("cleanup");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn logout_full_revoke_drops_session_and_indexes() {
+        let Some(store) = open_test_store().await else {
+            return;
+        };
+        let s = test_suffix();
+        let user_id = format!("u-{s}");
+        let idp_sid = format!("isid-{s}");
+        let created = store
+            .create_session(CreateSessionRequest {
+                user_id: &user_id,
+                tenant_id: "t",
+                idp_iss: "https://idp/",
+                idp_sub: &format!("sub-{s}"),
+                idp_sid: &idp_sid,
+                id_token: "tok",
+                email: "a@b",
+                display_name: "A",
+                user_agent: "ua",
+                ip: "1.1.1.1",
+                now: TEST_NOW,
+                session_ttl_seconds: 120,
+                absolute_lifetime_seconds: 28_800,
+                incoming_sid: None,
+            })
+            .await
+            .expect("create");
+        let sid = created.session_id.clone();
+        let mut conn = store.conn();
+
+        // Seed a Router JWT cache entry so we can prove logout drops it.
+        let _: () = redis::cmd("SET")
+            .arg(redis_keys::router_jwt_cache(&sid))
+            .arg("dummy-jwt")
+            .query_async(&mut conn)
+            .await
+            .expect("seed cache");
+
+        store.revoke_session(&sid).await.expect("logout revoke");
+
+        // Session HASH gone.
+        assert!(store.get_session(&sid).await.expect("get").is_none());
+        // user_sessions ZSET no longer lists this sid.
+        let members: Vec<String> = redis::cmd("ZRANGE")
+            .arg(redis_keys::user_sessions(&user_id))
+            .arg(0_i64)
+            .arg(-1_i64)
+            .query_async(&mut conn)
+            .await
+            .expect("zrange");
+        assert!(!members.iter().any(|m| m == &sid));
+        // sid_index SET no longer lists this sid.
+        let in_set: bool = redis::cmd("SISMEMBER")
+            .arg(redis_keys::sid_index("https://idp/", &idp_sid))
+            .arg(&sid)
+            .query_async(&mut conn)
+            .await
+            .expect("sismember");
+        assert!(!in_set);
+        // Router JWT cache dropped.
+        let cached: Option<String> = redis::cmd("GET")
+            .arg(redis_keys::router_jwt_cache(&sid))
+            .query_async(&mut conn)
+            .await
+            .expect("get cache");
+        assert!(cached.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running Redis; opt in via BFF_TEST_REDIS_URL"]
+    async fn logout_is_idempotent_on_missing_session() {
+        let Some(store) = open_test_store().await else {
+            return;
+        };
+        let bogus = format!("bogus-{}", test_suffix());
+        // Two calls — both succeed.
+        store.revoke_session(&bogus).await.expect("first revoke");
+        store.revoke_session(&bogus).await.expect("second revoke");
     }
 }
