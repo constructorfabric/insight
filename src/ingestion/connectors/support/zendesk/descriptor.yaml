@@ -7,15 +7,22 @@
 # Phase 2: support_ticket_events, zendesk_ticket_ext (schemas locked in zendesk.md).
 
 name: zendesk
-version: "1.0.0"
+# Strict semver per ADR-0015. 1.0.0: Phase-1 Bronze (tickets/agents/CSAT).
+# 1.1.0: Silver layer added (bronze→RMT promotion + person×date
+#   class_support_activity + dim_support_agent/ticket) — MINOR bump so
+#   reconcile re-runs the dbt step now that tag:zendesk+ spans real models.
+version: "1.1.0"
 type: declarative
 schedule: "0 5 * * *"       # 05:00 UTC daily
 workflow: sync               # Argo workflow template: ingestion-pipeline
 
 # Scope the dbt step to this connector's models (and their downstream) so the
-# Silver run never touches other connectors' models. No models are tagged
-# `zendesk` yet (Phase 1 ships Bronze only), so this selects nothing — a
-# correct no-op — until Phase 2 Silver models land tagged `zendesk`.
+# Silver run never touches other connectors' models. Selects zendesk__* staging
+# (bronze_promoted, support_agent/ticket/activity) + their downstream silver
+# unions (class_support_activity, dim_support_*). NOTE: the event-grain
+# zendesk__support_event is intentionally tagged `zendesk-audits-pending` (NOT
+# `zendesk`) and uses source()-only reads, so it is EXCLUDED here until the
+# Ticket Audits stream (support_ticket_events) lands.
 dbt_select: "tag:zendesk+"
 
 connection:
