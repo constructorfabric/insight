@@ -37,5 +37,11 @@ SELECT
     is_active,
     now()                           AS collected_at,
     toUnixTimestamp64Milli(now64()) AS _version
-FROM {{ source('bronze_zendesk', 'support_agents') }}
+FROM (
+    -- Read-time dedup of append-only RMT bronze (ADR-0001): keep the latest
+    -- extract per unique_key so re-delivered rows never duplicate downstream.
+    SELECT * FROM {{ source('bronze_zendesk', 'support_agents') }}
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY unique_key
+)
 WHERE email IS NOT NULL AND email != ''

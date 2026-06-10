@@ -37,6 +37,11 @@ SELECT
     parseDateTimeBestEffortOrNull(t.solved_at)   AS solved_at,
     now()                                        AS collected_at,
     toUnixTimestamp64Milli(now64())              AS _version
-FROM {{ source('bronze_zendesk', 'support_tickets') }} t
+FROM (
+    -- Read-time dedup of append-only RMT bronze (ADR-0001).
+    SELECT * FROM {{ source('bronze_zendesk', 'support_tickets') }}
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY unique_key
+) t
 LEFT JOIN {{ ref('zendesk__support_agent') }} a
        ON a.source_agent_id = t.assignee_id

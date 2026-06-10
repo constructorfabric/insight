@@ -1,9 +1,9 @@
 {{ config(
     materialized='incremental',
-    unique_key='event_key',
+    unique_key='unique_key',
     incremental_strategy='delete+insert',
     engine='ReplacingMergeTree(_version)',
-    order_by=['data_source', 'event_key'],
+    order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     schema='silver',
     tags=['zendesk-audits-pending']
@@ -30,7 +30,7 @@
 --       once, so the grain must be the change, see point 2).
 --   2. Confirm bronze columns and finalise the mapping below
 --      (audit_id, change_id, ticket_id, author_id, event_type, public, created_at).
---      event_key = data_source + audit_id + change_id (per-change uniqueness)
+--      unique_key = data_source + audit_id + change_id (per-change uniqueness)
 --      so one audit can legitimately emit both `public_comment` and `solved`.
 --   3. Retag this model `['zendesk', 'silver']` and point
 --      zendesk__support_activity at it (aggregate to person × date).
@@ -43,8 +43,9 @@ SELECT
     ev.tenant_id,
     ev.source_id                                  AS insight_source_id,
     'zendesk'                                     AS data_source,
-    -- per-change key so multi-change audits don't collide
-    concat('zendesk-', toString(ev.audit_id), '-', toString(ev.change_id)) AS event_key,
+    -- per-change key so multi-change audits don't collide (one audit can carry
+    -- comment + status + field changes). ADR-0001: column named unique_key.
+    concat('zendesk-', toString(ev.audit_id), '-', toString(ev.change_id)) AS unique_key,
     concat('zendesk-', toString(ev.ticket_id))    AS ticket_key,
     ev.ticket_id                                  AS source_ticket_id,
     a.person_key                                  AS actor_person_key,     -- KEY OF ATTRIBUTION
@@ -58,11 +59,18 @@ SELECT
     toDate(parseDateTimeBestEffortOrNull(ev.created_at)) AS metric_date,
     now()                                         AS collected_at,
     toUnixTimestamp64Milli(now64())               AS _version
-FROM {{ source('bronze_zendesk', 'support_ticket_events') }} ev
+FROM (
+    -- Read-time dedup of append-only RMT bronze (ADR-0001).
+    SELECT * FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY unique_key
+) ev
 -- Agent map from raw bronze (see header: source(), not ref(), so this stays
 -- out of tag:zendesk+). Internal agents only — customer authors drop out.
 INNER JOIN (
     SELECT agent_id, lower(email) AS person_key
     FROM {{ source('bronze_zendesk', 'support_agents') }}
     WHERE email IS NOT NULL AND email != ''
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY unique_key
 ) a ON a.agent_id = ev.author_id

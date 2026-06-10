@@ -46,7 +46,16 @@ WITH csat AS (
         countIf(startsWith(lower(coalesce(r.score, '')), 'good'))                 AS csat_good,
         countIf(startsWith(lower(coalesce(r.score, '')), 'good')
                 OR startsWith(lower(coalesce(r.score, '')), 'bad'))               AS csat_total
-    FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }} r
+    FROM (
+        -- Read-time dedup BEFORE the countIf (ADR-0001). Critical here: this
+        -- model AGGREGATES, so a re-delivered rating (incremental 3-day
+        -- overlap) would inflate csat_good/csat_total and the bad value would
+        -- be baked into the row — RMT(_version) on the output cannot undo it.
+        -- Keep one row per rating unique_key (latest extract).
+        SELECT * FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
+        ORDER BY _airbyte_extracted_at DESC
+        LIMIT 1 BY unique_key
+    ) r
     INNER JOIN {{ ref('zendesk__support_agent') }} a
             ON a.source_agent_id = r.assignee_id
     WHERE a.person_key != ''
