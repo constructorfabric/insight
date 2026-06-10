@@ -121,40 +121,30 @@ global:
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # Insight ALWAYS emits structured JSON to stdout — that is the product
-# contract and is not toggleable here. WHETHER it ALSO exports OTLP, and
-# WHERE, is driven entirely by `otlp.endpoint`:
+# contract and is not toggleable. WHETHER it ALSO exports OTLP, and WHERE,
+# is driven entirely by `otlp.endpoint`:
 #
-#   endpoint: ""   — stdout only. No OTEL_* vars are published, services
-#                    just log to stdout, and whoever runs the cluster
-#                    collects it — the host's own node agent, or our
-#                    bundled Loki/Alloy/Grafana installed via the gitops
-#                    `system/` layer. SAFE DEFAULT for a drop into an
-#                    unknown existing cluster: we configure nothing.
-#   endpoint: set  — services additionally export OTLP there. Point it at
-#                    the in-cluster collector for a bundled install
+#   endpoint: ""   — stdout only. No OTEL_* vars are published; whoever
+#                    runs the cluster collects stdout (the host's own node
+#                    agent, or the Loki/Alloy/Grafana stack installed via
+#                    the deploy pipeline's system layer). SAFE DEFAULT for
+#                    a drop into an unknown existing cluster.
+#   endpoint: set  — services additionally export OTLP there: the
+#                    in-cluster Alloy for a self-hosted stack
 #                    (http://alloy.insight-infra.svc.cluster.local:4317),
-#                    or at the customer's own collector (OTel Collector /
-#                    Datadog / Splunk) for an external one.
+#                    or the customer's own collector.
 #
-# The umbrella NEVER bundles the collector stack itself; like Airbyte and
-# Argo it is a separate release (installed via the gitops system layer —
-# gated there by inventory toggles). This block only governs what services
-# EMIT and where they POINT. The resolved coordinates are published into
-# the `{release}-platform` ConfigMap as INSIGHT_LOG_*/OTEL_* env vars
-# (see templates/platform-config.yaml) so every pod that does `envFrom`
-# picks them up uniformly — no per-service wiring.
+# The umbrella NEVER installs the collector stack — like Airbyte and Argo
+# it is separate releases, driven by the deploy pipeline (inventory
+# toggles; see docs/deploy/system/README.md). This block only governs what
+# services EMIT. The values are published into the `{release}-platform`
+# ConfigMap as INSIGHT_LOG_LEVEL / OTEL_* env vars, so every pod that does
+# `envFrom` picks them up uniformly — no per-service wiring.
 observability:
   logs:
     level: info # debug|info|warn|error — default level for all services
-    format: json # json|text (text only for local human debugging)
-  traces:
-    enabled: false # OTel trace export (Tempo). Off until the tracing phase.
   otlp:
-    # Empty → stdout only (no OTLP export). Set → services export logs/
-    # traces here. Bundled install: the gitops system Alloy Service, e.g.
-    #   http://alloy.insight-infra.svc.cluster.local:4317
-    # External install: the customer's OTLP endpoint.
-    endpoint: ""
+    endpoint: "" # empty = stdout only; set = services export OTLP here
     protocol: grpc # grpc | http/protobuf
 # ═══════════════════════════════════════════════════════════════════════════
 #  EXTERNAL — Airbyte (installed as a separate Helm release, SAME namespace)

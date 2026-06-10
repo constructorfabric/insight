@@ -43,6 +43,22 @@ Services ALWAYS log structured JSON to stdout regardless — that is the
 product contract; the endpoint only decides where (if anywhere) Insight also
 exports OTLP.
 
+**Access (follow-up: auth).** The baseline Grafana ships with no ingress and
+no SSO — reach it via port-forward:
+
+```shell
+kubectl -n insight-infra port-forward svc/grafana 3000:80
+# admin password:
+kubectl -n insight-infra get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
+# Explore → Loki:
+{namespace="insight"}            # service logs
+{component="reconcile-loop"}     # reconcile ticks
+```
+
+Putting Grafana behind auth is a tracked follow-up: seal a `grafana-creds`
+Secret (the optional-secrets helper applies it), then per-env ingress + OIDC
+SSO via the existing `insight-oidc` app.
+
 ## Values layout
 
 ```
