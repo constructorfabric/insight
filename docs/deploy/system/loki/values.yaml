@@ -1,0 +1,81 @@
+##
+## Loki — log store for the L2 system layer (observability `bundled` mode).
+##
+## Chart: grafana/loki   (https://grafana.github.io/helm-charts)
+## Pin in Makefile: LOKI_VERSION
+## Release: `loki` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/loki-values.yaml.
+##
+## Push/query endpoint other components use:
+##   http://loki.insight-infra.svc.cluster.local:3100
+##
+## SCOPE: this is the dev / single-tenant baseline — SingleBinary mode,
+## node-local filesystem storage, NO HA. For production move to
+## object storage (S3/GCS) + the read/write/backend split, and turn on
+## auth/multi-tenancy if a single Loki ever serves more than one install.
+##
+
+deploymentMode: SingleBinary
+
+loki:
+  # Single install per cluster → no tenant header required. Flip to true
+  # (and set X-Scope-OrgID on Alloy + the Grafana datasource) only if one
+  # Loki ever serves multiple tenants/installs.
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  storage:
+    type: filesystem
+  limits_config:
+    # Keep logs cheap: 7d retention for the whole store. Per-stream
+    # retention (e.g. shorter for the chatty `namespace=airbyte`) is a
+    # later refinement via limits_config.retention_stream.
+    retention_period: 168h
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 10Gi
+
+# Disable the microservice-split components — SingleBinary covers all roles.
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# Memcached tiers are overkill for the dev baseline.
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# No nginx gateway — components talk to the `loki` Service directly on 3100.
+gateway:
+  enabled: false
+
+# This chart bundles a test/canary job and self-monitoring by default;
+# off for a lean footprint in a shared infra namespace.
+test:
+  enabled: false
+lokiCanary:
+  enabled: false
+monitoring:
+  selfMonitoring:
+    enabled: false
+    grafanaAgent:
+      installOperator: false

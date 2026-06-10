@@ -1,0 +1,59 @@
+##
+## Grafana — observability UI for the L2 system layer (observability
+## `bundled` mode). The only LGTM component with a web face.
+##
+## Chart: grafana/grafana   (https://grafana.github.io/helm-charts)
+## Pin in Makefile: GRAFANA_VERSION
+## Release: `grafana` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/grafana-values.yaml
+## (ingress host, OIDC, admin secret).
+##
+## Reach it (dev): kubectl -n insight-infra port-forward svc/grafana 3000:80
+## Then Explore → Loki → e.g.  {namespace="airbyte"}  /  {component=~".*dbt.*"}
+##
+
+persistence:
+  enabled: true
+  size: 5Gi
+
+# Loki wired as the default datasource so Explore works out of the box.
+# Tempo/Mimir get added here in the tracing/metrics phases; `derivedFields`
+# will then map `trace_id` → a Tempo link for log↔trace correlation.
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki.insight-infra.svc.cluster.local:3100
+        isDefault: true
+        jsonData:
+          maxLines: 1000
+
+# Admin credentials. For anything past a throwaway PoC, seal a Secret named
+# `grafana-creds` (keys: admin-user, admin-password) — `make system-grafana`
+# applies any environments/<env>/sealed-secrets/insight-infra/grafana*-sealedsecret.yaml
+# via the optional-secrets helper. Until then the chart generates a random
+# admin password into the `grafana` Secret:
+#   kubectl -n insight-infra get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
+# admin:
+#   existingSecret: grafana-creds
+#   userKey: admin-user
+#   passwordKey: admin-password
+
+# Per-env overlay turns this on with the real host + TLS (mirrors the
+# api-gateway ingress pattern). Off in the shared baseline.
+ingress:
+  enabled: false
+
+service:
+  type: ClusterIP
+
+# OIDC SSO via the existing `insight-oidc` app is a per-env overlay concern
+# (issuer/clientId differ per cluster) — see environments/<env>/grafana-values.yaml.
+# grafana.ini:
+#   auth.generic_oauth:
+#     enabled: true
+#     ...

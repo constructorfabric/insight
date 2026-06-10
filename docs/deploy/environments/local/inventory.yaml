@@ -42,6 +42,13 @@ system:
   redpandaConsole: false
   airbyte:         true
   argoWorkflows:   true
+  # Observability (LGTM). Off for local dev — flip on to self-host
+  # Loki/Alloy/Grafana, and point the umbrella's observability.otlp.endpoint
+  # (environments/<env>/values.yaml) at this stack's Alloy. See
+  # system/README.md "Observability".
+  loki:            false
+  alloy:           false
+  grafana:         false
 
 # ─── Secrets (drives `make seal`) ──────────────────────────────────────
 secrets:

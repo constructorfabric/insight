@@ -1,0 +1,84 @@
+##
+## Grafana Alloy — log collector for the L2 system layer (observability
+## `bundled` mode).
+##
+## Chart: grafana/alloy   (https://grafana.github.io/helm-charts)
+## Pin in Makefile: ALLOY_VERSION
+## Release: `alloy` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/alloy-values.yaml.
+##
+## Runs as a DaemonSet: one agent per node, tails every pod's
+## stdout/stderr and ships to Loki. NO per-pod sidecars, NO changes in the
+## app services — they only need to write to stdout (JSON is parsed below).
+##
+## NOTE: this collects EVERYTHING on the node, including the chatty
+## `namespace=airbyte` sync pods. That is intentional for the first step
+## ("see at least some logs from Airbyte and dbt"); scope or shorten
+## retention per-namespace later via Loki limits + a relabel drop here.
+##
+
+controller:
+  type: daemonset
+
+alloy:
+  # Mounts /var/log + the container runtime log dir so the DaemonSet can
+  # read pod stdout. The chart wires the hostPath mounts for daemonset mode.
+  mounts:
+    varlog: true
+  configMap:
+    content: |-
+      // ── Discover pods scheduled on THIS node ───────────────────────────
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // ── Promote a few low-cardinality labels; map the k8s component
+      //    label (app.kubernetes.io/component) → `component` so reconcile /
+      //    airbyte-sync / dbt separate cleanly in Grafana. Do NOT label by
+      //    anything high-cardinality (trace_id, run_id) — keep those in the
+      //    log body and filter with `| json`.
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_component"]
+          target_label  = "component"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.process.parse.receiver]
+      }
+
+      // ── Parse OUR structured JSON to promote `level` to a label.
+      //    Non-JSON lines (raw Airbyte / dbt output) fall through the
+      //    stage untouched — they still arrive in Loki, just without a
+      //    `level` label.
+      loki.process "parse" {
+        stage.json {
+          expressions = { level = "level" }
+        }
+        stage.labels {
+          values = { level = "" }
+        }
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.insight-infra.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
