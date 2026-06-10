@@ -1,6 +1,7 @@
 {{ config(
     tags=['data_quality'],
     severity='warn',
+    store_failures=true,
     meta={
         'title': 'ic_kpis metric values within sane bounds',
         'domain': 'gold',

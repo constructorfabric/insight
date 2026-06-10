@@ -35,9 +35,9 @@ Chosen option: **A**.
 
 - **Checks are dbt tests.** Singular tests already are "SQL that returns violating rows"; a test passes when it returns none. Silver tests read the silver tables; gold tests read the `insight` views through a registered `gold` source. The view being built outside dbt is irrelevant to a read-only test, so one catalog covers both layers.
 - **Findings are structured logs.** An `on-run-end` macro (`emit_dq_findings`) walks the run results and emits one JSON line per test — `check_id`, `domain`, `category`, `gate`, `tier`, `status`, `rows_violating`, `duration_ms`, `audit_relation`, `remediation`. Low-cardinality fields are intended as log labels; the central log store handles query and alerting. No new table or endpoint owns findings.
-- **Non-blocking.** Tests are `severity=warn` by default, so a data finding exits cleanly; only an operational error (e.g. the warehouse unreachable) fails the run. A check can be escalated to `severity=error` individually when a violation should block.
+- **Non-blocking.** Every data-quality check sets `severity=warn` (and `store_failures=true`) in its own config, so a data finding exits cleanly; only an operational error (e.g. the warehouse unreachable) fails the run. A check can be escalated to `severity=error` individually when a violation should block. Untagged structural tests keep dbt's default `error` severity, so build integrity stays strict.
 - **Detail kept for drill-down.** `store_failures` writes each check's violating rows to an audit table; `audit_relation` in the finding points at it. The log line stays small; full rows are fetched on demand.
-- **Silver/gold only — never bronze.** A check reads only the silver and gold layers, which exist regardless of the connector set (silver placeholders + migration-created gold views, per `cpt-dataflow` fresh-cluster bring-up). Bronze is per-connector and may be absent, so reading it would make a check error on tenants lacking that connector. With silver/gold-only, a missing connector class simply yields an empty table and a clean pass — the catalog is connector-agnostic with no per-tenant logic. Enforced by `audit_dq_no_bronze.py`. Bronze/ingestion-correctness tests (e.g. silver-to-bronze traceability) are a separate suite run under `dbt build`, not the scheduled catalog.
+- **Silver/gold only — never bronze.** A check reads only the silver and gold layers, which exist regardless of the connector set (silver placeholders + migration-created gold views, per `cpt-dataflow` fresh-cluster bring-up). Bronze is per-connector and may be absent, so reading it would make a check error on tenants lacking that connector. With silver/gold-only, a missing connector class simply yields an empty table and a clean pass — the catalog is connector-agnostic with no per-tenant logic. Bronze/ingestion-correctness tests (e.g. silver-to-bronze traceability) are a separate suite run under `dbt build`, not the scheduled catalog.
 - **Opt-in catalog.** Only tests tagged `data_quality` are monitored; the scheduled run selects them by tag. The generic structural tests (`not_null`/`unique`/`relationships`) and any environment-specific assertions stay under `dbt build` for build integrity and are deliberately excluded, so the operational catalog is intentional rather than "every test that exists".
 - **Scheduled, decoupled.** A CronWorkflow runs the tagged catalog on its own schedule, independent of the per-connector pipeline, so a finding can never delay ingestion.
 
@@ -50,7 +50,7 @@ Chosen option: **A**.
 - Good: findings flow to the system that already does querying and notifications, with no bespoke storage.
 - Good: never blocks ingestion by default.
 - Bad: findings live as logs (retention-bounded), not a durable fact store — acceptable for an operational signal; durable history can be added later from the audit tables if needed.
-- Bad: `severity=warn` as the project default downgrades the gate of pre-existing tests; intentional, since the pipeline never ran them as gates before, and individual checks can opt back into `error`.
+- Bad: the silver/gold-only rule and the per-check config conventions (`tags`, `severity`, `store_failures`) rely on review discipline rather than automated enforcement; acceptable while the catalog is small.
 
 ### Confirmation
 
@@ -64,7 +64,6 @@ Today silver/gold are present regardless of the connector set, which is why the 
 ## More Information
 
 - Emitter: `src/ingestion/dbt/macros/emit_dq_findings.sql`; wired via `on-run-end` in `dbt_project.yml`.
-- Project test defaults (`store_failures`, `severity`): `dbt_project.yml`.
 - Gold source registration: `src/ingestion/silver/_shared/gold_sources.yml`.
 - Schedule and runner: `charts/insight/templates/ingestion/data-quality-cron.yaml`, `dbt-test.yaml`.
 - Authoring guide: `src/ingestion/dbt/tests/README.md`.

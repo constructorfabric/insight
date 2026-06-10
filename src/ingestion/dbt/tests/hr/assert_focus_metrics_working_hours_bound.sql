@@ -1,6 +1,7 @@
 {{ config(
     tags=['data_quality'],
     severity='warn',
+    store_failures=true,
     meta={
         'title': 'Working hours per day within physical bounds',
         'domain': 'hr',

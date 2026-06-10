@@ -1,6 +1,7 @@
 {{ config(
     tags=['data_quality'],
     severity='warn',
+    store_failures=true,
     meta={
         'title': 'One source per data_source (no duplicate connector)',
         'domain': 'collab',

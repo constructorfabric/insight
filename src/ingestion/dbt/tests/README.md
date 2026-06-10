@@ -6,13 +6,14 @@ gold views alike — gold tests read the `insight` views through the registered
 `gold` source.
 
 A scheduled run executes the opt-in catalog — the tests tagged `data_quality`
-(`dbt test --select tag:data_quality --store-failures`). For every test that
-runs, an `on-run-end` hook (`macros/emit_dq_findings.sql`) prints one JSON
-`DQ_FINDING` line to stdout for the central log store, and `store_failures`
-keeps the violating rows in an audit table for drill-down. Checks are
-non-blocking by default, so a finding never fails the pipeline. Untagged tests
-(including the generic `not_null`/`unique`/`relationships` assertions) still run
-under `dbt build` for build integrity, but are not part of the scheduled run.
+(`dbt test --select tag:data_quality`). For every check, an `on-run-end` hook
+(`macros/emit_dq_findings.sql`) prints one JSON `DQ_FINDING` line to stdout for
+the central log store, and `store_failures` keeps the violating rows in an
+audit table for drill-down. Checks are non-blocking (`severity=warn`), so a
+finding never fails the pipeline. Untagged tests (including the generic
+`not_null`/`unique`/`relationships` assertions) keep dbt's default `error`
+severity and run under `dbt build` for build integrity; they are not part of
+the scheduled run and don't emit findings.
 
 ## Adding a check
 
@@ -22,6 +23,7 @@ Create `tests/<domain>/assert_<subject>_<rule>.sql`:
 {{ config(
     tags=['data_quality'],
     severity='warn',
+    store_failures=true,
     meta={
         'title': 'Short human label',
         'domain': 'collab',            -- collab | git | task | ai | hr | gold | ...
@@ -43,9 +45,9 @@ Conventions:
 - **Read silver/gold only — never bronze.** Silver/gold exist regardless of the
   connector set, so a check adapts to any tenant: a missing connector class is
   just an empty table and a clean pass. Bronze is per-connector and may be
-  absent, which would make the check error. Enforced by `audit_dq_no_bronze.py`.
-  Checks that need bronze (e.g. silver-to-bronze traceability) are not data
-  quality — leave them untagged; they run under `dbt build`.
+  absent, which would make the check error. Checks that need bronze (e.g.
+  silver-to-bronze traceability) are not data quality — leave them untagged;
+  they run under `dbt build`.
 - **No `LIMIT`.** The row count is the violation count; `store_failures` keeps
   every offending row, and samples are taken at read time from the audit table.
 - **`severity`** is the build gate: `warn` (advisory, non-blocking) or `error`

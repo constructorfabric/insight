@@ -1,6 +1,7 @@
 {{ config(
     tags=['data_quality'],
     severity='warn',
+    store_failures=true,
     meta={
         'title': 'Meeting activity unique per person, day and source',
         'domain': 'collab',

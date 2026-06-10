@@ -1,6 +1,7 @@
 {{ config(
     tags=['data_quality'],
     severity='warn',
+    store_failures=true,
     meta={
         'title': 'Meeting video/screen-share duration capped by audio',
         'domain': 'collab',

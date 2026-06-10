@@ -45,11 +45,3 @@ on-run-start:
 # See macros/emit_dq_findings.sql.
 on-run-end:
   - "{{ emit_dq_findings() }}"
-
-# Every test keeps its violating rows (store_failures) for drill-down. Severity
-# is NOT set project-wide: structural/generic tests keep dbt's default `error`
-# (build integrity stays strict), while data-quality checks opt into
-# `severity='warn'` individually in their own config so a finding never blocks.
-data_tests:
-  ingestion:
-    +store_failures: true

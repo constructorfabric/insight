@@ -79,11 +79,12 @@ spec:
           with open("profiles.yml", "w") as f:
               yaml.safe_dump(profile, f)
           PY
-          # Checks are non-blocking: every test is severity=warn (dbt_project.yml),
-          # so data findings exit 0 and only an operational error (e.g. ClickHouse
-          # unreachable) fails this step. --store-failures keeps the violating rows
-          # for drill-down; the on-run-end hook prints one JSON finding per check.
-          # ${VAR:+...} drops the flag entirely when DBT_SELECT is empty so the
-          # default run covers the whole catalog.
-          dbt test --profiles-dir . --store-failures ${DBT_SELECT:+--select "$DBT_SELECT"}
+          # Data-quality checks are non-blocking: each carries severity=warn and
+          # store_failures=true in its own config, so findings exit 0 (only an
+          # operational error such as ClickHouse unreachable fails this step) and
+          # violating rows are kept for drill-down. The on-run-end hook prints one
+          # JSON finding per check. ${VAR:+...} drops the flag entirely when
+          # DBT_SELECT is empty so a manual run without the parameter covers all
+          # tests.
+          dbt test --profiles-dir . ${DBT_SELECT:+--select "$DBT_SELECT"}
 {{- end }}

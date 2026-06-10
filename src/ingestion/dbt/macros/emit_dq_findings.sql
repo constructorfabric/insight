@@ -54,7 +54,9 @@
           'audit_relation': r.node.relation_name,
           'remediation': meta.get('remediation', none)
       } -%}
-      {%- do log('DQ_FINDING ' ~ (finding | tojson), info=True) -%}
+      {#- print() writes the raw line to stdout (no dbt timestamp/level prefix),
+          so a log collector can parse `DQ_FINDING {json}` directly. -#}
+      {%- do print('DQ_FINDING ' ~ (finding | tojson)) -%}
     {%- endfor -%}
   {%- endif -%}
 {% endmacro %}
