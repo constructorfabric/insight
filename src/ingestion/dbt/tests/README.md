@@ -42,7 +42,10 @@ WHERE <violating condition>
 Conventions:
 
 - **Tag it `data_quality`.** Only tagged tests run in the scheduled job. An
-  untagged test is still a valid dbt test but won't be monitored.
+  untagged test is still a valid dbt test but won't be monitored. The tag is
+  reserved for singular tests — never apply it to models, seeds or snapshots
+  (the selector ignores them via `indirect_selection: empty`, so tagging one
+  does nothing except mislead).
 - **Read silver/gold only — never bronze.** Silver/gold exist regardless of the
   connector set, so a check adapts to any tenant: a missing connector class is
   just an empty table and a clean pass. Bronze is per-connector and may be

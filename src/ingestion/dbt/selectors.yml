@@ -8,3 +8,7 @@ selectors:
     definition:
       method: tag
       value: data_quality
+      # No indirect expansion: only tests that themselves carry the tag run.
+      # Without this, a model mis-tagged `data_quality` would drag all of its
+      # generic tests (severity=error) into the scheduled run.
+      indirect_selection: empty
