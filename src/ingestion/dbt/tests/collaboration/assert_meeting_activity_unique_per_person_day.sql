@@ -1,3 +1,15 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Meeting activity unique per person, day and source',
+        'domain': 'collab',
+        'category': 'grain',
+        'tier': 'error',
+        'remediation': 'More than one row per (tenant, person_key, date, data_source) means the silver grain broke — a duplicate stream or a unique_key collision. Check the feeding sources for that data_source.'
+    }
+) }}
 -- After ReplacingMergeTree merge there must be at most one row per
 -- (tenant, person_key, date) in `silver.class_collab_meeting_activity`,
 -- regardless of how many `data_source` / `insight_source_id` values exist.
@@ -24,4 +36,3 @@ FROM silver.class_collab_meeting_activity FINAL
 WHERE person_key IS NOT NULL AND person_key != ''
 GROUP BY tenant_id, person_key, date, data_source
 HAVING n > 1
-LIMIT 100

@@ -39,3 +39,9 @@ on-run-start:
   # before the materialization framework, so existing_relation is
   # captured as nil and the model takes the create-from-scratch branch.
   - "{{ drop_silver_placeholders_at_start() }}"
+
+# Emit one structured JSON data-quality finding per test node to stdout after
+# every invocation. Only emits for test nodes, so `dbt run` is unaffected.
+# See macros/emit_dq_findings.sql.
+on-run-end:
+  - "{{ emit_dq_findings() }}"

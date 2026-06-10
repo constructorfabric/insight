@@ -1,3 +1,15 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'One source per data_source (no duplicate connector)',
+        'domain': 'collab',
+        'category': 'source_uniqueness',
+        'tier': 'error',
+        'remediation': 'Two insight_source_id values for one data_source means a duplicate or parallel ingestion source for the same external account, which inflates meeting hours. Disable the stray source.'
+    }
+) }}
 -- A tenant should have AT MOST ONE `insight_source_id` per `data_source`
 -- in `silver.class_collab_meeting_activity`. More than one almost always
 -- means a parallel / duplicate Airbyte source slipped through — see
@@ -26,4 +38,3 @@ FROM (
 )
 GROUP BY tenant_id, data_source
 HAVING distinct_source_ids > 1
-LIMIT 100

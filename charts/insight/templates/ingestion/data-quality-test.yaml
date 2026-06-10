@@ -1,0 +1,87 @@
+{{- if .Values.ingestion.templates.enabled }}
+{{- /* Runs the data-quality check catalog — the dbt tests behind the
+       `data_quality` selector (selectors.yml). Purpose-specific on purpose:
+       no test selector to pass or forget, a bare submit is always a correct
+       DQ run. Each check emits one JSON DQ_FINDING line to stdout for the
+       central log store. */}}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: data-quality-test
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  serviceAccountName: argo-workflow
+  entrypoint: run
+  templates:
+    - name: run
+      # SECURITY:
+      #  Argo substitutes parameter refs as LITERAL TEXT at render time —
+      #  splicing them into shell, Python, or YAML source is a command-
+      #  injection sink. We pass every parameter via env vars and reference
+      #  them as `"$ENV_VAR"` in the shell, which is not parsed as code by
+      #  bash. Same convention as dbt-run.yaml.
+      inputs:
+        parameters:
+          - name: toolbox_image
+            default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+          - name: clickhouse_host
+            default: {{ include "insight.clickhouse.fqdn" . | quote }}
+          - name: clickhouse_port
+            default: {{ include "insight.clickhouse.port" . | quote }}
+          - name: clickhouse_user
+            default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+      activeDeadlineSeconds: 1800
+      script:
+        image: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+        imagePullPolicy: IfNotPresent
+        command: [bash]
+        env:
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+          - name: CLICKHOUSE_HOST
+            value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+          - name: CLICKHOUSE_PORT
+            value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+          - name: CLICKHOUSE_USER
+            value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+        source: |
+          set -euo pipefail
+          cd /ingestion/dbt
+          # Write profiles.yml from env vars via python so no user input is ever
+          # spliced into YAML or shell text (same sink-closing pattern as dbt-run).
+          python3 - <<'PY'
+          import os, yaml
+          profile = {
+              "ingestion": {
+                  "target": "k8s",
+                  "outputs": {
+                      "k8s": {
+                          "type": "clickhouse",
+                          "host": os.environ["CLICKHOUSE_HOST"],
+                          "port": int(os.environ["CLICKHOUSE_PORT"]),
+                          "schema": "silver",
+                          "user": os.environ["CLICKHOUSE_USER"],
+                          "password": os.environ["CLICKHOUSE_PASSWORD"],
+                          "secure": False,
+                          "send_receive_timeout": 1500,
+                          "query_limit": 0,
+                          "connect_timeout": 30,
+                      }
+                  }
+              }
+          }
+          with open("profiles.yml", "w") as f:
+              yaml.safe_dump(profile, f)
+          PY
+          # Data-quality checks are non-blocking: each carries severity=warn and
+          # store_failures=true in its own config, so findings exit 0 (only an
+          # operational error such as ClickHouse unreachable fails this step) and
+          # violating rows are kept for drill-down. The on-run-end hook prints one
+          # JSON DQ_FINDING line per check.
+          dbt test --profiles-dir . --selector data_quality
+{{- end }}

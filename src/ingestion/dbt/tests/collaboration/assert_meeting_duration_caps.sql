@@ -1,3 +1,15 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Meeting video/screen-share duration capped by audio',
+        'domain': 'collab',
+        'category': 'physical_bound',
+        'tier': 'warn',
+        'remediation': 'video_duration_seconds or screen_share_duration_seconds exceeds audio_duration_seconds for a person-day, which is physically impossible (audio is the full time in the meeting). Indicates a feeder stitching bug or a regression in per-participant duration wiring.'
+    }
+) }}
 -- #263 sanity guard: per-user-day, neither video nor screen-share duration
 -- should ever exceed audio duration (which for both feeders represents the
 -- maximum time the participant was in the meeting).
@@ -23,10 +35,5 @@ SELECT
     video_duration_seconds,
     screen_share_duration_seconds
 FROM silver.class_collab_meeting_activity FINAL
-WHERE audio_duration_seconds IS NOT NULL
-  AND audio_duration_seconds > 0
-  AND (
-       coalesce(video_duration_seconds, 0)        > audio_duration_seconds
-    OR coalesce(screen_share_duration_seconds, 0) > audio_duration_seconds
-  )
-LIMIT 100
+WHERE coalesce(video_duration_seconds, 0)        > coalesce(audio_duration_seconds, 0)
+   OR coalesce(screen_share_duration_seconds, 0) > coalesce(audio_duration_seconds, 0)
