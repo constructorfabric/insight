@@ -64,6 +64,20 @@ pub fn janitor_lock() -> &'static str {
     "bff:lock:janitor"
 }
 
+/// `bff:rl:auth:{ip}` — per-IP token-bucket counter for `/auth/*` rate
+/// limiting (DESIGN §4.4, Phase 3).
+#[must_use]
+pub fn bff_rl_auth(ip: &str) -> String {
+    format!("bff:rl:auth:{ip}")
+}
+
+/// `bff:rl:login_state_count` — process-wide live `bff:login_state:*` cap
+/// counter (DESIGN §4.4, Phase 3).
+#[must_use]
+pub fn bff_rl_login_state_count() -> &'static str {
+    "bff:rl:login_state_count"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +90,8 @@ mod tests {
         assert!(login_state("st").starts_with("bff:login_state:"));
         assert!(swap("old").starts_with("bff:swap:"));
         assert!(logout_jti("iss", "j1").starts_with("bff:logout_jti:"));
+        assert_eq!(bff_rl_auth("10.0.0.1"), "bff:rl:auth:10.0.0.1");
+        assert_eq!(bff_rl_login_state_count(), "bff:rl:login_state_count");
     }
 
     #[test]

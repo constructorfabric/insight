@@ -307,7 +307,7 @@ pub mod login_state {
     pub async fn touch(redis: &Arc<RedisShared>) -> Result<i64, BffError> {
         let mut conn = redis.manager();
         let v: i64 = conn
-            .incr("bff:rl:login_state_count", 1)
+            .incr(redis_keys::bff_rl_login_state_count(), 1)
             .await
             .map_err(|e| BffError::StoreUnavailable(e.to_string()))?;
         Ok(v)

@@ -27,9 +27,8 @@ use tracing::info;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RedisClientConfig {
-    /// Redis connection URL (e.g. `redis://localhost:6379/0`). Empty means
-    /// "no Redis configured" — modules that depend on this client will fail
-    /// at their own init when they call `client_hub.get::<RedisShared>()`.
+    /// Redis connection URL (e.g. `redis://localhost:6379/0`). Required:
+    /// module initialization fails fast if this is empty.
     pub url: String,
 }
 
