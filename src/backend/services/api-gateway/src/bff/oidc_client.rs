@@ -13,7 +13,7 @@
 //! UserInfo, etc. — is out of scope for v1.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -25,6 +25,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::bff::errors::BffError;
+use crate::bff::handlers::unix_now;
 
 /// Algorithms accepted on the ID token JWT header. Locked down to the
 /// asymmetric set OIDC providers actually use; rejecting `HS*` closes
@@ -411,15 +412,6 @@ struct TokenError {
     error: String,
     #[serde(default)]
     error_description: Option<String>,
-}
-
-fn unix_now() -> i64 {
-    i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs()),
-    )
-    .unwrap_or(0)
 }
 
 /// Decode the JWT header without verifying signature, and reject any

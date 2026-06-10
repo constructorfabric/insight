@@ -9,7 +9,6 @@
 //!   * the session has expired but Redis has not yet evicted it (race)
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
 use axum::extract::State;
@@ -18,7 +17,7 @@ use axum::response::{IntoResponse, Response};
 
 use crate::bff::cookies::{SessionCookie, read_session_cookie};
 use crate::bff::errors::BffError;
-use crate::bff::handlers::{BffState, jittered_refresh_at, no_store};
+use crate::bff::handlers::{BffState, jittered_refresh_at, no_store, unix_now};
 use crate::bff::session::{SessionView, TenantView, UserView};
 
 const NO_SESSION_REASON: &str = "no session";
@@ -37,12 +36,7 @@ pub async fn me(
         return Ok(unauthorized_clear_cookie());
     };
 
-    let now = i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs()),
-    )
-    .unwrap_or(0);
+    let now = unix_now();
     if record.expires_at <= now {
         return Ok(unauthorized_clear_cookie());
     }

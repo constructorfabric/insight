@@ -11,7 +11,6 @@
 //! 8. Set `__Host-sid` cookie + 302 to `return_to`.
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -21,7 +20,7 @@ use serde::Deserialize;
 use crate::bff::audit::{AuthEvent, AuthEventKind, hash_session_id};
 use crate::bff::cookies::{SessionCookie, read_session_cookie};
 use crate::bff::errors::BffError;
-use crate::bff::handlers::{BffState, no_store};
+use crate::bff::handlers::{BffState, no_store, unix_now};
 use crate::bff::identity;
 use crate::bff::session_store::{CreateSessionRequest, login_state};
 
@@ -50,6 +49,15 @@ pub async fn callback(
             err_desc = %q.error_description.as_deref().unwrap_or(""),
             "OIDC callback returned error",
         );
+        // Best-effort burn of the login_state record so the one-shot
+        // CSRF contract is honored even when the IdP rejected the
+        // request. We log on failure but do not block the user-facing
+        // response; the caller cannot complete the flow anyway.
+        if let Some(s) = q.state.as_deref()
+            && let Err(e) = login_state::take(&st.redis, s).await
+        {
+            tracing::warn!(error = %e, "best-effort login_state burn on error callback failed");
+        }
         let safe = sanitize_oauth_error_code(err);
         crate::bff::audit::emit(
             AuthEventKind::LoginFail,
@@ -190,15 +198,6 @@ fn client_ip_from_headers(headers: &HeaderMap) -> String {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_owned()
-}
-
-fn unix_now() -> i64 {
-    i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs()),
-    )
-    .unwrap_or(0)
 }
 
 #[cfg(test)]
