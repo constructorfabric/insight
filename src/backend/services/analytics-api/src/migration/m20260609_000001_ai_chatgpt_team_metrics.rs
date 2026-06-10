@@ -56,8 +56,8 @@ fn wide_aggregate_pp() -> &'static str {
          sumIf(metric_value, metric_key = 'cc_tool_accept') AS cc_tool_accept_v, \
          sumIf(metric_value, metric_key = 'team_ai_loc') AS team_ai_loc_v, \
          sumIf(metric_value, metric_key = 'cc_cost') AS cc_cost_v, \
-         sumIf(metric_value, metric_key = 'prs_with_cc') AS prs_with_cc_v, \
-         sumIf(metric_value, metric_key = 'prs_total') AS prs_total_v, \
+         if(countIf(metric_key = 'prs_with_cc') > 0, sumIf(metric_value, metric_key = 'prs_with_cc'), CAST(NULL AS Nullable(Float64))) AS prs_with_cc_v, \
+         if(countIf(metric_key = 'prs_total') > 0, sumIf(metric_value, metric_key = 'prs_total'), CAST(NULL AS Nullable(Float64))) AS prs_total_v, \
          if(sumIf(metric_value, metric_key = 'cursor_offered') > 0, \
             round(toFloat64(100) \
                   * sumIf(metric_value, metric_key = 'cursor_completions') \
@@ -269,6 +269,22 @@ mod tests {
         assert!(!pp.contains("CAST(NULL AS Nullable(Float64)) AS chatgpt_v"));
         // claude_web stays a NULL stub (not collected)
         assert!(pp.contains("CAST(NULL AS Nullable(Float64)) AS claude_web_v"));
+    }
+
+    /// PR metrics are honest-NULL (issue #1286): the Claude Team connector
+    /// ships no PR data, so the gold view no longer emits prs rows. The
+    /// aggregate must guard with `countIf(key) > 0 … else NULL` so a person
+    /// with no prs rows renders ComingSoon instead of a fake 0 (bare sumIf
+    /// would collapse the empty set to 0).
+    #[test]
+    fn prs_metrics_are_honest_null_guarded() {
+        let pp = wide_aggregate_pp();
+        for key in ["prs_with_cc", "prs_total"] {
+            assert!(
+                pp.contains(&format!("if(countIf(metric_key = '{key}') > 0")),
+                "{key} must be countIf-guarded (honest-NULL), not a bare sumIf"
+            );
+        }
     }
 
     /// Both query_refs must embed the ACTIVE_LIST and the shared pp/kv.

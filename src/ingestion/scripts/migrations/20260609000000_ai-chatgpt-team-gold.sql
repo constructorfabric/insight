@@ -88,9 +88,14 @@ ARRAY JOIN [
     ('cc_lines',        toFloat64(coalesce(c.lines_added,       0))),
     ('cc_tool_accept',  toFloat64(coalesce(c.tool_use_accepted, 0))),
     ('cc_offered',      toFloat64(coalesce(c.tool_use_offered,  0))),
-    ('cc_cost',         toFloat64(coalesce(c.cost_cents,        0))),
-    ('prs_with_cc',     toFloat64(coalesce(c.prs_with_cc_count, 0))),
-    ('prs_total',       toFloat64(coalesce(c.prs_total_count,   0)))
+    ('cc_cost',         toFloat64(coalesce(c.cost_cents,        0)))
+    -- honest-NULL (issue #1286): the Claude Team connector ships NO PR data
+    -- (bronze total_prs / prs_with_cc are 0 for every row — a non-ingested
+    -- source, not a measured zero). Emitting literal 0 rendered a fake
+    -- "0 PRs with Claude Code" and could trip false alerts. So we do NOT emit
+    -- prs_with_cc / prs_total rows at all; the keys stay ComingSoon via the
+    -- query_ref guard (if countIf(key) > 0 … else NULL). A future source with
+    -- real PR attribution re-introduces the rows and they light up.
 ] AS kv
 WHERE c.tool = 'claude_code'
   AND c.email IS NOT NULL AND c.email != ''
