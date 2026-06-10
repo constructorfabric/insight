@@ -44,16 +44,16 @@ pub fn no_store() -> TypedHeader<CacheControl> {
 #[must_use]
 pub fn jittered_refresh_at(
     expires_at: i64,
-    safety_margin_seconds: u64,
-    jitter_window_seconds: u64,
+    safety_margin_seconds: u16,
+    jitter_window_seconds: u16,
 ) -> i64 {
     use rand::Rng;
 
-    let base = expires_at.saturating_sub(i64::try_from(safety_margin_seconds).unwrap_or(i64::MAX));
+    let base = expires_at.saturating_sub(i64::from(safety_margin_seconds));
     if jitter_window_seconds == 0 {
         return base;
     }
-    let half = i64::try_from(jitter_window_seconds / 2).unwrap_or(i64::MAX);
+    let half = i64::from(jitter_window_seconds / 2);
     let offset = rand::thread_rng().gen_range(-half..=half);
     base.saturating_add(offset)
 }
@@ -74,16 +74,6 @@ mod tests {
             // base = 970, half = 5 → range [965, 975]
             assert!((965..=975).contains(&r), "got {r}");
         }
-    }
-
-    #[test]
-    fn jitter_clamps_overflowing_safety_margin_without_panic() {
-        // Safety margin > i64::MAX is clamped to i64::MAX before subtraction;
-        // the saturating subtraction never overflows, never panics. We
-        // don't care about the exact value — only that it's far in the
-        // past so the SPA refreshes immediately.
-        let r = jittered_refresh_at(10, u64::MAX, 0);
-        assert!(r < 0, "expected far-past refresh_at, got {r}");
     }
 
     #[test]

@@ -35,8 +35,8 @@ pub struct CreateSessionRequest<'a> {
     pub user_agent: &'a str,
     pub ip: &'a str,
     pub now: i64,
-    pub session_ttl_seconds: u64,
-    pub absolute_lifetime_seconds: u64,
+    pub session_ttl_seconds: u32,
+    pub absolute_lifetime_seconds: u32,
     /// Cookie value present on the callback request. We never reuse it;
     /// if it maps to a live session we revoke it before creating the new
     /// one (DESIGN §3.6 fixation guard).
@@ -110,12 +110,10 @@ impl SessionStore {
         let session_id = new_session_id();
         let csrf_token = new_csrf_token();
 
-        let expires_at = req
-            .now
-            .saturating_add(i64::try_from(req.session_ttl_seconds).unwrap_or(i64::MAX));
+        let expires_at = req.now.saturating_add(i64::from(req.session_ttl_seconds));
         let absolute_expires_at = req
             .now
-            .saturating_add(i64::try_from(req.absolute_lifetime_seconds).unwrap_or(i64::MAX));
+            .saturating_add(i64::from(req.absolute_lifetime_seconds));
 
         let record = SessionRecord {
             user_id: req.user_id.to_owned(),

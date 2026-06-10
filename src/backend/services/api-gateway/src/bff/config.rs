@@ -62,18 +62,18 @@ impl Default for OidcConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct SessionConfig {
     /// Session cookie TTL. Spec range: 30 s – 1 h. Default 120 s.
-    pub ttl_seconds: u64,
+    pub ttl_seconds: u32,
     /// Hard cap on session lifetime across refreshes. Spec range:
     /// 1 h – 24 h. Default 8 h.
-    pub absolute_lifetime_seconds: u64,
+    pub absolute_lifetime_seconds: u32,
     /// `refresh_at = expires_at - safety_margin + jitter`. Default 30 s.
-    pub refresh_safety_margin_seconds: u64,
+    pub refresh_safety_margin_seconds: u16,
     /// Total jitter window applied to `refresh_at` (uniform in `±half/2`).
     /// Default 10 s.
-    pub refresh_jitter_seconds: u64,
+    pub refresh_jitter_seconds: u16,
     /// Grace TTL for `bff:swap:{old_sid}` after a refresh-rotation. Default
     /// 250 ms.
-    pub refresh_grace_ms: u64,
+    pub refresh_grace_ms: u32,
 }
 
 impl Default for SessionConfig {
@@ -104,8 +104,9 @@ impl BffConfig {
         if self.public_origin.is_empty() {
             anyhow::bail!("bff: public_origin is required");
         }
-        url::Url::parse(&self.public_origin)
+        let parsed = url::Url::parse(&self.public_origin)
             .map_err(|e| anyhow::anyhow!("bff: public_origin is not a valid URL: {e}"))?;
+        validate_public_origin(&parsed)?;
 
         if self.oidc.issuer_url.is_empty() {
             anyhow::bail!("bff: oidc.issuer_url is required");
@@ -115,6 +116,9 @@ impl BffConfig {
         }
         if self.oidc.client_secret.is_empty() {
             anyhow::bail!("bff: oidc.client_secret is required");
+        }
+        if self.default_tenant_id.trim().is_empty() {
+            anyhow::bail!("bff: default_tenant_id is required");
         }
 
         // cpt-insightspec-nfr-bff-session-ttl
@@ -130,14 +134,14 @@ impl BffConfig {
                 self.session.absolute_lifetime_seconds
             );
         }
-        if self.session.refresh_safety_margin_seconds >= self.session.ttl_seconds {
+        if u32::from(self.session.refresh_safety_margin_seconds) >= self.session.ttl_seconds {
             anyhow::bail!(
                 "bff: session.refresh_safety_margin_seconds ({}) must be < session.ttl_seconds ({})",
                 self.session.refresh_safety_margin_seconds,
                 self.session.ttl_seconds
             );
         }
-        if self.session.refresh_jitter_seconds >= self.session.ttl_seconds {
+        if u32::from(self.session.refresh_jitter_seconds) >= self.session.ttl_seconds {
             anyhow::bail!(
                 "bff: session.refresh_jitter_seconds ({}) must be < session.ttl_seconds ({})",
                 self.session.refresh_jitter_seconds,
@@ -163,6 +167,37 @@ impl BffConfig {
         }
         scopes
     }
+}
+
+/// Defense-in-depth validation for `public_origin`: HTTPS only, except for
+/// local-dev hosts (`localhost`, `127.0.0.1`). Reject query/fragment/userinfo
+/// and any path beyond `/` since the value is concatenated with `"/auth/..."`
+/// at the call site. Runtime traffic is still enforced HTTPS-only at the
+/// ingress (NFR `cpt-insightspec-nfr-bff-https-only`); this guards the config.
+fn validate_public_origin(u: &url::Url) -> anyhow::Result<()> {
+    let host = u.host_str().unwrap_or("");
+    let is_local = host == "localhost" || host == "127.0.0.1";
+    match u.scheme() {
+        "https" => {}
+        "http" if is_local => {}
+        s => anyhow::bail!(
+            "bff: public_origin must use https (got `{s}://{host}`); http allowed only for localhost"
+        ),
+    }
+    if !u.username().is_empty() || u.password().is_some() {
+        anyhow::bail!("bff: public_origin must not include userinfo");
+    }
+    if u.query().is_some() {
+        anyhow::bail!("bff: public_origin must not include a query string");
+    }
+    if u.fragment().is_some() {
+        anyhow::bail!("bff: public_origin must not include a fragment");
+    }
+    let path = u.path();
+    if !(path.is_empty() || path == "/") {
+        anyhow::bail!("bff: public_origin must not include a path (got `{path}`)");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -244,6 +279,69 @@ mod tests {
     fn validate_rejects_empty_issuer() {
         let mut c = good_cfg();
         c.oidc.issuer_url = String::new();
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_empty_default_tenant_id() {
+        let mut c = good_cfg();
+        c.default_tenant_id = String::new();
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_blank_default_tenant_id() {
+        let mut c = good_cfg();
+        c.default_tenant_id = "   ".to_owned();
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_localhost_http_public_origin() {
+        let mut c = good_cfg();
+        c.public_origin = "http://localhost:8080".to_owned();
+        c.validate().expect("localhost http should pass");
+    }
+
+    #[test]
+    fn validate_accepts_loopback_http_public_origin() {
+        let mut c = good_cfg();
+        c.public_origin = "http://127.0.0.1:8080".to_owned();
+        c.validate().expect("127.0.0.1 http should pass");
+    }
+
+    #[test]
+    fn validate_rejects_non_localhost_http_public_origin() {
+        let mut c = good_cfg();
+        c.public_origin = "http://insight.example.com".to_owned();
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_https_with_userinfo_public_origin() {
+        let mut c = good_cfg();
+        c.public_origin = "https://user:pass@insight.example.com".to_owned();
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_public_origin_with_query() {
+        let mut c = good_cfg();
+        c.public_origin = "https://insight.example.com/?x=1".to_owned();
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_public_origin_with_fragment() {
+        let mut c = good_cfg();
+        c.public_origin = "https://insight.example.com/#f".to_owned();
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_public_origin_with_path() {
+        let mut c = good_cfg();
+        c.public_origin = "https://insight.example.com/app".to_owned();
         assert!(c.validate().is_err());
     }
 }
