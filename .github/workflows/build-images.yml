@@ -43,8 +43,10 @@ env:
   IMAGE_PREFIX: ghcr.io/constructorfabric
 
 permissions:
-  contents: write   # publish-chart auto-commits Chart.yaml bumps back to main
-  packages: write   # publish-chart pushes the umbrella chart to GHCR
+  contents: write      # publish-chart auto-commits Chart.yaml bumps back to main
+  packages: write      # publish-chart pushes the umbrella chart to GHCR
+  id-token: write      # keyless OIDC identity for attest-build-provenance
+  attestations: write  # store SLSA provenance in the repo attestation store
 
 jobs:
   # ─── Backend / chart change detection ──────────────────────────────────────
@@ -202,6 +204,7 @@ jobs:
             type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
       - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
         with:
           context: src/backend
           file: src/backend/services/api-gateway/Dockerfile
@@ -210,6 +213,19 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Keyless SLSA provenance: attests "this digest was built by THIS
+      # workflow at THIS commit" via the runner's short-lived OIDC identity —
+      # no stored signing keys. push-to-registry stores the attestation next
+      # to the image in GHCR (OCI referrer) so registry-only consumers
+      # (cluster admission controllers) can verify without GitHub API access.
+      # Verify: gh attestation verify oci://<image> --repo constructorfabric/insight
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-api-gateway
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   backend-analytics-api:
     needs: changes
@@ -234,6 +250,7 @@ jobs:
             type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
       - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
         with:
           context: src/backend
           file: src/backend/services/analytics-api/Dockerfile
@@ -242,6 +259,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Keyless SLSA provenance — see backend-api-gateway for the contract.
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-analytics-api
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   backend-identity:
     needs: changes
@@ -268,6 +293,7 @@ jobs:
       # .NET 9 identity is self-contained — context is the service folder
       # itself, not src/backend/ (no Cargo workspace membership).
       - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
         with:
           context: src/backend/services/identity
           file: src/backend/services/identity/Dockerfile
@@ -276,6 +302,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Keyless SLSA provenance — see backend-api-gateway for the contract.
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-identity
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   # ─── Toolbox build (with dbt parse smoke) ──────────────────────────────────
   # Toolbox is special — it bakes every connector's descriptor.yaml and dbt
@@ -354,6 +388,7 @@ jobs:
             dbt parse --profiles-dir /profiles
 
       - name: Push toolbox image
+        id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
@@ -363,6 +398,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
+
+      # Keyless SLSA provenance — see backend-api-gateway for the contract.
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-toolbox
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
 
   # ─── Connector image build (matrix-driven, descriptor-discovered) ──────────
   # One matrix leg per `descriptor.yaml.images.<key>` entry that fires this
@@ -394,6 +438,7 @@ jobs:
             type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
       - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
         with:
           context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
           file:    ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
@@ -404,6 +449,14 @@ jobs:
           # each other's layer cache.
           cache-from: type=gha,scope=${{ matrix.entry.name }}
           cache-to:   type=gha,mode=max,scope=${{ matrix.entry.name }}
+      # Keyless SLSA provenance — see backend-api-gateway for the contract.
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   # ─── Connector descriptor bump ─────────────────────────────────────────────
   # After build-image succeeds on every matrix leg, patch each connector's

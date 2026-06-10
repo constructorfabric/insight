@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
+# Rebuild marker (2026-06-09): GHCR packages did not follow the cyberfabric ->
+# constructorfabric org rename; this change fires a CI rebuild so the image is
+# republished (and attested) under ghcr.io/constructorfabric.
+
 # Matches the Rust-backend Docker pattern in src/backend/services/* (bookworm
 # builder + bookworm-slim runtime). Previously Alpine (musl) → Debian (glibc),
 # which risked silent musl/glibc ABI mismatches at runtime.
