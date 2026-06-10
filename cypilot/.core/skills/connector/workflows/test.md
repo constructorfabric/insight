@@ -69,6 +69,10 @@ Parse output and verify:
 - [ ] Expected streams are present in output
 - [ ] Records have expected fields from API
 
+If `read` emits nothing for minutes while the process stays CPU-busy, do NOT just wait — it is almost certainly a silent stall, not slowness. Diagnose:
+1. Check the runner's SQLite requests-cache (`/tmp/tmp*/*.sqlite`): a parent-stream cache in the tens/hundreds of MB and no longer growing = heavy `SubstreamPartitionRouter` parent (e.g. `fields=*all`) choking the CDK cache → restructure with a lightweight key-enumeration parent (see create.md MUST NOT list).
+2. Distinguish "stalled" from "slow fan-out": process CPU-time (`/proc/<pid>/stat`) steadily growing + records counter advancing = slow but healthy; counter frozen + a `:443` connection stuck in CLOSE_WAIT after a long idle = dead keepalive connection, re-run and watch continuously before concluding it hangs.
+
 Show sample:
 ```
 Stream: email_activity (N records)

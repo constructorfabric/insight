@@ -54,6 +54,12 @@ ALWAYS run `logs.sh` from `{INGESTION_DIR}` directory with `KUBECONFIG="${KUBECO
 
 ALWAYS check logs when a sync fails. Workflow failure → check Argo workflow logs first (`./logs.sh <workflow|latest>`), then Airbyte job logs (`./logs.sh airbyte <job-id>`). Common causes: expired credentials in K8s Secret, source API errors, ClickHouse destination unreachable.
 
+NEVER trust the Airbyte job status alone — it lies in both directions:
+- A job can report `succeeded` with **0 records committed** while the replication workload actually FAILED (e.g. replication pod unschedulable — `FailedScheduling: Insufficient cpu` — or the orchestrator OOM-killed mid-stream). "Green-but-empty" syncs look healthy for days.
+- A job can stay `running` forever while the source is silently stalled (e.g. SQLite requests-cache explosion on a heavy substream parent); the Argo `poll` step times out (`Failed`) but the orphaned Airbyte job and replication pod keep spinning — cancel the job AND delete the pod.
+
+The real health signal is per-job `aggregatedStats.recordsCommitted` (jobs API) and bronze freshness (`max(_airbyte_extracted_at)` per table) — check those, not the status column. A sync that commits only the first stream (e.g. bitbucket `repositories`) while later substreams show stale `_airbyte_extracted_at` means the replication died mid-job despite the green status.
+
 ## E2E Sync
 
 E2E (end-to-end) sync means running the full pipeline through Argo, not just triggering an Airbyte sync via API. The Argo pipeline includes: Airbyte sync → dbt transformations (Bronze → Silver). Without Argo, dbt models are not executed and Silver tables are not populated.

@@ -43,6 +43,8 @@ If `validate-strict` passed, these are already satisfied automatically — but e
 - [ ] No `format_datetime(...)` call inside an `AddedFieldDefinition.value` used as a cursor source. That Jinja expression may not render, leaving the literal template as the cursor value. Use native `%ms` / `%s` / `%s_as_float` / `%epoch_microseconds` in `cursor_datetime_formats` to parse epoch values directly from the source field.
 - [ ] Every `record.get('X', {}).get('Y')` chain is replaced with `(record.get('X') or {}).get('Y')`. The `.get(key, default)` default only applies when the key is **missing**; it does NOT apply when the key is present with `null` value, and `None.get(...)` crashes the whole slice.
 - [ ] Source API query syntax has been verified against a real tenant via `source.sh check`. YouTrack, Jira JQL, Salesforce SOQL each have distinct datetime and operator dialects — template substitution can produce syntactically valid but semantically wrong queries that `validate-strict` cannot detect.
+- [ ] No `SubstreamPartitionRouter` parent is a heavy stream (e.g. `fields=*all` / multi-MB responses). The CDK auto-caches parent HTTP responses in SQLite; a heavy parent balloons the cache (observed: 226 MB → silent permanent stall, job "running" with 0 records). Parents must request a minimal field set (pattern: dedicated key-enumeration stream like jira's `jira_issue_keys`, or an inline parent like `_scrum_boards`).
+- [ ] Every `DatetimeBasedCursor.cursor_field` exists at the **top level** of the emitted record. If the API nests it (Jira `fields.updated`), an `AddFields` hoist is present — otherwise state never advances and every sync silently re-reads the full window (detectable: resume read returns the same count as the first read).
 
 ## Step 2c: Per-stream `read` smoke test (MANDATORY)
 
@@ -78,6 +80,7 @@ Read connector package files and verify each item:
 - [ ] InlineSchemaLoader has `additionalProperties: true`
 - [ ] Schema includes `tenant_id`, `source_id`, `unique_key` as string fields
 - [ ] Nullable types used only where API actually returns null (not all fields)
+- [ ] EVERY top-level stream — including lightweight substream parents added for cache hygiene — carries the full identity stamp and a `promote_bronze_to_rmt` line. Reconcile (ADR-0015) auto-selects every discovered stream, so "helper" top-level streams land as real bronze tables; without the stamp + RMT promotion they accumulate unbounded duplicates. Parent streams that must NOT become tables go inline inside `partition_router.parent_stream_configs[].stream` instead (invisible to discover).
 
 ### CDK (Python)
 - [ ] `parse_response()` injects `tenant_id`, `source_id`, `unique_key`
