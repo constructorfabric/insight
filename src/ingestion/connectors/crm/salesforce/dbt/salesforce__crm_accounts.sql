@@ -30,12 +30,10 @@ SELECT * FROM (
             'IsDeleted',         toString(coalesce(IsDeleted, false))
         ))                                              AS metadata,
         custom_fields,
-        parseDateTimeBestEffort(CreatedDate)            AS created_at,
-        parseDateTimeBestEffort(LastModifiedDate)       AS updated_at,
+        CreatedDate                                     AS created_at,
+        LastModifiedDate                                AS updated_at,
         data_source,
-        toUnixTimestamp64Milli(
-            parseDateTime64BestEffort(SystemModstamp)
-        )                                               AS _version
+        coalesce(toUnixTimestamp64Milli(SystemModstamp), 0) AS _version
     FROM {{ source('bronze_salesforce', 'Account') }}
 )
 {% if is_incremental() %}

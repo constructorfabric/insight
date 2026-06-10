@@ -27,16 +27,12 @@ SELECT * FROM (
         toInt64(IsActive = true)                        AS is_active,
         toJSONString(map(
             'Username',   coalesce(toString(Username), ''),
-            'ProfileId',  coalesce(toString(ProfileId), ''),
-            'UserRoleId', coalesce(toString(UserRoleId), ''),
-            'IsDeleted',  toString(coalesce(IsDeleted, false))
+            'UserRoleId', coalesce(toString(UserRoleId), '')
         ))                                              AS metadata,
         custom_fields,
         collected_at,
         data_source,
-        toUnixTimestamp64Milli(
-            parseDateTime64BestEffort(SystemModstamp)
-        )                                               AS _version
+        coalesce(toUnixTimestamp64Milli(SystemModstamp), 0) AS _version
     FROM {{ source('bronze_salesforce', 'User') }}
 )
 {% if is_incremental() %}

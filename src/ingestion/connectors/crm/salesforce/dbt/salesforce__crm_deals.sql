@@ -32,7 +32,7 @@ SELECT * FROM (
         CAST(NULL AS Nullable(Float64))                 AS acv,
         CAST(NULL AS Nullable(Float64))                 AS tcv,
         CAST(NULL AS Nullable(Float64))                 AS arr,
-        toDateOrNull(CloseDate)                         AS close_date,
+        CloseDate                                       AS close_date,
         OwnerId                                         AS owner_id,
         -- Rep who created the Opportunity record (universal SF audit field).
         -- Parallels HubSpot's `properties_hs_created_by_user_id`.
@@ -56,12 +56,10 @@ SELECT * FROM (
             'IsDeleted', if(coalesce(IsDeleted, false), 'true', 'false')
         ))                                              AS metadata,
         custom_fields,
-        parseDateTime64BestEffortOrNull(CreatedDate, 3)      AS created_at,
-        parseDateTime64BestEffortOrNull(LastModifiedDate, 3) AS updated_at,
+        CreatedDate                                     AS created_at,
+        LastModifiedDate                                AS updated_at,
         data_source,
-        toUnixTimestamp64Milli(
-            parseDateTime64BestEffort(SystemModstamp)
-        )                                               AS _version
+        coalesce(toUnixTimestamp64Milli(SystemModstamp), 0) AS _version
     FROM {{ source('bronze_salesforce', 'Opportunity') }}
 )
 {% if is_incremental() %}

@@ -30,8 +30,9 @@ WITH tasks AS (
              ELSE NULL END                          AS deal_id,
         CASE WHEN startsWith(coalesce(WhatId, ''), '001') THEN WhatId
              ELSE NULL END                          AS account_id,
-        parseDateTimeBestEffort(
-            coalesce(toString(ActivityDate), toString(CreatedDate))
+        coalesce(
+            CAST(ActivityDate AS Nullable(DateTime64(3))),
+            CreatedDate
         )                                           AS timestamp,
         CASE WHEN CallType IS NOT NULL AND CallDurationInSeconds IS NOT NULL
              THEN toInt64(CallDurationInSeconds)
@@ -45,11 +46,9 @@ WITH tasks AS (
             'IsDeleted',   toString(coalesce(IsDeleted, false))
         ))                                          AS metadata,
         custom_fields,
-        parseDateTimeBestEffort(CreatedDate)        AS created_at,
+        CreatedDate                                 AS created_at,
         data_source,
-        toUnixTimestamp64Milli(
-            parseDateTime64BestEffort(SystemModstamp)
-        )                                           AS _version
+        coalesce(toUnixTimestamp64Milli(SystemModstamp), 0) AS _version
     FROM {{ source('bronze_salesforce', 'Task') }}
 ),
 events AS (
@@ -72,10 +71,12 @@ events AS (
              ELSE NULL END                          AS deal_id,
         CASE WHEN startsWith(coalesce(WhatId, ''), '001') THEN WhatId
              ELSE NULL END                          AS account_id,
-        parseDateTimeBestEffort(
-            coalesce(toString(StartDateTime), toString(ActivityDate), toString(CreatedDate))
+        coalesce(
+            StartDateTime,
+            CAST(ActivityDate AS Nullable(DateTime64(3))),
+            CreatedDate
         )                                           AS timestamp,
-        toInt64OrNull(DurationInMinutes) * 60       AS duration_seconds,
+        DurationInMinutes * 60                      AS duration_seconds,
         CAST(NULL AS Nullable(String))              AS outcome,
         toJSONString(map(
             'Subject',      coalesce(toString(Subject), ''),
@@ -85,11 +86,9 @@ events AS (
             'IsDeleted',    toString(coalesce(IsDeleted, false))
         ))                                          AS metadata,
         custom_fields,
-        parseDateTimeBestEffort(CreatedDate)        AS created_at,
+        CreatedDate                                 AS created_at,
         data_source,
-        toUnixTimestamp64Milli(
-            parseDateTime64BestEffort(SystemModstamp)
-        )                                           AS _version
+        coalesce(toUnixTimestamp64Milli(SystemModstamp), 0) AS _version
     FROM {{ source('bronze_salesforce', 'Event') }}
 ),
 combined AS (
