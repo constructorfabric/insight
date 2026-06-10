@@ -61,18 +61,4 @@ Conventions:
 - Read `ReplacingMergeTree` tables with `FINAL` (or the project's dedup pattern)
   so transient duplicates don't show up as false violations.
 
-## Finding shape
-
-```json
-{
-  "event": "data_quality_finding",
-  "run_id": "<dbt invocation id>",
-  "check_id": "assert_focus_metrics_working_hours_bound",
-  "title": "Working hours per day within physical bounds",
-  "domain": "hr", "category": "physical_bound",
-  "gate": "warn", "tier": "warn", "status": "warn",
-  "rows_violating": 559, "duration_ms": 78,
-  "audit_relation": "silver_dbt_test__audit.assert_focus_metrics_working_hours_bound",
-  "remediation": "..."
-}
-```
+The emitted finding's fields are documented in `macros/emit_dq_findings.sql`.
