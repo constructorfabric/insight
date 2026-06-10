@@ -65,7 +65,8 @@ Today silver/gold are present regardless of the connector set, which is why the 
 
 - Emitter: `src/ingestion/dbt/macros/emit_dq_findings.sql`; wired via `on-run-end` in `dbt_project.yml`.
 - Gold source registration: `src/ingestion/silver/_shared/gold_sources.yml`.
-- Schedule and runner: `charts/insight/templates/ingestion/data-quality-cron.yaml`, `dbt-test.yaml`.
+- Catalog selector: `src/ingestion/dbt/selectors.yml` (`data_quality`).
+- Schedule and runner: `charts/insight/templates/ingestion/data-quality-cron.yaml`, `data-quality-test.yaml`.
 - Authoring guide: `src/ingestion/dbt/tests/README.md`.
 
 ## Traceability

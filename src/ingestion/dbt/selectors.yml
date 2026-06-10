@@ -1,0 +1,10 @@
+selectors:
+  - name: data_quality
+    description: >
+      The data-quality check catalog: every test tagged `data_quality`.
+      Run with `dbt test --selector data_quality` — this is what the scheduled
+      data-quality workflow executes. Deliberately NOT `default: true`, so bare
+      `dbt test` / `dbt run` keep their full-project scope.
+    definition:
+      method: tag
+      value: data_quality

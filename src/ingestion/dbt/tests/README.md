@@ -6,7 +6,8 @@ gold views alike — gold tests read the `insight` views through the registered
 `gold` source.
 
 A scheduled run executes the opt-in catalog — the tests tagged `data_quality`
-(`dbt test --select tag:data_quality`). For every check, an `on-run-end` hook
+(`dbt test --selector data_quality`, defined in `selectors.yml`). For every
+check, an `on-run-end` hook
 (`macros/emit_dq_findings.sql`) prints one JSON `DQ_FINDING` line to stdout for
 the central log store, and `store_failures` keeps the violating rows in an
 audit table for drill-down. Checks are non-blocking (`severity=warn`), so a

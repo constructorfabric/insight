@@ -43,11 +43,6 @@ spec:
         steps:
           - - name: test
               templateRef:
-                name: dbt-test
+                name: data-quality-test
                 template: run
-              arguments:
-                parameters:
-                  # Empty selector → whole catalog.
-                  - name: dbt_select
-                    value: {{ default "" .Values.ingestion.dataQuality.select | quote }}
 {{- end }}

@@ -172,15 +172,16 @@ ingestion:
   airbyteSync:
     pollIntervalSeconds: 30
     idleThresholdSeconds: 1800 # 30 min without any byte/record/state movement → fail
-  # Data-quality checks: a CronWorkflow runs the dbt test catalog on a schedule
-  # (see templates/ingestion/data-quality-cron.yaml and dbt-test.yaml),
-  # independent of the per-connector pipeline. Each check emits a JSON finding
-  # to stdout for the central log store. Checks are non-blocking (tests are
-  # severity=warn) so a finding never freezes ingestion.
+  # Data-quality checks: a CronWorkflow runs the dbt check catalog (the
+  # `data_quality` selector — tests tagged data_quality, not every dbt test) on
+  # a schedule, independent of the per-connector pipeline. See
+  # templates/ingestion/data-quality-cron.yaml and data-quality-test.yaml.
+  # Each check emits a JSON finding to stdout for the central log store.
+  # Checks are non-blocking (severity=warn) so a finding never freezes
+  # ingestion.
   dataQuality:
     enabled: true
     schedule: "0 6 * * *" # daily 06:00 UTC, after overnight connector syncs
-    select: "tag:data_quality" # only checks tagged data_quality — an opt-in catalog, not every dbt test
     successfulJobsHistoryLimit: 3
     failedJobsHistoryLimit: 3
     ttlSecondsAfterCompletion: 1800

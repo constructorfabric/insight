@@ -1,8 +1,13 @@
 {{- if .Values.ingestion.templates.enabled }}
+{{- /* Runs the data-quality check catalog — the dbt tests behind the
+       `data_quality` selector (selectors.yml). Purpose-specific on purpose:
+       no test selector to pass or forget, a bare submit is always a correct
+       DQ run. Each check emits one JSON DQ_FINDING line to stdout for the
+       central log store. */}}
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: dbt-test
+  name: data-quality-test
   labels:
     {{- include "insight.labels" . | nindent 4 }}
     app.kubernetes.io/component: ingestion-template
@@ -19,10 +24,6 @@ spec:
       #  bash. Same convention as dbt-run.yaml.
       inputs:
         parameters:
-          # Empty selector runs the whole test catalog; pass e.g. "tag:silver"
-          # or a single test name to scope a run.
-          - name: dbt_select
-            default: ""
           - name: toolbox_image
             default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
           - name: clickhouse_host
@@ -42,8 +43,6 @@ spec:
               secretKeyRef:
                 name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
                 key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
-          - name: DBT_SELECT
-            value: {{ `"{{inputs.parameters.dbt_select}}"` }}
           - name: CLICKHOUSE_HOST
             value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
           - name: CLICKHOUSE_PORT
@@ -83,8 +82,6 @@ spec:
           # store_failures=true in its own config, so findings exit 0 (only an
           # operational error such as ClickHouse unreachable fails this step) and
           # violating rows are kept for drill-down. The on-run-end hook prints one
-          # JSON finding per check. ${VAR:+...} drops the flag entirely when
-          # DBT_SELECT is empty so a manual run without the parameter covers all
-          # tests.
-          dbt test --profiles-dir . ${DBT_SELECT:+--select "$DBT_SELECT"}
+          # JSON DQ_FINDING line per check.
+          dbt test --profiles-dir . --selector data_quality
 {{- end }}
