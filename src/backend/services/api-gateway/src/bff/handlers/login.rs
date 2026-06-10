@@ -18,6 +18,10 @@ use crate::bff::oidc_client::PkcePair;
 use crate::bff::secrets::{new_nonce, new_state};
 use crate::bff::session_store::login_state;
 
+/// Cap on `return_to` length. Aligns with typical browser URL length caps;
+/// not operator-tunable — purely defense in depth.
+const RETURN_TO_MAX_LEN: usize = 1024;
+
 #[derive(Debug, Deserialize)]
 pub struct LoginQuery {
     /// Path-only target inside the SPA to land on after callback.
@@ -90,7 +94,7 @@ pub(super) fn sanitize_return_to(raw: Option<&str>) -> String {
     if raw.is_empty() || !raw.starts_with('/') {
         return "/".to_owned();
     }
-    if raw.len() > 1024 {
+    if raw.len() > RETURN_TO_MAX_LEN {
         return "/".to_owned();
     }
     // First two raw chars must be `/` followed by something other than
@@ -103,7 +107,9 @@ pub(super) fn sanitize_return_to(raw: Option<&str>) -> String {
     // Reject any control char or backslash anywhere in the value. A `\`
     // mid-path can still mislead URL parsers; if a real SPA path needs
     // a backslash, it can be percent-encoded *and* we reject `%5c` below.
-    if raw.contains('\\') || raw.chars().any(|c| (c as u32) < 0x20) {
+    // `char::is_control` covers the full Unicode Cc category (C0
+    // U+0000–U+001F, DEL U+007F, and C1 U+0080–U+009F).
+    if raw.contains('\\') || raw.chars().any(char::is_control) {
         return "/".to_owned();
     }
     // Reject percent-encoded slashes/backslashes that some browsers
@@ -148,7 +154,7 @@ mod tests {
 
     #[test]
     fn sanitize_return_to_caps_length() {
-        let long = format!("/{}", "a".repeat(2000));
+        let long = format!("/{}", "a".repeat(RETURN_TO_MAX_LEN));
         assert_eq!(sanitize_return_to(Some(&long)), "/");
     }
 
@@ -174,5 +180,15 @@ mod tests {
         assert_eq!(sanitize_return_to(Some("/foo\r\nLocation: x")), "/");
         assert_eq!(sanitize_return_to(Some("/foo\tbar")), "/");
         assert_eq!(sanitize_return_to(Some("/foo\u{0000}")), "/");
+    }
+
+    #[test]
+    fn sanitize_return_to_rejects_del_and_c1_controls() {
+        // DEL (U+007F) was missed by the prior `(c as u32) < 0x20` check.
+        assert_eq!(sanitize_return_to(Some("/foo\u{007f}bar")), "/");
+        // NEL (U+0085), a C1 control.
+        assert_eq!(sanitize_return_to(Some("/foo\u{0085}bar")), "/");
+        // APC (U+009F), C1.
+        assert_eq!(sanitize_return_to(Some("/foo\u{009f}bar")), "/");
     }
 }
