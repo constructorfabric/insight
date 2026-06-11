@@ -29,6 +29,26 @@ except ImportError:
             return s[1:-1]
         return s
 
+    def _strip_comment(s: str) -> str:
+        # yaml.safe_load drops trailing ` # ...` comments; without this the
+        # fallback returns `"0 2 * * *" # daily at 02:00 UTC` verbatim for
+        # github-copilot's schedule — quotes and comment included — and
+        # reconcile gets a bogus cron. A `#` only starts a comment outside
+        # quotes and when preceded by whitespace (or at value start).
+        if s[:1] in ("'", '"'):
+            end = s.find(s[0], 1)
+            if end != -1:
+                rest = s[end + 1:]
+                if rest == "" or (
+                    rest[0] in " \t" and rest.lstrip(" \t").startswith("#")
+                ):
+                    return s[: end + 1]
+            return s
+        for i, ch in enumerate(s):
+            if ch == "#" and (i == 0 or s[i - 1] in " \t"):
+                return s[:i].rstrip()
+        return s
+
     def _read_yaml(path: str):
         with open(path, "r", encoding="utf-8") as f:
             text = f.read()
@@ -65,11 +85,11 @@ except ImportError:
                         )
                     list_target = parent[key] = []
                     stack[-1] = (indent, list_target, parent, key)
-                list_target.append(_unquote(line[2:].strip()))
+                list_target.append(_unquote(_strip_comment(line[2:].strip())))
                 continue
             if ":" in line:
                 k, _, v = line.partition(":")
-                k = k.strip(); v = v.strip()
+                k = k.strip(); v = _strip_comment(v.strip())
                 if v == "":
                     # nested block: dict placeholder until the first child
                     # line shows it's a list ("- item" swaps it above).

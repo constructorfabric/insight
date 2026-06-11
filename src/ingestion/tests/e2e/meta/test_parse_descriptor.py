@@ -29,12 +29,16 @@ _SCRIPT = (
 
 # Mirrors the shapes used by real descriptors (see the jira connector):
 # double/single-quoted scalars, quoted scalars containing `:`/`*`, nested
-# blocks, plain scalars, flow-style lists with quoted items, and block-style
-# lists (secret.required_fields) with plain and quoted items.
+# blocks, plain scalars, flow-style lists with quoted items, block-style
+# lists (secret.required_fields) with plain and quoted items, and trailing
+# inline comments (github-copilot/claude-enterprise quote their schedule
+# and follow it with `# daily at ...`).
 _DESCRIPTOR = """\
 name: jira
 version: "1.2.0"
-schedule: "0 3 * * *"
+schedule: "0 3 * * *" # daily at 03:00 UTC
+hash_inside: "a # b"   # trailing comment after a value containing '#'
+plain_commented: unquoted # note
 images:
   enrich:
     name: insight-jira-enrich
@@ -79,6 +83,8 @@ def descriptor(tmp_path: Path) -> Path:
         ),
         ("version", "1.2.0"),
         ("schedule", "0 3 * * *"),
+        ("hash_inside", "a # b"),
+        ("plain_commented", "unquoted"),
         ("single", "quoted"),
         ("plain", "unquoted"),
         ("flow", ["a", "b", "c"]),
@@ -106,6 +112,31 @@ def test_fallback_agrees_with_pyyaml(
 ) -> None:
     mod = _load_fallback(monkeypatch)
     assert mod._read_yaml(str(descriptor)) == yaml.safe_load(_DESCRIPTOR)
+
+
+_CORPUS = sorted((_REPO_ROOT / "src/ingestion/connectors").glob("*/*/descriptor.yaml"))
+
+
+@pytest.mark.parametrize(
+    "path", _CORPUS, ids=lambda p: f"{p.parent.parent.name}/{p.parent.name}"
+)
+def test_fallback_agrees_with_pyyaml_on_real_corpus(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    """Full-corpus parity: every shipped descriptor must parse identically
+    under the fallback and yaml.safe_load. github-copilot and
+    claude-enterprise carry trailing inline comments after their quoted
+    `schedule` values, which the fallback used to return verbatim."""
+    mod = _load_fallback(monkeypatch)
+    assert mod._read_yaml(str(path)) == yaml.safe_load(
+        path.read_text(encoding="utf-8")
+    )
+
+
+def test_corpus_glob_finds_descriptors() -> None:
+    """Guard the parity sweep against silently going empty if the
+    connectors tree moves."""
+    assert len(_CORPUS) >= 5
 
 
 def test_fallback_parses_real_jira_descriptor(
