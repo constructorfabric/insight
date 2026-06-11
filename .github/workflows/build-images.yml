@@ -785,9 +785,31 @@ jobs:
             | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Helm push
+        id: helm_push
         run: |
-          helm push "dist/insight-${{ steps.umbrella.outputs.version }}.tgz" \
-            oci://ghcr.io/constructorfabric/charts
+          set -euo pipefail
+          OUT="$(helm push "dist/insight-${{ steps.umbrella.outputs.version }}.tgz" \
+            oci://ghcr.io/constructorfabric/charts 2>&1)"
+          echo "$OUT"
+          # helm push prints "Digest: sha256:..." — that digest is the chart's
+          # OCI manifest identity, which the attestation below binds to.
+          DIGEST="$(echo "$OUT" | sed -n 's/^Digest: //p')"
+          if [ -z "$DIGEST" ]; then
+            echo "ERROR: could not parse chart digest from helm push output" >&2
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # Keyless SLSA provenance for the umbrella chart OCI artifact — same
+      # contract as the image attestations (see backend-api-gateway). Verify:
+      #   gh attestation verify oci://ghcr.io/constructorfabric/charts/insight:<ver> \
+      #     --repo constructorfabric/insight
+      - name: Attest chart provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/constructorfabric/charts/insight
+          subject-digest: ${{ steps.helm_push.outputs.digest }}
+          push-to-registry: true
 
       - name: Commit version bumps back to main
         env:

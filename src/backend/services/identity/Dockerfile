@@ -1,3 +1,6 @@
+# Rebuild marker (2026-06-11): republish so the chart-pinned tag advances to
+# an SLSA-attested image — current appVersion predates the provenance
+# attestation steps in build-images.yml.
 # Identity Resolution — .NET 9 service.
 #
 # Build context: src/backend/services/identity/
