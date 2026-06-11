@@ -301,7 +301,7 @@ Behaviour:
 - Strict semver regex on the tag listing. Pre-release tags or anything off-format is ignored.
 - One commit per poll run when the pin moves; nothing committed when no new version exists.
 - Commits are authored by a service account (`infra-poller@cyberfabric.local`) with a deploy key scoped to push to `main` of `infra/insight-gitops` only.
-- The poller acts only on environments listed in `auto_envs` of `.poller.yaml`. `dev` is included; non-dev envs (the internal `stage`/`test` clusters and every customer-named production cluster — `acme`, `globex`, …) are **not** auto-polled, those bumps are PR'd by an engineer, see [§3.4](#34-engineer-pulls-and-deploys).
+- The poller acts only on environments listed in `auto_envs` of `.poller.yaml`. `dev` is included; non-dev envs (the internal `stage`/`test` clusters and every customer-named production cluster — `acme`, `globex`, …) are **not** auto-polled, those bumps are PR'd by an engineer, see [§3.6](#36-engineer-deploys-the-app-l3).
 - The poller does not write to per-environment values files. Image tags in env values are expected to be empty (the chart's per-subchart `appVersion` flows through). Hotfix-style explicit `image.tag` overrides are an engineer-authored MR, never a poller action.
 - A failed `git push` (e.g. someone else pushed a manual change in the same hour) retries with `git pull --rebase` once; on a second failure it leaves the repo dirty and surfaces a CI failure.
 

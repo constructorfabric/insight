@@ -86,7 +86,7 @@ Injects **synthetic bridge records** from a seed table. Each pair forces two acc
 
 This step does not apply to our example, but a pair like:
 
-```
+```text
 p.jones@example.net  <->  pjones@example.net
 ```
 
@@ -185,7 +185,7 @@ The algorithm groups records by shared tokens. Each `(token, rid)` pair is a seg
 
 **Transitive closure:**
 
-```
+```text
 h2 ←— "sokol" —→ h3
 h2 ←— "sokol" —→ h4
 h4 ←— "a.sokolov@gmail.com" —→ h5

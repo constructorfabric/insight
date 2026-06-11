@@ -733,7 +733,7 @@ Identity-attribute observation history for persons, stored in MariaDB. Each row 
 | `insight_source_type` | `VARCHAR(30) NOT NULL` | Source system: `bamboohr`, `zoom`, `cursor`, `claude_admin`, `gitlab`, etc. Tiny tier — connector keys are short, owned vocabulary (longest today is `claude_enterprise` = 17 chars) |
 | `insight_source_id` | `BINARY(16) NOT NULL` | Connector instance UUID (temporary: sipHash128 from Bronze string `source_id` until `sources` table exists — see REC-IR-04) |
 | `insight_tenant_id` | `BINARY(16) NOT NULL` | Tenant UUID (temporary: sipHash128 from Bronze string `tenant_id` until `tenants` table exists — see REC-IR-04) |
-| `value_id` | `VARCHAR(320) COLLATE utf8mb4_bin NULL` | Value for `value_type IN ('id', 'email', 'username')`. Strict byte comparison; hot-path lookup target. Size 320 covers RFC 5321/5322 email maximum (64 local + `@` + 255 domain). `username` is id-like (case-sensitive in most platforms) and routes here for strict-equality lookup |
+| `value_id` | `VARCHAR(320) COLLATE utf8mb4_unicode_ci NULL` | Value for `value_type IN ('id', 'email', 'username')`. Case- and accent-insensitive comparison so a lookup matches regardless of source casing; hot-path lookup target. Size 320 covers RFC 5321/5322 email maximum (64 local + `@` + 255 domain). `username` is id-like and routes here for equality lookup |
 | `value_full_text` | `VARCHAR(512) COLLATE utf8mb4_unicode_ci NULL` | Value for `value_type='display_name'`. Case- and accent-insensitive collation for operator search; leaves room for future FULLTEXT index |
 | `value` | `TEXT NULL` | Catch-all value for any other `value_type` (e.g., `employee_id`, `platform_id`, `functional_team`, custom attributes). Not directly indexed |
 | `value_effective` | `TEXT GENERATED ALWAYS AS (COALESCE(value_id, value_full_text, value)) STORED` | Human-readable coalesce of the three value columns; **not indexed** (display only). Use it from SELECTs when you want the actual value without knowing the routing rules |
@@ -1334,7 +1334,7 @@ This walkthrough demonstrates the min-propagation algorithm (§4.1) as a verific
 | `youtrack` | `y1` | `display_name` | `andrey sokolov` |
 | `youtrack` | `y1` | `email` | `a.sokolov@acme.com` |
 
-**After name alias enrichment** (`alexei` <-> `alexey`): BambooHR and YouTrack get synthetic tokens for each other's name spelling.
+**After name alias enrichment** (`andrei` <-> `andrey`): BambooHR and YouTrack get synthetic tokens for each other's name spelling.
 
 **After domain alias enrichment** (`gmail.com`, `acme.io`, `acme.com` grouped): Git c3 and YouTrack share `a.sokolov@gmail.com`.
 

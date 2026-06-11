@@ -144,11 +144,12 @@ CREATE VIEW insight.commits_daily
     `commits` UInt64
 )
 AS SELECT
-    lower(author_email) AS person_id,
-    toDate(parseDateTimeBestEffortOrNull(assumeNotNull(date))) AS metric_date,
+    lower(c.author_email) AS person_id,
+    toDate(parseDateTimeBestEffortOrNull(assumeNotNull(c.date))) AS metric_date,
     count() AS commits
-FROM bronze_bitbucket_cloud.commits
-WHERE (author_email IS NOT NULL) AND (date IS NOT NULL)
+FROM bronze_bitbucket_cloud.commits AS c
+INNER JOIN insight.people AS p ON lower(c.author_email) = p.person_id
+WHERE (c.author_email IS NOT NULL) AND (c.date IS NOT NULL) AND (p.status = 'Active')
 GROUP BY
     person_id,
     metric_date
