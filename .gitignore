@@ -29,6 +29,7 @@ access
 # IDE
 .vs/
 .prs/
+.idea/
 
 # Claude Code local state
 .claude/worktrees/
