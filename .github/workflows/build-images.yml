@@ -212,7 +212,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
       # Keyless SLSA provenance: attests "this digest was built by THIS
       # workflow at THIS commit" via the runner's short-lived OIDC identity —
       # no stored signing keys. push-to-registry stores the attestation next
@@ -258,7 +258,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
       # Keyless SLSA provenance — see backend-api-gateway for the contract.
       - name: Attest build provenance
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -301,7 +301,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
       # Keyless SLSA provenance — see backend-api-gateway for the contract.
       - name: Attest build provenance
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -357,7 +357,7 @@ jobs:
           push: false
           tags: insight-toolbox:ci-validate
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Validate dbt project (dbt parse)
         # `dbt parse` exercises the dbt manifest: duplicate model/test
@@ -448,7 +448,7 @@ jobs:
           # Scope cache per image name so unrelated connectors don't evict
           # each other's layer cache.
           cache-from: type=gha,scope=${{ matrix.entry.name }}
-          cache-to:   type=gha,mode=max,scope=${{ matrix.entry.name }}
+          cache-to:   type=gha,mode=max,scope=${{ matrix.entry.name }},ignore-error=true
       # Keyless SLSA provenance — see backend-api-gateway for the contract.
       - name: Attest build provenance
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -799,6 +799,16 @@ jobs:
             exit 1
           fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # attest-build-provenance with push-to-registry reads DOCKER credentials
+      # (~/.docker/config.json) — `helm registry login` above writes to helm's
+      # own config, which the attest action cannot see. Without this login the
+      # attest step dies with "No credentials found for registry ghcr.io".
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Keyless SLSA provenance for the umbrella chart OCI artifact — same
       # contract as the image attestations (see backend-api-gateway). Verify:
