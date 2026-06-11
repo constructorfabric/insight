@@ -89,14 +89,15 @@ except ImportError:
                 continue
             if ":" in line:
                 k, _, v = line.partition(":")
-                k = k.strip(); v = _strip_comment(v.strip())
+                k = k.strip()
+                v = _strip_comment(v.strip())
                 if v == "":
                     # nested block: dict placeholder until the first child
                     # line shows it's a list ("- item" swaps it above).
                     cur[k] = {}
                     stack.append((indent + 2, cur[k], cur, k))
                     list_target = None
-                elif v == "[]" or v.startswith("[") and v.endswith("]"):
+                elif v == "[]" or (v.startswith("[") and v.endswith("]")):
                     inner = v[1:-1].strip()
                     cur[k] = [_unquote(s.strip()) for s in inner.split(",") if s.strip()]
                 else:
