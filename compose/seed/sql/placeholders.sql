@@ -1,3 +1,8 @@
+-- `insight` is created by /docker-entrypoint-initdb.d/00-init.sql on
+-- first CH start, but that script doesn't re-run if the operator
+-- wipes the db (e.g., DROP DATABASE insight SYNC for a re-bootstrap).
+-- Asserting it here makes the seed-sample idempotent across re-runs.
+CREATE DATABASE IF NOT EXISTS insight;
 CREATE DATABASE IF NOT EXISTS silver;
 CREATE DATABASE IF NOT EXISTS bronze_jira;
 CREATE DATABASE IF NOT EXISTS bronze_m365;
@@ -191,8 +196,11 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits (
     date              Date,
     is_merge_commit   UInt8,
     file_path         String  DEFAULT '',
-    lines_added       Nullable(Float64),
-    lines_removed     Nullable(Float64),
+    -- Non-Nullable so `toFloat64(sum(c.lines_added + c.lines_removed))`
+    -- in the git_bullet_rows view stays Float64 (the view's structure
+    -- declares metric_value as Float64, not Nullable(Float64)).
+    lines_added       Float64 DEFAULT 0,
+    lines_removed     Float64 DEFAULT 0,
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
@@ -204,8 +212,12 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     created_on        DateTime,
     merged_on         Nullable(DateTime),
     closed_on         Nullable(DateTime),
-    lines_added       Nullable(Float64),
-    lines_removed     Nullable(Float64),
+    -- Non-Nullable on purpose. The git_bullet_rows view's UNION branch
+    -- for `pr_size` declares the column as Float64 (non-null); a
+    -- Nullable placeholder makes the UNION type Nullable, which then
+    -- collides with the view structure under join_use_nulls=1.
+    lines_added       Float64 DEFAULT 0,
+    lines_removed     Float64 DEFAULT 0,
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (pr_id) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 CREATE TABLE IF NOT EXISTS silver.class_git_file_changes (
@@ -305,6 +317,9 @@ CREATE TABLE IF NOT EXISTS silver.mtr_git_person_weekly (
     lines_added       Int64,
     lines_removed     Int64,
     prs_merged        Float64,
+    -- spec_lines added because insight.ic_chart_loc and other views
+    -- reference it; upstream placeholder script omits it.
+    spec_lines        Nullable(Float64),
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, week) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 CREATE DATABASE IF NOT EXISTS bronze_jira;
