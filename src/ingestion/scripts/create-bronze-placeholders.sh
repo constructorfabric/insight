@@ -221,6 +221,9 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     spec_lines           Nullable(Float64),
     session_count        Nullable(Float64),
     total_chat_messages  Nullable(Float64),
+    cost_cents           Nullable(UInt32),
+    prs_with_cc_count    Nullable(UInt32),
+    prs_total_count      Nullable(UInt32),
     _version             UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
