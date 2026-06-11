@@ -3,7 +3,7 @@
    ---------------------------------------------------------------------------
    Project-level `on-run-start` hook. Iterates every silver target in
    the dbt graph and drops the placeholder created by
-   `scripts/create-bronze-placeholders.sh` when a three-factor
+   `scripts/create-bronze-placeholders.sh` when a two-factor
    signature matches.
 
    Why on-run-start (not per-model pre-hook):
@@ -20,16 +20,20 @@
    so `existing_relation` is captured as `nil` and the materialization
    takes the "create from scratch" branch with the model's real schema.
 
-   Detection — three-factor signature, ALL must hold:
+   Detection — two-factor signature, BOTH must hold:
 
      1. `system.tables.comment` matches the literal marker
         `INSIGHT_PLACEHOLDER_v1` set by `create-bronze-placeholders.sh`
-        on every silver placeholder it creates.
-     2. `system.tables.total_rows == 0`. A real dbt-managed silver
-        table has rows after its first incremental run. Guards against
-        the edge case where someone manually attached the marker to
-        a populated table.
-     3. **At least one staging model with the tag `silver:<identifier>`
+        on every silver placeholder it creates. dbt never attaches this
+        comment to tables it creates, so a POPULATED table carrying the
+        marker is still a placeholder. (Populated placeholders happen:
+        when staging first materialises mid-run, this hook has already
+        passed, the silver model inserts into the placeholder with
+        on_schema_change=ignore — silently truncating every column the
+        placeholder lacks — and a row-count guard would then block the
+        drop forever. Placeholder contents are always rebuildable from
+        staging, so dropping a populated one loses nothing.)
+     2. **At least one staging model with the tag `silver:<identifier>`
         is materialised** in the warehouse. The silver dbt models use
         the `union_by_tag` macro, whose no-source-tables fallback
         emits `SELECT * FROM {{ this }} WHERE 1 = 0` to preserve the
@@ -57,7 +61,7 @@
                 {%- set silver_id = silver_node.alias or silver_node.name -%}
                 {%- set silver_tag = 'silver:' ~ silver_id -%}
 
-                {#- Factor 3 — at least one staging model for this tag is materialised. -#}
+                {#- Factor 2 — at least one staging model for this tag is materialised. -#}
                 {%- set staging_present = namespace(found=False) -%}
                 {%- for stg in graph.nodes.values() -%}
                     {%- if not staging_present.found
@@ -76,18 +80,17 @@
                 {%- endfor -%}
 
                 {%- if staging_present.found -%}
-                    {#- Factors 1 + 2 — placeholder marker AND empty table. -#}
+                    {#- Factor 1 — placeholder marker. -#}
                     {%- set check_query -%}
                         SELECT count() AS n
                         FROM system.tables
                         WHERE database   = '{{ silver_node.schema }}'
                           AND name       = '{{ silver_id }}'
                           AND comment    = 'INSIGHT_PLACEHOLDER_v1'
-                          AND total_rows = 0
                     {%- endset -%}
                     {%- set result = run_query(check_query) -%}
                     {%- if result and result.rows and (result.rows[0][0] | int) > 0 -%}
-                        {%- do log("drop_silver_placeholders_at_start: dropping " ~ silver_node.schema ~ "." ~ silver_id ~ " (placeholder marker + 0 rows + staging materialised)", info=True) -%}
+                        {%- do log("drop_silver_placeholders_at_start: dropping " ~ silver_node.schema ~ "." ~ silver_id ~ " (placeholder marker + staging materialised)", info=True) -%}
                         {#- Use adapter.drop_relation (not raw run_query DROP TABLE)
                             so dbt invalidates its relation cache. dbt populates
                             the cache at parse-time via `list_relations_without_caching`,
