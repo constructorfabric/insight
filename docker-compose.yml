@@ -276,6 +276,11 @@ services:
       VITE_API_BASE_URL: "${VITE_API_BASE_URL:-http://localhost:${API_GATEWAY_PORT:-8080}}"
       VITE_OIDC_ISSUER: "${OIDC_ISSUER:-}"
       VITE_OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      # Dev impersonation: when set AND a matching row exists in
+      # identity.persons (value_type='email'), the FE skips OIDC and
+      # binds requests to that person. See CONTRIBUTING.md "Dev
+      # impersonation seed".
+      VITE_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-}"
     volumes:
       - ${INSIGHT_FRONT_PATH:-../insight-front}:/app
       - frontend-node-modules:/app/node_modules

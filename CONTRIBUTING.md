@@ -224,6 +224,38 @@ dist before bringing the stack up (or whenever you change source).
 
 ---
 
+## Dev impersonation seed
+
+A fresh stack has an empty `identity.persons` table. The frontend
+detects this and shows the "Dev impersonation not configured" hint
+until you wire it up. Two steps:
+
+1. Set `VITE_DEV_USER_EMAIL=you@yourorg.com` in `.env.compose`.
+2. Run the seed:
+
+   ```bash
+   ./dev-compose-seed.sh
+   ```
+
+This inserts one row into `identity.persons` with `value_type='email'`
+and your address as `value_id`, bound to the default tenant
+(`TENANT_DEFAULT_ID`). Idempotent — re-running with the same email
+doesn't duplicate.
+
+3. Restart the frontend so it picks up the new env var:
+
+   ```bash
+   docker compose -f docker-compose.yml --profile front-dev up -d insight-front-dev
+   ```
+
+The hint goes away. To impersonate a different user later, change the
+email in `.env.compose`, re-run the seed (or just point at a row you
+inserted manually), and restart the FE.
+
+Why this is a separate step — production ingestion populates `persons`
+from ClickHouse via `/v1/persons-seed` and Airbyte/dbt. Neither runs in
+compose, so we substitute a one-row direct insert.
+
 ## Common tasks
 
 ### Tail logs
