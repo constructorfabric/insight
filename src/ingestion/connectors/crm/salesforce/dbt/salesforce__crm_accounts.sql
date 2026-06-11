@@ -9,7 +9,7 @@
     tags=['salesforce', 'silver:class_crm_accounts']
 ) }}
 
-SELECT * FROM (
+WITH src AS (
     SELECT
         tenant_id,
         source_id,
@@ -37,5 +37,15 @@ SELECT * FROM (
     FROM {{ source('bronze_salesforce', 'Account') }}
 )
 {% if is_incremental() %}
-WHERE _version > coalesce((SELECT max(_version) FROM {{ this }}), 0)
+SELECT src.*
+FROM src
+LEFT JOIN (
+    SELECT tenant_id, source_id, max(_version) AS hwm
+    FROM {{ this }}
+    GROUP BY tenant_id, source_id
+) w
+  ON w.tenant_id = src.tenant_id AND w.source_id = src.source_id
+WHERE src._version > coalesce(w.hwm, 0)
+{% else %}
+SELECT * FROM src
 {% endif %}
