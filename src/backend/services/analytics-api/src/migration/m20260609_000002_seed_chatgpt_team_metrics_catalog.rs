@@ -286,7 +286,11 @@ mod tests {
     #[test]
     fn all_higher_is_better() {
         for row in SEEDS {
-            assert!(row.higher_is_better, "{}: higher_is_better must be true", row.metric_key);
+            assert!(
+                row.higher_is_better,
+                "{}: higher_is_better must be true",
+                row.metric_key
+            );
         }
     }
 
@@ -296,7 +300,11 @@ mod tests {
         use std::collections::HashSet;
         let mut seen: HashSet<&str> = HashSet::new();
         for row in SEEDS {
-            assert!(seen.insert(row.metric_key), "duplicate seed metric_key {:?}", row.metric_key);
+            assert!(
+                seen.insert(row.metric_key),
+                "duplicate seed metric_key {:?}",
+                row.metric_key
+            );
         }
     }
 

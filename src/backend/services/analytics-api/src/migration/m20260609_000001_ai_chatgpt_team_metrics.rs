@@ -225,21 +225,45 @@ mod tests {
     /// All 22 FE-visible metric_keys must appear in the ARRAY JOIN unpivot
     /// (19 from m20260601 + codex_lines / codex_sessions / chatgpt_active).
     const EXPECTED_METRIC_KEYS: &[&str] = &[
-        "active_ai_members", "cursor_active", "cc_active", "cursor_completions",
-        "cursor_agents", "cursor_lines", "cc_sessions", "cc_lines", "cc_tool_accept",
-        "team_ai_loc", "cc_cost", "prs_with_cc", "prs_total", "cursor_acceptance",
-        "cc_tool_acceptance", "ai_loc_share2", "codex_active", "chatgpt", "claude_web",
-        "codex_lines", "codex_sessions", "chatgpt_active",
+        "active_ai_members",
+        "cursor_active",
+        "cc_active",
+        "cursor_completions",
+        "cursor_agents",
+        "cursor_lines",
+        "cc_sessions",
+        "cc_lines",
+        "cc_tool_accept",
+        "team_ai_loc",
+        "cc_cost",
+        "prs_with_cc",
+        "prs_total",
+        "cursor_acceptance",
+        "cc_tool_acceptance",
+        "ai_loc_share2",
+        "codex_active",
+        "chatgpt",
+        "claude_web",
+        "codex_lines",
+        "codex_sessions",
+        "chatgpt_active",
     ];
 
     #[test]
     fn array_join_emits_all_22_keys() {
         let kv = array_join_kv();
         for key in EXPECTED_METRIC_KEYS {
-            assert!(kv.contains(&format!("('{key}',")), "ARRAY JOIN missing key {key}");
+            assert!(
+                kv.contains(&format!("('{key}',")),
+                "ARRAY JOIN missing key {key}"
+            );
         }
         // Exactly 22 tuple entries — guards against an accidental extra/dropped key.
-        assert_eq!(kv.matches("('").count(), 22, "ARRAY JOIN must emit exactly 22 keys");
+        assert_eq!(
+            kv.matches("('").count(),
+            22,
+            "ARRAY JOIN must emit exactly 22 keys"
+        );
         assert_eq!(EXPECTED_METRIC_KEYS.len(), 22);
     }
 
@@ -247,10 +271,22 @@ mod tests {
     /// codex_active); the counters must NOT be.
     #[test]
     fn active_list_has_chatgpt_and_codex_markers() {
-        assert!(ACTIVE_LIST.contains("'codex_active'"), "codex_active must be active");
-        assert!(ACTIVE_LIST.contains("'chatgpt_active'"), "chatgpt_active must be active");
-        assert!(!ACTIVE_LIST.contains("'codex_lines'"), "codex_lines is a counter, not active");
-        assert!(!ACTIVE_LIST.contains("'chatgpt'"), "chatgpt is a counter, not active");
+        assert!(
+            ACTIVE_LIST.contains("'codex_active'"),
+            "codex_active must be active"
+        );
+        assert!(
+            ACTIVE_LIST.contains("'chatgpt_active'"),
+            "chatgpt_active must be active"
+        );
+        assert!(
+            !ACTIVE_LIST.contains("'codex_lines'"),
+            "codex_lines is a counter, not active"
+        );
+        assert!(
+            !ACTIVE_LIST.contains("'chatgpt'"),
+            "chatgpt is a counter, not active"
+        );
     }
 
     /// Markers use countIf; counters use sumIf. A typo here = silent NULL.

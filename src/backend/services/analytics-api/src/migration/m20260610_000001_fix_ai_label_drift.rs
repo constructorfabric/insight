@@ -20,11 +20,26 @@ pub struct Migration;
 
 /// (metric_key, corrected sublabel). \u{b7} = "·", \u{f7} = "÷".
 const SUBLABEL_FIXES: &[(&str, &str)] = &[
-    ("ai_bullet_rows.cc_active",         "Claude Team \u{b7} any activity this period"),
-    ("ai_bullet_rows.cc_lines",          "Claude Team \u{b7} accepted lines \u{b7} period total"),
-    ("ai_bullet_rows.cc_sessions",       "Claude Team \u{b7} sessions \u{b7} period total"),
-    ("ai_bullet_rows.cc_tool_acceptance","Claude Team \u{b7} accepted \u{f7} offered \u{b7} daily avg"),
-    ("ai_bullet_rows.team_ai_loc",       "Cursor + Claude Code + Codex \u{b7} accepted lines \u{b7} period total"),
+    (
+        "ai_bullet_rows.cc_active",
+        "Claude Team \u{b7} any activity this period",
+    ),
+    (
+        "ai_bullet_rows.cc_lines",
+        "Claude Team \u{b7} accepted lines \u{b7} period total",
+    ),
+    (
+        "ai_bullet_rows.cc_sessions",
+        "Claude Team \u{b7} sessions \u{b7} period total",
+    ),
+    (
+        "ai_bullet_rows.cc_tool_acceptance",
+        "Claude Team \u{b7} accepted \u{f7} offered \u{b7} daily avg",
+    ),
+    (
+        "ai_bullet_rows.team_ai_loc",
+        "Cursor + Claude Code + Codex \u{b7} accepted lines \u{b7} period total",
+    ),
 ];
 
 #[async_trait::async_trait]
@@ -40,7 +55,10 @@ impl MigrationTrait for Migration {
             ))
             .await?;
         }
-        tracing::info!(fixed = SUBLABEL_FIXES.len(), "ai bullet sublabel drift corrected");
+        tracing::info!(
+            fixed = SUBLABEL_FIXES.len(),
+            "ai bullet sublabel drift corrected"
+        );
         Ok(())
     }
 
@@ -62,11 +80,21 @@ mod tests {
     #[test]
     fn sublabels_have_correct_source_attribution() {
         for (key, sub) in SUBLABEL_FIXES {
-            assert!(!sub.contains("Anthropic Enterprise API"), "{key}: stale Anthropic label");
+            assert!(
+                !sub.contains("Anthropic Enterprise API"),
+                "{key}: stale Anthropic label"
+            );
             assert!(!sub.contains("OpenAI API"), "{key}: stale OpenAI label");
         }
-        let team = SUBLABEL_FIXES.iter().find(|(k, _)| *k == "ai_bullet_rows.team_ai_loc").unwrap().1;
-        assert!(team.contains("Codex"), "team_ai_loc sublabel must include Codex");
+        let team = SUBLABEL_FIXES
+            .iter()
+            .find(|(k, _)| *k == "ai_bullet_rows.team_ai_loc")
+            .unwrap()
+            .1;
+        assert!(
+            team.contains("Codex"),
+            "team_ai_loc sublabel must include Codex"
+        );
     }
 
     // =====================================================================
@@ -82,14 +110,30 @@ mod tests {
     /// ai_person_period sum-branch (counters). Mirrors the multiIf in
     /// 20260610000000_ai-person-period-rollup-fix.sql — keep in sync.
     const SUM_KEYS: &[&str] = &[
-        "chatgpt", "cc_lines", "cc_sessions", "cursor_agents", "cursor_lines",
-        "claude_web", "cursor_completions", "team_ai_loc", "codex_lines",
-        "codex_sessions", "cc_offered", "cc_tool_accept", "cc_cost",
-        "prs_total", "prs_with_cc", "cursor_offered", "cursor_total_lines",
+        "chatgpt",
+        "cc_lines",
+        "cc_sessions",
+        "cursor_agents",
+        "cursor_lines",
+        "claude_web",
+        "cursor_completions",
+        "team_ai_loc",
+        "codex_lines",
+        "codex_sessions",
+        "cc_offered",
+        "cc_tool_accept",
+        "cc_cost",
+        "prs_total",
+        "prs_with_cc",
+        "cursor_offered",
+        "cursor_total_lines",
     ];
     /// ai_person_period max-branch (0/1 active markers).
     const MAX_KEYS: &[&str] = &[
-        "active_ai_members", "cursor_active", "cc_active", "codex_active",
+        "active_ai_members",
+        "cursor_active",
+        "cc_active",
+        "codex_active",
         "chatgpt_active",
     ];
 
@@ -103,16 +147,29 @@ mod tests {
     /// (honest-NULL) so they are absent here too.
     const BULLET_ROWS_KEYS: &[&str] = &[
         // branch 1 (all dev tools)
-        "active_ai_members", "team_ai_loc",
+        "active_ai_members",
+        "team_ai_loc",
         // branch 2 (cursor)
-        "cursor_active", "cursor_completions", "cursor_agents", "cursor_lines",
-        "cursor_offered", "cursor_total_lines",
+        "cursor_active",
+        "cursor_completions",
+        "cursor_agents",
+        "cursor_lines",
+        "cursor_offered",
+        "cursor_total_lines",
         // branch 3 (claude code)
-        "cc_active", "cc_sessions", "cc_lines", "cc_tool_accept", "cc_offered", "cc_cost",
+        "cc_active",
+        "cc_sessions",
+        "cc_lines",
+        "cc_tool_accept",
+        "cc_offered",
+        "cc_cost",
         // branch 4 (codex)
-        "codex_active", "codex_lines", "codex_sessions",
+        "codex_active",
+        "codex_lines",
+        "codex_sessions",
         // branch 5 (chatgpt chat)
-        "chatgpt_active", "chatgpt",
+        "chatgpt_active",
+        "chatgpt",
     ];
 
     /// Every key the gold view emits must be classified into EXACTLY one of
@@ -122,7 +179,9 @@ mod tests {
     fn every_bullet_key_is_classified_not_defaulting_to_avg() {
         for key in BULLET_ROWS_KEYS {
             let n = [SUM_KEYS.contains(key), MAX_KEYS.contains(key)]
-                .iter().filter(|b| **b).count();
+                .iter()
+                .filter(|b| **b)
+                .count();
             assert_eq!(
                 n, 1,
                 "metric_key '{key}' is emitted to ai_bullet_rows but is in {n} \

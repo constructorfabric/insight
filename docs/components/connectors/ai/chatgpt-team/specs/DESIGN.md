@@ -21,7 +21,7 @@
 
 ## 1. Architecture overview
 
-```
+```text
   ┌──────────────────────────┐                   ┌────────────────────────────┐
   │   Insight cluster        │                   │   Customer environment     │
   │                          │                   │                            │

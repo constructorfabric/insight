@@ -29,8 +29,11 @@ access_token live only on the proxy — Insight never sees them.
 ## K8s Secret
 
 See [`src/ingestion/secrets/connectors/chatgpt-team.yaml.example`](../../../secrets/connectors/chatgpt-team.yaml.example).
-Required: `chatgpt_account_id`, `chatgpt_org_id`, `proxy_url`, `proxy_auth_token`.
-Optional: `start_date`. No OpenAI admin key, no session — those are not Insight's concern.
+Required: `chatgpt_account_id`, `proxy_url`, `proxy_auth_token`.
+Optional: `chatgpt_org_id` (only for the subscription streams; `analytics-viewer`
+accounts have no billing visibility and omit it — the subscription streams then
+tolerate the 403/404), `start_date`. No OpenAI admin key, no session — those are
+not Insight's concern.
 
 ## Streams
 
