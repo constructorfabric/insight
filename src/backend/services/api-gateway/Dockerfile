@@ -1,6 +1,8 @@
-# Rebuild marker (2026-06-11): republish so the chart-pinned tag advances to
+# Rebuild marker (2026-06-11, take 2): republish so the chart-pinned tag advances to
 # an SLSA-attested image — current appVersion predates the provenance
 # attestation steps in build-images.yml.
+# Take 2: the first publish-chart attempt failed before committing the
+# appVersion bumps back to main (chart attest step lacked registry login).
 # Multi-stage build for Insight API Gateway
 #
 # Build context: src/backend/
