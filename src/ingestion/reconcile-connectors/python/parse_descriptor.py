@@ -40,7 +40,11 @@ except ImportError:
         #       - item1
         #       - item2
         root = {}
-        stack = [(0, root)]
+        # Stack entries are (indent, container, parent, key). parent/key
+        # locate the container inside its parent so the empty-dict
+        # placeholder pushed for `key:` can be swapped for a list when the
+        # first "- item" child line arrives.
+        stack = [(0, root, None, None)]
         list_target = None
         for raw in text.splitlines():
             if not raw.strip() or raw.lstrip().startswith("#"): continue
@@ -51,19 +55,27 @@ except ImportError:
                 stack.pop(); list_target = None
             cur = stack[-1][1]
             if line.startswith("- "):
-                if list_target is None: continue
+                if list_target is None:
+                    _, container, parent, key = stack[-1]
+                    if parent is None or container != {}:
+                        raise ValueError(
+                            f"{path}: list item {line!r} does not follow a "
+                            "key with an empty value; unsupported by the "
+                            "fallback parser — install PyYAML"
+                        )
+                    list_target = parent[key] = []
+                    stack[-1] = (indent, list_target, parent, key)
                 list_target.append(_unquote(line[2:].strip()))
                 continue
             if ":" in line:
                 k, _, v = line.partition(":")
                 k = k.strip(); v = v.strip()
                 if v == "":
-                    # nested object or list
+                    # nested block: dict placeholder until the first child
+                    # line shows it's a list ("- item" swaps it above).
                     cur[k] = {}
-                    stack.append((indent + 2, cur[k]))
+                    stack.append((indent + 2, cur[k], cur, k))
                     list_target = None
-                    # peek next significant line — if it starts with "- " set list_target
-                    # we let the next iteration set list_target lazily by replacing dict with list.
                 elif v == "[]" or v.startswith("[") and v.endswith("]"):
                     inner = v[1:-1].strip()
                     cur[k] = [_unquote(s.strip()) for s in inner.split(",") if s.strip()]

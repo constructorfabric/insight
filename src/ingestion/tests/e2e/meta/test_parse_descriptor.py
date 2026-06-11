@@ -29,7 +29,8 @@ _SCRIPT = (
 
 # Mirrors the shapes used by real descriptors (see the jira connector):
 # double/single-quoted scalars, quoted scalars containing `:`/`*`, nested
-# blocks, plain scalars, and flow-style lists with quoted items.
+# blocks, plain scalars, flow-style lists with quoted items, and block-style
+# lists (secret.required_fields) with plain and quoted items.
 _DESCRIPTOR = """\
 name: jira
 version: "1.2.0"
@@ -41,6 +42,13 @@ images:
 single: 'quoted'
 plain: unquoted
 flow: ["a", 'b', c]
+secret:
+  required_fields:
+    - jira_instance_url
+    - "jira_email"
+    - 'jira_api_token'
+    - jira_project_keys
+after_block: still-parsed
 """
 
 
@@ -74,6 +82,16 @@ def descriptor(tmp_path: Path) -> Path:
         ("single", "quoted"),
         ("plain", "unquoted"),
         ("flow", ["a", "b", "c"]),
+        (
+            "secret.required_fields",
+            [
+                "jira_instance_url",
+                "jira_email",
+                "jira_api_token",
+                "jira_project_keys",
+            ],
+        ),
+        ("after_block", "still-parsed"),
     ],
 )
 def test_fallback_strips_yaml_quotes(
@@ -88,6 +106,42 @@ def test_fallback_agrees_with_pyyaml(
 ) -> None:
     mod = _load_fallback(monkeypatch)
     assert mod._read_yaml(str(descriptor)) == yaml.safe_load(_DESCRIPTOR)
+
+
+def test_fallback_parses_real_jira_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The repro from the bug report: jira's secret.required_fields block
+    list came back as {} from the fallback while PyYAML returned the list."""
+    mod = _load_fallback(monkeypatch)
+    path = _REPO_ROOT / "src/ingestion/connectors/task-tracking/jira/descriptor.yaml"
+    parsed = mod._read_yaml(str(path))
+    assert parsed == yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert parsed["secret"]["required_fields"] == [
+        "jira_instance_url",
+        "jira_email",
+        "jira_api_token",
+        "jira_project_keys",
+    ]
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        "- orphan\n",  # list item with no key above it
+        "key: scalar\n- orphan\n",  # list item under an already-valued key
+    ],
+)
+def test_fallback_rejects_orphan_list_items(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, doc: str
+) -> None:
+    """Fail-fast convention (cypilot/config/rules/code-conventions.md):
+    constructs the fallback cannot represent must raise, not silently drop."""
+    mod = _load_fallback(monkeypatch)
+    path = tmp_path / "descriptor.yaml"
+    path.write_text(doc, encoding="utf-8")
+    with pytest.raises(ValueError, match="install PyYAML"):
+        mod._read_yaml(str(path))
 
 
 @pytest.mark.parametrize(
