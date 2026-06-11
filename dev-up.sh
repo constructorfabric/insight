@@ -103,8 +103,15 @@ IDENTITY_TENANT_DEFAULT_ID="${IDENTITY_TENANT_DEFAULT_ID:-}"
 
 # Insight tenant slug for the reconcile loop (Airbyte source/connection
 # naming per ADR-0005). The chart `required`s ingestion.reconcile.tenantId,
-# so the umbrella install dies without it.
-TENANT_ID="${TENANT_ID:-local}" # RULE-DEFAULTS-OK: dev-only bring-up; 'local' is the documented single-developer slug (.env.local.example)
+# so the umbrella install dies without it. Defaulting is safe ONLY for a
+# single-developer Kind cluster; on a shared remote cluster a silently
+# wrong slug would misname Airbyte sources/connections for everyone, so
+# remote mode fail-fasts instead.
+if [[ "$CLUSTER_MODE" == "local" ]]; then
+  TENANT_ID="${TENANT_ID:-local}" # RULE-DEFAULTS-OK: dev-only local Kind cluster; 'local' is the documented single-developer slug (.env.local.example)
+else
+  : "${TENANT_ID:?ERROR: TENANT_ID is required for CLUSTER_MODE=remote (Insight tenant slug per ADR-0005) — set it in $ENV_FILE}"
+fi
 
 # ─── Sanity ───────────────────────────────────────────────────────────────
 if [[ "$AUTH_DISABLED" != "true" && -z "$OIDC_EXISTING_SECRET" ]]; then
