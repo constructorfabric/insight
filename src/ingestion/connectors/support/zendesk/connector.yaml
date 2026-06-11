@@ -1,13 +1,15 @@
 # Airbyte Declarative Source for zendesk — INSIGHT-459.
 #
-# Phase 1 (this file): three streams:
+# Streams:
 #   1. support_tickets              — incremental, DatetimeBasedCursor on updated_at
 #   2. support_agents               — full refresh
 #   3. zendesk_satisfaction_ratings — incremental, DatetimeBasedCursor on updated_at
+#   4. support_ticket_events        — per-ticket audit log (SubstreamPartitionRouter
+#                                     over support_tickets); actor-attributed activity
 #
-# Phase 2 (not yet implemented — schemas locked in zendesk.md):
-#   4. support_ticket_events        — per-ticket audit log (SubstreamPartitionRouter)
+# Not yet implemented (schema locked in zendesk.md):
 #   5. zendesk_ticket_ext           — custom field key-value pairs
+#   (Guide / Help-Center articles — for the KB-authoring metric — also TBD.)
 #
 # Auth: HTTP Basic Auth, username = "{email}/token", password = "{api_token}"
 # API base: https://{subdomain}.zendesk.com/api/v2/
@@ -58,7 +60,8 @@ streams:
   # Note: on the incremental export endpoint, ?include=metric_sets embeds the
   # metric set per-ticket as record.metric_set (singular) — no parallel-array
   # join is needed; field extraction reads it directly below.
-  - type: DeclarativeStream
+  - &support_tickets_stream
+    type: DeclarativeStream
     name: support_tickets
     primary_key:
       - ticket_id
@@ -371,6 +374,89 @@ streams:
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
 
+  # ── Stream 4: support_ticket_events ─────────────────────────────────
+  # Per-ticket audit log (Ticket Audits API) — the ONLY honest source of
+  # actor-attributed activity (updates / comments / solved). Each audit carries
+  # `author_id` (the ACTOR who made the change) and a nested `events` array. We
+  # land ONE Bronze row per audit with `events` as JSON; the Silver model
+  # `zendesk__support_event` explodes + classifies it (one row per event), so a
+  # single audit can legitimately yield both a public_comment and a solved.
+  #
+  # SubstreamPartitionRouter fans out over support_tickets — one
+  # GET tickets/{id}/audits.json per ticket. Re-delivery is deduped downstream
+  # by unique_key (= audit id). No per-audit cursor: the parent ticket
+  # incremental bounds which tickets are (re)visited.
+  - type: DeclarativeStream
+    name: support_ticket_events
+    primary_key:
+      - audit_id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          audit_id: { type: string }
+          ticket_id: { type: string }
+          author_id: { type: string }
+          created_at: { type: string }
+          events: { type: string }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "tickets/{{ stream_partition.ticket_id }}/audits.json"
+        request_parameters:
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [audits]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('next_page', '') }}"
+          stop_condition: "{{ response.get('next_page') is none }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            stream: *support_tickets_stream
+            parent_key: ticket_id
+            partition_field: ticket_id
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [audit_id]
+            value: "{{ record['id'] | string }}"
+          - type: AddedFieldDefinition
+            path: [ticket_id]
+            value: "{{ record['ticket_id'] | string }}"
+          - type: AddedFieldDefinition
+            # actor of the audit (who made the change) — the attribution key
+            path: [author_id]
+            value: "{{ record['author_id'] | string if record.get('author_id') else '' }}"
+          - type: AddedFieldDefinition
+            # nested events[] kept as JSON; Silver explodes + classifies them
+            path: [events]
+            value: "{{ record.get('events', []) | tojson }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+
 spec:
   type: Spec
   connection_specification:
@@ -432,3 +518,4 @@ metadata:
     support_tickets: true
     support_agents: true
     zendesk_satisfaction_ratings: true
+    support_ticket_events: true

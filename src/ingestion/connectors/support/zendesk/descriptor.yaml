@@ -3,15 +3,18 @@
 # Loaded by insight-toolbox at reconcile time to create/update the Airbyte
 # connection for this connector.
 #
-# Phase 1 streams: support_tickets, support_agents, zendesk_satisfaction_ratings.
-# Phase 2: support_ticket_events, zendesk_ticket_ext (schemas locked in zendesk.md).
+# Streams: support_tickets, support_agents, zendesk_satisfaction_ratings,
+# support_ticket_events (Ticket Audits). TBD: zendesk_ticket_ext, Guide articles.
 
 name: zendesk
 # Strict semver per ADR-0015. 1.0.0: Phase-1 Bronze (tickets/agents/CSAT).
 # 1.1.0: Silver layer added (bronze→RMT promotion + person×date
 #   class_support_activity + dim_support_agent/ticket) — MINOR bump so
 #   reconcile re-runs the dbt step now that tag:zendesk+ spans real models.
-version: "1.1.0"
+# 1.2.0: Ticket Audits stream (support_ticket_events) enabled +
+#   zendesk__support_event activated (explode/classify) → actor-attributed
+#   activity counts (updates/public/private/solved) are now LIVE, not NULL.
+version: "1.2.0"
 type: declarative
 schedule: "0 5 * * *"       # 05:00 UTC daily
 workflow: sync               # Argo workflow template: ingestion-pipeline
