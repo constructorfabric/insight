@@ -21,7 +21,14 @@ Every fail-fast check lives in `insight.validate` at the bottom.
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 app.kubernetes.io/name: {{ .Chart.Name }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- /* appVersion is committed as the placeholder "---" and only replaced
+       by CI at chart publish (build-images.yml, publish-chart job). "---"
+       is not a valid label value (labels must start/end alphanumeric), so
+       installing straight from source (dev-up.sh) would fail with
+       `metadata.labels: Invalid value: "---"`. Omit the label then. */}}
+{{- if ne .Chart.AppVersion "---" }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/part-of: insight
 {{- end -}}
