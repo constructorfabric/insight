@@ -79,44 +79,55 @@ mod tests {
     // asserts every metric_key the gold view emits is classified into exactly
     // one bucket — so adding a connector key without classifying it fails CI.
     // =====================================================================
+    /// ai_person_period sum-branch (counters). Mirrors the multiIf in
+    /// 20260610000000_ai-person-period-rollup-fix.sql — keep in sync.
     const SUM_KEYS: &[&str] = &[
         "chatgpt", "cc_lines", "cc_sessions", "cursor_agents", "cursor_lines",
         "claude_web", "cursor_completions", "team_ai_loc", "codex_lines",
         "codex_sessions", "cc_offered", "cc_tool_accept", "cc_cost",
-        "prs_total", "prs_with_cc",
+        "prs_total", "prs_with_cc", "cursor_offered", "cursor_total_lines",
     ];
+    /// ai_person_period max-branch (0/1 active markers).
     const MAX_KEYS: &[&str] = &[
         "active_ai_members", "cursor_active", "cc_active", "codex_active",
         "chatgpt_active",
     ];
-    /// Ratio / share metrics that legitimately use avg().
-    const AVG_KEYS: &[&str] = &[
-        "cursor_acceptance", "cc_tool_acceptance", "ai_loc_share2",
+
+    /// The metric_keys actually EMITTED into insight.ai_bullet_rows by the gold
+    /// view 20260609000000 (its ARRAY JOIN branches) — these are the only keys
+    /// that reach ai_person_period and must therefore be classified. NB this is
+    /// the GOLD key set, NOT the query_ref ARRAY JOIN: the latter also lists
+    /// query_ref-computed ratios (cursor_acceptance, cc_tool_acceptance,
+    /// ai_loc_share2) and the claude_web stub, which are never emitted to
+    /// ai_bullet_rows and so never hit the period rollup. prs_* were removed
+    /// (honest-NULL) so they are absent here too.
+    const BULLET_ROWS_KEYS: &[&str] = &[
+        // branch 1 (all dev tools)
+        "active_ai_members", "team_ai_loc",
+        // branch 2 (cursor)
+        "cursor_active", "cursor_completions", "cursor_agents", "cursor_lines",
         "cursor_offered", "cursor_total_lines",
+        // branch 3 (claude code)
+        "cc_active", "cc_sessions", "cc_lines", "cc_tool_accept", "cc_offered", "cc_cost",
+        // branch 4 (codex)
+        "codex_active", "codex_lines", "codex_sessions",
+        // branch 5 (chatgpt chat)
+        "chatgpt_active", "chatgpt",
     ];
 
-    /// Every metric_key emitted into ai_bullet_rows (the FE-visible set from
-    /// m20260609_000001's ARRAY JOIN) must be explicitly classified.
-    const ALL_BULLET_KEYS: &[&str] = &[
-        "active_ai_members", "cursor_active", "cc_active", "cursor_completions",
-        "cursor_agents", "cursor_lines", "cc_sessions", "cc_lines", "cc_tool_accept",
-        "team_ai_loc", "cc_cost", "prs_with_cc", "prs_total", "cursor_acceptance",
-        "cc_tool_acceptance", "ai_loc_share2", "codex_active", "chatgpt", "claude_web",
-        "codex_lines", "codex_sessions", "chatgpt_active",
-    ];
-
+    /// Every key the gold view emits must be classified into EXACTLY one of
+    /// sum/max — none may fall to the avg() default (the #1286 defect class).
+    /// Adding a gold branch key without classifying it fails here.
     #[test]
     fn every_bullet_key_is_classified_not_defaulting_to_avg() {
-        for key in ALL_BULLET_KEYS {
-            let in_sum = SUM_KEYS.contains(key);
-            let in_max = MAX_KEYS.contains(key);
-            let in_avg = AVG_KEYS.contains(key);
-            let n = [in_sum, in_max, in_avg].iter().filter(|b| **b).count();
+        for key in BULLET_ROWS_KEYS {
+            let n = [SUM_KEYS.contains(key), MAX_KEYS.contains(key)]
+                .iter().filter(|b| **b).count();
             assert_eq!(
                 n, 1,
-                "metric_key '{key}' must be classified in EXACTLY one of \
-                 sum/max/avg for ai_person_period (found in {n}). A new key \
-                 left unclassified silently defaults to avg() — issue #1286."
+                "metric_key '{key}' is emitted to ai_bullet_rows but is in {n} \
+                 of sum/max (must be exactly 1). Unclassified → silently \
+                 defaults to avg() in ai_person_period — issue #1286."
             );
         }
     }

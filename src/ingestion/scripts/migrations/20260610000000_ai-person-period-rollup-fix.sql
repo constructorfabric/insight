@@ -9,8 +9,13 @@
 --       which are sum) → divided by each person's active-day count, so Codex
 --       was understated ~4-8x vs Claude Code (e.g. codex_lines 23,618 → 5,998).
 --   • cc_offered / cc_tool_accept   — tool-use counters → understated volumes.
---   • cc_cost                        — period spend (cents) → classified as sum
---       to match cc_lines (a "period total" sibling). FE divides by 100.
+--   • cc_cost                        — period spend → classified as sum to
+--       match cc_lines (a "period total" sibling; was avg-per-person daily).
+--       UNIT: cents end-to-end — gold sums cents, catalog unit='¢' /
+--       "…cost · cents · period total", and the FE renders cents as-is (no
+--       /100). Whether to display $ instead of ¢ is an open PRODUCT decision
+--       (would need /100 + unit='$' aligned across gold ↔ catalog ↔ FE); it is
+--       NOT a hidden ×100 bug today.
 --   • prs_total / prs_with_cc        — counters (honest-NULL handled upstream;
 --       classified as sum so real PR data sums correctly when a source ships it).
 --   • chatgpt_active                 — a 0/1 active-member flag (twin of
@@ -33,7 +38,12 @@ SELECT
         metric_key IN ('chatgpt','cc_lines','cc_sessions','cursor_agents',
                        'cursor_lines','claude_web','cursor_completions','team_ai_loc',
                        'codex_lines','codex_sessions','cc_offered','cc_tool_accept',
-                       'cc_cost','prs_total','prs_with_cc'),
+                       'cc_cost','prs_total','prs_with_cc',
+                       -- cursor offered/total-lines are counters too (twins of
+                       -- cc_offered); they were missing from the sum list and
+                       -- would have defaulted to avg. No data yet (bronze_cursor
+                       -- empty) but classified correctly for when it ships.
+                       'cursor_offered','cursor_total_lines'),
         sum(metric_value),
         metric_key IN ('active_ai_members','cursor_active','cc_active','codex_active',
                        'chatgpt_active'),
