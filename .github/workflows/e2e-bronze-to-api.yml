@@ -68,8 +68,14 @@ jobs:
           wait
 
       # ─── Run the suite inside the runner ────────────────────────────────
+      # Serial on purpose: the session rig is not xdist-safe yet (see
+      # conftest.py — per-worker analytics-api spawns race SeaORM migrations
+      # in the shared MariaDB, non-primary workers don't wait for ClickHouse
+      # migrations, and the shared dbt target/ dir is deleted by whichever
+      # worker finishes first). Wall-time cost is negligible: the image and
+      # cargo builds dominate the job.
       - name: Run E2E suite
-        run: ./e2e.sh test -n auto --tb=short -q
+        run: ./e2e.sh test --tb=short -q
 
       # ─── Diagnostics on failure ─────────────────────────────────────────
       - name: Dump compose logs on failure

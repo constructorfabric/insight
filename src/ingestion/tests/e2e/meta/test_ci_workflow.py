@@ -60,11 +60,17 @@ def test_ci_env_set_to_true(workflow: dict) -> None:
     assert env.get("CI") == "true", "workflow must export CI=true to enforce snapshot guard"
 
 
-def test_pytest_runs_with_xdist(workflow: dict) -> None:
-    """The pytest invocation MUST use -n auto so the suite parallelizes."""
+def test_pytest_runs_serial(workflow: dict) -> None:
+    """The pytest invocation MUST NOT use xdist: the session rig is not
+    xdist-safe yet (per-worker analytics-api spawns race SeaORM migrations in
+    the shared MariaDB, non-primary workers don't wait for CH migrations, and
+    the shared dbt target/ dir is deleted by whichever worker finishes first —
+    see conftest.py). Flip this test back once worker isolation lands."""
     job = next(iter(workflow["jobs"].values()))
     test_step = next(s for s in job["steps"] if s.get("name") == "Run E2E suite")
-    assert "-n auto" in test_step["run"]
+    assert "-n " not in test_step["run"] and not test_step["run"].rstrip().endswith("-n"), (
+        "CI must run the e2e suite serially until the rig is xdist-safe"
+    )
 
 
 def test_compose_logs_dumped_on_failure(workflow: dict) -> None:

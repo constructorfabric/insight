@@ -23,7 +23,7 @@ cd src/ingestion/tests/e2e
 ./e2e.sh build              # build the runner image (one-time, ~3-5 min cold)
 ./e2e.sh test               # full suite (includes people_smoke E2E)
 ./e2e.sh test -k people_smoke -v     # one fixture
-./e2e.sh test -n auto       # parallel (pytest-xdist)
+./e2e.sh test -n auto       # ⚠️ parallel (pytest-xdist) — NOT supported yet: workers race on shared CH/MariaDB/dbt target
 ./e2e.sh shell              # interactive bash inside the runner
 ./e2e.sh down               # tear down compose stack + volumes
 ```
