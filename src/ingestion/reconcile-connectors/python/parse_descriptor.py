@@ -20,6 +20,15 @@ try:
         with open(path, "r", encoding="utf-8") as f:
             return _yaml.safe_load(f) or {}
 except ImportError:
+    def _unquote(s: str) -> str:
+        # YAML quoted scalars: `image: "ghcr.io/...:tag"` must yield the
+        # bare string, as yaml.safe_load does. Without this, dev-up.sh
+        # passes a docker ref with literal quotes — `invalid reference
+        # format`. Only strip a MATCHING surrounding pair.
+        if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+            return s[1:-1]
+        return s
+
     def _read_yaml(path: str):
         with open(path, "r", encoding="utf-8") as f:
             text = f.read()
@@ -43,7 +52,7 @@ except ImportError:
             cur = stack[-1][1]
             if line.startswith("- "):
                 if list_target is None: continue
-                list_target.append(line[2:].strip())
+                list_target.append(_unquote(line[2:].strip()))
                 continue
             if ":" in line:
                 k, _, v = line.partition(":")
@@ -57,9 +66,9 @@ except ImportError:
                     # we let the next iteration set list_target lazily by replacing dict with list.
                 elif v == "[]" or v.startswith("[") and v.endswith("]"):
                     inner = v[1:-1].strip()
-                    cur[k] = [s.strip() for s in inner.split(",") if s.strip()]
+                    cur[k] = [_unquote(s.strip()) for s in inner.split(",") if s.strip()]
                 else:
-                    cur[k] = v
+                    cur[k] = _unquote(v)
         return root
 
 def _walk(obj, dotted: str):

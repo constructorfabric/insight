@@ -101,6 +101,11 @@ OIDC_AUDIENCE="${OIDC_AUDIENCE:-}"
 # Empty = identity requires the header on every request (prod mode).
 IDENTITY_TENANT_DEFAULT_ID="${IDENTITY_TENANT_DEFAULT_ID:-}"
 
+# Insight tenant slug for the reconcile loop (Airbyte source/connection
+# naming per ADR-0005). The chart `required`s ingestion.reconcile.tenantId,
+# so the umbrella install dies without it.
+TENANT_ID="${TENANT_ID:-local}" # RULE-DEFAULTS-OK: dev-only bring-up; 'local' is the documented single-developer slug (.env.local.example)
+
 # ─── Sanity ───────────────────────────────────────────────────────────────
 if [[ "$AUTH_DISABLED" != "true" && -z "$OIDC_EXISTING_SECRET" ]]; then
   : "${OIDC_ISSUER:?ERROR: OIDC_ISSUER is required — set it in $ENV_FILE or use OIDC_EXISTING_SECRET}"
@@ -428,6 +433,8 @@ frontend:
     className: "${INGRESS_CLASS}"
 ingestion:
   toolboxImage:    "${TOOLBOX_IMAGE_REF}"
+  reconcile:
+    tenantId: "${TENANT_ID}"
 EOF
 
 if [[ -n "$IMAGE_PULL_SECRET" ]]; then
