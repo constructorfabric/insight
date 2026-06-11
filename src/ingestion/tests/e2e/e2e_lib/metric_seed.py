@@ -18,36 +18,59 @@ from pathlib import Path
 import yaml
 
 from e2e_lib import mariadb
-from e2e_lib.config import SessionConfig
+from e2e_lib.config import SessionConfig, TEST_TENANT_ID
 
 LOG = logging.getLogger("e2e.metric_seed")
 
-# All test metrics live under the nil tenant — matches the auth-stub
-# context in analytics-api/src/auth.rs.
+# All e2e metric definitions live under TEST_TENANT_ID. The analytics-api tenant
+# middleware rejects the nil UUID, and `find_enabled_metric` filters the
+# `metrics` table by tenant, so both the prod metrics seeded by the binary's
+# migrations (under the nil tenant) and our overrides must sit under the tenant
+# the harness sends as `X-Insight-Tenant-Id`.
 # SeaORM stores `.uuid()` columns as BINARY(16) in MariaDB, so we pass raw
 # bytes — pymysql interprets a str as utf-8 (36 chars) and overflows.
+TEST_TENANT = TEST_TENANT_ID.bytes
 NIL_TENANT = uuid.UUID("00000000-0000-0000-0000-000000000000").bytes
 
 
 def seed_test_metrics(cfg: SessionConfig, seed_path: Path | None = None) -> int:
-    """Read seed/metrics.yaml and upsert into MariaDB.metrics. Returns row count."""
-    seed_path = seed_path or (cfg.repo_root / "src/ingestion/tests/e2e/seed/metrics.yaml")
-    if not seed_path.is_file():
-        LOG.debug("no seed file at %s — skipping", seed_path)
-        return 0
+    """Align MariaDB.metrics with the e2e tenant, then upsert seed overrides.
 
-    raw = yaml.safe_load(seed_path.read_text(encoding="utf-8"))
-    overrides = (raw or {}).get("overrides") or []
-    if not overrides:
-        LOG.debug("seed file %s has no overrides — skipping", seed_path)
-        return 0
+    Runs after the analytics-api binary's SeaORM migrations have seeded the prod
+    metric catalog (under the nil tenant). Returns the number of override rows.
+    """
+    seed_path = seed_path or (cfg.repo_root / "src/ingestion/tests/e2e/seed/metrics.yaml")
+    overrides: list[dict] = []
+    if seed_path.is_file():
+        raw = yaml.safe_load(seed_path.read_text(encoding="utf-8"))
+        overrides = (raw or {}).get("overrides") or []
 
     with mariadb.connection(cfg) as conn:
         with conn.cursor() as cur:
+            moved = _retenant_seeded_metrics(cur)
             for row in overrides:
                 _upsert_metric(cur, row)
-    LOG.info("upserted %d test metric(s) from %s", len(overrides), seed_path.name)
+    LOG.info(
+        "re-tenanted %d migration-seeded metric(s) onto %s; upserted %d override(s)",
+        moved,
+        TEST_TENANT_ID,
+        len(overrides),
+    )
     return len(overrides)
+
+
+def _retenant_seeded_metrics(cur) -> int:
+    """Move metrics the binary seeded under the nil tenant onto TEST_TENANT.
+
+    The query path's `find_enabled_metric` is tenant-scoped, so prod metrics
+    seeded under 0000…0 are invisible to a request that resolves to TEST_TENANT.
+    Re-homing them in the test DB (NOT in the migration source) keeps the fix
+    inside the harness and out of prod seeding. Idempotent."""
+    cur.execute(
+        "UPDATE metrics SET insight_tenant_id = %s WHERE insight_tenant_id = %s",
+        (TEST_TENANT, NIL_TENANT),
+    )
+    return cur.rowcount
 
 
 def _upsert_metric(cur, row: dict) -> None:
@@ -70,7 +93,7 @@ def _upsert_metric(cur, row: dict) -> None:
         """,
         (
             metric_id_bytes,
-            NIL_TENANT,
+            TEST_TENANT,
             row["name"],
             row.get("description", ""),
             row["query_ref"],

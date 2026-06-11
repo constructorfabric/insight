@@ -5,8 +5,9 @@
 # narrow metric not in the prod catalog (e.g. a direct read of insight.people
 # without the heavier joins of "Team Members").
 #
-# Each row uses Uuid::nil() as insight_tenant_id to match the auth-stub
-# context (analytics-api/src/auth.rs returns nil tenant).
+# Each row is inserted under config.TEST_TENANT_ID — the tenant the harness
+# sends as X-Insight-Tenant-Id on every request (the analytics-api tenant
+# middleware rejects nil/absent tenants, see e2e_lib/metric_seed.py).
 
 overrides:
   - id: 00000000-0000-0000-0000-0000face0001

@@ -13,7 +13,7 @@ See specs: [PRD](../../../../docs/domain/bronze-to-api-e2e/specs/PRD.md), [DESIG
 
 ## Prerequisites
 
-Only one: **Docker Engine ≥ 24**. Everything else (Python 3.12, Rust 1.92, dbt-clickhouse, pytest, all deps) lives inside the runner image.
+Only one: **Docker Engine ≥ 24**. Everything else (Python 3.12, Rust matching `rust-version` in `src/backend/Cargo.toml`, dbt-clickhouse, pytest, all deps) lives inside the runner image.
 
 ## Run (recommended — dockerized)
 
@@ -83,5 +83,5 @@ These ports avoid conflict with `dev-up.sh` (which uses 8123 / 3306) and the dbt
 
 ## Notes for fixture authors
 
-- Auth in `analytics-api` is a stub; requests work without a Bearer token. `insight_tenant_id` resolves to `00000000-0000-0000-0000-000000000000` (nil UUID) — your bronze CSV rows MUST use the same tenant.
+- Auth in `analytics-api` requires no Bearer token, but its tenant middleware rejects requests without a non-nil tenant. The harness sends `X-Insight-Tenant-Id` with `e2e_lib.config.TEST_TENANT_ID` on every request and re-homes seeded metric definitions onto that tenant (`metric_seed.py`). The ClickHouse query path does not filter by tenant yet, so bronze CSV rows may use any tenant value.
 - Metric definitions are auto-seeded by the analytics-api binary's SeaORM migrations. Look up the metric UUID with `GET /v1/metrics` once the session is up, or add overrides in `seed/metrics.yaml`.

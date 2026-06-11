@@ -4,9 +4,12 @@ We build once per session (cargo's incremental compile keeps it fast across
 sessions) and spawn the binary directly on the host (per DESIGN §4: a host
 binary keeps target/ warm and avoids container I/O on the cargo hot path).
 
-The auth middleware in analytics-api is currently a stub — the binary requires
-no Bearer token (auth happens at the API Gateway, which we bypass). All
-requests resolve to tenant_id = nil UUID.
+analytics-api requires no Bearer token (auth happens at the API Gateway, which
+we bypass), but its tenant middleware rejects requests without a resolvable
+non-nil tenant. The harness therefore sends `X-Insight-Tenant-Id` with
+`config.TEST_TENANT_ID` on every request — including /health polling — and
+`metric_seed.seed_test_metrics` re-homes the seeded metric definitions onto
+that tenant.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from typing import Any
 
 import httpx
 
-from e2e_lib.config import SessionConfig
+from e2e_lib.config import SessionConfig, TENANT_HEADER, TEST_TENANT_ID
 from e2e_lib.fixture_loader import Fixture
 
 LOG = logging.getLogger("e2e.api")
@@ -166,6 +169,7 @@ def build(cfg: SessionConfig) -> Path:
             "cargo executable not found on PATH or in standard rustup locations. "
             "Install via `rustup` and ensure ~/.cargo/bin is on PATH (or set CARGO_HOME)."
         )
+    version = "?"
     required = _required_cargo_version(cfg.repo_root)
     if required is not None:
         ok, version = _cargo_version_at_least(cargo, major=required[0], minor=required[1])
@@ -261,8 +265,17 @@ class AnalyticsApiProcess:
         return self._proc is not None and self._proc.poll() is None
 
     def client(self) -> httpx.Client:
-        """Return an httpx.Client bound to this process's base URL."""
-        return httpx.Client(base_url=self.base_url, timeout=30.0)
+        """Return an httpx.Client bound to this process's base URL.
+
+        Every request carries `X-Insight-Tenant-Id`: the tenant middleware sits
+        in front of all routes (including `/health`) and rejects requests with
+        no resolvable tenant, so the header is mandatory, not per-endpoint.
+        """
+        return httpx.Client(
+            base_url=self.base_url,
+            timeout=30.0,
+            headers={TENANT_HEADER: str(TEST_TENANT_ID)},
+        )
 
     def call_fixture(self, fixture: Fixture) -> ApiResponse:
         """Build a request from the fixture's spec.yaml, execute it, return ApiResponse.
@@ -292,7 +305,11 @@ class AnalyticsApiProcess:
                     f"{stdout[-2000:]}"
                 )
             try:
-                with httpx.Client(base_url=self.base_url, timeout=2.0) as c:
+                with httpx.Client(
+                    base_url=self.base_url,
+                    timeout=2.0,
+                    headers={TENANT_HEADER: str(TEST_TENANT_ID)},
+                ) as c:
                     r = c.get("/health")
                     if r.status_code == 200:
                         LOG.info("analytics-api is healthy at %s", self.base_url)

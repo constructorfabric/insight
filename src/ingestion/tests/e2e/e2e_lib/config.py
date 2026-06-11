@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import secrets
 import string
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,6 +18,20 @@ from pathlib import Path
 # Resolve the repo root from this file's location:
 # src/ingestion/tests/e2e/e2e_lib/config.py -> ../../../../../
 _REPO_ROOT = Path(__file__).resolve().parents[5]
+
+
+# Header analytics-api's tenant middleware reads to resolve the request tenant
+# (auth.rs::TENANT_HEADER). The harness sends it on EVERY request.
+TENANT_HEADER = "X-Insight-Tenant-Id"
+
+# Session tenant for the whole e2e run. analytics-api's tenant middleware
+# rejects the nil UUID (a non-identity value must not pin tenant context), so
+# the harness cannot use 0000…0. Instead it seeds metric definitions under this
+# non-nil tenant and sends it as `X-Insight-Tenant-Id` on every request. The
+# ClickHouse query path does not filter by tenant yet (MVP — handlers.rs), so
+# fixture data carries whatever tenant it likes; only the `metrics`-table lookup
+# is tenant-scoped, and that is what we align here.
+TEST_TENANT_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 def _random_password(length: int = 24) -> str:
