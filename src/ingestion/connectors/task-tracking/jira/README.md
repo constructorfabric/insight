@@ -31,7 +31,6 @@ stringData:
   jira_instance_url: "https://myorg.atlassian.net"
   jira_email: "user@example.com"
   jira_api_token: "CHANGE_ME"
-  jira_project_keys: "PROJ1,PROJ2"
   # jira_start_date: "2024-01-01"   # optional, default = 2020-01-01
 ```
 
@@ -42,7 +41,6 @@ stringData:
 | `jira_instance_url` | Yes | Jira Cloud URL, no trailing slash (e.g. `https://myorg.atlassian.net`) |
 | `jira_email` | Yes | Atlassian account email for Basic Auth |
 | `jira_api_token` | Yes | Atlassian API token. Marked `airbyte_secret: true` — never logged |
-| `jira_project_keys` | Yes | Comma-separated project keys (e.g. `TC,TNG`). Jira Cloud rejects unbounded JQL queries |
 | `jira_start_date` | No | Earliest date to sync issues from, `YYYY-MM-DD`. Default `2020-01-01` |
 
 ### Automatically injected
@@ -94,7 +92,7 @@ The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent f
 
 - **Auth**: Basic Auth with email + API token. Missing/invalid token → HTTP 401; Jira project-level permission failures → 403. Both halt the run.
 - **Rate limits**: Atlassian caps per-user and per-IP API calls. The connector honours `Retry-After` on HTTP 429 and 503 (both used by Atlassian for throttling) with backoff.
-- **JQL scope**: `jira_project_keys` is required; Jira Cloud rejects unbounded queries (`project != EMPTY`) with an error.
+- **Project scope**: projects are auto-discovered each sync via `/rest/api/3/project/search` (every project visible to the API token) and scanned per project (`project = "<KEY>"` JQL — Jira Cloud rejects unbounded queries). An incremental gate on `insight.lastIssueUpdateTime` (with a 3-day lookback) skips projects with no issue changes since the previous sync, so idle projects cost zero requests. New projects are picked up automatically on the next scheduled sync.
 - **Custom fields**: all custom fields are preserved in `jira_issue.custom_fields_json` for downstream dbt extraction.
 
 ## Related

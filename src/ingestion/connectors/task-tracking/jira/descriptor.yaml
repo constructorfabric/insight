@@ -1,5 +1,9 @@
 name: jira
-version: "1.2.1"
+# 2.0.0 (major): project scope moved from the jira_project_keys allowlist to
+# runtime auto-discovery; per-project partitioning resets incremental state —
+# reconcile dispatches a full refresh on major bumps (ADR-0015), which is the
+# intended migration.
+version: "2.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
@@ -28,4 +32,3 @@ secret:
     - jira_instance_url
     - jira_email
     - jira_api_token
-    - jira_project_keys

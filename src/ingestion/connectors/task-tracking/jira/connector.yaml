@@ -36,8 +36,11 @@ definitions:
               - 400
               - 404
       request_parameters:
+        # Per-project JQL: the project scope comes from the
+        # jira_project_discovery partition router (see definitions), not from
+        # config — the manual jira_project_keys allowlist is gone.
         jql: >-
-          project IN ({{ config['jira_project_keys'] }}) AND updated >= "{{
+          project = "{{ stream_partition.project_key }}" AND updated >= "{{
           stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time
           }}" ORDER BY updated ASC
         expand: names
@@ -56,6 +59,103 @@ definitions:
         pagination_strategy:
           type: OffsetIncrement
           page_size: 50
+
+  # ─── Project auto-discovery parent (supersedes the jira_project_keys
+  # allowlist; idea from PR #941/#616, reworked) ──────────────────────────
+  # Inline-only parent for jira_issue and jira_issue_keys: enumerates every
+  # project visible to the API token via /project/search and partitions the
+  # issue scans per project (JQL `project = "<KEY>"`). Defined under
+  # `definitions`, NOT `streams`, so discover() never sees it and reconcile
+  # (ADR-0015) cannot auto-select it as a bronze table.
+  #
+  # Incremental gate: `expand=insight` adds per-project
+  # insight.lastIssueUpdateTime (a denormalized Atlassian aggregate; observed
+  # second-fresh on live Jira Cloud). With the client-side cursor on the
+  # hoisted last_issue_update_time, the first sync emits every project while
+  # later syncs emit only projects whose issues changed since the previous
+  # run — idle projects cost zero child requests. Projects with no issues
+  # carry no insight block; they default to epoch and stay filtered until
+  # their first issue stamps a fresh lastIssueUpdateTime. Comments/worklogs
+  # bump the issue's `updated`, which bumps the project aggregate
+  # transitively, so this one gate covers all issue substreams.
+  #
+  # Residual risk (verified empirically): the client-side record filter
+  # compares strictly against the stored cursor — lookback_window does NOT
+  # widen the gate on resume (observed: 3/211 projects re-emitted, only those
+  # updated after the cursor). If the insight aggregate ever lags behind the
+  # source of truth, that project's data is delayed until its next issue
+  # update pushes the aggregate past the cursor. Accepted: the aggregate was
+  # observed second-fresh on live Jira Cloud, and a periodic full refresh
+  # (major version bump / connection reset) re-covers everything.
+  jira_project_discovery:
+    type: DeclarativeStream
+    name: jira_project_discovery
+    primary_key:
+      - project_key
+    retriever:
+      type: SimpleRetriever
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - values
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        error_handler:
+          $ref: "#/definitions/linked/HttpRequester/error_handler"
+        request_parameters:
+          expand: insight
+        url: "{{ config['jira_instance_url'] }}/rest/api/3/project/search"
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - project_key
+            value: "{{ record['key'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - last_issue_update_time
+            value: >-
+              {{ (record.get('insight') or {}).get('lastIssueUpdateTime') or
+              '1970-01-01T00:00:00.000+0000' }}
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: last_issue_update_time
+      is_client_side_incremental: true
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "1970-01-01"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f%z') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      lookback_window: P3D
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          project_key:
+            type:
+              - string
+              - "null"
+          last_issue_update_time:
+            type:
+              - string
+              - "null"
+        additionalProperties: true
 
 streams:
   - type: DeclarativeStream
@@ -776,6 +876,15 @@ streams:
         request_parameters:
           $ref: "#/definitions/linked/HttpRequester/request_parameters"
         url: "{{ config['jira_instance_url'] }}/rest/api/3/search/jql"
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: project_key
+            partition_field: project_key
+            incremental_dependency: true
+            stream:
+              $ref: "#/definitions/jira_project_discovery"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated
@@ -794,7 +903,14 @@ streams:
         datetime: "{{ now_utc().strftime('%Y-%m-%d %H:%M') }}"
         datetime_format: "%Y-%m-%d %H:%M"
       step: P30D
-      lookback_window: PT1H
+      # 14h lookback (was 1h): JQL bare datetimes are evaluated in the API
+      # user's local timezone, so an `updated <= <now-as-UTC-string>` upper
+      # bound silently excludes up to 14h of fresh updates for users in
+      # positive UTC offsets (max UTC+14). Rewinding the next window start by
+      # 14h re-covers that tail. Do NOT fix this by pushing end_datetime into
+      # the future instead — that advances the cursor past the actual query
+      # time and permanently skips records updated in between.
+      lookback_window: PT14H
     transformations:
       - type: AddFields
         fields:
@@ -7943,11 +8059,20 @@ streams:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         request_parameters:
           jql: >-
-            project IN ({{ config['jira_project_keys'] }}) AND updated >= "{{
+            project = "{{ stream_partition.project_key }}" AND updated >= "{{
             stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time
             }}" ORDER BY updated ASC
           fields: updated
         url: "{{ config['jira_instance_url'] }}/rest/api/3/search/jql"
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: project_key
+            partition_field: project_key
+            incremental_dependency: true
+            stream:
+              $ref: "#/definitions/jira_project_discovery"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated
@@ -7966,7 +8091,14 @@ streams:
         datetime: "{{ now_utc().strftime('%Y-%m-%d %H:%M') }}"
         datetime_format: "%Y-%m-%d %H:%M"
       step: P30D
-      lookback_window: PT1H
+      # 14h lookback (was 1h): JQL bare datetimes are evaluated in the API
+      # user's local timezone, so an `updated <= <now-as-UTC-string>` upper
+      # bound silently excludes up to 14h of fresh updates for users in
+      # positive UTC offsets (max UTC+14). Rewinding the next window start by
+      # 14h re-covers that tail. Do NOT fix this by pushing end_datetime into
+      # the future instead — that advances the cursor past the actual query
+      # time and permanently skips records updated in between.
+      lookback_window: PT14H
     transformations:
       - type: AddFields
         fields:
@@ -8059,7 +8191,6 @@ spec:
       - jira_api_token
       - insight_tenant_id
       - insight_source_id
-      - jira_project_keys
     properties:
       jira_instance_url:
         type: string
@@ -8086,13 +8217,6 @@ spec:
         description: Instance discriminator (e.g., jira-team-alpha)
         title: Source Instance ID
         order: 4
-      jira_project_keys:
-        type: string
-        description: >-
-          Comma-separated project keys to sync (e.g., TC,TNG). Required — Jira
-          Cloud does not allow unbounded queries.
-        title: Project Keys
-        order: 5
       jira_start_date:
         type: string
         description: "Earliest date to sync issues from (YYYY-MM-DD). Default: 2020-01-01"
