@@ -1,0 +1,1073 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+# Figma REST API v1 connector (ui-design domain, data_source=insight_figma).
+#
+# Raw extraction only — no aggregation in the connector (thin-extractor per
+# ADR cpt-insightspec-adr-connector-responsibility-scope). Activity rollups
+# (design_file_activity per the ui-design domain spec) are a downstream dbt
+# concern.
+#
+# API facts that shape this manifest (verified against figma/rest-api-spec,
+# June 2026):
+#   - No endpoint enumerates teams — figma_team_ids is required config, taken
+#     from the team URL (figma.com/files/team/<id>/...).
+#   - No endpoint enumerates team/org members; the User object in responses
+#     carries only id/handle/img_url (email exists solely on /v1/me). Identity
+#     resolution happens later in dbt from author_id/author_handle.
+#   - GET /v1/files/{key} (full document) is rate-limit Tier 1 (6 req/month on
+#     viewer seats) and is deliberately NOT used. All endpoints below are
+#     Tier 2/3.
+#   - /versions is the only paginated endpoint used (page_size max 50,
+#     pagination.next_page full URL); projects/files/comments return a single
+#     response.
+#   - 429 carries Retry-After; honoured with the same 600s cap as confluence.
+#   - File-level 403/404 are routine (invite-only projects, deleted files) and
+#     must not kill the sync — IGNOREd on per-file substreams, FAILed on the
+#     team-level stream where they mean a bad token or team id.
+#
+# Builder-UI compatibility notes: substream parents are INLINED full stream
+# definitions (whole-object $ref like "#/streams/N" fails validate-strict),
+# and url_base is an inline literal (string-typed slots reject granular
+# $ref). Inline parent copies are minimal — no transformations except where
+# a partition value must be denormalized (team_id on design_projects), with
+# parent_key pointing at raw API fields (id, key). Repetition is the price
+# of Builder compatibility.
+
+check:
+  type: CheckStream
+  stream_names:
+    - design_projects
+
+definitions:
+  design_projects_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+    properties:
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      data_source: {type: ["string", "null"]}
+      project_id: {type: ["string", "null"]}
+      project_name: {type: ["string", "null"]}
+      team_id: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
+    additionalProperties: true
+
+  design_files_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+    properties:
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      data_source: {type: ["string", "null"]}
+      file_key: {type: ["string", "null"]}
+      file_name: {type: ["string", "null"]}
+      project_id: {type: ["string", "null"]}
+      project_name: {type: ["string", "null"]}
+      team_id: {type: ["string", "null"]}
+      last_modified: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
+    additionalProperties: true
+
+  design_file_meta_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+    properties:
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      data_source: {type: ["string", "null"]}
+      file_key: {type: ["string", "null"]}
+      folder_name: {type: ["string", "null"]}
+      creator_id: {type: ["string", "null"]}
+      creator_handle: {type: ["string", "null"]}
+      last_touched_by_id: {type: ["string", "null"]}
+      last_touched_by_handle: {type: ["string", "null"]}
+      last_touched_at: {type: ["string", "null"]}
+      editor_type: {type: ["string", "null"]}
+      link_access: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
+    additionalProperties: true
+
+  design_file_versions_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+    properties:
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      data_source: {type: ["string", "null"]}
+      version_id: {type: ["string", "null"]}
+      file_key: {type: ["string", "null"]}
+      created_at: {type: ["string", "null"]}
+      label: {type: ["string", "null"]}
+      description: {type: ["string", "null"]}
+      author_id: {type: ["string", "null"]}
+      author_handle: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
+    additionalProperties: true
+
+  design_file_comments_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+    properties:
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      data_source: {type: ["string", "null"]}
+      comment_id: {type: ["string", "null"]}
+      file_key: {type: ["string", "null"]}
+      parent_comment_id: {type: ["string", "null"]}
+      author_id: {type: ["string", "null"]}
+      author_handle: {type: ["string", "null"]}
+      created_at: {type: ["string", "null"]}
+      resolved_at: {type: ["string", "null"]}
+      message: {type: ["string", "null"]}
+      order_id: {type: ["string", "null"]}
+      reaction_count: {type: ["integer", "null"]}
+      collected_at: {type: ["string", "null"]}
+    additionalProperties: true
+
+streams:
+  # ── Stream 0: design_projects ──────────────────────────────────────────
+  # One partition per configured team id. GET /v1/teams/{id}/projects
+  # returns all projects in a single response (no pagination).
+  - type: DeclarativeStream
+    name: design_projects
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/design_projects_schema"
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['figma_team_ids'].replace(' ', '').split(',') }}"
+        cursor_field: team_id
+      requester:
+        type: HttpRequester
+        url_base: https://api.figma.com
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['figma_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: X-Figma-Token
+        request_headers:
+          Accept: application/json
+        http_method: GET
+        path: /v1/teams/{{ stream_partition.team_id }}/projects
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 500, 502, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401, 403, 404]
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - projects
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_figma
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [project_name]
+            value: "{{ record.get('name', '') }}"
+          - type: AddedFieldDefinition
+            path: [team_id]
+            value: "{{ stream_partition.team_id }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  # ── Stream 1: design_files ─────────────────────────────────────────────
+  # GET /v1/projects/{id}/files per parent project, single response.
+  # Client-side incremental on last_modified (no server-side filter exists),
+  # same pattern as confluence wiki_pages. The inline parent copy of
+  # design_projects carries one AddFields (team_id from the partition) so
+  # team_id can be denormalized onto file records via extra_fields.
+  - type: DeclarativeStream
+    name: design_files
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/design_files_schema"
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            extra_fields:
+              - [name]
+              - [team_id]
+            stream:
+              type: DeclarativeStream
+              name: design_projects
+              primary_key:
+                - id
+              retriever:
+                type: SimpleRetriever
+                partition_router:
+                  type: ListPartitionRouter
+                  values: "{{ config['figma_team_ids'].replace(' ', '').split(',') }}"
+                  cursor_field: team_id
+                requester:
+                  type: HttpRequester
+                  url_base: https://api.figma.com
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['figma_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: X-Figma-Token
+                  request_headers:
+                    Accept: application/json
+                  http_method: GET
+                  path: /v1/teams/{{ stream_partition.team_id }}/projects
+                  error_handler:
+                    type: DefaultErrorHandler
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                        max_waiting_time_in_seconds: 600
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes: [429, 500, 502, 503]
+                      - type: HttpResponseFilter
+                        action: FAIL
+                        http_codes: [401, 403, 404]
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - projects
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [team_id]
+                      value: "{{ stream_partition.team_id }}"
+      requester:
+        type: HttpRequester
+        url_base: https://api.figma.com
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['figma_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: X-Figma-Token
+        request_headers:
+          Accept: application/json
+        http_method: GET
+        path: /v1/projects/{{ stream_partition.project_id }}/files
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 500, 502, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401]
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes: [403, 404]
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - files
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: last_modified
+      is_client_side_incremental: true
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('figma_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_figma
+          - type: AddedFieldDefinition
+            path: [file_key]
+            value: "{{ record['key'] }}"
+          - type: AddedFieldDefinition
+            path: [file_name]
+            value: "{{ record.get('name', '') }}"
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_partition.project_id }}"
+          - type: AddedFieldDefinition
+            path: [project_name]
+            value: "{{ (stream_slice.extra_fields or {}).get('name', '') }}"
+          - type: AddedFieldDefinition
+            path: [team_id]
+            value: "{{ (stream_slice.extra_fields or {}).get('team_id', '') }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['key'] }}
+
+  # ── Stream 2: design_file_meta ─────────────────────────────────────────
+  # GET /v1/files/{key}/meta — the only place the API exposes creator and
+  # last_touched_by (User objects: id/handle only, no email). Tier 3.
+  - type: DeclarativeStream
+    name: design_file_meta
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/design_file_meta_schema"
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: key
+            partition_field: file_key
+            stream:
+              type: DeclarativeStream
+              name: design_files
+              primary_key:
+                - key
+              retriever:
+                type: SimpleRetriever
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: id
+                      partition_field: project_id
+                      stream:
+                        type: DeclarativeStream
+                        name: design_projects
+                        primary_key:
+                          - id
+                        retriever:
+                          type: SimpleRetriever
+                          partition_router:
+                            type: ListPartitionRouter
+                            values: "{{ config['figma_team_ids'].replace(' ', '').split(',') }}"
+                            cursor_field: team_id
+                          requester:
+                            type: HttpRequester
+                            url_base: https://api.figma.com
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              api_token: "{{ config['figma_token'] }}"
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: X-Figma-Token
+                            request_headers:
+                              Accept: application/json
+                            http_method: GET
+                            path: /v1/teams/{{ stream_partition.team_id }}/projects
+                            error_handler:
+                              type: DefaultErrorHandler
+                              backoff_strategies:
+                                - type: WaitTimeFromHeader
+                                  header: Retry-After
+                                  max_waiting_time_in_seconds: 600
+                              response_filters:
+                                - type: HttpResponseFilter
+                                  action: RETRY
+                                  http_codes: [429, 500, 502, 503]
+                                - type: HttpResponseFilter
+                                  action: FAIL
+                                  http_codes: [401, 403, 404]
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path:
+                                - projects
+                requester:
+                  type: HttpRequester
+                  url_base: https://api.figma.com
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['figma_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: X-Figma-Token
+                  request_headers:
+                    Accept: application/json
+                  http_method: GET
+                  path: /v1/projects/{{ stream_partition.project_id }}/files
+                  error_handler:
+                    type: DefaultErrorHandler
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                        max_waiting_time_in_seconds: 600
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes: [429, 500, 502, 503]
+                      - type: HttpResponseFilter
+                        action: FAIL
+                        http_codes: [401]
+                      - type: HttpResponseFilter
+                        action: IGNORE
+                        http_codes: [403, 404]
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - files
+      requester:
+        type: HttpRequester
+        url_base: https://api.figma.com
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['figma_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: X-Figma-Token
+        request_headers:
+          Accept: application/json
+        http_method: GET
+        path: /v1/files/{{ stream_partition.file_key }}/meta
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 500, 502, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401]
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes: [403, 404]
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - file
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_figma
+          - type: AddedFieldDefinition
+            path: [file_key]
+            value: "{{ stream_partition.file_key }}"
+          - type: AddedFieldDefinition
+            path: [folder_name]
+            value: "{{ record.get('folder_name', '') }}"
+          - type: AddedFieldDefinition
+            path: [creator_id]
+            value: "{{ (record.get('creator') or {}).get('id', '') }}"
+          - type: AddedFieldDefinition
+            path: [creator_handle]
+            value: "{{ (record.get('creator') or {}).get('handle', '') }}"
+          - type: AddedFieldDefinition
+            path: [last_touched_by_id]
+            value: "{{ (record.get('last_touched_by') or {}).get('id', '') }}"
+          - type: AddedFieldDefinition
+            path: [last_touched_by_handle]
+            value: "{{ (record.get('last_touched_by') or {}).get('handle', '') }}"
+          - type: AddedFieldDefinition
+            path: [last_touched_at]
+            value: "{{ record.get('last_touched_at', '') }}"
+          - type: AddedFieldDefinition
+            path: [editor_type]
+            value: "{{ record.get('editorType', '') }}"
+          - type: AddedFieldDefinition
+            path: [link_access]
+            value: "{{ record.get('link_access', '') }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_partition.file_key }}
+
+  # ── Stream 3: design_file_versions ─────────────────────────────────────
+  # GET /v1/files/{key}/versions — newest first, paginated via
+  # pagination.next_page (full URL), page_size max 50. History is unbounded
+  # (autosave checkpoints), so two guards against walking it all:
+  #   - record_filter drops versions older than figma_start_date
+  #   - stop_condition halts pagination once the page tail crosses the date
+  - type: DeclarativeStream
+    name: design_file_versions
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/design_file_versions_schema"
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: key
+            partition_field: file_key
+            stream:
+              type: DeclarativeStream
+              name: design_files
+              primary_key:
+                - key
+              retriever:
+                type: SimpleRetriever
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: id
+                      partition_field: project_id
+                      stream:
+                        type: DeclarativeStream
+                        name: design_projects
+                        primary_key:
+                          - id
+                        retriever:
+                          type: SimpleRetriever
+                          partition_router:
+                            type: ListPartitionRouter
+                            values: "{{ config['figma_team_ids'].replace(' ', '').split(',') }}"
+                            cursor_field: team_id
+                          requester:
+                            type: HttpRequester
+                            url_base: https://api.figma.com
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              api_token: "{{ config['figma_token'] }}"
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: X-Figma-Token
+                            request_headers:
+                              Accept: application/json
+                            http_method: GET
+                            path: /v1/teams/{{ stream_partition.team_id }}/projects
+                            error_handler:
+                              type: DefaultErrorHandler
+                              backoff_strategies:
+                                - type: WaitTimeFromHeader
+                                  header: Retry-After
+                                  max_waiting_time_in_seconds: 600
+                              response_filters:
+                                - type: HttpResponseFilter
+                                  action: RETRY
+                                  http_codes: [429, 500, 502, 503]
+                                - type: HttpResponseFilter
+                                  action: FAIL
+                                  http_codes: [401, 403, 404]
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path:
+                                - projects
+                requester:
+                  type: HttpRequester
+                  url_base: https://api.figma.com
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['figma_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: X-Figma-Token
+                  request_headers:
+                    Accept: application/json
+                  http_method: GET
+                  path: /v1/projects/{{ stream_partition.project_id }}/files
+                  error_handler:
+                    type: DefaultErrorHandler
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                        max_waiting_time_in_seconds: 600
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes: [429, 500, 502, 503]
+                      - type: HttpResponseFilter
+                        action: FAIL
+                        http_codes: [401]
+                      - type: HttpResponseFilter
+                        action: IGNORE
+                        http_codes: [403, 404]
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - files
+      requester:
+        type: HttpRequester
+        url_base: https://api.figma.com
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['figma_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: X-Figma-Token
+        request_headers:
+          Accept: application/json
+        http_method: GET
+        path: /v1/files/{{ stream_partition.file_key }}/versions
+        request_parameters:
+          page_size: "{{ config.get('figma_page_size', 50) }}"
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 500, 502, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401]
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes: [403, 404]
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestPath
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ (response.get('pagination', {}) or {}).get('next_page', '') }}"
+          stop_condition: >-
+            {{ not (response.get('pagination', {}) or {}).get('next_page')
+            or ((last_record or {}).get('created_at') or '9999')
+            < (config.get('figma_start_date') or '2020-01-01') }}
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - versions
+        record_filter:
+          type: RecordFilter
+          condition: >-
+            {{ record.get('created_at', '') >= (config.get('figma_start_date')
+            or '2020-01-01') }}
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_figma
+          - type: AddedFieldDefinition
+            path: [version_id]
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [file_key]
+            value: "{{ stream_partition.file_key }}"
+          - type: AddedFieldDefinition
+            path: [label]
+            value: "{{ record.get('label') or '' }}"
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ record.get('description') or '' }}"
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id', '') }}"
+          - type: AddedFieldDefinition
+            path: [author_handle]
+            value: "{{ (record.get('user') or {}).get('handle', '') }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_partition.file_key }}-{{ record['id'] }}
+
+  # ── Stream 4: design_file_comments ─────────────────────────────────────
+  # GET /v1/files/{key}/comments — single response, top-level comments and
+  # replies together (parent_id discriminates), unlike confluence's 4-stream
+  # matrix. resolved_at is the resolution marker.
+  - type: DeclarativeStream
+    name: design_file_comments
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/design_file_comments_schema"
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: key
+            partition_field: file_key
+            stream:
+              type: DeclarativeStream
+              name: design_files
+              primary_key:
+                - key
+              retriever:
+                type: SimpleRetriever
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: id
+                      partition_field: project_id
+                      stream:
+                        type: DeclarativeStream
+                        name: design_projects
+                        primary_key:
+                          - id
+                        retriever:
+                          type: SimpleRetriever
+                          partition_router:
+                            type: ListPartitionRouter
+                            values: "{{ config['figma_team_ids'].replace(' ', '').split(',') }}"
+                            cursor_field: team_id
+                          requester:
+                            type: HttpRequester
+                            url_base: https://api.figma.com
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              api_token: "{{ config['figma_token'] }}"
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: X-Figma-Token
+                            request_headers:
+                              Accept: application/json
+                            http_method: GET
+                            path: /v1/teams/{{ stream_partition.team_id }}/projects
+                            error_handler:
+                              type: DefaultErrorHandler
+                              backoff_strategies:
+                                - type: WaitTimeFromHeader
+                                  header: Retry-After
+                                  max_waiting_time_in_seconds: 600
+                              response_filters:
+                                - type: HttpResponseFilter
+                                  action: RETRY
+                                  http_codes: [429, 500, 502, 503]
+                                - type: HttpResponseFilter
+                                  action: FAIL
+                                  http_codes: [401, 403, 404]
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path:
+                                - projects
+                requester:
+                  type: HttpRequester
+                  url_base: https://api.figma.com
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['figma_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: X-Figma-Token
+                  request_headers:
+                    Accept: application/json
+                  http_method: GET
+                  path: /v1/projects/{{ stream_partition.project_id }}/files
+                  error_handler:
+                    type: DefaultErrorHandler
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                        max_waiting_time_in_seconds: 600
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes: [429, 500, 502, 503]
+                      - type: HttpResponseFilter
+                        action: FAIL
+                        http_codes: [401]
+                      - type: HttpResponseFilter
+                        action: IGNORE
+                        http_codes: [403, 404]
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - files
+      requester:
+        type: HttpRequester
+        url_base: https://api.figma.com
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['figma_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: X-Figma-Token
+        request_headers:
+          Accept: application/json
+        http_method: GET
+        path: /v1/files/{{ stream_partition.file_key }}/comments
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 500, 502, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401]
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes: [403, 404]
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - comments
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_figma
+          - type: AddedFieldDefinition
+            path: [comment_id]
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [file_key]
+            value: "{{ stream_partition.file_key }}"
+          - type: AddedFieldDefinition
+            path: [parent_comment_id]
+            value: "{{ record.get('parent_id', '') }}"
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id', '') }}"
+          - type: AddedFieldDefinition
+            path: [author_handle]
+            value: "{{ (record.get('user') or {}).get('handle', '') }}"
+          - type: AddedFieldDefinition
+            path: [resolved_at]
+            value: "{{ record.get('resolved_at') or '' }}"
+          - type: AddedFieldDefinition
+            path: [order_id]
+            value: "{{ record.get('order_id') or '' }}"
+          - type: AddedFieldDefinition
+            path: [reaction_count]
+            value: "{{ (record.get('reactions') or []) | length }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_partition.file_key }}-{{ record['id'] }}
+
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 1
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - figma_token
+      - figma_team_ids
+    properties:
+      insight_tenant_id:
+        type: string
+        description: Insight tenant identifier stamped onto every emitted record.
+        title: Insight Tenant ID
+        order: 0
+      insight_source_id:
+        type: string
+        description: >-
+          Instance discriminator for multi-instance support (e.g. figma-acme).
+        title: Insight Source ID
+        order: 1
+      figma_token:
+        type: string
+        description: >-
+          Figma personal access token (Figma → Settings → Security → Personal
+          access tokens). Needs read scopes for projects, file metadata, file
+          versions and file comments. The token sees exactly what its owner
+          sees, and rate limits depend on the owner's seat type — use an
+          account with a Dev/Full seat that is a member of every configured
+          team.
+        title: Figma Personal Access Token
+        airbyte_secret: true
+        order: 2
+      figma_team_ids:
+        type: string
+        minLength: 1
+        pattern: "^\\s*[^,\\s]+(\\s*,\\s*[^,\\s]+)*\\s*$"
+        description: >-
+          Comma-separated Figma team IDs to collect. The API cannot enumerate
+          teams — copy each ID from the team URL
+          (figma.com/files/team/<team_id>/...).
+        title: Figma Team IDs
+        order: 3
+      figma_start_date:
+        type: string
+        description: >-
+          Earliest date of interest (YYYY-MM-DD). Files not modified since,
+          and file versions created before, this date are skipped. Defaults
+          to 2020-01-01.
+        title: Start Date
+        format: date
+        default: "2020-01-01"
+        order: 4
+      figma_page_size:
+        type: integer
+        description: >-
+          Page size for the file versions endpoint (default 50, which is also
+          the API maximum).
+        title: Page Size
+        default: 50
+        minimum: 1
+        maximum: 50
+        order: 5
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    design_projects: false
+    design_files: false
+    design_file_meta: false
+    design_file_versions: false
+    design_file_comments: false

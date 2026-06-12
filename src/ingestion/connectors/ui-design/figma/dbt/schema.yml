@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: bronze_figma
+    schema: bronze_figma
+    tables:
+      - name: design_projects
+      - name: design_files
+      - name: design_file_meta
+      - name: design_file_versions
+      - name: design_file_comments
+
+# Bronze-only delivery: no staging/Silver models yet. Future staging
+# projections (e.g. figma__design_activity → class_design_activity per the
+# ui-design domain spec) will reference these sources. Identity note for
+# that work: Figma User objects carry only id/handle (no email anywhere in
+# the REST API except /v1/me), so author resolution must go through the
+# Identity Manager name-matching path or an Enterprise SCIM-sourced
+# directory — there is no jira_user-style email join available.

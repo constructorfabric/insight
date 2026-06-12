@@ -14,7 +14,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INGESTION_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+INGESTION_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONNECTORS_DIR="${INGESTION_DIR}/connectors"
 TOOLS_DIR="${INGESTION_DIR}/tools/declarative-connector"
 

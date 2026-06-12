@@ -1,0 +1,20 @@
+name: figma
+type: nocode
+version: "1.0.0"
+
+schedule: "0 5 * * *"
+workflow: sync
+
+# Bronze-only delivery: dbt step promotes the five bronze tables to
+# ReplacingMergeTree (figma__bronze_promoted) and nothing else. Silver
+# routing (class_design_activity per the ui-design domain spec) is a
+# follow-up — when staging models land, they pick up the same tag.
+dbt_select: "tag:figma+"
+
+connection:
+  namespace: bronze_figma
+secret:
+  required_fields:
+    - figma_token
+    - figma_team_ids
+    - figma_start_date

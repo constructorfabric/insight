@@ -1,7 +1,7 @@
 # Design Tools Connector Specification (Multi-Source)
 
-> Version 1.0 — March 2026
-> Based on: Figma (Source TBD — to be assigned in CONNECTORS_REFERENCE.md)
+> Version 1.1 — June 2026 (Figma API facts verified against figma/rest-api-spec; see `figma/figma.md`)
+> Based on: Figma (implemented: `src/ingestion/connectors/ui-design/figma/`, bronze-only)
 
 Data-source agnostic specification for design tool connectors. Defines unified Bronze schemas that work across Figma (and future sources: Sketch, Adobe XD) using a `data_source` discriminator column.
 
@@ -45,9 +45,19 @@ Data-source agnostic specification for design tool connectors. Defines unified B
 - **Version creation** — who created a version of a file, and when (proxy for active editing)
 - **Comments** — who posted a comment on a file, and when (proxy for async design review/collaboration)
 
-Figma's Analytics API (Enterprise plan only) provides user-level activity summaries via an admin dashboard, but this is not available through a public REST API for non-Enterprise plans. `design_file_activity` is therefore a **derived table** populated at collection time by aggregating version and comment records per user per file per day.
+Figma's Analytics API (Enterprise plan only) provides user-level activity summaries via an admin dashboard, but this is not available through a public REST API for non-Enterprise plans. `design_file_activity` is therefore a **derived table** — but per the thin-extractor architecture (ADR `cpt-insightspec-adr-connector-responsibility-scope`) it is derived **in dbt (Silver)**, not by the connector. The connector ships raw streams.
 
-**Why four tables**: Design tool data naturally separates into: (1) per-user activity aggregates (the primary metric table), (2) a file/project directory (the dimension table for file metadata), (3) a user directory (identity anchor), and (4) the standard collection run log. Keeping them separate avoids wide denormalized rows and allows each table to evolve independently.
+**Implemented bronze streams (Figma, June 2026)** — raw extraction in `bronze_figma`, each record carrying `tenant_id`/`source_id`/`unique_key`/`data_source`:
+
+| Stream | Contents | Sync mode |
+|--------|----------|-----------|
+| `design_projects` | Projects per configured team | Full refresh |
+| `design_files` | File directory: `file_key`, `file_name`, `last_modified`, project/team denormalized | Incremental (client-side on `last_modified`) |
+| `design_file_meta` | Creator, last_touched_by, `editor_type`, `folder_name`, `link_access` | Full refresh (substream) |
+| `design_file_versions` | Raw version history: author id/handle, timestamps, labels | Full refresh (substream, bounded by start date) |
+| `design_file_comments` | Raw comments incl. replies, resolution, reactions | Full refresh (substream) |
+
+The `design_file_activity` / `design_users` tables below remain the **target derived model** for the dbt layer and are kept for reference — with one major correction: `design_users` cannot be populated from the Figma REST API (see below).
 
 **Terminology mapping**:
 
@@ -58,7 +68,7 @@ Figma's Analytics API (Enterprise plan only) provides user-level activity summar
 | File viewed | Figma Analytics (Enterprise only) | — | `design_file_activity.files_viewed` |
 | File | `GET /v1/projects/{id}/files` | — | `design_files` |
 | Project | `GET /v1/teams/{id}/projects` | — | `design_files.project_name` (denormalized) |
-| User | `GET /v1/teams/{id}/members` | — | `design_users` |
+| User | **No REST endpoint** — `GET /v1/teams/{id}/members` does not exist (open feature request). Enterprise SCIM only. | — | `design_users` (Enterprise SCIM, planned) |
 
 ---
 
@@ -66,7 +76,7 @@ Figma's Analytics API (Enterprise plan only) provides user-level activity summar
 
 ### `design_file_activity` — Per-user per-file per-day activity
 
-Derived daily aggregates of design activity per user per file. Populated at collection time by aggregating version history and comment records. This is the primary analytics table for design team productivity.
+Derived daily aggregates of design activity per user per file. Populated in dbt (Silver) by aggregating the raw `design_file_versions` and `design_file_comments` bronze streams. This is the primary analytics table for design team productivity.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -86,7 +96,7 @@ Derived daily aggregates of design activity per user per file. Populated at coll
 - `idx_design_activity_user`: `(insight_source_id, email, date)`
 - `idx_design_activity_file`: `(file_key, date, data_source)`
 
-**Derivation note**: One `design_file_activity` row per `(user_id, file_key, date)`. At collection time:
+**Derivation note**: One `design_file_activity` row per `(user_id, file_key, date)`. In the dbt derivation:
 - `versions_created` = count of version records where `created_by.id = user_id` on `date`
 - `comments_posted` = count of comment records where `user.id = user_id` on `date`
 - `files_viewed` = populated only when Figma Analytics API is available (Enterprise plan); NULL otherwise
@@ -120,7 +130,9 @@ Directory of all design files and the projects they belong to. Used as a dimensi
 
 ### `design_users` — User directory
 
-Identity anchor for design tool analytics. Populated from the team members endpoint. Used to resolve source-native `user_id` to `email` and thence to canonical `person_id` in Silver.
+> **Correction (June 2026): not implementable from the Figma REST API.** There is no team/org member enumeration endpoint at any plan tier, and `User` objects in versions/comments/meta responses carry only `id`/`handle`/`img_url` — never email. The only programmatic directory sources are Enterprise-only: the SCIM API (requires SSO + a dedicated SCIM token; `userName` = email) or the Activity Logs API (org admin). This table is therefore **planned for Enterprise tenants only**, populated from SCIM. For everyone else, identity resolution falls back to handle-based name matching in Silver (see Identity Resolution).
+
+Identity anchor for design tool analytics. Used to resolve source-native `user_id` to `email` and thence to canonical `person_id` in Silver.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -171,32 +183,30 @@ Monitoring table — not an analytics source.
 
 | Unified table | Figma endpoint | Key mapping notes |
 |---------------|----------------|-------------------|
-| `design_files` | `GET /v1/teams/{team_id}/projects` → `GET /v1/projects/{project_id}/files` | `key` → `file_key`; `name` → `file_name`; `last_modified` → `last_modified` |
-| `design_users` | `GET /v1/teams/{team_id}/members` | `id` → `user_id`; `email` → `email`; `handle` → `display_name`; `role` → `role` |
-| `design_file_activity` (versions) | `GET /v1/files/{file_key}/versions` | Aggregate by `(created_by.id, date(created_at))` → `versions_created` |
-| `design_file_activity` (comments) | `GET /v1/files/{file_key}/comments` | Aggregate by `(user.id, date(created_at))` → `comments_posted` |
-| `design_file_activity` (views) | Figma Analytics API (Enterprise only) | `files_viewed` — NULL for non-Enterprise plans |
+| `design_projects` (bronze) | `GET /v1/teams/{team_id}/projects` | `id` → `project_id`; `name` → `project_name`; team id from config partition |
+| `design_files` (bronze) | `GET /v1/projects/{project_id}/files` | `key` → `file_key`; `name` → `file_name`; `last_modified` passthrough |
+| `design_file_meta` (bronze) | `GET /v1/files/{file_key}/meta` | `creator`/`last_touched_by` → id + handle (no email); `editorType` → `editor_type` |
+| `design_file_versions` (bronze) | `GET /v1/files/{file_key}/versions` | `user` → `author_id`/`author_handle`; raw rows, no aggregation |
+| `design_file_comments` (bronze) | `GET /v1/files/{file_key}/comments` | `user` → `author_id`/`author_handle`; `parent_id` → `parent_comment_id`; raw rows |
+| `design_users` | Enterprise SCIM `/scim/v2/Users` only (planned) | No REST member endpoint exists; `userName` = email |
+| `design_file_activity` (derived, dbt) | — | Aggregated in Silver from `design_file_versions` + `design_file_comments` |
+| `design_file_activity` (views) | Figma Analytics (Enterprise dashboard only) | `files_viewed` — no public API; NULL |
 
-**`design_file_activity` construction**: The connector iterates over all files in all projects for all configured teams. For each file:
-1. Fetch version history (`/v1/files/{key}/versions`) — extract all versions created since last sync, group by `(created_by.id, date)`, count → `versions_created`
-2. Fetch comments (`/v1/files/{key}/comments`) — extract all comments posted since last sync, group by `(user.id, date)`, count → `comments_posted`
-3. Merge version and comment aggregates into `design_file_activity` rows; upsert on `(user_id, file_key, date)`
+**`design_file_activity` construction (dbt, planned)**: aggregate `design_file_versions` by `(author_id, file_key, date(created_at))` → `versions_created` (with autosave-checkpoint session collapse per the `confluence__wiki_activity` precedent) and `design_file_comments` by `(author_id, file_key, date(created_at))` → `comments_posted`; merge on `(author_id, file_key, date)`.
 
-**Rate limiting**: Figma REST API is rate-limited per token. Large teams with many files will require cursor-based pagination and rate-limit backoff.
+**Rate limiting**: per-endpoint tiers tied to the token owner's seat type (verified June 2026). All endpoints used are Tier 2/3: 50–150 req/min on a Dev/Full seat, 5–10 req/min on a viewer seat. The full-document endpoint (`GET /v1/files/{key}`) is Tier 1 (6 req/month on viewer seats) and is not used. `429` carries `Retry-After`. See `figma/figma.md` for the tier table.
 
 ---
 
 ## Identity Resolution
 
-**Identity anchor**: `design_users` table (`email` field from team members endpoint).
+**Identity anchor (corrected June 2026)**: the Figma REST API exposes **no emails** for record authors — `User` objects carry only `id`/`handle`/`img_url`. Resolution paths, in order of preference:
 
-**Resolution process**:
-1. Collect `email` from `design_users` (populated from `GET /v1/teams/{team_id}/members`)
-2. In `design_file_activity`, `user_id` is the Figma numeric ID — resolve to `email` via `design_users` join at Silver step 1
-3. Normalize email (lowercase, trim)
-4. Map to canonical `person_id` via Identity Manager in Silver step 2
+1. **Enterprise SCIM directory** (tenants with Figma Enterprise + SSO): `design_users` populated from `/scim/v2/Users` (`userName` = email) → email join → `person_id` via Identity Manager.
+2. **Handle-based matching** (all other tenants): `author_handle` (display name) matched against HR/git display names via the Identity Manager name-matching mechanism (`inbox/IDENTITY_RESOLUTION.md`).
+3. The stable `author_id` preserves per-person continuity within Figma even when unresolved.
 
-**`email` availability**: Figma team members endpoint exposes email only for users within the organisation's team. Guest users and external collaborators may have email withheld.
+This mirrors confluence (no email in the v2 API, resolved via the `jira_user` join) — except Figma has no companion-product user table, so SCIM or name-matching is the path.
 
 ---
 
