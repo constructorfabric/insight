@@ -156,7 +156,7 @@ Figma publishes per-endpoint **tiers**; budgets depend on the token owner's seat
 
 **Resolution chain (Silver, future)**:
 
-```
+```text
 design_file_versions.author_id / author_handle
   → Identity Manager name-matching (handle ≈ display name in HR/git sources)
     → person_id

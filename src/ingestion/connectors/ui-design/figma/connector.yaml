@@ -1034,6 +1034,8 @@ spec:
         order: 2
       figma_team_ids:
         type: string
+        minLength: 1
+        pattern: "^\\s*[^,\\s]+(\\s*,\\s*[^,\\s]+)*\\s*$"
         description: >-
           Comma-separated Figma team IDs to collect. The API cannot enumerate
           teams — copy each ID from the team URL

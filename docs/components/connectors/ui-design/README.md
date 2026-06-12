@@ -76,7 +76,7 @@ The `design_file_activity` / `design_users` tables below remain the **target der
 
 ### `design_file_activity` — Per-user per-file per-day activity
 
-Derived daily aggregates of design activity per user per file. Populated at collection time by aggregating version history and comment records. This is the primary analytics table for design team productivity.
+Derived daily aggregates of design activity per user per file. Populated in dbt (Silver) by aggregating the raw `design_file_versions` and `design_file_comments` bronze streams. This is the primary analytics table for design team productivity.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -96,7 +96,7 @@ Derived daily aggregates of design activity per user per file. Populated at coll
 - `idx_design_activity_user`: `(insight_source_id, email, date)`
 - `idx_design_activity_file`: `(file_key, date, data_source)`
 
-**Derivation note**: One `design_file_activity` row per `(user_id, file_key, date)`. At collection time:
+**Derivation note**: One `design_file_activity` row per `(user_id, file_key, date)`. In the dbt derivation:
 - `versions_created` = count of version records where `created_by.id = user_id` on `date`
 - `comments_posted` = count of comment records where `user.id = user_id` on `date`
 - `files_viewed` = populated only when Figma Analytics API is available (Enterprise plan); NULL otherwise
