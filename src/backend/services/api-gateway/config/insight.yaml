@@ -1,7 +1,7 @@
 # Insight API Gateway Configuration
 #
-# Environment variable overrides: APP__modules__<module>__config__<key>
-# Example: APP__modules__oidc-authn-plugin__config__issuer_url=https://dev-123.okta.com/oauth2/default
+# Environment variable overrides: APP__gears__<gear>__config__<key>
+# Example: APP__gears__oidc-authn-plugin__config__issuer_url=https://dev-123.okta.com/oauth2/default
 
 server:
   home_dir: "/app/data"
@@ -14,7 +14,7 @@ logging:
   api-gateway:
     console_level: debug
 
-modules:
+gears:
   api-gateway:
     config:
       bind_addr: "0.0.0.0:8080"
@@ -36,7 +36,7 @@ modules:
       # When false, OIDC plugin validates JWT tokens.
       auth_disabled: false
 
-  module-orchestrator:
+  gear-orchestrator:
     config: {}
 
   grpc-hub:
@@ -50,8 +50,8 @@ modules:
 
   # OIDC/JWT plugin — validates bearer tokens against IdP (Okta, Keycloak, etc.)
   # Required env vars for production:
-  #   APP__modules__oidc-authn-plugin__config__issuer_url
-  #   APP__modules__oidc-authn-plugin__config__audience
+  #   APP__gears__oidc-authn-plugin__config__issuer_url
+  #   APP__gears__oidc-authn-plugin__config__audience
   oidc-authn-plugin:
     config:
       vendor: "hyperspot"
@@ -94,17 +94,13 @@ modules:
     config:
       vendor: "hyperspot"
 
+  # Zero-config in the gears-rust split: the plugin derives the tenant from
+  # the SecurityContext at request time (JWT claims when auth is enabled, or
+  # toolkit-security's DEFAULT_TENANT_ID when auth_disabled=true).
   single-tenant-tr-plugin:
     config:
       vendor: "hyperspot"
       priority: 20
-      tenants:
-        # Default tenant — used when a single workspace is deployed.
-        # Replace with dynamic tenant resolution for multi-tenant deployments.
-        - id: "00000000-df51-5b42-9538-d2b56b7ee953"
-          name: "default"
-          parent_id: null
-          status: active
 
   # ─── Reverse Proxy ─────────────────────────────────────────
   # Routes requests to downstream services after authentication.
@@ -117,6 +113,6 @@ modules:
 
 # ─── Local development ──────────────────────────────────────
 # To run without OIDC (auth disabled), override:
-#   modules.api-gateway.config.auth_disabled: true
+#   gears.api-gateway.config.auth_disabled: true
 # Or use the no-auth config:
 #   insight-api-gateway run -c config/no-auth.yaml

@@ -4,7 +4,7 @@ HTTP entry point for all Insight backend services. Built on cyberfabric-core Mod
 
 ## What it does
 
-- Routes HTTP requests to backend service modules
+- Routes HTTP requests to backend service gears
 - Validates JWT bearer tokens against an OIDC provider (Okta, Keycloak, Auth0, etc.)
 - Enforces RBAC and tenant isolation via authz-resolver
 - Provides OpenAPI documentation, CORS, rate limiting, request tracing
@@ -41,7 +41,7 @@ Configuration is loaded in layers (highest priority last):
 
 1. **Defaults** — hardcoded in code
 2. **YAML file** — `-c config/insight.yaml`
-3. **Environment variables** — `APP__modules__<module>__config__<key>`
+3. **Environment variables** — `APP__gears__<gear>__config__<key>`
 4. **CLI flags** — `--verbose`, `--print-config`
 
 ### Key environment variables
@@ -50,8 +50,8 @@ Configuration is loaded in layers (highest priority last):
 |----------|-------------|---------|
 | `OIDC_ISSUER_URL` | OIDC issuer URL | `https://dev-12345.okta.com/oauth2/default` |
 | `OIDC_AUDIENCE` | Expected JWT audience | `api://insight` |
-| `APP__modules__api-gateway__config__bind_addr` | Listen address | `0.0.0.0:8080` |
-| `APP__modules__api-gateway__config__auth_disabled` | Disable auth | `true` |
+| `APP__gears__api-gateway__config__bind_addr` | Listen address | `0.0.0.0:8080` |
+| `APP__gears__api-gateway__config__auth_disabled` | Disable auth | `true` |
 
 ### Okta setup
 
@@ -112,24 +112,24 @@ helm install insight-gw ./helm --set authDisabled=true
 ## Architecture
 
 ```text
-Client → Ingress → API Gateway → [Auth Middleware] → Service Modules
+Client → Ingress → API Gateway → [Auth Middleware] → Service Gears
                                        │
                                        ├── OIDC Plugin (JWT validation via JWKS)
                                        ├── AuthZ Resolver (RBAC + org scoping)
                                        └── Tenant Resolver (workspace isolation)
 ```
 
-The gateway is a cyberfabric-core ModKit server binary that links:
+The gateway is a gears-rust Toolkit server binary that links:
 
-| Module | Purpose |
-|--------|---------|
+| Gear | Purpose |
+|------|---------|
 | `api-gateway` | Axum HTTP server, routing, OpenAPI, CORS, rate limiting |
 | `oidc-authn-plugin` | JWT validation against OIDC provider |
 | `authn-resolver` | Authentication gateway (delegates to OIDC plugin) |
 | `authz-resolver` | Authorization (static plugin now, org-tree plugin later) |
 | `tenant-resolver` | Multi-tenant workspace isolation |
 | `grpc-hub` | Internal gRPC communication |
-| `module-orchestrator` | Module lifecycle management |
+| `gear-orchestrator` | Gear lifecycle management |
 | `types-registry` | GTS type/plugin discovery |
 
 ## Public endpoints (no auth required)

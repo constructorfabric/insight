@@ -47,7 +47,7 @@ impl Gear for OidcAuthnPlugin {
         if config.issuer_url.is_empty() {
             anyhow::bail!(
                 "oidc-authn-plugin: issuer_url is required. \
-                 Set modules.oidc-authn-plugin.config.issuer_url in your config."
+                 Set gears.oidc-authn-plugin.config.issuer_url in your config."
             );
         }
 

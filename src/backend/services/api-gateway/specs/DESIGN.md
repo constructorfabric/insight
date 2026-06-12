@@ -367,7 +367,7 @@ Deployed as a Kubernetes Deployment with per-service Helm chart (`services/api-g
 
 Configuration via:
 1. YAML config file (baked into image at `/etc/insight/`)
-2. Environment variable overrides (`APP__modules__<module>__config__<key>`)
+2. Environment variable overrides (`APP__gears__<gear>__config__<key>`)
 3. Helm values → rendered as env vars in deployment template
 
 ## 4. Additional Context
@@ -397,7 +397,7 @@ The OIDC plugin uses `modkit-auth::JwksKeyProvider` which:
 Defaults (code) → YAML file (-c flag) → Env vars (APP__*) → CLI flags (-v)
 ```
 
-Each layer overrides the previous. Environment variables use double-underscore nesting: `APP__modules__oidc-authn-plugin__config__issuer_url`.
+Each layer overrides the previous. Environment variables use double-underscore nesting: `APP__gears__oidc-authn-plugin__config__issuer_url`.
 
 ## 5. Traceability
 

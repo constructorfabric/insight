@@ -76,7 +76,7 @@ impl Gear for AuthInfoModule {
             tracing::warn!(
                 "auth-info: issuer_url is empty. \
                  /auth/config endpoint will return empty OIDC config. \
-                 Set modules.auth-info.config.issuer_url."
+                 Set gears.auth-info.config.issuer_url."
             );
         }
         if config.scopes.split_whitespace().next().is_none() {
@@ -84,7 +84,7 @@ impl Gear for AuthInfoModule {
                 "auth-info: scopes is empty. SPA will request no OIDC scopes \
                  and IdPs will fall back to default audiences (Entra → Microsoft Graph), \
                  producing access tokens the gateway can't validate. \
-                 Set modules.auth-info.config.scopes (space-separated)."
+                 Set gears.auth-info.config.scopes (space-separated)."
             );
         }
 

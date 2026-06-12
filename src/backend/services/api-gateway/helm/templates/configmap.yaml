@@ -13,7 +13,7 @@ data:
       default:
         console_level: info
 
-    modules:
+    gears:
       api-gateway:
         config:
           bind_addr: "0.0.0.0:{{ .Values.service.port }}"
@@ -32,7 +32,7 @@ data:
               burst: {{ .Values.gateway.rateLimit.burst }}
               in_flight: {{ .Values.gateway.rateLimit.inFlight }}
 
-      module-orchestrator:
+      gear-orchestrator:
         config: {}
 
       grpc-hub:
@@ -87,7 +87,7 @@ data:
           # expected a string` on api-gateway init when running with
           # authDisabled=true (no Secret mounted) or with a BYO
           # `oidc.existingSecret` that does NOT include the
-          # `APP__modules__auth-info__config__scopes` env-var override.
+          # `APP__gears__auth-info__config__scopes` env-var override.
           # In Secret-injected paths the env-var still wins (envFrom
           # overrides envFrom-loaded YAML); this fallback covers the
           # configmap-only paths.
@@ -106,20 +106,15 @@ data:
         config:
           vendor: "hyperspot"
 
+      # Zero-config in the gears-rust split: the plugin derives the tenant
+      # from the SecurityContext at request time (JWT claims when auth is
+      # enabled, or toolkit-security's DEFAULT_TENANT_ID when
+      # authDisabled=true). The umbrella's `global.tenantDefaultId` is
+      # therefore no longer consumed here.
       single-tenant-tr-plugin:
         config:
           vendor: "hyperspot"
           priority: 20
-          tenants:
-            # ID sourced from the umbrella's `global.tenantDefaultId` so
-            # this gateway, the identity service, and the analytics-api
-            # all agree on one tenant UUID. Falls back to a fixed UUID
-            # for standalone-subchart users who don't go through the
-            # umbrella (and therefore don't see `global.*`).
-            - id: {{ (default dict .Values.global).tenantDefaultId | default "00000000-df51-5b42-9538-d2b56b7ee953" | quote }}
-              name: "default"
-              parent_id: null
-              status: active
 
       proxy:
         config:
