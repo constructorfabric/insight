@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass, field
 
 # ─── Fixed UUIDs ────────────────────────────────────────────────────────
-# The dev lead's UUID matches the value the original dev-compose-seed.sh
+# The dev lead's UUID matches the value the original dev-compose.sh seed
 # inserts, so re-runs across both scripts converge on the same row.
 DEV_LEAD_UUID = "00000000-0000-0000-0000-000000000010"
 
@@ -33,7 +33,7 @@ AUTHOR_PERSON_UUID = "00000000-0000-0000-0000-000000000000"
 
 # Fixed insight_source_id used by every dev-seed observation, org-chart
 # edge, and account_person_map row. Matches what the original
-# dev-compose-seed.sh used so the persons unique-key absorbs both.
+# dev-compose.sh seed used so the persons unique-key absorbs both.
 DEV_SEED_SOURCE_ID = "00000000-0000-0000-0000-000000000001"
 DEV_SEED_SOURCE_TYPE = "dev-seed"
 
@@ -123,6 +123,10 @@ TEAM_PROFILES: dict[str, TeamProfile] = {
     }),
 }
 
+COMPANY_EMAIL_SUFFIX = "company.nonpresent"
+
+def build_email(person: str) -> str:
+    return f"{person}@{COMPANY_EMAIL_SUFFIX}".lower()
 
 def build_roster(dev_user_email: str) -> list[Person]:
     """Construct the 25-person roster anchored on `dev_user_email`."""
@@ -131,7 +135,7 @@ def build_roster(dev_user_email: str) -> list[Person]:
 
     ceo = Person(
         uuid=CEO_UUID,
-        email="email_ceo@company.nonpresent",
+        email=build_email("email_ceo"),
         team=None,
         role="ceo",
         parent_uuid=None,
@@ -140,11 +144,11 @@ def build_roster(dev_user_email: str) -> list[Person]:
     leads: list[Person] = [
         Person(uuid=DEV_LEAD_UUID, email=dev_user_email,
                team="development", role="lead", parent_uuid=CEO_UUID),
-        Person(uuid=SALES_LEAD_UUID, email="email_sales_lead@company.nonpresent",
+        Person(uuid=SALES_LEAD_UUID, email=build_email("email_sales_lead"),
                team="sales", role="lead", parent_uuid=CEO_UUID),
-        Person(uuid=HR_LEAD_UUID, email="email_hr_lead@company.nonpresent",
+        Person(uuid=HR_LEAD_UUID, email=build_email("email_hr_lead"),
                team="hr", role="lead", parent_uuid=CEO_UUID),
-        Person(uuid=SUPPORT_LEAD_UUID, email="email_support_lead@company.nonpresent",
+        Person(uuid=SUPPORT_LEAD_UUID, email=build_email("email_support_lead"),
                team="support", role="lead", parent_uuid=CEO_UUID),
     ]
 
@@ -155,7 +159,7 @@ def build_roster(dev_user_email: str) -> list[Person]:
         for n in range(1, 6):
             ics.append(Person(
                 uuid=_ic_uuid(tid, n),
-                email=f"email_{lead.team}_{n:02d}@company.nonpresent",
+                email=build_email(f"email_{lead.team}_{n:02d}"),
                 team=lead.team,
                 role="ic",
                 parent_uuid=lead.uuid,
@@ -166,7 +170,7 @@ def build_roster(dev_user_email: str) -> list[Person]:
 
 def get_dev_user_email() -> str:
     """Resolve the dev user's email, honouring VITE_DEV_USER_EMAIL."""
-    val = os.environ.get("VITE_DEV_USER_EMAIL", "").strip()
+    val = os.environ.get("VITE_DEV_USER_EMAIL", "").strip().lower()
     if not val:
         raise SystemExit(
             "ERROR: VITE_DEV_USER_EMAIL must be set in the seed environment.\n"
