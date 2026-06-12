@@ -1,0 +1,429 @@
+#!/usr/bin/env bash
+# Insight platform — docker-compose dev stack control surface.
+#
+# Subcommands:
+#   up       Bring the stack up. Builds artefacts, generates override,
+#            starts every service per the chosen profile.
+#   down     Stop everything (data preserved by default).
+#   build    Rebuild one service's host-side artefact.
+#   seed     Populate the demo dataset (identity / silver / all).
+#   help     Print this message.
+#
+# Each subcommand has its own --help.
+#
+# Most settings live in .env.compose. See .env.compose.example for the
+# full contract and CONTRIBUTING.md for the daily workflow.
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+
+# ──────────────────────────────────────────────────────────────────────
+# Shared helpers
+# ──────────────────────────────────────────────────────────────────────
+
+# bash 3.2 (Mac default) lacks associative arrays. Plain strings + tiny
+# helpers keep this script portable.
+trim()     { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
+contains() { case " $1 " in *" $2 "*) return 0 ;; esac; return 1; }
+add()      { local list="$1" item="$2"; contains "$list" "$item" && printf '%s' "$list" || printf '%s %s' "$list" "$item"; }
+
+resolve_env_file() {
+  local f="${1:-.env.compose}"
+  [[ -f "$f" ]] && { printf '%s' "$f"; return 0; }
+  [[ "$f" == ".env.compose" && -f ".env.compose.example" ]] && {
+    printf '%s' ".env.compose.example"
+    return 0
+  }
+  echo "ERROR: env file not found: $f" >&2
+  echo "       Run:  cp .env.compose.example .env.compose" >&2
+  return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────
+# up
+# ──────────────────────────────────────────────────────────────────────
+
+cmd_up_help() {
+  cat <<'EOF'
+usage: dev-compose.sh up [options]
+
+Bring the stack up: build host-side artefacts (Rust + .NET + optional
+frontend dist), generate a per-run compose override that flips selected
+services to ghcr images, then `docker compose up -d`.
+
+Options:
+  --from-ghcr=svc1,svc2     Pull these backend services from ghcr instead
+                            of building. Recognised: api-gateway,
+                            analytics-api, identity.
+  --build-only=svc1,svc2    Build only these; everything else from ghcr.
+  --frontend-mode=MODE      Override FRONTEND_MODE for this run.
+                            (dev | built | ghcr)
+  --no-frontend             Don't start any frontend variant.
+  --skip-build              Don't rebuild artefacts — reuse what's
+                            already in compose/build/.
+  --env-file=PATH           Alternate dotenv file. Default: .env.compose.
+
+Out-of-scope:
+  --start-airbyte / --start-argo
+      Both need k8s and are not shipped by this compose stack.
+      The script exits with a pointer to CONTRIBUTING.md if you pass them.
+EOF
+}
+
+cmd_up() {
+  local env_file=".env.compose"
+  local from_ghcr_csv=""
+  local build_only_csv=""
+  local frontend_mode_override=""
+  local skip_build=false
+  local no_frontend=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --env-file=*)      env_file="${1#*=}"; shift ;;
+      --env-file)        env_file="$2"; shift 2 ;;
+      --from-ghcr=*)     from_ghcr_csv="${1#*=}"; shift ;;
+      --from-ghcr)       from_ghcr_csv="$2"; shift 2 ;;
+      --build-only=*)    build_only_csv="${1#*=}"; shift ;;
+      --build-only)      build_only_csv="$2"; shift 2 ;;
+      --frontend-mode=*) frontend_mode_override="${1#*=}"; shift ;;
+      --frontend-mode)   frontend_mode_override="$2"; shift 2 ;;
+      --skip-build)      skip_build=true; shift ;;
+      --no-frontend)     no_frontend=true; shift ;;
+      --start-airbyte|--start-argo)
+        echo "ERROR: $1 is not supported by the compose stack." >&2
+        echo "       Both need k8s. Install orbstack/k3d/kind and use the" >&2
+        echo "       existing ./dev-up.sh path. See CONTRIBUTING.md." >&2
+        return 2 ;;
+      -h|--help)         cmd_up_help; return 0 ;;
+      *) echo "ERROR: unknown arg: $1" >&2; cmd_up_help; return 2 ;;
+    esac
+  done
+
+  env_file="$(resolve_env_file "$env_file")"
+  set -a; source "$env_file"; set +a
+
+  [[ -n "$frontend_mode_override" ]] && FRONTEND_MODE="$frontend_mode_override"
+  FRONTEND_MODE="${FRONTEND_MODE:-dev}"
+
+  # ── Resolve which services go to ghcr ────────────────────────────
+  local all_backend="api-gateway analytics-api identity"
+  local ghcr_list=""
+  local build_list=""
+
+  [[ -n "${API_GATEWAY_IMAGE:-}"   ]] && ghcr_list=$(add "$ghcr_list" api-gateway)
+  [[ -n "${ANALYTICS_API_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" analytics-api)
+  [[ -n "${IDENTITY_IMAGE:-}"      ]] && ghcr_list=$(add "$ghcr_list" identity)
+
+  if [[ -n "$from_ghcr_csv" ]]; then
+    local OLD_IFS=$IFS; IFS=','
+    local s
+    for s in $from_ghcr_csv; do ghcr_list=$(add "$ghcr_list" "$(trim "$s")"); done
+    IFS=$OLD_IFS
+  fi
+  if [[ -n "$build_only_csv" ]]; then
+    local OLD_IFS=$IFS; IFS=','
+    local s
+    for s in $build_only_csv; do build_list=$(add "$build_list" "$(trim "$s")"); done
+    IFS=$OLD_IFS
+    for s in $all_backend; do
+      contains "$build_list" "$s" || ghcr_list=$(add "$ghcr_list" "$s")
+    done
+  fi
+
+  contains "$ghcr_list" api-gateway   && [[ -z "${API_GATEWAY_IMAGE:-}"   ]] && export API_GATEWAY_IMAGE="ghcr.io/constructorfabric/insight-api-gateway:${API_GATEWAY_GHCR_TAG:-latest}"
+  contains "$ghcr_list" analytics-api && [[ -z "${ANALYTICS_API_IMAGE:-}" ]] && export ANALYTICS_API_IMAGE="ghcr.io/constructorfabric/insight-analytics-api:${ANALYTICS_API_GHCR_TAG:-latest}"
+  contains "$ghcr_list" identity      && [[ -z "${IDENTITY_IMAGE:-}"      ]] && export IDENTITY_IMAGE="ghcr.io/constructorfabric/insight-identity:${IDENTITY_GHCR_TAG:-latest}"
+  true
+
+  # ── Generate per-run override ────────────────────────────────────
+  local override="compose/override.generated.yml"
+  mkdir -p compose
+  {
+    echo "# Auto-generated by dev-compose.sh — DO NOT EDIT BY HAND."
+    echo "# Per-run override that flips selected services to ghcr mode."
+    if [[ -z "$ghcr_list" ]]; then
+      echo "services: {}"
+    else
+      echo "services:"
+      local svc
+      for svc in $all_backend; do
+        if contains "$ghcr_list" "$svc"; then
+          cat <<YML
+  ${svc}:
+    build: !reset null
+    volumes: !override []
+    entrypoint: !reset null
+    command: !reset null
+YML
+        fi
+      done
+    fi
+  } > "$override"
+
+  local compose_cmd=(docker compose --env-file "$env_file" -f docker-compose.yml -f "$override")
+  local profiles=()
+  if [[ "$no_frontend" != "true" ]]; then
+    case "$FRONTEND_MODE" in
+      dev|built|ghcr) profiles+=(--profile "front-$FRONTEND_MODE") ;;
+      *) echo "ERROR: FRONTEND_MODE must be dev|built|ghcr (got: $FRONTEND_MODE)" >&2; return 1 ;;
+    esac
+  fi
+
+  # ── Build phase ──────────────────────────────────────────────────
+  if [[ "$skip_build" != "true" ]]; then
+    echo "=== Building artefacts (skip with --skip-build) ==="
+    local rust_bins=""
+    contains "$ghcr_list" api-gateway   || rust_bins="$rust_bins insight-api-gateway"
+    contains "$ghcr_list" analytics-api || rust_bins="$rust_bins analytics-api"
+    rust_bins=$(trim "$rust_bins")
+    if [[ -n "$rust_bins" ]]; then
+      echo "--- Rust:$rust_bins"
+      local bin_flags=""
+      local b
+      for b in $rust_bins; do bin_flags="$bin_flags --bin $b"; done
+      "${compose_cmd[@]}" --profile build run --rm \
+        build-rust bash -c "
+          set -eux
+          apt-get update && apt-get install -y --no-install-recommends \
+            protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
+          cargo build --release$bin_flags
+          mkdir -p /out/api-gateway /out/analytics-api
+          [ -f /target/release/insight-api-gateway ] && install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway || true
+          [ -f /target/release/analytics-api ]       && install -m 0755 /target/release/analytics-api       /out/analytics-api/analytics-api || true
+        "
+    fi
+    if ! contains "$ghcr_list" identity; then
+      echo "--- .NET: identity"
+      "${compose_cmd[@]}" --profile build run --rm build-dotnet
+    fi
+    if [[ "$no_frontend" != "true" && "$FRONTEND_MODE" == "built" ]]; then
+      echo "--- Frontend: pnpm build"
+      "${compose_cmd[@]}" --profile build run --rm build-frontend
+    fi
+  fi
+
+  local svc
+  for svc in $all_backend; do
+    contains "$ghcr_list" "$svc" && mkdir -p "compose/build/$svc"
+  done
+
+  echo "=== docker compose up ==="
+  "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} up -d --remove-orphans
+
+  echo
+  "${compose_cmd[@]}" ps
+  echo
+  echo "Stop: ./dev-compose.sh down"
+  echo "Rebuild one: ./dev-compose.sh build <service>"
+  echo "Seed demo data: ./dev-compose.sh seed"
+}
+
+# ──────────────────────────────────────────────────────────────────────
+# down
+# ──────────────────────────────────────────────────────────────────────
+
+cmd_down_help() {
+  cat <<'EOF'
+usage: dev-compose.sh down [options]
+
+Stop and remove every container. Data volumes (mariadb-data,
+clickhouse-data, redis-data, redpanda-data, rust-target) are PRESERVED
+unless --volumes is passed.
+
+Options:
+  --volumes  / -v  Also remove named volumes and wipe compose/build/.
+  --env-file=PATH  Alternate dotenv file.
+EOF
+}
+
+cmd_down() {
+  local env_file=".env.compose"
+  local wipe=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --env-file=*) env_file="${1#*=}"; shift ;;
+      --env-file)   env_file="$2"; shift 2 ;;
+      --volumes|-v) wipe=true; shift ;;
+      -h|--help)    cmd_down_help; return 0 ;;
+      *) echo "ERROR: unknown arg: $1" >&2; cmd_down_help; return 2 ;;
+    esac
+  done
+  env_file="$(resolve_env_file "$env_file")"
+
+  local override="compose/override.generated.yml"
+  local compose_cmd=(docker compose --env-file "$env_file" -f docker-compose.yml)
+  [[ -f "$override" ]] && compose_cmd+=(-f "$override")
+
+  "${compose_cmd[@]}" \
+    --profile front-dev --profile front-built --profile front-ghcr \
+    --profile build --profile seed \
+    down $([[ "$wipe" == "true" ]] && echo "--volumes --remove-orphans")
+
+  if [[ "$wipe" == "true" ]]; then
+    echo "Wiping host-side build artefacts (compose/build/)..."
+    rm -rf compose/build/
+  fi
+  echo "Done."
+}
+
+# ──────────────────────────────────────────────────────────────────────
+# build
+# ──────────────────────────────────────────────────────────────────────
+
+cmd_build_help() {
+  cat <<'EOF'
+usage: dev-compose.sh build <target>
+
+Rebuild one host-side artefact and let the already-running container
+pick it up via ENABLE_AUTO_RELOAD.
+
+Targets:
+  api-gateway        Rust gateway binary only.
+  analytics-api      Rust analytics binary only.
+  identity           .NET 9 publish output.
+  frontend           pnpm build → dist/.
+  rust               Both Rust services.
+  all                Everything (Rust + .NET + frontend).
+EOF
+}
+
+cmd_build() {
+  local env_file=".env.compose"
+  if [[ "${1:-}" == "--env-file" ]]; then env_file="$2"; shift 2; fi
+  if [[ "${1:-}" == --env-file=* ]]; then env_file="${1#*=}"; shift; fi
+
+  local target="${1:-}"
+  [[ -z "$target" || "$target" == "-h" || "$target" == "--help" ]] && { cmd_build_help; return 0; }
+
+  env_file="$(resolve_env_file "$env_file")"
+  set -a; source "$env_file"; set +a
+
+  local compose_cmd=(docker compose --env-file "$env_file" -f docker-compose.yml --profile build)
+  build_rust_bins() {
+    local bin_flags=""
+    local b
+    for b in "$@"; do bin_flags="$bin_flags --bin $b"; done
+    "${compose_cmd[@]}" run --rm build-rust bash -c "
+      set -eux
+      apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
+      cargo build --release$bin_flags
+      mkdir -p /out/api-gateway /out/analytics-api
+      [ -f /target/release/insight-api-gateway ] && install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway || true
+      [ -f /target/release/analytics-api ]       && install -m 0755 /target/release/analytics-api       /out/analytics-api/analytics-api || true
+    "
+  }
+
+  case "$target" in
+    api-gateway)   build_rust_bins insight-api-gateway ;;
+    analytics-api) build_rust_bins analytics-api ;;
+    rust)          build_rust_bins insight-api-gateway analytics-api ;;
+    identity)      "${compose_cmd[@]}" run --rm build-dotnet ;;
+    frontend)      "${compose_cmd[@]}" run --rm build-frontend ;;
+    all)
+      build_rust_bins insight-api-gateway analytics-api
+      "${compose_cmd[@]}" run --rm build-dotnet
+      "${compose_cmd[@]}" run --rm build-frontend
+      ;;
+    *) echo "ERROR: unknown target: $target" >&2; cmd_build_help; return 2 ;;
+  esac
+  echo "Done. If a runtime container has ENABLE_AUTO_RELOAD=true it will restart automatically."
+}
+
+# ──────────────────────────────────────────────────────────────────────
+# seed
+# ──────────────────────────────────────────────────────────────────────
+
+cmd_seed_help() {
+  cat <<'EOF'
+usage: dev-compose.sh seed [identity|silver|all]
+
+Populate the demo dataset. Stack must be up first.
+
+  identity   25 persons + org_chart + account_person_map in MariaDB.
+  silver     CREATE silver tables, apply gold-view migrations, generate
+             ~24k rows of 60-day per-team activity in ClickHouse.
+  all        Both (default if no arg).
+
+After `silver` or `all` runs, analytics-api is restarted so its
+metric-catalog schema validator re-checks the freshly-populated tables.
+Without that bounce, every metric stays cached at the boot-time
+`schema_status='error'`, the FE flags every bullet row schema_error=true,
+and section badges read "no peer data" everywhere.
+Tracking upstream as constructorfabric/insight#1307.
+
+See compose/seed/README.md for the ruff/mypy/venv setup.
+EOF
+}
+
+cmd_seed() {
+  local env_file=".env.compose"
+  if [[ "${1:-}" == "--env-file" ]]; then env_file="$2"; shift 2; fi
+  if [[ "${1:-}" == --env-file=* ]]; then env_file="${1#*=}"; shift; fi
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then cmd_seed_help; return 0; fi
+
+  env_file="$(resolve_env_file "$env_file")"
+  local override="compose/override.generated.yml"
+  local compose_cmd=(docker compose --env-file "$env_file" -f docker-compose.yml)
+  [[ -f "$override" ]] && compose_cmd+=(-f "$override")
+
+  local args=("$@")
+  [[ ${#args[@]} -eq 0 ]] && args=("all")
+
+  # Run the seed step itself. NOT `exec` — we still want to bounce
+  # analytics-api after silver/all completes (see cf/insight#1307).
+  "${compose_cmd[@]}" --profile seed run --rm seed-sample "${args[@]}"
+  local seed_status=$?
+  if [[ $seed_status -ne 0 ]]; then
+    return $seed_status
+  fi
+
+  # Restart analytics-api when ClickHouse data was touched. Its schema
+  # validator caches schema_status at startup and never re-checks; without
+  # this nudge the catalog keeps serving the pre-seed 'table_not_found'
+  # verdict and the FE shows "no peer data" everywhere.
+  case "${args[0]}" in
+    silver|all)
+      echo
+      echo "=== restarting analytics-api so it re-validates schema (cf/insight#1307) ==="
+      "${compose_cmd[@]}" restart analytics-api >/dev/null
+      ;;
+  esac
+}
+
+# ──────────────────────────────────────────────────────────────────────
+# Dispatcher
+# ──────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<'EOF'
+usage: dev-compose.sh <subcommand> [args]
+
+Subcommands:
+  up      Build artefacts + start the stack.
+  down    Stop everything. --volumes to wipe data.
+  build   Rebuild one host-side artefact.
+  seed    Populate the demo dataset (identity / silver / all).
+  help    Print this message.
+
+Each subcommand has its own --help.
+EOF
+}
+
+main() {
+  local sub="${1:-help}"
+  [[ $# -gt 0 ]] && shift
+  case "$sub" in
+    up)    cmd_up    "$@" ;;
+    down)  cmd_down  "$@" ;;
+    build) cmd_build "$@" ;;
+    seed)  cmd_seed  "$@" ;;
+    help|-h|--help) usage ;;
+    *) echo "ERROR: unknown subcommand: $sub" >&2; usage; return 2 ;;
+  esac
+}
+
+main "$@"

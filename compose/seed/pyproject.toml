@@ -1,0 +1,40 @@
+# Tool config for the Insight sample-data seeder.
+# Lives next to the code so `ruff check .` and `mypy .` work from the dir.
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+# Pragmatic strict set: pycodestyle, pyflakes, isort, bugbear, comprehensions,
+# pyupgrade, return-style, simplify, type-annotations, datetime-tz, naming.
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # flake8-bugbear
+    "C4",       # flake8-comprehensions
+    "UP",       # pyupgrade
+    "RET",      # flake8-return
+    "SIM",      # flake8-simplify
+    "ANN",      # flake8-annotations
+    "DTZ",      # flake8-datetimez (naive datetime is a bug)
+    "N",        # pep8-naming
+    "RUF",      # ruff-specific
+]
+ignore = [
+    "ANN401",  # Dynamic `Any` is sometimes the right tool
+    "E501",    # Long lines handled by `line-length`
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+# clickhouse-connect doesn't ship full type stubs yet
+[[tool.mypy.overrides]]
+module = "clickhouse_connect.*"
+ignore_missing_imports = true

@@ -1,0 +1,2 @@
+PyMySQL==1.2.0
+clickhouse-connect==1.2.0

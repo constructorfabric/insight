@@ -15,7 +15,7 @@ logging:
 modules:
   api-gateway:
     config:
-      bind_addr: "127.0.0.1:8080"
+      bind_addr: "0.0.0.0:8080"
       enable_docs: true
       cors_enabled: true
       prefix_path: "/api"
@@ -30,6 +30,15 @@ modules:
       issuer_url: ""
       client_id: ""
       redirect_uri: "http://localhost:3000/callback"
+
+  # The oidc-authn-plugin module is registered in the binary regardless of
+  # whether auth is in use. It rejects an empty issuer_url at startup, so
+  # we hand it a placeholder URL that is never actually contacted because
+  # api-gateway.auth_disabled=true short-circuits the validator. Replace
+  # with a real issuer when flipping AUTH_DISABLED off.
+  oidc-authn-plugin:
+    config:
+      issuer_url: "https://no-auth.local/oauth2/default"
 
   module-orchestrator:
     config: {}
@@ -69,4 +78,6 @@ modules:
     config:
       routes:
         - prefix: "/analytics"
-          upstream: "http://localhost:8081"
+          upstream: "http://analytics-api:8081"
+        - prefix: "/identity"
+          upstream: "http://identity:8082"

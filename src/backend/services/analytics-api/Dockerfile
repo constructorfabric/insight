@@ -40,18 +40,38 @@ RUN cargo build --release --bin analytics-api
 # Stage 2: Runtime
 FROM debian:bookworm-slim
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+ARG TARGETARCH
+ARG WATCHEXEC_VERSION=2.3.2
+
+# Runtime deps + watchexec. See api-gateway/Dockerfile for rationale.
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) WX_ARCH=x86_64-unknown-linux-musl ;; \
+      arm64) WX_ARCH=aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
+    curl -fsSL "https://github.com/watchexec/watchexec/releases/download/v${WATCHEXEC_VERSION}/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}.tar.xz" \
+        | tar -xJ -C /tmp; \
+    install -m 0755 "/tmp/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}/watchexec" /usr/local/bin/watchexec; \
+    rm -rf /tmp/watchexec-*; \
+    apt-get purge -y curl xz-utils; \
+    apt-get autoremove -y; \
     rm -rf /var/lib/apt/lists/*
+
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /app
 
 COPY --from=builder /build/target/release/analytics-api /app/analytics-api
 
-RUN useradd -U -u 1000 appuser && \
+RUN useradd -U -u 1000 -m appuser && \
     chown -R 1000:1000 /app
 USER 1000
 
 EXPOSE 8081
 
-CMD ["/app/analytics-api"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/app/analytics-api", "--", "/app/analytics-api"]

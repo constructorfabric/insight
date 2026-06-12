@@ -1,0 +1,430 @@
+# Insight platform — local docker-compose dev stack.
+#
+# This is the docker-compose path for working on Insight on a developer
+# laptop. The Kind/helmfile path (dev-up.sh) is being retired in favour
+# of this; see CONTRIBUTING.md.
+#
+# Quick start:
+#   cp .env.compose.example .env.compose
+#   ./dev-compose.sh up
+#
+# Everything is driven by .env.compose. Read .env.compose.example for the
+# full settings contract.
+#
+# Layout:
+#   * infra services  : mariadb, clickhouse, redis, redpanda
+#   * backend         : api-gateway, analytics-api, identity
+#   * frontend        : ONE of insight-front-{dev,built,ghcr}, selected by
+#                       FRONTEND_MODE (profile-gated)
+#   * builders        : build-rust, build-dotnet, build-frontend
+#                       (profile=build — invoked by dev-compose.sh build)
+#
+# Auto-reload: every backend container runs the shared docker-entrypoint.sh
+# which honours ENABLE_AUTO_RELOAD=true to wrap the binary in `watchexec`.
+# When unset, runs the bare command (matching prod). NEVER set this in k8s.
+
+name: insight
+
+# ─── Networks ─────────────────────────────────────────────────────────
+networks:
+  insight:
+    name: insight
+
+# ─── Volumes (data + build artefacts) ─────────────────────────────────
+volumes:
+  mariadb-data:        {}
+  clickhouse-data:     {}
+  clickhouse-logs:     {}
+  redis-data:          {}
+  redpanda-data:       {}
+  # Cargo build cache. Lives in Docker so Mac/Windows hosts don't get
+  # Linux-target object files polluting their native ./src/backend/target.
+  rust-target:         {}
+  # Frontend dev mode: node_modules lives in a named volume so the host's
+  # bind-mount of source doesn't clobber it and Mac perf stays sane.
+  frontend-node-modules: {}
+
+# ─── x-anchors (DRY shared blocks) ────────────────────────────────────
+x-restart-policy: &restart-policy
+  # NO k8s-style auto-restart. Compose recreates on `up` but won't restart
+  # crashed processes on its own — keeping behaviour explicit per
+  # requirement #8. ENABLE_AUTO_RELOAD is the ONLY restart switch and it
+  # is gated by an explicit env var.
+  restart: "no"
+
+x-backend-env: &backend-env
+  ENABLE_AUTO_RELOAD: ${ENABLE_AUTO_RELOAD:-}
+  RUST_LOG: ${RUST_LOG:-info}
+
+x-backend-common: &backend-common
+  <<: *restart-policy
+  init: true
+  networks: [insight]
+
+# ─── Services ─────────────────────────────────────────────────────────
+services:
+
+  # ── Infra ─────────────────────────────────────────────────────────────
+
+  mariadb:
+    <<: *restart-policy
+    image: mariadb:11.4
+    container_name: insight-mariadb
+    networks: [insight]
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root-local}
+      MARIADB_DATABASE: identity
+      MARIADB_USER: ${MARIADB_USER:-insight}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-insight-local}
+    ports:
+      - "${MARIADB_PORT:-3306}:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./compose/mariadb-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  clickhouse:
+    <<: *restart-policy
+    image: clickhouse/clickhouse-server:24.8
+    container_name: insight-clickhouse
+    networks: [insight]
+    environment:
+      CLICKHOUSE_DB: insight
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-insight}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-insight-local}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+      - ./compose/clickhouse-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      # Profile override — see the file for the join_use_nulls rationale.
+      - ./compose/clickhouse-user-defaults.xml:/etc/clickhouse-server/users.d/seed-defaults.xml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    <<: *restart-policy
+    image: redis:7-alpine
+    container_name: insight-redis
+    networks: [insight]
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redpanda:
+    <<: *restart-policy
+    image: redpandadata/redpanda:v24.2.7
+    container_name: insight-redpanda
+    networks: [insight]
+    command:
+      - redpanda
+      - start
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:${REDPANDA_KAFKA_PORT:-19092}
+      - --pandaproxy-addr=internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr=internal://redpanda:8082,external://localhost:${REDPANDA_PROXY_PORT:-18082}
+      - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr=redpanda:33145
+      - --advertise-rpc-addr=redpanda:33145
+      - --mode=dev-container
+      - --smp=1
+      - --default-log-level=warn
+    ports:
+      - "${REDPANDA_KAFKA_PORT:-19092}:19092"
+      - "${REDPANDA_PROXY_PORT:-18082}:18082"
+      - "${REDPANDA_SCHEMA_PORT:-18081}:18081"
+      - "${REDPANDA_ADMIN_PORT:-19644}:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # ── Backend services ──────────────────────────────────────────────────
+  #
+  # All three use the EXISTING service Dockerfiles (modified to bundle
+  # docker-entrypoint.sh + watchexec). For ghcr mode, set
+  # API_GATEWAY_IMAGE / ANALYTICS_API_IMAGE / IDENTITY_IMAGE to a registry
+  # ref in .env.compose — the dev-compose.sh up script generates an
+  # override that drops `build:` and the bind-mount for affected services.
+
+  api-gateway:
+    <<: *backend-common
+    image: ${API_GATEWAY_IMAGE:-insight-api-gateway:dev}
+    container_name: insight-api-gateway
+    build:
+      context: src/backend
+      dockerfile: services/api-gateway/Dockerfile
+    depends_on:
+      mariadb:    { condition: service_healthy }
+      identity:   { condition: service_started  }
+    environment:
+      <<: *backend-env
+      # Service config is baked at /app/config/. Compose `command:` below
+      # selects which one; see CONTRIBUTING.md for the OIDC swap.
+    volumes:
+      # Bind-mount the host-built Linux binary over the baked one. The
+      # ./compose/build/api-gateway path is populated by `./dev-compose.sh up`
+      # (or `./dev-compose.sh build api-gateway`), which runs the
+      # `build-rust` builder service under the `build` profile and writes
+      # the freshly-compiled binary to /out/api-gateway/. A plain
+      # `docker compose build` does NOT create this artefact — it only
+      # builds the runtime image; the bind-mount source has to exist on
+      # the host or compose errors out.
+      - ./compose/build/api-gateway/insight-api-gateway:/app/insight-api-gateway:ro
+      # Mount the service's config dir so YAML edits don't require a
+      # full image rebuild.
+      - ./src/backend/services/api-gateway/config:/app/config:ro
+    command:
+      - "/app/insight-api-gateway"   # <watched path>
+      - "--"
+      - "/app/insight-api-gateway"
+      - "-c"
+      - "/app/config/no-auth.yaml"
+      - "run"
+    ports:
+      - "${API_GATEWAY_PORT:-8080}:8080"
+
+  analytics-api:
+    <<: *backend-common
+    image: ${ANALYTICS_API_IMAGE:-insight-analytics-api:dev}
+    container_name: insight-analytics-api
+    build:
+      context: src/backend
+      dockerfile: services/analytics-api/Dockerfile
+    depends_on:
+      mariadb:    { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      redis:      { condition: service_healthy }
+    environment:
+      <<: *backend-env
+      ANALYTICS__bind_addr:          "0.0.0.0:8081"
+      ANALYTICS__database_url:       "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@mariadb:3306/analytics"
+      ANALYTICS__clickhouse_url:     "http://clickhouse:8123"
+      ANALYTICS__clickhouse_database: "insight"
+      ANALYTICS__clickhouse_user:    "${CLICKHOUSE_USER:-insight}"
+      ANALYTICS__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
+      ANALYTICS__identity_url:       "http://identity:8082"
+      ANALYTICS__redis_url:          "redis://redis:6379"
+      ANALYTICS__metric_catalog__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
+    volumes:
+      - ./compose/build/analytics-api/analytics-api:/app/analytics-api:ro
+    command:
+      - "/app/analytics-api"
+      - "--"
+      - "/app/analytics-api"
+    ports:
+      - "${ANALYTICS_API_PORT:-8081}:8081"
+
+  identity:
+    <<: *backend-common
+    image: ${IDENTITY_IMAGE:-insight-identity:dev}
+    container_name: insight-identity
+    build:
+      context: src/backend
+      dockerfile: services/identity/Dockerfile
+    depends_on:
+      mariadb: { condition: service_healthy }
+    environment:
+      <<: *backend-env
+      ASPNETCORE_URLS: "http://0.0.0.0:8082"
+      IDENTITY__mariadb__url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@mariadb:3306/identity"
+      IDENTITY__identity__bind_addr: "0.0.0.0:8082"
+      IDENTITY__identity__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
+    volumes:
+      # The .NET publish dir is replaced wholesale, not just one binary.
+      - ./compose/build/identity:/app:ro
+    command:
+      - "/app/Insight.Identity.Api.dll"   # <watched path — the published DLL>
+      - "--"
+      - "dotnet"
+      - "/app/Insight.Identity.Api.dll"
+    ports:
+      - "${IDENTITY_PORT:-8082}:8082"
+
+  # ── Frontend (one variant active per FRONTEND_MODE) ────────────────────
+  #
+  # The dev-compose.sh up script translates FRONTEND_MODE=dev|built|ghcr
+  # into the matching --profile flag.
+
+  insight-front-dev:
+    <<: *restart-policy
+    profiles: ["front-dev"]
+    image: node:24-bookworm-slim
+    container_name: insight-front
+    networks:
+      insight:
+        aliases: [insight-front]
+    working_dir: /app
+    environment:
+      CI: "true"
+      # Vite proxies `/api/*` to this target — used by the FE's
+      # analytics + identity API clients. Must resolve from inside the
+      # frontend container, so we use the compose service name.
+      VITE_API_PROXY_TARGET: "${VITE_API_PROXY_TARGET:-http://api-gateway:8080}"
+      VITE_OIDC_ISSUER: "${OIDC_ISSUER:-}"
+      VITE_OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      # Dev impersonation: when set AND a matching row exists in
+      # identity.persons (value_type='email'), the FE skips OIDC and
+      # binds requests to that person. See CONTRIBUTING.md "Dev
+      # impersonation seed".
+      VITE_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-}"
+    volumes:
+      - ${INSIGHT_FRONT_PATH:-../insight-front}:/app
+      - frontend-node-modules:/app/node_modules
+    command:
+      - "sh"
+      - "-c"
+      - "corepack enable && pnpm install --frozen-lockfile && exec pnpm dev --host 0.0.0.0 --port 5173"
+    ports:
+      - "${FRONTEND_PORT:-3000}:5173"
+
+  insight-front-built:
+    <<: *restart-policy
+    profiles: ["front-built"]
+    image: nginx:1.27-alpine
+    container_name: insight-front
+    networks:
+      insight:
+        aliases: [insight-front]
+    environment:
+      CSP_REMOTE: ${CSP_REMOTE:-}
+    volumes:
+      # Host-built dist/ — produced by dev-compose.sh build (build-frontend)
+      # or by running `pnpm build` directly in the insight-front repo.
+      - ${INSIGHT_FRONT_PATH:-../insight-front}/dist:/usr/share/nginx/html:ro
+      - ${INSIGHT_FRONT_PATH:-../insight-front}/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${INSIGHT_FRONT_PATH:-../insight-front}/nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+
+  insight-front-ghcr:
+    <<: *restart-policy
+    profiles: ["front-ghcr"]
+    image: ${FRONTEND_IMAGE:-ghcr.io/constructorfabric/insight-front:latest}
+    container_name: insight-front
+    networks:
+      insight:
+        aliases: [insight-front]
+    environment:
+      CSP_REMOTE: ${CSP_REMOTE:-}
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+
+  # ── Builders (profile=build) ───────────────────────────────────────────
+  #
+  # These run to completion and exit. Invoked by dev-compose.sh build, not
+  # by `up`. They produce Linux artefacts on whatever host (Mac/Win/Linux)
+  # so the runtime containers can bind-mount them.
+
+  build-rust:
+    profiles: ["build"]
+    image: rust:1.95-bookworm
+    container_name: insight-build-rust
+    networks: [insight]
+    working_dir: /workspace
+    environment:
+      CARGO_TARGET_DIR: /target
+    volumes:
+      - ./src/backend:/workspace
+      - rust-target:/target
+      - ./compose/build:/out
+    # The script overrides this command to pick a specific bin. Default
+    # builds both Rust services.
+    command:
+      - "bash"
+      - "-c"
+      - |
+        set -eux
+        apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
+        cargo build --release --bin insight-api-gateway --bin analytics-api
+        mkdir -p /out/api-gateway /out/analytics-api
+        install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway
+        install -m 0755 /target/release/analytics-api      /out/analytics-api/analytics-api
+
+  build-dotnet:
+    profiles: ["build"]
+    image: mcr.microsoft.com/dotnet/sdk:9.0
+    container_name: insight-build-dotnet
+    networks: [insight]
+    working_dir: /src
+    volumes:
+      - ./src/backend/services/identity:/src
+      - ./compose/build/identity:/out
+    command:
+      - "bash"
+      - "-c"
+      - |
+        set -eux
+        dotnet publish src/Insight.Identity.Api/Insight.Identity.Api.csproj \
+          -c Debug -o /out /p:UseAppHost=false
+
+  build-frontend:
+    profiles: ["build"]
+    image: node:24-bookworm-slim
+    container_name: insight-build-frontend
+    networks: [insight]
+    working_dir: /app
+    volumes:
+      - ${INSIGHT_FRONT_PATH:-../insight-front}:/app
+      - frontend-node-modules:/app/node_modules
+    command:
+      - "sh"
+      - "-c"
+      - "corepack enable && pnpm install --frozen-lockfile && pnpm build"
+
+  # ── Sample-data seeder (profile=seed) ──────────────────────────────────
+  #
+  # Invoked via ./dev-compose.sh seed which passes positional args
+  # (identity | silver | all) through to seed.py.
+  seed-sample:
+    profiles: ["seed"]
+    container_name: insight-seed-sample
+    networks: [insight]
+    build:
+      context: compose/seed
+      dockerfile: Dockerfile
+    depends_on:
+      mariadb:    { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      identity:   { condition: service_started }
+    environment:
+      # Identity / persons anchor
+      VITE_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-}"
+      TENANT_DEFAULT_ID:   "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
+      # MariaDB
+      MARIADB_HOST:        mariadb
+      MARIADB_PORT:        "3306"
+      MARIADB_USER:        "${MARIADB_USER:-insight}"
+      MARIADB_PASSWORD:    "${MARIADB_PASSWORD:-insight-local}"
+      # ClickHouse (Phase 2)
+      CLICKHOUSE_HOST:     clickhouse
+      CLICKHOUSE_HTTP_PORT: "8123"
+      CLICKHOUSE_USER:     "${CLICKHOUSE_USER:-insight}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-insight-local}"
+    volumes:
+      # Bind-mount the source so seed.py edits don't need a rebuild.
+      - ./compose/seed:/app:ro
+      # Phase 2 will read these to apply gold view migrations.
+      - ./src/ingestion/scripts/migrations:/migrations:ro

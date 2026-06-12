@@ -272,9 +272,10 @@ FE_IMAGE="${FE_REPO}:${FE_TAG}"
 if [[ "$COMPONENT" != "ingestion" ]]; then
   echo "=== Building backend images ==="
   build_and_load_image analytics-api src/backend/services/analytics-api/Dockerfile
-  # The .NET 9 identity service uses its OWN build context (the service
-  # folder), unlike the Rust services which share `src/backend/` as context.
-  build_and_load_image identity      src/backend/services/identity/Dockerfile src/backend/services/identity/
+  # All three backend Dockerfiles now share `src/backend/` as context so
+  # the docker-compose dev stack can COPY a shared docker-entrypoint.sh
+  # from the same place.
+  build_and_load_image identity      src/backend/services/identity/Dockerfile
   build_and_load_image api-gateway   src/backend/services/api-gateway/Dockerfile
 
   # Frontend — prefer a local build from the neighbouring insight-front

@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!--
+  ClickHouse profile override mounted into /etc/clickhouse-server/users.d/.
+
+  The analytics-api Rust service issues LEFT JOIN queries against the
+  gold `insight.*` views with `join_use_nulls=1`, but those views are
+  CREATEd by our seed-sample migrations with the default (0). When the
+  two disagree, CH 24+ rejects the query:
+    "Nullable column having not Nullable type in structure.
+     If query from view has JOIN, it may be cause by different values
+     of 'join_use_nulls' setting."
+  Setting join_use_nulls=1 as the profile default means views are both
+  CREATEd and queried under the same regime.
+-->
+<clickhouse>
+  <profiles>
+    <default>
+      <join_use_nulls>1</join_use_nulls>
+    </default>
+  </profiles>
+</clickhouse>

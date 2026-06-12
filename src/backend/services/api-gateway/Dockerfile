@@ -52,9 +52,32 @@ RUN cargo build --release --bin insight-api-gateway
 # Stage 2: Runtime
 FROM debian:bookworm-slim
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+ARG TARGETARCH
+ARG WATCHEXEC_VERSION=2.3.2
+
+# Runtime deps + watchexec. The watcher is used by the local
+# docker-compose dev stack when ENABLE_AUTO_RELOAD=true to restart the
+# binary on bind-mount change. Multi-arch via BuildKit's $TARGETARCH.
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) WX_ARCH=x86_64-unknown-linux-musl ;; \
+      arm64) WX_ARCH=aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
+    curl -fsSL "https://github.com/watchexec/watchexec/releases/download/v${WATCHEXEC_VERSION}/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}.tar.xz" \
+        | tar -xJ -C /tmp; \
+    install -m 0755 "/tmp/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}/watchexec" /usr/local/bin/watchexec; \
+    rm -rf /tmp/watchexec-*; \
+    apt-get purge -y curl xz-utils; \
+    apt-get autoremove -y; \
     rm -rf /var/lib/apt/lists/*
+
+# Shared dev/prod entrypoint. ENABLE_AUTO_RELOAD switches behaviour at
+# runtime; see docker-entrypoint.sh for the contract.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /app
 
@@ -62,10 +85,13 @@ COPY --from=builder /build/target/release/insight-api-gateway /app/insight-api-g
 COPY --from=builder /build/services/api-gateway/config/ /app/config/
 
 RUN mkdir -p /app/data && \
-    useradd -U -u 1000 appuser && \
+    useradd -U -u 1000 -m appuser && \
     chown -R 1000:1000 /app
 USER 1000
 
 EXPOSE 8080
 
-CMD ["/app/insight-api-gateway", "-c", "/app/config/insight.yaml", "run"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+# CMD format: <watched-path> -- <command> [args...]. Compose may override
+# `command:` for dev (e.g. swap insight.yaml for no-auth.yaml).
+CMD ["/app/insight-api-gateway", "--", "/app/insight-api-gateway", "-c", "/app/config/insight.yaml", "run"]

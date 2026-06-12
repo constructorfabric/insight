@@ -3,6 +3,14 @@
 .env.*
 !.env.*.example
 up-orb.sh
+
+# docker-compose dev stack
+/compose/build/
+/compose/override.generated.yml
+/compose/seed/.venv/
+/compose/seed/__pycache__/
+/compose/seed/.mypy_cache/
+/compose/seed/.ruff_cache/
 __pycache__/
 *.pyc
 .venv/
@@ -25,6 +33,7 @@ access
 # IDE
 .vs/
 .prs/
+.idea/
 
 # Claude Code local state
 .claude/worktrees/
