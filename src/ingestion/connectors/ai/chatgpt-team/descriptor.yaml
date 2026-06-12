@@ -1,0 +1,50 @@
+name: chatgpt-team
+# Strict semver per ADR-0015. 1.0.0: initial MVP — browser-proxy
+# architecture (mirrors claude-team). Reads chatgpt.com web data via the
+# customer-deployed chatgpt-team-proxy; requires `proxy_url` (no default),
+# `proxy_auth_token`, and the workspace `chatgpt_account_id` / `chatgpt_org_id`.
+# 1.0.1: tolerate 403/404 on subscription streams (blank org_id).
+# 1.1.0: add Silver dbt models (chatgpt_team__ai_dev_usage,
+#   chatgpt_team__ai_assistant_usage) — MINOR bump per ADR-0015 so reconcile
+#   re-runs the dbt step (tag:chatgpt-team+ now spans the new staging models
+#   and their downstream silver.class_ai_* unions).
+# 1.1.1: review fixes (PR #1282) — drop conflicting window_days on the Codex
+#   leaderboard (daily range only), remove the hardcoded min_datetime floor,
+#   add lookback_window P2D, dedup on lower(trim(email)) and add a Codex
+#   activity filter. Behaviour + dbt output change → reconcile must re-run.
+version: "1.1.1"
+# Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
+# instance, so we avoid scheduling chatgpt-team next to anything else that
+# may also hit it (same rationale as claude-team).
+schedule: '0 4 * * *'
+workflow: sync
+
+# Scopes the dbt run to this connector: bronze→RMT promotion + Silver staging
+# models (chatgpt_team__ai_dev_usage → class_ai_dev_usage,
+# chatgpt_team__ai_assistant_usage → class_ai_assistant_usage) and their
+# downstream silver.class_ai_* unions.
+dbt_select: 'tag:chatgpt-team+'
+
+connection:
+  namespace: bronze_chatgpt_team
+
+# Required secret fields (carried in the K8s Secret stringData):
+#   - chatgpt_account_id — workspace account UUID (for /accounts/{id}/* endpoints)
+#   - chatgpt_org_id      — organization UUID (for /subscriptions/{org_id}/* endpoints)
+#   - proxy_url           — base URL of the customer-deployed chatgpt-team-proxy
+#   - proxy_auth_token    — bearer token; must match PROXY_AUTH_TOKEN on the proxy
+#
+# Note: NO chatgpt.com session here. It lives ONLY on the customer's proxy
+# container and is installed via the proxy's `POST /admin/session-key`.
+# The proxy also derives the short-lived access_token. Insight never sees
+# either — only proxy_url + proxy_auth_token.
+secret:
+  required_fields:
+    - chatgpt_account_id
+    - proxy_url
+    - proxy_auth_token
+  optional_fields:
+    # Only needed by the subscription streams; blank for analytics-viewer
+    # accounts without billing visibility.
+    - chatgpt_org_id
+    - start_date

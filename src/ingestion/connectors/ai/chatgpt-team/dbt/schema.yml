@@ -1,0 +1,78 @@
+version: 2
+
+sources:
+  - name: bronze_chatgpt_team
+    schema: bronze_chatgpt_team
+    tables:
+      - name: chatgpt_team_seats
+      - name: chatgpt_team_chat_activity
+      - name: chatgpt_team_codex_user_daily
+      - name: chatgpt_team_subscription_usage
+      - name: chatgpt_team_subscription_balance
+
+models:
+  - name: chatgpt_team__ai_dev_usage
+    description: >
+      Bronze → Silver: ChatGPT Team per-user per-day Codex usage →
+      class_ai_dev_usage (tool='codex', source='chatgpt_team'). Sourced from
+      chatgpt_team_codex_user_daily. session_count ← n_threads;
+      lines_added ← lines_added; cost_cents NULL (credits ≠ currency).
+      Codex-only counters (credits/n_turns/text_tokens/current_streak) kept in
+      tool_action_breakdown_json. Column contract matches claude_team__ai_dev_usage.
+    columns:
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-email-day"
+        tests: [not_null, unique]
+      - name: email
+        description: "Work email (lowercased) — identity key"
+        tests: [not_null]
+      - name: day
+        description: "Usage date (UTC) — toDate(date)"
+        tests: [not_null]
+      - name: tool
+        description: "Always 'codex'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['codex']
+      - name: source
+        description: "Always 'chatgpt_team'"
+        tests: [not_null]
+      - name: _version
+        description: "RMT version — toUnixTimestamp64Milli(_airbyte_extracted_at) per ADR-0001"
+        tests: [not_null]
+
+  - name: chatgpt_team__ai_assistant_usage
+    description: >
+      Bronze → Silver: ChatGPT Team per-user per-day chat usage →
+      class_ai_assistant_usage (tool='chatgpt', surface='chat',
+      source='chatgpt_team'). Sourced from chatgpt_team_chat_activity.
+      message_count ← messages; conversation_count NULL (endpoint reports
+      messages, not conversations). Per-bucket splits (gpt/tool/connector/project),
+      credits_used and seat_type kept in surface_metrics_json. Column contract
+      matches claude_enterprise__ai_assistant_usage.
+    columns:
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-email-day-chat"
+        tests: [not_null, unique]
+      - name: email
+        tests: [not_null]
+      - name: day
+        tests: [not_null]
+      - name: tool
+        description: "Always 'chatgpt'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['chatgpt']
+      - name: surface
+        description: "Always 'chat'"
+        tests: [not_null]
+      - name: _version
+        tests: [not_null]
+
+# Bronze→RMT promotion is bootstrapped by chatgpt_team__bronze_promoted.sql.
+# subscription_usage/balance have no Silver model yet (billing not in a unified
+# stream — OQ-CGT-2); collection_runs is not produced by a declarative source.

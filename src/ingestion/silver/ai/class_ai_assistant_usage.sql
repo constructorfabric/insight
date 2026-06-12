@@ -10,6 +10,7 @@
 ) }}
 
 -- depends_on: {{ ref('claude_enterprise__ai_assistant_usage') }}
+-- depends_on: {{ ref('chatgpt_team__ai_assistant_usage') }}
 
 SELECT * FROM (
     {{ union_by_tag('silver:class_ai_assistant_usage') }}

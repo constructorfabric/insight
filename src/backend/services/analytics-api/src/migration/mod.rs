@@ -21,6 +21,9 @@ mod m20260601_000001_ai_claude_team_metrics;
 mod m20260601_000002_seed_claude_team_metrics_catalog;
 mod m20260603_000001_seed_crm_metric_catalog;
 mod m20260603_000002_link_crm_query_catalog;
+mod m20260609_000001_ai_chatgpt_team_metrics;
+mod m20260609_000002_seed_chatgpt_team_metrics_catalog;
+mod m20260610_000001_fix_ai_label_drift;
 
 #[cfg(test)]
 mod live_tests;
@@ -54,6 +57,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260601_000002_seed_claude_team_metrics_catalog::Migration),
             Box::new(m20260603_000001_seed_crm_metric_catalog::Migration),
             Box::new(m20260603_000002_link_crm_query_catalog::Migration),
+            Box::new(m20260609_000001_ai_chatgpt_team_metrics::Migration),
+            Box::new(m20260609_000002_seed_chatgpt_team_metrics_catalog::Migration),
+            Box::new(m20260610_000001_fix_ai_label_drift::Migration),
         ]
     }
 }

@@ -1,0 +1,522 @@
+# Airbyte Declarative Source for chatgpt-team.
+#
+# Talks to a customer-deployed `chatgpt-team-proxy` HTTP endpoint, NOT to
+# chatgpt.com directly. The proxy is a headless-Chromium bridge that holds
+# the customer's chatgpt.com session, derives a short-lived bearer
+# access_token, and presents the chatgpt.com web API (/backend-api/*) as a
+# plain HTTP service. Insight authenticates with a shared bearer token
+# (`proxy_auth_token`); the session never leaves the customer.
+#
+# The proxy maps the external `/api/*` route onto `chatgpt.com/backend-api/*`,
+# so stream paths below start with `/api/...`.
+#
+# Proxy source code + Dockerfile + deployment docs:
+#   https://gitlab.constr.dev/insight/secure-enclave → proxies/chatgpt_team/
+#
+# Five streams (Phase 1):
+#   1. chatgpt_team_seats             — full snapshot, offset-paginated
+#   2. chatgpt_team_chat_activity     — per-day, cursor-paginated; DatetimeBasedCursor
+#   3. chatgpt_team_codex_user_daily  — per-day, page-paginated; DatetimeBasedCursor
+#   4. chatgpt_team_subscription_usage   — per-model spend snapshot; tolerates 403
+#   5. chatgpt_team_subscription_balance — current balance snapshot; tolerates 403
+#
+# NOTE: endpoint shapes/fields are derived from the data_collector prototype
+# (apps/openai) and NOT yet verified against a live instance — see connector
+# spec OQ-CGT-3/4/6. The proxy handles the chatgpt.com access_token.
+
+version: "7.0.4"
+type: DeclarativeSource
+
+definitions:
+  base_requester: &base_requester
+    type: HttpRequester
+    url_base: "{{ config['proxy_url'] }}"
+    http_method: GET
+    request_headers:
+      Authorization: "Bearer {{ config['proxy_auth_token'] }}"
+
+  standard_fields: &standard_fields
+    - type: AddedFieldDefinition
+      path: [tenant_id]
+      value: "{{ config['insight_tenant_id'] }}"
+    - type: AddedFieldDefinition
+      path: [source_id]
+      value: "{{ config['insight_source_id'] }}"
+    - type: AddedFieldDefinition
+      path: [collected_at]
+      value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+    - type: AddedFieldDefinition
+      path: [data_source]
+      value: insight_chatgpt_team
+
+  # Per-day cursor shared by chat_activity and codex_user_daily. The API
+  # treats start_date/end_date as an inclusive single-day filter, so we
+  # walk one day per request (step P1D) and inject the day onto each row
+  # (the per-user objects do not carry the date themselves).
+  day_cursor: &day_cursor
+    type: DatetimeBasedCursor
+    cursor_field: date
+    cursor_datetime_formats:
+      - "%Y-%m-%d"
+    datetime_format: "%Y-%m-%d"
+    start_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ config.get('start_date') or day_delta(-7, format='%Y-%m-%d') }}"
+      datetime_format: "%Y-%m-%d"
+    end_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ day_delta(-1, format='%Y-%m-%d') }}"
+      datetime_format: "%Y-%m-%d"
+    step: P1D
+    cursor_granularity: P1D
+    # Re-pull a 2-day tail so late-arriving / still-accumulating "yesterday"
+    # analytics rows reach Bronze. The dbt models' 3-day window can't fix data
+    # Bronze never received. (claude-team's day cursor has the same gap.)
+    lookback_window: P2D
+    start_time_option:
+      type: RequestOption
+      field_name: start_date
+      inject_into: request_parameter
+    end_time_option:
+      type: RequestOption
+      field_name: end_date
+      inject_into: request_parameter
+
+  # Tolerate the most common failure mode for the subscription streams —
+  # the session/account lacks billing visibility. Mark the response as
+  # "no records" instead of failing the whole sync (mirrors claude-team's
+  # overage_spend handling).
+  # The subscription streams need chatgpt_org_id. When it is blank (e.g. an
+  # analytics-viewer account with no billing visibility) the request hits
+  # /subscriptions//usage → 404; a billing-gated session returns 403. Both
+  # are benign here: IGNORE them so the stream commits zero records and the
+  # sync stays GREEN (the seat/chat/Codex streams are unaffected). A real
+  # org_id with billing access starts populating rows automatically.
+  # ⚠️ MONITORING: IGNORE also hides a mistyped chatgpt_org_id or a broken proxy
+  # route (green-but-empty). Runbook: if chatgpt_org_id is SET but the
+  # subscription streams return 0 rows for N consecutive days, alert — that is a
+  # misconfig, not "no billing visibility".
+  billing_error_handler: &billing_error_handler
+    type: DefaultErrorHandler
+    response_filters:
+      - type: HttpResponseFilter
+        http_codes: [403, 404]
+        action: IGNORE
+        error_message: "chatgpt.com returned 403/404 — billing not visible (or chatgpt_org_id blank). Subscription stream skipped, sync continues."
+
+check:
+  type: CheckStream
+  stream_names:
+    - chatgpt_team_seats
+
+streams:
+  # ── Stream 1: chatgpt_team_seats ────────────────────────────────────
+  # Org roster. Endpoint: GET /backend-api/accounts/{account_id}/users
+  # Response envelope: {items: [...], total, limit, offset}. Offset-paginated
+  # (offset += page size; stop when a page returns < page size).
+  - type: DeclarativeStream
+    name: chatgpt_team_seats
+    primary_key:
+      - user_id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          user_id: { type: string }
+          email: { type: string }
+          name: { type: ["string", "null"] }
+          role: { type: ["string", "null"] }
+          seat_type: { type: ["string", "null"] }
+          added_at: { type: ["string", "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "/api/accounts/{{ config['chatgpt_account_id'] }}/users"
+        request_parameters:
+          query: ""
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [items]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: 25
+        page_token_option:
+          type: RequestOption
+          field_name: offset
+          inject_into: request_parameter
+        page_size_option:
+          type: RequestOption
+          field_name: limit
+          inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [user_id]
+            value: "{{ record['id'] | string }}"
+          - type: AddedFieldDefinition
+            # The endpoint names the join date `created_time` (not `added_at`).
+            path: [added_at]
+            value: "{{ record.get('created_time') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+
+  # ── Stream 2: chatgpt_team_chat_activity ────────────────────────────
+  # Per-user per-day chat usage. Endpoint:
+  #   GET /backend-api/accounts/{account_id}/analytics/user_list
+  # Response: {users: [...], next_cursor}. Cursor-paginated within a day;
+  # DatetimeBasedCursor walks days. `date` injected from the cursor.
+  - type: DeclarativeStream
+    name: chatgpt_team_chat_activity
+    primary_key:
+      - date
+      - email
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          date: { type: string }
+          email: { type: string }
+          name: { type: ["string", "null"] }
+          seat_type: { type: ["string", "null"] }
+          messages: { type: ["number", "null"] }
+          gpt_messages: { type: ["number", "null"] }
+          tool_messages: { type: ["number", "null"] }
+          connector_messages: { type: ["number", "null"] }
+          project_messages: { type: ["number", "null"] }
+          credits_used: { type: ["number", "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "/api/accounts/{{ config['chatgpt_account_id'] }}/analytics/user_list"
+        request_parameters:
+          page_size: "100"
+          order_by_field: "messages"
+          order_by_direction: "DESC"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [users]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('next_cursor', '') }}"
+          stop_condition: "{{ not response.get('next_cursor') }}"
+        page_token_option:
+          type: RequestOption
+          field_name: after_cursor
+          inject_into: request_parameter
+    incremental_sync: *day_cursor
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            # The API does not include the date in per-user objects; inject
+            # the cursor's current day so rows from different days do not
+            # collide on the primary key.
+            path: [date]
+            value: "{{ stream_interval.start_time }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
+
+  # ── Stream 3: chatgpt_team_codex_user_daily ─────────────────────────
+  # Per-user per-day Codex usage. Endpoint:
+  #   GET /backend-api/wham/analytics/usage-leaderboard
+  # Response: {data: [...], total_users}. Page-number-paginated within a
+  # day; DatetimeBasedCursor walks days. lines_added comes from a nested
+  # code_attribution object.
+  - type: DeclarativeStream
+    name: chatgpt_team_codex_user_daily
+    primary_key:
+      - date
+      - email
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          date: { type: string }
+          email: { type: string }
+          user_id: { type: ["string", "null"] }
+          name: { type: ["string", "null"] }
+          credits: { type: ["number", "null"] }
+          n_threads: { type: ["number", "null"] }
+          n_turns: { type: ["number", "null"] }
+          current_streak: { type: ["number", "null"] }
+          text_tokens: { type: ["number", "null"] }
+          lines_added: { type: ["number", "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "/api/wham/analytics/usage-leaderboard"
+        request_parameters:
+          # Daily granularity comes from the day_cursor injecting start_date /
+          # end_date (one day per request). NO window_days — it would make each
+          # "daily" row a 30-day rolling aggregate (≈30× overcount). Dropped per
+          # review; dev values are day-scale (~140 lines/person/day), confirming
+          # the date range is honored.
+          client_filter: "all"
+          sort_by: "credits"
+          sort_direction: "desc"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: 50
+          start_from_page: 1
+        page_token_option:
+          type: RequestOption
+          field_name: page
+          inject_into: request_parameter
+        page_size_option:
+          type: RequestOption
+          field_name: page_size
+          inject_into: request_parameter
+    incremental_sync: *day_cursor
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [date]
+            value: "{{ stream_interval.start_time }}"
+          - type: AddedFieldDefinition
+            path: [user_id]
+            value: "{{ record['user_id'] | string if record.get('user_id') else '' }}"
+          - type: AddedFieldDefinition
+            # Nested under code_attribution.lines_of_code.added; null-safe.
+            path: [lines_added]
+            value: "{{ ((record.get('code_attribution') or {}).get('lines_of_code') or {}).get('added') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
+
+  # ── Stream 4: chatgpt_team_subscription_usage ───────────────────────
+  # Per-model spend for the current window. Endpoint:
+  #   GET /backend-api/subscriptions/{org_id}/usage
+  # Response: {usage_detail: [{label, amount}], current_balance, ...}.
+  # No pagination. Snapshot: a `snapshot_date` (today) is injected so daily
+  # snapshots accumulate instead of overwriting.
+  #
+  # NOTE: the prototype queried the billing cycle (resets on the 14th). We
+  # use a simple [start_date or -30d, today] window here; billing-cycle
+  # alignment is deferred (spec OQ — billing semantics).
+  - type: DeclarativeStream
+    name: chatgpt_team_subscription_usage
+    primary_key:
+      - snapshot_date
+      - model
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          snapshot_date: { type: string }
+          model: { type: string }
+          amount: { type: ["number", "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "/api/subscriptions/{{ config['chatgpt_org_id'] }}/usage"
+        request_parameters:
+          start_date: "{{ config.get('start_date') or day_delta(-30, format='%Y-%m-%d') }}"
+          end_date: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        error_handler: *billing_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [usage_detail]
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [snapshot_date]
+            value: "{{ now_utc().strftime('%Y-%m-%d') }}"
+          - type: AddedFieldDefinition
+            path: [model]
+            value: "{{ record['label'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}-{{ record['label'] }}"
+
+  # ── Stream 5: chatgpt_team_subscription_balance ─────────────────────
+  # Current balance snapshot. Same endpoint as stream 4, but extracts the
+  # root object's current_balance (field_path []). One row per run.
+  - type: DeclarativeStream
+    name: chatgpt_team_subscription_balance
+    primary_key:
+      - snapshot_date
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          snapshot_date: { type: string }
+          current_balance: { type: ["number", "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "/api/subscriptions/{{ config['chatgpt_org_id'] }}/usage"
+        request_parameters:
+          start_date: "{{ config.get('start_date') or day_delta(-30, format='%Y-%m-%d') }}"
+          end_date: "{{ now_utc().strftime('%Y-%m-%d') }}"
+        error_handler: *billing_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [snapshot_date]
+            value: "{{ now_utc().strftime('%Y-%m-%d') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - chatgpt_account_id
+      - proxy_url
+      - proxy_auth_token
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Tenant isolation identifier, injected as `tenant_id` on every record.
+        order: 0
+      chatgpt_account_id:
+        type: string
+        title: ChatGPT Account ID
+        description: |
+          ChatGPT workspace account UUID — used by `/accounts/{account_id}/*`
+          endpoints. Find it via the logged-in browser at
+          `https://chatgpt.com/api/auth/session` or in DevTools.
+        order: 1
+      chatgpt_org_id:
+        type: string
+        title: ChatGPT Organization ID
+        description: |
+          ChatGPT organization UUID (e.g. `org-...`) — used ONLY by the
+          subscription streams (`/subscriptions/{org_id}/*`). Optional:
+          leave blank if the operator account lacks billing visibility
+          (e.g. an `analytics-viewer` role) — the subscription streams are
+          then skipped and the seat/chat/Codex streams still run.
+        default: ""
+        order: 2
+      proxy_url:
+        type: string
+        title: Proxy URL
+        description: |
+          Base URL of the customer-deployed chatgpt-team-proxy
+          (https://gitlab.constr.dev/insight/secure-enclave →
+          proxies/chatgpt_team). The customer hosts this proxy themselves.
+          No default — operator MUST set per installation.
+        order: 3
+      proxy_auth_token:
+        type: string
+        title: Proxy Auth Token
+        airbyte_secret: true
+        description: |
+          Shared bearer token used by Insight to authenticate to the
+          customer-hosted proxy. Sent as `Authorization: Bearer <token>`
+          on every request. Matches the proxy's PROXY_AUTH_TOKEN env var.
+        order: 4
+      insight_source_id:
+        type: string
+        title: Source Instance ID
+        description: Connector instance identifier for multi-instance deployments. Set by the reconcile loop from the K8s Secret annotation `insight.cyberfabric.com/source-id`.
+        default: ""
+        order: 5
+      start_date:
+        type: string
+        title: Start Date (daily streams only)
+        description: |
+          Earliest date to backfill the per-day streams (chat_activity,
+          codex_user_daily) from (YYYY-MM-DD). Default: 7 days ago. Set to
+          "2026-01-14" for a full historical backfill (earliest observed
+          data point for the test org). Also bounds the subscription window.
+        default: ""
+        order: 6
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    chatgpt_team_seats: true
+    chatgpt_team_chat_activity: true
+    chatgpt_team_codex_user_daily: true
+    chatgpt_team_subscription_usage: true
+    chatgpt_team_subscription_balance: true
