@@ -229,6 +229,34 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
 SQL
 fi
 
+# silver.class_support_activity — support (Zendesk) dbt model. Referenced by the
+# support_bullet_rows gold view (20260611000000_support-bullet-rows.sql); without
+# this placeholder CREATE VIEW fails at migration time (CH 24.x validates view
+# source tables) in any env where dbt hasn't built the silver model yet.
+if ! ch_table_exists silver class_support_activity; then
+  echo "  Creating placeholder: silver.class_support_activity"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_support_activity (
+    tenant_id           String,
+    insight_source_id   String,
+    unique_key          String,
+    data_source         String,
+    person_key          String,
+    email               String,
+    date                Date,
+    updates             Nullable(UInt32),
+    public_comments     Nullable(UInt32),
+    private_comments    Nullable(UInt32),
+    solved              Nullable(UInt32),
+    kb_articles_created Nullable(UInt32),
+    csat_good           UInt32,
+    csat_total          UInt32,
+    collected_at        DateTime,
+    _version            UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
 # silver.class_ai_api_usage — programmatic AI API token usage (Claude Admin
 # messages_usage; future OpenAI). Schema mirrors `silver/ai/class_ai_api_usage`
 # dbt model order_by=['unique_key'] config — email is always NULL by design
