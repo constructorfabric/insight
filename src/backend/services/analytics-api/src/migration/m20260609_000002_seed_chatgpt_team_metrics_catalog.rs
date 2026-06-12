@@ -1,19 +1,19 @@
 //! Seed `metric_catalog` + `product-default` `metric_threshold` rows for the
-//! ChatGPT Team metric_keys surfaced in `m20260609_000001_ai_chatgpt_team_metrics`
+//! `ChatGPT` Team `metric_keys` surfaced in `m20260609_000001_ai_chatgpt_team_metrics`
 //! (INSIGHT-459). Counterpart of `m20260601_000002_seed_claude_team_metrics_catalog`.
 //!
-//! Two existing rows are refreshed (they shipped as ComingSoon placeholders
+//! Two existing rows are refreshed (they shipped as `ComingSoon` placeholders
 //! in m20260527 with stale metadata):
-//!   `ai_bullet_rows.codex_active` — sublabel fixed "OpenAI API" →
-//!                    "ChatGPT Team · Codex"; source_tags → ["chatgpt_team"].
-//!   `ai_bullet_rows.chatgpt`      — source_tags ["chatgpt"] → ["chatgpt_team"].
+//!   `ai_bullet_rows.codex_active` — sublabel fixed `OpenAI API` →
+//!                    `ChatGPT Team · Codex`; `source_tags` → `[chatgpt_team]`.
+//!   `ai_bullet_rows.chatgpt`      — `source_tags` `[chatgpt]` → `[chatgpt_team]`.
 //!
-//! Three new rows (newly emitted by the Gold view + query_ref):
-//!   `ai_bullet_rows.codex_lines`    — Codex AI-accepted lines (lines_added).
-//!   `ai_bullet_rows.codex_sessions` — Codex sessions (threads / n_threads).
-//!   `ai_bullet_rows.chatgpt_active` — ChatGPT chat DAU marker.
+//! Three new rows (newly emitted by the Gold view + `query_ref)`:
+//!   `ai_bullet_rows.codex_lines`    — Codex AI-accepted lines (`lines_added`).
+//!   `ai_bullet_rows.codex_sessions` — Codex sessions (threads / `n_threads`).
+//!   `ai_bullet_rows.chatgpt_active` — `ChatGPT` chat DAU marker.
 //!
-//! Thresholds mirror the cyber-insight-front BULLET_DEFS for the same keys
+//! Thresholds mirror the cyber-insight-front `BULLET_DEFS` for the same keys
 //! (good/warn). Adjust per-tenant via the admin CRUD API (#525).
 //!
 //! Idempotent via ON DUPLICATE KEY UPDATE — safe to re-run.
@@ -238,13 +238,13 @@ impl MigrationTrait for Migration {
 mod tests {
     use super::*;
 
-    /// Pins the seed count: 2 refreshed (codex_active, chatgpt) + 3 new.
+    /// Pins the seed count: 2 refreshed (`codex_active`, chatgpt) + 3 new.
     #[test]
     fn seed_count_is_five() {
         assert_eq!(SEEDS.len(), 5, "expected 5 ChatGPT Team catalog rows");
     }
 
-    /// All metric_keys route to `ai_bullet_rows.` (catalog namespace).
+    /// All `metric_keys` route to `ai_bullet_rows.` (catalog namespace).
     #[test]
     fn all_keys_route_to_ai_bullet_rows() {
         for row in SEEDS {
@@ -256,7 +256,7 @@ mod tests {
         }
     }
 
-    /// Every row is tagged exclusively to the chatgpt_team connector.
+    /// Every row is tagged exclusively to the `chatgpt_team` connector.
     #[test]
     fn all_keys_tagged_chatgpt_team() {
         for row in SEEDS {
@@ -282,7 +282,7 @@ mod tests {
         }
     }
 
-    /// All ChatGPT Team metrics are activity/adoption signals — higher is better.
+    /// All `ChatGPT` Team metrics are activity/adoption signals — higher is better.
     #[test]
     fn all_higher_is_better() {
         for row in SEEDS {
@@ -294,7 +294,7 @@ mod tests {
         }
     }
 
-    /// No duplicate metric_keys.
+    /// No duplicate `metric_keys`.
     #[test]
     fn no_duplicate_metric_keys() {
         use std::collections::HashSet;
@@ -308,7 +308,7 @@ mod tests {
         }
     }
 
-    /// source_tags JSON must be a well-formed, non-empty JSON array.
+    /// `source_tags` JSON must be a well-formed, non-empty JSON array.
     #[test]
     fn source_tags_json_is_well_formed() {
         for row in SEEDS {

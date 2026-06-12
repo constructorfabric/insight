@@ -2,15 +2,15 @@
 //! findings). `threshold-config.ts` was deleted on the FE (#66): metric labels
 //! now come from the wire catalog, so these corrections live here.
 //!
-//! Surgical `UPDATE … SET sublabel` on the product-default rows (tenant_id IS
+//! Surgical `UPDATE … SET sublabel` on the product-default rows (`tenant_id` IS
 //! NULL) — we touch ONLY the sublabel, never the label/description/thresholds.
 //! Idempotent (re-running sets the same text).
 //!
-//!   • cc_active / cc_lines / cc_sessions / cc_tool_acceptance — sourced from
+//!   • `cc_active` / `cc_lines` / `cc_sessions` / `cc_tool_acceptance` — sourced from
 //!     the **Claude Team** connector (`claude_team_code_metrics`), not the
 //!     "Anthropic Enterprise API". (codex_* was already corrected to
-//!     "ChatGPT Team · Codex" in m20260609_000002.)
-//!   • team_ai_loc — the daily LOC sum correctly includes Codex
+//!     "`ChatGPT` Team · Codex" in `m20260609_000002`.)
+//!   • `team_ai_loc` — the daily LOC sum correctly includes Codex
 //!     (cc + codex + cursor), so the sublabel must say so.
 
 use sea_orm_migration::prelude::*;
@@ -18,7 +18,7 @@ use sea_orm_migration::prelude::*;
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
-/// (metric_key, corrected sublabel). \u{b7} = "·", \u{f7} = "÷".
+/// (`metric_key`, corrected sublabel). \u{b7} = "·", \u{f7} = "÷".
 const SUBLABEL_FIXES: &[(&str, &str)] = &[
     (
         "ai_bullet_rows.cc_active",
@@ -75,8 +75,8 @@ impl MigrationTrait for Migration {
 mod tests {
     use super::*;
 
-    /// No leftover "Anthropic Enterprise API" / "OpenAI API" attribution in the
-    /// corrected sublabels, and team_ai_loc names Codex.
+    /// No leftover "Anthropic Enterprise API" / "`OpenAI` API" attribution in the
+    /// corrected sublabels, and `team_ai_loc` names Codex.
     #[test]
     fn sublabels_have_correct_source_attribution() {
         for (key, sub) in SUBLABEL_FIXES {
@@ -86,14 +86,14 @@ mod tests {
             );
             assert!(!sub.contains("OpenAI API"), "{key}: stale OpenAI label");
         }
+        // `find` + `matches!` (not unwrap/expect — the crate denies both):
+        // team_ai_loc must be present AND its sublabel must name Codex.
         let team = SUBLABEL_FIXES
             .iter()
-            .find(|(k, _)| *k == "ai_bullet_rows.team_ai_loc")
-            .unwrap()
-            .1;
+            .find(|(k, _)| *k == "ai_bullet_rows.team_ai_loc");
         assert!(
-            team.contains("Codex"),
-            "team_ai_loc sublabel must include Codex"
+            matches!(team, Some((_, sub)) if sub.contains("Codex")),
+            "team_ai_loc sublabel must be present and include Codex"
         );
     }
 
@@ -107,7 +107,7 @@ mod tests {
     // asserts every metric_key the gold view emits is classified into exactly
     // one bucket — so adding a connector key without classifying it fails CI.
     // =====================================================================
-    /// ai_person_period sum-branch (counters). Mirrors the multiIf in
+    /// `ai_person_period` sum-branch (counters). Mirrors the multiIf in
     /// 20260610000000_ai-person-period-rollup-fix.sql — keep in sync.
     const SUM_KEYS: &[&str] = &[
         "chatgpt",
@@ -128,7 +128,7 @@ mod tests {
         "cursor_offered",
         "cursor_total_lines",
     ];
-    /// ai_person_period max-branch (0/1 active markers).
+    /// `ai_person_period` max-branch (0/1 active markers).
     const MAX_KEYS: &[&str] = &[
         "active_ai_members",
         "cursor_active",
@@ -137,13 +137,13 @@ mod tests {
         "chatgpt_active",
     ];
 
-    /// The metric_keys actually EMITTED into insight.ai_bullet_rows by the gold
+    /// The `metric_keys` actually EMITTED into `insight.ai_bullet_rows` by the gold
     /// view 20260609000000 (its ARRAY JOIN branches) — these are the only keys
-    /// that reach ai_person_period and must therefore be classified. NB this is
-    /// the GOLD key set, NOT the query_ref ARRAY JOIN: the latter also lists
-    /// query_ref-computed ratios (cursor_acceptance, cc_tool_acceptance,
-    /// ai_loc_share2) and the claude_web stub, which are never emitted to
-    /// ai_bullet_rows and so never hit the period rollup. prs_* were removed
+    /// that reach `ai_person_period` and must therefore be classified. NB this is
+    /// the GOLD key set, NOT the `query_ref` ARRAY JOIN: the latter also lists
+    /// query_ref-computed ratios (`cursor_acceptance`, `cc_tool_acceptance`,
+    /// `ai_loc_share2`) and the `claude_web` stub, which are never emitted to
+    /// `ai_bullet_rows` and so never hit the period rollup. prs_* were removed
     /// (honest-NULL) so they are absent here too.
     const BULLET_ROWS_KEYS: &[&str] = &[
         // branch 1 (all dev tools)
@@ -173,7 +173,7 @@ mod tests {
     ];
 
     /// Every key the gold view emits must be classified into EXACTLY one of
-    /// sum/max — none may fall to the avg() default (the #1286 defect class).
+    /// sum/max — none may fall to the `avg()` default (the #1286 defect class).
     /// Adding a gold branch key without classifying it fails here.
     #[test]
     fn every_bullet_key_is_classified_not_defaulting_to_avg() {

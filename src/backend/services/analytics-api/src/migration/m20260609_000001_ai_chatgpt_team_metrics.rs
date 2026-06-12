@@ -1,27 +1,27 @@
-//! Un-stub ChatGPT Team (Codex + Chat) in Team / IC Bullet AI `query_ref`s
+//! Un-stub `ChatGPT` Team (Codex + Chat) in Team / IC Bullet AI `query_ref`s
 //! (INSIGHT-459).
 //!
 //! Pairs with ingestion migration
 //! `20260609000000_ai-chatgpt-team-gold.sql`, which adds Branch 4
 //! (`tool = 'codex'`) and Branch 5 (`tool = 'chatgpt'`) to
 //! `insight.ai_bullet_rows`, emitting:
-//!   codex_active, codex_lines, codex_sessions, chatgpt_active, chatgpt.
+//!   `codex_active`, `codex_lines`, `codex_sessions`, `chatgpt_active`, chatgpt.
 //!
 //! Before this migration the wide-aggregate hardcoded
 //! `codex_active_v` / `chatgpt_v` / `claude_web_v` as `CAST(NULL …)`
-//! (ComingSoon), so the keys rendered as ComingSoon on the FE.
+//! (`ComingSoon`), so the keys rendered as `ComingSoon` on the FE.
 //!
 //! Changes to each `query_ref` (Team + IC):
 //!   1. `codex_active_v` ← real `countIf(metric_key='codex_active')` marker
 //!      (was hardcoded NULL).
 //!   2. `chatgpt_v` ← real `sumIf(metric_value, metric_key='chatgpt')`
-//!      (was hardcoded NULL). ChatGPT chat interactions (messages).
-//!   3. New `codex_lines_v` / `codex_sessions_v` (`sumIf`, like cc_lines /
-//!      cc_sessions) and `chatgpt_active_v` (`countIf` marker, like
-//!      codex_active).
-//!   4. `chatgpt_active` added to ACTIVE_LIST so its outer aggregation is
+//!      (was hardcoded NULL). `ChatGPT` chat interactions (messages).
+//!   3. New `codex_lines_v` / `codex_sessions_v` (`sumIf`, like `cc_lines` /
+//!      `cc_sessions`) and `chatgpt_active_v` (`countIf` marker, like
+//!      `codex_active`).
+//!   4. `chatgpt_active` added to `ACTIVE_LIST` so its outer aggregation is
 //!      `sum(per-person marker)` = count of active persons (DAU), matching
-//!      codex_active / cc_active.
+//!      `codex_active` / `cc_active`.
 //!   5. `claude_web_v` stays hardcoded NULL — Claude web is not collected.
 //!
 //! Backend-emitted `metric_key`s: 19 → 22.
@@ -41,8 +41,8 @@ const ACTIVE_LIST: &str =
     "'active_ai_members', 'cursor_active', 'cc_active', 'codex_active', 'chatgpt_active'";
 
 /// Inner wide-aggregate: one row per `person_id`, every FE-visible
-/// `metric_key` in its own column. codex_active / chatgpt now read real
-/// values; codex_lines / codex_sessions / chatgpt_active are new.
+/// `metric_key` in its own column. `codex_active` / chatgpt now read real
+/// values; `codex_lines` / `codex_sessions` / `chatgpt_active` are new.
 fn wide_aggregate_pp() -> &'static str {
     "SELECT person_id, any(org_unit_id) AS org_unit_id, \
          if(countIf(metric_key = 'active_ai_members') > 0, toFloat64(1), CAST(NULL AS Nullable(Float64))) AS active_ai_members_v, \
@@ -84,7 +84,7 @@ fn wide_aggregate_pp() -> &'static str {
 }
 
 /// `ARRAY JOIN` unpivot: wide columns → long rows per person.
-/// 19 keys from m20260601 + 3 new ChatGPT Team keys = 22 total.
+/// 19 keys from m20260601 + 3 new `ChatGPT` Team keys = 22 total.
 fn array_join_kv() -> &'static str {
     "ARRAY JOIN [ \
          ('active_ai_members',  active_ai_members_v), \
@@ -222,8 +222,8 @@ impl MigrationTrait for Migration {
 mod tests {
     use super::*;
 
-    /// All 22 FE-visible metric_keys must appear in the ARRAY JOIN unpivot
-    /// (19 from m20260601 + codex_lines / codex_sessions / chatgpt_active).
+    /// All 22 FE-visible `metric_keys` must appear in the ARRAY JOIN unpivot
+    /// (19 from m20260601 + `codex_lines` / `codex_sessions` / `chatgpt_active`).
     const EXPECTED_METRIC_KEYS: &[&str] = &[
         "active_ai_members",
         "cursor_active",
@@ -267,8 +267,8 @@ mod tests {
         assert_eq!(EXPECTED_METRIC_KEYS.len(), 22);
     }
 
-    /// chatgpt_active is a DAU marker → must be in ACTIVE_LIST (alongside
-    /// codex_active); the counters must NOT be.
+    /// `chatgpt_active` is a DAU marker → must be in `ACTIVE_LIST` (alongside
+    /// `codex_active`); the counters must NOT be.
     #[test]
     fn active_list_has_chatgpt_and_codex_markers() {
         assert!(
@@ -310,7 +310,7 @@ mod tests {
     /// PR metrics are honest-NULL (issue #1286): the Claude Team connector
     /// ships no PR data, so the gold view no longer emits prs rows. The
     /// aggregate must guard with `countIf(key) > 0 … else NULL` so a person
-    /// with no prs rows renders ComingSoon instead of a fake 0 (bare sumIf
+    /// with no prs rows renders `ComingSoon` instead of a fake 0 (bare sumIf
     /// would collapse the empty set to 0).
     #[test]
     fn prs_metrics_are_honest_null_guarded() {
@@ -323,7 +323,7 @@ mod tests {
         }
     }
 
-    /// Both query_refs must embed the ACTIVE_LIST and the shared pp/kv.
+    /// Both `query_refs` must embed the `ACTIVE_LIST` and the shared pp/kv.
     #[test]
     fn queries_reference_active_list_and_unpivot() {
         for q in [team_query(), ic_query()] {
