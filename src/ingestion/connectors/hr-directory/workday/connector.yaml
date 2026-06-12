@@ -1,0 +1,376 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - workers
+
+definitions:
+  linked:
+    HttpRequester:
+      url_base: "{{ config['workday_base_url'] }}/"
+      authenticator:
+        type: BasicHttpAuthenticator
+        username: "{{ config['workday_isu_username'] }}"
+        password: "{{ config['workday_isu_password'] }}"
+      request_headers:
+        Accept: application/json
+    SimpleRetriever:
+      paginator:
+        type: NoPagination
+
+streams:
+  - type: DeclarativeStream
+    name: workers
+    retriever:
+      type: SimpleRetriever
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      requester:
+        type: HttpRequester
+        path: "{{ config['workday_workers_report_path'] }}"
+        url_base: "{{ config['workday_base_url'] }}/"
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        request_parameters:
+          format: json
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - Report_Entry
+    primary_key: unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        required:
+          - unique_key
+        properties:
+          Employee_ID:
+            type:
+              - string
+              - "null"
+          Display_Name:
+            type:
+              - string
+              - "null"
+          First_Name:
+            type:
+              - string
+              - "null"
+          Last_Name:
+            type:
+              - string
+              - "null"
+          Work_Email:
+            type:
+              - string
+              - "null"
+          Business_Title:
+            type:
+              - string
+              - "null"
+          Job_Profile:
+            type:
+              - string
+              - "null"
+          Worker_Type:
+            type:
+              - string
+              - "null"
+          Worker_Status:
+            type:
+              - string
+              - "null"
+          Supervisory_Organization:
+            type:
+              - string
+              - "null"
+          Manager_Employee_ID:
+            type:
+              - string
+              - "null"
+          Manager_Work_Email:
+            type:
+              - string
+              - "null"
+          Location:
+            type:
+              - string
+              - "null"
+          Country:
+            type:
+              - string
+              - "null"
+          City:
+            type:
+              - string
+              - "null"
+          Hire_Date:
+            type:
+              - string
+              - "null"
+          Original_Hire_Date:
+            type:
+              - string
+              - "null"
+          Termination_Date:
+            type:
+              - string
+              - "null"
+          Last_Functionally_Updated:
+            type:
+              - string
+              - "null"
+          Scheduled_Weekly_Hours:
+            type:
+              - number
+              - string
+              - "null"
+          raw_data:
+            type:
+              - object
+              - "null"
+            additionalProperties: true
+          source_id:
+            type:
+              - string
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - raw_data
+            value: "{{ record }}"
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['Employee_ID'] }}
+  - type: DeclarativeStream
+    name: leave_requests
+    retriever:
+      type: SimpleRetriever
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      requester:
+        type: HttpRequester
+        path: "{{ config['workday_leave_report_path'] }}"
+        url_base: "{{ config['workday_base_url'] }}/"
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        request_parameters:
+          format: json
+          From_Date: "{{ config.get('workday_start_date', '2020-01-01') }}"
+          To_Date: "{{ now_utc().strftime('%Y-%m-%d') }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - Report_Entry
+    primary_key: unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        required:
+          - unique_key
+        properties:
+          Request_ID:
+            type:
+              - string
+              - "null"
+          Employee_ID:
+            type:
+              - string
+              - "null"
+          Time_Off_Type:
+            type:
+              - string
+              - "null"
+          Start_Date:
+            type:
+              - string
+              - "null"
+          End_Date:
+            type:
+              - string
+              - "null"
+          Quantity:
+            type:
+              - number
+              - string
+              - "null"
+          Unit:
+            type:
+              - string
+              - "null"
+          Status:
+            type:
+              - string
+              - "null"
+          Submitted_Moment:
+            type:
+              - string
+              - "null"
+          raw_data:
+            type:
+              - object
+              - "null"
+            additionalProperties: true
+          source_id:
+            type:
+              - string
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - raw_data
+            value: "{{ record }}"
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['Request_ID'] }}
+
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 1
+
+spec:
+  type: Spec
+  documentation_url: https://community.workday.com/sites/default/files/file-hosting/restapi/index.html
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - workday_base_url
+      - workday_isu_username
+      - workday_isu_password
+      - workday_workers_report_path
+      - workday_leave_report_path
+    properties:
+      insight_tenant_id:
+        type: string
+        description: Tenant isolation identifier (UUID).
+        order: 0
+        title: Insight Tenant ID
+      insight_source_id:
+        type: string
+        description: >-
+          Unique identifier for this Workday connector instance (e.g.,
+          'workday-acme-prod').
+        order: 1
+        title: Insight Source ID
+        examples:
+          - workday-acme-prod
+      workday_base_url:
+        type: string
+        description: >-
+          RaaS (Reports-as-a-Service) base URL including the Workday tenant,
+          without a trailing slash:
+          https://<host>/ccx/service/customreport2/<workday_tenant>.
+        order: 2
+        title: Workday RaaS Base URL
+        examples:
+          - https://wd5-services1.workday.com/ccx/service/customreport2/acme
+      workday_isu_username:
+        type: string
+        description: >-
+          Integration System User (ISU) username. The ISU security group must
+          be shared on both custom reports.
+        order: 3
+        title: ISU Username
+      workday_isu_password:
+        type: string
+        description: Integration System User (ISU) password.
+        order: 4
+        title: ISU Password
+        airbyte_secret: true
+      workday_workers_report_path:
+        type: string
+        description: >-
+          Path to the workers custom report relative to the base URL:
+          <report_owner>/<Report_Name>. The report must follow the Insight
+          report contract (see connector README).
+        order: 5
+        title: Workers Report Path
+        examples:
+          - ISU_Insight/Insight_Employee_Sync
+      workday_leave_report_path:
+        type: string
+        description: >-
+          Path to the time-off custom report relative to the base URL:
+          <report_owner>/<Report_Name>. The report must define From_Date and
+          To_Date prompts enabled as web service parameters.
+        order: 6
+        title: Leave Report Path
+        examples:
+          - ISU_Insight/Insight_Leave_Sync
+      workday_start_date:
+        type: string
+        description: >-
+          Start date for time-off history (ISO format YYYY-MM-DD), passed to
+          the leave report From_Date prompt. Defaults to 2020-01-01 if not
+          set.
+        order: 7
+        title: Start Date
+        default: "2020-01-01"
+        examples:
+          - "2024-01-01"
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    workers: true
+    leave_requests: true

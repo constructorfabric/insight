@@ -1,0 +1,14 @@
+name: workday
+version: "1.0.0"
+schedule: 0 4 * * *
+dbt_select: tag:workday+
+workflow: sync
+connection:
+  namespace: bronze_workday
+secret:
+  required_fields:
+    - workday_base_url
+    - workday_isu_username
+    - workday_isu_password
+    - workday_workers_report_path
+    - workday_leave_report_path

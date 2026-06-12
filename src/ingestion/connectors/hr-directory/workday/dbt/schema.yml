@@ -1,0 +1,214 @@
+version: 2
+
+sources:
+  - name: workday
+    schema: bronze_workday
+    tables:
+      - name: workers
+      - name: leave_requests
+
+models:
+  - name: workday__to_class_people
+    description: >
+      Workday Workers -> class_people (Silver Step 1).
+      Full-refresh RaaS source. Identity key: email (Work_Email).
+      Maps Workday Worker_Status to normalised status (active/on_leave/terminated)
+      and Worker_Type to employment_type (full_time/contractor).
+      SCD Type 2 fields (valid_from/valid_to) are set as current-state snapshot
+      (valid_from = Last_Functionally_Updated, valid_to = NULL).
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation identifier"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite dedup key"
+        tests:
+          - not_null
+      - name: source_person_id
+        description: "Workday Employee ID"
+        tests:
+          - not_null
+      - name: email
+        description: "Work email — identity key for Silver Step 2"
+      - name: display_name
+        description: "Full display name"
+      - name: first_name
+        description: "First name"
+      - name: last_name
+        description: "Last name"
+      - name: status
+        description: "Normalised: active, on_leave, terminated"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['active', 'on_leave', 'terminated']
+      - name: employment_type
+        description: "Normalised: full_time (Employee), contractor (Contingent Worker)"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['full_time', 'contractor']
+      - name: source
+        description: "Always 'workday'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['workday']
+      - name: workspace_id
+        description: "Tenant identifier"
+        tests:
+          - not_null
+
+  - name: workday__hr_events
+    description: >
+      Workday leave_requests → class_hr_events (Silver Step 2 staging).
+      One row per time-off request. Joins to workers to resolve email.
+      Unlike BambooHR, RaaS report columns are flat — no JSON extraction needed.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: source_person_id
+        description: "Workday Employee ID"
+        tests:
+          - not_null
+      - name: email
+        description: "Resolved from workers.Work_Email via JOIN"
+      - name: event_type
+        description: "Always 'leave' for leave_requests"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['leave']
+      - name: event_subtype
+        description: "Time-off type name (policy-defined, client-specific) from Time_Off_Type"
+      - name: start_date
+        description: "Leave start date"
+        tests:
+          - not_null
+      - name: end_date
+        description: "Leave end date"
+        tests:
+          - not_null
+      - name: duration_amount
+        description: "Quantity (numeric)"
+      - name: duration_unit
+        description: "Unit: hours or days"
+      - name: request_status
+        description: "Request status (Approved, Submitted, Canceled, ...)"
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['workday']
+      - name: created_at
+        description: "When the time-off request was submitted in Workday"
+      - name: ingested_at
+        tests:
+          - not_null
+
+  - name: workday__working_hours
+    description: >
+      Workday active workers → class_hr_working_hours (Silver Step 2 staging).
+      One row per active worker with their scheduled working hours.
+      Scheduled_Weekly_Hours is Workday-delivered; defaults to 40h/week when empty.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: source_person_id
+        description: "Workday Employee ID"
+        tests:
+          - not_null
+      - name: email
+        description: "Work email — identity key"
+        tests:
+          - not_null
+      - name: display_name
+        tests:
+          - not_null
+      - name: employment_type
+        description: "Workday Worker_Type (Employee, Contingent Worker)"
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['workday']
+      - name: working_hours_per_day
+        description: "Scheduled working hours per working day"
+        tests:
+          - not_null
+      - name: working_hours_per_week
+        description: "Scheduled working hours per week"
+        tests:
+          - not_null
+      - name: ingested_at
+        tests:
+          - not_null
+
+  - name: workday__workers_snapshot
+    description: >
+      SCD2 append-only snapshot of Workday workers.
+      Tracks changes in standard report columns and custom report columns
+      from raw_data. Custom columns list is passed via dbt var
+      workday_custom_fields.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+      - name: _row_hash
+        description: "cityHash64 of tracked columns for change detection"
+      - name: _tracked_at
+        description: "Timestamp when this version was captured"
+
+  - name: workday__workers_fields_history
+    description: >
+      Field-level change log for Workday workers.
+      One row per changed field per version transition.
+      Includes both standard and custom report columns (from raw_data).
+    columns:
+      - name: entity_id
+        description: "Workday Employee ID"
+        tests:
+          - not_null
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: field_name
+        description: "Name of the changed field"
+        tests:
+          - not_null
+      - name: old_value
+        description: "Previous value (as string)"
+      - name: new_value
+        description: "New value (as string)"
+      - name: updated_at
+        description: "Timestamp of the change"
+        tests:
+          - not_null
