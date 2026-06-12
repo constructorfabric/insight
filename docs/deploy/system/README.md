@@ -43,6 +43,14 @@ Services ALWAYS log structured JSON to stdout regardless — that is the
 product contract; the endpoint only decides where (if anywhere) Insight also
 exports OTLP.
 
+**Dashboards.** `system/grafana/values.yaml` provisions two log-based
+dashboards into the "Insight" folder: HTTP (request rate by status class,
+latency percentiles per route — built on the api-gateway access log) and
+Ingestion & deploys (reconcile / airbyte-sync / dbt pod logs, deploy hook
+pods, shipped helm output). Deploy markers come from the
+`insight-post-upgrade` hook pod; `make deploy-app` additionally ships its
+helm log to Loki via `scripts/push-deploy-log.sh` (best-effort).
+
 **Access (follow-up: auth).** The baseline Grafana ships with no ingress and
 no SSO — reach it via port-forward:
 
