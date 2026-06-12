@@ -63,15 +63,16 @@ definitions:
       type: MinMaxDatetime
       datetime: "{{ config.get('start_date') or day_delta(-7, format='%Y-%m-%d') }}"
       datetime_format: "%Y-%m-%d"
-      # Earliest data point observed in the data_collector audit for the
-      # test org — going earlier returns empty pages. Verify per tenant.
-      min_datetime: "2026-01-14"
     end_datetime:
       type: MinMaxDatetime
       datetime: "{{ day_delta(-1, format='%Y-%m-%d') }}"
       datetime_format: "%Y-%m-%d"
     step: P1D
     cursor_granularity: P1D
+    # Re-pull a 2-day tail so late-arriving / still-accumulating "yesterday"
+    # analytics rows reach Bronze. The dbt models' 3-day window can't fix data
+    # Bronze never received. (claude-team's day cursor has the same gap.)
+    lookback_window: P2D
     start_time_option:
       type: RequestOption
       field_name: start_date
@@ -91,6 +92,10 @@ definitions:
   # are benign here: IGNORE them so the stream commits zero records and the
   # sync stays GREEN (the seat/chat/Codex streams are unaffected). A real
   # org_id with billing access starts populating rows automatically.
+  # ⚠️ MONITORING: IGNORE also hides a mistyped chatgpt_org_id or a broken proxy
+  # route (green-but-empty). Runbook: if chatgpt_org_id is SET but the
+  # subscription streams return 0 rows for N consecutive days, alert — that is a
+  # misconfig, not "no billing visibility".
   billing_error_handler: &billing_error_handler
     type: DefaultErrorHandler
     response_filters:
@@ -283,7 +288,11 @@ streams:
         <<: *base_requester
         path: "/api/wham/analytics/usage-leaderboard"
         request_parameters:
-          window_days: "30"
+          # Daily granularity comes from the day_cursor injecting start_date /
+          # end_date (one day per request). NO window_days — it would make each
+          # "daily" row a 30-day rolling aggregate (≈30× overcount). Dropped per
+          # review; dev values are day-scale (~140 lines/person/day), confirming
+          # the date range is honored.
           client_filter: "all"
           sort_by: "credits"
           sort_direction: "desc"

@@ -75,7 +75,9 @@ FROM (
     SELECT *
     FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_chat_activity') }}
     ORDER BY _airbyte_extracted_at DESC
-    LIMIT 1 BY tenant_id, source_id, email, date
+    -- Dedup on the SAME normalized key the unique_key uses (lower(trim(email))),
+    -- else two case-variant spellings collide on unique_key (unique-test fail).
+    LIMIT 1 BY tenant_id, source_id, lower(trim(email)), date
 )
 WHERE email IS NOT NULL
   AND trim(email) != ''

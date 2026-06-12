@@ -78,11 +78,22 @@ FROM (
     SELECT *
     FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_codex_user_daily') }}
     ORDER BY _airbyte_extracted_at DESC
-    LIMIT 1 BY tenant_id, source_id, email, date
+    -- Dedup on the SAME normalized key the unique_key uses (lower(trim(email))),
+    -- else two case-variant spellings of one address both survive and then
+    -- collide on unique_key (unique-test failure).
+    LIMIT 1 BY tenant_id, source_id, lower(trim(email)), date
 )
 WHERE email IS NOT NULL
   AND trim(email) != ''
   AND date IS NOT NULL
+  -- Only emit rows with real Codex activity so codex_active (the DAU marker)
+  -- is not inflated by zero-usage users (mirrors the chat model's filter).
+  AND (
+        coalesce(credits, 0) > 0
+     OR coalesce(toUInt32OrNull(toString(n_turns)),   0) > 0
+     OR coalesce(toUInt32OrNull(toString(n_threads)), 0) > 0
+     OR coalesce(toUInt32OrNull(toString(lines_added)), 0) > 0
+  )
 {% if is_incremental() %}
   AND toDate(date) > (
       SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY

@@ -73,9 +73,11 @@ not Insight's concern.
 
 ## Silver Targets
 
-Planned (follow-up): `chatgpt_team_chat_activity` → `class_ai_tool_usage`
-(with Claude web/mobile), `chatgpt_team_codex_user_daily` → `class_ai_dev_usage`
-(with Claude Code / Cursor). Only the bronze→RMT promotion (`dbt/`) exists today.
+Shipped (this connector's `dbt/`):
+- `chatgpt_team_codex_user_daily` → `chatgpt_team__ai_dev_usage` → **`class_ai_dev_usage`** (`tool='codex'`, alongside Claude Code / Cursor).
+- `chatgpt_team_chat_activity` → `chatgpt_team__ai_assistant_usage` → **`class_ai_assistant_usage`** (`tool='chatgpt'`, `surface='chat'`).
+
+Plus the bronze→RMT promotion (`chatgpt_team__bronze_promoted`). The keys then flow to Gold (`ai_bullet_rows`) and the analytics-api query_ref / `metric_catalog`.
 
 ## Related
 
