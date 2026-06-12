@@ -91,6 +91,7 @@ Read connector package files and verify each item:
 
 ### Descriptor
 - [ ] `name` matches directory name
+- [ ] `version` is bumped in the SAME PR as any `connector.yaml` change — reconcile republishes the nocode manifest only on descriptor-version drift (equal versions → noop), so a manifest edit without a bump silently never reaches Airbyte
 - [ ] `connection.namespace` = `bronze_<name>`
 - [ ] `dbt_select` includes connector tag with `+` suffix (e.g., `tag:m365+`)
 - [ ] `schedule` is valid cron expression

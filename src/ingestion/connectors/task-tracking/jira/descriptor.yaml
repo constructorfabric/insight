@@ -1,5 +1,5 @@
 name: jira
-version: "1.2.0"
+version: "1.2.1"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is

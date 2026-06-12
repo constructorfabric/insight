@@ -15,6 +15,7 @@ Registers connector in Airbyte, creates connections, and sets up Argo workflows.
 - **All cursor fields exist in schema** (prevents ClickHouse destination NPE)
 - Tenant config (`connections/<tenant>.yaml` with `tenant_id`) and K8s Secrets with credentials
 - Cluster running (`./up.sh` completed)
+- **`descriptor.yaml` `version` bumped whenever `connector.yaml` changed.** On reconcile-managed clusters the nocode manifest is republished ONLY on descriptor-version drift (reconcile compares descriptor `version` against the version stored on the Airbyte definition; equal → noop, ADR-0015). A manifest-only PR without a version bump silently never reaches Airbyte — the deploy "succeeds" with the old manifest still active. CI auto-bumps descriptors only for image ref changes, NOT for manifest edits.
 
 ## Phase 1: Register Connector
 
