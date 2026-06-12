@@ -335,6 +335,86 @@ Define source (bronze database) and model with tests:
 - `source_id`: not_null
 - `unique_key`: not_null, unique
 
+#### 3.6b Identity Resolution inputs (REQUIRED when the source exposes a user directory)
+
+If the connector has a stream that enumerates users **with emails** (or another
+person-identifying value like employee_id), it MUST feed Identity Resolution
+via the standard three-macro chain. Reference implementations:
+`collaboration/zoom`, `collaboration/zulip-proxy`, `hr-directory/bamboohr`,
+`hr-directory/ms-entra`, `wiki/outline`.
+
+```
+<users bronze table>
+  -> <name>__users_snapshot         snapshot() macro — SCD2, appends a row when
+                                    tracked columns change
+    -> <name>__users_fields_history fields_history() macro — one row per changed
+                                    field per version transition
+      -> <name>__identity_inputs    identity_inputs_from_history() macro —
+                                    UPSERT/DELETE observation rows, tagged
+                                    silver:identity_inputs
+        -> identity.identity_inputs silver/_shared/identity_inputs.sql unions
+                                    all contributors via union_by_tag
+```
+
+Three models to create (snake_case connector name):
+
+```sql
+-- dbt/<name>__users_snapshot.sql
+-- depends_on: {{ ref('<name>__bronze_promoted') }}
+{{ config(materialized='incremental', incremental_strategy='append',
+          schema='staging', tags=['<name>']) }}
+{{ snapshot(
+    source_ref=source('bronze_<name>', '<users_stream>'),
+    unique_key_col='unique_key',
+    check_cols=['<email_field>', '<display_name_field>', '<status_field>']
+) }}
+```
+
+```sql
+-- dbt/<name>__users_fields_history.sql
+{{ config(materialized='table', schema='staging', tags=['<name>', 'silver']) }}
+{{ fields_history(
+    snapshot_ref=ref('<name>__users_snapshot'),
+    entity_id_col='<source_user_id_col>',
+    fields=['<email_field>', '<display_name_field>', '<status_field>']
+) }}
+```
+
+```sql
+-- dbt/<name>__identity_inputs.sql
+{{ config(materialized='incremental', incremental_strategy='append',
+          schema='staging', tags=['<name>', 'silver', 'silver:identity_inputs']) }}
+{{ identity_inputs_from_history(
+    fields_history_ref=ref('<name>__users_fields_history'),
+    source_type='<name>',
+    identity_fields=[
+        {'field': '<email_field>', 'value_type': 'email',        'value_field_name': 'bronze_<name>.<users_stream>.<email_field>'},
+        {'field': '<name_field>',  'value_type': 'display_name', 'value_field_name': 'bronze_<name>.<users_stream>.<name_field>'},
+    ],
+    deactivation_condition="field_name = '<status_field>' AND lower(new_value) = '<inactive_value>'"
+) }}
+```
+
+Rules:
+- `entity_id_col` is the SOURCE-side stable user id (e.g. `user_id`, `id`) —
+  the macro emits the canonical `value_type='id'` binding row from it
+  automatically (ADR-0002); do NOT list it in `identity_fields`.
+- `check_cols` (snapshot) and `fields` (fields_history) must be the same list —
+  every field whose change should produce a history row. Booleans are fine:
+  `fields_history` stringifies via `toString()`, so a ClickHouse Bool becomes
+  `'true'`/`'false'` — compare with `lower(new_value) = 'true'` in
+  `deactivation_condition`.
+- The snapshot reads its source with `FINAL`, so the bronze table MUST already
+  be RMT-promoted (`<name>__bronze_promoted` + the `-- depends_on` header on
+  the snapshot model).
+- Add `-- depends_on: {{ ref('<name>__identity_inputs') }}` to
+  `src/ingestion/silver/_shared/identity_inputs.sql` so the first run
+  materialises the staging model before the shared union.
+- Document the chain and contributed value types in the connector README.
+- If the source exposes NO user directory (e.g. Confluence — author ids only,
+  no emails), skip this section and document in the README how identities
+  resolve instead (cross-connector JOIN, Silver Step 2 direct mapping).
+
 ### For CDK (`CONNECTOR_TYPE=cdk`):
 
 Create Python scaffold:

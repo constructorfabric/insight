@@ -14,6 +14,8 @@ models:
       bronze_jira.jira_user on the same accountId namespace. If Jira is not
       provisioned, the JOIN is skipped at compile-time and author_email /
       last_editor_email are NULL — Silver Step 2 maps author_id → person_id.
+      Outline embeds user objects in API responses, so its staging model
+      reads author_email / last_editor_email straight from bronze.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -69,14 +71,14 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ['confluence']
+                values: ['confluence', 'outline']
       - name: data_source
         description: "Framework source discriminator"
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ['insight_confluence']
+                values: ['insight_confluence', 'insight_outline']
       - name: collected_at
         description: "When the record was collected"
 
@@ -144,14 +146,14 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ['confluence']
+                values: ['confluence', 'outline']
       - name: data_source
         description: "Framework source discriminator"
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ['insight_confluence']
+                values: ['insight_confluence', 'insight_outline']
       - name: collected_at
         description: "When the record was collected"
 
@@ -163,9 +165,9 @@ models:
       replies (both kinds). Feeds engagement metrics ("which docs got
       reviewed vs published-and-ignored") in gold. See issue #285.
 
-      First contributor: Confluence (`confluence__wiki_engagement`). Other
-      wiki sources can hook in later by adding staging models tagged
-      `silver:class_wiki_engagement`.
+      Contributors: Confluence (`confluence__wiki_engagement`) and Outline
+      (`outline__wiki_engagement`). Other wiki sources can hook in later by
+      adding staging models tagged `silver:class_wiki_engagement`.
 
       Design note (#285 AC#2 waiver): the issue's literal AC#2 asked for
       per-event comment rows to be added to `class_wiki_activity` with a
@@ -225,13 +227,13 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ['confluence']
+                values: ['confluence', 'outline']
       - name: data_source
         description: "Framework source discriminator"
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ['insight_confluence']
+                values: ['insight_confluence', 'insight_outline']
       - name: collected_at
         description: "When the latest contributing comment row was collected"

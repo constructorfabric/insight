@@ -162,6 +162,18 @@ Read connector package files and verify each item:
 - [ ] Uses `{{ source('bronze_<name>', '<stream>') }}`
 - [ ] Has `{% if is_incremental() %}` block
 
+### Identity Resolution inputs
+
+- [ ] If the connector ingests a user-directory stream with emails (or another
+  person-identifying value), the three-macro chain is present:
+  `<name>__users_snapshot` (snapshot) → `<name>__users_fields_history`
+  (fields_history) → `<name>__identity_inputs` (identity_inputs_from_history,
+  tagged `silver:identity_inputs`). See `connector-create.md` §3.6b.
+- [ ] `src/ingestion/silver/_shared/identity_inputs.sql` carries a
+  `-- depends_on: {{ ref('<name>__identity_inputs') }}` line for the connector.
+- [ ] If the source has NO user directory, the README documents the
+  alternative resolution path instead (e.g. Confluence → jira_user JOIN).
+
 ### dbt schema.yml
 - [ ] Source defined with `schema: bronze_<name>`
 - [ ] Model has `tenant_id` with not_null test

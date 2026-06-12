@@ -1,0 +1,18 @@
+name: outline
+version: "1.0.0"
+schedule: "0 4 * * *"
+workflow: sync
+
+# Silver routing (class_wiki_pages, class_wiki_activity, class_wiki_engagement)
+# enabled via dbt tags on the staging models (silver:class_wiki_pages,
+# silver:class_wiki_activity, silver:class_wiki_engagement).
+# silver_targets prohibited per Connector Spec §4.10 — Silver determined by dbt_select tags.
+dbt_select: "tag:outline+"
+
+connection:
+  namespace: bronze_outline
+secret:
+  required_fields:
+    - outline_instance_url
+    - outline_api_token
+    - outline_start_date

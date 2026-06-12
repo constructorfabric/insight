@@ -1,0 +1,825 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+# Outline (getoutline.com) knowledge-base connector.
+#
+# API shape: RPC style — every endpoint is POST {instance}/api/{method} with a
+# JSON body. Auth is a static Bearer API key. Pagination is offset/limit in the
+# request body; the response wraps records in a `data` array and echoes
+# pagination in a `pagination` key. Rate limiting returns 429 with a
+# Retry-After header (same handling as the Confluence connector: cap the
+# honoured wait at 600s so a pathological Retry-After fails fast instead of
+# silently hanging the sync).
+#
+# The manifest is fully inlined (no $ref, not even definitions.linked):
+# validate-strict currently rejects linked $refs repo-wide, and inlining
+# passes both the Builder strict validator and the CDK runtime validator.
+#
+# Stream parity with wiki/confluence:
+#   wiki_spaces        <- collections.list   (Confluence: spaces)
+#   wiki_pages         <- documents.list     (Confluence: pages)
+#   wiki_page_versions <- revisions.list     (Confluence: page versions)
+#   wiki_comments      <- comments.list      (Confluence: 4 comment streams;
+#                         Outline has a single threaded model — replies via
+#                         parentCommentId, inline-vs-footer via anchorText)
+#   wiki_users         <- users.list         (no Confluence equivalent — the
+#                         Outline API returns user emails directly, so author
+#                         identity is resolved without a Jira JOIN)
+
+check:
+  type: CheckStream
+  stream_names:
+    - wiki_spaces
+
+streams:
+  - type: DeclarativeStream
+    name: wiki_spaces
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        properties:
+          unique_key: {type: ["string", "null"]}
+          tenant_id: {type: ["string", "null"]}
+          source_id: {type: ["string", "null"]}
+          data_source: {type: ["string", "null"]}
+          space_id: {type: ["string", "null"]}
+          name: {type: ["string", "null"]}
+          description: {type: ["string", "null"]}
+          space_type: {type: ["string", "null"]}
+          status: {type: ["string", "null"]}
+          url: {type: ["string", "null"]}
+          created_at: {type: ["string", "null"]}
+          collected_at: {type: ["string", "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['outline_instance_url'] }}/api"
+        path: /collections.list
+        http_method: POST
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['outline_api_token'] }}"
+        request_headers:
+          Accept: application/json
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401, 403]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('outline_page_size', 100) }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - offset
+        page_size_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - limit
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: "insight_outline"
+          - type: AddedFieldDefinition
+            path: [space_id]
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ record.get('description') or '' }}"
+          - type: AddedFieldDefinition
+            path: [space_type]
+            value: "collection"
+          - type: AddedFieldDefinition
+            path: [status]
+            value: >-
+              {{ 'archived' if record.get('archivedAt') else ('deleted' if
+              record.get('deletedAt') else 'active') }}
+          - type: AddedFieldDefinition
+            path: [url]
+            value: >-
+              {{ record.get('url', '') if record.get('url', '').startswith('http')
+              else config['outline_instance_url'] + record.get('url', '') }}
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ record.get('createdAt', '') }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  - type: DeclarativeStream
+    name: wiki_pages
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        properties:
+          unique_key: {type: ["string", "null"]}
+          tenant_id: {type: ["string", "null"]}
+          source_id: {type: ["string", "null"]}
+          data_source: {type: ["string", "null"]}
+          page_id: {type: ["string", "null"]}
+          space_id: {type: ["string", "null"]}
+          title: {type: ["string", "null"]}
+          status: {type: ["string", "null"]}
+          author_id: {type: ["string", "null"]}
+          author_email: {type: ["string", "null"]}
+          last_editor_id: {type: ["string", "null"]}
+          last_editor_email: {type: ["string", "null"]}
+          created_at: {type: ["string", "null"]}
+          updated_at: {type: ["string", "null"]}
+          version_number: {type: ["integer", "null"]}
+          parent_page_id: {type: ["string", "null"]}
+          collected_at: {type: ["string", "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['outline_instance_url'] }}/api"
+        path: /documents.list
+        http_method: POST
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['outline_api_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_body_json:
+          sort: updatedAt
+          direction: DESC
+          statusFilter:
+            - published
+            - archived
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401, 403]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('outline_page_size', 100) }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - offset
+        page_size_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - limit
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      is_client_side_incremental: true
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%fZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('outline_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%fZ') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%S.%fZ"
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: "insight_outline"
+          - type: AddedFieldDefinition
+            path: [page_id]
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [space_id]
+            value: "{{ record.get('collectionId') or '' }}"
+          - type: AddedFieldDefinition
+            path: [status]
+            value: >-
+              {{ 'trashed' if record.get('deletedAt') else ('archived' if
+              record.get('archivedAt') else ('current' if
+              record.get('publishedAt') else 'draft')) }}
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('createdBy') or {}).get('id', '') }}"
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ (record.get('createdBy') or {}).get('email', '') }}"
+          - type: AddedFieldDefinition
+            path: [last_editor_id]
+            value: "{{ (record.get('updatedBy') or {}).get('id', '') }}"
+          - type: AddedFieldDefinition
+            path: [last_editor_email]
+            value: "{{ (record.get('updatedBy') or {}).get('email', '') }}"
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ record.get('createdAt', '') }}"
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt', '') }}"
+          - type: AddedFieldDefinition
+            path: [version_number]
+            value: "{{ record.get('revision', 0) }}"
+          - type: AddedFieldDefinition
+            path: [parent_page_id]
+            value: "{{ record.get('parentDocumentId') or '' }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  - type: DeclarativeStream
+    name: wiki_page_versions
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        properties:
+          unique_key: {type: ["string", "null"]}
+          tenant_id: {type: ["string", "null"]}
+          source_id: {type: ["string", "null"]}
+          data_source: {type: ["string", "null"]}
+          page_id: {type: ["string", "null"]}
+          revision_id: {type: ["string", "null"]}
+          author_id: {type: ["string", "null"]}
+          author_email: {type: ["string", "null"]}
+          created_at: {type: ["string", "null"]}
+          message: {type: ["string", "null"]}
+          collected_at: {type: ["string", "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: page_id
+            stream:
+              type: DeclarativeStream
+              name: wiki_pages
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id: {type: ["string", "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  url_base: "{{ config['outline_instance_url'] }}/api"
+                  path: /documents.list
+                  http_method: POST
+                  authenticator:
+                    type: BearerAuthenticator
+                    api_token: "{{ config['outline_api_token'] }}"
+                  request_headers:
+                    Accept: application/json
+                  request_body_json:
+                    sort: updatedAt
+                    direction: DESC
+                    statusFilter:
+                      - published
+                      - archived
+                  error_handler:
+                    type: DefaultErrorHandler
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                        max_waiting_time_in_seconds: 600
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes: [429, 503]
+                      - type: HttpResponseFilter
+                        action: FAIL
+                        http_codes: [401, 403]
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: OffsetIncrement
+                    page_size: "{{ config.get('outline_page_size', 100) }}"
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: body_json
+                    field_path:
+                      - offset
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: body_json
+                    field_path:
+                      - limit
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - data
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['outline_instance_url'] }}/api"
+        path: /revisions.list
+        http_method: POST
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['outline_api_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_body_json:
+          documentId: "{{ stream_partition.page_id }}"
+          sort: createdAt
+          direction: ASC
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401, 403]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('outline_page_size', 100) }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - offset
+        page_size_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - limit
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: "insight_outline"
+          - type: AddedFieldDefinition
+            path: [page_id]
+            value: "{{ stream_partition.page_id }}"
+          - type: AddedFieldDefinition
+            path: [revision_id]
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: >-
+              {{ record.get('createdById') or (record.get('createdBy') or
+              {}).get('id', '') }}
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ (record.get('createdBy') or {}).get('email', '') }}"
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ record.get('createdAt', '') }}"
+          - type: AddedFieldDefinition
+            path: [message]
+            value: "{{ record.get('name') or '' }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  - type: DeclarativeStream
+    name: wiki_comments
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        properties:
+          unique_key: {type: ["string", "null"]}
+          tenant_id: {type: ["string", "null"]}
+          source_id: {type: ["string", "null"]}
+          data_source: {type: ["string", "null"]}
+          comment_id: {type: ["string", "null"]}
+          page_id: {type: ["string", "null"]}
+          parent_comment_id: {type: ["string", "null"]}
+          author_id: {type: ["string", "null"]}
+          author_email: {type: ["string", "null"]}
+          created_at: {type: ["string", "null"]}
+          updated_at: {type: ["string", "null"]}
+          resolution_status: {type: ["string", "null"]}
+          anchor_text: {type: ["string", "null"]}
+          collected_at: {type: ["string", "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['outline_instance_url'] }}/api"
+        path: /comments.list
+        http_method: POST
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['outline_api_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_body_json:
+          includeAnchorText: true
+          sort: createdAt
+          direction: ASC
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401, 403]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('outline_page_size', 100) }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - offset
+        page_size_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - limit
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: "insight_outline"
+          - type: AddedFieldDefinition
+            path: [comment_id]
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [page_id]
+            value: "{{ record.get('documentId', '') }}"
+          - type: AddedFieldDefinition
+            path: [parent_comment_id]
+            value: "{{ record.get('parentCommentId') or '' }}"
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: >-
+              {{ record.get('createdById') or (record.get('createdBy') or
+              {}).get('id', '') }}
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ (record.get('createdBy') or {}).get('email', '') }}"
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ record.get('createdAt', '') }}"
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt', '') }}"
+          - type: AddedFieldDefinition
+            path: [resolution_status]
+            value: "{{ 'resolved' if record.get('resolvedAt') else 'open' }}"
+          - type: AddedFieldDefinition
+            path: [anchor_text]
+            value: "{{ record.get('anchorText') or '' }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  - type: DeclarativeStream
+    name: wiki_users
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        properties:
+          unique_key: {type: ["string", "null"]}
+          tenant_id: {type: ["string", "null"]}
+          source_id: {type: ["string", "null"]}
+          data_source: {type: ["string", "null"]}
+          user_id: {type: ["string", "null"]}
+          name: {type: ["string", "null"]}
+          email: {type: ["string", "null"]}
+          role: {type: ["string", "null"]}
+          is_suspended: {type: ["boolean", "null"]}
+          last_active_at: {type: ["string", "null"]}
+          created_at: {type: ["string", "null"]}
+          collected_at: {type: ["string", "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['outline_instance_url'] }}/api"
+        path: /users.list
+        http_method: POST
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['outline_api_token'] }}"
+        request_headers:
+          Accept: application/json
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [429, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401, 403]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('outline_page_size', 100) }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - offset
+        page_size_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path:
+            - limit
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: "insight_outline"
+          - type: AddedFieldDefinition
+            path: [user_id]
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [email]
+            value: "{{ record.get('email', '') }}"
+          - type: AddedFieldDefinition
+            path: [role]
+            value: "{{ record.get('role', '') }}"
+          - type: AddedFieldDefinition
+            path: [is_suspended]
+            value: "{{ record.get('isSuspended', false) }}"
+          - type: AddedFieldDefinition
+            path: [last_active_at]
+            value: "{{ record.get('lastActiveAt') or '' }}"
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ record.get('createdAt', '') }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+# default_concurrency MUST be > 1: with a single worker the concurrent CDK
+# self-deadlocks once a sync generates >= ~10k partitions (futures limit) —
+# wiki_page_versions partitions per document and this instance has 11k+ docs.
+# Same fix as jira/confluence (records counter frozen at exactly 10000 is the
+# fingerprint).
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 4
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - outline_instance_url
+      - outline_api_token
+    properties:
+      insight_tenant_id:
+        type: string
+        description: Insight tenant identifier stamped onto every emitted record.
+        title: Insight Tenant ID
+        order: 0
+      insight_source_id:
+        type: string
+        description: >-
+          Instance discriminator for multi-instance support (e.g.
+          outline-acme).
+        title: Insight Source ID
+        order: 1
+      outline_instance_url:
+        type: string
+        description: >-
+          Outline instance URL (e.g. https://app.getoutline.com for cloud or
+          https://wiki.example.com for self-hosted). Do not include a trailing
+          slash or the /api suffix.
+        title: Outline Instance URL
+        order: 2
+      outline_api_token:
+        type: string
+        description: >-
+          Outline API key generated in Settings -> API Keys. Sent as a Bearer
+          token.
+        title: Outline API Token
+        airbyte_secret: true
+        order: 3
+      outline_start_date:
+        type: string
+        description: >-
+          Earliest date for incremental sync (YYYY-MM-DD). Defaults to
+          2020-01-01.
+        title: Start Date
+        format: date
+        default: "2020-01-01"
+        order: 4
+      outline_page_size:
+        type: integer
+        description: >-
+          Number of results per API page (default 100, the Outline server-side
+          maximum).
+        title: Page Size
+        default: 100
+        minimum: 1
+        maximum: 100
+        order: 5
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    wiki_spaces: false
+    wiki_pages: false
+    wiki_page_versions: false
+    wiki_comments: false
+    wiki_users: false

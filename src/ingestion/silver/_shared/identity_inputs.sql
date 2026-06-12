@@ -13,6 +13,7 @@
 -- depends_on: {{ ref('bamboohr__identity_inputs') }}
 -- depends_on: {{ ref('zoom__identity_inputs') }}
 -- depends_on: {{ ref('ms_entra__identity_inputs') }}
+-- depends_on: {{ ref('outline__identity_inputs') }}
 -- depends_on: {{ ref('seed_identity_inputs_from_cursor') }}
 -- depends_on: {{ ref('seed_identity_inputs_from_claude_admin') }}
 

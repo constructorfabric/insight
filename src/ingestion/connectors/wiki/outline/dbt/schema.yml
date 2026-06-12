@@ -1,0 +1,161 @@
+version: 2
+
+sources:
+  - name: bronze_outline
+    schema: bronze_outline
+    tables:
+      - name: wiki_spaces
+      - name: wiki_pages
+      - name: wiki_page_versions
+      - name: wiki_comments
+      - name: wiki_users
+
+models:
+  - name: outline__users_snapshot
+    description: >
+      SCD2 snapshot of the Outline user directory (wiki_users). Appends a
+      new row when any of `name`, `email`, `role`, `is_suspended` changes
+      for a given user.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+
+  - name: outline__users_fields_history
+    description: >
+      Field-level change log derived from the users snapshot. One row per
+      changed field per version transition.
+
+  - name: outline__identity_inputs
+    description: >
+      Identity Manager input rows emitted from the user fields-history.
+      Contributes `email` and `display_name` (from `name`) value types plus
+      the canonical `id` binding row. Deactivation triggered when
+      `is_suspended=true`.
+
+  - name: outline__wiki_pages
+    description: >
+      Bronze → Silver step 1: Outline documents → class_wiki_pages. One row
+      per (tenant, source, document) with collection/author/editor dimensions
+      and revision count. author_email / last_editor_email resolved via LEFT
+      JOIN with the connector's own wiki_users stream (users.list is the only
+      Outline endpoint exposing emails; embedded user objects omit the email
+      field on self-hosted instances). No cross-connector JOIN needed.
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: page_id
+        tests:
+          - not_null
+      - name: version_count
+        tests:
+          - not_null
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['outline']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_outline']
+
+  - name: outline__wiki_activity
+    description: >
+      Bronze → Silver step 1: Outline revisions → class_wiki_activity.
+      Per-user per-day edit activity with counts of pages_edited, total_edits
+      (logical 30-min sessions, same policy as Confluence #259), and
+      pages_created (first revision of a document, ordinal derived via
+      row_number since Outline revisions carry no version number).
+      author_email resolved via LEFT JOIN with the connector's own
+      wiki_users stream (embedded createdBy objects omit email).
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: author_id
+        tests:
+          - not_null
+      - name: day
+        tests:
+          - not_null
+      - name: pages_edited
+        tests:
+          - not_null
+      - name: total_edits
+        tests:
+          - not_null
+      - name: pages_created
+        tests:
+          - not_null
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['outline']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_outline']
+
+  - name: outline__wiki_engagement
+    description: >
+      Bronze → Silver: Outline comments → class_wiki_engagement. Per
+      (tenant, source, page, day) summary of comment activity from the
+      single threaded wiki_comments stream. Confluence's footer/inline
+      dimension is derived from anchor_text (anchored = inline), replies
+      from parent_comment_id. Aggregations: total_comments, footer_comments,
+      inline_comments, replies, unique_commenters, unresolved_inline_count.
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: page_id
+        tests:
+          - not_null
+      - name: day
+        tests:
+          - not_null
+      - name: total_comments
+        tests:
+          - not_null
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['outline']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_outline']
