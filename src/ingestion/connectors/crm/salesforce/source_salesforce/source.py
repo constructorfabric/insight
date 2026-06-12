@@ -1,7 +1,7 @@
 """Salesforce source entry point.
 
 Wires together authentication (OAuth Client Credentials), describe-driven
-stream discovery, per-sobject REST-vs-Bulk decision, and ``ConcurrentCursor``
+stream discovery (REST ``/queryAll`` for every stream), and ``ConcurrentCursor``
 for parallel incremental slicing. Config keys are prefixed ``salesforce_*`` /
 ``insight_*`` so the K8s Secret can carry multiple connectors without
 collision.
@@ -31,37 +31,31 @@ from airbyte_cdk.models import (
 from airbyte_cdk.sources.concurrent_source.concurrent_source import ConcurrentSource
 from airbyte_cdk.sources.concurrent_source.concurrent_source_adapter import ConcurrentSourceAdapter
 from airbyte_cdk.sources.connector_state_manager import ConnectorStateManager
-from airbyte_cdk.sources.declarative.async_job.job_tracker import JobTracker
 from airbyte_cdk.sources.message import InMemoryMessageRepository
 from airbyte_cdk.sources.source import TState
 from airbyte_cdk.sources.streams import Stream
 from airbyte_cdk.sources.streams.concurrent.adapters import StreamFacade
 from airbyte_cdk.sources.streams.concurrent.cursor import ConcurrentCursor, CursorField, FinalStateCursor
-from airbyte_cdk.sources.streams.http.requests_native_auth import TokenAuthenticator
 from airbyte_cdk.sources.utils.schema_helpers import InternalConfig
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
 
 from pathlib import Path
 from airbyte_cdk.models import ConnectorSpecification
 
-from source_salesforce.api import Salesforce
+from source_salesforce.api import Salesforce, SalesforceAuthenticator
 from source_salesforce.constants import (
     PARENT_SALESFORCE_OBJECTS,
-    UNSUPPORTED_BULK_API_SALESFORCE_OBJECTS,
     UNSUPPORTED_FILTERING_STREAMS,
 )
 from source_salesforce.streams import (
     DEFAULT_LOOKBACK_SECONDS,
-    BulkIncrementalSalesforceStream,
-    BulkSalesforceStream,
-    BulkSalesforceSubStream,
     IncrementalRestSalesforceStream,
     RestSalesforceStream,
     RestSalesforceSubStream,
 )
 
 
-_DEFAULT_CONCURRENCY = 20
+_DEFAULT_CONCURRENCY = 1
 _MAX_CONCURRENCY = 50
 logger = logging.getLogger("airbyte")
 
@@ -69,7 +63,7 @@ logger = logging.getLogger("airbyte")
 class SourceSalesforce(ConcurrentSourceAdapter):
     DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
     START_DATE_OFFSET_IN_YEARS = 2
-    stop_sync_on_stream_failure = True
+    stop_sync_on_stream_failure = False
     message_repository = InMemoryMessageRepository(Level(AirbyteLogFormatter.level_mapping[logger.level]))
 
     def __init__(self, catalog: Optional[ConfiguredAirbyteCatalog], config: Optional[Mapping[str, Any]], state: Optional[TState], **kwargs):
@@ -85,12 +79,11 @@ class SourceSalesforce(ConcurrentSourceAdapter):
             concurrency_level = _DEFAULT_CONCURRENCY
         logger.info(f"Using concurrent cdk with concurrency level {concurrency_level}")
         concurrent_source = ConcurrentSource.create(
-            concurrency_level, concurrency_level // 2, logger, self._slice_logger, self.message_repository
+            concurrency_level, max(1, concurrency_level // 2), logger, self._slice_logger, self.message_repository
         )
         super().__init__(concurrent_source)
         self.catalog = catalog
         self.state = state
-        self._job_tracker = JobTracker(limit=100)
 
     def spec(self, logger_: logging.Logger) -> ConnectorSpecification:
         spec_path = Path(__file__).parent / "spec.json"
@@ -174,59 +167,20 @@ class SourceSalesforce(ConcurrentSourceAdapter):
         return True, None
 
     @classmethod
-    def _get_api_type(
-        cls, stream_name: str, json_schema: Mapping[str, Any], force_use_bulk_api: bool
-    ) -> str:
-        """Return ``"rest"`` or ``"bulk"`` for the given stream.
+    def _get_stream_type(cls, stream_name: str):
+        """Get proper stream class: full_refresh, incremental or substream.
 
-        Bulk API cannot emit base64 or compound (object) fields as CSV columns,
-        so any sobject carrying those drops to REST unless the operator sets
-        ``force_use_bulk_api`` (accepting data loss for those fields).
-        """
-        properties = json_schema.get("properties") or {}
-        not_bulk_safe = {
-            key: value
-            for key, value in properties.items()
-            if isinstance(value, Mapping)
-            and (
-                value.get("format") == "base64"
-                or "object" in (value.get("type") or [])
-            )
-        }
-        if stream_name in UNSUPPORTED_BULK_API_SALESFORCE_OBJECTS:
-            logger.warning("Bulk API not supported for stream '%s'; using REST", stream_name)
-            return "rest"
-        if force_use_bulk_api and not_bulk_safe:
-            logger.warning(
-                "Excluding non-Bulk fields from stream '%s': %s",
-                stream_name,
-                list(not_bulk_safe),
-            )
-            return "bulk"
-        if not_bulk_safe:
-            return "rest"
-        return "bulk"
-
-    @classmethod
-    def _get_stream_type(cls, stream_name: str, api_type: str):
-        """Get proper stream class: full_refresh, incremental or substream
-
-        SubStreams (like ContentDocumentLink) do not support incremental sync because of query restrictions, look here:
-        https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_contentdocumentlink.htm
+        Every stream uses the REST ``/queryAll`` API. SubStreams (like
+        ContentDocumentLink) do not support incremental sync because of query
+        restrictions: https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_contentdocumentlink.htm
         """
         parent_name = PARENT_SALESFORCE_OBJECTS.get(stream_name, {}).get("parent_name")
-        if api_type == "rest":
-            full_refresh = RestSalesforceSubStream if parent_name else RestSalesforceStream
-            incremental = IncrementalRestSalesforceStream
-        elif api_type == "bulk":
-            full_refresh = BulkSalesforceSubStream if parent_name else BulkSalesforceStream
-            incremental = BulkIncrementalSalesforceStream
-        else:
-            raise Exception(f"Stream {stream_name} cannot be processed by REST or BULK API.")
+        full_refresh = RestSalesforceSubStream if parent_name else RestSalesforceStream
+        incremental = IncrementalRestSalesforceStream
         return full_refresh, incremental
 
     def prepare_stream(self, stream_name: str, json_schema, sobject_options, sf_object, authenticator, config):
-        """Choose proper stream class: syncMode(full_refresh/incremental), API type(Rest/Bulk), SubStream"""
+        """Choose proper stream class: syncMode (full_refresh/incremental), REST API, SubStream."""
         pk, replication_key = sf_object.get_pk_and_replication_key(json_schema)
         stream_kwargs = {
             "stream_name": stream_name,
@@ -236,7 +190,6 @@ class SourceSalesforce(ConcurrentSourceAdapter):
             "sf_api": sf_object,
             "authenticator": authenticator,
             "start_date": config.get("salesforce_start_date"),
-            "job_tracker": self._job_tracker,
             "message_repository": self.message_repository,
             # Envelope context — tenant_id / source_id / custom_fields split.
             "tenant_id": config["insight_tenant_id"],
@@ -244,10 +197,7 @@ class SourceSalesforce(ConcurrentSourceAdapter):
             "custom_field_names": sf_object.get_custom_field_names(stream_name),
         }
 
-        api_type = self._get_api_type(
-            stream_name, json_schema, config.get("salesforce_force_use_bulk_api", False)
-        )
-        full_refresh, incremental = self._get_stream_type(stream_name, api_type)
+        full_refresh, incremental = self._get_stream_type(stream_name)
         if replication_key and stream_name not in UNSUPPORTED_FILTERING_STREAMS:
             stream_class = incremental
             stream_kwargs["replication_key"] = replication_key
@@ -266,7 +216,7 @@ class SourceSalesforce(ConcurrentSourceAdapter):
         sf_object: Salesforce,
     ) -> List[Stream]:
         """Generates a list of stream by their names. It can be used for different tests too"""
-        authenticator = TokenAuthenticator(sf_object.access_token)
+        authenticator = SalesforceAuthenticator(sf_object._token_provider)
         schemas = sf_object.generate_schemas(stream_objects)
         default_args = [sf_object, authenticator, config]
         streams = []
@@ -290,7 +240,7 @@ class SourceSalesforce(ConcurrentSourceAdapter):
 
             stream = stream_class(**kwargs)
             streams.append(self._wrap_for_concurrency(config, stream, state_manager))
-        # The Describe meta-stream from upstream is intentionally omitted —
+        # The Describe meta-stream is intentionally omitted —
         # Bronze already captures per-field metadata via the generated schema,
         # and the meta-stream would add a large sobjects table that nothing in
         # the downstream dbt pipeline consumes.
@@ -326,7 +276,7 @@ class SourceSalesforce(ConcurrentSourceAdapter):
                 datetime.now() - relativedelta(years=self.START_DATE_OFFSET_IN_YEARS)
             ).strftime(self.DATETIME_FORMAT)
         sf = self._get_sf_object(config)
-        stream_objects = sf.get_validated_streams(config=config, catalog=self.catalog)
+        stream_objects = sf.get_validated_streams(catalog=self.catalog)
         streams = self.generate_streams(config, stream_objects, sf)
         return streams
 
