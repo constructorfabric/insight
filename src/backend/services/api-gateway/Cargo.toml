@@ -37,11 +37,25 @@ oidc-authn-plugin = { path = "../../plugins/oidc-authn-plugin" }
 # Auth info + proxy modules
 modkit-macros = { workspace = true }
 modkit-security = { workspace = true }
+modkit-auth = { workspace = true }
+modkit-canonical-errors = { workspace = true }
 async-trait = { workspace = true }
 axum = "0.8"
+axum-extra = { workspace = true }
+time = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# BFF: session store + OIDC + crypto
+redis = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+subtle = { workspace = true }
+url = "2.5"
 
 # Runtime
 tokio = { workspace = true }
@@ -49,6 +63,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
+# OIDC (discovery, code-with-PKCE, ID-token validation) used by the BFF.
+openidconnect = "4"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

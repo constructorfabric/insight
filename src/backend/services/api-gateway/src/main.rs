@@ -5,6 +5,8 @@
 //! - OIDC `AuthN` plugin (JWT validation against Okta/Keycloak/Auth0)
 //! - `AuthZ` resolver (static plugin for now, custom org-tree plugin later)
 //! - Tenant resolver (single-tenant plugin)
+//! - BFF (server-side OIDC + cookie sessions)
+//! - Reverse proxy
 //!
 //! # Configuration
 //!
@@ -14,10 +16,18 @@
 //!   insight-api-gateway run -c config/insight.yaml
 //!   insight-api-gateway check -c config/insight.yaml
 
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
+// IdP, ModKit, ClientHub, OperationBuilder, UserInfo etc. are standard
+// industry/framework terms — wrapping every occurrence in backticks adds
+// noise without improving readability.
+#![allow(clippy::doc_markdown)]
+
 // Insight modules (compiled into the binary, registered via inventory).
 mod auth_info;
+mod bff;
 mod core_types;
 mod proxy;
+mod redis_client;
 
 // Link external modules via inventory — runtime discovers them automatically.
 use api_gateway_module as _;
