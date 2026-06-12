@@ -30,13 +30,6 @@
             "destinationName": { "type": "string" },
             "argoInstanceId": { "type": "string" },
             "tenantId": { "type": "string" },
-            "logs": {
-              "type": "object",
-              "properties": {
-                "size":         { "type": "string", "default": "5Gi" },
-                "storageClass": { "type": "string" }
-              }
-            },
             "resources": {
               "type": "object",
               "properties": {

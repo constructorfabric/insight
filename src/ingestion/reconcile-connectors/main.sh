@@ -140,8 +140,21 @@ main() {
   fi
   export INSIGHT_TENANT_ID="${tenant_id}"
 
-  printf 'tenant=%s subcommand=%s dry-run=%d connector=%s no-gc=%d no-sync-trigger=%d\n' \
-    "${tenant_id}" "${subcmd}" "${dry_run}" "${connector:-<all>}" "${no_gc}" "${no_sync_trigger}" >&2
+  # Lifecycle event (stdout JSON → Loki). Replaces the old stderr header;
+  # the same fields ride as structured keys so one LogQL filter finds them.
+  log_event reconcile.started \
+    "starting ${subcmd} (tenant=${tenant_id})" \
+    "$(jq -cn \
+        --arg tenant "${tenant_id}" \
+        --arg subcommand "${subcmd}" \
+        --arg connector "${connector:-}" \
+        --argjson dry_run "$(( dry_run ))" \
+        --argjson no_gc "$(( no_gc ))" \
+        --argjson no_sync_trigger "$(( no_sync_trigger ))" \
+        '{tenant: $tenant, subcommand: $subcommand,
+          connector: (if $connector == "" then "all" else $connector end),
+          dry_run: ($dry_run == 1), no_gc: ($no_gc == 1),
+          no_sync_trigger: ($no_sync_trigger == 1)}')"
 
   # @cpt-begin:cpt-insightspec-flow-reconcile-dry-run:p2:inst-dr-call-flow
   case "${subcmd}" in
@@ -160,5 +173,13 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  # Abnormal-exit event: `set -e` aborts skip log_run_summary entirely, so
+  # without this a crashed tick would leave NO terminal event in Loki and
+  # look identical to "never ran". reconcile.completed still owns the
+  # normal path (including errors counted by the loop).
+  trap '_rc=$?; if [[ ${_rc} -ne 0 ]]; then
+          log_event reconcile.failed "reconcile aborted with exit code ${_rc}" \
+            "{\"status\":\"aborted\",\"exit_code\":${_rc}}" || true
+        fi' EXIT
   main "$@"
 fi

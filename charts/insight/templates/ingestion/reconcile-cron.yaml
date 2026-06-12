@@ -48,14 +48,6 @@ spec:
     imagePullSecrets:
       {{- toYaml . | nindent 6 }}
     {{- end }}
-    volumes:
-      - name: insight-reconcile-logs
-        {{- if .Values.ingestion.reconcile.logs.persistent }}
-        persistentVolumeClaim:
-          claimName: {{ include "insight.fullname" . }}-reconcile-logs
-        {{- else }}
-        emptyDir: {}
-        {{- end }}
     templates:
       - name: run
         container:
@@ -65,6 +57,12 @@ spec:
             - "-c"
             - "bash /ingestion/reconcile-connectors/main.sh"
           env:
+            # Correlation id stamped on every JSON log line (lib/log.sh):
+            # one tick's lines group in Loki via `| json | run_id="..."`.
+            - name: RECONCILE_RUN_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: AIRBYTE_URL
               value: {{ include "insight.airbyte.url" . | quote }}
             - name: INSIGHT_NAMESPACE
@@ -122,7 +120,4 @@ spec:
             limits:
               cpu: {{ required "ingestion.reconcile.resources.limits.cpu is required" .Values.ingestion.reconcile.resources.limits.cpu | quote }}
               memory: {{ required "ingestion.reconcile.resources.limits.memory is required" .Values.ingestion.reconcile.resources.limits.memory | quote }}
-          volumeMounts:
-            - name: insight-reconcile-logs
-              mountPath: /var/log/insight
 {{- end }}

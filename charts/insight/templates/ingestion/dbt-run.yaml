@@ -104,9 +104,33 @@ spec:
           # so manual triggers without the parameter run all models.
           # DBT_FULL_REFRESH="true" appends --full-refresh per ADR-0015;
           # any other value (false / empty) runs incremental.
+          # --log-format json: structured per-model output for the log
+          # collector (Alloy maps dbt's nested info.level/info.name).
+          # The if/else (instead of `dbt ...; RC=$?`) keeps the terminal
+          # dbt.completed event below alive under `set -e`.
+          T0=$(date +%s); RC=0
           if [[ "${DBT_FULL_REFRESH:-false}" == "true" ]]; then
-            dbt run --profiles-dir . --full-refresh ${DBT_SELECT:+--select "$DBT_SELECT"}
+            dbt run --profiles-dir . --log-format json --full-refresh ${DBT_SELECT:+--select "$DBT_SELECT"} || RC=$?
           else
-            dbt run --profiles-dir . ${DBT_SELECT:+--select "$DBT_SELECT"}
+            dbt run --profiles-dir . --log-format json ${DBT_SELECT:+--select "$DBT_SELECT"} || RC=$?
           fi
+          # Lifecycle event for the high-level "dbt run finished after N
+          # minutes, success/failed" view; python3 keeps the JSON safe
+          # against whatever characters ride in DBT_SELECT.
+          DBT_RC="$RC" DBT_DURATION_MS=$(( ($(date +%s) - T0) * 1000 )) python3 - <<'PY'
+          import json, os, time
+          rc = int(os.environ["DBT_RC"])
+          print(json.dumps({
+              "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "level": "info" if rc == 0 else "error",
+              "component": "dbt",
+              "event": "dbt.completed",
+              "status": "success" if rc == 0 else "failed",
+              "exit_code": rc,
+              "duration_ms": int(os.environ["DBT_DURATION_MS"]),
+              "select": os.environ.get("DBT_SELECT", ""),
+              "full_refresh": os.environ.get("DBT_FULL_REFRESH", "false") == "true",
+          }), flush=True)
+          PY
+          exit "$RC"
 {{- end }}
