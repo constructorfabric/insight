@@ -6,18 +6,22 @@ Runs Airbyte declarative-manifest connectors in Docker without the full Airbyte 
 
 | Command | Needs creds? | When to use |
 |---|---|---|
-| `./source.sh validate <class>/<connector>` | no | CDK-runtime validation. Resolves `$ref` before checking. **Lenient** — passes manifests the Builder UI rejects. |
-| `./source.sh validate-strict <class>/<connector>` | no | **Strict** Builder-UI validation — runs the manifest through `declarative_component_schema.yaml` **without `$ref` resolution**, emitting per-path errors. Run this **before** opening the manifest in the Airbyte Builder UI. |
+| `./source.sh validate <class>/<connector>` | no | CDK-runtime validation. Resolves `$ref` AND normalizes (auto-fills `type:` etc.) before checking. **Lenient** — passes manifests the Builder UI rejects. |
+| `./source.sh validate-strict <class>/<connector>` | no | **Strict** Builder-UI validation — resolves `$ref`s with the CDK resolver, then validates against `declarative_component_schema.yaml` **without normalization**, emitting per-path errors. Run this **before** opening the manifest in the Airbyte Builder UI. |
 | `./source.sh check <class>/<connector> <tenant>` | yes | Manifest + credentials smoke test against the source API. |
 | `./source.sh discover <class>/<connector> <tenant>` | yes | List available streams and their schemas. |
 | `./source.sh read <class>/<connector> <tenant>` | yes | Extract data (Airbyte Protocol JSON on stdout). |
 
 `<class>/<connector>` is relative to `src/ingestion/connectors/`, e.g. `collaboration/m365` or `task-tracking/youtrack`.
 
+## Validator image pin
+
+All commands run inside `airbyte/source-declarative-manifest` pinned in `source.sh` (`BASE_IMAGE`) to the `airbyte-cdk` version bundled with the **deployed** Airbyte platform — the version in `airbyte-connector-builder-server/requirements.in` of the `airbyte-platform` release matching `AIRBYTE_VERSION` in `deploy/scripts/install-airbyte.sh`. Never switch the default to `:latest`: upstream tightens `declarative_component_schema.yaml` over time, so a newer schema rejects manifests the deployed Builder UI happily accepts (false `validate-strict` failures). When bumping `AIRBYTE_VERSION`, bump the pin in `source.sh` + `Dockerfile` in the same change; the local wrapper image tag derives from the pin, so the rebuild happens automatically.
+
 ## Validation ladder — always in this order
 
-1. **`validate-strict`** — first. Catches Builder UI blockers (`$ref` misuse, missing `type: AddedFieldDefinition`, integer-only slots templated by mistake, bad `$schema` URL, etc.) early, before runtime wastes a round trip.
-2. **`validate`** — second. Smoke-checks that the CDK loader accepts the manifest at runtime, after `$ref` resolution.
+1. **`validate-strict`** — first. Catches Builder UI blockers (unresolvable `$ref`, missing `type: AddedFieldDefinition`, integer-only slots templated by mistake, bad `$schema` URL, etc.) early, before runtime wastes a round trip.
+2. **`validate`** — second. Smoke-checks that the CDK loader accepts the manifest at runtime, after `$ref` resolution and normalization.
 3. **`check <tenant>`** — third. Real credentials against the real API. Catches query-syntax errors and auth problems.
 4. **`discover` / `read`** — fourth. Produces real records locally; feeds `generate-schema.sh`.
 
@@ -25,31 +29,11 @@ If any step in the ladder fails, fix the issue and restart from step 1. **Do not
 
 ## Builder-UI compatibility — hard rules
 
-The Airbyte Builder UI validates manifests against `declarative_component_schema.yaml` with **no `$ref` resolution**. A manifest can load fine via the CDK and still be rejected by the Builder. Keep these rules in mind when authoring manifests or when copying from another connector package:
+The Builder UI resolves `$ref`s with the CDK's `ManifestReferenceResolver` and then validates the resolved manifest against `declarative_component_schema.yaml` — but **without** the runtime's `ManifestNormalizer` pass that auto-fills missing `type:` fields and similar. `validate-strict` reproduces exactly that: resolve refs, then raw schema check. A manifest can load fine via the runtime CDK (`validate`) and still be rejected by the Builder. Keep these rules in mind when authoring manifests or when copying from another connector package:
 
-### Rule 1 — No whole-object `$ref`
+### Rule 1 — Prefer field-level `$ref` into `definitions.linked`
 
-❌ **Forbidden** (the `task-tracking/jira` manifest uses this pattern — **do not copy from it**):
-
-```yaml
-requester:
-  $ref: "#/definitions/base_requester"
-paginator:
-  $ref: "#/definitions/paginator"
-```
-
-```yaml
-parent_stream_configs:
-  - stream:
-      $ref: "#/streams/4"        # substream-parent-by-ref
-```
-
-```yaml
-transformations:
-  - $ref: "#/definitions/add_fields"   # transformation-by-ref
-```
-
-✅ **Allowed** — granular, field-level `$ref` into `definitions.linked.<Component>/<field>`:
+Any resolvable `$ref` passes `validate-strict` (the resolver inlines it before the schema check, including `$ref`-with-sibling-keys merge). For **project style**, keep shared values in `definitions.linked.<Component>/<field>` — the Builder's own shared-components store, round-tripped losslessly by the UI:
 
 ```yaml
 definitions:
@@ -77,7 +61,7 @@ streams:
         path: /widgets
 ```
 
-For anything that cannot be expressed as a leaf-field `$ref` (full requester, paginator, retriever, stream), **inline the full definition** or duplicate it across streams. Repetition is the price of Builder compatibility.
+Whole-object `$ref`s (full requester, paginator, stream — the `task-tracking/jira` style, also what the Builder export itself emits as `streams: [{$ref: "#/definitions/streams/<name>"}]`) resolve fine and pass the gate; for new in-house manifests still prefer linked field refs or inlining — resolved whole-object refs lose their sharing on a Builder round-trip.
 
 ### Rule 2 — `type: AddedFieldDefinition` on every `AddFields.fields[]` item
 
@@ -233,10 +217,10 @@ Keep both `%ms` (for live record values) and `%Y-%m-%dT%H:%M:%S` (for persisted 
 → `streams[0].transformations[0].fields[3]` is missing `type: AddedFieldDefinition`.
 
 ```
-[1] streams/0/retriever/requester: 'type' is a required property
+STRICT VALIDATION FAILED — unresolvable $ref: Undefined reference #/definitions/base_requester
 ```
 
-→ The `requester` is a `$ref` (opaque to the Builder validator). Inline or use granular leaf-field `$ref`.
+→ A `$ref` points at a path that does not exist in the manifest. Fix the path or define the target. (Resolvable `$ref`s are inlined before validation — error paths always refer to the **resolved** manifest.)
 
 ```
 [1] concurrency_level/default_concurrency: "{{ config.get('x_concurrency', 1) }}" is not of type 'integer'
@@ -251,7 +235,7 @@ docker run --rm \
   -v "$PWD/src/ingestion/connectors/<class>/<connector>:/input:ro" \
   -v "$PWD/src/ingestion/tools/declarative-connector/validate_strict.py:/scripts/validate_strict.py:ro" \
   --entrypoint=/bin/sh \
-  airbyte/source-declarative-manifest:local \
+  airbyte/source-declarative-manifest:local-6.60.9 \
   -c "python3 /scripts/validate_strict.py /input/connector.yaml"
 ```
 

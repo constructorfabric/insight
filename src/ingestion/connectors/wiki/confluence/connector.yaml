@@ -52,11 +52,14 @@ definitions:
   add_fields:
     type: AddFields
     fields:
-      - path: [tenant_id]
+      - type: AddedFieldDefinition
+        path: [tenant_id]
         value: "{{ config['insight_tenant_id'] }}"
-      - path: [source_id]
+      - type: AddedFieldDefinition
+        path: [source_id]
         value: "{{ config['insight_source_id'] }}"
-      - path: [data_source]
+      - type: AddedFieldDefinition
+        path: [data_source]
         value: "insight_confluence"
 
   confluence_paginator:
@@ -260,26 +263,35 @@ streams:
       - $ref: "#/definitions/add_fields"
       - type: AddFields
         fields:
-          - path: [space_id]
+          - type: AddedFieldDefinition
+            path: [space_id]
             value: "{{ record['id'] }}"
-          - path: [name]
+          - type: AddedFieldDefinition
+            path: [name]
             value: "{{ record.get('name', '') }}"
-          - path: [description]
+          - type: AddedFieldDefinition
+            path: [description]
             value: >-
               {{ (record.get('description', {}) or {}).get('plain', {}).get('value', '') }}
-          - path: [space_type]
+          - type: AddedFieldDefinition
+            path: [space_type]
             value: "{{ record['type'] }}"
-          - path: [status]
+          - type: AddedFieldDefinition
+            path: [status]
             value: >-
               {{ 'active' if record.get('status') == 'current' else record.get('status', '') }}
-          - path: [url]
+          - type: AddedFieldDefinition
+            path: [url]
             value: >-
               {{ record.get('_links', {}).get('webui', '') if record.get('_links', {}).get('webui', '').startswith('http') else config['confluence_instance_url'] + record.get('_links', {}).get('webui', '') }}
-          - path: [created_at]
+          - type: AddedFieldDefinition
+            path: [created_at]
             value: "{{ record.get('createdAt', '') }}"
-          - path: [collected_at]
+          - type: AddedFieldDefinition
+            path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
@@ -333,25 +345,35 @@ streams:
       - $ref: "#/definitions/add_fields"
       - type: AddFields
         fields:
-          - path: [page_id]
+          - type: AddedFieldDefinition
+            path: [page_id]
             value: "{{ record['id'] }}"
-          - path: [space_id]
+          - type: AddedFieldDefinition
+            path: [space_id]
             value: "{{ record['spaceId'] }}"
-          - path: [author_id]
+          - type: AddedFieldDefinition
+            path: [author_id]
             value: "{{ record.get('authorId', '') }}"
-          - path: [last_editor_id]
+          - type: AddedFieldDefinition
+            path: [last_editor_id]
             value: "{{ record.get('version', {}).get('authorId', '') }}"
-          - path: [created_at]
+          - type: AddedFieldDefinition
+            path: [created_at]
             value: "{{ record.get('createdAt', '') }}"
-          - path: [updated_at]
+          - type: AddedFieldDefinition
+            path: [updated_at]
             value: "{{ record.get('version', {}).get('createdAt', '') }}"
-          - path: [version_number]
+          - type: AddedFieldDefinition
+            path: [version_number]
             value: "{{ record.get('version', {}).get('number', '') }}"
-          - path: [parent_page_id]
+          - type: AddedFieldDefinition
+            path: [parent_page_id]
             value: "{{ record.get('parentId', '') }}"
-          - path: [collected_at]
+          - type: AddedFieldDefinition
+            path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
@@ -393,21 +415,29 @@ streams:
       - $ref: "#/definitions/add_fields"
       - type: AddFields
         fields:
-          - path: [page_id]
+          - type: AddedFieldDefinition
+            path: [page_id]
             value: "{{ stream_partition.page_id }}"
-          - path: [version_number]
+          - type: AddedFieldDefinition
+            path: [version_number]
             value: "{{ record.get('number', '') }}"
-          - path: [author_id]
+          - type: AddedFieldDefinition
+            path: [author_id]
             value: "{{ record.get('authorId', '') }}"
-          - path: [created_at]
+          - type: AddedFieldDefinition
+            path: [created_at]
             value: "{{ record.get('createdAt', '') }}"
-          - path: [message]
+          - type: AddedFieldDefinition
+            path: [message]
             value: "{{ record.get('message', '') }}"
-          - path: [minor_edit]
+          - type: AddedFieldDefinition
+            path: [minor_edit]
             value: "{{ record.get('minorEdit', false) }}"
-          - path: [collected_at]
+          - type: AddedFieldDefinition
+            path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ stream_partition.page_id }}-{{ record['number'] }}
@@ -457,22 +487,30 @@ streams:
       - $ref: "#/definitions/add_fields"
       - type: AddFields
         fields:
-          - path: [comment_id]
+          - type: AddedFieldDefinition
+            path: [comment_id]
             value: "{{ record['id'] }}"
-          - path: [page_id]
+          - type: AddedFieldDefinition
+            path: [page_id]
             value: "{{ stream_partition.page_id }}"
-          - path: [author_id]
+          - type: AddedFieldDefinition
+            path: [author_id]
             value: "{{ (record.get('version', {}) or {}).get('authorId', '') }}"
-          - path: [created_at]
+          - type: AddedFieldDefinition
+            path: [created_at]
             value: "{{ (record.get('version', {}) or {}).get('createdAt', '') }}"
-          - path: [body_storage]
+          - type: AddedFieldDefinition
+            path: [body_storage]
             value: >-
               {{ (record.get('body', {}) or {}).get('storage', {}).get('value', '') }}
-          - path: [resolution_status]
+          - type: AddedFieldDefinition
+            path: [resolution_status]
             value: "{{ record.get('resolutionStatus', '') }}"
-          - path: [collected_at]
+          - type: AddedFieldDefinition
+            path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
@@ -515,22 +553,30 @@ streams:
       - $ref: "#/definitions/add_fields"
       - type: AddFields
         fields:
-          - path: [comment_id]
+          - type: AddedFieldDefinition
+            path: [comment_id]
             value: "{{ record['id'] }}"
-          - path: [page_id]
+          - type: AddedFieldDefinition
+            path: [page_id]
             value: "{{ record.get('pageId', '') }}"
-          - path: [parent_comment_id]
+          - type: AddedFieldDefinition
+            path: [parent_comment_id]
             value: "{{ stream_partition.parent_comment_id }}"
-          - path: [author_id]
+          - type: AddedFieldDefinition
+            path: [author_id]
             value: "{{ (record.get('version', {}) or {}).get('authorId', '') }}"
-          - path: [created_at]
+          - type: AddedFieldDefinition
+            path: [created_at]
             value: "{{ (record.get('version', {}) or {}).get('createdAt', '') }}"
-          - path: [body_storage]
+          - type: AddedFieldDefinition
+            path: [body_storage]
             value: >-
               {{ (record.get('body', {}) or {}).get('storage', {}).get('value', '') }}
-          - path: [collected_at]
+          - type: AddedFieldDefinition
+            path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
@@ -573,28 +619,38 @@ streams:
       - $ref: "#/definitions/add_fields"
       - type: AddFields
         fields:
-          - path: [comment_id]
+          - type: AddedFieldDefinition
+            path: [comment_id]
             value: "{{ record['id'] }}"
-          - path: [page_id]
+          - type: AddedFieldDefinition
+            path: [page_id]
             value: "{{ stream_partition.page_id }}"
-          - path: [author_id]
+          - type: AddedFieldDefinition
+            path: [author_id]
             value: "{{ (record.get('version', {}) or {}).get('authorId', '') }}"
-          - path: [created_at]
+          - type: AddedFieldDefinition
+            path: [created_at]
             value: "{{ (record.get('version', {}) or {}).get('createdAt', '') }}"
-          - path: [body_storage]
+          - type: AddedFieldDefinition
+            path: [body_storage]
             value: >-
               {{ (record.get('body', {}) or {}).get('storage', {}).get('value', '') }}
-          - path: [resolution_status]
+          - type: AddedFieldDefinition
+            path: [resolution_status]
             value: "{{ record.get('resolutionStatus', '') }}"
-          - path: [inline_marker_ref]
+          - type: AddedFieldDefinition
+            path: [inline_marker_ref]
             value: >-
               {{ (record.get('properties', {}) or {}).get('inlineMarkerRef', '') }}
-          - path: [inline_original_selection]
+          - type: AddedFieldDefinition
+            path: [inline_original_selection]
             value: >-
               {{ (record.get('properties', {}) or {}).get('inlineOriginalSelection', '') }}
-          - path: [collected_at]
+          - type: AddedFieldDefinition
+            path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
@@ -637,22 +693,30 @@ streams:
       - $ref: "#/definitions/add_fields"
       - type: AddFields
         fields:
-          - path: [comment_id]
+          - type: AddedFieldDefinition
+            path: [comment_id]
             value: "{{ record['id'] }}"
-          - path: [page_id]
+          - type: AddedFieldDefinition
+            path: [page_id]
             value: "{{ record.get('pageId', '') }}"
-          - path: [parent_comment_id]
+          - type: AddedFieldDefinition
+            path: [parent_comment_id]
             value: "{{ stream_partition.parent_comment_id }}"
-          - path: [author_id]
+          - type: AddedFieldDefinition
+            path: [author_id]
             value: "{{ (record.get('version', {}) or {}).get('authorId', '') }}"
-          - path: [created_at]
+          - type: AddedFieldDefinition
+            path: [created_at]
             value: "{{ (record.get('version', {}) or {}).get('createdAt', '') }}"
-          - path: [body_storage]
+          - type: AddedFieldDefinition
+            path: [body_storage]
             value: >-
               {{ (record.get('body', {}) or {}).get('storage', {}).get('value', '') }}
-          - path: [collected_at]
+          - type: AddedFieldDefinition
+            path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}

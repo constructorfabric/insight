@@ -22,9 +22,11 @@ definitions:
   mandatory_fields:
     type: AddFields
     fields:
-      - path: [tenant_id]
+      - type: AddedFieldDefinition
+        path: [tenant_id]
         value: "{{ config['insight_tenant_id'] }}"
-      - path: [source_id]
+      - type: AddedFieldDefinition
+        path: [source_id]
         value: "{{ config['insight_source_id'] }}"
 
   post_paginator:
@@ -111,7 +113,8 @@ streams:
       - $ref: "#/definitions/mandatory_fields"
       - type: AddFields
         fields:
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
 
   # ── Stream 2: cursor_audit_logs (incremental, GET) ──
@@ -171,7 +174,8 @@ streams:
       - $ref: "#/definitions/mandatory_fields"
       - type: AddFields
         fields:
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['event_id'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
@@ -276,7 +280,8 @@ streams:
       - $ref: "#/definitions/mandatory_fields"
       - type: AddFields
         fields:
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}-{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
@@ -372,7 +377,8 @@ streams:
       - $ref: "#/definitions/mandatory_fields"
       - type: AddFields
         fields:
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}-{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
@@ -490,7 +496,8 @@ streams:
       - $ref: "#/definitions/mandatory_fields"
       - type: AddFields
         fields:
-          - path: [unique_key]
+          - type: AddedFieldDefinition
+            path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userId'] }}-{{ record['date'] }}"
     incremental_sync:
       type: DatetimeBasedCursor

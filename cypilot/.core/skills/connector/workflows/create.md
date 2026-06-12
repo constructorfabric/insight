@@ -503,6 +503,8 @@ If `validate-strict` fails, do NOT proceed. Fix per-path errors first — the Bu
 
 If `validate-strict` passes but `validate` fails, there is a runtime problem — usually a bad Jinja expression, a template reference to an undefined config key, or a `$ref` pointing at a path that does not exist.
 
+Both validators run inside `airbyte/source-declarative-manifest` pinned (in `source.sh` / `Dockerfile`) to the CDK version bundled with the deployed Airbyte platform — see `src/ingestion/tools/declarative-connector/README.md` §"Validator image pin". Never override the image to `:latest`: its strict schema drifts ahead of the deployed Builder UI and produces false failures.
+
 ### 5.3 Check credentials against API
 
 ```bash
