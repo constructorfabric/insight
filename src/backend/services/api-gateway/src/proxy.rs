@@ -370,10 +370,35 @@ fn is_hop_by_hop(name: &str) -> bool {
 mod tests {
     use super::*;
     use axum::body::to_bytes;
-    use axum::routing::get;
+    use axum::routing::{get, post};
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
     use tower::ServiceExt;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Spawn a throwaway upstream server on an ephemeral port and return its
+    /// address. Used to exercise `forward_request` against a real socket.
+    async fn spawn_upstream(router: Router) -> std::io::Result<SocketAddr> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        tokio::spawn(async move {
+            // Runs until the test process exits; ignore the terminal result.
+            let _ = axum::serve(listener, router).await;
+        });
+        Ok(addr)
+    }
+
+    fn state_for(addr: SocketAddr, prefix: &str) -> Result<Arc<ProxyState>, reqwest::Error> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        Ok(Arc::new(ProxyState {
+            client,
+            upstream: format!("http://{addr}"),
+            prefix: prefix.to_owned(),
+        }))
+    }
 
     #[tokio::test]
     async fn not_found_problem_conforms_to_rfc9457() -> TestResult {
@@ -440,6 +465,159 @@ mod tests {
             serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
         assert_eq!(json["status"], 404);
         assert_eq!(json["type"], "urn:insight:error:not_found");
+        Ok(())
+    }
+
+    // --- UT-1: api-gateway coverage tranche (was 33% → exercises the
+    // hop-by-hop filter, config defaults, the 502 error path, and the full
+    // forward_request plumbing against a real upstream socket). ---
+
+    #[test]
+    fn hop_by_hop_headers_are_recognized() {
+        for h in [
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+            "host",
+        ] {
+            assert!(is_hop_by_hop(h), "{h} must be treated as hop-by-hop");
+        }
+        for h in [
+            "content-type",
+            "authorization",
+            "x-insight-tenant-id",
+            "accept",
+        ] {
+            assert!(!is_hop_by_hop(h), "{h} must be forwarded end-to-end");
+        }
+    }
+
+    #[test]
+    fn route_config_defaults_public_to_false() -> TestResult {
+        let r: RouteConfig =
+            serde_json::from_str(r#"{"prefix":"/analytics","upstream":"http://u:8081"}"#)?;
+        assert_eq!(r.prefix, "/analytics");
+        assert!(
+            !r.public,
+            "routes must require auth unless explicitly public"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn route_config_parses_public_true() -> TestResult {
+        let r: RouteConfig =
+            serde_json::from_str(r#"{"prefix":"/p","upstream":"http://u","public":true}"#)?;
+        assert!(r.public);
+        Ok(())
+    }
+
+    #[test]
+    fn proxy_config_defaults_to_empty_routes() -> TestResult {
+        let c: ProxyConfig = serde_json::from_str("{}")?;
+        assert!(c.routes.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn proxy_handler_returns_502_when_upstream_unreachable() -> TestResult {
+        // Bind then immediately drop to obtain a port nothing is listening on.
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        drop(listener);
+
+        let state = state_for(addr, "/analytics")?;
+        let req = Request::builder()
+            .uri("/analytics/v1/metrics")
+            .body(Body::empty())?;
+        let resp = proxy_handler(state, req).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        let ct = resp
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .ok_or("content-type missing")?;
+        assert_eq!(ct, "application/problem+json");
+        let body = to_bytes(resp.into_body(), 4096).await?;
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+        assert_eq!(json["status"], 502);
+        assert_eq!(json["code"], "bad_gateway");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forward_request_strips_prefix_and_proxies_method_and_body() -> TestResult {
+        let upstream = Router::new().route(
+            "/v1/echo",
+            post(|body: axum::body::Bytes| async move { (StatusCode::CREATED, body) }),
+        );
+        let addr = spawn_upstream(upstream).await?;
+        let state = state_for(addr, "/analytics")?;
+
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/analytics/v1/echo")
+            .body(Body::from("ping"))?;
+        let resp = forward_request(&state, req).await?;
+
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let body = to_bytes(resp.into_body(), 4096).await?;
+        assert_eq!(&body[..], b"ping", "prefix stripped, body proxied verbatim");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forward_request_preserves_query_string() -> TestResult {
+        let upstream = Router::new().route(
+            "/v1/q",
+            get(
+                |axum::extract::RawQuery(q): axum::extract::RawQuery| async move {
+                    (StatusCode::OK, q.unwrap_or_default())
+                },
+            ),
+        );
+        let addr = spawn_upstream(upstream).await?;
+        let state = state_for(addr, "/analytics")?;
+
+        let req = Request::builder()
+            .uri("/analytics/v1/q?a=1&b=2")
+            .body(Body::empty())?;
+        let resp = forward_request(&state, req).await?;
+        let body = to_bytes(resp.into_body(), 4096).await?;
+        assert_eq!(&body[..], b"a=1&b=2");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forward_request_forwards_end_to_end_headers_not_hop_by_hop() -> TestResult {
+        let upstream = Router::new().route(
+            "/v1/h",
+            get(|headers: axum::http::HeaderMap| async move {
+                let auth = headers.contains_key("authorization");
+                (StatusCode::OK, format!("auth={auth}"))
+            }),
+        );
+        let addr = spawn_upstream(upstream).await?;
+        let state = state_for(addr, "")?;
+
+        let req = Request::builder()
+            .uri("/v1/h")
+            .header("authorization", "Bearer token")
+            .header("connection", "keep-alive")
+            .body(Body::empty())?;
+        let resp = forward_request(&state, req).await?;
+        let body = to_bytes(resp.into_body(), 4096).await?;
+        assert_eq!(
+            &body[..],
+            b"auth=true",
+            "authorization forwarded end-to-end"
+        );
         Ok(())
     }
 }
