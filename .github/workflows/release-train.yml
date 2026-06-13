@@ -1,0 +1,249 @@
+# Release train — once-per-day release candidate, manual promotion.
+#
+# Model: BUILD ONCE, PROMOTE MANY. Every merge already publishes an immutable
+# umbrella chart (build-images.yml). This workflow never rebuilds anything:
+# it SELECTS a published chart version, validates that exact artifact, and
+# (on manual promotion with approval) tags it as the release.
+#
+#   nightly cron        → latest published chart becomes the Release Candidate:
+#                         artifact validation + RC prerelease report
+#   workflow_dispatch   → same, for an explicit version (hotfix / off-cycle),
+#                         optionally with promote=true
+#   promote=true        → gated by GitHub Environment `production`
+#                         (QA lead + Release Manager required reviewers);
+#                         on approval: annotated tag v<chart-version> +
+#                         GitHub Release. The TAG IS THE RECORD of the release,
+#                         created BY the pipeline — never the trigger for it.
+#
+# The team keeps merging to main while an RC is under test: new merges create
+# new chart versions and do not disturb the pinned RC. "Feature freeze" =
+# freezing WHICH VERSION gets promoted, not freezing the branch.
+
+name: Release Train
+
+on:
+  schedule:
+    - cron: "0 3 * * *"          # nightly RC cut
+  workflow_dispatch:
+    inputs:
+      chart_version:
+        description: "Umbrella chart version to validate (empty = latest published)"
+        required: false
+        type: string
+      promote:
+        description: "Promote to release (requires production environment approval)"
+        required: false
+        type: boolean
+        default: false
+
+# Least privilege at the top; jobs elevate only the scope they actually need
+# (validate-artifact → OIDC/attestations; rc-report + promote → contents: write).
+permissions:
+  contents: read
+  packages: read        # resolve chart versions from GHCR (resolve job)
+
+concurrency:
+  group: release-train
+  cancel-in-progress: false
+
+env:
+  CHART_OCI: oci://ghcr.io/constructorfabric/charts/insight
+  CHART_PKG: charts%2Finsight
+  KUBECONFORM_VERSION: v0.6.7
+  KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
+
+jobs:
+  resolve:
+    name: resolve-rc-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - name: Pick chart version (input or latest published)
+        id: pick
+        # INPUT_VERSION via env (never interpolated into the script) + strict
+        # semver validation — blocks shell injection from a dispatch input.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.chart_version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_VERSION:-}" ]]; then
+            if [[ ! "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::invalid chart_version '$INPUT_VERSION' (expected semver X.Y.Z)"; exit 1
+            fi
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION=$(gh api "orgs/constructorfabric/packages/container/${CHART_PKG}/versions?per_page=100" \
+              --jq '.[].metadata.container.tags[]' \
+              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          fi
+          [[ -n "$VERSION" ]] || { echo "::error::could not resolve a chart version"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release candidate: insight chart $VERSION"
+
+  validate-artifact:
+    name: validate-artifact
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # OIDC + attestation scopes live only here — the only job that verifies SLSA.
+    # (Job-level permissions default every unlisted scope to none, so packages
+    # is re-declared for the registry login below.)
+    permissions:
+      packages: read        # helm/docker registry login
+      id-token: write       # OIDC for SLSA provenance verification
+      attestations: read    # verify SLSA provenance
+    steps:
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.14.0
+
+      - name: Login registries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Pull the EXACT artifact under release
+        run: helm pull "$CHART_OCI" --version "${{ needs.resolve.outputs.version }}"
+
+      - name: Verify SLSA provenance of the chart artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify "oci://ghcr.io/constructorfabric/charts/insight:${{ needs.resolve.outputs.version }}" \
+            --owner constructorfabric
+
+      - name: Render with production-shaped values
+        run: |
+          set -euo pipefail
+          helm template insight "insight-${{ needs.resolve.outputs.version }}.tgz" \
+            --namespace insight \
+            --set ingestion.reconcile.tenantId=rc-validate \
+            > rendered.yaml
+          echo "rendered $(grep -c '^kind:' rendered.yaml) objects"
+
+      - name: kubeconform rendered manifests
+        run: |
+          set -euo pipefail
+          # Verified download: fetch to disk, check SHA256, then extract & run.
+          curl -sSL -o kubeconform.tgz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tgz" | sha256sum -c -
+          tar xzf kubeconform.tgz kubeconform
+          ./kubeconform -strict -ignore-missing-schemas -summary rendered.yaml
+
+      - name: Version-pair integrity — every referenced image must exist, none may be :latest
+        run: |
+          set -euo pipefail
+          rc=0
+          mapfile -t images < <(grep -E '^\s+image:\s' rendered.yaml | sed -E 's/.*image:\s*"?([^"]+)"?\s*$/\1/' | sort -u)
+          echo "checking ${#images[@]} unique image refs"
+          for img in "${images[@]}"; do
+            if [[ "$img" == *":latest" || "$img" != *":"* ]]; then
+              echo "::error::floating tag in release artifact: $img (frontend blank-page defect class)"; rc=1; continue
+            fi
+            if docker manifest inspect "$img" >/dev/null 2>&1; then
+              echo "  ✓ $img"
+            else
+              echo "::error::image referenced by chart does not exist: $img"; rc=1
+            fi
+          done
+          exit $rc
+
+  rc-report:
+    name: rc-report
+    needs: [resolve, validate-artifact]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Creates/edits the RC prerelease → needs write (resolve & validate are read-only).
+    permissions:
+      contents: write
+    steps:
+      - name: Publish / refresh RC prerelease record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="rc-${V}"
+          NOTES=$(cat <<EOF
+          ## Release Candidate — insight chart \`${V}\`
+
+          Cut by release-train run [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) on $(date -u +%F).
+
+          Artifact validation (the exact OCI artifact, no rebuild):
+          - ✅ SLSA provenance verified
+          - ✅ helm template renders with production-shaped values
+          - ✅ kubeconform manifest validation
+          - ✅ all referenced images exist; no \`:latest\` / floating tags
+
+          Pending environment gates before promotion (see Target Operating Model §4/§9):
+          - QA regression pack on QA environment
+          - Golden-dataset data regression N−1 → N
+          - Latest nightly fresh-install green
+
+          Promote via: Actions → Release Train → Run workflow → chart_version=\`${V}\`, promote=\`true\`.
+          EOF
+          )
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$NOTES"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "RC: insight chart ${V}" --notes "$NOTES"
+          fi
+
+  promote:
+    name: promote-to-release
+    # Manual dispatch only, never the cron — and only after artifact validation.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.promote }}
+    needs: [resolve, validate-artifact]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # THE GATE: required reviewers (QA lead + Release Manager) configured by
+    # scripts/ci/enforce-quality-gates.sh. This job PAUSES until both approve.
+    # The recorded approval is the signed release checklist.
+    environment: production
+    # Elevated write scoped to this job only — it creates the tag + release.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Create annotated release tag (the immutable release record)
+        env:
+          V: ${{ needs.resolve.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # persist-credentials:false → authenticate the push explicitly.
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git config user.name "release-train"
+          git config user.email "release-train@users.noreply.github.com"
+          git tag -a "v${V}" -m "Release: insight umbrella chart ${V} (approved via production environment, run ${{ github.run_id }})"
+          git push origin "v${V}"
+
+      - name: Finalize GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release delete "rc-${V}" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          gh release create "v${V}" --repo "$GITHUB_REPOSITORY" \
+            --title "insight ${V}" \
+            --notes "Approved release of umbrella chart \`${V}\` (oci://ghcr.io/constructorfabric/charts/insight:${V}).
+          Approval recorded on the \`production\` environment of run ${{ github.run_id }}.
+
+          Deploy: bump \`.insight-version\` to \`${V}\` in infra/insight-gitops (the allowlist gate accepts only tagged releases)."
+
+      - name: Promotion summary
+        run: |
+          echo "## ✅ insight ${{ needs.resolve.outputs.version }} promoted" >> "$GITHUB_STEP_SUMMARY"
+          echo "Next: gitops MR bumping .insight-version (allowlist now accepts it)." >> "$GITHUB_STEP_SUMMARY"

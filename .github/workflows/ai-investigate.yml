@@ -1,0 +1,101 @@
+# AI failure investigation — when a gate fails, the AI investigates with FULL
+# context, because everything it needs is co-located in the repo:
+#   tests + PRD + DESIGN + ADRs + schemas + code, per component
+#   (docs/<unit>/specs/* and src/**/specs/*, registered in artifacts.toml).
+#
+# Trigger: any mandatory gate workflow finishing red on a PR branch.
+# Output: an investigation comment on the PR — root-cause hypothesis, the
+# spec section the failure violates (PRD/DESIGN traceability), suspect files,
+# and a proposed fix or test. Advisory, never a gate: humans decide, AI digs.
+#
+# Requires: ANTHROPIC_API_KEY repo secret.
+
+name: AI Investigate Failure
+
+on:
+  workflow_run:
+    workflows:
+      - "Backend Lint & Test"
+      - "E2E — Bronze to API"
+      - "Security Gates"
+      - "Helm Validate"
+      - "Docs Gates"
+      - "Nightly Install Test"
+      - "Release Train"
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  investigate:
+    # Only for failures on SAME-REPO branches. A malicious fork cannot trigger
+    # this (which would run on the default branch with secret access + Bash and
+    # a head_sha checkout) — closes the workflow_run secret-exfiltration vector.
+    if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Collect failing job logs
+        # Untrusted workflow_run.* values are passed via env (shell quotes them),
+        # never interpolated into the script body — avoids template injection.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WF_NAME: ${{ github.event.workflow_run.name }}
+          WF_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WF_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/failure
+          gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --log-failed > /tmp/failure/failed-jobs.log 2>/dev/null || \
+            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log \
+            | tail -800 > /tmp/failure/failed-jobs.log
+          {
+            echo "workflow: $WF_NAME"
+            echo "branch:   $WF_BRANCH"
+            echo "sha:      $WF_SHA"
+          } > /tmp/failure/meta.txt
+
+      - name: AI investigation (full co-located context)
+        # Pinned to the supported moving major @v1 per Anthropic's published
+        # guidance (the v1 tag is the maintained release channel; a frozen SHA
+        # would miss security fixes). This step runs only on workflow_run after
+        # a gate already failed, is advisory, and creates no release artifact.
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            A mandatory CI gate failed. Investigate the root cause using the
+            full co-located context of this repository.
+
+            Failure metadata: /tmp/failure/meta.txt  (workflow, branch, sha)
+            Failing job logs: /tmp/failure/failed-jobs.log
+
+            Method:
+            1. Read the logs; identify the first real failure (not cascades).
+            2. Locate the failing code/test/model. Read its CO-LOCATED specs:
+               the component's specs/PRD.md, specs/DESIGN.md, specs/ADR/*,
+               specs/schemas/* (see docs/DOCS_MAP.md and
+               cypilot/config/artifacts.toml for the code↔spec mapping).
+            3. Determine: is the code violating the spec, is the test wrong,
+               or is the spec stale? Cite the exact PRD/DESIGN section.
+            4. Identify suspect files/commits (git log on the touched paths).
+
+            Then post ONE comment on the PR for the branch named in
+            /tmp/failure/meta.txt (use `gh pr comment`) containing: ① root-cause
+            hypothesis with confidence, ② the spec section it traces to,
+            ③ suspect files with line refs, ④ a concrete proposed fix or
+            failing-test reproduction, ⑤ what to check if the hypothesis is
+            wrong. Be brief and factual. If no open PR exists for the branch,
+            open an issue titled "CI failure investigation" instead.
+          claude_args: "--allowedTools Bash,Read,Grep,Glob --max-turns 30"
