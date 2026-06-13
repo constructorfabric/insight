@@ -40,7 +40,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # PR: fetch enough history to diff base..head. Cron: full history.
-          fetch-depth: ${{ github.event_name == 'schedule' && 0 || 50 }}
+          # String operands: numeric 0 is falsy in &&/|| so it would collapse to 50.
+          fetch-depth: ${{ github.event_name == 'schedule' && '0' || '50' }}
           persist-credentials: false
       - name: TruffleHog (verified secrets are a hard failure)
         uses: trufflesecurity/trufflehog@1aa1871f9ae24a8c8a3a48a9345514acf42beb39 # v3.82.13
