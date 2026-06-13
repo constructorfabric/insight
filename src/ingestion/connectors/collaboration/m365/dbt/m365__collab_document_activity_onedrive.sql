@@ -28,7 +28,10 @@ SELECT
     syncedFileCount AS synced_count,
     sharedInternallyFileCount AS shared_internally_count,
     sharedExternallyFileCount AS shared_externally_count,
-    CAST(NULL AS Nullable(Int64)) AS visited_page_count,
+    -- OneDrive has no page-visit metric. Pinned to Nullable(Float64) to match
+    -- the SharePoint half: the silver tag-union (class_collab_document_activity)
+    -- fails with NO_COMMON_TYPE if the two halves disagree (Int64 vs Float64).
+    CAST(NULL AS Nullable(Float64)) AS visited_page_count,
     reportPeriod AS report_period,
     now() AS collected_at,
     'insight_m365' AS data_source,
