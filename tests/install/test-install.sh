@@ -110,6 +110,8 @@ if ! $SKIP_INSTALL; then
   if grep -q '^appVersion: "---"' "$REPO/charts/insight/Chart.yaml"; then
     echo "  (applying defect-#4 workaround: appVersion --- → 0.0.0-citest)"
     sed -i.bak 's/^appVersion: "---"/appVersion: "0.0.0-citest"/' "$REPO/charts/insight/Chart.yaml"
+    # Restore the original on exit so the workaround never leaves a dirty checkout.
+    trap 'mv -f "$REPO/charts/insight/Chart.yaml.bak" "$REPO/charts/insight/Chart.yaml" 2>/dev/null || true' EXIT
   fi
   ( cd "$REPO" && INSIGHT_VALUES_FILES="$OVERRIDES" timeout "$TIMEOUT" ./dev-up.sh ) >>"$LOG" 2>&1
   RC=$?

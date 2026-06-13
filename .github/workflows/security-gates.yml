@@ -83,7 +83,7 @@ jobs:
           python-version: "3.12"
       - name: Python dependency audit (known CVEs block)
         run: |
-          pip install --quiet pip-audit
+          pip install --quiet 'pip-audit==2.10.1'
           rc=0
           # Audit every Python project manifest in the ingestion tree.
           while IFS= read -r f; do

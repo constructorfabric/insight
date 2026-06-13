@@ -30,7 +30,9 @@ jobs:
 
       - name: Install kind
         run: |
+          set -euo pipefail
           curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+          echo "1d86e3069ffbe3da9f1a918618aecbc778e00c75f838882d0dfa2d363bc4a68c  kind" | sha256sum -c -
           chmod +x kind && sudo mv kind /usr/local/bin/
 
       - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
