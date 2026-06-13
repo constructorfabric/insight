@@ -99,8 +99,18 @@ gh api -X PUT "repos/${REPO}/environments/production" --input - <<JSON
 JSON
 
 echo
-echo "✓ Done. Manual follow-ups that the API cannot fully express:"
-echo "  1. Verify the automation App retains push/bypass on main (see header)."
-echo "  2. In infra/insight-gitops: add the .insight-version allowlist check"
+echo "✓ Done. Branch protection now makes review MANDATORY: 1 approving review"
+echo "  from a CODEOWNER (require_code_owner_reviews), stale approvals dismissed —"
+echo "  no MR merges without it. GitHub auto-requests the owning team (per"
+echo "  .github/CODEOWNERS) on every PR."
+echo
+echo "  Manual follow-ups that the API cannot express:"
+echo "  1. TWO random reviewers per PR: in each owning team's settings"
+echo "     (Org → Teams → <team> → Code review assignment), enable auto-assignment,"
+echo "     'Number of reviewers' = 2, routing = 'Load balance' (or 'Round robin')."
+echo "     GitHub then assigns 2 random members whose code-owner approval counts."
+echo "     Owning teams: * → @${org}/insight-app-maintainers ; .github/** → @${org}/security"
+echo "  2. Verify the automation App retains push/bypass on main (see header)."
+echo "  3. In infra/insight-gitops: add the .insight-version allowlist check"
 echo "     (CI job that rejects versions absent from approved-versions.txt,"
 echo "     which only the production-environment approval workflow appends to)."
