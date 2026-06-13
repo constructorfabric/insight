@@ -59,3 +59,71 @@ pub fn threshold_matches(value: f64, operator: &str, threshold: f64) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn each_operator_matches_and_rejects_correctly() {
+        assert!(threshold_matches(5.0, "gt", 4.0));
+        assert!(!threshold_matches(4.0, "gt", 4.0));
+        assert!(threshold_matches(4.0, "ge", 4.0));
+        assert!(!threshold_matches(3.9, "ge", 4.0));
+        assert!(threshold_matches(3.0, "lt", 4.0));
+        assert!(!threshold_matches(4.0, "lt", 4.0));
+        assert!(threshold_matches(4.0, "le", 4.0));
+        assert!(!threshold_matches(4.1, "le", 4.0));
+        assert!(threshold_matches(4.0, "eq", 4.0));
+        assert!(!threshold_matches(4.1, "eq", 4.0));
+    }
+
+    #[test]
+    fn eq_tolerates_floating_point_error() {
+        // 0.1 + 0.2 != 0.3 in IEEE-754; the epsilon compare must still match.
+        assert!(threshold_matches(0.1 + 0.2, "eq", 0.3));
+    }
+
+    #[test]
+    fn unknown_operator_never_matches() {
+        assert!(!threshold_matches(5.0, "between", 4.0));
+        assert!(!threshold_matches(5.0, "", 4.0));
+        assert!(!threshold_matches(5.0, "GT", 4.0)); // case-sensitive
+    }
+
+    #[test]
+    fn valid_sets_match_their_messages() {
+        assert_eq!(VALID_OPERATORS, &["gt", "ge", "lt", "le", "eq"]);
+        assert_eq!(VALID_LEVELS, &["good", "warning", "critical"]);
+        for op in VALID_OPERATORS {
+            assert!(INVALID_OPERATOR_MSG.contains(op));
+        }
+        for lvl in VALID_LEVELS {
+            assert!(INVALID_LEVEL_MSG.contains(lvl));
+        }
+    }
+
+    #[test]
+    fn create_request_deserializes() -> R {
+        let req: CreateThresholdRequest = serde_json::from_str(
+            r#"{"field_name":"score","operator":"ge","value":4.0,"level":"good"}"#,
+        )?;
+        assert_eq!(req.field_name, "score");
+        assert_eq!(req.operator, "ge");
+        assert!((req.value - 4.0).abs() < f64::EPSILON);
+        assert_eq!(req.level, "good");
+        Ok(())
+    }
+
+    #[test]
+    fn update_request_allows_partial_fields() -> R {
+        let req: UpdateThresholdRequest = serde_json::from_str(r#"{"value":9.5}"#)?;
+        assert_eq!(req.value, Some(9.5));
+        assert!(req.field_name.is_none());
+        assert!(req.operator.is_none());
+        assert!(req.level.is_none());
+        Ok(())
+    }
+}
