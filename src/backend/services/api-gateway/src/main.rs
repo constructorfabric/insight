@@ -59,7 +59,7 @@ struct Cli {
     command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug, PartialEq, Eq)]
 enum Commands {
     /// Start the API gateway server (default).
     Run,
@@ -86,5 +86,76 @@ async fn main() -> Result<()> {
         Commands::Run => run_server(config).await,
         Commands::Migrate => run_migrate(config).await,
         Commands::Check => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(args)
+    }
+
+    #[test]
+    fn bare_invocation_has_no_subcommand_and_defaults_to_run() -> R {
+        let cli = parse(&["insight-api-gateway"])?;
+        assert!(cli.command.is_none());
+        // main maps None → Run
+        assert_eq!(cli.command.unwrap_or(Commands::Run), Commands::Run);
+        assert_eq!(cli.verbose, 0);
+        assert!(!cli.print_config);
+        assert!(cli.config.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn subcommands_parse() -> R {
+        assert_eq!(parse(&["x", "run"])?.command, Some(Commands::Run));
+        assert_eq!(parse(&["x", "check"])?.command, Some(Commands::Check));
+        assert_eq!(parse(&["x", "migrate"])?.command, Some(Commands::Migrate));
+        Ok(())
+    }
+
+    #[test]
+    fn verbose_flag_counts() -> R {
+        assert_eq!(parse(&["x"])?.verbose, 0);
+        assert_eq!(parse(&["x", "-v"])?.verbose, 1);
+        assert_eq!(parse(&["x", "-vv"])?.verbose, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn config_path_and_print_config_flags() -> R {
+        let cli = parse(&["x", "--config", "/etc/insight.yaml", "--print-config"])?;
+        assert_eq!(
+            cli.config.as_deref(),
+            Some(std::path::Path::new("/etc/insight.yaml"))
+        );
+        assert!(cli.print_config);
+        Ok(())
+    }
+
+    #[test]
+    fn short_config_flag_works() -> R {
+        let cli = parse(&["x", "-c", "a.yaml", "run"])?;
+        assert_eq!(cli.config.as_deref(), Some(std::path::Path::new("a.yaml")));
+        assert_eq!(cli.command, Some(Commands::Run));
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_subcommand_is_rejected() {
+        assert!(Cli::try_parse_from(["x", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // Catches clap derive misconfig (duplicate args, bad defaults) at test time.
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
     }
 }

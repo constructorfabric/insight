@@ -16,7 +16,7 @@ use modkit::contracts::{Module, RestApiCapability};
 use serde::{Deserialize, Serialize};
 
 /// OIDC configuration served to the frontend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthInfoResponse {
     /// OIDC issuer URL (e.g., `https://dev-12345.okta.com/oauth2/default`).
     pub issuer_url: String,
@@ -30,8 +30,28 @@ pub struct AuthInfoResponse {
     pub response_type: String,
 }
 
+impl AuthInfoResponse {
+    /// Build the frontend response from module config: split the space-separated
+    /// `scopes` (OAuth2 wire format) into a list, and pin `response_type` to the
+    /// Authorization-Code-flow value. Extracted from `register_rest` so the
+    /// transformation is unit-testable without the module runtime.
+    pub(crate) fn from_config(config: &AuthInfoConfig) -> Self {
+        Self {
+            issuer_url: config.issuer_url.clone(),
+            client_id: config.client_id.clone(),
+            redirect_uri: config.redirect_uri.clone(),
+            scopes: config
+                .scopes
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect(),
+            response_type: "code".to_owned(),
+        }
+    }
+}
+
 /// Module configuration (from YAML).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AuthInfoConfig {
     /// OIDC issuer URL. Should match the OIDC plugin's `issuer_url`.
@@ -109,17 +129,7 @@ impl RestApiCapability for AuthInfoModule {
             .ok_or_else(|| anyhow::anyhow!("auth-info not initialized"))?
             .clone();
 
-        let response = AuthInfoResponse {
-            issuer_url: config.issuer_url.clone(),
-            client_id: config.client_id.clone(),
-            redirect_uri: config.redirect_uri.clone(),
-            scopes: config
-                .scopes
-                .split_whitespace()
-                .map(str::to_owned)
-                .collect(),
-            response_type: "code".to_owned(),
-        };
+        let response = AuthInfoResponse::from_config(&config);
 
         let handler = move || {
             let resp = response.clone();
@@ -137,5 +147,100 @@ impl RestApiCapability for AuthInfoModule {
 
         tracing::info!("registered public endpoint: GET /v1/auth/config");
         Ok(router)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    fn cfg(scopes: &str) -> AuthInfoConfig {
+        AuthInfoConfig {
+            issuer_url: "https://idp.example/oauth2".to_owned(),
+            client_id: "spa-client".to_owned(),
+            redirect_uri: "https://app.example/callback".to_owned(),
+            scopes: scopes.to_owned(),
+        }
+    }
+
+    #[test]
+    fn from_config_splits_space_separated_scopes() {
+        let r = AuthInfoResponse::from_config(&cfg("openid profile email"));
+        assert_eq!(r.scopes, vec!["openid", "profile", "email"]);
+    }
+
+    #[test]
+    fn from_config_collapses_extra_whitespace_and_tabs() {
+        // OAuth2 wire format is space-separated; be liberal about spacing.
+        let r = AuthInfoResponse::from_config(&cfg("  openid\tprofile   email \n"));
+        assert_eq!(r.scopes, vec!["openid", "profile", "email"]);
+    }
+
+    #[test]
+    fn from_config_empty_scopes_yields_empty_vec() {
+        assert!(AuthInfoResponse::from_config(&cfg("")).scopes.is_empty());
+        assert!(AuthInfoResponse::from_config(&cfg("   ")).scopes.is_empty());
+    }
+
+    #[test]
+    fn from_config_response_type_is_always_code() {
+        assert_eq!(
+            AuthInfoResponse::from_config(&cfg("openid")).response_type,
+            "code"
+        );
+    }
+
+    #[test]
+    fn from_config_passes_through_identity_fields() {
+        let r = AuthInfoResponse::from_config(&cfg("openid"));
+        assert_eq!(r.issuer_url, "https://idp.example/oauth2");
+        assert_eq!(r.client_id, "spa-client");
+        assert_eq!(r.redirect_uri, "https://app.example/callback");
+    }
+
+    #[test]
+    fn config_default_is_all_empty() {
+        let c = AuthInfoConfig::default();
+        assert!(c.issuer_url.is_empty());
+        assert!(c.client_id.is_empty());
+        assert!(c.redirect_uri.is_empty());
+        assert!(c.scopes.is_empty());
+    }
+
+    #[test]
+    fn config_parses_known_fields() -> R {
+        let c: AuthInfoConfig = serde_json::from_str(
+            r#"{"issuer_url":"https://i","client_id":"c","redirect_uri":"r","scopes":"openid email"}"#,
+        )?;
+        assert_eq!(c.client_id, "c");
+        assert_eq!(c.scopes, "openid email");
+        Ok(())
+    }
+
+    #[test]
+    fn config_rejects_unknown_fields() {
+        // deny_unknown_fields guards against typo'd / stale config keys.
+        let err = serde_json::from_str::<AuthInfoConfig>(r#"{"issuer":"oops"}"#);
+        assert!(err.is_err(), "unknown field must be rejected");
+    }
+
+    #[test]
+    fn response_json_roundtrips() -> R {
+        let r = AuthInfoResponse::from_config(&cfg("openid profile"));
+        let json = serde_json::to_string(&r)?;
+        let back: AuthInfoResponse = serde_json::from_str(&json)?;
+        assert_eq!(r, back);
+        // wire shape the frontend depends on
+        assert!(json.contains("\"response_type\":\"code\""));
+        assert!(json.contains("\"scopes\":[\"openid\",\"profile\"]"));
+        Ok(())
+    }
+
+    #[test]
+    fn module_default_is_uninitialized() {
+        let m = AuthInfoModule::default();
+        assert!(m.config.get().is_none(), "config unset before init");
     }
 }
