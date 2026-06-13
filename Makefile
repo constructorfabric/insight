@@ -26,8 +26,11 @@ lint: ## clippy (mirrors backend-checks.yml)
 
 unit: ## unit tests: Rust + .NET identity (mirrors backend-checks.yml)
 	cd $(BACKEND) && cargo test --all
-	cd $(BACKEND)/services/identity && dotnet test Insight.Identity.sln --configuration Release || \
-	  { echo "⚠ dotnet not available locally — CI will enforce"; }
+	@if command -v dotnet >/dev/null 2>&1; then \
+	  cd $(BACKEND)/services/identity && dotnet test Insight.Identity.sln --configuration Release; \
+	else \
+	  echo "⚠ dotnet not available locally — CI will enforce"; \
+	fi
 
 coverage: coverage-unit ## instrumented coverage (alias: unit; e2e separate, see coverage-e2e)
 
@@ -44,7 +47,7 @@ coverage-e2e: ## INSTRUMENTED e2e coverage — services built with -C instrument
 	  source <(cargo llvm-cov show-env --export-prefix) && \
 	  cargo llvm-cov clean --workspace && \
 	  cargo build --workspace && \
-	  cd ../ingestion/tests/e2e && INSIGHT_BIN_DIR=../../../backend/target/debug ./e2e.sh test --tb=short -q; \
+	  cd ../ingestion/tests/e2e && INSIGHT_BIN_DIR=../../../backend/target/debug ./e2e.sh test --tb=short -q && \
 	  cd ../../../backend && \
 	  cargo llvm-cov report --lcov --output-path target/coverage-e2e.lcov && \
 	  cargo llvm-cov report --html --output-dir target/coverage-e2e-html && \
@@ -53,8 +56,11 @@ coverage-e2e: ## INSTRUMENTED e2e coverage — services built with -C instrument
 	@echo "      for profraw collection — rig wiring is roadmap 2.15."
 
 dbt-validate: ## dbt parse — catches broken models before CI
-	@command -v dbt >/dev/null && (cd src/ingestion/dbt && dbt parse --no-partial-parse) \
-	  || echo "⚠ dbt not installed locally — toolbox build enforces dbt parse in CI"
+	@if command -v dbt >/dev/null 2>&1; then \
+	  (cd src/ingestion/dbt && dbt parse --no-partial-parse); \
+	else \
+	  echo "⚠ dbt not installed locally — toolbox build enforces dbt parse in CI"; \
+	fi
 
 docs-map: ## regenerate docs/DOCS_MAP.md (markdown map by category)
 	python3 scripts/ci/docs_map.py
@@ -69,12 +75,19 @@ helm-check: ## chart validation (mirrors helm-validate.yml)
 	  --set ingestion.reconcile.tenantId=local-check >/dev/null && echo "✓ chart renders"
 
 security: ## local security scans (CI enforces; local = early warning)
-	@command -v trufflehog >/dev/null && trufflehog git file://. --since-commit HEAD~10 --results=verified --fail || echo "⚠ trufflehog not installed (brew install trufflehog)"
-	@command -v semgrep >/dev/null && semgrep scan --config auto --error -q || echo "⚠ semgrep not installed (brew install semgrep)"
-	@command -v cargo-audit >/dev/null && (cd $(BACKEND) && cargo audit) || echo "⚠ cargo-audit not installed"
+	@if command -v trufflehog >/dev/null 2>&1; then \
+	  trufflehog git file://. --since-commit HEAD~10 --results=verified --fail; \
+	else echo "⚠ trufflehog not installed (brew install trufflehog)"; fi
+	@if command -v semgrep >/dev/null 2>&1; then \
+	  semgrep scan --config auto --error -q; \
+	else echo "⚠ semgrep not installed (brew install semgrep)"; fi
+	@if command -v cargo-audit >/dev/null 2>&1; then \
+	  (cd $(BACKEND) && cargo audit); \
+	else echo "⚠ cargo-audit not installed"; fi
 
 e2e: ## bronze→API end-to-end suite (mirrors e2e-bronze-to-api.yml)
-	cd src/ingestion/tests/e2e && ./e2e.sh build && ./e2e.sh test --tb=short -q; ./e2e.sh down
+	cd src/ingestion/tests/e2e && ./e2e.sh build && \
+	  { ./e2e.sh test --tb=short -q; rc=$$?; ./e2e.sh down; exit $$rc; }
 
 fuzz: ## fuzz Rust parsers/inputs (cargo-fuzz; add targets under fuzz/)
 	@command -v cargo-fuzz >/dev/null || { echo "⚠ install: cargo install cargo-fuzz"; exit 0; }
