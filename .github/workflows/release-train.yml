@@ -154,6 +154,9 @@ jobs:
     needs: [resolve, validate-artifact]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Creates/edits the RC prerelease → needs write (resolve & validate are read-only).
+    permissions:
+      contents: write
     steps:
       - name: Publish / refresh RC prerelease record
         env:

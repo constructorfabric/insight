@@ -77,7 +77,7 @@ jobs:
             if grep -nE '^[[:space:]]*tag:[[:space:]]*(""|'"''"'|null|~)?[[:space:]]*$' <<<"$clean"; then
               echo "::error file=$f::empty/missing image tag (floating-ref defect class)"; rc=1
             fi
-          done < <(git ls-files 'charts/**/values.yaml' 'src/**/helm/values.yaml')
+          done < <(git ls-files 'charts/**/values.yaml' 'src/**/helm/values.yaml' 'helmfile/charts/**/values.yaml')
           exit $rc
 
       - name: helm lint (strict) — umbrella and all local subcharts

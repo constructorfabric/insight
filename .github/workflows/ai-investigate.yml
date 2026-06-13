@@ -32,7 +32,10 @@ permissions:
 
 jobs:
   investigate:
-    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    # Only for failures on SAME-REPO branches. A malicious fork cannot trigger
+    # this (which would run on the default branch with secret access + Bash and
+    # a head_sha checkout) — closes the workflow_run secret-exfiltration vector.
+    if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
