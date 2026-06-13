@@ -1,0 +1,113 @@
+# Security gates — MANDATORY, BLOCKING.
+#
+# Every job here is a required status check on `main` (see
+# scripts/ci/enforce-quality-gates.sh). None of these jobs may use
+# `continue-on-error` or `allow_failure` semantics: a finding either gets
+# fixed, or gets an explicit reviewed suppression in-repo
+# (.trivyignore / .semgrepignore / audit.toml). Silent bypass is not a state.
+#
+# Rationale: both company reference pipelines (gitlab.constr.dev 931666,
+# 929528) carry Trivy scans with allow_failure that have been red for days.
+# The Constructor/Virtuozzo CI/CD Master Plan §2 mandates hard-fail gates.
+
+name: Security Gates
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Nightly deep sweep (full history / full repo), per Master Plan §2:
+    # PR runs scan only the diff; the cron run scans everything.
+    - cron: "0 1 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets-scan:
+    name: secrets-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # PR: fetch enough history to diff base..head. Cron: full history.
+          fetch-depth: ${{ github.event_name == 'schedule' && 0 || 50 }}
+      - name: TruffleHog (verified secrets are a hard failure)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+          extra_args: --results=verified,unknown
+
+  sast:
+    name: sast
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semgrep scan (findings block)
+        run: semgrep scan --config auto --error --exclude-rule generic.secrets.security.detected-generic-secret
+
+  deps-audit:
+    name: deps-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Rust dependency audit (RUSTSEC advisories block)
+        working-directory: src/backend
+        run: cargo audit --deny warnings
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python dependency audit (known CVEs block)
+        run: |
+          pip install --quiet pip-audit
+          rc=0
+          # Audit every Python project manifest in the ingestion tree.
+          while IFS= read -r f; do
+            echo "::group::pip-audit $f"
+            case "$f" in
+              *requirements*.txt) pip-audit -r "$f" || rc=1 ;;
+              *pyproject.toml)    (cd "$(dirname "$f")" && pip-audit .) || rc=1 ;;
+            esac
+            echo "::endgroup::"
+          done < <(find src/ingestion -name 'pyproject.toml' -o -name 'requirements*.txt' | grep -v node_modules)
+          exit $rc
+
+  trivy-config:
+    name: trivy-config
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy IaC & Dockerfile misconfiguration scan (CRITICAL/HIGH block)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          trivyignores: .trivyignore
+      - name: Trivy filesystem vulnerability scan (CRITICAL/HIGH block)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+          trivyignores: .trivyignore
