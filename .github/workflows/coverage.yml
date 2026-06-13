@@ -1,0 +1,87 @@
+# Instrumented coverage — exact lines of code touched, UNIT and E2E SEPARATELY.
+#
+# Everything is compiled with -C instrument-coverage (LLVM source-based
+# coverage via cargo-llvm-cov): the reports show per-line execution, not
+# estimates. Two distinct profiles answer two distinct questions:
+#   coverage-unit : which lines do the unit tests exercise?     (every PR)
+#   coverage-e2e  : which lines does the real bronze→API flow
+#                   exercise in the instrumented binaries?      (nightly)
+# The delta between them is itself a signal: lines only e2e touches have no
+# fast-feedback test; lines neither touches are the AI gap-analysis input
+# (`make coverage-gaps`).
+#
+# Gate: COVERAGE_MIN_LINES is a RATCHET — starts at the current baseline,
+# only ever goes up (Phase 1.6). Same commands as `make coverage-unit/-e2e`.
+
+name: Coverage
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["src/backend/**", ".github/workflows/coverage.yml"]
+  schedule:
+    - cron: "30 3 * * *"   # nightly: e2e instrumented profile
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  COVERAGE_MIN_LINES: "0"   # ratchet upward per Phase 1.6 — never down
+
+jobs:
+  coverage-unit:
+    name: coverage-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/backend
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Instrumented unit coverage (exact lines)
+        working-directory: src/backend
+        run: |
+          cargo llvm-cov --all-features --workspace \
+            --lcov --output-path target/coverage-unit.lcov \
+            --fail-under-lines "$COVERAGE_MIN_LINES"
+          cargo llvm-cov report --summary-only | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit-lcov
+          path: src/backend/target/coverage-unit.lcov
+
+  coverage-e2e:
+    name: coverage-e2e
+    # Heavy (instrumented build + full e2e rig): nightly + manual only.
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/backend
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Instrumented e2e coverage (separate profile)
+        run: make coverage-e2e
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-e2e-lcov
+          path: src/backend/target/coverage-e2e.lcov
+          if-no-files-found: warn
