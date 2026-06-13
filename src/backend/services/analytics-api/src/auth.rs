@@ -22,7 +22,7 @@ use std::sync::Arc;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use modkit_canonical_errors::CanonicalError;
+use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
 use crate::api::error::TenantError;

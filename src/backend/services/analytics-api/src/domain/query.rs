@@ -1,7 +1,7 @@
 //! Query request/response models — `OData`-style per DNA REST conventions.
 
-use modkit_canonical_errors::Problem;
 use serde::{Deserialize, Serialize};
+use toolkit_canonical_errors::Problem;
 use uuid::Uuid;
 
 /// Query request body for `POST /v1/metrics/{id}/query`.

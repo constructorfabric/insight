@@ -26,7 +26,7 @@
 //!
 //! ## Why we sometimes set `Problem.detail` directly
 //!
-//! `modkit-canonical-errors` v0.7.3's `ResourceErrorBuilder::with_detail`
+//! `toolkit-canonical-errors` v0.7.3's `ResourceErrorBuilder::with_detail`
 //! is `pub(crate)` — only callable inside the crate. The public builder
 //! pre-sets the canonical default detail string for each category
 //! ("You do not have permission to perform this operation", etc.). For
@@ -39,9 +39,9 @@
 
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
-use modkit_canonical_errors::{CanonicalError, Problem};
 use sea_orm::DbErr;
 use serde_json::json;
+use toolkit_canonical_errors::{CanonicalError, Problem};
 use uuid::Uuid;
 
 use crate::api::error::ThresholdAdminError;
@@ -475,7 +475,7 @@ mod tests {
             "gts://gts.cf.core.errors.err.v1~cf.core.err.failed_precondition.v1~"
         );
         assert_eq!(body["context"]["resource_name"], row_id.to_string());
-        // The cyberfabric `modkit-canonical-errors` crate serializes the
+        // The cyberfabric `toolkit-canonical-errors` crate serializes the
         // `FailedPrecondition` ctx as `context.violations` (not
         // `context.precondition_violations`); DESIGN §3.3 example shows
         // the latter — cross-team alignment is a follow-up. We pin to
@@ -506,7 +506,7 @@ mod tests {
         let resp = lock_reason_required_response(None);
         assert_eq!(resp.status(), 400);
         let body = body_json(resp).await;
-        // The cyberfabric `modkit-canonical-errors` crate serializes the
+        // The cyberfabric `toolkit-canonical-errors` crate serializes the
         // `FailedPrecondition` ctx as `context.violations` (not
         // `context.precondition_violations`); DESIGN §3.3 example shows
         // the latter — cross-team alignment is a follow-up. We pin to
@@ -523,7 +523,7 @@ mod tests {
         let resp = lock_scope_invalid_response(None);
         assert_eq!(resp.status(), 400);
         let body = body_json(resp).await;
-        // The cyberfabric `modkit-canonical-errors` crate serializes the
+        // The cyberfabric `toolkit-canonical-errors` crate serializes the
         // `FailedPrecondition` ctx as `context.violations` (not
         // `context.precondition_violations`); DESIGN §3.3 example shows
         // the latter — cross-team alignment is a follow-up. We pin to

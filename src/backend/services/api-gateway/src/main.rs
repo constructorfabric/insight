@@ -14,17 +14,16 @@
 //!   insight-api-gateway run -c config/insight.yaml
 //!   insight-api-gateway check -c config/insight.yaml
 
-// Insight modules (compiled into the binary, registered via inventory).
+// Insight gears (compiled into the binary, registered via inventory).
 mod auth_info;
-mod core_types;
 mod proxy;
 
 // Link external modules via inventory — runtime discovers them automatically.
-use api_gateway_module as _;
+use api_gateway as _;
 use authn_resolver as _;
 use authz_resolver as _;
+use gear_orchestrator as _;
 use grpc_hub as _;
-use module_orchestrator as _;
 use oidc_authn_plugin as _;
 use single_tenant_tr_plugin as _;
 use static_authz_plugin as _;
@@ -35,7 +34,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use modkit::bootstrap::{AppConfig, run_migrate, run_server};
+use toolkit::bootstrap::{AppConfig, run_migrate, run_server};
 
 /// Insight API Gateway — entry point for all backend services.
 #[derive(Parser)]

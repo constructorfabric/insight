@@ -12,7 +12,7 @@ logging:
   default:
     console_level: debug
 
-modules:
+gears:
   api-gateway:
     config:
       bind_addr: "0.0.0.0:8080"
@@ -31,7 +31,7 @@ modules:
       client_id: ""
       redirect_uri: "http://localhost:3000/callback"
 
-  # The oidc-authn-plugin module is registered in the binary regardless of
+  # The oidc-authn-plugin gear is registered in the binary regardless of
   # whether auth is in use. It rejects an empty issuer_url at startup, so
   # we hand it a placeholder URL that is never actually contacted because
   # api-gateway.auth_disabled=true short-circuits the validator. Replace
@@ -40,7 +40,7 @@ modules:
     config:
       issuer_url: "https://no-auth.local/oauth2/default"
 
-  module-orchestrator:
+  gear-orchestrator:
     config: {}
 
   grpc-hub:
@@ -64,15 +64,13 @@ modules:
     config:
       vendor: "hyperspot"
 
+  # Zero-config in the gears-rust split: the plugin now derives the tenant
+  # from the SecurityContext at request time. With api-gateway.auth_disabled,
+  # toolkit-security injects DEFAULT_TENANT_ID (00000000-df51-5b42-9538-…).
   single-tenant-tr-plugin:
     config:
       vendor: "hyperspot"
       priority: 20
-      tenants:
-        - id: "00000000-df51-5b42-9538-d2b56b7ee953"
-          name: "default"
-          parent_id: null
-          status: active
 
   proxy:
     config:

@@ -19,10 +19,9 @@ insight-clickhouse = { workspace = true }
 clickhouse = { workspace = true }
 
 axum = { workspace = true }
-tower-http = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
-modkit-canonical-errors = { workspace = true }
+toolkit-canonical-errors = { workspace = true }
 reqwest = { workspace = true }
 redis = { workspace = true }
 

@@ -50,16 +50,16 @@
 //! TODO: when admin-crud (#525) and any future POST/PUT handler ships,
 //! the duplication this module prevents will be visible. If a third
 //! cyberfabric service grows the same need, upstream `CanonicalJson` to
-//! `cf-modkit-canonical-errors` (where `Problem` already lives) and
+//! `cf-gears-toolkit-canonical-errors` (where `Problem` already lives) and
 //! drop this module.
 
 use axum::Json;
 use axum::extract::{FromRequest, Request, rejection::JsonRejection};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use modkit_canonical_errors::Problem;
 use serde::de::DeserializeOwned;
 use serde_json::json;
+use toolkit_canonical_errors::Problem;
 
 /// GTS type URI for the canonical `invalid_argument` category. Mirrors what
 /// `CanonicalError::gts_type` would emit for the same variant; we build the
@@ -69,7 +69,7 @@ const INVALID_ARGUMENT_TYPE: &str =
     "gts://gts.cf.core.errors.err.v1~cf.core.err.invalid_argument.v1~";
 
 /// GTS type URI for the catalog-local `unsupported_media_type` category.
-/// `modkit-canonical-errors` v0.7.3 doesn't expose a builder for this
+/// `toolkit-canonical-errors` v0.7.3 doesn't expose a builder for this
 /// category (it maps every variant to a fixed HTTP status from a closed
 /// set, and 415 isn't in the set). When the upstream crate grows the
 /// variant, swap this constant for the standard `CanonicalError::gts_type`

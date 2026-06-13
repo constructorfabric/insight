@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use axum::extract::{Extension, State};
 use axum::response::{IntoResponse, Response};
-use modkit_canonical_errors::CanonicalError;
+use toolkit_canonical_errors::CanonicalError;
 
 use super::AppState;
 use super::canonical_json::CanonicalJson;

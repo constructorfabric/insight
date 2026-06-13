@@ -14,7 +14,7 @@ A cyberfabric `authn-resolver` plugin that validates JWT bearer tokens against a
 ## Configuration
 
 ```yaml
-modules:
+gears:
   oidc-authn-plugin:
     config:
       vendor: "hyperspot"
@@ -45,8 +45,8 @@ modules:
 ### Environment variable overrides
 
 ```bash
-export APP__modules__oidc-authn-plugin__config__issuer_url=https://dev-12345.okta.com/oauth2/default
-export APP__modules__oidc-authn-plugin__config__audience=api://insight
+export APP__gears__oidc-authn-plugin__config__issuer_url=https://dev-12345.okta.com/oauth2/default
+export APP__gears__oidc-authn-plugin__config__audience=api://insight
 ```
 
 ## Claim mapping

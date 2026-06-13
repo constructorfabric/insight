@@ -10,10 +10,10 @@ use std::sync::{Arc, OnceLock};
 use async_trait::async_trait;
 use axum::http::{Method, StatusCode};
 use axum::{Json, Router};
-use modkit::api::{OpenApiRegistry, OperationBuilder};
-use modkit::context::ModuleCtx;
-use modkit::contracts::{Module, RestApiCapability};
 use serde::{Deserialize, Serialize};
+use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::context::GearCtx;
+use toolkit::contracts::{Gear, RestApiCapability};
 
 /// OIDC configuration served to the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ pub struct AuthInfoResponse {
     pub response_type: String,
 }
 
-/// Module configuration (from YAML).
+/// Gear configuration (from YAML).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AuthInfoConfig {
@@ -42,7 +42,7 @@ pub struct AuthInfoConfig {
     pub redirect_uri: String,
     /// Scopes to request, as a space-separated string (matches OAuth2's wire
     /// format). Stored as `String` so the standard
-    /// `APP__modules__auth-info__config__scopes` env-var override works
+    /// `APP__gears__auth-info__config__scopes` env-var override works
     /// without a custom Vec deserializer; split on whitespace when building
     /// the response. IdP-specific:
     ///   Entra v2 single-app: "openid profile email api://<clientId>/Access.Default"
@@ -51,7 +51,7 @@ pub struct AuthInfoConfig {
 }
 
 /// Auth info module — serves OIDC config to the frontend.
-#[modkit::module(
+#[toolkit::gear(
     name = "auth-info",
     capabilities = [rest]
 )]
@@ -68,15 +68,15 @@ impl Default for AuthInfoModule {
 }
 
 #[async_trait]
-impl Module for AuthInfoModule {
-    async fn init(&self, ctx: &ModuleCtx) -> anyhow::Result<()> {
+impl Gear for AuthInfoModule {
+    async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let config: AuthInfoConfig = ctx.config()?;
 
         if config.issuer_url.is_empty() {
             tracing::warn!(
                 "auth-info: issuer_url is empty. \
                  /auth/config endpoint will return empty OIDC config. \
-                 Set modules.auth-info.config.issuer_url."
+                 Set gears.auth-info.config.issuer_url."
             );
         }
         if config.scopes.split_whitespace().next().is_none() {
@@ -84,7 +84,7 @@ impl Module for AuthInfoModule {
                 "auth-info: scopes is empty. SPA will request no OIDC scopes \
                  and IdPs will fall back to default audiences (Entra → Microsoft Graph), \
                  producing access tokens the gateway can't validate. \
-                 Set modules.auth-info.config.scopes (space-separated)."
+                 Set gears.auth-info.config.scopes (space-separated)."
             );
         }
 
@@ -99,7 +99,7 @@ impl Module for AuthInfoModule {
 impl RestApiCapability for AuthInfoModule {
     fn register_rest(
         &self,
-        _ctx: &ModuleCtx,
+        _ctx: &GearCtx,
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {

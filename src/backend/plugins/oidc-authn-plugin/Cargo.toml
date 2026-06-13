@@ -13,17 +13,14 @@ workspace = true
 
 [dependencies]
 # gears-rust
-modkit = { workspace = true }
-modkit-auth = { workspace = true }
-modkit-http = { workspace = true }
-modkit-security = { workspace = true }
-modkit-macros = { workspace = true }
+toolkit = { workspace = true }
+toolkit-auth = { workspace = true }
+toolkit-security = { workspace = true }
 authn-resolver-sdk = { workspace = true }
 types-registry-sdk = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
-tokio = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

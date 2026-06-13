@@ -1,6 +1,6 @@
 //! OIDC `AuthN` plugin module registration.
 //!
-//! Registers with the cyberfabric runtime via the `#[modkit::module]` macro.
+//! Registers with the cyberfabric runtime via the `#[toolkit::gear]` macro.
 //! Discovered by `authn-resolver` gateway via the GTS types-registry.
 
 use std::sync::{Arc, OnceLock};
@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use authn_resolver_sdk::{AuthNResolverPluginClient, AuthNResolverPluginSpecV1};
-use modkit::Module;
-use modkit::client_hub::ClientScope;
-use modkit::context::ModuleCtx;
-use modkit::gts::BaseModkitPluginV1;
+use toolkit::Gear;
+use toolkit::client_hub::ClientScope;
+use toolkit::context::GearCtx;
+use toolkit::gts::PluginV1;
 use tracing::info;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
@@ -23,7 +23,7 @@ use crate::domain::service::OidcService;
 ///
 /// Validates JWT bearer tokens against an OIDC provider (Okta, Keycloak, Auth0, etc.)
 /// using JWKS key discovery.
-#[modkit::module(
+#[toolkit::gear(
     name = "oidc-authn-plugin",
     deps = ["types-registry"]
 )]
@@ -40,14 +40,14 @@ impl Default for OidcAuthnPlugin {
 }
 
 #[async_trait]
-impl Module for OidcAuthnPlugin {
-    async fn init(&self, ctx: &ModuleCtx) -> anyhow::Result<()> {
+impl Gear for OidcAuthnPlugin {
+    async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let config: OidcAuthnPluginConfig = ctx.config()?;
 
         if config.issuer_url.is_empty() {
             anyhow::bail!(
                 "oidc-authn-plugin: issuer_url is required. \
-                 Set modules.oidc-authn-plugin.config.issuer_url in your config."
+                 Set gears.oidc-authn-plugin.config.issuer_url in your config."
             );
         }
 
@@ -69,14 +69,14 @@ impl Module for OidcAuthnPlugin {
             "initializing OIDC authn plugin"
         );
 
-        // Create JWKS key provider using modkit-auth
+        // Create JWKS key provider using toolkit-auth
         let key_provider = Arc::new(
-            modkit_auth::JwksKeyProvider::new(config.effective_jwks_url())?
+            toolkit_auth::JwksKeyProvider::new(config.effective_jwks_url())?
                 .with_refresh_interval(Duration::from_secs(config.jwks_refresh_interval_seconds)),
         );
 
         // Initial key fetch — log warning if IdP is unreachable, don't crash
-        match modkit_auth::traits::KeyProvider::refresh_keys(key_provider.as_ref()).await {
+        match toolkit_auth::traits::KeyProvider::refresh_keys(key_provider.as_ref()).await {
             Ok(()) => info!("JWKS keys loaded successfully"),
             Err(e) => tracing::warn!(
                 error = %e,
@@ -95,7 +95,7 @@ impl Module for OidcAuthnPlugin {
 
         // Register plugin instance in types-registry (fallible — do before OnceLock)
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
-        let instance = BaseModkitPluginV1::<AuthNResolverPluginSpecV1> {
+        let instance = PluginV1::<AuthNResolverPluginSpecV1> {
             id: instance_id.clone(),
             vendor: config.vendor.clone(),
             priority: config.priority,

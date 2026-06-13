@@ -2,14 +2,14 @@
 //!
 //! Each unit struct binds a GTS resource namespace and exposes builder-style
 //! constructors (`not_found`, `invalid_argument`, …) from the
-//! `modkit-canonical-errors` crate. The resulting `CanonicalError` serializes
+//! `toolkit-canonical-errors` crate. The resulting `CanonicalError` serializes
 //! to an RFC 9457 `application/problem+json` envelope via the crate's
 //! `IntoResponse` impl.
 //!
 //! See `docs/domain/metric-catalog/specs/DESIGN.md` §3.3 (Error Envelope)
 //! and DNA `REST/API.md §7` for the platform-wide contract.
 
-use modkit_canonical_errors::resource_error;
+use toolkit_canonical_errors::resource_error;
 
 #[resource_error("gts.cf.insight.analytics_api.metric.v1~")]
 pub struct MetricError;
@@ -78,7 +78,7 @@ mod tests {
     use axum::body::to_bytes;
     use axum::http::header::CONTENT_TYPE;
     use axum::response::IntoResponse;
-    use modkit_canonical_errors::{CanonicalError, Problem};
+    use toolkit_canonical_errors::{CanonicalError, Problem};
 
     use super::*;
 

@@ -1,13 +1,13 @@
 //! OIDC token validation service.
 //!
-//! Uses `modkit-auth` `JwksKeyProvider` for JWT signature validation
+//! Uses `toolkit-auth` `JwksKeyProvider` for JWT signature validation
 //! and `validate_claims` for standard claim checks.
 
-use modkit_auth::traits::KeyProvider;
-use modkit_auth::{JwksKeyProvider, ValidationConfig, validate_claims};
-use modkit_security::SecurityContext;
 use secrecy::SecretString;
 use std::sync::Arc;
+use toolkit_auth::traits::KeyProvider;
+use toolkit_auth::{JwksKeyProvider, ValidationConfig, validate_claims};
+use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use crate::config::OidcAuthnPluginConfig;

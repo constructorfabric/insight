@@ -17,36 +17,32 @@ workspace = true
 
 [dependencies]
 # gears-rust
-modkit = { workspace = true, features = ["bootstrap"] }
+toolkit = { workspace = true, features = ["bootstrap"] }
 
-# System modules (linked via inventory for runtime discovery)
-api-gateway-module = { workspace = true }
+# System gears (linked via inventory for runtime discovery)
+api_gateway = { workspace = true }
 authn-resolver = { workspace = true }
 authz-resolver = { workspace = true }
 tenant-resolver = { workspace = true }
-grpc-hub = { workspace = true }
-module-orchestrator = { workspace = true }
-types-registry = { workspace = true }
-types-registry-sdk = { workspace = true }
+grpc_hub = { workspace = true }
+gear_orchestrator = { workspace = true }
+types_registry = { workspace = true }
 
 # Plugins
 static-authz-plugin = { workspace = true }
 single-tenant-tr-plugin = { workspace = true }
 oidc-authn-plugin = { path = "../../plugins/oidc-authn-plugin" }
 
-# Auth info + proxy modules
-modkit-macros = { workspace = true }
-modkit-security = { workspace = true }
+# Auth info + proxy gears
+toolkit-canonical-errors = { workspace = true }
 async-trait = { workspace = true }
 axum = "0.8"
 reqwest = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 
 # Runtime
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 

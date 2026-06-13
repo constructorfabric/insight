@@ -48,7 +48,6 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 # Web framework
 axum = "0.8"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Database (MariaDB via SeaORM)
 sea-orm = { version = "1.1", features = ["runtime-tokio", "sqlx-mysql", "with-uuid", "with-chrono", "with-json", "macros"] }
@@ -75,34 +74,26 @@ redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 
-# gears-rust toolkit (crates.io)
-#
-# Still published under the legacy `cf-modkit-*` / `cf-*` names. The
-# gears-rust workspace renamed the local packages to `cf-gears-toolkit-*`
-# but the renamed crates have not been pushed to crates.io yet; flip the
-# `package = "..."` strings here when they appear.
-modkit = { package = "cf-modkit", version = "=0.6.2" }
-modkit-auth = { package = "cf-modkit-auth", version = "=0.6.1" }
-modkit-http = { package = "cf-modkit-http", version = "=0.6.2" }
-modkit-security = { package = "cf-modkit-security", version = "=0.6.2" }
-modkit-macros = { package = "cf-modkit-macros", version = "=0.6.2" }
-modkit-canonical-errors = { package = "cf-modkit-canonical-errors", version = "=0.7.3", features = ["axum", "sea-orm"] }
+# gears-rust toolkit (crates.io, `cf-gears-toolkit-*` family)
+toolkit = { package = "cf-gears-toolkit", version = "=0.6.12" }
+toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.7.1" }
+toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.7.1" }
+toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.7.4", features = ["axum", "sea-orm"] }
 
 # gears-rust SDKs (crates.io)
-authn-resolver-sdk = { package = "cf-authn-resolver-sdk", version = "0.3.8" }
-authz-resolver-sdk = { package = "cf-authz-resolver-sdk", version = "0.2.17" }
-types-registry-sdk = { package = "cf-types-registry-sdk", version = "0.1.5" }
+authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.17" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.2.3" }
 
-# gears-rust system modules (crates.io)
-api-gateway-module = { package = "cf-api-gateway", version = "0.1.22" }
-authn-resolver = { package = "cf-authn-resolver", version = "0.2.8" }
-authz-resolver = { package = "cf-authz-resolver", version = "0.1.15" }
-tenant-resolver = { package = "cf-tenant-resolver", version = "0.1.16" }
-static-authz-plugin = { package = "cf-static-authz-plugin", version = "0.1.15" }
-single-tenant-tr-plugin = { package = "cf-single-tenant-tr-plugin", version = "0.1.17" }
-grpc-hub = { package = "cf-grpc-hub", version = "0.1.18" }
-module-orchestrator = { package = "cf-module-orchestrator", version = "0.1.18" }
-types-registry = { package = "cf-types-registry", version = "0.1.17" }
+# gears-rust system gears (crates.io)
+api_gateway = { package = "cf-gears-api-gateway", version = "0.2.8" }
+authn-resolver = { package = "cf-gears-authn-resolver", version = "0.2.17" }
+authz-resolver = { package = "cf-gears-authz-resolver", version = "0.1.24" }
+tenant-resolver = { package = "cf-gears-tenant-resolver", version = "0.1.21" }
+static-authz-plugin = { package = "cf-gears-static-authz-plugin", version = "0.1.20" }
+single-tenant-tr-plugin = { package = "cf-gears-single-tenant-tr-plugin", version = "0.1.22" }
+grpc_hub = { package = "cf-gears-grpc-hub", version = "0.2.7" }
+gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.1.26" }
+types_registry = { package = "cf-gears-types-registry", version = "0.1.22" }
 
 # Config
 figment = { version = "0.10", features = ["yaml", "env"] }
@@ -111,5 +102,5 @@ figment = { version = "0.10", features = ["yaml", "env"] }
 insight-clickhouse = { path = "libs/insight-clickhouse" }
 
 # CI rebuild marker — bumped to retrigger the api-gateway + analytics-api
-# image builds on the constructorfabric/* namespace flip (2026-06-09 11:32).
+# image builds on the cf → gears crate migration (2026-06-12).
 
