@@ -253,36 +253,90 @@ models:
           - not_null
 
   - name: class_collab_document_activity
-    description: "Unified daily document activity per user (M365 OneDrive + SharePoint)"
+    description: >
+      Unified daily document activity per user (M365 OneDrive + SharePoint).
+
+      ENFORCED CONTRACT (data_type per column): dbt verifies the built relation
+      against these declared types at build time. This is what makes the
+      Float64-vs-Int64 class (issue #1318) a build failure instead of a runtime
+      ClickHouse NO_COMMON_TYPE error. Types are the live ClickHouse catalog
+      types; keep them in sync if a staging column's type legitimately changes
+      (and update both M365 halves together so the tag-union stays type-stable).
+    config:
+      contract:
+        enforced: true
+      # Contract-enforced incremental models must not silently ignore schema
+      # drift; fail the run so a column/type change is caught, not absorbed.
+      on_schema_change: fail
     columns:
       - name: tenant_id
+        data_type: String
         description: "Tenant isolation field"
         tests:
           - not_null
       - name: insight_source_id
+        data_type: String
         description: "Source instance identifier"
         tests:
           - not_null
       - name: unique_key
-        description: "Composite deduplication key"
+        data_type: FixedString(16)
+        description: "Composite dedup key (MD5 → FixedString(16))"
         tests:
           - not_null
           - unique
+      - name: user_id
+        data_type: String
+        description: "userPrincipalName"
+      - name: user_name
+        data_type: String
+        description: "userPrincipalName"
+      - name: email
+        data_type: String
+        description: "userPrincipalName"
       - name: person_key
+        data_type: String
         description: "lower(email) with lower(user_name) fallback — cross-source identity join key"
         tests:
           - not_null
       - name: date
+        data_type: Date
         description: "Activity date (UTC)"
         tests:
           - not_null
       - name: product
+        data_type: String
         description: "onedrive | sharepoint"
         tests:
           - not_null
           - accepted_values:
               values: ['onedrive', 'sharepoint']
+      - name: viewed_or_edited_count
+        data_type: Nullable(Float64)
+        description: "Files viewed or edited"
+      - name: synced_count
+        data_type: Nullable(Float64)
+        description: "Files synced"
+      - name: shared_internally_count
+        data_type: Nullable(Float64)
+        description: "Files shared internally"
+      - name: shared_externally_count
+        data_type: Nullable(Float64)
+        description: "Files shared externally"
+      - name: visited_page_count
+        data_type: Nullable(Float64)
+        description: "SharePoint page visits (NULL for OneDrive). Pinned Float64 on both halves — see #1318."
+      - name: report_period
+        data_type: Nullable(String)
+        description: "M365 report period (days)"
+      - name: collected_at
+        data_type: DateTime
+        description: "Ingestion timestamp"
       - name: data_source
+        data_type: String
         description: "Source discriminator: insight_m365"
         tests:
           - not_null
+      - name: _version
+        data_type: Int64
+        description: "ReplacingMergeTree version (latest wins)"

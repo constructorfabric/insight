@@ -1,0 +1,80 @@
+# Data-contract & test-completeness coverage — the QA gate that MEASURES, in CI,
+# how much of the metric path is under an enforced dbt contract + key tests, and
+# how many bronze sources have a freshness check.
+#
+# Runs on `dbt parse` only — NO database, NO credentials, NO seeded data needed
+# (contract.enforced, tests, and source freshness all live in the parsed
+# manifest). So every MR gets the numbers + the per-model gap list as a
+# downloadable artifact and a job summary.
+#
+# Today it is REPORT-ONLY (informational): the baseline is 1/124 contracted, so
+# blocking would red every PR. Dev burns the debt down (adds contracts); flip
+# the marked step to `--check` per domain to make it blocking as coverage rises.
+# Tracked as a QA-logged bug; QA owns this gate, Dev owns filling the contracts.
+
+name: Data Contracts
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/ingestion/**"
+      - "scripts/ci/dbt_coverage.py"
+      - ".github/workflows/data-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dbt-coverage:
+    name: dbt-coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dbt (core + clickhouse adapter)
+        run: pip install --quiet 'dbt-core~=1.10' 'dbt-clickhouse~=1.9'
+
+      - name: dbt parse (manifest only — no warehouse connection)
+        working-directory: src/ingestion/dbt
+        env:
+          # parse does NOT connect; a placeholder satisfies the profile's env_var.
+          CLICKHOUSE_PASSWORD: ci-noconnect
+          DBT_PROFILES_DIR: ${{ github.workspace }}/src/ingestion/dbt
+        run: |
+          [ -f packages.yml ] && dbt deps || true
+          dbt parse --no-version-check
+
+      - name: Data-contract & test coverage report
+        run: |
+          python scripts/ci/dbt_coverage.py src/ingestion/dbt/target/manifest.json \
+            | tee /tmp/dbt-coverage.txt
+          {
+            echo '## dbt data-contract coverage'
+            echo '```'
+            grep -E 'metric-path models|enforced contract|key tests|bronze sources|freshness declared' /tmp/dbt-coverage.txt
+            echo '```'
+            echo '_Report-only. Dev fills contracts; flip the gate step to `--check` per domain to enforce._'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Flip to blocking per domain as contracts land (QA ratchet) ──
+      # - name: Enforce (blocking)
+      #   run: python scripts/ci/dbt_coverage.py src/ingestion/dbt/target/manifest.json --check
+
+      - name: Upload coverage report + manifest (downloadable results)
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: dbt-coverage
+          path: |
+            /tmp/dbt-coverage.txt
+            src/ingestion/dbt/target/manifest.json
+          if-no-files-found: warn
