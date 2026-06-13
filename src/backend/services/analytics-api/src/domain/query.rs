@@ -85,3 +85,73 @@ pub enum BatchQueryResult {
 pub struct BatchQueryResponse {
     pub results: Vec<BatchQueryResult>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn default_top_is_25() {
+        assert_eq!(default_top(), 25);
+    }
+
+    #[test]
+    fn query_request_maps_odata_params() -> R {
+        let q: QueryRequest = serde_json::from_str(
+            r#"{"$filter":"metric_date ge '2026-03-01'","$orderby":"metric_date desc","$select":"person_id","$top":50}"#,
+        )?;
+        assert_eq!(q.filter.as_deref(), Some("metric_date ge '2026-03-01'"));
+        assert_eq!(q.orderby.as_deref(), Some("metric_date desc"));
+        assert_eq!(q.select.as_deref(), Some("person_id"));
+        assert_eq!(q.top, 50);
+        assert!(q.skip.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn query_request_applies_defaults_when_empty() -> R {
+        let q: QueryRequest = serde_json::from_str("{}")?;
+        assert_eq!(q.top, 25, "$top defaults to default_top()");
+        assert!(q.filter.is_none());
+        assert!(q.orderby.is_none());
+        assert!(q.select.is_none());
+        assert!(q.skip.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn batch_request_flattens_query_into_each_item() -> R {
+        let b: BatchQueryRequest = serde_json::from_str(
+            r#"{"queries":[{"id":"a","metric_id":"11111111-1111-1111-1111-111111111111","$top":10,"$filter":"x eq 1"}]}"#,
+        )?;
+        assert_eq!(b.queries.len(), 1);
+        let item = &b.queries[0];
+        assert_eq!(item.id.as_deref(), Some("a"));
+        assert_eq!(item.query.top, 10);
+        assert_eq!(item.query.filter.as_deref(), Some("x eq 1"));
+        Ok(())
+    }
+
+    #[test]
+    fn batch_result_ok_serializes_with_lowercase_status_tag() -> R {
+        let r = BatchQueryResult::Ok {
+            id: Some("a".to_owned()),
+            metric_id: Uuid::nil(),
+            response: QueryResponse {
+                items: vec![],
+                page_info: PageInfo {
+                    has_next: false,
+                    cursor: None,
+                },
+            },
+        };
+        let json = serde_json::to_string(&r)?;
+        assert!(
+            json.contains("\"status\":\"ok\""),
+            "tag = lowercase variant: {json}"
+        );
+        Ok(())
+    }
+}
