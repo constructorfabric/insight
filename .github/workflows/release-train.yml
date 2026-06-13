@@ -36,13 +36,11 @@ on:
         type: boolean
         default: false
 
-# Least privilege at the top; the promote job elevates to contents: write
-# only where it actually creates the tag + release.
+# Least privilege at the top; jobs elevate only the scope they actually need
+# (validate-artifact → OIDC/attestations; rc-report + promote → contents: write).
 permissions:
   contents: read
-  packages: read        # resolve chart versions from GHCR
-  id-token: write       # OIDC for SLSA provenance verification
-  attestations: read    # verify SLSA provenance
+  packages: read        # resolve chart versions from GHCR (resolve job)
 
 concurrency:
   group: release-train
@@ -90,6 +88,13 @@ jobs:
     needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # OIDC + attestation scopes live only here — the only job that verifies SLSA.
+    # (Job-level permissions default every unlisted scope to none, so packages
+    # is re-declared for the registry login below.)
+    permissions:
+      packages: read        # helm/docker registry login
+      id-token: write       # OIDC for SLSA provenance verification
+      attestations: read    # verify SLSA provenance
     steps:
       - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
         with:
