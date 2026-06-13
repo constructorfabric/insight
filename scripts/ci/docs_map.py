@@ -55,9 +55,22 @@ def headings(p: pathlib.Path):
     except OSError: return []
     return [m.group(1).strip() for m in re.finditer(r"^##\s+(.+)$", text, re.M)]
 
+def _norm_heading(h: str) -> str:
+    # Drop a leading section number ("1. ", "2) ") and normalize whitespace/case.
+    return re.sub(r"^\s*\d+[.)]?\s+", "", h.strip()).lower()
+
 def template_ok(p: pathlib.Path, required):
-    hs = " | ".join(headings(p))
-    return [s for s in required if s.lower() not in hs.lower()]
+    # Structural match against actual `##` headings (numbering-tolerant), NOT a
+    # substring search over prose — a required section is satisfied only by a
+    # real heading that equals it or extends it ("Operational Concept &
+    # Environment" satisfies "Operational Concept").
+    hs = [_norm_heading(h) for h in headings(p)]
+    out = []
+    for s in required:
+        s_norm = s.strip().lower()
+        if not any(h == s_norm or h.startswith(s_norm) for h in hs):
+            out.append(s)
+    return out
 
 def load_waivers():
     out = {}
@@ -108,7 +121,13 @@ def main():
             key = rel
             if key in waivers:
                 reason, expiry = waivers[key]
-                if expiry < today:
+                try:
+                    expired = datetime.date.fromisoformat(expiry) < datetime.date.today()
+                except ValueError:
+                    errors.append(f"{rel}: waiver has invalid expiry '{expiry}' (expected YYYY-MM-DD) — {problem}")
+                    status = "❌"
+                    continue
+                if expired:
                     errors.append(f"{rel}: waiver EXPIRED ({expiry}) — {problem}")
                     status = "❌"
                 else:

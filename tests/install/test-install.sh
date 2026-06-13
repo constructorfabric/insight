@@ -80,7 +80,15 @@ fi
 # ─── Phase 1: optional clean slate ──────────────────────────────────────────
 if $CLEAN; then
   echo "═══ Phase 1: clean slate (deleting kind cluster) ═══"
-  (cd "$REPO" && ./cleanup.sh) >>"$LOG" 2>&1 || kind delete cluster --name insight >>"$LOG" 2>&1
+  # cleanup.sh prompts interactively ("Are you sure? [y/N]"). In CI / any
+  # non-interactive shell that read gets empty stdin, the script cancels with
+  # exit 0, and the `||` fallback never fires — leaving the cluster in place
+  # and silently breaking the fresh-install contract. Delete directly instead.
+  if [[ -n "${CI:-}" ]] || ! [ -t 0 ]; then
+    kind delete cluster --name insight >>"$LOG" 2>&1 || true
+  else
+    (cd "$REPO" && ./cleanup.sh) >>"$LOG" 2>&1 || kind delete cluster --name insight >>"$LOG" 2>&1
+  fi
   echo "  cluster deleted"
 fi
 

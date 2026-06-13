@@ -24,15 +24,21 @@ on:
 permissions:
   contents: read
 
+env:
+  KUBECONFORM_VERSION: v0.6.7
+  KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
+
 jobs:
   helm-validate:
     name: helm-validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
         with:
           version: v3.14.0
 
@@ -61,8 +67,15 @@ jobs:
           set -euo pipefail
           rc=0
           while IFS= read -r f; do
-            if grep -nE '(image:|tag:).*(:latest"?$|latest"?\s*$)' "$f" | grep -v '^\s*#'; then
-              echo "::error file=$f::':latest' image reference in chart values (frontend blank-page defect class)"; rc=1
+            # Strip comments first so commented examples don't trip the guard.
+            clean=$(sed -E 's/[[:space:]]#.*$//; s/^[[:space:]]*#.*$//' "$f")
+            # (1) explicit :latest on an image reference
+            if grep -nE '^[[:space:]]*image:[[:space:]]*.*:latest("?[[:space:]]*)$' <<<"$clean"; then
+              echo "::error file=$f::':latest' image reference (frontend blank-page defect class)"; rc=1
+            fi
+            # (2) empty / null tag values
+            if grep -nE '^[[:space:]]*tag:[[:space:]]*(""|'"''"'|null|~)?[[:space:]]*$' <<<"$clean"; then
+              echo "::error file=$f::empty/missing image tag (floating-ref defect class)"; rc=1
             fi
           done < <(git ls-files 'charts/**/values.yaml' 'src/**/helm/values.yaml')
           exit $rc
@@ -73,7 +86,7 @@ jobs:
           helm dependency update charts/insight
           helm lint --strict charts/insight
           for c in src/backend/services/*/helm src/frontend/helm helmfile/charts/*; do
-            [ -f "$c/Chart.yaml" ] && helm lint "$c"
+            [ -f "$c/Chart.yaml" ] && helm lint --strict "$c"
           done
 
       - name: helm template — full render must succeed with default values
@@ -88,5 +101,9 @@ jobs:
       - name: kubeconform — rendered manifests must be valid Kubernetes
         run: |
           set -euo pipefail
-          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          # Verified download: fetch to disk, check SHA256, then extract & run.
+          curl -sSL -o kubeconform.tgz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tgz" | sha256sum -c -
+          tar xzf kubeconform.tgz kubeconform
           ./kubeconform -strict -ignore-missing-schemas -summary /tmp/rendered.yaml

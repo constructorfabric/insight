@@ -36,10 +36,12 @@ on:
         type: boolean
         default: false
 
+# Least privilege at the top; the promote job elevates to contents: write
+# only where it actually creates the tag + release.
 permissions:
-  contents: write       # create tags + releases
+  contents: read
   packages: read        # resolve chart versions from GHCR
-  id-token: read
+  id-token: write       # OIDC for SLSA provenance verification
   attestations: read    # verify SLSA provenance
 
 concurrency:
@@ -49,6 +51,8 @@ concurrency:
 env:
   CHART_OCI: oci://ghcr.io/constructorfabric/charts/insight
   CHART_PKG: charts%2Finsight
+  KUBECONFORM_VERSION: v0.6.7
+  KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
 
 jobs:
   resolve:
@@ -60,12 +64,18 @@ jobs:
     steps:
       - name: Pick chart version (input or latest published)
         id: pick
+        # INPUT_VERSION via env (never interpolated into the script) + strict
+        # semver validation — blocks shell injection from a dispatch input.
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.chart_version }}
         run: |
           set -euo pipefail
-          if [[ -n "${{ inputs.chart_version }}" ]]; then
-            VERSION="${{ inputs.chart_version }}"
+          if [[ -n "${INPUT_VERSION:-}" ]]; then
+            if [[ ! "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::invalid chart_version '$INPUT_VERSION' (expected semver X.Y.Z)"; exit 1
+            fi
+            VERSION="$INPUT_VERSION"
           else
             VERSION=$(gh api "orgs/constructorfabric/packages/container/${CHART_PKG}/versions?per_page=100" \
               --jq '.[].metadata.container.tags[]' \
@@ -81,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
         with:
           version: v3.14.0
 
@@ -113,7 +123,12 @@ jobs:
 
       - name: kubeconform rendered manifests
         run: |
-          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          set -euo pipefail
+          # Verified download: fetch to disk, check SHA256, then extract & run.
+          curl -sSL -o kubeconform.tgz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tgz" | sha256sum -c -
+          tar xzf kubeconform.tgz kubeconform
           ./kubeconform -strict -ignore-missing-schemas -summary rendered.yaml
 
       - name: Version-pair integrity — every referenced image must exist, none may be :latest
@@ -185,14 +200,22 @@ jobs:
     # scripts/ci/enforce-quality-gates.sh. This job PAUSES until both approve.
     # The recorded approval is the signed release checklist.
     environment: production
+    # Elevated write scoped to this job only — it creates the tag + release.
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Create annotated release tag (the immutable release record)
         env:
           V: ${{ needs.resolve.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # persist-credentials:false → authenticate the push explicitly.
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git config user.name "release-train"
           git config user.email "release-train@users.noreply.github.com"
           git tag -a "v${V}" -m "Release: insight umbrella chart ${V} (approved via production environment, run ${{ github.run_id }})"
