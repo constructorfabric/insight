@@ -98,3 +98,55 @@ impl AppConfig {
         Ok(config)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn default_helpers() {
+        assert_eq!(default_bind_addr(), "0.0.0.0:8081");
+        assert_eq!(default_clickhouse_database(), "insight");
+        assert!(MetricCatalogConfig::default().tenant_default_id.is_none());
+    }
+
+    #[test]
+    fn applies_defaults_for_optional_fields() -> R {
+        let cfg: AppConfig = Figment::new()
+            .merge(Yaml::string("database_url: mysql://db\nclickhouse_url: http://ch\n"))
+            .extract()?;
+        assert_eq!(cfg.bind_addr, "0.0.0.0:8081");
+        assert_eq!(cfg.clickhouse_database, "insight");
+        assert_eq!(cfg.database_url, "mysql://db");
+        assert_eq!(cfg.clickhouse_url, "http://ch");
+        assert!(cfg.clickhouse_user.is_none());
+        assert!(cfg.clickhouse_password.is_none());
+        assert!(cfg.identity_url.is_empty());
+        assert!(cfg.redis_url.is_empty());
+        assert!(cfg.metric_catalog.tenant_default_id.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_values_override_defaults() -> R {
+        let cfg: AppConfig = Figment::new()
+            .merge(Yaml::string(
+                "database_url: d\nclickhouse_url: c\nbind_addr: 127.0.0.1:9000\nclickhouse_database: other\n",
+            ))
+            .extract()?;
+        assert_eq!(cfg.bind_addr, "127.0.0.1:9000");
+        assert_eq!(cfg.clickhouse_database, "other");
+        Ok(())
+    }
+
+    #[test]
+    fn missing_required_field_errors() {
+        // clickhouse_url has no default → extraction must fail without it.
+        let res = Figment::new()
+            .merge(Yaml::string("database_url: only\n"))
+            .extract::<AppConfig>();
+        assert!(res.is_err(), "missing clickhouse_url must fail");
+    }
+}
