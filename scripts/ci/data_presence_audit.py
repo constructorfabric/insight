@@ -15,6 +15,15 @@ Three checks the per-PR test pyramid can't answer (they need the live warehouse)
                  run. (See the "same period, different data" class.)
   3. FRESHNESS — the newest row per populated silver table is within the SLA.
                  Stale data = the sync stopped and nobody noticed.
+  4. RESOLUTION — every gold serving view (`insight.*`, the objects analytics-api
+                 selects from) resolves against the *current* silver schema. Gold
+                 views are built by analytics-api migrations; silver by dbt — the
+                 two can drift. A view that references a silver column the deployed
+                 schema doesn't have (e.g. silver rebuilt out of lockstep) throws
+                 at query time, analytics-api returns 500, and the dashboard renders
+                 the section as a blank "No data" — a server error disguised as an
+                 empty period. This check SELECTs `LIMIT 0` from each view so a
+                 broken one surfaces here instead of in a user's dashboard.
 
 Connects over the ClickHouse HTTP interface (stdlib only). Env:
   CH_HOST (default 127.0.0.1)  CH_PORT (8123)  CH_USER (default)  CH_PASSWORD
@@ -34,6 +43,7 @@ import argparse
 import os
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 
@@ -75,6 +85,53 @@ def ch(query: str) -> str:
 def rows(query: str) -> list[list[str]]:
     out = ch(query + " FORMAT TSV")
     return [line.split("\t") for line in out.splitlines()] if out else []
+
+
+def _view_error(name: str) -> str | None:
+    """SELECT LIMIT 0 from a gold view; return the first error line, or None if it resolves.
+
+    `LIMIT 0` still forces ClickHouse to name-resolve and type-check the whole
+    view body, so an unresolved column / missing source table surfaces as an
+    analysis exception without scanning any rows.
+    """
+    try:
+        ch(f"SELECT * FROM insight.{name} LIMIT 0")
+        return None
+    except urllib.error.HTTPError as he:  # HTTP transport: CH error is in the body
+        body = he.read().decode(errors="replace") if hasattr(he, "read") else str(he)
+        return _clickhouse_error_line(body) or f"HTTP {he.code}"
+    except Exception as e:  # noqa: BLE001 — kubectl transport puts the CH error in stderr
+        return _clickhouse_error_line(str(e)) or "query failed"
+
+
+def _clickhouse_error_line(raw: str) -> str:
+    """Pull the meaningful line out of a ClickHouse error.
+
+    ClickHouse prefixes errors with a "Received exception from server (version …):"
+    banner; the actual cause ("Code: 47. DB::Exception: Identifier 'c.lines_added'
+    cannot be resolved …") is on the next line. Return that, not the banner.
+    """
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    detail = next((ln for ln in lines if "DB::Exception" in ln or ln.startswith("Code:")), "")
+    return (detail or (lines[0] if lines else ""))[:240]
+
+
+def check_views() -> list[str]:
+    """Every gold serving view in `insight` must resolve against the live schema."""
+    print("== gold serving views (resolve against current silver schema) ==")
+    broken = []
+    view_rows = rows(
+        "SELECT name FROM system.tables WHERE database='insight' "
+        "AND engine LIKE '%View%' ORDER BY name"
+    )
+    for (name, *_rest) in view_rows:
+        err = _view_error(name)
+        if err:
+            print(f"  BROKEN insight.{name}: {err}")
+            broken.append(name)
+        else:
+            print(f"  ok     insight.{name}")
+    return broken
 
 
 def main() -> None:
@@ -146,12 +203,17 @@ def main() -> None:
         flag = "DUP " if dup else ("STALE" if stale else "ok   ")
         print(f"  {flag} {name}: {total} rows{dup}{stale}")
 
+    # 4. RESOLUTION — gold serving views resolve against the live silver schema
+    broken_views = check_views()
+
     # summary + gate
     print(
         f"\nsummary: empty={len(fail_empty)} duplicated={len(fail_dup)} "
-        f"stale={len(fail_stale)}"
+        f"stale={len(fail_stale)} broken_views={len(broken_views)}"
     )
-    violations = list(fail_dup)
+    # A broken gold view = a dashboard section serves HTTP 500 (rendered as a blank
+    # "No data"), so it is always a hard violation under --check — never opt-in.
+    violations = list(fail_dup) + list(broken_views)
     if args.fail_on_empty:
         violations += fail_empty
     if args.fail_on_stale:
