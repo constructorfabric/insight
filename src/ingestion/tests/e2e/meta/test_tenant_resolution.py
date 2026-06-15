@@ -41,31 +41,47 @@ def test_valid_tenant_is_accepted(analytics_api: AnalyticsApiProcess) -> None:
     assert status == 200, f"valid tenant should be accepted, got {status}"
 
 
-@pytest.mark.parametrize(
-    "case,headers",
-    [
-        ("missing", {}),
-        ("empty", {TENANT_HEADER: ""}),
-        ("nil-uuid", {TENANT_HEADER: NIL_TENANT}),
-        ("malformed", {TENANT_HEADER: "not-a-uuid"}),
-    ],
-)
-def test_unresolvable_tenant_is_rejected(
-    analytics_api: AnalyticsApiProcess, case: str, headers: dict[str, str]
-) -> None:
-    """Tenant isolation: a missing / empty / nil / malformed tenant must be
-    REJECTED — never silently served, which would let a caller read data
-    without a resolvable tenant scope.
+# Each rejection case below is its own test rather than one parametrized matrix:
+# they are distinct requirements (different inputs, potentially different codes
+# if the spec ever diverges), so a per-case test pins each independently and a
+# failure names the exact case. They share one assertion of the EXACT code,
+# because today every unresolvable input funnels through
+# `auth::read_session_tenant` → `None` → `resolve_tenant(None)` → (no configured
+# default in this rig) → the canonical `invalid_argument` envelope = 400
+# (`auth::tenant_unresolved_response`; pinned by `api/tenant_resolution_tests.rs`).
+# Asserting `== 400` (not a 4xx range) catches a drift to 401/403 that would mean
+# the isolation boundary or the envelope moved.
 
-    Exact code: the middleware short-circuits with the canonical
-    ``invalid_argument`` envelope (``field_violations[{tenant_id,
-    TENANT_UNRESOLVED}]``), which maps to **400 Bad Request** — see
-    ``analytics-api::auth::tenant_unresolved_response`` and the parity unit
-    tests in ``api/tenant_resolution_tests.rs``. Asserting the exact code (not
-    a 4xx range) catches a regression to any other client error, e.g. a 401/403
-    that would imply the boundary moved or the envelope changed."""
-    status = _health_status(analytics_api, headers)
+
+def _assert_tenant_rejected_400(
+    api: AnalyticsApiProcess, headers: dict[str, str], why: str
+) -> None:
+    status = _health_status(api, headers)
     assert status == 400, (
-        f"{case} tenant must be rejected with 400 invalid_argument "
+        f"{why}: tenant must be rejected with 400 invalid_argument "
         f"(TENANT_UNRESOLVED, tenant isolation), got {status}"
+    )
+
+
+def test_missing_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+    """No `X-Insight-Tenant-Id` header → `read_session_tenant` has no first
+    value → None → unresolved → 400."""
+    _assert_tenant_rejected_400(analytics_api, {}, "missing header")
+
+
+def test_empty_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+    """Empty header value → `Uuid::parse_str("")` fails → None → 400."""
+    _assert_tenant_rejected_400(analytics_api, {TENANT_HEADER: ""}, "empty header")
+
+
+def test_nil_uuid_tenant_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+    """Nil UUID is parseable but rejected by the `!is_nil()` filter → None → 400;
+    a nil tenant must never pin tenant context."""
+    _assert_tenant_rejected_400(analytics_api, {TENANT_HEADER: NIL_TENANT}, "nil uuid")
+
+
+def test_malformed_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+    """Non-UUID header → `Uuid::parse_str("not-a-uuid")` fails → None → 400."""
+    _assert_tenant_rejected_400(
+        analytics_api, {TENANT_HEADER: "not-a-uuid"}, "malformed header"
     )
