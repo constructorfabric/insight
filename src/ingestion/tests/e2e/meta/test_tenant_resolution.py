@@ -54,9 +54,18 @@ def test_unresolvable_tenant_is_rejected(
     analytics_api: AnalyticsApiProcess, case: str, headers: dict[str, str]
 ) -> None:
     """Tenant isolation: a missing / empty / nil / malformed tenant must be
-    REJECTED with a 4xx — never silently served, which would let a caller read
-    data without a resolvable tenant scope."""
+    REJECTED — never silently served, which would let a caller read data
+    without a resolvable tenant scope.
+
+    Exact code: the middleware short-circuits with the canonical
+    ``invalid_argument`` envelope (``field_violations[{tenant_id,
+    TENANT_UNRESOLVED}]``), which maps to **400 Bad Request** — see
+    ``analytics-api::auth::tenant_unresolved_response`` and the parity unit
+    tests in ``api/tenant_resolution_tests.rs``. Asserting the exact code (not
+    a 4xx range) catches a regression to any other client error, e.g. a 401/403
+    that would imply the boundary moved or the envelope changed."""
     status = _health_status(analytics_api, headers)
-    assert 400 <= status < 500, (
-        f"{case} tenant must be rejected with 4xx (tenant isolation), got {status}"
+    assert status == 400, (
+        f"{case} tenant must be rejected with 400 invalid_argument "
+        f"(TENANT_UNRESOLVED, tenant isolation), got {status}"
     )
