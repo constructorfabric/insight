@@ -686,6 +686,30 @@ jobs:
         with:
           version: '3.14.0'
 
+      # Re-anchor the working tree to the live tip of the target branch
+      # BEFORE any value is computed. `checkout` above pins this run's
+      # trigger SHA, but the umbrella `version` is derived as
+      # (Chart.yaml version + 1) and `ingestion.toolboxImage` is rewritten
+      # to this run's build tag — both read from / written to the tree. If
+      # origin/main has advanced (an earlier release run already bumped &
+      # pushed; common when two src/ingestion/** PRs merge back-to-back),
+      # the trigger-SHA tree is stale: both runs compute the SAME next
+      # version and both rewrite the SAME toolboxImage line to a different
+      # tag. They both `helm push` that version (clobbering each other's
+      # OCI artifact), and the final commit can never fast-forward — the
+      # rebase-retry below then conflicts on the toolboxImage line in
+      # charts/insight/values.yaml (the version line auto-merges, identical
+      # on both sides) and cannot auto-resolve. Resetting to the live tip
+      # makes version-compute, the toolboxImage ref and the commit all
+      # consistent with what's on the branch, and makes a plain job re-run
+      # idempotent (a re-run recomputes against the refreshed tip instead
+      # of replaying the stale pinned SHA forever).
+      - name: Re-anchor to live branch tip
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$GITHUB_REF_NAME"
+          git reset --hard "origin/$GITHUB_REF_NAME"
+
       # Per-service subchart appVersion bumps. Each is bumped INDEPENDENTLY,
       # only if the matching image was rebuilt this run. Services whose
       # source didn't change keep their previous appVersion → their image
@@ -871,16 +895,18 @@ jobs:
           # detected on the subsequent run.
           git commit -m "chore(release): umbrella ${UMBRELLA_VERSION} (build ${BUILD_TAG}) [skip ci]"
 
-          # Push, with one rebase-retry to absorb a race against
-          # origin/${GITHUB_REF_NAME} advancing between job start and now.
-          # Mirrors the gitops poller's policy: rebase once, fail loud on
-          # second failure.
+          # We re-anchored to the live branch tip at job start and runs are
+          # serialised per-ref (see the workflow `concurrency` block), so this
+          # push is expected to fast-forward. Do NOT rebase the bump commit on
+          # failure: the only way the tip moves under us now is a direct human
+          # push to ${GITHUB_REF_NAME}, and rebasing our bump onto it conflicts
+          # on the values.yaml lines we just edited (toolboxImage) —
+          # unresolvable in CI. Fail loud instead; a plain job re-run is
+          # idempotent (it recomputes against the refreshed tip, see
+          # "Re-anchor" above).
           if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
-            echo "push failed; rebasing onto refreshed origin/${GITHUB_REF_NAME} and retrying"
-            if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
-              echo "rebase failed (conflict on bumped files?); aborting"
-              git rebase --abort 2>/dev/null || true
-              exit 1
-            fi
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+            echo "push to ${GITHUB_REF_NAME} was rejected — the branch tip moved" >&2
+            echo "after re-anchor (a direct human push?). Re-run this job to" >&2
+            echo "recompute the bump against the new tip." >&2
+            exit 1
           fi
