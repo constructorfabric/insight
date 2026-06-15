@@ -29,11 +29,20 @@ src/ingestion/reconcile-connectors/
 | AIRBYTE_API_URL | — | Airbyte server URL (in-cluster) |
 | INSIGHT_NAMESPACE | `insight` | Namespace for K8s Secrets + CronWorkflows |
 | INSIGHT_RECONCILE_TOKEN_TTL | `600` | Airbyte API token cache TTL (seconds) |
-| XDG_STATE_HOME | — | Local log dir parent (defaults to `$HOME/.local/state`) |
+| RECONCILE_RUN_ID | — | Correlation id stamped on every log line (the chart injects the workflow pod name) |
 
-## Log destinations
+## Logging
 
-- In-cluster: `/var/log/insight/reconcile-${YYYY-MM-DD}.log` on PVC `insight-reconcile-logs`
-- Local: `${XDG_STATE_HOME:-$HOME/.local/state}/insight/reconcile-${YYYY-MM-DD}.log`
+Structured JSON to stdout, one object per line (`lib/log.sh`): fields
+`ts`, `level`, `component:"reconcile"`, `msg`, optional `event` and
+`run_id`. The cluster's log collector (Alloy → Loki) is the durable
+destination — there is no file/PVC logging anymore.
 
-Quiet runs emit ZERO file lines and ONE stdout summary line.
+Lifecycle events, emitted on EVERY run (including no-op ticks, so a
+missing event means the loop did not run):
+
+- `reconcile.started`  — tenant, subcommand, dry_run, connector scope
+- `reconcile.completed` — status, changes, errors, duration_ms
+- `reconcile.failed`   — abnormal abort (set -e path), exit_code
+
+Find one tick in Loki: `{namespace="insight"} | json | run_id="<pod>"`.

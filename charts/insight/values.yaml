@@ -211,23 +211,9 @@ ingestion:
     destinationName: "" # Optional: name of the Bronze destination managed by reconcile. Default `clickhouse-bronze`.
     argoInstanceId: "" # Optional. Set only if the cluster's Argo workflow controller runs with `instanceID:` configured (e.g. "argo-workflows-insight" on dev-vhc). Empty leaves the controller-instanceid label off — controllers without instanceID accept that.
     tenantId: "" # Set to the Insight tenant slug (used in source/connection names per ADR-0005). No silent default.
-    logs:
-      # `persistent: false` → reconcile-loop CronWorkflow pods write logs
-      # to an emptyDir mounted at /var/log/insight; logs survive only
-      # until pod GC. Sufficient for dev/test where the Argo controller's
-      # pod-log archive is the source of record for debugging.
-      #
-      # `persistent: true` → chart provisions a PVC at deploy time.
-      # REQUIREMENT: the StorageClass referenced (either explicit
-      # `storageClass` or the cluster default) MUST use
-      # `volumeBindingMode: Immediate` — workflow pods only exist while
-      # a Workflow is running, so a `WaitForFirstConsumer` class leaves
-      # the PVC Pending forever, blocking `helm --wait`. Production
-      # operators wanting cross-run log persistence should either
-      # provide an Immediate-binding StorageClass or accept emptyDir.
-      persistent: false
-      size: 5Gi
-      storageClass: ""
+    # NB: the old `logs:` block (PVC/emptyDir file logger at
+    # /var/log/insight) is gone — reconcile emits structured JSON to
+    # stdout and the cluster's log collector is the durable destination.
     resources:
       requests:
         cpu: "100m"

@@ -333,7 +333,9 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 		-f $(VALUES) \
 		--atomic --timeout $(TIMEOUT) \
 		--history-max 10 \
-		2>&1 | tee $$LOG
+		2>&1 | tee $$LOG; \
+	NS_INFRA=$(NS_INFRA) KUBE_CTX=$(KUBE_CTX) \
+		bash scripts/push-deploy-log.sh $(ENV) $$LOG $(INSIGHT_VERSION) || true
 
 # Helper: chain a sub-target IF the matching inventory.<section>.<key>
 # is true; otherwise print a skip message. Use with $(call …) below.

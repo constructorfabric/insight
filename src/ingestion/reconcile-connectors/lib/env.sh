@@ -13,12 +13,6 @@ env_in_cluster_p() {
   test -f /var/run/secrets/kubernetes.io/serviceaccount/token
 }
 
-env_log_target_resolve() {
-  if env_in_cluster_p; then
-    echo "/var/log/insight/reconcile-$(date -u +%Y-%m-%d).log"
-  else
-    local base="${XDG_STATE_HOME:-$HOME/.local/state}/insight"  # RULE-DEFAULTS-OK: XDG Base Directory Spec defines exactly this fallback
-    mkdir -p "$base"
-    echo "$base/reconcile-$(date -u +%Y-%m-%d).log"
-  fi
-}
+# env_log_target_resolve was removed together with the PVC file logger —
+# lib/log.sh now emits JSON to stdout (the log collector is the durable
+# destination), so there is no file target to resolve.

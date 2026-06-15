@@ -178,6 +178,18 @@ spec:
               body = e.read().decode()
               print(f"Airbyte API error {e.code}: {body}", file=sys.stderr)
               sys.exit(1)
+          # Lifecycle event goes to STDERR: stdout is this step's Argo
+          # outputs.result (the bare job id consumed by poll-job) and must
+          # stay single-line. The collector ingests both streams alike.
+          import time
+          print(json.dumps({
+              "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "level": "info",
+              "component": "airbyte-sync",
+              "event": "sync.triggered",
+              "connection_id": os.environ["CONNECTION_ID"],
+              "job_id": resp["job"]["id"],
+          }), file=sys.stderr, flush=True)
           print(resp["job"]["id"])
 
     - name: poll-job
@@ -265,6 +277,25 @@ spec:
           poll_interval = int(os.environ["POLL_INTERVAL_SECONDS"])
           idle_threshold = int(os.environ["IDLE_THRESHOLD_SECONDS"])
 
+          t0 = time.time()
+          def emit_completed(status, exit_code):
+              # One structured terminal event per sync for the high-level
+              # "sync finished after N minutes, success/failed" view.
+              # duration_ms counts from poll start — the trigger step runs
+              # seconds earlier, so this tracks the sync wall-clock closely.
+              p = last_progress or (None, 0, 0, 0)
+              print(json.dumps({
+                  "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "level": "info" if exit_code == 0 else "error",
+                  "component": "airbyte-sync",
+                  "event": "sync.completed",
+                  "job_id": job_id,
+                  "status": status,
+                  "duration_ms": int((time.time() - t0) * 1000),
+                  "bytes": p[1],
+                  "records": p[2],
+              }), flush=True)
+
           last_progress = None
           last_progress_at = time.time()
           while True:
@@ -298,12 +329,15 @@ spec:
                   print(f"Job {job_id} status={status} no-progress-for={idle_for}s threshold={idle_threshold}s", flush=True)
                   if idle_for > idle_threshold:
                       print(f"FAIL: Airbyte job has not emitted any record/byte/state for {idle_for}s (threshold {idle_threshold}s). Treating as stuck.", flush=True)
+                      emit_completed("stuck", 2)
                       sys.exit(2)
               if status == "succeeded":
                   print("Sync complete")
+                  emit_completed("succeeded", 0)
                   sys.exit(0)
               elif status in ("failed", "cancelled"):
                   print(f"Sync failed: {status}")
+                  emit_completed(status, 1)
                   sys.exit(1)
               time.sleep(poll_interval)
 {{- end }}

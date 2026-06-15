@@ -10,7 +10,7 @@
 ## (ingress host, OIDC, admin secret).
 ##
 ## Reach it (dev): kubectl -n insight-infra port-forward svc/grafana 3000:80
-## Then Explore → Loki → e.g.  {namespace="airbyte"}  /  {component=~".*dbt.*"}
+## Then Explore → Loki, or the provisioned dashboards in the Insight folder.
 ##
 
 persistence:
@@ -18,19 +18,141 @@ persistence:
   size: 5Gi
 
 # Loki wired as the default datasource so Explore works out of the box.
-# Tempo/Mimir get added here in the tracing/metrics phases; `derivedFields`
-# will then map `trace_id` → a Tempo link for log↔trace correlation.
+# Fixed uid so provisioned dashboards can reference it. Tempo/Mimir get
+# added here in the tracing/metrics phases; `derivedFields` will then map
+# `trace_id` → a Tempo link for log↔trace correlation.
 datasources:
   datasources.yaml:
     apiVersion: 1
     datasources:
       - name: Loki
+        uid: loki
         type: loki
         access: proxy
         url: http://loki.insight-infra.svc.cluster.local:3100
         isDefault: true
         jsonData:
           maxLines: 1000
+
+# ─── Dashboards as code ─────────────────────────────────────────────────
+# Provisioned into the "Insight" folder. Sources are LOG-based (LogQL over
+# the gateway access_log and pod logs) — no Prometheus needed yet.
+# Deploy markers: every umbrella deploy runs the insight-post-upgrade hook
+# pod; its log lines drive the dashboard annotations. The "deploy output"
+# panel shows what scripts/push-deploy-log.sh ships ({job="deploy-insight"}).
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: insight
+        orgId: 1
+        folder: Insight
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/insight
+
+dashboards:
+  insight:
+    insight-http:
+      json: |
+        {
+          "uid": "insight-http",
+          "title": "Insight · HTTP",
+          "schemaVersion": 39,
+          "time": {"from": "now-6h", "to": "now"},
+          "refresh": "1m",
+          "annotations": {"list": [
+            {"name": "Deploys", "enable": true, "iconColor": "purple",
+             "datasource": {"type": "loki", "uid": "loki"},
+             "expr": "{namespace=\"insight\", pod=~\"insight-post-upgrade.*\"}"}
+          ]},
+          "panels": [
+            {"id": 1, "type": "timeseries", "title": "Requests by status (rps)",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "2xx", "expr": "sum(rate({namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"2..\" [$__auto]))"},
+               {"refId": "B", "legendFormat": "4xx", "expr": "sum(rate({namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"4..\" [$__auto]))"},
+               {"refId": "C", "legendFormat": "5xx", "expr": "sum(rate({namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"5..\" [$__auto]))"}
+             ]},
+            {"id": 2, "type": "timeseries", "title": "2xx latency by route, p95 (ms)",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "fieldConfig": {"defaults": {"unit": "ms", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{route}}", "expr": "quantile_over_time(0.95, {namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"2..\" | label_format route=`{{ regexReplaceAll \"(/[0-9]+|/[0-9a-fA-F-]{16,}|/[^/?]*%40[^/?]*)\" .uri \"/{id}\" }}` | unwrap duration_ms [$__auto]) by (route)"}
+             ]},
+            {"id": 3, "type": "timeseries", "title": "2xx latency, p50 / p99 (ms)",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "fieldConfig": {"defaults": {"unit": "ms", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "p50", "expr": "quantile_over_time(0.5, {namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"2..\" | unwrap duration_ms [$__auto])"},
+               {"refId": "B", "legendFormat": "p99", "expr": "quantile_over_time(0.99, {namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"2..\" | unwrap duration_ms [$__auto])"}
+             ]},
+            {"id": 4, "type": "logs", "title": "4xx / 5xx responses",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
+             "targets": [
+               {"refId": "A", "expr": "{namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"[45]..\""}
+             ]},
+            {"id": 5, "type": "logs", "title": "Service errors (gateway / analytics / identity)",
+             "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
+             "targets": [
+               {"refId": "A", "expr": "{namespace=\"insight\", container=~\"api-gateway|analytics-api|identity\"} |= \"ERROR\""}
+             ]}
+          ]
+        }
+    insight-ingestion:
+      json: |
+        {
+          "uid": "insight-ingestion",
+          "title": "Insight · Ingestion & deploys",
+          "schemaVersion": 39,
+          "time": {"from": "now-24h", "to": "now"},
+          "refresh": "1m",
+          "annotations": {"list": [
+            {"name": "Deploys", "enable": true, "iconColor": "purple",
+             "datasource": {"type": "loki", "uid": "loki"},
+             "expr": "{namespace=\"insight\", pod=~\"insight-post-upgrade.*\"}"}
+          ]},
+          "panels": [
+            {"id": 1, "type": "logs", "title": "Reconcile",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
+             "targets": [{"refId": "A", "expr": "{namespace=\"insight\", pod=~\".*reconcile.*\"}"}]},
+            {"id": 2, "type": "logs", "title": "Airbyte syncs (trigger / poll)",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
+             "targets": [{"refId": "A", "expr": "{namespace=\"insight\", pod=~\".*-sync-.*\"}"}]},
+            {"id": 3, "type": "logs", "title": "dbt",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
+             "targets": [{"refId": "A", "expr": "{namespace=\"insight\", pod=~\".*dbt.*\"}"}]},
+            {"id": 4, "type": "logs", "title": "Deploy: hook pods (migrations, configuration)",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
+             "targets": [{"refId": "A", "expr": "{namespace=\"insight\", pod=~\"insight-(configuration|post-install|post-upgrade).*\"}"}]},
+            {"id": 5, "type": "logs", "title": "Deploy: helm/make output (push-deploy-log.sh)",
+             "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Ascending"},
+             "targets": [{"refId": "A", "expr": "{job=\"deploy-insight\"}"}]}
+          ]
+        }
 
 # Admin credentials. For anything past a throwaway PoC, seal a Secret named
 # `grafana-creds` (keys: admin-user, admin-password) — `make system-grafana`
