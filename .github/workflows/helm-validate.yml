@@ -47,6 +47,8 @@ jobs:
           set -euo pipefail
           rc=0
           while IFS= read -r chart; do
+            # vendored upstream subcharts (e.g. clickhouse 25.3) carry their own non-semver versions — not ours to enforce
+            case "$chart" in helmfile/charts/*) continue ;; esac
             app_version=$(yq -r '.appVersion // ""' "$chart")
             version=$(yq -r '.version // ""' "$chart")
             # version must be semver

@@ -39,6 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # nosemgrep: yaml.github-actions.security.workflow-run-target-code-checkout.workflow-run-target-code-checkout -- mitigated: job gated on head_repository == this repo (same-repo only), persist-credentials:false, no secrets used
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
