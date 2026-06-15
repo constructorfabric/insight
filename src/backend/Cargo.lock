@@ -2615,8 +2615,8 @@ dependencies = [
  "oidc-authn-plugin",
  "reqwest",
  "serde",
+ "serde_json",
  "tokio",
- "tower",
  "tracing",
 ]
 
