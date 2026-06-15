@@ -30,7 +30,14 @@ SELECT
 FROM silver.class_support_activity AS a
 LEFT JOIN insight.people AS p ON a.person_key = p.person_id
 ARRAY JOIN [
-    ('support_active',           toFloat64(1)),
+    -- support_active = the person did ACTOR work that day (comment/update/solve).
+    -- NOT 1-per-row: a class_support_activity row can exist purely from the
+    -- assignee-attributed CSAT contribution (a customer rated their ticket),
+    -- and a day with only that is not "active support work". So gate on the
+    -- actor counters; max()/sum() downstream then count genuinely-active members.
+    ('support_active',           toFloat64(if(
+        ifNull(a.updates, 0) + ifNull(a.public_comments, 0)
+        + ifNull(a.private_comments, 0) + ifNull(a.solved, 0) > 0, 1, 0))),
     ('support_updates',          toFloat64(ifNull(a.updates, 0))),
     ('support_public_comments',  toFloat64(ifNull(a.public_comments, 0))),
     ('support_private_comments', toFloat64(ifNull(a.private_comments, 0))),

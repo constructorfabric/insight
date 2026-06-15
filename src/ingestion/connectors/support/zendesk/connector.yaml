@@ -206,6 +206,97 @@ streams:
             path: [metadata]
             value: "{{ record | tojson }}"
 
+  # ── Stream 1b: support_ticket_ids (slim parent for the audit fan-out) ─
+  # Key-only mirror of support_tickets — emits ONLY ticket_id + the cursor
+  # field, NO `metadata` payload. This is the SubstreamPartitionRouter parent
+  # for support_ticket_events (NOT the heavyweight support_tickets stream).
+  #
+  # WHY (jira/confluence silent-hang, see jira jira_issue_keys): the CDK caches
+  # every PARENT record for a substream. With the full-payload support_tickets
+  # as parent (metadata = whole-ticket JSON), that cache balloons and the sync
+  # freezes at scale. Keeping the parent records tiny keeps the cache small;
+  # support_tickets stays the full-record emitter but is no longer a parent, so
+  # it is read once and not cached. Reconcile (ADR-0015) auto-selects this as a
+  # tiny bronze_zendesk.support_ticket_ids table (key + updated_at per ticket).
+  - &support_ticket_ids_stream
+    type: DeclarativeStream
+    name: support_ticket_ids
+    primary_key:
+      - ticket_id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          ticket_id: { type: string }
+          updated_at: { type: string }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        # No include=metric_sets — this stream only needs ids, keeping the
+        # parent payload (and the substream cache) minimal.
+        path: "incremental/tickets.json"
+        request_parameters:
+          per_page: "1000"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [tickets]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('after_cursor', '') }}"
+          stop_condition: "{{ response.get('end_of_stream', False) == True }}"
+        page_token_option:
+          type: RequestOption
+          field_name: after_cursor
+          inject_into: request_parameter
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
+      datetime_format: "%s"
+      lookback_window: "P1D"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-90, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_time_option:
+        type: RequestOption
+        field_name: start_time
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [ticket_id]
+            value: "{{ record['id'] | string }}"
+          - type: AddedFieldDefinition
+            # keep the cursor field on the emitted record (incremental_dependency)
+            path: [updated_at]
+            value: "{{ record['updated_at'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+
   # ── Stream 2: support_agents ────────────────────────────────────────
   # Full refresh — agent roster is small; Zendesk has no reliable
   # incremental user endpoint on all plan tiers.
@@ -282,12 +373,18 @@ streams:
             path: [group_id]
             value: "{{ record['default_group_id'] | string if record.get('default_group_id') else '' }}"
           - type: AddedFieldDefinition
-            # group_name resolved in Phase 2 via CustomTransformation (GET /api/v2/groups lookup)
+            # group_name resolved in Phase 2 via CustomTransformation (GET /api/v2/groups lookup).
+            # NULL (not "") — Phase-1 intent is honest-NULL-until-Phase-2, and the
+            # schema declares it nullable; an empty string would flow into the
+            # silver agent dim as a non-null blank.
             path: [group_name]
-            value: ""
+            value: "{{ none }}"
           - type: AddedFieldDefinition
+            # emit an integer (schema/Bronze DDL is Int64) — don't rely on the
+            # destination coercing the string '0'/'1'.
             path: [is_active]
-            value: "{{ '0' if record.get('suspended') else '1' }}"
+            value: "{{ 0 if record.get('suspended') else 1 }}"
+            value_type: integer
 
   # ── Stream 3: zendesk_satisfaction_ratings ──────────────────────────
   # Separate incremental stream for CSAT ratings. Stored independently
@@ -404,10 +501,12 @@ streams:
   # `zendesk__support_event` explodes + classifies it (one row per event), so a
   # single audit can legitimately yield both a public_comment and a solved.
   #
-  # SubstreamPartitionRouter fans out over support_tickets — one
-  # GET tickets/{id}/audits.json per ticket. Re-delivery is deduped downstream
-  # by unique_key (= audit id). No per-audit cursor: the parent ticket
-  # incremental bounds which tickets are (re)visited.
+  # SubstreamPartitionRouter fans out over the SLIM support_ticket_ids parent
+  # (key-only — never the heavyweight support_tickets stream; see Stream 1b for
+  # the cache-bloat rationale) — one GET tickets/{id}/audits.json per ticket.
+  # Re-delivery is deduped downstream by unique_key (= audit id). No per-audit
+  # cursor: incremental_dependency=true means the parent's updated_at cursor
+  # bounds which tickets are (re)visited each run.
   - type: DeclarativeStream
     name: support_ticket_events
     primary_key:
@@ -475,9 +574,11 @@ streams:
         type: SubstreamPartitionRouter
         parent_stream_configs:
           - type: ParentStreamConfig
-            stream: *support_tickets_stream
+            stream: *support_ticket_ids_stream
             parent_key: ticket_id
             partition_field: ticket_id
+            # the parent's updated_at cursor drives which tickets are revisited
+            incremental_dependency: true
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -500,6 +601,16 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+
+# default_concurrency MUST be >= 2 (jira's hard-won lesson): with 1 worker the
+# concurrent CDK self-deadlocks once a sync generates ~10k partitions — the
+# lone worker spins on generate_partitions (futures limit) while the
+# partition-read futures it awaits have no worker to run them (CPU-busy,
+# zero records, for hours). The support_ticket_events audit fan-out is exactly
+# that shape (one partition per ticket), so this is required, not optional.
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 4
 
 spec:
   type: Spec

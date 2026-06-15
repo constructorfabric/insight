@@ -43,7 +43,11 @@ WITH events AS (
         countIf(event_type = 'update')            AS updates,
         countIf(event_type = 'public_comment')    AS public_comments,
         countIf(event_type = 'private_comment')   AS private_comments,
-        countIf(event_type = 'solved')            AS solved
+        -- DISTINCT tickets solved (not solve-events): a reopen→solve on the
+        -- same ticket fires multiple `status→solved` audits; counting events
+        -- would over-report against the "Solved tickets" label. uniqExact over
+        -- source_ticket_id collapses them to one per (person, date).
+        uniqExactIf(source_ticket_id, event_type = 'solved') AS solved
     FROM {{ ref('zendesk__support_event') }}
     WHERE actor_person_key != ''
     GROUP BY tenant_id, source_id, person_key, date

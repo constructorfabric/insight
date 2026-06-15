@@ -28,23 +28,30 @@ name: zendesk
 #   without a lookback a record at the edge is permanently skipped (for a
 #   ticket, its whole audit activity). cf. jira #1316. PATCH: no schema change,
 #   cursor state stays valid (lookback only widens the start each run).
+# 1.3.0: review #1304 — audit fan-out hardening. New slim key-only parent
+#   stream `support_ticket_ids` (id + updated_at, no metadata payload) is now
+#   the SubstreamPartitionRouter parent for support_ticket_events instead of the
+#   heavyweight support_tickets stream (jira/confluence cache-bloat silent-hang
+#   pattern) + incremental_dependency: true + top-level concurrency_level
+#   default_concurrency 4 (jira: 1 self-deadlocks at ~10k partitions). Also
+#   is_active emits int, group_name emits NULL. MINOR: adds a bronze stream +
+#   changes substream topology (resets the audit substream's parent state).
 # `nocode` = declarative-manifest connector (connector.yaml published to the
 # Airbyte builder), as opposed to `cdk` (a pre-built Python image registered
 # from images.cdk.image). MUST be `nocode`/absent for declarative connectors:
 # reconcile only branches on `nocode` vs `cdk` — any other value (e.g.
 # `declarative`) falls through to the cdk image path and fails with no image.
-version: "1.2.3"
+version: "1.3.0"
 type: nocode
 schedule: "0 5 * * *"       # 05:00 UTC daily
 workflow: sync               # Argo workflow template: ingestion-pipeline
 
 # Scope the dbt step to this connector's models (and their downstream) so the
 # Silver run never touches other connectors' models. Selects zendesk__* staging
-# (bronze_promoted, support_agent/ticket/activity) + their downstream silver
-# unions (class_support_activity, dim_support_*). NOTE: the event-grain
-# zendesk__support_event is intentionally tagged `zendesk-audits-pending` (NOT
-# `zendesk`) and uses source()-only reads, so it is EXCLUDED here until the
-# Ticket Audits stream (support_ticket_events) lands.
+# (bronze_promoted, support_agent/ticket/activity) + the event-grain
+# zendesk__support_event (tagged ['zendesk','silver'] now that the Ticket
+# Audits stream is live, so it IS in tag:zendesk+) + their downstream silver
+# unions (class_support_activity, dim_support_*).
 dbt_select: "tag:zendesk+"
 
 connection:
