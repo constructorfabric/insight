@@ -81,7 +81,44 @@ spec:
           # Data-quality checks are non-blocking: each carries severity=warn and
           # store_failures=true in its own config, so findings exit 0 (only an
           # operational error such as ClickHouse unreachable fails this step) and
-          # violating rows are kept for drill-down. The on-run-end hook prints one
-          # JSON DQ_FINDING line per check.
-          dbt test --profiles-dir . --selector data_quality
+          # violating rows are kept for drill-down. --log-format json matches the
+          # dbt-run convention so the log collector parses dbt's events uniformly.
+          # The `|| RC=$?` keeps the finding emitter below alive under `set -e`.
+          RC=0
+          dbt test --profiles-dir . --selector data_quality --log-format json || RC=$?
+          # Emit one structured JSON data-quality finding per check to stdout for
+          # the log collector. Built from dbt's own artifacts (not its logger),
+          # so each line is a top-level JSON object — queryable as
+          # `| json | event="data_quality_finding"`. python3 reading files keeps
+          # the step free of any shell/text interpolation.
+          python3 - <<'PY'
+          import json
+          rr = json.load(open("target/run_results.json"))
+          nodes = json.load(open("target/manifest.json"))["nodes"]
+          run_id = rr["metadata"].get("invocation_id")
+          for r in rr["results"]:
+              n = nodes.get(r["unique_id"])
+              if not n or n.get("resource_type") != "test":
+                  continue
+              if "data_quality" not in (n.get("tags") or []):
+                  continue
+              cfg = n.get("config") or {}
+              meta = cfg.get("meta") or {}
+              print(json.dumps({
+                  "event": "data_quality_finding",
+                  "run_id": run_id,
+                  "check_id": n.get("name"),
+                  "title": meta.get("title", n.get("name")),
+                  "domain": meta.get("domain", "unknown"),
+                  "category": meta.get("category", "uncategorized"),
+                  "gate": cfg.get("severity"),
+                  "tier": meta.get("tier", "warn"),
+                  "status": r.get("status"),
+                  "rows_violating": r.get("failures") or 0,
+                  "duration_ms": round((r.get("execution_time") or 0) * 1000),
+                  "audit_relation": r.get("relation_name"),
+                  "remediation": meta.get("remediation"),
+              }))
+          PY
+          exit "$RC"
 {{- end }}

@@ -2,7 +2,7 @@
 {{- /* Argo CronWorkflow that runs the dbt data-quality test catalog on a
        schedule, independent of the per-connector ingestion pipeline so a
        finding can never block ingestion. Emits one JSON finding per check
-       (see macros/emit_dq_findings.sql) for the central log store. */}}
+       (see data-quality-test.yaml) for the central log store. */}}
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:

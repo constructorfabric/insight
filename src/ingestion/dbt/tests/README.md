@@ -6,15 +6,17 @@ gold views alike — gold tests read the `insight` views through the registered
 `gold` source.
 
 A scheduled run executes the opt-in catalog — the tests tagged `data_quality`
-(`dbt test --selector data_quality`, defined in `selectors.yml`). For every
-check, an `on-run-end` hook
-(`macros/emit_dq_findings.sql`) prints one JSON `DQ_FINDING` line to stdout for
-the central log store, and `store_failures` keeps the violating rows in an
-audit table for drill-down. Checks are non-blocking (`severity=warn`), so a
-finding never fails the pipeline. Untagged tests (including the generic
+(`dbt test --selector data_quality --log-format json`, defined in
+`selectors.yml`). A python post-step then reads dbt's `run_results.json` and
+`manifest.json` and prints one JSON finding per check to stdout (a top-level
+JSON object — `event="data_quality_finding"`) for the central log store, while
+`store_failures` keeps the violating rows in an audit table for drill-down.
+Checks are non-blocking (`severity=warn`), so a finding never fails the
+pipeline. Untagged tests (including the generic
 `not_null`/`unique`/`relationships` assertions) keep dbt's default `error`
 severity and run under `dbt build` for build integrity; they are not part of
-the scheduled run and don't emit findings.
+the scheduled run and don't emit findings. The runner and emitter live in
+`charts/insight/templates/ingestion/data-quality-test.yaml`.
 
 ## Adding a check
 
@@ -64,4 +66,5 @@ Conventions:
 - Read `ReplacingMergeTree` tables with `FINAL` (or the project's dedup pattern)
   so transient duplicates don't show up as false violations.
 
-The emitted finding's fields are documented in `macros/emit_dq_findings.sql`.
+The emitted finding's fields are documented in the python emitter in
+`charts/insight/templates/ingestion/data-quality-test.yaml`.

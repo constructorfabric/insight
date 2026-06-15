@@ -25,7 +25,7 @@ The pipeline transforms raw connector data into silver tables and gold views. Da
 
 ## Considered Options
 
-- **A. dbt tests, results emitted as structured log lines.** Every check is a dbt test (`severity=warn`, `store_failures`); an `on-run-end` hook prints one JSON finding per check to stdout; a scheduled run executes the catalog.
+- **A. dbt tests, results emitted as structured log lines.** Every check is a dbt test (`severity=warn`, `store_failures`); the scheduled run executes the catalog with `--log-format json` and a python post-step prints one JSON finding per check to stdout.
 - **B. A dedicated backend endpoint with its own SQL check catalog.** A service holds a hand-written list of checks, runs them on request, and returns findings, persisting them to its own table.
 - **C. A standalone SQL-runner job** with its own catalog and its own emitter, separate from dbt.
 
@@ -34,7 +34,7 @@ The pipeline transforms raw connector data into silver tables and gold views. Da
 Chosen option: **A**.
 
 - **Checks are dbt tests.** Singular tests already are "SQL that returns violating rows"; a test passes when it returns none. Silver tests read the silver tables; gold tests read the `insight` views through a registered `gold` source. The view being built outside dbt is irrelevant to a read-only test, so one catalog covers both layers.
-- **Findings are structured logs.** An `on-run-end` macro (`emit_dq_findings`) walks the run results and emits one JSON line per test — `check_id`, `domain`, `category`, `gate`, `tier`, `status`, `rows_violating`, `duration_ms`, `audit_relation`, `remediation`. Low-cardinality fields are intended as log labels; the central log store handles query and alerting. No new table or endpoint owns findings.
+- **Findings are structured logs.** The runner executes the catalog with `--log-format json` (matching the dbt-run convention so the log collector parses dbt's events uniformly), then a python post-step reads dbt's `run_results.json` and `manifest.json` and prints one **top-level JSON** finding per check to stdout — `check_id`, `domain`, `category`, `gate`, `tier`, `status`, `rows_violating`, `duration_ms`, `audit_relation`, `remediation`, discriminated by `event="data_quality_finding"`. Built from artifacts rather than dbt's logger because dbt would otherwise nest the line inside its own log envelope. Low-cardinality fields are intended as log labels; the central log store handles query and alerting. No new table or endpoint owns findings.
 - **Non-blocking.** Every data-quality check sets `severity=warn` (and `store_failures=true`) in its own config, so a data finding exits cleanly; only an operational error (e.g. the warehouse unreachable) fails the run. A check can be escalated to `severity=error` individually when a violation should block. Untagged structural tests keep dbt's default `error` severity, so build integrity stays strict.
 - **Detail kept for drill-down.** `store_failures` writes each check's violating rows to an audit table; `audit_relation` in the finding points at it. The log line stays small; full rows are fetched on demand.
 - **Silver/gold only — never bronze.** A check reads only the silver and gold layers, which exist regardless of the connector set (silver placeholders + migration-created gold views, per `cpt-dataflow` fresh-cluster bring-up). Bronze is per-connector and may be absent, so reading it would make a check error on tenants lacking that connector. With silver/gold-only, a missing connector class simply yields an empty table and a clean pass — the catalog is connector-agnostic with no per-tenant logic. Bronze/ingestion-correctness tests (e.g. silver-to-bronze traceability) are a separate suite run under `dbt build`, not the scheduled catalog.
@@ -63,7 +63,7 @@ Today silver/gold are present regardless of the connector set, which is why the 
 
 ## More Information
 
-- Emitter: `src/ingestion/dbt/macros/emit_dq_findings.sql`; wired via `on-run-end` in `dbt_project.yml`.
+- Runner and finding emitter: `charts/insight/templates/ingestion/data-quality-test.yaml`.
 - Gold source registration: `src/ingestion/silver/_shared/gold_sources.yml`.
 - Catalog selector: `src/ingestion/dbt/selectors.yml` (`data_quality`).
 - Schedule and runner: `charts/insight/templates/ingestion/data-quality-cron.yaml`, `data-quality-test.yaml`.
