@@ -13,9 +13,25 @@
 ## Then Explore → Loki, or the provisioned dashboards in the Insight folder.
 ##
 
+# No persistence: this Grafana is fully as-code — the Loki datasource and
+# the dashboards below are provisioned from this values file, so an
+# ephemeral grafana.db is the source-of-truth-friendly choice. It also
+# avoids two problems a PVC caused on the reference cluster:
+#   1. RWO PVC + RollingUpdate deadlock — a new pod can't mount the volume
+#      the old one holds, so every dashboard change wedged the rollout.
+#   2. "Datasource provisioning error: data source not found" — a persisted
+#      datasource (provisioned before it had a uid) collides with the
+#      uid-bearing provisioning on restart and crash-loops grafana.
+# Anything worth keeping lives in git, not in grafana.db. The admin
+# password is re-applied from the Secret on each start, so it stays stable.
 persistence:
-  enabled: true
-  size: 5Gi
+  enabled: false
+
+# init-chown-data is moot without a PVC, but keep it off: some clusters'
+# runtimes strip CAP_CHOWN from uid-0 containers, so the chart's chown init
+# fails with EPERM and would wedge the rollout if ever re-enabled.
+initChownData:
+  enabled: false
 
 # Loki wired as the default datasource so Explore works out of the box.
 # Fixed uid so provisioned dashboards can reference it. Tempo/Mimir get
