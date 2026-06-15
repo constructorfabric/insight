@@ -1,0 +1,26 @@
+name: data-integrity
+
+# Static, warehouse-free guards on the dbt models. Blocking from day one — no
+# service container needed, so there's no reason to let these regress.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/ingestion/**'
+      - 'scripts/ci/nullable_key_audit.py'
+  workflow_dispatch:
+
+jobs:
+  nullable-key-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # A ReplacingMergeTree that dedups on a NULLABLE key never collapses its
+      # duplicates (NULL != NULL) → drifting, double-counted metrics (#1330).
+      - name: No dbt model may dedup on a nullable key
+        run: python scripts/ci/nullable_key_audit.py --check
+      - name: Self-test the guard's parser
+        run: python -m pytest scripts/ci/test_nullable_key_audit.py -q
