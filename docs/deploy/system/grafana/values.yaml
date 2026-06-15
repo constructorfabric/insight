@@ -119,8 +119,24 @@ dashboards:
              "targets": [
                {"refId": "A", "expr": "{namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"[45]..\""}
              ]},
+            {"id": 6, "type": "timeseries", "title": "4xx by status code (count)",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
+             "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["sum"]}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{status}}", "expr": "sum by (status) (count_over_time({namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"4..\" [$__auto]))"}
+             ]},
+            {"id": 7, "type": "timeseries", "title": "5xx by status code (count)",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+             "datasource": {"type": "loki", "uid": "loki"},
+             "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
+             "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["sum"]}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{status}}", "expr": "sum by (status) (count_over_time({namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"5..\" [$__auto]))"}
+             ]},
             {"id": 5, "type": "logs", "title": "Service errors (gateway / analytics / identity)",
-             "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+             "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
              "datasource": {"type": "loki", "uid": "loki"},
              "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
              "targets": [
