@@ -73,9 +73,17 @@ LEFT JOIN {{ source('bronze_zulip_proxy', 'users') }} AS u FINAL
     AND u.id = m.sender_id
 WHERE u.email IS NOT NULL AND u.email != ''
 {% if is_incremental() %}
+  -- Watermark on the source EXTRACT time, not the business date (see zoom model header
+  -- for the backfill-strand failure mode this fixes). Re-pulled rows carry a fresh
+  -- `_airbyte_extracted_at`, so reprocess every business date touched by a recent extract.
   AND (
-    (SELECT max(date) FROM {{ this }}) IS NULL
-    OR toDate(parseDateTimeBestEffortOrNull(m.created_at)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    (SELECT count() FROM {{ this }}) = 0
+    OR toDate(parseDateTimeBestEffortOrNull(m.created_at)) IN (
+      SELECT DISTINCT toDate(parseDateTimeBestEffortOrNull(created_at))
+      FROM {{ source('bronze_zulip_proxy', 'messages') }}
+      WHERE _airbyte_extracted_at
+            > (SELECT max(_airbyte_extracted_at) FROM {{ source('bronze_zulip_proxy', 'messages') }}) - INTERVAL 3 DAY
+    )
   )
 {% endif %}
 GROUP BY

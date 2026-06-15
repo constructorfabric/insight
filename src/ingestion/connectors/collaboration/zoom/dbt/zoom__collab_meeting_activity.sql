@@ -147,9 +147,22 @@ LEFT JOIN {{ ref('zoom__meeting_sessions') }} AS ml FINAL
     AND p.tenant_id = ml.tenant_id
     AND p.source_id = ml.source_id
 {% if is_incremental() %}
+-- Watermark on the source EXTRACT time, not the meeting date. A forward-only
+-- `join_time > max(date) - 3d` filter permanently strands backfilled / late-arriving
+-- history: this is exactly how the Zoom meeting_hours undercount happened on virtuozzo —
+-- bronze held the full history but staging kept only the last few days, so the monthly
+-- total collapsed to ~one week. Re-pulled rows always carry a fresh `_airbyte_extracted_at`,
+-- so we reprocess every meeting date touched by a recent extract. The whole date is
+-- re-aggregated from full bronze, so per-day SUMs stay correct even when a day's
+-- participants arrive across several sync batches.
 WHERE (
-    (SELECT max(date) FROM {{ this }}) IS NULL
-    OR toDate(parseDateTimeBestEffortOrNull(p.join_time)) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    (SELECT count() FROM {{ this }}) = 0
+    OR toDate(parseDateTimeBestEffortOrNull(p.join_time)) IN (
+        SELECT DISTINCT toDate(parseDateTimeBestEffortOrNull(join_time))
+        FROM {{ source('bronze_zoom', 'participants') }}
+        WHERE _airbyte_extracted_at
+              > (SELECT max(_airbyte_extracted_at) FROM {{ source('bronze_zoom', 'participants') }}) - INTERVAL 3 DAY
+    )
 )
 {% endif %}
 GROUP BY

@@ -32,8 +32,16 @@ FROM {{ source('bronze_m365', 'email_activity') }}
 WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
 {% if is_incremental() %}
+  -- Watermark on the source EXTRACT time, not the business date (see zoom model header
+  -- for the backfill-strand failure mode this fixes). Re-pulled rows carry a fresh
+  -- `_airbyte_extracted_at`, so reprocess every business date touched by a recent extract.
   AND (
-    (SELECT max(date) FROM {{ this }}) IS NULL
-    OR toDate(reportRefreshDate) > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    (SELECT count() FROM {{ this }}) = 0
+    OR toDate(reportRefreshDate) IN (
+      SELECT DISTINCT toDate(reportRefreshDate)
+      FROM {{ source('bronze_m365', 'email_activity') }}
+      WHERE _airbyte_extracted_at
+            > (SELECT max(_airbyte_extracted_at) FROM {{ source('bronze_m365', 'email_activity') }}) - INTERVAL 3 DAY
+    )
   )
 {% endif %}
