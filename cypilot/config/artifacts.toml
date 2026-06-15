@@ -113,9 +113,14 @@ path = "docs/components/connectors/crm/salesforce/specs/DESIGN.md"
 name = "Salesforce Connector Design"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/hr-directory/workday/specs/PRD.md"
+name = "Workday Connector PRD"
+
+[[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/hr-directory/workday.md"
-name = "Workday Connector Specification"
+path = "docs/components/connectors/hr-directory/workday/specs/DESIGN.md"
+name = "Workday Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
