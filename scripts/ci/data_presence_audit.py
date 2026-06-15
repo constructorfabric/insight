@@ -34,8 +34,24 @@ Usage:
   data_presence_audit.py --check --fail-on-empty --fail-on-stale
   data_presence_audit.py --max-age-hours 36 --waive-empty bronze_slack,bronze_zoom
 
-Designed to run nightly against the deployed environment and as a gate on the
-production sync DAG. Query logic validated against the kind-insight cluster.
+WHERE THIS RUNS — this is a *live-warehouse monitor*, not a per-PR test.
+Every property here is true by construction on a freshly seeded e2e/CI database
+(data is always present, deduped, and "now"), so the checks only earn their keep
+against the real accumulated warehouse. Two distinct invocations:
+
+  * PR CI (deterministic, blocking): RESOLUTION + DEDUP only — these hold on any
+    *populated* schema, so they catch gold↔silver drift and un-merged duplicates
+    regardless of dataset. They require a DB that has actually been `dbt build`-ed;
+    run against a blank ClickHouse they pass vacuously and prove nothing.
+        data_presence_audit.py --check          # resolution+dedup are always gated
+  * Nightly against the deployed environment (the real home): add presence and
+    freshness — "a connected source wrote 0 rows" and "newest row older than the
+    SLA" only mean "the real sync stopped" against live data, never in seeded CI.
+        data_presence_audit.py --check --fail-on-empty --fail-on-stale
+
+So --fail-on-empty / --fail-on-stale are opt-in on purpose: leave them OFF in PR
+CI, turn them ON only for the scheduled deployed run + the post-sync DAG gate.
+Query logic validated against the kind-insight cluster.
 """
 from __future__ import annotations
 

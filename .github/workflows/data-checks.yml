@@ -1,0 +1,66 @@
+name: data-checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/ingestion/**'
+      - 'scripts/ci/**'
+  workflow_dispatch:
+
+jobs:
+  # Static gate — no warehouse needed. Blocking from day one: every connector that
+  # reaches bronze must be tagged into a silver:class_* union (else blank dashboards).
+  connector-silver-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Connector -> silver coverage
+        run: python scripts/ci/connector_silver_coverage.py --check
+
+  # Warehouse-dependent gates (dbt contracts/tests, gold-view resolution, presence).
+  # Report-only until the dbt CI profile is pointed at the service container; then
+  # remove `continue-on-error` to make it blocking.
+  dbt-and-warehouse-gates:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.3
+        ports:
+          - '8123:8123'
+          - '9000:9000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dbt
+        run: pip install dbt-core dbt-clickhouse
+      - name: dbt build + tests + contract coverage (changed models)
+        working-directory: src/ingestion
+        run: |
+          # TODO: point profiles.yml at the clickhouse service (host 127.0.0.1:8123),
+          # then enable:
+          #   dbt deps
+          #   dbt build --select state:modified+
+          #   python ../../scripts/ci/dbt_coverage.py --check
+          echo "wire the dbt CI profile to the clickhouse service, then enable the lines above"
+      # NOTE: this gates RESOLUTION + DEDUP only (the structural checks that hold on
+      # any *populated* schema). --fail-on-empty / --fail-on-stale stay OFF here on
+      # purpose: presence and freshness are meaningless in PR CI (data is always
+      # empty/fresh) and belong to the nightly run against the *deployed* warehouse.
+      # PREREQ: this is vacuous until the dbt step above actually `dbt build`s into
+      # the service container — against a blank ClickHouse there are no views/tables
+      # to resolve, so it passes proving nothing. Enable as blocking (drop the job's
+      # continue-on-error) only once dbt populates the container.
+      - name: Gold-view resolution + data presence
+        env:
+          CH_HOST: 127.0.0.1
+          CH_PORT: '8123'
+          CH_USER: default
+          CH_PASSWORD: ''
+        run: python scripts/ci/data_presence_audit.py --check
