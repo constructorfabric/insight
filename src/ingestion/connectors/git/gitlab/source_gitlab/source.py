@@ -16,6 +16,7 @@ from source_gitlab.config import GitlabConfig
 from source_gitlab.streams.branches import BranchesStream
 from source_gitlab.streams.commits import CommitsStream
 from source_gitlab.streams.file_changes import CommitFileChangesStream
+from source_gitlab.streams.merge_requests import MergeRequestsStream
 from source_gitlab.streams.projects import ProjectsStream
 from source_gitlab.streams.users import UsersStream
 
@@ -79,6 +80,7 @@ class SourceGitlab(AbstractSource):
             CommitFileChangesStream(
                 parent=projects, branches=branches, start_date=cfg.start_date, **shared
             ),
+            MergeRequestsStream(parent=projects, **shared),
         ]
 
 
