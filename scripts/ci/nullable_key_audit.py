@@ -19,22 +19,24 @@ design — it errs toward flagging, so a flagged model is reviewed, not silently
 shipped.
 
 Usage:
-  nullable_key_audit.py            # report, exit 0
-  nullable_key_audit.py --check    # exit 1 if any model dedups on a nullable key
+  nullable_key_audit.py    # report findings; exit 1 if any model dedups on a nullable key
 """
+
 from __future__ import annotations
 
-import argparse
 import pathlib
 import re
 import sys
 
+# scripts/ci/<this file> → parents[2] is the repo root.
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 INGEST = ROOT / "src" / "ingestion"
 
 ORDER_BY_RE = re.compile(r"order_by\s*=\s*\[([^\]]*)\]")
 NULLABLE_RE = re.compile(r"Nullable\s*\(", re.IGNORECASE)
 CAST_NULL_RE = re.compile(r"CAST\s*\(\s*NULL\b", re.IGNORECASE)
+
+
 def projections_for(text: str, col: str) -> list[str]:
     """Return every SELECT expression projected `AS <col>`, isolated from its
     sibling columns by a paren-depth-aware backward scan.
@@ -118,11 +120,7 @@ def audit_model(path: pathlib.Path) -> list[tuple[str, str, str]]:
     return out
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--check", action="store_true", help="exit 1 on a nullable dedup key")
-    args = ap.parse_args()
-
+def main() -> int:
     models = sorted(INGEST.rglob("*.sql"))
     ordered = 0
     errors: list[tuple[pathlib.Path, str, str]] = []
@@ -139,12 +137,12 @@ def main() -> None:
         f"\nsummary: {ordered} ordered/RMT models scanned · "
         f"{len(errors)} dedup on a NULLABLE key"
     )
-    if args.check and errors:
+    if errors:
         print(f"\nFAILED: {len(errors)} model(s) dedup on a nullable key")
-        sys.exit(1)
-    if args.check:
-        print("\nPASSED")
+        return 1
+    print("\nPASSED")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

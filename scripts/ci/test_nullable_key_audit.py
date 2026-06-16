@@ -1,6 +1,7 @@
 """Parser self-test for nullable_key_audit — proves the gate catches a nullable
 dedup key, ignores commas inside MD5(concat(...)), and is not tainted by a
 sibling column's CAST(NULL ...)."""
+
 import pathlib
 import sys
 
