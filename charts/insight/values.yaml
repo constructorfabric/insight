@@ -236,6 +236,122 @@ ingestion:
       limits:
         cpu: "500m"
         memory: "512Mi"
+
+  # ─── bronze source freshness (ingestion-monitoring) ──────────────────────
+  # Runtime half of source-freshness monitoring. The per-source `freshness:`
+  # blocks (loaded_at_field + warn_after/error_after) live in each connector
+  # `schema.yml` — see constructorfabric/insight#1346 / EPIC #1321. This block
+  # only governs the CronWorkflow that *runs* `dbt source freshness` on a
+  # schedule, reads `target/sources.json`, and fans the verdict out to a
+  # notification channel. It does NOT own threshold values.
+  freshness:
+    enabled: true
+    # Cron expression for the freshness check. Daily at 13:00 UTC sits past
+    # all current connector sync slots (02:00–11:00 UTC) plus a 2h grace.
+    schedule: "0 13 * * *"
+    # dbt selector for the freshness check. `source:*` covers every declared
+    # source. Narrow this for smoke-testing in dev.
+    dbtSelect: "source:*"
+    # Identification labels included in every notification payload so
+    # receivers can route alerts when one bot is shared across multiple
+    # deployments / customers. Both default to empty — leaving them out
+    # of the summary entirely.
+    #   cluster — deployment / installation tier (e.g. "prod", "staging").
+    #   tenant  — customer / workspace identifier. Set when one Insight
+    #             installation serves multiple tenants.
+    cluster: ""
+    tenant: ""
+    # Notification delivery. Each driver has its own subblock with the
+    # settings it needs; `driver` selects which one is active and the
+    # rest are inert. New drivers drop in by adding a sibling block +
+    # extending the parser branch in `dbt-source-freshness.yaml` — no
+    # other Helm surface needs to change.
+    #
+    # Every driver that needs an outgoing URL reads it from a Kubernetes
+    # Secret (mirrors the `clickhouse.passwordSecret` pattern) so the
+    # token is not rendered into manifests and not visible in the Argo UI.
+    notification:
+      # "" — no fan-out (default). Breaches still surface via Argo run
+      #      status / `failedJobsHistoryLimit`. Use this for clusters
+      #      that don't have an outgoing channel wired yet.
+      # "webhook" — generic JSON POST. Body shape:
+      #     { topic, cluster, summary, breaches: [...] }
+      #   Suitable for Mattermost / a custom relay / opsgenie ingest.
+      # "zulip"   — Zulip incoming-webhook integration.
+      # "slack"   — Slack incoming-webhook.
+      # "teams"   — Microsoft Teams incoming-webhook (MessageCard).
+      # "email"   — SMTP via stdlib smtplib (no extra deps).
+      driver: ""
+
+      # ─── webhook driver ─────────────────────────────────────────────
+      webhook:
+        # Required when driver=webhook. The full POST URL lives in
+        # this Secret under `key`.
+        urlSecret:
+          name: ""
+          key: "url"
+
+      # ─── zulip driver ───────────────────────────────────────────────
+      zulip:
+        # Required when driver=zulip. The integration URL Zulip's UI
+        # gives you when you add an "Incoming webhook" integration
+        # already encodes stream/topic in its query string — paste it
+        # verbatim here. The parser silently rewrites the path from
+        # `.../external/json` (which dumps the body as a JSON code
+        # block) to `.../external/slack` (Zulip's Slack-compatible
+        # webhook, which renders markdown), so a JSON-style URL still
+        # produces a properly-formatted message.
+        urlSecret:
+          name: ""
+          key: "url"
+        # Routing overrides. Empty → use whatever's in the integration
+        # URL's query string. Note Zulip stream names can contain a
+        # trailing zero-width space (U+200B); copy-pasting from the UI
+        # is safer than retyping.
+        stream: ""
+        topic: ""
+
+      # ─── slack driver ───────────────────────────────────────────────
+      slack:
+        # Required when driver=slack. Slack incoming-webhook URL.
+        urlSecret:
+          name: ""
+          key: "url"
+        # Optional channel override. Slack incoming webhooks are bound
+        # to a default channel at creation; setting this overrides
+        # only if the workspace allows it (admin policy).
+        channel: ""
+
+      # ─── teams driver ───────────────────────────────────────────────
+      teams:
+        # Required when driver=teams. Microsoft Teams incoming-webhook
+        # URL. The URL is bound to a single channel at creation; there
+        # is no override knob.
+        urlSecret:
+          name: ""
+          key: "url"
+
+      # ─── email driver ───────────────────────────────────────────────
+      email:
+        smtp:
+          host: ""
+          port: 587            # 587 = STARTTLS, 465 = SMTPS, 25 = plain
+          username: ""         # SMTP AUTH user; password lives in Secret
+          # SMTP password — required when driver=email and the SMTP
+          # server requires AUTH. Put the password in a k8s Secret.
+          passwordSecret:
+            name: ""
+            key: "password"
+          # Use STARTTLS on connect. Ignored when port=465 (already
+          # implicit TLS).
+          starttls: true
+        # Envelope.
+        from: ""               # e.g. "ingestion-monitor@example.com"
+        # Comma-separated list of recipient addresses. Helm values do
+        # not support arrays through to env vars cleanly without a
+        # template loop; a single string is the simplest shape.
+        to: ""                 # e.g. "oncall@example.com,sre@example.com"
+        subjectPrefix: "[ingestion-freshness]"
 # ═══════════════════════════════════════════════════════════════════════════
 #  INFRASTRUCTURE
 # ═══════════════════════════════════════════════════════════════════════════
