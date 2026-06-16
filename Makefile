@@ -10,7 +10,7 @@
 # ============================================================================
 SHELL := /usr/bin/env bash
 BACKEND := src/backend
-.PHONY: check ci-pr fmt lint unit coverage coverage-unit coverage-e2e coverage-gaps dbt-validate docs-map docs-check \
+.PHONY: check ci-pr fmt lint unit coverage coverage-unit coverage-e2e coverage-gaps dbt-validate docs-map docs-check docs-validate \
         helm-check security e2e fuzz aio contracts dev dev-down help
 
 check: fmt lint unit dbt-validate docs-check helm-check security e2e ## full pre-push gate
@@ -65,8 +65,12 @@ dbt-validate: ## dbt parse — catches broken models before CI
 docs-map: ## regenerate docs/DOCS_MAP.md (markdown map by category)
 	python3 scripts/ci/docs_map.py
 
-docs-check: ## documentation gate: PRD+DESIGN present, on-template, mapped — or no pass
+docs-check: ## docs gate (lightweight, blocking): PRD+DESIGN present + DOCS_MAP.md fresh
 	python3 scripts/ci/docs_map.py --check
+
+docs-validate: ## authoritative artifact structure + code traceability (cypilot `cpt validate`)
+	@command -v cpt >/dev/null 2>&1 || { echo "⚠ install: pipx install cypilot"; exit 1; }
+	cpt validate
 
 helm-check: ## chart validation (mirrors helm-validate.yml)
 	helm dependency update charts/insight >/dev/null
