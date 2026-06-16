@@ -5,18 +5,24 @@
 # as the mandatory gate. This Makefile is the single source of those commands —
 # local and CI never drift because they both call these targets.
 #
-#   make check      ← run before every push: everything PR CI will enforce
-#   make ci-pr      ← exactly the required PR status checks, nothing more
+#   make check      ← fast inner loop: fmt + lint + unit + cheap static gates.
+#                     No cluster, no containers, no helm — runnable anywhere.
+#   make ci-pr      ← full PR parity (adds helm + security scans); run before
+#                     opening/updating a PR if you have those tools installed.
+#   make e2e        ← bronze→API suite (containers); opt-in, CI runs it too.
+#
+# For the tightest loop, scope to what you touched, e.g. `cargo test -p api-gateway`
+# — `make check` is the broader pre-push pass, not a per-keystroke command.
 # ============================================================================
 SHELL := /usr/bin/env bash
 BACKEND := src/backend
 .PHONY: check ci-pr fmt lint unit coverage coverage-unit coverage-e2e coverage-gaps dbt-validate docs-map docs-check docs-validate \
         helm-check security e2e fuzz aio contracts dev dev-down help
 
-check: fmt lint unit dbt-validate docs-check helm-check security e2e ## full pre-push gate
-	@echo "✓ ALL LOCAL GATES PASSED — safe to push (CI re-runs the same)"
+check: fmt lint unit dbt-validate docs-check ## fast pre-push loop (no cluster / containers / helm)
+	@echo "✓ fast local gates passed — for full PR parity run 'make ci-pr'"
 
-ci-pr: fmt lint unit dbt-validate docs-check helm-check ## exactly the blocking PR checks
+ci-pr: fmt lint unit dbt-validate docs-check helm-check security ## full blocking PR checks (needs helm + scanners)
 
 fmt: ## formatting (mirrors backend-checks.yml)
 	cd $(BACKEND) && cargo fmt --all -- --check
@@ -76,7 +82,7 @@ helm-check: ## chart validation (mirrors helm-validate.yml)
 	helm dependency update charts/insight >/dev/null
 	helm lint --strict charts/insight
 	helm template insight charts/insight --namespace insight \
-	  --set ingestion.reconcile.tenantId=local-check >/dev/null && echo "✓ chart renders"
+	  -f charts/insight/ci/ci-values.yaml >/dev/null && echo "✓ chart renders"
 
 security: ## local security scans (CI enforces; local = early warning)
 	@if command -v trufflehog >/dev/null 2>&1; then \
