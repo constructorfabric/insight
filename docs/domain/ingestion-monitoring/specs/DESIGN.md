@@ -30,7 +30,7 @@ date: 2026-05-04
   - [4.4 Why the Zulip dispatcher silently rewrites the endpoint](#44-why-the-zulip-dispatcher-silently-rewrites-the-endpoint)
   - [4.5 Why narrow the selector at runtime](#45-why-narrow-the-selector-at-runtime)
   - [4.6 Why the trap detector is advisory](#46-why-the-trap-detector-is-advisory)
-  - [4.7 Why `meta.freshness_optout_reason` is mandatory](#47-why-metafreshnessoptoutreason-is-mandatory)
+  - [4.7 Why every `freshness: null` opt-out needs a rationale](#47-why-every-freshness-null-opt-out-needs-a-rationale)
 - [5. Traceability](#5-traceability)
 
 <!-- /toc -->
@@ -74,12 +74,12 @@ the Secret reference, never the raw value
 | `cpt-insightspec-fr-mon-selector-narrowing` | Pre-step queries `system.databases`, builds the effective dbt selector. |
 | `cpt-insightspec-fr-mon-stale-report-cleanup` | `rm -f target/sources.json` before every dbt invocation. |
 | `cpt-insightspec-fr-mon-exit-rederivation` | Inline Python parser re-derives outcome from `target/sources.json`; dbt's exit code is swallowed. |
-| `cpt-insightspec-fr-mon-thresholds-sot` | Helm `ingestion.freshness.thresholds.*` → workflow params → `FRESHNESS_*_H` env → dbt `env_var(...)`. |
-| `cpt-insightspec-fr-mon-four-tiers` | dbt project-level `+freshness` plus per-source `freshness:` blocks selecting `default` / `event` / `report` / `report_extended`. |
-| `cpt-insightspec-fr-mon-tier-assignment` | Tier choice lives in connector `schema.yml`; Helm only tunes tier values. |
+| `cpt-insightspec-fr-mon-thresholds-sot` | Literal `warn_after`/`error_after` per source in `schema.yml`; the CronWorkflow reads them via `--select source:*`. No Helm/env-var layer. |
+| `cpt-insightspec-fr-mon-four-tiers` | Per-source `freshness:` blocks with literal tier values `default` / `event` / `report` / `report_extended`. |
+| `cpt-insightspec-fr-mon-tier-assignment` | Tier choice lives as literal values in connector `schema.yml`; no runtime tuning knob. |
 | `cpt-insightspec-fr-mon-optout-pertable` | Per-table `freshness: null` in `schema.yml`. |
-| `cpt-insightspec-fr-mon-optout-rationale` | `lint-bronze-freshness.py` enforces `meta.freshness_optout_reason`. |
-| `cpt-insightspec-fr-mon-mandatory-anchor` | `lint-bronze-freshness.py` enforces a reachable `loaded_at_field`. |
+| `cpt-insightspec-fr-mon-optout-rationale` | One-line rationale comment beside each `freshness: null`; reserved for incremental streams. |
+| `cpt-insightspec-fr-mon-mandatory-anchor` | Per-source `loaded_at_field`; coverage counted by the QA `dbt_coverage.py` gate (#1321). A missing/invalid anchor surfaces as a dbt `runtime error`. |
 | `cpt-insightspec-fr-mon-trap-post-parser` | Workflow runs `freshness-trap-detect.py` after the parser, advisory-only. |
 | `cpt-insightspec-fr-mon-trap-two-modes` | Heuristic full-reemit + opt-in business-date divergence in the same script. |
 | `cpt-insightspec-fr-mon-trap-skip-annotation` | `meta.bronze_freshness_trap_check: skip` honoured by detector. |
@@ -100,7 +100,7 @@ the Secret reference, never the raw value
 | `cpt-insightspec-nfr-mon-daily-cadence` | `CronWorkflow.schedule` | Inspect rendered CronWorkflow; manual ad-hoc submission still works. |
 | `cpt-insightspec-nfr-mon-credential-isolation` | `secretKeyRef` branches in workflow template | `kubectl get workflowtemplate ... -o yaml` carries no raw URLs/passwords. |
 | `cpt-insightspec-nfr-mon-exit-codes` | Inline parser exit logic | Inject fixtures; assert exits 0 / 1 / 2. |
-| `cpt-insightspec-nfr-mon-ci-gated` | `lint-bronze-freshness.py` in CI | Open PR with bad `schema.yml`; CI fails. |
+| `cpt-insightspec-nfr-mon-ci-gated` | QA-owned `dbt_coverage.py` gate (#1321) | Open PR with an undeclared `bronze_*` source; coverage gate fails. |
 | `cpt-insightspec-nfr-mon-trap-advisory-mode` | Trap detector exit handling | Force trap finding; verify primary exit code unchanged. |
 | `cpt-insightspec-nfr-mon-activation-deadline` | `WorkflowTemplate.activeDeadlineSeconds: 1200` | Inspect rendered template. |
 | `cpt-insightspec-nfr-mon-empty-sentinel` | Inline parser `1970-01-01` detection | Empty bronze table fixture; verify `(table is empty)` line. |
@@ -120,7 +120,7 @@ WorkflowTemplate inputs.parameters → env vars + secretKeyRef
         │
         ▼
 dbt source freshness  ─►  target/sources.json
-(env_var(...) reads FRESHNESS_*_H)
+(reads literal warn_after/error_after per source in schema.yml)
         │
         ▼
 Inline Python parser (.yaml:317-562)
@@ -185,16 +185,18 @@ observation window.
 The dbt-clickhouse adapter does not support metadata-based freshness;
 a missing field → `runtime error`. `+loaded_at_field` at project level
 is silently ignored (`loaded_at_field` is a *property*, not a config).
-Hence the per-source declaration and the lint that enforces it.
+Hence every source declares its own `loaded_at_field`, and coverage is
+counted by the QA `dbt_coverage.py` gate (#1321).
 
-#### `+freshness` propagates from project level
+#### Thresholds are literal per source, not inherited
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-mon-freshness-propagates`
 
-The project-level `+freshness` block in `dbt_project.yml:71-79` is
-inherited by every source; per-source `freshness:` blocks override it.
-Tier selection therefore lives in `schema.yml`, not in the project
-config.
+Each source carries its own literal `freshness:` block (`warn_after` /
+`error_after`) and `loaded_at_field` directly in `schema.yml`. There is no
+project-level `+freshness` default and no Helm/env-var threshold layer — the
+`dbt_coverage.py` gate counts per-source declarations, so inheritance would not
+register as coverage anyway. Tier values live with the source.
 
 #### Zulip's `/external/json` is not a markdown sender
 
@@ -230,10 +232,10 @@ empty (no rows ingested)" instead (workflow template lines 348–360).
 
 | Concept | Where it's defined |
 |---|---|
-| **Bronze source** | `sources:` entry in any connector's `dbt/schema.yml`; identified by `name: bronze_*` or `schema: bronze_*` (lint matches both — see `lint-bronze-freshness.py:69-73`). |
-| **Freshness anchor** | `loaded_at_field` property at source or table level. Two valid forms: `_airbyte_extracted_at` (streaming) or a business-date expression (`parseDateTimeBestEffortOrNull(...)`, `parseDateTime64BestEffortOrNull(..., 3)`, `fromUnixTimestamp64Milli(...)`). |
-| **Opt-out** | Per-table `freshness: null` plus mandatory `meta.freshness_optout_reason: "<rationale>"` (lint at `lint-bronze-freshness.py:88-97`). |
-| **SLA tier** | One of `default`, `event`, `report`, `report_extended`; chosen by the connector's source-level `freshness:` block referencing a tier-specific env var. |
+| **Bronze source** | `sources:` entry in any connector's `dbt/schema.yml`; identified by `name: bronze_*` / `schema: bronze_*`. |
+| **Freshness anchor** | `loaded_at_field` property at source or table level. Two valid forms: `_airbyte_extracted_at` (incremental) or a business-date expression (`parseDateTimeBestEffortOrNull(...)`, etc.) for windowed connectors. |
+| **Opt-out** | Per-table `freshness: null` plus a one-line rationale comment; reserved for incremental streams that legitimately go quiet. |
+| **SLA tier** | One of `default`, `event`, `report`, `report_extended`; chosen by the literal `warn_after`/`error_after` values in the connector's source-level `freshness:` block. |
 | **Breach** | A row in the parser's `breaches` list: `{source, status, max_loaded_at, age_hours, empty}` (workflow template lines 352–360). |
 | **Trap suspect** | A finding from the trap detector: `kind ∈ {full-reemit, incremental-topup}` plus row-level evidence (`freshness-trap-detect.py:186-227`). |
 | **Driver** | A parser dispatch arm + Helm subblock + workflow-yaml `secretKeyRef` branch. Five today (`webhook`, `zulip`, `slack`, `teams`, `email`); `""` = log-only. |
@@ -414,65 +416,38 @@ freshness verdict.
   parser.
 - `cpt-insightspec-component-mon-parser` — its verdict is preserved.
 
-#### CI Lint
+#### Per-source declaration coverage (external — QA gate)
 
 - [ ] `p1` - **ID**: `cpt-insightspec-component-mon-ci-lint`
 
-##### Why this component exists
+##### Why this is not a component of this module
 
-Bad `schema.yml` (missing `loaded_at_field`, opt-out without rationale)
-should fail at PR time, not at runtime in production. The lint catches
-both classes locally and in CI.
-
-##### Responsibility scope
-
-- Walk `src/ingestion/connectors/*/dbt/schema.yml`.
-- Reject any `bronze_*` source without a reachable
-  `loaded_at_field` (`lint-bronze-freshness.py:69-73`).
-- Reject any `freshness: null` opt-out without
-  `meta.freshness_optout_reason` (lines 88–97).
-- Exit 0 on success, non-zero with structured diagnostics on failure.
-
-##### Responsibility boundaries
-
-- Does NOT run dbt or ClickHouse.
-- Does NOT enforce tier choice — only that *some* anchor is reachable.
+Catching an undeclared / mis-anchored `bronze_*` source at PR time is real,
+but it is owned by the QA `scripts/ci/dbt_coverage.py` gate (EPIC #1321 /
+#1322), which counts per-source `loaded_at_field` + `freshness` declarations.
+This module does not ship its own connector-schema lint. The two failure
+modes that gate does not cover — choosing the *wrong* anchor (windowed source
+left on `_airbyte_extracted_at` → false-green) or a non-timestamp column
+(→ dbt `runtime error`) — are caught by confirming `ext_age` vs `biz_age`
+against live data, not statically.
 
 ##### Related components (by ID)
 
-- `cpt-insightspec-component-mon-workflow-template` — runtime counterpart
-  for runtime checks.
+- `cpt-insightspec-component-mon-workflow-template` — runtime counterpart.
 
-#### Threshold Env-Var Layer
+#### Thresholds are literal per source (no env-var layer)
 
 - [ ] `p1` - **ID**: `cpt-insightspec-component-mon-threshold-env`
 
-##### Why this component exists
+##### Why there is no threshold component
 
-Helm needs to be the single source of truth for tier values without
-dbt needing to know about Helm. Env vars are the contract layer:
-workflow template exports `FRESHNESS_*_H`, dbt reads them via
-`env_var(...)` in `dbt_project.yml` and per-connector `schema.yml`.
-
-##### Responsibility scope
-
-- Map every Helm `thresholds.*` value to a workflow parameter.
-- Export the parameter as a `FRESHNESS_*_H` env var inside the toolbox
-  pod (workflow template lines 197–212).
-- Provide a literal default in every `env_var('FRESHNESS_*_H', 'NN')`
-  call so dbt still works when the env is unset (e.g. local
-  invocations).
-
-##### Responsibility boundaries
-
-- Does NOT decide which source uses which tier — that is in
-  `schema.yml`.
-- Does NOT validate threshold values — `values.schema.json` does.
-
-##### Related components (by ID)
-
-- `cpt-insightspec-component-mon-helm-surface` — provides values.
-- `cpt-insightspec-component-mon-workflow-template` — exports env vars.
+Earlier drafts routed tier values through Helm → workflow params →
+`FRESHNESS_*_H` env → dbt `env_var(...)`. That was dropped: the
+`dbt_coverage.py` gate counts per-source declarations, so thresholds live as
+**literal `warn_after`/`error_after` values in each source's `schema.yml`** —
+a single source of truth with no second place to drift and no Helm/env layer.
+The CronWorkflow simply runs `dbt source freshness --select source:*` and acts
+on whatever each source declares.
 
 #### Helm Surface
 
@@ -487,8 +462,8 @@ Operators need a single tunable surface. `ingestion.freshness.*` in
 ##### Responsibility scope
 
 - `ingestion.freshness.{enabled,schedule,dbtSelect,cluster,tenant}`
-  top-level keys.
-- `ingestion.freshness.thresholds.*` block (8 fields, four tiers).
+  top-level keys. (No `thresholds.*` block — thresholds are literal per
+  source in `schema.yml`, not Helm-tuned.)
 - `ingestion.freshness.notification.{driver, webhook, zulip, slack,
   teams, email}` per-driver subblocks with `urlSecret` references.
 - `values.schema.json` enforces the driver enum (line 37) and the
@@ -503,7 +478,6 @@ Operators need a single tunable surface. `ingestion.freshness.*` in
 
 - `cpt-insightspec-component-mon-cronworkflow` — flattens this into
   parameters.
-- `cpt-insightspec-component-mon-threshold-env` — reads thresholds.
 - `cpt-insightspec-component-mon-driver-dispatcher` — reads driver
   selection.
 
@@ -781,14 +755,7 @@ driver in production). This keeps the dev/prod-parity NFR honest.
 | `ingestion.freshness.dbtSelect` | string | `"source:*"` | Default selector. Narrowed at runtime to deployed bronze databases. |
 | `ingestion.freshness.cluster` | string | `""` | Identity label — installation tier. |
 | `ingestion.freshness.tenant` | string | `""` | Identity label — customer / workspace. |
-| `ingestion.freshness.thresholds.defaultWarnHours` | int | `30` | "default" tier warn. |
-| `ingestion.freshness.thresholds.defaultErrorHours` | int | `48` | "default" tier error. |
-| `ingestion.freshness.thresholds.eventWarnHours` | int | `72` | "event" tier warn. |
-| `ingestion.freshness.thresholds.eventErrorHours` | int | `96` | "event" tier error. |
-| `ingestion.freshness.thresholds.reportWarnHours` | int | `48` | "report" tier warn. |
-| `ingestion.freshness.thresholds.reportErrorHours` | int | `96` | "report" tier error. |
-| `ingestion.freshness.thresholds.reportExtendedWarnHours` | int | `72` | "report_extended" tier warn. |
-| `ingestion.freshness.thresholds.reportExtendedErrorHours` | int | `120` | "report_extended" tier error. |
+| _(thresholds)_ | — | — | Not a Helm value — `warn_after`/`error_after` are literal per source in each connector's `schema.yml`. |
 | `ingestion.freshness.notification.driver` | enum | `""` | One of `""`, `webhook`, `zulip`, `slack`, `teams`, `email`. Schema-validated. |
 | `ingestion.freshness.notification.webhook.urlSecret.{name,key}` | secretRef | — | Required when driver=webhook. |
 | `ingestion.freshness.notification.zulip.urlSecret.{name,key}` | secretRef | — | Required when driver=zulip. |
@@ -881,31 +848,27 @@ would erode trust in the whole monitoring domain. So the trap detector
 logs, the freshness parser owns the verdict (workflow template lines
 575–579).
 
-### 4.7 Why `meta.freshness_optout_reason` is mandatory
+### 4.7 Why every `freshness: null` opt-out needs a rationale
 
 Bare `freshness: null` is too easy to leave in by accident. Once it
 lands, the table is invisible to monitoring forever, with no comment
-explaining why. Forcing a one-line rationale at the time of writing
-(`lint-bronze-freshness.py:88-97`) keeps the audit surface
-grep-friendly: `grep -A1 'freshness: null'` shows what every opt-out
-is for.
+explaining why. The convention is a one-line rationale comment beside
+each opt-out, kept grep-friendly: `grep -A1 'freshness: null'` shows
+what every opt-out is for. Opt-out is reserved for incremental streams
+that legitimately go quiet — a full-refresh roster/lookup keeps
+`_airbyte_extracted_at` as a sync-liveness signal instead.
 
 ## 5. Traceability
 
 - Feature spec: [`feature-bronze-freshness-sla/FEATURE.md`](feature-bronze-freshness-sla/FEATURE.md)
 - Operator runbook: [`src/ingestion/MONITORING.md`](../../../../src/ingestion/MONITORING.md)
-- Implementation files (`feat/bronze-freshness-sla` branch in `dzarlax/insight`):
-  - Workflow + parser: [`charts/insight/templates/ingestion/dbt-source-freshness.yaml`](../../../../charts/insight/templates/ingestion/dbt-source-freshness.yaml)
-  - Helm surface: [`charts/insight/values.yaml`](../../../../charts/insight/values.yaml) lines 147–292
-  - Schema: [`charts/insight/values.schema.json`](../../../../charts/insight/values.schema.json) lines 26–99
-  - dbt project freshness defaults: [`src/ingestion/dbt/dbt_project.yml`](../../../../src/ingestion/dbt/dbt_project.yml) lines 70–79
-  - CI lint: [`src/ingestion/scripts/lint-bronze-freshness.py`](../../../../src/ingestion/scripts/lint-bronze-freshness.py)
-  - Trap detector: [`src/ingestion/scripts/freshness-trap-detect.py`](../../../../src/ingestion/scripts/freshness-trap-detect.py)
-  - Per-connector schemas: `src/ingestion/connectors/*/*/dbt/schema.yml`
-- Relevant commits on `feat/bronze-freshness-sla`:
-  - `542756f` — driver-based notification (replaces flat `notificationWebhookUrl` with per-driver subblocks).
-  - `c196fdb` — Zulip render fix (`/external/json` → `/external/slack` rewrite + Slack-compatible form fields), explicit `User-Agent` for Cloudflare-fronted receivers, ZWSP note in Zulip stream values.
-  - `23d1b18` — empty-table sentinel (1970-01-01 detection in the parser).
+- Implementation is split across two PRs into `constructorfabric/insight`:
+  - **Runtime / alerting** (this module — branch `feat/ingestion-freshness-runtime`, closes #949, refs #1321):
+    - Workflow + parser: [`charts/insight/templates/ingestion/dbt-source-freshness.yaml`](../../../../charts/insight/templates/ingestion/dbt-source-freshness.yaml)
+    - Helm surface: [`charts/insight/values.yaml`](../../../../charts/insight/values.yaml)
+    - Schema: [`charts/insight/values.schema.json`](../../../../charts/insight/values.schema.json)
+    - Trap detector: [`src/ingestion/scripts/freshness-trap-detect.py`](../../../../src/ingestion/scripts/freshness-trap-detect.py)
+  - **Per-source declarations** (EPIC #1321 / #1322): PR #1346 (base freshness blocks) + PR SharedQA/insight#1 (business-date anchors + tiers) — `src/ingestion/connectors/*/*/dbt/schema.yml`.
 - Future work cross-references:
-  - Deployment health — [issue #272](https://github.com/cyberfabric/insight/issues/272).
+  - Deployment health — [issue #272](https://github.com/constructorfabric/insight/issues/272).
   - Volume baseline / source-vs-bronze attribution / ownership — "Open work" sections of [`MONITORING.md`](../../../../src/ingestion/MONITORING.md).

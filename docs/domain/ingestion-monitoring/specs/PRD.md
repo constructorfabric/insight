@@ -79,8 +79,8 @@ Two classes of silent failure motivated the domain:
 
 - Every Airbyte-managed `bronze_*` source has a verifiable
   PASS/WARN/ERROR freshness verdict produced once per day.
-- Adding a new connector inherits monitoring without per-pipeline
-  plumbing — a `loaded_at_field` line in the connector's `schema.yml` is
+- Adding a new connector gains monitoring without per-pipeline
+  plumbing — a `freshness:` block in the connector's `schema.yml` is
   enough.
 - Operators receive breaches via a notification driver of their choice
   (webhook, Zulip, Slack, Teams, email) — without exposing the channel's
@@ -152,12 +152,12 @@ template, lines 317–562.
 — advisory script that spots full-reemit and incremental-topup patterns
 the dbt freshness check cannot see. Runs after the parser.
 
-#### CI lint
+#### Coverage gate (QA-owned, out of this module's scope)
 
-[`src/ingestion/scripts/lint-bronze-freshness.py`](../../../../src/ingestion/scripts/lint-bronze-freshness.py)
-— fails any PR that introduces a `bronze_*` source without a reachable
-`loaded_at_field`, or a `freshness: null` opt-out without
-`meta.freshness_optout_reason`.
+Per-source declaration coverage is measured by the QA-owned
+`scripts/ci/dbt_coverage.py` gate (EPIC #1321 / #1322), which counts every
+`bronze_*` source that declares `loaded_at_field` + `freshness`. This module
+relies on that gate rather than shipping its own connector-schema lint.
 
 ## 3. Operational Concept & Environment
 
@@ -171,8 +171,7 @@ the dbt freshness check cannot see. Runs after the parser.
   values; ClickHouse reachable on `host.docker.internal:8123` for the
   trap detector.
 - The `insight-toolbox` image must carry `dbt`, `dbt-clickhouse`, and
-  the freshness scripts (`freshness-trap-detect.py`,
-  `lint-bronze-freshness.py`).
+  the freshness trap detector (`freshness-trap-detect.py`).
 - Notification driver credentials must live in Kubernetes Secrets
   referenced by `secretKeyRef`; the rendered `WorkflowTemplate` /
   `CronWorkflow` YAML must never carry the raw URL or password.
@@ -193,14 +192,12 @@ the dbt freshness check cannot see. Runs after the parser.
 ### 4.1 In Scope
 
 - **Bronze freshness SLA** — the `dbt source freshness` check against
-  `_airbyte_extracted_at` (streaming) or a business-date column
-  (report/event), with four threshold tiers (`default` 30/48 h, `event`
-  72/96 h, `report` 48/96 h, `report_extended` 72/120 h). Source:
+  `_airbyte_extracted_at` (incremental) or a business-date column
+  (windowed), with four threshold tiers (`default` 36/72 h, `event`
+  96/168 h, `report` 72/120 h, `report_extended` 120/168 h). Source:
   [`feature-bronze-freshness-sla/FEATURE.md`](feature-bronze-freshness-sla/FEATURE.md).
-- **CI lint of connector schemas** — every `bronze_*` source must
-  declare a reachable `loaded_at_field` (source-level, per-table, or
-  explicit `freshness: null` with `meta.freshness_optout_reason`).
-  Source: [`lint-bronze-freshness.py`](../../../../src/ingestion/scripts/lint-bronze-freshness.py).
+  The per-source declarations themselves are owned by the connector-schema
+  work (EPIC #1321 / #1322 — PR #1346 + PR SharedQA/insight#1), not this module.
 - **Runtime trap detector** — heuristic full-reemit detection (no
   config) plus opt-in `meta.bronze_business_date_col` divergence check;
   advisory only, never affects workflow exit code. Source:
@@ -277,37 +274,34 @@ re-derives the workflow outcome from `target/sources.json`.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-mon-thresholds-sot`
 
-All thresholds **MUST** be sourced once from
-`ingestion.freshness.thresholds.*`
-(charts/insight/values.yaml:159–183), passed as `WorkflowTemplate`
-parameters, exported as `FRESHNESS_*_H` env vars (workflow template
-lines 197–212), and read by dbt via
-`env_var('FRESHNESS_WARN_DEFAULT_H', '30')` in
-[`src/ingestion/dbt/dbt_project.yml`](../../../../src/ingestion/dbt/dbt_project.yml)
-and per-connector `schema.yml`.
+Each source's thresholds **MUST** be a single source of truth: literal
+`warn_after`/`error_after` values declared in that source's `schema.yml`.
+The CronWorkflow runs `dbt source freshness --select source:*` and reads
+exactly what each source declares — no Helm/env-var threshold layer, so there
+is no second place a value can drift.
 
 #### Four Tiers
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-mon-four-tiers`
 
 The system **MUST** support exactly four tiers, each with documented
-rationale:
+rationale (applied as literal values per source):
 
-- `default` (30/48 h) — streaming connectors with daily cron cadence.
-- `event` (72/96 h) — natural-quiet-day connectors (Confluence
-  edits, Zoom meetings).
-- `report` (48/96 h) — vendor analytics with documented 24–48 h
-  publish lag (Microsoft Graph reports baseline).
-- `report_extended` (72/120 h) — vendor analytics with ~3-day
+- `default` (36/72 h) — incremental connectors on daily cron cadence.
+- `event` (96/168 h) — natural-quiet-day connectors (Confluence
+  edits, Zoom meetings) where a zero-row weekend is normal.
+- `report` (72/120 h) — windowed vendor analytics with documented 24–48 h
+  publish lag (Microsoft Graph reports, ChatGPT/Claude Team baseline).
+- `report_extended` (120/168 h) — windowed vendor analytics with ~3-day
   baseline lag (Slack admin.analytics typical).
 
 #### Tier Assignment
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-mon-tier-assignment`
 
-Tier assignment **MUST** be per-connector and live in the connector's
-`schema.yml`. Re-tiering is an engineering change; Helm tunes the
-*values* of each tier, not which source falls in which tier.
+Tier assignment **MUST** be per-connector and live as literal values in the
+connector's `schema.yml`. Re-tiering is an engineering change committed to the
+source declaration — there is no runtime tuning knob.
 
 ### 5.3 Opt-Out Hygiene
 
@@ -323,11 +317,10 @@ per-table in `schema.yml`.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-mon-optout-rationale`
 
-The CI lint
-([`lint-bronze-freshness.py`](../../../../src/ingestion/scripts/lint-bronze-freshness.py))
-**MUST** reject any opt-out lacking
-`meta.freshness_optout_reason: "<rationale>"` so the audit surface
-stays grep-able.
+Every `freshness: null` opt-out **MUST** carry a one-line rationale comment
+beside it so the audit surface stays grep-able, and is reserved for
+*incremental* streams that legitimately go quiet (a full-refresh roster keeps
+`_airbyte_extracted_at` as a sync-liveness signal instead of opting out).
 
 #### Mandatory Anchor
 
@@ -479,8 +472,9 @@ warn-only; `1` at least one `error` / `runtime error`; `2`
 
 - [ ] `p1` - **ID**: `cpt-insightspec-nfr-mon-ci-gated`
 
-`lint-bronze-freshness.py` **MUST** run on every PR touching
-`src/ingestion/connectors/*/dbt/schema.yml`.
+Per-source freshness declaration coverage **MUST** be gated in CI by the
+QA-owned `scripts/ci/dbt_coverage.py` (EPIC #1321 / #1322) — this module does
+not own a connector-schema lint of its own.
 
 #### Advisory-Fail Mode for Traps
 
@@ -634,14 +628,13 @@ run, or the tier has been changed (with rationale in commit message).
 **Main Flow**:
 
 1. Author declares `loaded_at_field` at source or table level
-   (`_airbyte_extracted_at` for streaming, a business-date expression
-   for report-style).
-2. Author optionally selects a tier by referencing
-   `env_var('FRESHNESS_WARN_*_H')` in a per-source `freshness:` block;
-   the default tier applies otherwise.
-3. Author opens a PR. The CI lint asserts that every `bronze_*` source
-   has a reachable anchor and that any `freshness: null` opt-out
-   carries `meta.freshness_optout_reason`.
+   (`_airbyte_extracted_at` for incremental, a
+   `parseDateTimeBestEffortOrNull(<business_date>)` expression for windowed).
+2. Author sets the literal tier `warn_after`/`error_after` on the source's
+   `freshness:` block (`default`/`report`/`report_extended`/`event`).
+3. Author opens a PR. The `dbt_coverage.py` gate (EPIC #1321) confirms the
+   source is declared; the windowed-vs-incremental call is confirmed against
+   live data (`ext_age` vs `biz_age`), not by a lint.
 4. PR merges; the next daily freshness run includes the new source.
 
 **Postconditions**: The new source is monitored on the same SLA tier
@@ -674,8 +667,9 @@ not the credential.
 
 ## 9. Acceptance Criteria
 
-- [ ] Every `bronze_*` source under `src/ingestion/connectors/*/*/dbt/schema.yml` has a reachable `loaded_at_field` (source / table / opt-out) — verified by `python3 src/ingestion/scripts/lint-bronze-freshness.py` exiting 0.
-- [ ] Every `freshness: null` opt-out carries `meta.freshness_optout_reason` — same lint enforces this.
+- [ ] Every `bronze_*` source under `src/ingestion/connectors/*/*/dbt/schema.yml` declares `loaded_at_field` + a literal `freshness:` block (source / table / opt-out) — counted by the QA-owned `dbt_coverage.py` gate (EPIC #1321).
+- [ ] Every `freshness: null` opt-out carries a one-line rationale comment and is an incremental (not full-refresh) stream.
+- [ ] Windowed connectors anchor on a business-date column, not `_airbyte_extracted_at` — confirmed by `ext_age` vs `biz_age` on live data where rows exist.
 - [ ] `dbt source freshness --select 'source:bronze_*'` from a clean checkout produces `target/sources.json` with one result per declared (source, table) pair, no `runtime error` due to missing `loaded_at_field`.
 - [ ] Each tier produces the expected verdict on its representative connectors:
   - `default` — Bitbucket, Jira, BambooHR, Cursor (non-daily), GitHub, OpenAI, Claude (PASS within 30 h of last sync).

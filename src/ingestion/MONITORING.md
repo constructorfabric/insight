@@ -16,21 +16,28 @@ to it: [`PRD.md`](../../docs/domain/ingestion-monitoring/specs/PRD.md),
 
 ### Bronze freshness (live)
 
-Every Airbyte-managed bronze source inherits a 30h-warn / 48h-error
-threshold against `_airbyte_extracted_at`. The threshold is defined once at
-project level in `src/ingestion/dbt/dbt_project.yml`:
+Every bronze source declares its own `freshness:` block + `loaded_at_field`
+**per source in the connector's `schema.yml`** (not inherited from a project
+default — `dbt_coverage.py` counts per-source declarations, so each source
+declares explicitly). The declaration half is tracked under EPIC #1321 / #1322
+(PR #1346 + the per-connector anchoring in PR SharedQA/insight#1); this
+CronWorkflow only *runs* the check and acts on the verdict.
 
-```yaml
-sources:
-  ingestion:
-    +freshness:
-      warn_after:  { count: 30, period: hour }
-      error_after: { count: 48, period: hour }
-```
+The critical choice is **which column** `loaded_at_field` points at, and it
+depends on whether the connector is **incremental** or **windowed**:
 
-Each source's `schema.yml` then declares the field to check. The right
-choice depends on whether the connector is **streaming** or
-**report-style**:
+- **Incremental** (git, jira, youtrack — rows land as events happen) →
+  `loaded_at_field: _airbyte_extracted_at`. The technical extract timestamp
+  tracks reality because the cursor only advances when new data arrives.
+- **Windowed / vendor-analytics** (M365 Graph, ChatGPT/Claude Team, Slack
+  analytics, Cursor daily, OpenAI usage — the API re-emits a fixed reporting
+  window every sync) → anchor on the **business-date column**
+  (`parseDateTimeBestEffortOrNull(<col>)`). Here `_airbyte_extracted_at` is
+  re-stamped every run and would be **false-green**: verified on live data,
+  M365 business data was 4.5 days stale while `_airbyte_extracted_at` was 10.6h
+  fresh. See the "Trap to avoid" item in the new-connector checklist below.
+
+Examples of the two forms:
 
 ```yaml
 # Streaming connector — Airbyte cursor follows business time. Rows land in
@@ -58,32 +65,37 @@ sources:
     tables: ...
 ```
 
-Active per-source assignments. Threshold tier ("default" = 30h/48h, "event"
-= 72h/96h) is set in the same `schema.yml` block; values are
-Helm-controlled via `ingestion.freshness.thresholds.*` (envvar fallthrough
-keeps local `dbt source freshness` working without Helm rendering).
+Active per-source assignments. The `warn_after`/`error_after` thresholds are
+**literal values in each source's `schema.yml`** (not Helm/env-var driven), so
+there is a single source of truth and the local `dbt source freshness` reads
+exactly what ships. Tiers used: **default** 36h/72h · **report** 72h/120h ·
+**report_extended** 120h/168h · **event** 96h/168h.
 
-| Source / table | `loaded_at_field` | Tier | Notes |
+| Source / table | `loaded_at_field` | Tier | Confidence |
 |---|---|---|---|
-| bronze_bamboohr (employees) | `_airbyte_extracted_at` | default | Full-refresh roster — sync-alive signal |
-| bronze_bitbucket_cloud.* | `_airbyte_extracted_at` | default | Mostly incremental (insert-on-event) |
-| bronze_claude_admin.* | `_airbyte_extracted_at` | default | |
-| bronze_claude_enterprise.* | `_airbyte_extracted_at` | default | |
-| bronze_confluence.wiki_page_versions | `parseDateTime64BestEffortOrNull(created_at, 3)` | **event** | Connector re-emits version table; quiet weekends real |
-| bronze_cursor.cursor_daily_usage | `fromUnixTimestamp64Milli(toInt64OrZero(toString(date)))` | default | Daily aggregate; weekend rows still emitted |
-| bronze_cursor (other tables) | `_airbyte_extracted_at` | default | |
-| bronze_github.* | `_airbyte_extracted_at` | default | |
-| bronze_jira.* | `_airbyte_extracted_at` | default | Event-style streams (incremental cursor) |
-| bronze_m365.{teams,email,onedrive,sharepoint}_activity | `parseDateTimeBestEffortOrNull(reportRefreshDate)` | **report** (48h/96h) | Microsoft Graph reports document 24-48h publish lag; warn at upper baseline |
-| bronze_openai.* | `_airbyte_extracted_at` | default | |
-| bronze_slack.users_details | `parseDateTimeBestEffortOrNull(date)` | **report_extended** (72h/120h) | Slack admin.analytics typical 3-day lag, up to 5 during Slack maintenance |
-| bronze_zoom.meetings | `parseDateTimeBestEffortOrNull(start_time)` | **event** | Re-fetches 30-day window; quiet weekends real |
-| bronze_zoom.participants | `parseDateTimeBestEffortOrNull(join_time)` | **event** | |
-| bronze_zoom.users | (opted out via `freshness: null`) | — | Roster |
+| bronze_m365.*_activity | `parseDateTimeBestEffortOrNull(reportRefreshDate)` | report | **verified** (live) |
+| bronze_chatgpt_team.{chat_activity,codex_user_daily} | `parseDateTimeBestEffortOrNull(date)` | report | **verified** |
+| bronze_chatgpt_team.{subscription_usage,subscription_balance} | `parseDateTimeBestEffortOrNull(snapshot_date)` | report | inferred |
+| bronze_claude_team.code_metrics | `parseDateTimeBestEffortOrNull(metric_date)` | report | **verified** |
+| bronze_cursor.cursor_daily_usage | `parseDateTimeBestEffortOrNull(day)` | report | inferred (daily resync re-fetch) |
+| bronze_slack.users_details | `parseDateTimeBestEffortOrNull(date)` | report_extended | inferred (3–5d Slack lag) |
+| bronze_zoom.{meetings,participants} | `parseDateTimeBestEffortOrNull(end_time/join_time)` | event | inferred (30d window; quiet weekends real) |
+| bronze_openai.usage_*/costs | `parseDateTimeBestEffortOrNull(bucket_start_time)` | report | inferred |
+| bronze_claude_admin.{messages_usage,cost_report,code_usage} | `parseDateTimeBestEffortOrNull(date)` | report | inferred |
+| bronze_claude_enterprise.summaries | `parseDateTimeBestEffortOrNull(date)` | report | inferred |
+| bronze_github_copilot.{user,org}_metrics | `parseDateTimeBestEffortOrNull(day)` | report | inferred |
+| bronze_confluence.wiki_pages / bronze_outline.wiki_pages | `parseDateTimeBestEffortOrNull(updated_at)` | event | inferred |
+| git / jira / youtrack / figma / salesforce / hubspot / zulip_proxy | `_airbyte_extracted_at` | default | incremental — extracted_at tracks reality |
+| rosters & lookups (bamboohr, ms_entra, workday, *_members, *_seats, *_users, *_statuses…) | `_airbyte_extracted_at` | default | full-refresh → sync-liveness signal |
 
-Re-categorizing a connector across tiers is an engineering change (it
-usually comes with a `loaded_at_field` revisit), not an ops dial — that's
-why the mapping lives in connector `schema.yml`, not in Helm values.
+"verified" rows are backed by measured `ext_age` vs `biz_age` on live data;
+"inferred" rows are anchored on the connector's cursor column (verified to
+exist) but their windowed behavior is not yet confirmed against data — they are
+marked inline in each `schema.yml` with `confirm once ingested`.
+
+Re-categorizing a connector across tiers is an engineering change (it usually
+comes with a `loaded_at_field` revisit), not an ops dial — that's why the
+mapping lives in connector `schema.yml`, literal per source.
 
 `loaded_at_field` is a dbt **property**, not a config — `+loaded_at_field`
 at project level is silently ignored. The dbt-clickhouse adapter does not
@@ -106,9 +118,9 @@ matching driver. Driver shapes and credential bindings are documented in
 | `error` | past `error_after` for the source's tier | 1 (Argo Failed) | Page |
 | `runtime error` | dbt couldn't even check the source (CH down, schema drift, query failure) | 1 (Argo Failed) | Page — investigate before trusting other sources |
 
-Concrete tier values come from the connector's source-level `freshness:`
-block and the Helm overlay (defaults `default` 30h/48h, `event` 72h/96h,
-`report` 48h/96h, `report_extended` 72h/120h).
+Concrete tier values are the literal `warn_after`/`error_after` in the source's
+`schema.yml`. Tiers: `default` 36h/72h, `report` 72h/120h, `report_extended`
+120h/168h, `event` 96h/168h.
 
 `error` and `runtime error` flip the workflow to Failed so Argo retains the
 run in `failedJobsHistoryLimit`. Warn-only runs stay Successful — the breach
@@ -117,55 +129,56 @@ but on-call doesn't get paged on a single missed sync.
 
 ### How it stays generic
 
-New connectors **do not** need to repeat the freshness block. They get the
-default the moment they declare a `bronze_*` source under
-`src/ingestion/connectors/.../dbt/schema.yml`. Two knobs the connector author
-controls:
-
-1. **Per-table opt-out** — slow-moving lookup/catalog streams (e.g.,
-   `jira_statuses`, `claude_admin_workspaces`, `bamboohr.meta_fields`) set
-   `freshness: null` next to the table in `schema.yml`. A quiet day is
-   legitimate for those.
-2. **Tighter SLA** — sub-daily connectors (none today) override at the source
-   level in `schema.yml` with their own `freshness:` block.
-
-That's it. No per-connector pipeline plumbing.
+The CronWorkflow is connector-agnostic: it runs `dbt source freshness --select
+source:*` and acts on whatever every `bronze_*` source declares. A new
+connector is covered the moment its `schema.yml` carries a `freshness:` block —
+no per-connector pipeline plumbing. The declaration (which column, which tier)
+is the connector author's call, captured per source in `schema.yml`.
 
 ## Adding a new connector — freshness checklist
 
 1. In the new `connectors/<category>/<name>/dbt/schema.yml`, declare the
-   `bronze_*` source.
-2. Pick **one** of the three valid forms:
-   - **Streaming / event-cursor** (commits, issues, edits, etc.) — `loaded_at_field: _airbyte_extracted_at`. Inherits the default tier (30h/48h).
-   - **Report-style daily snapshot** (a connector that re-fetches a fixed window every run — e.g. Microsoft Graph reports, Slack admin.analytics, Cursor daily_usage) — `loaded_at_field: parseDateTimeBestEffortOrNull(<business_date_col>)`. Inherits default tier; weekend rows still expected because the upstream API publishes them.
-   - **Event-style with quiet weekends** (Confluence edits, Zoom meetings — connectors where a Saturday with zero rows is normal) — `loaded_at_field: ...(event_ts)` AND a source-level `freshness:` block that anchors on the event tier:
+   `bronze_*` source with a `freshness:` block + `loaded_at_field`.
+2. Pick the `loaded_at_field` by sync shape:
+   - **Incremental / event-cursor** (commits, issues, edits) —
+     `loaded_at_field: _airbyte_extracted_at`, `default` tier (36h/72h). The
+     extract timestamp tracks reality because the cursor only advances on new data.
+   - **Windowed / vendor-analytics** (re-fetches a fixed reporting window every
+     run — Graph reports, Slack/Cursor/OpenAI daily) —
+     `loaded_at_field: parseDateTimeBestEffortOrNull(<business_date_col>)` with the
+     `report` (or `report_extended` for 3–5d lag) tier. **Do not** leave it on
+     `_airbyte_extracted_at` — it re-stamps every sync and goes false-green.
+   - **Event-style with quiet weekends** (Confluence/Zoom — a zero-row Saturday is
+     normal) — anchor on the event timestamp with the `event` tier (96h/168h):
 
      ```yaml
      freshness:
-       warn_after:  { count: "{{ env_var('FRESHNESS_WARN_EVENT_H',  '72') | int }}", period: hour }
-       error_after: { count: "{{ env_var('FRESHNESS_ERROR_EVENT_H', '96') | int }}", period: hour }
+       warn_after:  { count: 96,  period: hour }
+       error_after: { count: 168, period: hour }
+     loaded_at_field: parseDateTimeBestEffortOrNull(<event_ts>)
      ```
 
-3. For roster / catalog tables (rarely-changing lookup streams) add `freshness: null` per-table.
+3. Confirm the windowed-vs-incremental call against live data when the connector
+   has rows: compare `now() - max(_airbyte_extracted_at)` against
+   `now() - max(<business_date>)`. A large gap = windowed (anchor on the business
+   date); roughly equal = incremental (`_airbyte_extracted_at` is fine).
+4. Roster/lookup tables (full-refresh, rarely-changing) keep `_airbyte_extracted_at`
+   on the `default` tier — the re-stamped extract time is a useful "sync alive"
+   signal. Use a per-table `freshness: null` opt-out only for streams that are
+   *incremental* and legitimately go quiet for days (where `_airbyte_extracted_at`
+   would false-alarm).
+5. Coverage is measured by the QA-owned `dbt_coverage.py` gate (EPIC #1321),
+   which counts per-source declarations — which is why each source declares
+   explicitly rather than inheriting a project default.
 
-4. CI runs `src/ingestion/scripts/lint-bronze-freshness.py` against every PR
-   that touches connector schemas — it fails the build if any `bronze_*`
-   source is missing `loaded_at_field` and is not opted out. The check can
-   be run locally:
-
-   ```bash
-   python3 src/ingestion/scripts/lint-bronze-freshness.py
-   ```
-
-   (uses PyYAML; the toolbox image has it already)
-
-5. **Trap to avoid**: if your connector re-emits a fixed window every run
+6. **Trap to avoid**: if your connector re-emits a fixed window every run
    (`SELECT count(), max(_airbyte_extracted_at) - min(_airbyte_extracted_at)
    FROM bronze_<x>.<table>` shows all rows extracted within the last 24h
    even though the table covers many days of history), `_airbyte_extracted_at`
-   will look fresh forever. Use the report-style or event-style form
-   instead. The lint can't detect this — it's a judgment call about the
-   source shape, documented per-source in the assignment table below.
+   will look fresh forever (the false-green failure mode). Anchor on the
+   business-date column instead. This is a judgment call about the source
+   shape — confirm it against live data and record it in the assignment table
+   above.
 
 ## Who consumes the signal
 
@@ -180,7 +193,7 @@ signal expects to land on; see [Open work](#open-work) for the rotation gap.
 | Role | What they read | When | Action |
 |---|---|---|---|
 | Ingestion on-call (TBD) | Argo UI / `kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp` for the `dbt-source-freshness-check` runs | Daily, after the 13:00 UTC run | Triage `error` / `runtime error` runs |
-| `cyberfabric/insight` repo Issues | One issue per persistent breach (>2 consecutive runs) opened by the on-call | Within 1 business day of the breach | Hand off to the connector owner |
+| `constructorfabric/insight` repo Issues | One issue per persistent breach (>2 consecutive runs) opened by the on-call | Within 1 business day of the breach | Hand off to the connector owner |
 | Connector owner (TBD per connector) | The issue body — includes the failing source, max-loaded-at, lag in hours | On issue assignment | Fix the connector or update the SLA |
 | Tenant on-call (post-MVP) | Webhook payload (Zulip / email / generic POST) routed by `cluster` field | Real-time | Same triage as above, scoped to one deployment |
 

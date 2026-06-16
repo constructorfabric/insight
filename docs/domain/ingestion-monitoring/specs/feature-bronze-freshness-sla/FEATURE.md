@@ -28,7 +28,7 @@ date: 2026-05-04
   - [Source Freshness Status](#source-freshness-status)
   - [Trap Suspect Lifecycle](#trap-suspect-lifecycle)
 - [5. Definitions of Done](#5-definitions-of-done)
-  - [Threshold Inheritance](#threshold-inheritance)
+  - [Per-Source Thresholds](#per-source-thresholds)
   - [Per-Table Opt-Out](#per-table-opt-out)
   - [Workflow Execution](#workflow-execution)
   - [Notification Delivery](#notification-delivery)
@@ -63,8 +63,9 @@ error-after, and `runtime error` if the freshness query itself fails.
 
 Catch ingestion-layer breaches before they propagate to silver/gold
 metrics and to the dashboard. Keep the cost of adding new connectors low
-— a new connector inherits the SLA the moment it declares its bronze
-source.
+— a new connector is covered the moment it declares a `freshness:` block on
+its bronze source; the CronWorkflow picks it up via `source:*` with no
+per-connector plumbing.
 
 **Requirements**: `cpt-insightspec-fr-mon-daily-cronworkflow`,
 `cpt-insightspec-fr-mon-thresholds-sot`,
@@ -87,7 +88,7 @@ source.
 
 - Operational runbook: [`src/ingestion/MONITORING.md`](../../../../../src/ingestion/MONITORING.md) — verification steps, on-call matrix, parser exit codes, payload shape
 - Workflow template: [`charts/insight/templates/ingestion/dbt-source-freshness.yaml`](../../../../../charts/insight/templates/ingestion/dbt-source-freshness.yaml)
-- Threshold config: [`src/ingestion/dbt/dbt_project.yml`](../../../../../src/ingestion/dbt/dbt_project.yml) — project-level `+freshness`
+- Threshold config: literal `warn_after`/`error_after` per source in each connector's `dbt/schema.yml` (declaration half tracked under EPIC #1321 / #1322 — PR #1346 + the per-connector business-date anchoring in PR SharedQA/insight#1)
 - PRD: [../PRD.md](../PRD.md)
 - DESIGN: [../DESIGN.md](../DESIGN.md)
 - Per-source declarations: every connector's `dbt/schema.yml` carries
@@ -163,20 +164,21 @@ source.
 - CI lint
 
 **Success Scenarios**:
-- New connector declares `loaded_at_field` at source or table level; CI
-  lint passes; next daily run includes the new source.
+- New connector declares a `freshness:` block + `loaded_at_field` at source or
+  table level; the `dbt_coverage.py` gate counts it; next daily run includes it.
 
 **Error Scenarios**:
-- Author forgets `loaded_at_field` → lint fails the PR with a structured
-  diagnostic.
-- Author opts a table out via `freshness: null` without rationale →
-  lint fails the PR demanding `meta.freshness_optout_reason`.
+- Author leaves a windowed connector on `_airbyte_extracted_at` → false-green
+  (no breach raised while data is stale). Caught by confirming `ext_age` vs
+  `biz_age` on live data, not by a lint.
+- Author anchors on a non-timestamp / wrong column → dbt emits `runtime error`
+  for that source (visible, paged), not a silent miss.
 
 **Steps**:
-1. [ ] - `p1` - Author adds a `sources:` entry in the connector's `dbt/schema.yml` - `inst-add-source-entry`
-2. [ ] - `p1` - Author selects the anchor: `_airbyte_extracted_at` for streaming, a business-date expression for report-style - `inst-pick-anchor`
-3. [ ] - `p1` - Author optionally selects a tier by referencing `env_var('FRESHNESS_WARN_*_H')` in a per-source `freshness:` block; otherwise the default tier applies - `inst-pick-tier`
-4. [ ] - `p1` - Author opens a PR; CI runs `lint-bronze-freshness.py` - `inst-ci-lint`
+1. [ ] - `p1` - Author adds a `sources:` entry with a literal `freshness:` block in the connector's `dbt/schema.yml` - `inst-add-source-entry`
+2. [ ] - `p1` - Author selects the anchor: `_airbyte_extracted_at` for incremental, a `parseDateTimeBestEffortOrNull(<business_date>)` expression for windowed - `inst-pick-anchor`
+3. [ ] - `p1` - Author sets the literal tier (`default`/`report`/`report_extended`/`event`) `warn_after`/`error_after` per source - `inst-pick-tier`
+4. [ ] - `p1` - Author opens a PR; the `dbt_coverage.py` gate (EPIC #1321) confirms the source is declared - `inst-coverage-gate`
 5. [ ] - `p1` - PR merges; the next daily freshness run includes the new source with no further plumbing - `inst-included-next-run`
 
 ### Switch Notification Driver in a Tenant Overlay
@@ -355,15 +357,16 @@ but never persisted.
 
 ## 5. Definitions of Done
 
-### Threshold Inheritance
+### Per-Source Thresholds
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-bronze-freshness-sla-thresholds`
 
 The system **MUST** ensure every `bronze_*` source declared anywhere
 under `src/ingestion/connectors/` is included in `dbt source freshness`
-without per-connector wiring. New connectors **MUST** gain coverage by
-adding `loaded_at_field` at the source level — no `dbt_project.yml`
-edits.
+without per-connector wiring. Each source **MUST** declare its own
+`freshness:` block + `loaded_at_field` literally in its `schema.yml`
+(the `dbt_coverage.py` gate counts per-source declarations); the
+CronWorkflow runs `--select source:*` and needs no project default.
 
 **Implements**:
 - `cpt-insightspec-flow-bronze-freshness-sla-wire`
@@ -374,7 +377,6 @@ edits.
 - `cpt-insightspec-fr-mon-four-tiers`
 
 **Touches**:
-- `src/ingestion/dbt/dbt_project.yml`
 - `src/ingestion/connectors/*/*/dbt/schema.yml`
 
 ### Per-Table Opt-Out
@@ -383,8 +385,10 @@ edits.
 
 `freshness: null` on a table **MUST** exclude it from the breach count
 without removing the source itself from the report. Every opt-out
-**MUST** carry `meta.freshness_optout_reason: "<rationale>"`, enforced
-by `lint-bronze-freshness.py`.
+**MUST** carry a one-line rationale comment next to it, and is reserved
+for *incremental* streams that legitimately go quiet for days (a
+full-refresh roster/lookup keeps `_airbyte_extracted_at` as a
+sync-liveness signal instead).
 
 **Implements**:
 - `cpt-insightspec-flow-bronze-freshness-sla-wire`
@@ -394,7 +398,6 @@ by `lint-bronze-freshness.py`.
 - `cpt-insightspec-fr-mon-optout-rationale`
 
 **Touches**:
-- `src/ingestion/scripts/lint-bronze-freshness.py`
 - `src/ingestion/connectors/*/*/dbt/schema.yml`
 
 ### Workflow Execution
