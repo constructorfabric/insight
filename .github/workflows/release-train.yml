@@ -155,16 +155,18 @@ jobs:
           tar xzf kubeconform.tgz kubeconform
           ./kubeconform -strict -ignore-missing-schemas -summary rendered.yaml
 
-      - name: Version-pair integrity — every referenced image must exist, none may be :latest
+      - name: Release artifact integrity — every referenced image must exist in the registry
         run: |
           set -euo pipefail
+          # The :latest / floating-tag gate lives in helm-validate.yml (it scans
+          # the source values.yaml). Here we do the part nothing else does:
+          # verify each image in the RENDERED released artifact is actually
+          # published. The render pins service tags to the release version, so a
+          # floating tag can't reach this step anyway.
           rc=0
           mapfile -t images < <(grep -E '^\s+image:\s' rendered.yaml | sed -E 's/.*image:\s*"?([^"]+)"?\s*$/\1/' | sort -u)
           echo "checking ${#images[@]} unique image refs"
           for img in "${images[@]}"; do
-            if [[ "$img" == *":latest" || "$img" != *":"* ]]; then
-              echo "::error::floating tag in release artifact: $img (frontend blank-page defect class)"; rc=1; continue
-            fi
             if docker manifest inspect "$img" >/dev/null 2>&1; then
               echo "  ✓ $img"
             else

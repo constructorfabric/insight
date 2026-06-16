@@ -3,13 +3,13 @@
 # enforce-quality-gates.sh — make the mandatory gates MECHANICALLY enforced.
 #
 # Configures, via the GitHub API:
-#   1. Branch protection on `main`: all mandatory CI jobs become REQUIRED
-#      status checks; PR review with CODEOWNERS is required; force-push and
-#      branch deletion are disabled; stale approvals are dismissed.
-#   2. GitHub Environments `staging` and `production` with required
-#      reviewers (QA lead team + release managers team) — this is the
-#      "QA Delivery signed checklist" gate from the Release Process Diagram,
-#      enforced in software instead of by convention.
+#   Branch protection on `main`: all mandatory CI jobs become REQUIRED status
+#   checks; PR review with CODEOWNERS is required; force-push and branch
+#   deletion are disabled; stale approvals are dismissed.
+#
+# (Deploy-environment gating — `staging`/`production` Environments with required
+# reviewer teams — is deliberately NOT configured here: those org teams and
+# environments don't exist yet. Add it once they do, in its own change.)
 #
 # Usage:
 #   ./scripts/ci/enforce-quality-gates.sh            # dry-run: print plan
@@ -28,8 +28,6 @@
 set -euo pipefail
 
 REPO="${REPO:-constructorfabric/insight}"
-QA_TEAM="${QA_TEAM:-insight-qa-leads}"            # org team slug: QA leads
-RM_TEAM="${RM_TEAM:-insight-release-managers}"    # org team slug: release managers
 APPLY=false
 [[ "${1:-}" == "--apply" ]] && APPLY=true
 
@@ -67,7 +65,6 @@ JSON
 
 echo "Repository:        $REPO"
 echo "Required checks:   ${REQUIRED_CHECKS[*]}"
-echo "Environments:      staging (reviewers: $QA_TEAM), production (reviewers: $QA_TEAM + $RM_TEAM)"
 echo
 
 if ! $APPLY; then
@@ -79,24 +76,9 @@ if ! $APPLY; then
 fi
 
 org="${REPO%%/*}"
-team_id() { gh api "orgs/${org}/teams/$1" --jq .id; }
 
 echo "→ Applying branch protection on main…"
 echo "$protection_payload" | gh api -X PUT "repos/${REPO}/branches/main/protection" --input -
-
-echo "→ Creating 'staging' environment (required reviewer: ${QA_TEAM})…"
-gh api -X PUT "repos/${REPO}/environments/staging" --input - <<JSON
-{ "reviewers": [ { "type": "Team", "id": $(team_id "$QA_TEAM") } ],
-  "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false } }
-JSON
-
-echo "→ Creating 'production' environment (required reviewers: ${QA_TEAM} + ${RM_TEAM}, 5 min wait timer)…"
-gh api -X PUT "repos/${REPO}/environments/production" --input - <<JSON
-{ "wait_timer": 5,
-  "reviewers": [ { "type": "Team", "id": $(team_id "$QA_TEAM") },
-                 { "type": "Team", "id": $(team_id "$RM_TEAM") } ],
-  "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false } }
-JSON
 
 echo
 echo "✓ Done. Branch protection now makes review MANDATORY: 1 approving review"
@@ -111,6 +93,3 @@ echo "     'Number of reviewers' = 2, routing = 'Load balance' (or 'Round robin'
 echo "     GitHub then assigns 2 random members whose code-owner approval counts."
 echo "     Owning teams: * → @${org}/insight-app-maintainers ; .github/** → @${org}/security"
 echo "  2. Verify the automation App retains push/bypass on main (see header)."
-echo "  3. In infra/insight-gitops: add the .insight-version allowlist check"
-echo "     (CI job that rejects versions absent from approved-versions.txt,"
-echo "     which only the production-environment approval workflow appends to)."
