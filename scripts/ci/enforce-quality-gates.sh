@@ -9,13 +9,23 @@
 #
 # (Deploy-environment gating — `staging`/`production` Environments with required
 # reviewer teams — is deliberately NOT configured here: those org teams and
-# environments don't exist yet. Add it once they do, in its own change.)
+# environments don't exist yet, and nothing deploys via GitHub Actions, so an
+# Environment would gate nothing. Add it where deploys actually run if ever.)
+#
+# WHO RUNS THIS, AND WHEN:
+#   A repository ADMIN runs it BY HAND, from their own machine — it is NOT a CI
+#   job and nothing triggers it automatically. Editing branch protection needs
+#   admin rights on the repo, so a normal contributor or the default CI token
+#   cannot apply it. Run it once to set the rules up, and again only when the
+#   required-check names change.
 #
 # Usage:
-#   ./scripts/ci/enforce-quality-gates.sh            # dry-run: print plan
-#   ./scripts/ci/enforce-quality-gates.sh --apply    # actually configure
+#   ./scripts/ci/enforce-quality-gates.sh            # DRY-RUN: just print the plan (safe, anyone)
+#   ./scripts/ci/enforce-quality-gates.sh --apply    # APPLY the settings (repo admin only)
 #
-# Requirements: gh CLI authenticated with admin:repo scope on $REPO.
+# Prerequisite for --apply: the `gh` CLI logged in (`gh auth login`) as a user
+#   who is an admin on $REPO. Check with:
+#     gh api repos/$REPO -q .permissions.admin     # must print: true
 #
 # IMPORTANT — release automation bypass:
 #   bump-descriptors and publish-chart push directly to main using the
