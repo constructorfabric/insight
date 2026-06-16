@@ -117,12 +117,31 @@ jobs:
           gh attestation verify "oci://ghcr.io/constructorfabric/charts/insight:${{ needs.resolve.outputs.version }}" \
             --owner constructorfabric
 
-      - name: Render with production-shaped values
+      - name: Render the released chart with required values
         run: |
           set -euo pipefail
-          helm template insight "insight-${{ needs.resolve.outputs.version }}.tgz" \
+          V="${{ needs.resolve.outputs.version }}"
+          # The umbrella fail-fasts without required inputs (infra image tags,
+          # DB names, tenant) — by design, so a bare render can't succeed. Supply
+          # them here; the SERVICE image tags are pinned to the release version V
+          # so the image-existence check below verifies the ACTUAL published
+          # images. (PR-time render uses charts/insight/ci/ci-values.yaml.)
+          helm template insight "insight-$V.tgz" \
             --namespace insight \
+            --set global.tenantDefaultId=11111111-1111-1111-1111-111111111111 \
             --set ingestion.reconcile.tenantId=rc-validate \
+            --set clickhouse.database=insight \
+            --set clickhouse.username=default \
+            --set clickhouse.image.tag=25.3 \
+            --set mariadb.database=identity \
+            --set mariadb.username=identity \
+            --set mariadb.auth.username=identity \
+            --set mariadb.auth.database=identity \
+            --set apiGateway.authDisabled=true \
+            --set apiGateway.image.tag="$V" \
+            --set analyticsApi.image.tag="$V" \
+            --set identity.image.tag="$V" \
+            --set frontend.image.tag="$V" \
             > rendered.yaml
           echo "rendered $(grep -c '^kind:' rendered.yaml) objects"
 
