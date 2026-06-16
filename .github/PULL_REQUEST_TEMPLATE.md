@@ -11,8 +11,8 @@
 - [ ] Requirement linked & scope matches the FEATURE / issue
 - [ ] Added/updated a test that is **red without this change, green with it**
 - [ ] Tests are at the right layer (unit / contract / e2e) and assert **intended** behavior, not current output
-- [ ] `make check` (fmt · lint · typecheck · tests · relevant gates) passes **locally** before push
-- [ ] Coverage held or raised vs the base branch (the ratchet)
+- [ ] Local checks pass **before push** — Rust: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`; Frontend: `pnpm typecheck`, `pnpm test`; Docs: `cpt validate`
+- [ ] Coverage held or raised vs the base branch — the **ratchet** (CI fails if coverage drops below the base)
 - [ ] Negative paths covered (null / empty / error / unauthorized) — no silent failure
 - [ ] Docs / spec (DESIGN / FEATURE) updated
 
