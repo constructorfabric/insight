@@ -259,12 +259,11 @@ jobs:
           gh release delete "rc-${V}" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
           gh release create "v${V}" --repo "$GITHUB_REPOSITORY" \
             --title "insight ${V}" \
-            --notes "Approved release of umbrella chart \`${V}\` (oci://ghcr.io/constructorfabric/charts/insight:${V}).
-          Approval recorded on the \`production\` environment of run ${{ github.run_id }}.
+            --notes "Released umbrella chart \`${V}\` (oci://ghcr.io/constructorfabric/charts/insight:${V}).
 
-          Deploy: bump \`.insight-version\` to \`${V}\` in infra/insight-gitops (the allowlist gate accepts only tagged releases)."
+          Deploy: clusters are deployed from the private \`infra/insight-gitops\` repo (Makefile-driven, OCI-pinned umbrella chart — see docs/components/deployment/gitops/README.md). Bump its pinned umbrella version to \`${V}\`."
 
       - name: Promotion summary
         run: |
           echo "## ✅ insight ${{ needs.resolve.outputs.version }} promoted" >> "$GITHUB_STEP_SUMMARY"
-          echo "Next: gitops MR bumping .insight-version (allowlist now accepts it)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Next: deploy via the private infra/insight-gitops repo (bump the pinned umbrella version)." >> "$GITHUB_STEP_SUMMARY"
