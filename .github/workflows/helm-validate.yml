@@ -51,15 +51,18 @@ jobs:
             case "$chart" in helmfile/charts/*) continue ;; esac
             app_version=$(yq -r '.appVersion // ""' "$chart")
             version=$(yq -r '.version // ""' "$chart")
-            # version must be semver
-            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$ ]]; then
-              echo "::error file=$chart::invalid chart version '$version'"; rc=1
+            # version must be plain semver X.Y.Z — every chart uses that today
+            # (0.1.0 / 0.1.72). Widen here if we ever ship a pre-release suffix.
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error file=$chart::invalid chart version '$version' (expected X.Y.Z)"; rc=1
             fi
-            # appVersion (when present) must be a build tag, semver, or dev placeholder
+            # appVersion (when present) must be the release BUILD TAG that
+            # publish-chart stamps: YYYY.MM.DD.HH.MM-<sha7>. This is the only
+            # form our charts use; the check exists to reject the "---"
+            # placeholder (#1303) and anything else that isn't a real build tag.
             if [[ -n "$app_version" ]] && \
-               ! [[ "$app_version" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7}$ ]] && \
-               ! [[ "$app_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$ ]]; then
-              echo "::error file=$chart::invalid appVersion '$app_version' (the '---' bug class)"; rc=1
+               ! [[ "$app_version" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7}$ ]]; then
+              echo "::error file=$chart::invalid appVersion '$app_version' (expected build tag YYYY.MM.DD.HH.MM-<sha7>; the '---' bug class)"; rc=1
             fi
           done < <(git ls-files '*/Chart.yaml' 'Chart.yaml')
           exit $rc
