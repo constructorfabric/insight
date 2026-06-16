@@ -91,12 +91,17 @@ jobs:
             [ -f "$c/Chart.yaml" ] && helm lint --strict "$c"
           done
 
-      - name: helm template — full render must succeed with default values
+      - name: helm template — full render must succeed with CI values
         run: |
           set -euo pipefail
+          # The umbrella fail-fasts without required inputs (infra image tags,
+          # DB names, tenant) — by design, not a bug, so a bare render can't
+          # succeed. ci/ci-values.yaml supplies the minimal set a real deploy
+          # would, giving the render + kubeconform gate valid manifests to
+          # check. These are render-only placeholders, not deploy defaults.
           helm template insight charts/insight \
             --namespace insight \
-            --set ingestion.reconcile.tenantId=ci-validate \
+            -f charts/insight/ci/ci-values.yaml \
             > /tmp/rendered.yaml
           echo "rendered $(grep -c '^kind:' /tmp/rendered.yaml) objects"
 
