@@ -25,7 +25,9 @@ def _now_iso() -> str:
 
 
 def subtract_minutes(iso_timestamp: str, minutes: int) -> str:
-    moment = datetime.fromisoformat(iso_timestamp) - timedelta(minutes=minutes)
+    moment = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00")) - timedelta(
+        minutes=minutes
+    )
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

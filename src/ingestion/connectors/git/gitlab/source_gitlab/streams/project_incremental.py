@@ -7,11 +7,12 @@ from airbyte_cdk.models import AirbyteMessage, SyncMode
 from airbyte_cdk.sources.streams import IncrementalMixin
 
 from source_gitlab.streams.base import GitlabStream, GitlabSubstream, subtract_minutes
+from source_gitlab.streams.windowing import UpdatedAtWindowing
 
 CURSOR_OVERLAP_MINUTES = 1
 
 
-class ProjectUpdatedAtStream(GitlabSubstream, IncrementalMixin):
+class ProjectUpdatedAtStream(UpdatedAtWindowing, GitlabSubstream, IncrementalMixin):
     cursor_field = "updated_at"
 
     def __init__(self, *, parent: GitlabStream, **kwargs: Any) -> None:
@@ -62,7 +63,7 @@ class ProjectUpdatedAtStream(GitlabSubstream, IncrementalMixin):
             if project_id is not None
             else None
         )
-        for record in super().read_records(
+        for record in self._windowed_records(
             sync_mode,
             cursor_field=cursor_field,
             stream_slice=stream_slice,
@@ -85,4 +86,7 @@ class ProjectUpdatedAtStream(GitlabSubstream, IncrementalMixin):
         updated_after = (stream_slice or {}).get("updated_after")
         if updated_after:
             params["updated_after"] = updated_after
+        updated_before = (stream_slice or {}).get("updated_before")
+        if updated_before:
+            params["updated_before"] = updated_before
         return params

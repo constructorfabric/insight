@@ -17,10 +17,14 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.5",
     "types-requests",
+    "pytest>=8.0",
 ]
 
 [project.scripts]
 source-gitlab-insight = "source_gitlab.source:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["."]

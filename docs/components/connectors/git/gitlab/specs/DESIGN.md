@@ -517,7 +517,64 @@ honoring whatever limits the instance reports (§5.6). Therefore:
 - The primary throughput lever is **request count** (diff granularity), not
   thread count. Concurrency multiplies a reduced N.
 
-## 6. Downstream Mapping (informative)
+### 5.8 Offset-cap windowing
+
+Offset pagination has a hard ceiling (instance max-allowed-offset, default
+50,000). A single ordered query cannot page past it, so large collections are
+split into time windows. A collection that genuinely cannot be windowed **fails
+loud** — never silently truncates.
+
+**Detection** (no dependence on totals, which vanish above 10k results — the
+commits endpoint omits `x-total` entirely):
+- Proactive **soft page cap** is the primary trigger — `SOFT_PAGE_LIMIT = 490`
+  (×100 = 49k, just under the default). Deterministic; needs no instance config.
+- Reactive **HTTP 400** (offset/pagination text) as a backstop for instances
+  with a lower-than-default cap. The instance's configured cap is never read
+  (non-admin tokens can't).
+
+**Where:** inside `read_records`, via an internal window loop — never in
+`stream_slices` (window sizes are unknowable upfront, and a slice erroring
+mid-pagination can't resume). The outer slice stays the logical unit (ref range
+/ project); the loop calls `HttpStream.read_records` per concrete window. Page
+count is tracked in `next_page_token`, the cap-400 raised from `parse_response`;
+both surface a `WindowTooLarge` the loop catches. Partial records emitted before
+a split are harmless (RMT dedups).
+
+**Two adapters under a shared `TimeWindowedReadMixin`:**
+- `UpdatedAtWindowing` (`merge_requests`, `issues`, MR enumerator — server-sorted
+  `updated_at asc`): **rolling-continue** — on soft cap, the next window's
+  `updated_after = last-emitted updated_at − 1s` (the 1 s rewind tolerates an
+  inclusive `updated_after`; the boundary record re-emits and RMT dedups). When
+  the next start would not advance past the current window start, >cap records
+  share one timestamp ⇒ fail loud.
+- `CommittedDateWindowing` (`commits`, `commit_file_changes` — a ref range is not
+  date-sorted, so cannot roll): **midpoint-bisect** `[since, until]` into
+  `[since, mid]` + `[mid, until]`. `since`/`until` are inclusive, so the halves
+  already overlap at `mid` — no manual rewind. The over-cap window re-reads its
+  range on split (RMT dedups). The **final window stays open-ended** (no
+  `until`); bisecting an open window uses `now()` as the working upper bound
+  while the right child keeps the open end, so the realistic handful of
+  clock-skewed future-dated commits lands in that open tail and is collected.
+  Window bounds are serialized at second resolution; when the midpoint collapses
+  onto a bound, the window is unsplittable ⇒ fail loud. A genuinely unbounded
+  future is not windowable by bisection — a tripped window is incomplete and the
+  API returns commits in topological, not chronological, order, so there is no
+  reliable max date to bound against; the degenerate case of more-than-the-cap
+  commits dated across future time fails loud rather than truncating silently.
+  Date-only / tz-naive inputs (`gitlab_start_date` is `YYYY-MM-DD`) normalize to
+  UTC before any arithmetic.
+
+**State:** the cursor (per-ref SHA / per-project `updated_at`) advances only
+after **all** windows of the unit complete. No per-window persistence — a crash
+re-runs the unit; append-only + RMT make the re-emit harmless.
+
+`fail loud` raises `UnwindowableWindow` carrying the window bounds — i.e. >cap
+records share one timestamp / one unsplittable second, unwindowable via the
+available API.
+
+Timestamps round-trip through `datetime.fromisoformat` with `Z` normalized to
+`+00:00` (the 3.10 floor rejects a bare `Z`); windows are emitted UTC `Z` so the
+`+`-offset encoding pitfall (§9) never reaches the query string.
 
 Bronze is source-native. Staging dbt models map each stream to the shared
 silver contract via `silver:<class>` tags.

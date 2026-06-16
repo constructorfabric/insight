@@ -8,11 +8,12 @@ from airbyte_cdk.models import AirbyteMessage, SyncMode
 from airbyte_cdk.sources.streams import IncrementalMixin
 
 from source_gitlab.streams.base import GitlabStream, GitlabSubstream, subtract_minutes
+from source_gitlab.streams.windowing import UpdatedAtWindowing
 
 CURSOR_OVERLAP_MINUTES = 1
 
 
-class _MergeRequestEnumerator(GitlabStream):
+class _MergeRequestEnumerator(UpdatedAtWindowing, GitlabStream):
     name = "_mr_enum_internal"
     skippable_statuses = frozenset({404})
 
@@ -22,6 +23,17 @@ class _MergeRequestEnumerator(GitlabStream):
 
     def stream_slices(self, **kwargs: Any) -> Iterable[Mapping[str, Any] | None]:
         yield None
+
+    def read_records(
+        self,
+        sync_mode: SyncMode,
+        cursor_field: list[str] | None = None,
+        stream_slice: Mapping[str, Any] | None = None,
+        stream_state: Mapping[str, Any] | None = None,
+    ) -> Iterable[Mapping[str, Any] | AirbyteMessage]:
+        yield from self._windowed_records(
+            sync_mode, cursor_field, stream_slice, stream_state
+        )
 
     def _path(self, *, stream_slice: Mapping[str, Any] | None) -> str:
         return f"projects/{(stream_slice or {})['project_id']}/merge_requests"
@@ -37,6 +49,9 @@ class _MergeRequestEnumerator(GitlabStream):
         updated_after = (stream_slice or {}).get("updated_after")
         if updated_after:
             params["updated_after"] = updated_after
+        updated_before = (stream_slice or {}).get("updated_before")
+        if updated_before:
+            params["updated_before"] = updated_before
         return params
 
     def _record_key(

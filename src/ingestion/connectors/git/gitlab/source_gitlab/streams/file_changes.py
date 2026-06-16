@@ -12,9 +12,10 @@ from source_gitlab.streams.base import (
     GitlabSubstream,
     parse_diff_counts,
 )
+from source_gitlab.streams.windowing import CommittedDateWindowing
 
 
-class _DefaultCommitsEnumerator(GitlabStream):
+class _DefaultCommitsEnumerator(CommittedDateWindowing, GitlabStream):
     name = "_default_commits_internal"
 
     def __init__(self, *, start_date: str | None = None, **kwargs: Any) -> None:
@@ -28,8 +29,22 @@ class _DefaultCommitsEnumerator(GitlabStream):
     def stream_slices(self, **kwargs: Any) -> Iterable[Mapping[str, Any] | None]:
         yield None
 
+    def read_records(
+        self,
+        sync_mode: SyncMode,
+        cursor_field: list[str] | None = None,
+        stream_slice: Mapping[str, Any] | None = None,
+        stream_state: Mapping[str, Any] | None = None,
+    ) -> Iterable[Mapping[str, Any] | AirbyteMessage]:
+        yield from self._windowed_records(
+            sync_mode, cursor_field, stream_slice, stream_state
+        )
+
     def _path(self, *, stream_slice: Mapping[str, Any] | None) -> str:
         return f"projects/{(stream_slice or {})['project_id']}/repository/commits"
+
+    def _window_initial(self, stream_slice: Mapping[str, Any] | None) -> dict[str, Any]:
+        return {"since": self._start_date, "until": None}
 
     def _initial_params(
         self, stream_slice: Mapping[str, Any] | None
@@ -38,8 +53,12 @@ class _DefaultCommitsEnumerator(GitlabStream):
             "ref_name": (stream_slice or {})["ref"],
             "per_page": self.page_size,
         }
-        if self._start_date:
-            params["since"] = self._start_date
+        since = (stream_slice or {}).get("since")
+        if since:
+            params["since"] = since
+        until = (stream_slice or {}).get("until")
+        if until:
+            params["until"] = until
         return params
 
     def _record_key(

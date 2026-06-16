@@ -13,9 +13,10 @@ from source_gitlab.streams.base import (
     GitlabSubstream,
     trim_text,
 )
+from source_gitlab.streams.windowing import CommittedDateWindowing
 
 
-class CommitsStream(GitlabSubstream, IncrementalMixin):
+class CommitsStream(CommittedDateWindowing, GitlabSubstream, IncrementalMixin):
     name = "commits"
     cursor_field = "committed_date"
 
@@ -113,11 +114,8 @@ class CommitsStream(GitlabSubstream, IncrementalMixin):
         stream_slice: Mapping[str, Any] | None = None,
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any] | AirbyteMessage]:
-        yield from super().read_records(
-            sync_mode,
-            cursor_field=cursor_field,
-            stream_slice=stream_slice,
-            stream_state=stream_state,
+        yield from self._windowed_records(
+            sync_mode, cursor_field, stream_slice, stream_state
         )
         advance = (stream_slice or {}).get("advance")
         project_id = (stream_slice or {}).get("project_id")
@@ -132,6 +130,9 @@ class CommitsStream(GitlabSubstream, IncrementalMixin):
         project_id = (stream_slice or {})["project_id"]
         return f"projects/{project_id}/repository/commits"
 
+    def _window_initial(self, stream_slice: Mapping[str, Any] | None) -> dict[str, Any]:
+        return {"since": self._start_date, "until": None}
+
     def _initial_params(
         self, stream_slice: Mapping[str, Any] | None
     ) -> Mapping[str, Any]:
@@ -140,8 +141,12 @@ class CommitsStream(GitlabSubstream, IncrementalMixin):
             "with_stats": "true",
             "per_page": self.page_size,
         }
-        if self._start_date:
-            params["since"] = self._start_date
+        since = (stream_slice or {}).get("since")
+        if since:
+            params["since"] = since
+        until = (stream_slice or {}).get("until")
+        if until:
+            params["until"] = until
         return params
 
     def _record_key(
