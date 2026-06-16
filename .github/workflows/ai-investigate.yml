@@ -8,7 +8,8 @@
 # spec section the failure violates (PRD/DESIGN traceability), suspect files,
 # and a proposed fix or test. Advisory, never a gate: humans decide, AI digs.
 #
-# Requires: ANTHROPIC_API_KEY repo secret.
+# Optional: ANTHROPIC_API_KEY repo secret. When it is not set, the job skips
+# its work and passes cleanly — this workflow is advisory and never a gate.
 
 name: AI Investigate Failure
 
@@ -38,6 +39,12 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Job-level env can read `secrets`; step-level `if` then gates on it. The
+    # ANTHROPIC_API_KEY secret is optional, so when it is absent the heavy steps
+    # are skipped and the workflow still passes (advisory, never a gate) instead
+    # of erroring out inside the action with no key.
+    env:
+      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
       # nosemgrep: yaml.github-actions.security.workflow-run-target-code-checkout.workflow-run-target-code-checkout -- mitigated: job gated on head_repository == this repo (same-repo only), persist-credentials:false, no secrets used
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -45,7 +52,12 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
 
+      - name: Note when skipped (no API key)
+        if: env.HAS_ANTHROPIC_KEY != 'true'
+        run: echo "ANTHROPIC_API_KEY not configured — advisory AI investigation skipped; workflow passes."
+
       - name: Collect failing job logs
+        if: env.HAS_ANTHROPIC_KEY == 'true'
         # Untrusted workflow_run.* values are passed via env (shell quotes them),
         # never interpolated into the script body — avoids template injection.
         env:
@@ -68,6 +80,7 @@ jobs:
           } > /tmp/failure/meta.txt
 
       - name: AI investigation (full co-located context)
+        if: env.HAS_ANTHROPIC_KEY == 'true'
         # Pinned to the supported moving major @v1 per Anthropic's published
         # guidance (the v1 tag is the maintained release channel; a frozen SHA
         # would miss security fixes). This step runs only on workflow_run after
