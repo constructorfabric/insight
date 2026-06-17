@@ -192,9 +192,13 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_document_activity (
     person_key               String,
     date                     Date,
     data_source              String,
+    unique_key               String,
+    product                  String,
     shared_internally_count  Float64,
     shared_externally_count  Float64,
     viewed_or_edited_count   Float64,
+    synced_count             Float64,
+    visited_page_count       Float64,
     _version                 UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
