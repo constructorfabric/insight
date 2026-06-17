@@ -144,16 +144,17 @@ def test_valid_tenant_is_accepted_on_every_route(analytics_api: AnalyticsApiProc
     )
 
 
-def test_whitespace_padded_valid_tenant_is_accepted(analytics_api: AnalyticsApiProcess) -> None:
-    """`read_session_tenant` trims before parsing, so a valid UUID with
-    surrounding whitespace still resolves and is accepted (200). Pins the
-    intentional `.trim()` branch — distinct from the whitespace-ONLY rejection
-    below."""
-    _assert_accepted_everywhere(
-        analytics_api,
-        {TENANT_HEADER: f"  {TEST_TENANT_ID}  "},
-        "whitespace-padded valid tenant",
-    )
+# NOTE: the whitespace-PADDED-accept and whitespace-ONLY-reject cases that pin
+# `read_session_tenant`'s `.trim()` branch (auth.rs) are NOT expressible here.
+# An HTTP header value carries no leading/trailing OWS on the wire (RFC 9110
+# §5.5 / RFC 9112 §5): httpx's h11 layer refuses to transmit such a value
+# (`LocalProtocolError: Illegal header value`), and any compliant server would
+# strip it before the handler runs — so the trim branch is unreachable over
+# HTTP. Those two cases live as unit parity tests in
+# `analytics-api/src/api/tenant_resolution_tests.rs`
+# (`whitespace_padded_tenant_is_trimmed_and_resolved`,
+# `whitespace_only_tenant_header_is_treated_as_unset`), which build the request
+# directly and can exercise the branch.
 
 
 # --------------------------------------------------------------------------- #
@@ -176,15 +177,6 @@ def test_empty_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> 
     """Empty header value → `Uuid::parse_str("")` fails → None → 400."""
     _assert_tenant_unresolved_everywhere(
         analytics_api, {TENANT_HEADER: ""}, "empty header"
-    )
-
-
-def test_whitespace_only_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
-    """Whitespace-only header → trimmed to "" → `Uuid::parse_str` fails → None →
-    400. Complements the whitespace-PADDED accept case: padding around a valid
-    UUID is fine, padding around nothing is not."""
-    _assert_tenant_unresolved_everywhere(
-        analytics_api, {TENANT_HEADER: "   "}, "whitespace-only header"
     )
 
 
