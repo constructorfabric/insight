@@ -28,13 +28,20 @@ WITH _wm_src AS (
 SELECT _wm_src.*
 FROM _wm_src
 LEFT JOIN (
-    SELECT {{ tenant_col }} AS _wm_t, {{ source_col }} AS _wm_s, max({{ version_col }}) AS _wm_hwm
+    SELECT {{ tenant_col }} AS _wm_t, {{ source_col }} AS _wm_s,
+           max({{ version_col }}) AS _wm_hwm, 1 AS _wm_seen
     FROM {{ this }}
     GROUP BY {{ tenant_col }}, {{ source_col }}
 ) _wm
     ON _wm._wm_t = _wm_src.{{ tenant_col }}
    AND _wm._wm_s = _wm_src.{{ source_col }}
-WHERE _wm_src.{{ version_col }} > coalesce(_wm._wm_hwm, 0)
+-- _wm_seen = 0 means this (tenant, source) has never been loaded → keep ALL its
+-- rows, including a legitimate {{ version_col }} = 0 first row. NB: ClickHouse fills
+-- unmatched LEFT JOIN columns with type DEFAULTS (0), not NULL (unless
+-- join_use_nulls=1), so an `IS NULL` guard would NOT work here — hence the
+-- explicit seen-flag.
+WHERE _wm._wm_seen = 0
+   OR _wm_src.{{ version_col }} > _wm._wm_hwm
 {% else %}
 SELECT * FROM (
     {{ src }}
