@@ -36,7 +36,10 @@ def test_dbt_profiles_written(dbt_runner: DbtRunner) -> None:
     assert profiles.exists()
     body = profiles.read_text()
     assert "ingestion:" in body
-    assert "127.0.0.1" in body
+    # Host follows the session config (compose service name in docker mode,
+    # 127.0.0.1 in host mode) — not a hardcoded localhost, or `dbt test` is
+    # unreachable from the dockerized runner.
+    assert f"host: {dbt_runner.cfg.ch_host}" in body
     assert "ReplacingMergeTree" in body
 
 
