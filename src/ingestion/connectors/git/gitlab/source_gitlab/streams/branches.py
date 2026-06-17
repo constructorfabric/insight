@@ -32,17 +32,9 @@ class BranchesStream(GitlabSubstream):
             yield from self._project_branches(slice_["parent"])
             return
         for records in concurrency.imap_bounded(
-            self._gate, self._iter_projects(), self._branches_task
+            self._gate, self._iter_unique_projects(), self._branches_task
         ):
             yield from records
-
-    def _iter_projects(self) -> Iterable[Mapping[str, Any]]:
-        for parent_slice in self._parent.stream_slices(sync_mode=SyncMode.full_refresh):
-            for project in self._parent.read_records(
-                sync_mode=SyncMode.full_refresh, stream_slice=parent_slice
-            ):
-                if isinstance(project, Mapping) and project.get("id") is not None:
-                    yield project
 
     def _branches_task(self, project: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         return list(self._project_branches(project))

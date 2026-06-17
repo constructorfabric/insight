@@ -71,7 +71,7 @@ class CommitsStream(GitlabSubstream, IncrementalMixin):
                 yield item
 
     def _project_tasks(self) -> Iterable[Mapping[str, Any]]:
-        for project in self._iter_projects():
+        for project in self._iter_unique_projects():
             project_id = project.get("id")
             default = project.get("default_branch")
             if project_id is None or not default:
@@ -89,14 +89,6 @@ class CommitsStream(GitlabSubstream, IncrementalMixin):
             "default_head": stored.get("default_head"),
             "branches": dict(stored.get("branches") or {}),
         }
-
-    def _iter_projects(self) -> Iterable[Mapping[str, Any]]:
-        for parent_slice in self._parent.stream_slices(sync_mode=SyncMode.full_refresh):
-            for project in self._parent.read_records(
-                sync_mode=SyncMode.full_refresh, stream_slice=parent_slice
-            ):
-                if isinstance(project, Mapping) and project.get("id") is not None:
-                    yield project
 
     def _fetch_project(
         self, task: Mapping[str, Any]

@@ -273,3 +273,17 @@ class GitlabSubstream(GitlabStream, ABC):
                 f"— cannot build request path (routing bug, not a deleted entity)"
             )
         return value
+
+    def _iter_unique_projects(self) -> Iterable[Mapping[str, Any]]:
+        seen: set[Any] = set()
+        for parent_slice in self._parent.stream_slices(sync_mode=SyncMode.full_refresh):
+            for project in self._parent.read_records(
+                sync_mode=SyncMode.full_refresh, stream_slice=parent_slice
+            ):
+                if not isinstance(project, Mapping):
+                    continue
+                project_id = project.get("id")
+                if project_id is None or project_id in seen:
+                    continue
+                seen.add(project_id)
+                yield project

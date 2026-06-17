@@ -14,7 +14,7 @@ from collections.abc import (
     MutableMapping,
 )
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from typing import Any
 
 import requests
@@ -359,9 +359,6 @@ def imap_stream(
         abort.set()
         for future in pending:
             future.cancel()
-        while any(not f.done() for f in pending):
-            with suppress(queue.Empty):
-                record_q.get(timeout=0.5)
 
 
 class OrderedPrefix:
