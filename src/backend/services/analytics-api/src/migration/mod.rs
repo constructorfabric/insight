@@ -39,6 +39,8 @@ mod m20260609_000002_seed_chatgpt_team_metrics_catalog;
 mod m20260610_000001_fix_ai_label_drift;
 mod m20260611_000001_ai_bullet_dept_reconcile;
 mod m20260612_000001_team_git_bullet;
+mod m20260613_000001_dept_ai_distribution;
+mod m20260613_000002_member_ai_values;
 
 #[cfg(test)]
 mod live_tests;
@@ -90,6 +92,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260610_000001_fix_ai_label_drift::Migration),
             Box::new(m20260611_000001_ai_bullet_dept_reconcile::Migration),
             Box::new(m20260612_000001_team_git_bullet::Migration),
+            Box::new(m20260613_000001_dept_ai_distribution::Migration),
+            Box::new(m20260613_000002_member_ai_values::Migration),
         ]
     }
 }
