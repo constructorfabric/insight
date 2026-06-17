@@ -252,3 +252,33 @@ async fn multi_valued_tenant_header_is_refused() -> TestResult {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn non_visible_ascii_tenant_header_is_treated_as_unset() -> TestResult {
+    // A header value carrying bytes that are not valid visible ASCII makes
+    // `HeaderValue::to_str()` fail, so `read_session_tenant`'s `to_str().ok()?`
+    // arm short-circuits to None → with no configured default the request is
+    // rejected with the canonical TENANT_UNRESOLVED envelope. Like the
+    // whitespace cases this is unreachable over real HTTP (h11 refuses such
+    // bytes), but a misbehaving in-process caller could construct it, so the
+    // error arm must resolve to "unset", never panic or leak.
+    let app = router_with_default(None);
+
+    // 0xC3 0x28 is a non-UTF-8, non-visible-ASCII byte sequence; `from_bytes`
+    // accepts opaque header bytes while `to_str` rejects them.
+    let value = axum::http::HeaderValue::from_bytes(&[0xC3, 0x28])?;
+    let req = Request::builder()
+        .uri("/_tenant_echo")
+        .method("GET")
+        .header(TENANT_HEADER, value)
+        .body(Body::empty())?;
+    let resp = app.oneshot(req).await?;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await?;
+    assert_eq!(
+        body["context"]["field_violations"][0]["reason"],
+        "TENANT_UNRESOLVED"
+    );
+    Ok(())
+}
