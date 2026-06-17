@@ -47,37 +47,12 @@ resolve_env_file() {
 }
 
 # ──────────────────────────────────────────────────────────────────────
-# First-run wizard helpers
+# Helpers that survived the wizard extraction
 #
-# Used by cmd_up to generate .env.compose interactively when it's
-# missing. Everything here is io-helpers and validation — the wizard
-# proper is `bootstrap_env_wizard` below.
+# The first-run wizard moved to compose/insight-init.sh (shared with the
+# k8s-local bring-up). These two helpers stay because non-wizard
+# subcommands here (prune, cmd_up's seed-gate flip) still use them.
 # ──────────────────────────────────────────────────────────────────────
-
-# ask <prompt> <default> — print prompt, read one line, echo answer (or
-# default on empty input). Prompts go to stderr so the captured stdout
-# stays clean.
-ask() {
-  local prompt="$1" default="${2:-}" answer
-  if [[ -n "$default" ]]; then
-    printf '%s [%s]: ' "$prompt" "$default" >&2
-  else
-    printf '%s: ' "$prompt" >&2
-  fi
-  read -r answer
-  [[ -z "$answer" ]] && answer="$default"
-  printf '%s' "$answer"
-}
-
-# ask_secret <prompt> — read a password without echoing it. No default
-# (passwords shouldn't have defaults you can't see).
-ask_secret() {
-  local prompt="$1" answer
-  printf '%s: ' "$prompt" >&2
-  read -rs answer
-  printf '\n' >&2
-  printf '%s' "$answer"
-}
 
 # ask_yes_no <prompt> <default y|n> — loops until a yes/no answer; return
 # 0 for yes, 1 for no. Default is taken when the user hits Enter.
@@ -101,7 +76,6 @@ ask_yes_no() {
 # and GNU sed by writing through a temp file.
 update_env_var() {
   local file="$1" key="$2" value="$3" escaped tmp
-  # Escape sed replacement-side metacharacters: \, &, and our delimiter |.
   escaped=$(printf '%s' "$value" | sed -e 's/[\\&|]/\\&/g')
   if grep -qE "^[[:space:]]*${key}=" "$file" 2>/dev/null; then
     tmp=$(mktemp)
@@ -110,238 +84,6 @@ update_env_var() {
   else
     printf '%s=%s\n' "$key" "$value" >> "$file"
   fi
-}
-
-# Warn loudly when the user pastes localhost as an "external" DB host —
-# inside the container, that points at the container itself. Common
-# gotcha; the wizard can't fix it but should flag it.
-warn_localhost_host() {
-  local host="$1" label="$2"
-  case "$host" in
-    localhost|127.0.0.1|::1)
-      echo "  WARN: '$host' resolves to the container itself, not your host." >&2
-      echo "        For a $label running on the docker host, use" >&2
-      echo "        host.docker.internal (Mac/Windows) or your LAN IP." >&2
-      ;;
-  esac
-}
-
-# validate_mariadb host port user pass — runs `mariadb -e "SELECT 1"`
-# inside a transient mariadb container. Returns 0 on success.
-validate_mariadb() {
-  local host="$1" port="$2" user="$3" pass="$4"
-  echo "  Probing MariaDB at ${host}:${port}..." >&2
-  if docker run --rm mariadb:11.4 mariadb \
-       -h "$host" -P "$port" -u "$user" "--password=$pass" \
-       -e "SELECT 1" >/dev/null 2>&1; then
-    echo "  MariaDB OK." >&2
-    return 0
-  fi
-  echo "  ERROR: could not connect to MariaDB at ${host}:${port} as ${user}." >&2
-  return 1
-}
-
-# validate_clickhouse host http_port user pass db — issues SELECT 1 via
-# the HTTP interface using host-side curl. Returns 0 on success.
-validate_clickhouse() {
-  local host="$1" port="$2" user="$3" pass="$4" db="$5"
-  echo "  Probing ClickHouse at ${host}:${port}..." >&2
-  if curl -sf -u "${user}:${pass}" \
-       --data-urlencode "query=SELECT 1" \
-       --data-urlencode "database=${db}" \
-       "http://${host}:${port}/" >/dev/null 2>&1; then
-    echo "  ClickHouse OK." >&2
-    return 0
-  fi
-  echo "  ERROR: could not connect to ClickHouse at ${host}:${port} as ${user}." >&2
-  return 1
-}
-
-# Walk the user through the questions needed to populate .env.compose
-# the first time. Caller (cmd_up) has already verified that
-# .env.compose is missing AND the env-file path wasn't overridden.
-bootstrap_env_wizard() {
-  if [[ ! -t 0 ]]; then
-    echo "ERROR: .env.compose is missing and stdin is not a TTY." >&2
-    echo "       The first-run wizard needs an interactive shell." >&2
-    echo "       Copy .env.compose.example to .env.compose and edit," >&2
-    echo "       or re-run ./dev-compose.sh up from a terminal." >&2
-    return 1
-  fi
-  if [[ ! -f .env.compose.example ]]; then
-    echo "ERROR: .env.compose.example is missing — can't bootstrap." >&2
-    return 1
-  fi
-
-  cat >&2 <<'EOF'
-
-=== First-run wizard: configuring .env.compose ===
-
-You're bringing up the Insight dev stack for the first time. This
-wizard collects the few values needed to generate .env.compose, then
-hands off to `docker compose up`. Press Enter to accept defaults shown
-in [brackets].
-
-EOF
-
-  # ── MariaDB ─────────────────────────────────────────────────────────
-  local mariadb_external maria_host maria_port maria_user maria_pass
-  local maria_root_pass=root-local
-  echo "--- MariaDB ---" >&2
-  if ask_yes_no "Use the local MariaDB in docker compose?" "y"; then
-    mariadb_external=false
-    maria_host=mariadb
-    maria_port=3306
-    maria_user=insight
-    maria_pass=insight-local
-  else
-    mariadb_external=true
-    maria_host=$(ask "  External MariaDB host" "")
-    [[ -z "$maria_host" ]] && { echo "  ERROR: host is required." >&2; return 1; }
-    warn_localhost_host "$maria_host" "MariaDB"
-    maria_port=$(ask "  External MariaDB port" "3306")
-    maria_user=$(ask "  MariaDB user" "insight")
-    maria_pass=$(ask_secret "  MariaDB password")
-    validate_mariadb "$maria_host" "$maria_port" "$maria_user" "$maria_pass" || return 1
-  fi
-  echo "" >&2
-
-  # ── ClickHouse ──────────────────────────────────────────────────────
-  local ch_external ch_host ch_port ch_db ch_user ch_pass
-  echo "--- ClickHouse ---" >&2
-  if ask_yes_no "Use the local ClickHouse in docker compose?" "y"; then
-    ch_external=false
-    ch_host=clickhouse
-    ch_port=8123
-    ch_db=insight
-    ch_user=insight
-    ch_pass=insight-local
-  else
-    ch_external=true
-    ch_host=$(ask "  External ClickHouse host" "")
-    [[ -z "$ch_host" ]] && { echo "  ERROR: host is required." >&2; return 1; }
-    warn_localhost_host "$ch_host" "ClickHouse"
-    ch_port=$(ask "  External ClickHouse HTTP port" "8123")
-    ch_db=$(ask   "  ClickHouse database" "insight")
-    ch_user=$(ask "  ClickHouse user" "insight")
-    ch_pass=$(ask_secret "  ClickHouse password")
-    validate_clickhouse "$ch_host" "$ch_port" "$ch_user" "$ch_pass" "$ch_db" || return 1
-  fi
-  echo "" >&2
-
-  # ── Tenant ID (only meaningful when binding to existing data) ───────
-  local tenant_id
-  if [[ "$mariadb_external" == "true" || "$ch_external" == "true" ]]; then
-    echo "--- Tenant ID ---" >&2
-    echo "  External DBs already contain data tied to a specific tenant." >&2
-    echo "  Enter the UUID present in persons.insight_tenant_id." >&2
-    tenant_id=$(ask "  TENANT_DEFAULT_ID" "")
-    if [[ -z "$tenant_id" ]]; then
-      echo "  ERROR: tenant ID is required when using external DBs." >&2
-      return 1
-    fi
-    echo "" >&2
-  else
-    tenant_id="00000000-df51-5b42-9538-d2b56b7ee953"
-  fi
-
-  # ── Email ───────────────────────────────────────────────────────────
-  echo "--- Dev impersonation ---" >&2
-  local dev_email
-  dev_email=$(ask "VITE_DEV_USER_EMAIL" "dev@company.nonpresent")
-  echo "" >&2
-
-  # ── Frontend ────────────────────────────────────────────────────────
-  echo "--- Frontend ---" >&2
-  local fe_mode fe_path default_fe_path="../insight-front"
-  echo "  How should the frontend run?" >&2
-  echo "    1) ghcr   — pull the pre-built image (no source needed)" >&2
-  echo "    2) local  — Vite + HMR against an existing insight-front checkout" >&2
-  echo "    3) clone  — git clone insight-front, then run Vite + HMR" >&2
-  local fe_choice
-  while true; do
-    fe_choice=$(ask "  Choice" "1")
-    case "$fe_choice" in
-      1|ghcr)
-        fe_mode="ghcr"
-        fe_path="$default_fe_path"
-        break ;;
-      2|local|dev)
-        fe_mode="dev"
-        fe_path=$(ask "  Path to insight-front checkout" "$default_fe_path")
-        if [[ -z "$fe_path" || ! -d "$fe_path" ]]; then
-          echo "  ERROR: '$fe_path' does not exist. Pick option 3 to clone." >&2
-          return 1
-        fi
-        break ;;
-      3|clone)
-        if ! command -v git >/dev/null 2>&1; then
-          echo "  ERROR: git is not installed; pick 1 or 2." >&2
-          continue
-        fi
-        fe_path=$(ask "  Clone insight-front into" "$default_fe_path")
-        if [[ -e "$fe_path" ]]; then
-          echo "  ERROR: '$fe_path' already exists; refusing to clone over it." >&2
-          echo "         Remove it first, or pick 2 to reuse the existing checkout." >&2
-          return 1
-        fi
-        if ! git clone https://github.com/constructorfabric/insight-front.git "$fe_path" >&2; then
-          echo "  ERROR: clone failed." >&2
-          return 1
-        fi
-        fe_mode="dev"
-        break ;;
-      *)
-        echo "  Please answer 1, 2, or 3." >&2 ;;
-    esac
-  done
-  echo "" >&2
-
-  # ── Seeding decision for external DBs ───────────────────────────────
-  local seed_external=false
-  if [[ "$mariadb_external" == "true" || "$ch_external" == "true" ]]; then
-    echo "--- Test data ---" >&2
-    echo "  Local DBs are always seeded on first up. For external DBs the" >&2
-    echo "  wizard leaves them alone unless you opt in here." >&2
-    if ask_yes_no "  Seed test data into your external DB(s)?" "n"; then
-      seed_external=true
-    fi
-    echo "" >&2
-  fi
-
-  # ── Write .env.compose ──────────────────────────────────────────────
-  cp .env.compose.example .env.compose
-  update_env_var .env.compose MARIADB_EXTERNAL          "$mariadb_external"
-  update_env_var .env.compose MARIADB_HOST              "$maria_host"
-  update_env_var .env.compose MARIADB_INTERNAL_PORT     "$maria_port"
-  update_env_var .env.compose MARIADB_USER              "$maria_user"
-  update_env_var .env.compose MARIADB_PASSWORD          "$maria_pass"
-  update_env_var .env.compose MARIADB_ROOT_PASSWORD     "$maria_root_pass"
-  update_env_var .env.compose CLICKHOUSE_EXTERNAL       "$ch_external"
-  update_env_var .env.compose CLICKHOUSE_HOST           "$ch_host"
-  update_env_var .env.compose CLICKHOUSE_INTERNAL_HTTP_PORT "$ch_port"
-  update_env_var .env.compose CLICKHOUSE_DATABASE       "$ch_db"
-  update_env_var .env.compose CLICKHOUSE_USER           "$ch_user"
-  update_env_var .env.compose CLICKHOUSE_PASSWORD       "$ch_pass"
-  update_env_var .env.compose TENANT_DEFAULT_ID         "$tenant_id"
-  update_env_var .env.compose VITE_DEV_USER_EMAIL       "$dev_email"
-  update_env_var .env.compose FRONTEND_MODE             "$fe_mode"
-  update_env_var .env.compose INSIGHT_FRONT_PATH        "$fe_path"
-
-  # SEEDED_LOCAL_* gates the first-run auto-seed in cmd_up.
-  #   - empty/false → seed will run.
-  #   - true        → seed will be skipped.
-  # For external DBs the user explicitly declined, we pre-mark them
-  # seeded so cmd_up doesn't touch them.
-  if [[ "$mariadb_external" == "true" && "$seed_external" != "true" ]]; then
-    update_env_var .env.compose SEEDED_LOCAL_MARIA true
-  fi
-  if [[ "$ch_external" == "true" && "$seed_external" != "true" ]]; then
-    update_env_var .env.compose SEEDED_LOCAL_CH true
-  fi
-
-  echo "Wrote .env.compose. Continuing with up..." >&2
-  echo "" >&2
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -370,8 +112,9 @@ Options:
 
 Out-of-scope:
   --start-airbyte / --start-argo
-      Both need k8s and are not shipped by this compose stack.
-      The script exits with a pointer to CONTRIBUTING.md if you pass them.
+      Both need k8s and are not shipped by this compose stack. For a
+      k8s-local bring-up that includes Airbyte and Argo Workflows, run
+      `make deploy ENV=local` from deploy/gitops/.
 EOF
 }
 
@@ -397,8 +140,9 @@ cmd_up() {
       --no-frontend)     no_frontend=true; shift ;;
       --start-airbyte|--start-argo)
         echo "ERROR: $1 is not supported by the compose stack." >&2
-        echo "       Both need k8s. Install orbstack/k3d/kind and use the" >&2
-        echo "       existing ./dev-up.sh path. See CONTRIBUTING.md." >&2
+        echo "       Both need k8s. Bring up a kind/k3d/OrbStack cluster, then:" >&2
+        echo "         cd deploy/gitops && make deploy ENV=local" >&2
+        echo "       The first-run wizard prompts for which L2 services to install." >&2
         return 2 ;;
       -h|--help)         cmd_up_help; return 0 ;;
       *) echo "ERROR: unknown arg: $1" >&2; cmd_up_help; return 2 ;;
@@ -407,8 +151,10 @@ cmd_up() {
 
   # First-run wizard: only when the user is using the default env file
   # and it doesn't exist yet. A custom --env-file path is left alone.
+  # The wizard itself lives in compose/insight-init.sh, shared with the
+  # k8s-local bring-up.
   if [[ "$env_file" == ".env.compose" && ! -f "$env_file" ]]; then
-    bootstrap_env_wizard || return $?
+    bash "$ROOT_DIR/compose/insight-init.sh" --target=compose || return $?
   fi
 
   env_file="$(resolve_env_file "$env_file")"

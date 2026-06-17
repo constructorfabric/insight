@@ -136,7 +136,7 @@ global:
 #
 # The umbrella NEVER installs the collector stack — like Airbyte and Argo
 # it is separate releases, driven by the deploy pipeline (inventory
-# toggles; see docs/deploy/system/README.md). This block only governs what
+# toggles; see deploy/gitops/system/README.md). This block only governs what
 # services EMIT. The values are published into the `{release}-platform`
 # ConfigMap as INSIGHT_LOG_LEVEL / OTEL_* env vars, so every pod that does
 # `envFrom` picks them up uniformly — no per-service wiring.

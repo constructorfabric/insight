@@ -1,0 +1,27 @@
+# Local deploy artefacts (rendered manifests, deploy logs)
+.deploy/
+
+# Anything that smells like a raw secret
+*.env
+*.env.local
+secrets.local.*
+*-plain.yaml
+
+# The sample secret store consumed by scripts/secret-fetch.sh. The
+# .template file is committed; the populated copy must never be
+# committed (the sealed manifests in environments/<env>/sealed-secrets/
+# are the only safe-to-commit representation).
+secrets-store.yaml
+
+# The wizard writes a concrete inventory.yaml from inventory.yaml.template
+# on first `make deploy ENV=local`. Each env's inventory.yaml IS committed
+# (it's the source of truth for that cluster's topology), so this ignore
+# is intentionally narrow — only the sandbox local copy is gitignored,
+# because the wizard regenerates it from the template.
+environments/local/inventory.yaml
+
+# pub-cert is fetched from the cluster via `make fetch-cert`; the
+# corresponding generated *.pem is committed, but never the controller's
+# private key.
+*.key
+*.pkcs8

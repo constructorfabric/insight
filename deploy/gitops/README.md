@@ -1,63 +1,70 @@
-# Insight GitOps — Sample Starter
+# Insight GitOps
 
-A clone-and-adapt template for deploying [Insight](https://github.com/constructorfabric/insight)
-into a Kubernetes cluster. The umbrella Helm chart is published from the
-public Insight repo to `oci://ghcr.io/constructorfabric/charts/insight` per
+The real deployment surface for [Insight](https://github.com/constructorfabric/insight)
+on Kubernetes. The umbrella Helm chart is published from the public
+Insight repo to `oci://ghcr.io/constructorfabric/charts/insight` per
 merge to `main`; this directory holds everything else — values
 overlays, sealed-secret manifests, the Makefile, and a few helper
 scripts.
 
-**This is a sample.** Copy it into a private repo of your own, swap the
-sample `local` env for one or more of your real clusters, replace the
-secret-fetch stub with your password manager, and you have a working
-gitops setup.
+The bundled `local` env (sandbox) doubles as a starter template for
+new envs: copy `environments/local/inventory.yaml.template` into a new
+env directory, fill in `kubeContext` + the rest, swap the
+`scripts/secret-fetch.sh` stub for your password-manager integration
+when you go past sandbox, and you have a working gitops setup.
 
-> The reference design lives in [`../components/deployment/`](../components/deployment/).
+> The reference design lives in [`../../docs/components/deployment/`](../../docs/components/deployment/).
 > Below is the operator-facing summary; the linked docs go deeper into
 > rationale (DESIGN, PRD, ADR).
 
 ## What's in this directory
 
-```
-docs/deploy/
-├── README.md                 # this file
-├── Makefile                  # engineer entry point (bootstrap / system-* / deploy / seal …)
-├── Brewfile                  # required tooling
-├── .insight-version          # one line: the umbrella chart semver pinned for this repo
+```text
+deploy/gitops/
+├── README.md                    # this file
+├── Makefile                     # engineer entry point (bootstrap / system-* / deploy / seal …)
+├── Brewfile                     # required tooling (macOS — Linux uses your package manager)
+├── .insight-version             # one line: the umbrella chart semver pinned for this repo
 ├── .gitignore
-├── .gitleaks.toml            # pre-commit secret-scanning rules
-├── secrets-store.yaml.sample # template for the sample secret store
+├── .gitleaks.toml               # pre-commit secret-scanning rules
+├── secrets-store.yaml.template  # template for the sample secret store; copy to secrets-store.yaml and fill in
 ├── bootstrap/
-│   ├── argo-rbac.yaml.tmpl   # supplemental Argo RBAC; templated, applied by Makefile
-│   └── local/                # per-cluster L0 prereqs (one dir per env)
+│   ├── argo-rbac.yaml.template  # supplemental Argo RBAC; rendered + applied by Makefile
+│   └── local/                   # per-cluster L0 prereqs (one dir per env)
 │       ├── ingress-nginx-values.yaml
 │       ├── cert-manager-values.yaml
 │       ├── sealed-secrets-values.yaml
 │       └── selfsigned-issuer.yaml
-├── system/                   # L2 base values, one dir per service
-│   ├── README.md             # services table + secret layout
-│   ├── mariadb/              # values.yaml + SECRETS.md
-│   ├── clickhouse/           # values.yaml + SECRETS.md
-│   ├── redis/                # values.yaml + SECRETS.md
-│   ├── redpanda/             # values.yaml
-│   ├── redpanda-console/     # values.yaml
-│   ├── airbyte/              # values.yaml
-│   └── argo-workflows/       # values.yaml
+├── system/                      # L2 base values, one dir per service
+│   ├── README.md                # services table + secret layout
+│   ├── mariadb/                 # values.yaml + SECRETS.md
+│   ├── clickhouse/              # values.yaml + SECRETS.md
+│   ├── redis/                   # values.yaml + SECRETS.md
+│   ├── redpanda/                # values.yaml
+│   ├── redpanda-console/        # values.yaml
+│   ├── airbyte/                 # values.yaml
+│   └── argo-workflows/          # values.yaml
 ├── environments/
-│   └── local/                # sample sandbox env (start here)
-│       ├── inventory.yaml    # what this cluster has (drives bootstrap / system / seal / deploy)
-│       ├── values.yaml       # umbrella overlay (L3)
-│       ├── pub-cert.pem.sample
+│   └── local/                   # sandbox env (also the starter template for new envs)
+│       ├── inventory.yaml.template  # what this cluster has (drives bootstrap / system / seal / deploy)
+│       ├── values.yaml          # umbrella overlay (L3)
 │       └── sealed-secrets/
-│           ├── insight-infra/*.yaml.sample  # L2 sealed secrets (one folder per Kubernetes namespace)
-│           └── insight/*.yaml.sample        # L3 sealed secrets
+│           ├── insight-infra/*.yaml.template  # L2 sealed-secret shape (one folder per Kubernetes namespace)
+│           └── insight/*.yaml.template        # L3 sealed-secret shape
 └── scripts/
-    ├── doctor.sh             # invoked by `make doctor`
-    ├── render-diff.sh        # invoked by `make diff`
-    ├── secret-fetch.sh       # password-manager stub for `make seal-secret`
-    ├── compose-app-secrets.sh# derives insight-{analytics-api,identity}-config from insight-db-creds
-    └── airbyte-setup.sh      # post-install Airbyte setup-wizard automation
+    ├── doctor.sh                # invoked by `make doctor`
+    ├── render-diff.sh           # invoked by `make diff`
+    ├── secret-fetch.sh          # password-manager stub for `make seal-secret`
+    ├── compose-app-secrets.sh   # derives insight-{analytics-api,identity}-config from insight-db-creds
+    └── airbyte-setup.sh         # post-install Airbyte setup-wizard automation
 ```
+
+The wizard at `../../compose/insight-init.sh` is shared with the
+docker-compose stack. For `ENV=local`, `make deploy ENV=local`
+auto-invokes it whenever `environments/local/inventory.yaml` is
+missing, then chains `bootstrap → fetch-cert → seal → system →
+deploy-app`. For other envs the operator copies the template manually
+and runs each target individually.
 
 ## Layer model
 
@@ -84,7 +91,19 @@ Before running any `make` target against a cluster:
    fail fast with `cannot reach cluster '<ctx>'` if `kubectl
    cluster-info` errors.
 
-3. **Kube-context named `insight-<env>`** — the Makefile expects the
+3. **Kubeconfig** — `kubectl`, `helm`, and `kubeseal` all read from
+   `$KUBECONFIG` (or `~/.kube/config` if unset). If your cluster's
+   kubeconfig lives elsewhere, pass it on the make invocation:
+
+   ```bash
+   KUBECONFIG=/path/to/config.yaml make deploy ENV=local
+   ```
+
+   The wizard prints which kubeconfig it's reading at startup; if the
+   context list is empty or wrong, abort and re-invoke with the right
+   `KUBECONFIG=` prefix.
+
+4. **Kube-context named `insight-<env>`** — the Makefile expects the
    context for env `<env>` to be called `insight-<env>` (e.g. ENV=local
    → context `insight-local`). If your kubeconfig uses a different
    name, either rename:
@@ -111,25 +130,45 @@ which L2 services to install, which secrets to seal, and whether
 per-secret targets (`make system-mariadb`, `make seal-secret …`) remain
 available for one-off / rotation work.
 
-Skim `environments/local/inventory.yaml` for the schema; it's the
-shortest path to understanding what each env can declare.
+Skim `environments/local/inventory.yaml.template` for the schema; it's
+the shortest path to understanding what each env can declare. The
+wizard generates the concrete `environments/local/inventory.yaml` from
+it on the first `make deploy ENV=local`.
 
-## Quick start (local k3s sandbox)
+## Quick start (local sandbox — kind / k3d / OrbStack)
+
+For `ENV=local`, one command does it all:
 
 ```bash
-brew bundle install
-make doctor                          # verify tooling
+make deploy ENV=local
+```
 
-# L0 — install ingress-nginx, cert-manager, sealed-secrets-controller
-# plus the insight-infra + insight namespaces. Driven by
-# inventory.bootstrap.*. Idempotent.
-make bootstrap   ENV=local
+On the first run, when `environments/local/inventory.yaml` is missing,
+this auto-invokes the first-run wizard (shared with the docker-compose
+stack) which prompts for kube-context, L2 toggles, passwords, and the
+tenant ID, then writes:
+
+- `environments/local/inventory.yaml`
+- `secrets-store.yaml` (gitignored cleartext) with the entries the
+  wizard collected
+
+After the wizard, the same `make deploy ENV=local` continues with the
+full chain: `bootstrap → fetch-cert → seal → system → deploy-app`.
+Subsequent `make deploy ENV=local` calls skip the wizard (inventory
+already exists) and re-run the chain idempotently.
+
+If you'd rather run the steps manually:
+
+```bash
+brew bundle install                  # macOS — Linux uses your package manager
+make doctor                          # verify tooling
+make bootstrap   ENV=local           # L0
 make fetch-cert  ENV=local           # capture the controller's pub cert for `make seal*`
 
 # Stage cleartext Secret manifests in the sample secret store. (Copy
-# the sample, fill in real passwords. NEVER COMMIT the populated file —
+# the template, fill in real passwords. NEVER COMMIT the populated file —
 # it's gitignored.)
-cp secrets-store.yaml.sample secrets-store.yaml
+cp secrets-store.yaml.template secrets-store.yaml
 $EDITOR secrets-store.yaml
 
 # Seal everything listed in inventory.secrets. Cleartext is streamed
@@ -142,26 +181,26 @@ AIRBYTE_SETUP_EMAIL=admin@example.com AIRBYTE_SETUP_ORG=Sandbox \
   make system            ENV=local
 make system-status       ENV=local   # what's installed in insight-infra
 
-# L3 — the umbrella app. `make deploy` is an alias for `make deploy-app`
-# and only touches the `insight` namespace. It applies every L3 sealed
-# manifest, waits for `insight-db-creds` to materialise, composes the
-# derived `insight-analytics-api-config` + `insight-identity-config`
-# Secrets, then helm-upgrades.
-#
-# Before the first `make deploy`: edit `environments/local/values.yaml`
-# and replace the `REPLACE_WITH_LATEST_*_TAG` placeholders with concrete
-# image tags. The umbrella chart's appVersion is the canonical source —
-# check the tag on `oci://ghcr.io/constructorfabric/charts/insight:<.insight-version>`
-# or peek at GHCR directly.
+# L3 — the umbrella app. Only touches the `insight` namespace. Applies
+# every L3 sealed manifest, waits for `insight-db-creds` to materialise,
+# composes the derived `insight-analytics-api-config` +
+# `insight-identity-config` Secrets, then helm-upgrades. Image tags are
+# inherited from the umbrella chart's appVersion — no per-service tag
+# overrides are needed in values.yaml for the sandbox path.
 make diff   ENV=local                # inspect what would change
 make deploy ENV=local
 ```
 
 ## Adding a new environment
 
+The shared wizard only writes the `local` env. For new envs, copy from
+the templates:
+
 ```bash
-# 1. Copy the sample env.
-cp -r environments/local environments/<new>
+# 1. Bootstrap a new env directory from the local templates.
+mkdir -p environments/<new>
+cp environments/local/inventory.yaml.template environments/<new>/inventory.yaml
+cp environments/local/values.yaml             environments/<new>/values.yaml
 
 # 2. Edit environments/<new>/inventory.yaml — kube-context, which L0
 #    controllers / L2 services / secrets this env wants, whether it's
@@ -175,8 +214,7 @@ cp -r environments/local environments/<new>
 #    values. (The bootstrap/<env>/ dir is read by the bootstrap-*
 #    sub-targets; missing = chart defaults.)
 
-# 5. Bootstrap + fetch cert + seal + L2 + L3 — same as the quick start
-#    above, just with ENV=<new>.
+# 5. Bootstrap + fetch cert + seal + L2 + L3, individually.
 make bootstrap  ENV=<new>
 make fetch-cert ENV=<new>
 make seal       ENV=<new>
@@ -188,7 +226,7 @@ The `local` env disables OIDC for sandbox convenience. For production
 or staging envs, set `apiGateway.authDisabled: false`, configure an
 OIDC IdP (Okta, Entra, Auth0, Keycloak, …), and seal a corresponding
 `insight-oidc` Secret — see
-[`environments/local/sealed-secrets/insight/insight-oidc-sealedsecret.yaml.sample`](environments/local/sealed-secrets/insight/insight-oidc-sealedsecret.yaml.sample)
+[`environments/local/sealed-secrets/insight/insight-oidc-sealedsecret.yaml.template`](environments/local/sealed-secrets/insight/insight-oidc-sealedsecret.yaml.template)
 for the seven required keys.
 
 ## Secret management
@@ -201,7 +239,7 @@ the cleartext lives in your password manager.
 
 `make seal-secret` calls `scripts/secret-fetch.sh <resource-name>`
 under the hood. The shipped stub reads from a local
-`secrets-store.yaml` file (see `secrets-store.yaml.sample` for the
+`secrets-store.yaml` file (see `secrets-store.yaml.template` for the
 format). **Replace this stub before you go to production.** Plug in
 whichever password manager / vault / KMS you use:
 
@@ -219,22 +257,22 @@ Exit non-zero on lookup failure.
 
 Per-service key shapes are in [`system/<svc>/SECRETS.md`](system/).
 
-### Sealed-secret samples in this directory
+### Sealed-secret templates in this directory
 
-The committed `*.yaml.sample` files under
+The committed `*.yaml.template` files under
 `environments/local/sealed-secrets/` show the **shape** of a sealed
 manifest — they intentionally don't contain working ciphertext, because
 a SealedSecret can only be decrypted by the cluster it was sealed
-against. Run the `make seal-secret …` commands in the quick-start
-above and you'll get real `*.yaml` siblings beside them, safe to
-commit.
+against. Run the `make seal-secret …` commands (or `make deploy
+ENV=local`, which seals everything in the inventory) and you'll get
+real `*.yaml` siblings beside them, safe to commit.
 
 ## Chart-pin flow (L3)
 
 1. The public Insight repo's CI publishes umbrella chart versions to
    `oci://ghcr.io/constructorfabric/charts/insight:<semver>` per merge to
    `main`. See
-   [`../components/deployment/specs/ADR/0001-chart-publishing-on-merge.md`](../components/deployment/specs/ADR/0001-chart-publishing-on-merge.md)
+   [`../../docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md`](../../docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md)
    for the contract.
 2. The `.insight-version` file in this repo pins one semver. Bump it
    to promote a new chart version. The Makefile reads it as

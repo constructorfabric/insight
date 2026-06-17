@@ -13,7 +13,7 @@
 # This stub reads from a local YAML file (default:
 # `secrets-store.yaml` at the repo root) whose top-level keys are
 # resource names and values are cleartext Secret manifests. See
-# `secrets-store.yaml.sample` for the format.
+# `secrets-store.yaml.template` for the format.
 #
 # IMPORTANT — replace this stub before going to production. The flat
 # YAML file is only convenient for sandbox / first-time-walkthrough
@@ -37,7 +37,7 @@ STORE="${SECRET_STORE_FILE:-$SCRIPT_DIR/../secrets-store.yaml}"
 
 if [ ! -f "$STORE" ]; then
   echo "ERROR: secret-store file not found at $STORE" >&2
-  echo "       Copy secrets-store.yaml.sample to secrets-store.yaml," >&2
+  echo "       Copy secrets-store.yaml.template to secrets-store.yaml," >&2
   echo "       fill in the cleartext Secret manifests, and re-run." >&2
   echo "       (Or override the path with SECRET_STORE_FILE=...)" >&2
   exit 1

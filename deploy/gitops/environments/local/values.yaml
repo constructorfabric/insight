@@ -74,19 +74,16 @@ ingestion:
 
 # ─── App services ──────────────────────────────────────────────────────────
 #
-# Pin `image.tag` to a concrete tag published to GHCR by the upstream
-# CI. The published tag format is `YYYY.MM.DD.HH.MM-<short-sha>`; pick
-# the latest one from the chart appVersion in
-# https://github.com/constructorfabric/insight (or whichever umbrella
-# you're tracking) and update on bumps.
-#
-# The example tags below are illustrative — replace them with whatever
-# the umbrella chart pinned in `.insight-version` was built against.
+# Image tags are NOT pinned here. The umbrella chart's appVersion (and
+# each subchart's image.tag default) drives which image versions get
+# deployed — bumping `.insight-version` switches to that chart's image
+# defaults atomically. Override `image.tag` per service ONLY when you
+# need to roll out a hotfix on one service ahead of a new chart version;
+# remove the override on the next chart bump so you don't drift from
+# the chart's tested set.
 
 apiGateway:
   replicaCount: 1
-  image:
-    tag: "REPLACE_WITH_LATEST_BACKEND_TAG"
   # Sandbox: no OIDC. Real envs flip this to false and supply an
   # `insight-oidc` Secret in the `insight` namespace.
   authDisabled: true
@@ -98,8 +95,6 @@ apiGateway:
 
 analyticsApi:
   replicaCount: 1
-  image:
-    tag: "REPLACE_WITH_LATEST_BACKEND_TAG"
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 512Mi }
@@ -115,9 +110,6 @@ analyticsApi:
 # from insight-db-creds.
 identity:
   deploy: true
-  image:
-    repository: ghcr.io/constructorfabric/insight-identity
-    tag: "REPLACE_WITH_LATEST_BACKEND_TAG"
   databaseName: "identity"
   # Optional. When set (must be a valid GUID), identity-resolution
   # lookups don't 400 with "Tenant not provided" if the caller omits
@@ -131,12 +123,5 @@ identity:
 
 frontend:
   replicaCount: 1
-  # The frontend image is built from a separate repo (insight-front)
-  # with its own publish-chart workflow; its tag is decoupled from the
-  # backend services above. Pin the latest tag from
-  # https://github.com/orgs/constructorfabric/packages?q=insight-front
-  # (or whichever upstream you're tracking).
-  image:
-    tag: "REPLACE_WITH_LATEST_FRONTEND_TAG"
   ingress:
     enabled: false

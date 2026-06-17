@@ -55,17 +55,20 @@ VALUES           ?= environments/$(ENV)/values.yaml
 TIMEOUT          ?= 10m
 RENDER_DIR       := .deploy
 
-# Extra flags appended to umbrella-related helm invocations (show chart,
-# template, upgrade --install). Default empty; override to pass e.g.
-# `--plain-http` when CHART points at a local HTTP OCI registry such as
-# `oci://localhost:5001/charts/insight` for offline testing.
+# Extra flags appended to helm invocations. Default empty.
 #
-# HELM_EXTRA_FLAGS:   passed to ALL helm calls (show / template / upgrade).
-#                     Use for flags valid on every helm command, e.g.
-#                     `--plain-http` when pulling from a local OCI registry.
-# HELM_UPGRADE_FLAGS: passed ONLY to `helm upgrade --install`. Use for
-#                     apply-time flags like `--force-conflicts` (SSA
-#                     ownership override) that error out on
+# HELM_EXTRA_FLAGS:   passed to ALL helm calls (bootstrap-*, system-*,
+#                     umbrella deploy, show/template/list/status/rollback).
+#                     Use for flags valid on every helm command:
+#                       `--plain-http` when pulling from a local HTTP OCI
+#                         registry (e.g. oci://localhost:5001/...)
+#                       `--debug` when a step is hanging and you want
+#                         helm to print every kubectl API call it makes
+#                         (verbose; great for diagnosing a stuck install).
+#                     Example: HELM_EXTRA_FLAGS=--debug make deploy ENV=local
+# HELM_UPGRADE_FLAGS: passed ONLY to the umbrella `helm upgrade --install`.
+#                     Use for apply-time flags like `--force-conflicts`
+#                     (SSA ownership override) that error out on
 #                     read-only `helm show` / `helm template`.
 HELM_EXTRA_FLAGS   ?=
 HELM_UPGRADE_FLAGS ?=
@@ -102,7 +105,7 @@ AIRBYTE_VERSION  ?= 1.9.2
 
 ARGO_RELEASE     ?= argo-workflows
 ARGO_VERSION     ?= 1.0.13
-ARGO_RBAC_TMPL   ?= bootstrap/argo-rbac.yaml.tmpl
+ARGO_RBAC_TMPL   ?= bootstrap/argo-rbac.yaml.template
 ARGO_WORKFLOW_SA ?= argo-workflow
 
 # Observability stack (LGTM — logs first). Installed only when the bundled
@@ -221,9 +224,11 @@ sync-clean:
 inventory-present:
 	@test -f $(INVENTORY) \
 		|| { echo "$(C_RED)ERROR$(C_RST): inventory not found at $(INVENTORY)"; \
-		     echo "       Copy environments/local/inventory.yaml to a new env directory,"; \
-		     echo "       adjust kubeContext / namespaces / bootstrap / system / secrets,"; \
-		     echo "       then re-run."; \
+		     echo "       For ENV=local: run \`make deploy ENV=local\` and the first-run wizard"; \
+		     echo "       will generate it interactively."; \
+		     echo "       For other envs: copy environments/local/inventory.yaml.template to"; \
+		     echo "       environments/<env>/inventory.yaml, adjust kubeContext / namespaces /"; \
+		     echo "       bootstrap / system / secrets, then re-run."; \
 		     exit 1; }
 
 .PHONY: kube-ctx-required
@@ -277,14 +282,49 @@ diff: sync-clean values-present chart-present
 	@bash scripts/render-diff.sh "$(ENV)" "$(NAMESPACE)" "$(RELEASE)" \
 		"$(CHART)" "$(VALUES)" "$(RENDER_DIR)" "$(INSIGHT_VERSION)"
 
-# Top-level deploy targets the L3 app only. L2 system services are
-# deliberately not chained — each cluster picks which services it
-# self-hosts vs. swaps for managed endpoints. Engineers run the L2
-# subset they need (system-mariadb / system-clickhouse / system-redis /
-# system-redpanda / system-redpanda-console / system-airbyte /
-# system-argo) before this target.
+# Top-level deploy. For ENV=local (sandbox), `deploy` chains the full
+# bring-up: wizard → bootstrap → fetch-cert → seal → system → deploy-app.
+# For any other env, `deploy` keeps the narrow behavior (just upgrade
+# the L3 umbrella); each cluster picks which L2 services it self-hosts
+# vs. swaps for managed endpoints, so chaining `system` would be wrong.
 .PHONY: deploy
+ifeq ($(ENV),local)
+deploy: local-up
+else
 deploy: deploy-app
+endif
+
+# Local sandbox bring-up. Runs the wizard if inventory.yaml is missing,
+# then chains the L0/L2/L3 install. Idempotent — re-running is a no-op
+# apart from helm-upgrade noise. Each sub-make re-evaluates the
+# inventory, so the wizard-written inventory.yaml is visible to the
+# chained targets even though this make process started without it.
+.PHONY: local-up
+local-up: local-wizard
+	@set -a; [ -f environments/local/.env.local ] && . ./environments/local/.env.local; set +a; \
+	  CTX=$$(yq -r '.kubeContext' $(INVENTORY)); \
+	  if [ -z "$$CTX" ] || [ "$$CTX" = "null" ]; then \
+	    echo "$(C_RED)ERROR$(C_RST): inventory.yaml missing .kubeContext after wizard"; exit 1; \
+	  fi; \
+	  $(MAKE) --no-print-directory bootstrap   ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory fetch-cert  ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory seal        ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory system      ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory deploy-app  ENV=local KUBE_CTX=$$CTX
+
+# Run the wizard only when inventory.yaml is missing. The wizard itself
+# enforces non-TTY rejection. If the file is present (re-run on the
+# same machine), skip silently.
+.PHONY: local-wizard
+local-wizard:
+	@if [ -f $(INVENTORY) ]; then \
+	  exit 0; \
+	fi; \
+	WIZARD="$$(cd ../.. && pwd)/compose/insight-init.sh"; \
+	if [ ! -f "$$WIZARD" ]; then \
+	  echo "$(C_RED)ERROR$(C_RST): wizard not found at $$WIZARD"; exit 1; \
+	fi; \
+	bash "$$WIZARD" --target=k8s-local
 
 .PHONY: deploy-app
 deploy-app: deploy-insight
@@ -426,7 +466,7 @@ system-mariadb: vpn-up kube-ctx
 	$(call _require_system_creds,mariadb)
 	helm upgrade --install $(MARIADB_RELEASE) $(MARIADB_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(MARIADB_VERSION) \
+		--version $(MARIADB_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,mariadb) \
 		--wait --timeout 10m
 
@@ -435,7 +475,7 @@ system-clickhouse: vpn-up kube-ctx
 	$(call _require_system_creds,clickhouse)
 	helm upgrade --install $(CLICKHOUSE_RELEASE) $(CLICKHOUSE_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(CLICKHOUSE_VERSION) \
+		--version $(CLICKHOUSE_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,clickhouse) \
 		--wait --timeout 10m
 
@@ -444,7 +484,7 @@ system-redis: vpn-up kube-ctx
 	$(call _require_system_creds,redis)
 	helm upgrade --install $(REDIS_RELEASE) $(REDIS_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(REDIS_VERSION) \
+		--version $(REDIS_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,redis) \
 		--wait --timeout 5m
 
@@ -454,7 +494,7 @@ system-redpanda: vpn-up kube-ctx
 	$(call _apply_optional_system_secrets,redpanda)
 	helm upgrade --install $(REDPANDA_RELEASE) $(REDPANDA_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(REDPANDA_VERSION) \
+		--version $(REDPANDA_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,redpanda) \
 		--wait --timeout 10m
 
@@ -464,7 +504,7 @@ system-redpanda-console: vpn-up kube-ctx
 	$(call _apply_optional_system_secrets,redpanda-console)
 	helm upgrade --install $(REDPANDA_CONSOLE_RELEASE) $(REDPANDA_CONSOLE_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(REDPANDA_CONSOLE_VERSION) \
+		--version $(REDPANDA_CONSOLE_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,redpanda-console) \
 		--wait --timeout 5m
 
@@ -480,7 +520,7 @@ system-loki: vpn-up kube-ctx
 	$(call _apply_optional_system_secrets,loki)
 	helm upgrade --install $(LOKI_RELEASE) $(LOKI_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(LOKI_VERSION) \
+		--version $(LOKI_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,loki) \
 		--wait --timeout 10m
 
@@ -490,7 +530,7 @@ system-alloy: vpn-up kube-ctx
 	$(call _apply_optional_system_secrets,alloy)
 	helm upgrade --install $(ALLOY_RELEASE) $(ALLOY_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(ALLOY_VERSION) \
+		--version $(ALLOY_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,alloy) \
 		--wait --timeout 5m
 
@@ -500,7 +540,7 @@ system-grafana: vpn-up kube-ctx
 	$(call _apply_optional_system_secrets,grafana)
 	helm upgrade --install $(GRAFANA_RELEASE) $(GRAFANA_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(GRAFANA_VERSION) \
+		--version $(GRAFANA_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,grafana) \
 		--wait --timeout 5m
 
@@ -527,7 +567,7 @@ system-airbyte: vpn-up kube-ctx
 	$(call _apply_optional_system_secrets,airbyte)
 	helm upgrade --install $(AIRBYTE_RELEASE) airbyte/airbyte \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(AIRBYTE_VERSION) \
+		--version $(AIRBYTE_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,airbyte) \
 		--wait --timeout 15m
 	@NAMESPACE=$(NS_INFRA) AIRBYTE_RELEASE=$(AIRBYTE_RELEASE) \
@@ -544,7 +584,7 @@ system-argo: vpn-up kube-ctx
 	$(call _apply_optional_system_secrets,argo-workflows)
 	helm upgrade --install $(ARGO_RELEASE) argo/argo-workflows \
 		--namespace $(NS_INFRA) --create-namespace \
-		--version $(ARGO_VERSION) \
+		--version $(ARGO_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,argo-workflows) \
 		--set controller.workflowNamespaces[0]=$(NS_INFRA) \
 		--set controller.instanceID.enabled=true \
@@ -559,19 +599,19 @@ system-argo: vpn-up kube-ctx
 .PHONY: system-status
 system-status: vpn-up kube-ctx
 	@echo "=== Helm releases in $(NS_INFRA) ==="
-	@helm list -n $(NS_INFRA) 2>/dev/null || echo "(namespace $(NS_INFRA) absent — run 'make bootstrap ENV=$(ENV)')"
+	@helm list -n $(NS_INFRA) $(HELM_EXTRA_FLAGS) 2>/dev/null || echo "(namespace $(NS_INFRA) absent — run 'make bootstrap ENV=$(ENV)')"
 	@echo
 	@echo "=== Pods in $(NS_INFRA) ==="
 	@kubectl -n $(NS_INFRA) get pods -o wide 2>/dev/null || true
 
 .PHONY: rollback
 rollback: vpn-up kube-ctx
-	@helm rollback $(RELEASE) --namespace $(NAMESPACE)
-	@helm history $(RELEASE) --namespace $(NAMESPACE) --max 5
+	@helm rollback $(RELEASE) --namespace $(NAMESPACE) $(HELM_EXTRA_FLAGS)
+	@helm history $(RELEASE) --namespace $(NAMESPACE) --max 5 $(HELM_EXTRA_FLAGS)
 
 .PHONY: status
 status: vpn-up kube-ctx
-	@helm status $(RELEASE) --namespace $(NAMESPACE) --show-resources || true
+	@helm status $(RELEASE) --namespace $(NAMESPACE) --show-resources $(HELM_EXTRA_FLAGS) || true
 	@echo "---"
 	@kubectl -n $(NAMESPACE) rollout status deploy --timeout=30s || true
 
@@ -590,9 +630,10 @@ tag: sync-clean
 # through kubeseal.
 #
 # `scripts/secret-fetch.sh` ships as a STUB: it reads from a local YAML
-# file (secrets-store.yaml.sample) keyed by the resource name. Replace
-# it with your own password-manager / vault / KMS integration —
-# anything that prints a Kubernetes Secret manifest to stdout will work.
+# file (secrets-store.yaml.template → copy to secrets-store.yaml) keyed
+# by the resource name. Replace it with your own password-manager /
+# vault / KMS integration — anything that prints a Kubernetes Secret
+# manifest to stdout will work.
 #
 # Override the resource name with SECRET_NAME=… Or skip the script
 # entirely with VALUE_FILE=… (one-off bootstrapping; the cleartext file
@@ -605,8 +646,9 @@ PUB_CERT := environments/$(ENV)/pub-cert.pem
 secret-fetch-present:
 	@test -x scripts/secret-fetch.sh \
 		|| { echo "$(C_RED)ERROR$(C_RST): scripts/secret-fetch.sh not found or not executable"; \
-		     echo "       This sample ships a stub that reads from secrets-store.yaml."; \
-		     echo "       Replace it with an integration against your password manager."; \
+		     echo "       The shipped stub reads from secrets-store.yaml (copy from"; \
+		     echo "       secrets-store.yaml.template). Replace it with an integration"; \
+		     echo "       against your password manager for non-sandbox envs."; \
 		     exit 1; }
 
 .PHONY: seal
@@ -744,7 +786,7 @@ bootstrap-ingress-nginx: vpn-up kube-ctx
 	fi; \
 	helm upgrade --install $(INGRESS_NGINX_RELEASE) ingress-nginx/ingress-nginx \
 		--namespace $(INGRESS_NGINX_NAMESPACE) --create-namespace \
-		--version $(INGRESS_NGINX_VERSION) \
+		--version $(INGRESS_NGINX_VERSION) $(HELM_EXTRA_FLAGS) \
 		$$VALUES_ARGS \
 		--wait --timeout 5m
 
@@ -758,7 +800,7 @@ bootstrap-cert-manager: vpn-up kube-ctx
 	fi; \
 	helm upgrade --install $(CERT_MANAGER_RELEASE) jetstack/cert-manager \
 		--namespace $(CERT_MANAGER_NAMESPACE) --create-namespace \
-		--version $(CERT_MANAGER_VERSION) \
+		--version $(CERT_MANAGER_VERSION) $(HELM_EXTRA_FLAGS) \
 		--set crds.enabled=true \
 		$$VALUES_ARGS \
 		--wait --timeout 5m
@@ -771,7 +813,16 @@ bootstrap-cert-manager: vpn-up kube-ctx
 
 .PHONY: bootstrap-sealed-secrets
 bootstrap-sealed-secrets: vpn-up kube-ctx
-	@helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets >/dev/null 2>&1 || true
+	@# The old bitnami-labs.github.io/sealed-secrets host now returns
+	@# 404. Bitnami consolidated the index to bitnami.github.io (note
+	@# the -labs is gone). If the repo was registered under the old
+	@# URL on this machine, drop it first so `repo add` re-registers
+	@# the new host instead of silently keeping the dead one.
+	@OLD_REPOS=$$(helm repo list 2>/dev/null | awk '$$1=="sealed-secrets" && $$2!="https://bitnami.github.io/sealed-secrets" {print $$1}'); \
+	if [ -n "$$OLD_REPOS" ]; then \
+		printf '%s\n' "$$OLD_REPOS" | xargs -n1 helm repo remove >/dev/null 2>&1 || true; \
+	fi
+	@helm repo add sealed-secrets https://bitnami.github.io/sealed-secrets >/dev/null 2>&1 || true
 	@helm repo update sealed-secrets >/dev/null
 	@VALUES_ARGS=""; \
 	if [ -s $(BOOTSTRAP_DIR)/sealed-secrets-values.yaml ]; then \
@@ -779,7 +830,7 @@ bootstrap-sealed-secrets: vpn-up kube-ctx
 	fi; \
 	helm upgrade --install $(SEALED_SECRETS_RELEASE) sealed-secrets/sealed-secrets \
 		--namespace $(SEALED_SECRETS_NAMESPACE) \
-		--version $(SEALED_SECRETS_VERSION) \
+		--version $(SEALED_SECRETS_VERSION) $(HELM_EXTRA_FLAGS) \
 		$$VALUES_ARGS \
 		--wait --timeout 3m
 

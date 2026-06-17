@@ -98,15 +98,17 @@ If you keep them elsewhere, set `INSIGHT_FRONT_PATH` in `.env.compose`.
 We are currently in transition. Both paths exist; **the compose path is
 the preferred one going forward**.
 
-| Path        | Driver               | Use it when                                          |
-| ----------- | -------------------- | ---------------------------------------------------- |
-| **compose** | `dev-compose.sh up`  | Day-to-day backend / frontend work. Default.        |
-| k8s/helm    | `dev-up.sh` (Kind)   | Testing helm charts; ingestion (Airbyte) work;      |
-|             |                      | anything that needs Argo Workflows or a real        |
-|             |                      | cluster shape.                                       |
+| Path        | Driver                                      | Use it when                                          |
+| ----------- | ------------------------------------------- | ---------------------------------------------------- |
+| **compose** | `dev-compose.sh up`                         | Day-to-day backend / frontend work. Default.        |
+| k8s/helm    | `cd deploy/gitops && make deploy ENV=local` | Testing the published umbrella; ingestion (Airbyte) work; anything that needs Argo Workflows or the real cluster shape. |
 
 The compose path does **not** ship Airbyte or Argo Workflows — see
 [Beyond compose](#beyond-compose) below.
+
+Both first-run paths share a single wizard at
+[`compose/insight-init.sh`](compose/insight-init.sh), so the questions
+(MariaDB / ClickHouse / tenant / dev email) are identical across them.
 
 ---
 
@@ -557,7 +559,7 @@ No rebuild, no compose bounce. To revert, undo the edits.
 
 The compose stack ships **9-ish services** but **does NOT include**:
 
-- **Airbyte** — needs k8s. Use `./dev-up.sh ingestion`.
+- **Airbyte** — needs k8s.
 - **Argo Workflows** — k8s controller; same deal.
 - **dbt scheduling** that depends on Argo Workflows.
 
@@ -568,8 +570,31 @@ To run these, install **one** of:
 - kind (`brew install kind`)
 - minikube (`brew install minikube`)
 
-…and use the existing `dev-up.sh` path. The k8s and compose stacks can
-coexist — they use disjoint host ports by default.
+…provision a cluster, then bring up Insight on k8s with the shared
+first-run wizard:
+
+```bash
+cd deploy/gitops
+make deploy ENV=local
+# or, if your kubeconfig lives outside ~/.kube/config:
+KUBECONFIG=/path/to/config.yaml make deploy ENV=local
+```
+
+`kubectl`, `helm`, and `kubeseal` all honour `$KUBECONFIG`; the wizard
+prints which file it's using at startup so you can abort and retry with
+the right path if the context list looks wrong.
+
+On the first run the wizard generates `environments/local/inventory.yaml`,
+`secrets-store.yaml`, and — when Airbyte is enabled —
+`environments/local/.env.local` (carries the post-install setup creds the
+`make system-airbyte` step needs). Subsequent runs skip the wizard and
+just reconcile the stack. The wizard asks the same MariaDB/ClickHouse/
+tenant questions as the compose path, plus kube-context and which L2
+services to install (Airbyte/Argo/redpanda-console/observability).
+
+The k8s and compose stacks can coexist — they use disjoint host ports
+by default. Demo-data seeding on the k8s path is manual — see the wizard
+output for the port-forward + `compose/seed/` commands.
 
 ---
 
