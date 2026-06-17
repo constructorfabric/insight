@@ -7,7 +7,7 @@ middleware: every request must carry a resolvable, non-nil tenant in the
 the data-correctness / security boundary that stops one tenant's request from
 resolving against another tenant's data.
 
-This matrix is the e2e mirror of the Rust unit parity tests in
+This matrix is the e2e counterpart to the Rust unit parity tests in
 `analytics-api/src/api/tenant_resolution_tests.rs`: it confirms the middleware
 ACCEPTS a resolvable tenant and REJECTS every unresolvable input on EVERY read
 route that traverses the middleware — the liveness probe (`/health`) and all
@@ -16,6 +16,14 @@ three data endpoints:
 - `POST /v1/metrics/{id}/query`  (single-metric read)
 - `POST /v1/metrics/queries`     (batch read)
 - `POST /v1/catalog/get_metrics` (metric-catalog read)
+
+It covers only the inputs that are actually transmittable over HTTP. The
+whitespace-padded-accept and whitespace-only-reject cases — which pin
+`read_session_tenant`'s `.trim()` branch — live ONLY as Rust unit tests,
+because an HTTP header value carries no leading/trailing OWS on the wire
+(RFC 9110 §5.5): httpx's h11 layer refuses to send such a value and a compliant
+server strips it before the handler runs, so the branch is unreachable here.
+See the NOTE near the reject cases below.
 
 Rejection cases assert the EXACT canonical envelope, not merely a 4xx/400 code:
 status 400 + `application/problem+json` + `field_violations[0]` =
