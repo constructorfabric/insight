@@ -172,13 +172,24 @@ class DbtRunner:
                 f"stderr tail:\n{result.stderr[-1000:]}"
             )
         data = json.loads(run_results.read_text(encoding="utf-8"))
+        # Match on exact unique_id or a full dot-segment of it — NOT substring.
+        # A substring match (`selector in unique_id`) collides on shared prefixes
+        # (e.g. `assert_counts` would also match `assert_counts_non_negative`),
+        # and silently taking matches[0] could report a different node's
+        # status/failures. Segment-membership matches both singular tests
+        # (name is the last segment) and generic tests (name precedes the hash).
+        results = data.get("results", [])
         matches = [
-            r for r in data.get("results", []) if selector in r.get("unique_id", "")
+            r
+            for r in results
+            if selector == r.get("unique_id", "")
+            or selector in str(r.get("unique_id", "")).split(".")
         ]
-        if not matches:
-            ran = [r.get("unique_id") for r in data.get("results", [])]
+        if len(matches) != 1:
+            ran = [r.get("unique_id") for r in results]
             raise DbtError(
-                f"dbt test selected no node matching {selector!r}; ran: {ran}"
+                f"dbt test expected exactly one node for selector {selector!r}, "
+                f"matched {len(matches)}; ran: {ran}"
             )
         node = matches[0]
         return str(node.get("status")), int(node.get("failures") or 0)
