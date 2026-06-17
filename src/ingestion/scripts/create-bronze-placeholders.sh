@@ -188,6 +188,7 @@ if ! ch_table_exists silver class_collab_document_activity; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_collab_document_activity (
     insight_tenant_id        String,
+    tenant_id                String,
     email                    String,
     person_key               String,
     date                     Date,
@@ -313,6 +314,8 @@ if ! ch_table_exists silver class_people; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_people (
     unique_key      String,
+    tenant_id       String,
+    source          String,
     email           Nullable(String),
     department_name Nullable(String),
     _version        UInt64
