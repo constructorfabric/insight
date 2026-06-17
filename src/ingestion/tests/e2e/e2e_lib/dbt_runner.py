@@ -148,8 +148,15 @@ class DbtRunner:
             "--vars",
             json.dumps({"worker_id": worker_n}),
         ]
+        # Wipe any prior run_results.json BEFORE running: if `dbt test` crashes
+        # (compile error, CH connection timeout) it may not write a fresh one,
+        # and reading a stale file would report a pass/fail from the LAST run.
+        # After the run, an absent file therefore means dbt failed to produce
+        # results at all, not "0 failures".
+        run_results = self.target_dir / "run_results.json"
+        run_results.unlink(missing_ok=True)
         LOG.info("dbt test --select %s (worker=%s)", selector, worker_ctx.worker_id)
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             cwd=str(self.dbt_project_dir),
             capture_output=True,
@@ -157,10 +164,12 @@ class DbtRunner:
             check=False,  # warn-severity violations exit 0; failures read from run_results
             timeout=timeout_s,
         )
-        run_results = self.target_dir / "run_results.json"
         if not run_results.exists():
             raise DbtError(
-                f"dbt test produced no run_results.json for selector {selector!r}"
+                f"dbt test produced no run_results.json for selector {selector!r} "
+                f"(likely a compile/connection failure, exit={result.returncode})\n"
+                f"stdout tail:\n{result.stdout[-2000:]}\n"
+                f"stderr tail:\n{result.stderr[-1000:]}"
             )
         data = json.loads(run_results.read_text(encoding="utf-8"))
         matches = [

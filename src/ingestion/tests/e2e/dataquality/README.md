@@ -33,6 +33,26 @@ check (PR #1350) this way.
   here so the check's projection resolves. Placeholder/model drift is its own
   class of bug worth a dedicated guard.
 
+## Known limitations / follow-ups (from review)
+
+- **Seeds silver, not bronze.** This proves "bad data in silver → the check
+  fires", but NOT that the bronze→silver transform is correct. If the transform
+  silently dropped negatives, the check would never see them. Closing this is the
+  priority next step, and it is a real task, not a one-line edit: building
+  `+class_collab_document_activity` pulls `m365__bronze_promoted` and both
+  staging models, so `create-bronze-placeholders.sh` must be completed for the
+  whole m365 bronze graph first. Once done, `_seed()` inserts into **bronze**,
+  runs `dbt build`, then runs the check — exercising the transform end to end.
+- **Serial only (shared silver table).** `_seed()` TRUNCATEs and re-inserts, so
+  two tests writing this table concurrently would clobber each other. That is the
+  rig-wide model today — every fixture TRUNCATEs shared tables and the suite runs
+  serially (see `conftest.py`; `worker_id` is already plumbed through the dbt
+  runner for the eventual per-worker-schema fix). This check inherits parallel
+  safety when the rig gets it; it does not add a divergent isolation scheme of
+  its own. A tenant-scoped insert would not help here because the check is
+  table-wide (it does not filter by tenant), so another worker's rows would still
+  be visible.
+
 ## Running it
 
 ```bash

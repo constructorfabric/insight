@@ -51,12 +51,18 @@ COLS = [
 _NIL_TENANT = "00000000-0000-0000-0000-000000000000"
 
 
-def _row(unique_key: str, viewed: float) -> tuple:
+def _row(unique_key: str, viewed: float, *, days_ago: int = 1) -> tuple:
+    # Relative, never hardcoded: a date factory must survive time-bound dbt
+    # logic. The non-negative check has no date filter, but a sibling check
+    # (assert_collab_document_counts_no_spike) filters `date >= today() - 120`
+    # and `>= today() - 3` — a hardcoded 2026 date would be filtered out, the
+    # check would see zero rows, and a seeded violation would falsely "pass".
+    event_date = dt.date.today() - dt.timedelta(days=days_ago)
     return (
         _NIL_TENANT,
         "alice@example.com",
         "alice@example.com",
-        dt.date(2026, 6, 1),
+        event_date,
         "insight_m365",
         unique_key,
         "sharepoint",
