@@ -619,8 +619,18 @@ if ! ch_table_exists bronze_m365 onedrive_activity; then
   echo "  Creating placeholder: bronze_m365.onedrive_activity"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_m365.onedrive_activity (
+    -- tenant_id / source_id are injected as physical record fields by the m365
+    -- connector (connector.yaml adds_fields: insight_tenant_id / insight_source_id),
+    -- so they are real bronze columns the staging model reads directly. Unlike
+    -- bamboohr (which injects tenant via the snapshot macro), m365 needs them here.
+    tenant_id String,
+    source_id String,
     userPrincipalName String,
     lastActivityDate String,
+    reportRefreshDate String,
+    reportPeriod String,
+    viewedOrEditedFileCount Nullable(Float64),
+    syncedFileCount Nullable(Float64),
     sharedInternallyFileCount Nullable(Float64),
     sharedExternallyFileCount Nullable(Float64),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
@@ -634,10 +644,23 @@ if ! ch_table_exists bronze_m365 sharepoint_activity; then
   echo "  Creating placeholder: bronze_m365.sharepoint_activity"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_m365.sharepoint_activity (
+    -- See onedrive_activity above: tenant_id / source_id are connector-injected
+    -- physical fields. SharePoint additionally carries visitedPageCount, which
+    -- the staging model reads (OneDrive casts it NULL instead).
+    tenant_id String,
+    source_id String,
     userPrincipalName String,
     lastActivityDate String,
+    reportRefreshDate String,
+    reportPeriod String,
+    viewedOrEditedFileCount Nullable(Float64),
+    syncedFileCount Nullable(Float64),
     sharedInternallyFileCount Nullable(Float64),
     sharedExternallyFileCount Nullable(Float64),
+    -- Int64 (not Float64) to match the OneDrive staging model's
+    -- CAST(NULL AS Nullable(Int64)); a Float64 here makes the silver UNION
+    -- fail with NO_COMMON_TYPE (Int64 vs Float64).
+    visitedPageCount Nullable(Int64),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',

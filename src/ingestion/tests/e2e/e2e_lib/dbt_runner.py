@@ -111,7 +111,12 @@ class DbtRunner:
                 "outputs": {
                     "test": {
                         "type": "clickhouse",
-                        "host": "127.0.0.1",
+                        # Use the session's CH host, not a hardcoded localhost:
+                        # in E2E_RUN_MODE=docker the runner reaches CH via the
+                        # compose service name (`clickhouse`), and only in host
+                        # mode is it 127.0.0.1. Hardcoding localhost made `dbt
+                        # build` unreachable from the dockerized runner.
+                        "host": self.cfg.ch_host,
                         "port": self.cfg.ch_http_port,
                         "schema": "default",
                         "user": self.cfg.ch_user,
