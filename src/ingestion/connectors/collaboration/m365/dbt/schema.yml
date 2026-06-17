@@ -2,6 +2,19 @@ version: 2
 
 sources:
   - name: bronze_m365
+    # Source freshness (TAF #1322). WINDOWED connector — verified on live data:
+    # the Graph getReport endpoint re-emits the whole `reportPeriod` window
+    # every sync, so `_airbyte_extracted_at` is re-stamped each run and tracks
+    # sync liveness, NOT data freshness (measured: extracted_at 10.6h fresh
+    # while reportRefreshDate 108.7h / 4.5d stale; 24 business dates re-emitted
+    # in the last extraction batch). Anchor on the report's own business date
+    # and use the report tier to absorb Graph's 24–48h publish lag.
+    freshness:
+      warn_after: {count: 72, period: hour}
+      error_after: {count: 120, period: hour}
+    # reportRefreshDate is Nullable(String) 'YYYY-MM-DD'; dbt freshness needs a
+    # timestamp expression, so parse it (verified against live ClickHouse).
+    loaded_at_field: parseDateTimeBestEffortOrNull(reportRefreshDate)
     schema: bronze_m365
     tables:
       - name: email_activity
