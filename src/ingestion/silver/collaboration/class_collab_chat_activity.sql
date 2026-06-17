@@ -11,9 +11,4 @@
     tags=['silver']
 ) }}
 
-SELECT * FROM (
-    {{ union_by_tag('silver:class_collab_chat_activity') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+{{ incremental_watermark(union_by_tag('silver:class_collab_chat_activity'), tenant_col='tenant_id', source_col='insight_source_id') }}

@@ -15,9 +15,4 @@
 -- depends_on: {{ ref('copilot__ai_dev_usage') }}
 -- depends_on: {{ ref('chatgpt_team__ai_dev_usage') }}
 
-SELECT * FROM (
-    {{ union_by_tag('silver:class_ai_dev_usage') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+{{ incremental_watermark(union_by_tag('silver:class_ai_dev_usage'), tenant_col='insight_tenant_id', source_col='source_id') }}
