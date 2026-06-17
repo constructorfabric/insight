@@ -8,10 +8,12 @@ the data-correctness / security boundary that stops one tenant's request from
 resolving against another tenant's data.
 
 This matrix confirms the middleware ACCEPTS a valid tenant and REJECTS the
-missing / empty / nil / malformed cases — on both the liveness probe (`/health`)
-and the real data path (`POST /v1/metrics/{id}/query`), since the isolation
-boundary must hold on every route, not just the one that reads no data. JWT auth
-itself lives at the gateway and is out of scope for this analytics-api-only rig.
+missing / empty / nil / malformed cases on every read route that traverses the
+tenant middleware — the liveness probe (`/health`) and all three data endpoints:
+`POST /v1/metrics/{id}/query` (single), `POST /v1/metrics/queries` (batch), and
+`POST /v1/catalog/get_metrics` (catalog). The isolation boundary must hold on
+every route, not just the one that reads no data. JWT auth itself lives at the
+gateway and is out of scope for this analytics-api-only rig.
 
 Run:
     pytest src/ingestion/tests/e2e/meta/test_tenant_resolution.py -m smoke
@@ -37,22 +39,43 @@ def _health_status(api: AnalyticsApiProcess, headers: dict[str, str]) -> int:
         return c.get("/health").status_code
 
 
-# The metrics-query endpoint is the real data path — where tenant isolation
-# actually guards a read, not just liveness. `face0001` ("Smoke — insight.people
-# direct") is seeded under TEST_TENANT_ID by seed/metrics.yaml. For the rejection
-# cases the metric id is irrelevant: the tenant middleware rejects before the
-# handler ever resolves the metric. A VALID JSON body is sent so a 400 can only
-# come from tenant resolution, never from request-body validation.
+# The three data endpoints below all traverse the tenant middleware, which
+# resolves the tenant server-side and rejects an unresolvable one BEFORE the
+# handler parses the body (see analytics-api `catalog.rs` header). So a
+# bad-tenant request is turned away regardless of body — but we still send a
+# valid Content-Type + body so a 400 can only come from tenant resolution, never
+# from a 415 or body-validation error. `face0001` ("Smoke — insight.people
+# direct") is seeded under TEST_TENANT_ID by seed/metrics.yaml; for the rejection
+# cases the metric id is irrelevant.
 QUERY_METRIC_ID = "00000000-0000-0000-0000-0000face0001"
 _QUERY_BODY = {"$top": 1}
+_BATCH_BODY = {"queries": []}
+_CATALOG_BODY: dict = {}
+
+
+def _post_status(
+    api: AnalyticsApiProcess, headers: dict[str, str], path: str, body: dict
+) -> int:
+    """POST `path` with a JSON body and exactly the given headers."""
+    with httpx.Client(base_url=api.base_url, timeout=10.0, headers=headers) as c:
+        return c.post(path, json=body).status_code
 
 
 def _query_status(api: AnalyticsApiProcess, headers: dict[str, str]) -> int:
-    """POST /v1/metrics/{id}/query with exactly the given headers — the read path
-    that actually returns tenant-scoped data."""
-    url = f"/v1/metrics/{QUERY_METRIC_ID}/query"
-    with httpx.Client(base_url=api.base_url, timeout=10.0, headers=headers) as c:
-        return c.post(url, json=_QUERY_BODY).status_code
+    """POST /v1/metrics/{id}/query — single-metric read path."""
+    return _post_status(
+        api, headers, f"/v1/metrics/{QUERY_METRIC_ID}/query", _QUERY_BODY
+    )
+
+
+def _batch_query_status(api: AnalyticsApiProcess, headers: dict[str, str]) -> int:
+    """POST /v1/metrics/queries — batch read path."""
+    return _post_status(api, headers, "/v1/metrics/queries", _BATCH_BODY)
+
+
+def _catalog_status(api: AnalyticsApiProcess, headers: dict[str, str]) -> int:
+    """POST /v1/catalog/get_metrics — metric-catalog read path."""
+    return _post_status(api, headers, "/v1/catalog/get_metrics", _CATALOG_BODY)
 
 
 def test_valid_tenant_is_accepted(analytics_api: AnalyticsApiProcess) -> None:
@@ -69,6 +92,26 @@ def test_valid_tenant_is_accepted_on_query_endpoint(
     proving the boundary admits a valid tenant where reads actually happen."""
     status = _query_status(analytics_api, {TENANT_HEADER: str(TEST_TENANT_ID)})
     assert status == 200, f"valid tenant should reach the query endpoint, got {status}"
+
+
+def test_valid_tenant_is_accepted_on_batch_query_endpoint(
+    analytics_api: AnalyticsApiProcess,
+) -> None:
+    """A resolvable tenant reaches the batch read path: an (empty) batch query
+    returns 200, proving the boundary admits a valid tenant on /v1/metrics/queries."""
+    status = _batch_query_status(analytics_api, {TENANT_HEADER: str(TEST_TENANT_ID)})
+    assert status == 200, f"valid tenant should reach the batch endpoint, got {status}"
+
+
+def test_valid_tenant_is_accepted_on_catalog_endpoint(
+    analytics_api: AnalyticsApiProcess,
+) -> None:
+    """A resolvable tenant reaches the catalog read path: get_metrics returns 200,
+    proving the boundary admits a valid tenant on /v1/catalog/get_metrics."""
+    status = _catalog_status(analytics_api, {TENANT_HEADER: str(TEST_TENANT_ID)})
+    assert status == 200, (
+        f"valid tenant should reach the catalog endpoint, got {status}"
+    )
 
 
 # Each rejection case below is its own test rather than one parametrized matrix:
@@ -91,6 +134,8 @@ def _assert_tenant_rejected_400(
     for probe, where in (
         (_health_status, "/health"),
         (_query_status, "/v1/metrics/{id}/query"),
+        (_batch_query_status, "/v1/metrics/queries"),
+        (_catalog_status, "/v1/catalog/get_metrics"),
     ):
         status = probe(api, headers)
         assert status == 400, (
@@ -116,7 +161,9 @@ def test_nil_uuid_tenant_is_rejected(analytics_api: AnalyticsApiProcess) -> None
     _assert_tenant_rejected_400(analytics_api, {TENANT_HEADER: NIL_TENANT}, "nil uuid")
 
 
-def test_malformed_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+def test_malformed_tenant_header_is_rejected(
+    analytics_api: AnalyticsApiProcess,
+) -> None:
     """Non-UUID header → `Uuid::parse_str("not-a-uuid")` fails → None → 400."""
     _assert_tenant_rejected_400(
         analytics_api, {TENANT_HEADER: "not-a-uuid"}, "malformed header"
