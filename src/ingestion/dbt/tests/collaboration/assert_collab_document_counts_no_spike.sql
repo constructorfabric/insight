@@ -23,8 +23,10 @@
 --     so the window sort/scan never grows with total history. A user with fewer
 --     than 14 active days in that window simply isn't evaluated (too little
 --     signal), which the prior_n guard below enforces.
---   * output is capped to the last 3 days, so a scheduled daily run only reports
---     newly-appearing spikes, not the same old spike re-flagged every run.
+--   * output is capped to rows collected in the last 3 days (collected_at, the
+--     row arrival time -- not activity date), so a scheduled daily run reports
+--     newly-arrived spikes once, and a late backfill landing today for an older
+--     activity date is still caught instead of being silently dropped.
 --
 -- Method: unpivot the five activity counts, then for each series compute a
 -- trailing baseline over the previous 28 observed days (excluding the current
@@ -43,10 +45,12 @@
 WITH recent AS (
     SELECT
         tenant_id,
+        insight_source_id,
         person_key,
         product,
         data_source,
         date,
+        collected_at,
         viewed_or_edited_count,
         synced_count,
         shared_internally_count,
@@ -58,10 +62,12 @@ WITH recent AS (
 unpivoted AS (
     SELECT
         tenant_id,
+        insight_source_id,
         person_key,
         product,
         data_source,
         date,
+        collected_at,
         m.1 AS metric,
         m.2 AS value
     FROM recent
@@ -78,10 +84,12 @@ unpivoted AS (
 baselined AS (
     SELECT
         tenant_id,
+        insight_source_id,
         person_key,
         product,
         data_source,
         date,
+        collected_at,
         metric,
         value,
         count()           OVER w AS prior_n,
@@ -90,13 +98,14 @@ baselined AS (
         max(date)         OVER w AS prev_date
     FROM unpivoted
     WINDOW w AS (
-        PARTITION BY tenant_id, person_key, product, data_source, metric
+        PARTITION BY tenant_id, insight_source_id, person_key, product, data_source, metric
         ORDER BY date
         ROWS BETWEEN 28 PRECEDING AND 1 PRECEDING
     )
 )
 SELECT
     tenant_id,
+    insight_source_id,
     person_key,
     product,
     data_source,
@@ -112,4 +121,4 @@ WHERE prior_n >= 14
   AND (date - prev_date) <= 35
   AND value > base_mean + 5 * base_sd
   AND value > base_mean * 10
-  AND date >= today() - 3
+  AND collected_at >= today() - 3
