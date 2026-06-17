@@ -2,6 +2,12 @@ version: 2
 
 sources:
   - name: bronze_zulip_proxy
+    # Source freshness (TAF #1322): the newest Airbyte row must be recent,
+    # else the sync silently stopped and dashboards go stale with no error.
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
     schema: bronze_zulip_proxy
     tables:
       - name: users
