@@ -9,7 +9,7 @@
     tags=['salesforce', 'silver:class_crm_deals']
 ) }}
 
-SELECT * FROM (
+WITH src AS (
     SELECT
         tenant_id,
         source_id,
@@ -32,7 +32,7 @@ SELECT * FROM (
         CAST(NULL AS Nullable(Float64))                 AS acv,
         CAST(NULL AS Nullable(Float64))                 AS tcv,
         CAST(NULL AS Nullable(Float64))                 AS arr,
-        toDateOrNull(CloseDate)                         AS close_date,
+        CloseDate                                       AS close_date,
         OwnerId                                         AS owner_id,
         -- Rep who created the Opportunity record (universal SF audit field).
         -- Parallels HubSpot's `properties_hs_created_by_user_id`.
@@ -56,14 +56,22 @@ SELECT * FROM (
             'IsDeleted', if(coalesce(IsDeleted, false), 'true', 'false')
         ))                                              AS metadata,
         custom_fields,
-        parseDateTime64BestEffortOrNull(CreatedDate, 3)      AS created_at,
-        parseDateTime64BestEffortOrNull(LastModifiedDate, 3) AS updated_at,
+        CreatedDate                                     AS created_at,
+        LastModifiedDate                                AS updated_at,
         data_source,
-        toUnixTimestamp64Milli(
-            parseDateTime64BestEffort(SystemModstamp)
-        )                                               AS _version
+        coalesce(toUnixTimestamp64Milli(SystemModstamp), 0) AS _version
     FROM {{ source('bronze_salesforce', 'Opportunity') }}
 )
 {% if is_incremental() %}
-WHERE _version > coalesce((SELECT max(_version) FROM {{ this }}), 0)
+SELECT src.*
+FROM src
+LEFT JOIN (
+    SELECT tenant_id, source_id, max(_version) AS hwm
+    FROM {{ this }}
+    GROUP BY tenant_id, source_id
+) w
+  ON w.tenant_id = src.tenant_id AND w.source_id = src.source_id
+WHERE src._version > coalesce(w.hwm, 0)
+{% else %}
+SELECT * FROM src
 {% endif %}
