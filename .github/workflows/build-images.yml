@@ -181,21 +181,86 @@ jobs:
   # work in the gitops promotion flow (see publish-chart for the appVersion
   # logic).
 
+  # Per-arch backend builds run in parallel on native runners (amd64 on
+  # ubuntu-latest, arm64 on ubuntu-24.04-arm). Each leg pushes by digest
+  # only — the tagged multi-arch manifest is assembled by the merge-* job
+  # below once both legs finish. This avoids QEMU emulation entirely:
+  # `cargo build` / `dotnet publish` run natively on each arch's runner.
   backend-api-gateway:
     needs: changes
     if: |
       needs.changes.outputs.api_gateway == 'true'
       || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      # QEMU enables cross-arch emulation so a single amd64 runner can build
-      # arm64 layers too. Required for the `platforms:` list on
-      # docker/build-push-action below (single-arch buildx alone can't cross).
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
+        with:
+          context: src/backend
+          file: src/backend/services/api-gateway/Dockerfile
+          platforms: ${{ matrix.platform }}
+          # push-by-digest=true emits one untagged manifest per arch into
+          # GHCR; the merge job below joins them into the final tagged
+          # multi-arch manifest. push=false (PRs) → buildx still builds,
+          # validating the Dockerfile, but nothing is pushed.
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-api-gateway,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          # Scope cache per arch so amd64 and arm64 don't evict each other.
+          cache-from: type=gha,scope=api-gateway-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=api-gateway-${{ matrix.arch }},ignore-error=true
+      - name: Export digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-api-gateway-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Assemble the multi-arch manifest from the per-arch digests and attest
+  # the manifest. Runs only on main pushes (the per-arch legs don't push
+  # on PRs). attest-build-provenance binds to the manifest digest, so
+  # `gh attestation verify oci://<image>:<tag>` covers both arches.
+  merge-api-gateway:
+    needs: [changes, backend-api-gateway]
+    if: |
+      always()
+      && needs.backend-api-gateway.result == 'success'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-api-gateway-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -205,31 +270,30 @@ jobs:
         with:
           images: ${{ env.IMAGE_PREFIX }}/insight-api-gateway
           tags: |
-            type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
-            type=raw,value=latest,enable={{is_default_branch}}
-      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        id: build
-        with:
-          context: src/backend
-          file: src/backend/services/api-gateway/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-      # Keyless SLSA provenance: attests "this digest was built by THIS
-      # workflow at THIS commit" via the runner's short-lived OIDC identity —
-      # no stored signing keys. push-to-registry stores the attestation next
-      # to the image in GHCR (OCI referrer) so registry-only consumers
-      # (cluster admission controllers) can verify without GitHub API access.
-      # Verify: gh attestation verify oci://<image> --repo constructorfabric/insight
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-api-gateway@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-api-gateway:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      # Keyless SLSA provenance on the MANIFEST digest — covers both arches
+      # with one attestation (see backend-api-gateway in earlier commits for
+      # the keyless-OIDC contract). Verify:
+      #   gh attestation verify oci://<image>:<tag> --repo constructorfabric/insight
       - name: Attest build provenance
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-api-gateway
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
 
   backend-analytics-api:
@@ -237,14 +301,67 @@ jobs:
     if: |
       needs.changes.outputs.analytics_api == 'true'
       || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      # QEMU for cross-arch — see backend-api-gateway for the contract.
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
+        with:
+          context: src/backend
+          file: src/backend/services/analytics-api/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-analytics-api,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          cache-from: type=gha,scope=analytics-api-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=analytics-api-${{ matrix.arch }},ignore-error=true
+      - name: Export digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-analytics-api-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-analytics-api:
+    needs: [changes, backend-analytics-api]
+    if: |
+      always()
+      && needs.backend-analytics-api.result == 'success'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-analytics-api-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -254,26 +371,26 @@ jobs:
         with:
           images: ${{ env.IMAGE_PREFIX }}/insight-analytics-api
           tags: |
-            type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
-            type=raw,value=latest,enable={{is_default_branch}}
-      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        id: build
-        with:
-          context: src/backend
-          file: src/backend/services/analytics-api/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-      # Keyless SLSA provenance — see backend-api-gateway for the contract.
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-analytics-api@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-analytics-api:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-analytics-api
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
 
   backend-identity:
@@ -281,11 +398,19 @@ jobs:
     if: |
       needs.changes.outputs.identity == 'true'
       || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      # QEMU for cross-arch — see backend-api-gateway for the contract.
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -293,13 +418,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ${{ env.IMAGE_PREFIX }}/insight-identity
-          tags: |
-            type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
-            type=raw,value=latest,enable={{is_default_branch}}
       # Context is src/backend/ (uniform with api-gateway + analytics-api)
       # so the Dockerfile can reach src/backend/docker-entrypoint.sh —
       # the shared ENABLE_AUTO_RELOAD-aware entrypoint added in the
@@ -310,19 +428,71 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/identity/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-      # Keyless SLSA provenance — see backend-api-gateway for the contract.
-      - name: Attest build provenance
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-identity,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          cache-from: type=gha,scope=identity-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=identity-${{ matrix.arch }},ignore-error=true
+      - name: Export digest
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-identity-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-identity:
+    needs: [changes, backend-identity]
+    if: |
+      always()
+      && needs.backend-identity.result == 'success'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-identity-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/insight-identity
+          tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-identity@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-identity:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-identity
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
 
   # ─── Toolbox build (with dbt parse smoke) ──────────────────────────────────
@@ -330,17 +500,27 @@ jobs:
   # project at build time, so a descriptor-only change (commit A from
   # bump-descriptors) MUST re-trigger it. paths-filter for `toolbox` matches
   # `src/ingestion/**` (which includes descriptor.yaml).
+  #
+  # Per-arch matrix runs amd64 and arm64 builds in parallel on native
+  # runners; merge-toolbox below assembles the multi-arch manifest.
   toolbox:
     needs: changes
     if: |
       needs.changes.outputs.toolbox == 'true'
       || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-
-      # QEMU for cross-arch — see backend-api-gateway for the contract.
-      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -351,27 +531,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ${{ env.IMAGE_PREFIX }}/insight-toolbox
-          tags: |
-            type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      # Build → validate → push. The build step loads the image into the
-      # local Docker daemon so the validate step can `docker run` against it;
-      # the push step reuses the buildx cache (essentially free). Without
-      # the validate step a broken dbt project (duplicate model name,
-      # broken `ref()`, jinja error, schema.yml mismatch) only manifests
-      # at first CronWorkflow run in the cluster.
+      # Build → validate (amd64 leg only) → push by digest. Python toolbox
+      # content is arch-agnostic, so we validate once on amd64 and skip
+      # validate on arm64. The validate-build uses `load: true` (single-arch
+      # only, into the runner's Docker daemon) so `docker run` can exercise
+      # `dbt parse`. The push-build then reuses the buildx cache — mostly
+      # cache-hits on amd64, full build on arm64 (native, fast).
       #
-      # Validate step is amd64-only by necessity: `load: true` cannot import
-      # a multi-arch manifest into the runner's Docker daemon (single-arch
-      # only), and the `docker run` that follows must execute natively on
-      # the amd64 runner. The arm64 leg is built+pushed in the push step
-      # below (no local load needed).
-      - name: Build toolbox image (load locally)
+      # Caveat: if validate fails on amd64, the arm64 leg may have already
+      # pushed an untagged digest. merge-toolbox is gated on toolbox=success
+      # so the orphan never gets tagged; GHCR retention reclaims it.
+      - name: Build toolbox image (load locally, amd64 only)
+        if: matrix.arch == 'amd64'
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/ingestion
@@ -380,10 +551,11 @@ jobs:
           load: true
           push: false
           tags: insight-toolbox:ci-validate
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
+          cache-from: type=gha,scope=toolbox-amd64
+          cache-to: type=gha,mode=max,scope=toolbox-amd64,ignore-error=true
 
       - name: Validate dbt project (dbt parse)
+        if: matrix.arch == 'amd64'
         # `dbt parse` exercises the dbt manifest: duplicate model/test
         # names, broken `ref()`/`source()`, jinja syntax errors,
         # schema.yml model patches that don't match a model — all error
@@ -411,48 +583,165 @@ jobs:
             insight-toolbox:ci-validate \
             dbt parse --profiles-dir /profiles
 
-      - name: Push toolbox image
-        id: push
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      - name: Build and push toolbox image (by digest)
+        id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-toolbox,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          cache-from: type=gha,scope=toolbox-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=toolbox-${{ matrix.arch }},ignore-error=true
 
-      # Keyless SLSA provenance — see backend-api-gateway for the contract.
-      - name: Attest build provenance
+      - name: Export digest
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-toolbox-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-toolbox:
+    needs: [changes, toolbox]
+    if: |
+      always()
+      && needs.toolbox.result == 'success'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-toolbox-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/insight-toolbox
+          tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-toolbox@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-toolbox:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-toolbox
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
 
   # ─── Connector image build (matrix-driven, descriptor-discovered) ──────────
-  # One matrix leg per `descriptor.yaml.images.<key>` entry that fires this
-  # run (see discover-images for the firing rule). Build identity (`name`,
-  # `dockerfile`, `context`) is read from the matrix entry — there is no
-  # per-connector hardcode in this workflow.
+  # One matrix leg per `descriptor.yaml.images.<key>` entry × arch that
+  # fires this run (see discover-images for the firing rule). Build
+  # identity (`name`, `dockerfile`, `context`) is read from the matrix
+  # entry — there is no per-connector hardcode in this workflow.
+  #
+  # The matrix is a cross-product: every connector entry × {amd64, arm64}.
+  # Each leg pushes by digest; merge-image below assembles the multi-arch
+  # manifest per entry.
   build-image:
     needs: [changes, discover-images]
     if: needs.discover-images.outputs.any == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
+        with:
+          context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
+          file:    ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          # Scope cache per (image name, arch) so unrelated connectors and
+          # cross-arch builds don't evict each other.
+          cache-from: type=gha,scope=${{ matrix.entry.name }}-${{ matrix.arch }}
+          cache-to:   type=gha,mode=max,scope=${{ matrix.entry.name }}-${{ matrix.arch }},ignore-error=true
+      - name: Export digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.entry.name }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # One merge leg per connector entry: pulls the per-arch digests this run
+  # produced, assembles the multi-arch manifest at <build_tag>+latest, and
+  # attests the manifest digest.
+  merge-image:
+    needs: [changes, discover-images, build-image]
+    if: |
+      always()
+      && needs.discover-images.outputs.any == 'true'
+      && needs.build-image.result == 'success'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
-      # QEMU for cross-arch — see backend-api-gateway for the contract.
-      - uses: docker/setup-qemu-action@v3
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.entry.name }}-*
+          merge-multiple: true
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -462,28 +751,26 @@ jobs:
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}
           tags: |
-            type=raw,value=${{ needs.changes.outputs.build_tag }},enable={{is_default_branch}}
-            type=raw,value=latest,enable={{is_default_branch}}
-      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        id: build
-        with:
-          context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
-          file:    ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push:    ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          tags:    ${{ steps.meta.outputs.tags }}
-          labels:  ${{ steps.meta.outputs.labels }}
-          # Scope cache per image name so unrelated connectors don't evict
-          # each other's layer cache.
-          cache-from: type=gha,scope=${{ matrix.entry.name }}
-          cache-to:   type=gha,mode=max,scope=${{ matrix.entry.name }},ignore-error=true
-      # Keyless SLSA provenance — see backend-api-gateway for the contract.
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
 
   # ─── Connector descriptor bump ─────────────────────────────────────────────
@@ -504,27 +791,30 @@ jobs:
     needs:
       - changes
       - discover-images
-      - backend-api-gateway
-      - backend-analytics-api
-      - backend-identity
-      - toolbox
-      - build-image
+      - merge-api-gateway
+      - merge-analytics-api
+      - merge-identity
+      - merge-toolbox
+      - merge-image
     # All siblings must finish first — bump-descriptors auto-commits to main
     # and that push retriggers the workflow, so we must NOT pin descriptors
     # while a backend service or toolbox is still building or has just failed
     # tests. The `success || skipped` shape mirrors publish-chart: any of
-    # the backend/toolbox jobs may legitimately be `skipped` when `changes`
-    # didn't flag them, but they must never be `failure` or `cancelled`.
+    # the merge-* jobs may legitimately be `skipped` when its underlying
+    # build job was skipped (paths-filter didn't flag it), but they must
+    # never be `failure` or `cancelled`. Each merge-* job's manifest-push
+    # is what tags the canonical <build_tag> images, so descriptor refs
+    # only safely point at those tags once the merge completes.
     if: |
       always()
       && github.event_name == 'push'
       && github.ref == 'refs/heads/main'
       && needs.discover-images.outputs.any == 'true'
-      && needs.build-image.result == 'success'
-      && (needs.backend-api-gateway.result   == 'success' || needs.backend-api-gateway.result   == 'skipped')
-      && (needs.backend-analytics-api.result == 'success' || needs.backend-analytics-api.result == 'skipped')
-      && (needs.backend-identity.result      == 'success' || needs.backend-identity.result      == 'skipped')
-      && (needs.toolbox.result               == 'success' || needs.toolbox.result               == 'skipped')
+      && needs.merge-image.result == 'success'
+      && (needs.merge-api-gateway.result   == 'success' || needs.merge-api-gateway.result   == 'skipped')
+      && (needs.merge-analytics-api.result == 'success' || needs.merge-analytics-api.result == 'skipped')
+      && (needs.merge-identity.result      == 'success' || needs.merge-identity.result      == 'skipped')
+      && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
     runs-on: ubuntu-latest
     outputs:
       # `committed` is set to 'true' when this job actually pushed a
@@ -656,22 +946,22 @@ jobs:
     needs:
       - changes
       - discover-images
-      - backend-api-gateway
-      - backend-analytics-api
-      - backend-identity
-      - toolbox
-      - build-image
+      - merge-api-gateway
+      - merge-analytics-api
+      - merge-identity
+      - merge-toolbox
+      - merge-image
       - bump-descriptors
     if: |
       always()
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && github.ref == 'refs/heads/main'
-      && (needs.backend-api-gateway.result   == 'success' || needs.backend-api-gateway.result   == 'skipped')
-      && (needs.backend-analytics-api.result == 'success' || needs.backend-analytics-api.result == 'skipped')
-      && (needs.backend-identity.result      == 'success' || needs.backend-identity.result      == 'skipped')
-      && (needs.toolbox.result               == 'success' || needs.toolbox.result               == 'skipped')
-      && (needs.build-image.result           == 'success' || needs.build-image.result           == 'skipped')
-      && (needs.bump-descriptors.result      == 'success' || needs.bump-descriptors.result      == 'skipped')
+      && (needs.merge-api-gateway.result   == 'success' || needs.merge-api-gateway.result   == 'skipped')
+      && (needs.merge-analytics-api.result == 'success' || needs.merge-analytics-api.result == 'skipped')
+      && (needs.merge-identity.result      == 'success' || needs.merge-identity.result      == 'skipped')
+      && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
+      && (needs.merge-image.result         == 'success' || needs.merge-image.result         == 'skipped')
+      && (needs.bump-descriptors.result    == 'success' || needs.bump-descriptors.result    == 'skipped')
       && needs.bump-descriptors.outputs.committed != 'true'
       && (
         needs.changes.outputs.api_gateway   == 'true'
