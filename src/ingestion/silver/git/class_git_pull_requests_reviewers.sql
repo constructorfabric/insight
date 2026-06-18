@@ -1,5 +1,6 @@
 -- depends_on: {{ ref('github__pull_requests_reviewers') }}
 -- depends_on: {{ ref('bitbucket_cloud__pull_requests_reviewers') }}
+-- depends_on: {{ ref('gitlab__pull_requests_reviewers') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',

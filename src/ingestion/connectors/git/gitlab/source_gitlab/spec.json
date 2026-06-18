@@ -1,0 +1,77 @@
+{
+  "documentationUrl": "https://docs.gitlab.com/api/rest/",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "GitLab Source (self-hosted)",
+    "type": "object",
+    "required": [
+      "insight_tenant_id",
+      "insight_source_id",
+      "gitlab_url",
+      "gitlab_token"
+    ],
+    "additionalProperties": true,
+    "properties": {
+      "insight_tenant_id": {
+        "type": "string",
+        "title": "Tenant ID",
+        "description": "Tenant isolation identifier (UUID).",
+        "order": 0
+      },
+      "insight_source_id": {
+        "type": "string",
+        "title": "Source ID",
+        "description": "Stable identifier for this GitLab instance (e.g., 'gitlab-acme-prod').",
+        "examples": ["gitlab-acme-prod"],
+        "order": 1
+      },
+      "gitlab_url": {
+        "type": "string",
+        "title": "Instance URL",
+        "description": "Base URL of the self-hosted GitLab instance (no trailing slash).",
+        "examples": ["https://gitlab.example.com"],
+        "order": 2
+      },
+      "gitlab_token": {
+        "type": "string",
+        "title": "Access Token",
+        "description": "GitLab Personal Access Token. Required scopes: read_api, read_repository, read_user.",
+        "airbyte_secret": true,
+        "order": 3
+      },
+      "gitlab_groups": {
+        "type": "array",
+        "items": { "type": "string" },
+        "title": "Groups",
+        "description": "Top-level group full paths to collect; subgroups and projects are discovered recursively. Leave empty to collect the entire instance (every project the token can access — requires an admin or broad service token for full coverage).",
+        "examples": [["acme", "acme/platform"]],
+        "order": 4
+      },
+      "gitlab_projects": {
+        "type": "array",
+        "items": { "type": "string" },
+        "title": "Additional Projects",
+        "description": "Explicit project paths or numeric IDs to collect in addition to the configured groups.",
+        "order": 5
+      },
+      "gitlab_start_date": {
+        "type": "string",
+        "title": "Start Date",
+        "description": "Start date for initial collection (YYYY-MM-DD). Commits and merge requests before this date are skipped on the first run.",
+        "format": "date",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+        "examples": ["2024-01-01"],
+        "order": 6
+      },
+      "gitlab_max_workers": {
+        "type": "integer",
+        "title": "Max Concurrent Requests",
+        "description": "Maximum number of GitLab API requests in flight at once. Higher values speed up large syncs but put more load on the instance; the connector still backs off reactively on HTTP 429. Raise it for a controlled self-hosted instance, lower it for a shared one.",
+        "default": 8,
+        "minimum": 1,
+        "maximum": 32,
+        "order": 7
+      }
+    }
+  }
+}
