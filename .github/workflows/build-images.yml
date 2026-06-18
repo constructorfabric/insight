@@ -189,6 +189,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # QEMU enables cross-arch emulation so a single amd64 runner can build
+      # arm64 layers too. Required for the `platforms:` list on
+      # docker/build-push-action below (single-arch buildx alone can't cross).
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -208,6 +212,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/api-gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -235,6 +240,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # QEMU for cross-arch — see backend-api-gateway for the contract.
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -254,6 +261,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/analytics-api/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -276,6 +284,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # QEMU for cross-arch — see backend-api-gateway for the contract.
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -300,6 +310,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/identity/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -328,6 +339,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # QEMU for cross-arch — see backend-api-gateway for the contract.
+      - uses: docker/setup-qemu-action@v3
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -351,11 +365,18 @@ jobs:
       # the validate step a broken dbt project (duplicate model name,
       # broken `ref()`, jinja error, schema.yml mismatch) only manifests
       # at first CronWorkflow run in the cluster.
+      #
+      # Validate step is amd64-only by necessity: `load: true` cannot import
+      # a multi-arch manifest into the runner's Docker daemon (single-arch
+      # only), and the `docker run` that follows must execute natively on
+      # the amd64 runner. The arm64 leg is built+pushed in the push step
+      # below (no local load needed).
       - name: Build toolbox image (load locally)
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
+          platforms: linux/amd64
           load: true
           push: false
           tags: insight-toolbox:ci-validate
@@ -397,6 +418,7 @@ jobs:
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -426,6 +448,8 @@ jobs:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
+      # QEMU for cross-arch — see backend-api-gateway for the contract.
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -445,6 +469,7 @@ jobs:
         with:
           context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
           file:    ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
+          platforms: linux/amd64,linux/arm64
           push:    ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags:    ${{ steps.meta.outputs.tags }}
           labels:  ${{ steps.meta.outputs.labels }}
