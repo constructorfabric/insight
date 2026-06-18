@@ -35,4 +35,6 @@ jobs:
       - name: No dbt model may dedup on a nullable key
         run: python scripts/ci/nullable_key_audit.py
       - name: Self-test the guard's parser
-        run: python -m pytest scripts/ci/test_nullable_key_audit.py -q
+        run: |
+          python -m pip install --quiet pytest==8.3.4
+          python -m pytest scripts/ci/test_nullable_key_audit.py -q
