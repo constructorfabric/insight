@@ -154,3 +154,36 @@ LEFT JOIN insight.people AS p ON lower(o.email) = p.person_id
 WHERE o.source = 'claude_team'
   AND o.email IS NOT NULL AND o.email != ''
   AND o.overage_cents IS NOT NULL;
+
+-- =====================================================================
+-- ai_person_period — classify the new cc_overage key (issue #1286 guard)
+-- =====================================================================
+-- The period-rollup view (last set in 20260610000000) reclassifies each
+-- bullet metric_key: counters → sum, active flags → max, ratios → avg.
+-- A key absent from the multiIf silently defaults to avg() — the #1286
+-- defect. cc_overage is a per-period spend counter (twin of cc_cost, a
+-- "period total" sibling), so it MUST sum, not average — otherwise a
+-- monthly overage snapshot would be divided by each person's active-day
+-- count. Recreated here with cc_overage added to the sum branch; the
+-- Rust guard test (m20260610_000001) mirrors this list.
+-- =====================================================================
+DROP VIEW IF EXISTS insight.ai_person_period;
+CREATE VIEW insight.ai_person_period AS
+SELECT
+    metric_key,
+    person_id,
+    any(org_unit_id)                                              AS org_unit_id,
+    max(metric_date)                                              AS metric_date,
+    multiIf(
+        metric_key IN ('chatgpt','cc_lines','cc_sessions','cursor_agents',
+                       'cursor_lines','claude_web','cursor_completions','team_ai_loc',
+                       'codex_lines','codex_sessions','cc_offered','cc_tool_accept',
+                       'cc_cost','cc_overage','prs_total','prs_with_cc',
+                       'cursor_offered','cursor_total_lines'),
+        sum(metric_value),
+        metric_key IN ('active_ai_members','cursor_active','cc_active','codex_active',
+                       'chatgpt_active'),
+        max(metric_value),
+        avg(metric_value))                                        AS v
+FROM insight.ai_bullet_rows
+GROUP BY metric_key, person_id;
