@@ -68,6 +68,11 @@ services:
 
   mariadb:
     <<: *restart-policy
+    # Only started when MARIADB_EXTERNAL!=true (dev-compose.sh up adds the
+    # `local-mariadb` profile in that case). For external MariaDB, point
+    # MARIADB_HOST / MARIADB_INTERNAL_PORT at the real host and leave this
+    # profile inactive.
+    profiles: ["local-mariadb"]
     image: mariadb:11.4
     container_name: insight-mariadb
     networks: [insight]
@@ -89,6 +94,11 @@ services:
 
   clickhouse:
     <<: *restart-policy
+    # Only started when CLICKHOUSE_EXTERNAL!=true (dev-compose.sh up adds
+    # the `local-clickhouse` profile in that case). For external
+    # ClickHouse, point CLICKHOUSE_HOST / CLICKHOUSE_INTERNAL_HTTP_PORT at
+    # the real host and leave this profile inactive.
+    profiles: ["local-clickhouse"]
     image: clickhouse/clickhouse-server:24.8
     container_name: insight-clickhouse
     networks: [insight]
@@ -177,7 +187,9 @@ services:
       context: src/backend
       dockerfile: services/api-gateway/Dockerfile
     depends_on:
-      mariadb:    { condition: service_healthy }
+      # required: false → compose skips this dependency when mariadb's
+      # `local-mariadb` profile isn't active (external MariaDB mode).
+      mariadb:    { condition: service_healthy, required: false }
       identity:   { condition: service_started  }
     environment:
       <<: *backend-env
@@ -214,15 +226,17 @@ services:
       context: src/backend
       dockerfile: services/analytics-api/Dockerfile
     depends_on:
-      mariadb:    { condition: service_healthy }
-      clickhouse: { condition: service_healthy }
+      # required: false → compose skips this dependency when the local
+      # profile isn't active (external MariaDB / ClickHouse modes).
+      mariadb:    { condition: service_healthy, required: false }
+      clickhouse: { condition: service_healthy, required: false }
       redis:      { condition: service_healthy }
     environment:
       <<: *backend-env
       ANALYTICS__bind_addr:          "0.0.0.0:8081"
-      ANALYTICS__database_url:       "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@mariadb:3306/analytics"
-      ANALYTICS__clickhouse_url:     "http://clickhouse:8123"
-      ANALYTICS__clickhouse_database: "insight"
+      ANALYTICS__database_url:       "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
+      ANALYTICS__clickhouse_url:     "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
+      ANALYTICS__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
       ANALYTICS__clickhouse_user:    "${CLICKHOUSE_USER:-insight}"
       ANALYTICS__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
       ANALYTICS__identity_url:       "http://identity:8082"
@@ -245,11 +259,13 @@ services:
       context: src/backend
       dockerfile: services/identity/Dockerfile
     depends_on:
-      mariadb: { condition: service_healthy }
+      # required: false → compose skips this dependency when mariadb's
+      # `local-mariadb` profile isn't active (external MariaDB mode).
+      mariadb: { condition: service_healthy, required: false }
     environment:
       <<: *backend-env
       ASPNETCORE_URLS: "http://0.0.0.0:8082"
-      IDENTITY__mariadb__url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@mariadb:3306/identity"
+      IDENTITY__mariadb__url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/identity"
       IDENTITY__identity__bind_addr: "0.0.0.0:8082"
       IDENTITY__identity__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
     volumes:
@@ -322,6 +338,11 @@ services:
   insight-front-ghcr:
     <<: *restart-policy
     profiles: ["front-ghcr"]
+    # Ghcr images are amd64-only for now (arm64 builds are tracked
+    # separately). Pin the platform so Apple-silicon hosts pull the
+    # amd64 manifest and run it under Rosetta instead of erroring out
+    # with "no matching manifest for linux/arm64/v8".
+    platform: linux/amd64
     image: ${FRONTEND_IMAGE:-ghcr.io/constructorfabric/insight-front:latest}
     container_name: insight-front
     networks:
@@ -329,6 +350,29 @@ services:
         aliases: [insight-front]
     environment:
       CSP_REMOTE: ${CSP_REMOTE:-}
+      # Production builds of the FE refuse to dev-impersonate unless the
+      # entrypoint emits window.__DEV_CONFIG__. Forwarding the wizard's
+      # dev email here is what makes the ghcr image actually render data
+      # in the compose stack. The entrypoint refuses to honor both
+      # DEV_USER_EMAIL and OIDC_* simultaneously.
+      DEV_USER_EMAIL: ${VITE_DEV_USER_EMAIL:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-}
+    volumes:
+      # Patch script — inserts `location /api/ → api-gateway:8080` into
+      # the FE image's nginx template at a known marker, then chains to
+      # the original entrypoint. Avoids maintaining a parallel template
+      # (drift surface): we describe just the diff we need. The
+      # published image has no /api proxy because k8s ingress routes
+      # /api → api-gateway directly; compose has no front-proxy so the
+      # hop has to land locally.
+      - ./compose/front-ghcr-patch-template.sh:/compose/front-ghcr-patch-template.sh:ro
+    entrypoint: ["/bin/sh", "/compose/front-ghcr-patch-template.sh"]
+    # Restate the image's baked CMD — compose's `entrypoint:` override
+    # implicitly clears it, which would leave the patch script chaining
+    # to `/docker-entrypoint.sh` with no args, exiting silently.
+    command: ["nginx", "-g", "daemon off;"]
     ports:
       - "${FRONTEND_PORT:-3000}:80"
 
@@ -406,21 +450,24 @@ services:
       context: compose/seed
       dockerfile: Dockerfile
     depends_on:
-      mariadb:    { condition: service_healthy }
-      clickhouse: { condition: service_healthy }
+      # required: false → seeding an external DB doesn't need the local
+      # mariadb/clickhouse profiles to be active.
+      mariadb:    { condition: service_healthy, required: false }
+      clickhouse: { condition: service_healthy, required: false }
       identity:   { condition: service_started }
     environment:
       # Identity / persons anchor
       VITE_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-}"
       TENANT_DEFAULT_ID:   "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
-      # MariaDB
-      MARIADB_HOST:        mariadb
-      MARIADB_PORT:        "3306"
+      # MariaDB — falls back to the local docker service name/port; the
+      # wizard rewrites these when external MariaDB is selected.
+      MARIADB_HOST:        "${MARIADB_HOST:-mariadb}"
+      MARIADB_PORT:        "${MARIADB_INTERNAL_PORT:-3306}"
       MARIADB_USER:        "${MARIADB_USER:-insight}"
       MARIADB_PASSWORD:    "${MARIADB_PASSWORD:-insight-local}"
-      # ClickHouse (Phase 2)
-      CLICKHOUSE_HOST:     clickhouse
-      CLICKHOUSE_HTTP_PORT: "8123"
+      # ClickHouse — same convention as MariaDB above.
+      CLICKHOUSE_HOST:     "${CLICKHOUSE_HOST:-clickhouse}"
+      CLICKHOUSE_HTTP_PORT: "${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
       CLICKHOUSE_USER:     "${CLICKHOUSE_USER:-insight}"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-insight-local}"
     volumes:

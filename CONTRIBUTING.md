@@ -9,51 +9,60 @@ spec files under `docs/components/<area>/specs/`.
 
 ---
 
-## TL;DR — from scratch to a populated FE
+## TL;DR — happy path, all defaults
 
-Clone, configure, start the stack, seed the demo dataset:
+Clone, run one command, answer four prompts, get a fully populated
+stack:
 
 ```bash
-# 1. Clone both repos side-by-side.
 git clone git@github.com:cyberantonz/insight.git
-git clone git@github.com:cyberantonz/insight-front.git   # sibling dir
 cd insight
-
-# 2. Copy the env template and set your dev-impersonation email
-#    (becomes the development-team lead in the demo roster).
-cp .env.compose.example .env.compose
-sed -i.bak 's|^VITE_DEV_USER_EMAIL=$|VITE_DEV_USER_EMAIL=you@yourorg.com|' .env.compose && rm .env.compose.bak
-
-# 3. Build host artefacts + start every service.
-#    First run: 5–15 minutes (cold Rust compile + first image pulls).
 ./dev-compose.sh up
-
-# 4. Populate the demo dataset (identity persons + 24k silver rows +
-#    gold views). Idempotent; safe to re-run.
-./dev-compose.sh seed all
-
-# 5. Restart the frontend so it picks up the new VITE_DEV_USER_EMAIL.
-docker compose -f docker-compose.yml --profile front-dev up -d insight-front-dev
 ```
 
-Open <http://localhost:3000>. The dashboards now have data — `you@yourorg.com`
-is the dev-team lead, the CEO sees the whole tree, every team has
-60 days of activity.
+The first `up` runs an interactive wizard because `.env.compose`
+doesn't exist yet. With defaults accepted everywhere, the answers are:
+
+| Prompt                                | Default | Effect                                  |
+| ------------------------------------- | ------- | --------------------------------------- |
+| Use local MariaDB in docker compose?  | Y       | Compose starts mariadb on :3306         |
+| Use local ClickHouse in docker compose? | Y     | Compose starts clickhouse on :8123      |
+| `VITE_DEV_USER_EMAIL`                 | `dev@company.nonpresent` | Dev-team lead in the seed roster |
+| Frontend choice                       | `1` (ghcr) | Pulls the published `insight-front:latest` image |
+
+The wizard writes `.env.compose`, then the script:
+
+1. Builds host artefacts (Rust + .NET; frontend is pulled if you picked
+   ghcr). First run: 5–15 minutes (cold Rust compile).
+2. Brings every service up (`docker compose up -d`).
+3. Auto-seeds the demo dataset — 25 persons in MariaDB + ~24k rows
+   across 16 ClickHouse silver tables.
+4. Flips `SEEDED_LOCAL_MARIA` / `SEEDED_LOCAL_CH` in `.env.compose` so
+   later `up` calls don't re-seed.
+
+Open <http://localhost:3000>. The dashboards have data;
+`dev@company.nonpresent` is the dev-team lead, CEO sees the whole org
+tree, every team has 60 days of activity.
 
 Daily workflow:
 
 ```bash
 ./dev-compose.sh build api-gateway     # rebuild one Rust service after a code edit
 ./dev-compose.sh build all             # rebuild everything
-./dev-compose.sh seed silver           # refresh ClickHouse data only
+./dev-compose.sh seed silver           # refresh ClickHouse demo data only
 ./dev-compose.sh down                  # stop everything; data preserved
 ./dev-compose.sh down --volumes        # also wipe DB volumes + build/ artefacts
+./dev-compose.sh prune                 # destructive wipe + remove .env.compose
 ```
 
 > **First-run timing.** The cold Rust compile is the slow part — count
 > on ~5–15 minutes depending on your machine (it's downloading the
 > crates.io tree and compiling the whole workspace once). Subsequent
 > runs reuse the Cargo cache volume and finish in seconds.
+
+> **Re-running the wizard.** Delete `.env.compose` (or run
+> `./dev-compose.sh prune`) and `up` again. Or hand-edit
+> `.env.compose` — the wizard only runs when the file is missing.
 
 ---
 
@@ -130,6 +139,81 @@ if you have conflicts.
 
 ---
 
+## Using external MariaDB / ClickHouse
+
+The wizard's defaults run both DBs in compose. If you already have a
+populated MariaDB or ClickHouse elsewhere (shared dev box, staging
+mirror, your own host install), answer **N** to the relevant wizard
+prompt and you'll be asked for connection details:
+
+```
+Use the local MariaDB in docker compose? [Y/n]: n
+  External MariaDB host: db.internal.example
+  External MariaDB port [3306]:
+  MariaDB user [insight]:
+  MariaDB password:        ← hidden
+  Probing MariaDB at db.internal.example:3306…
+  MariaDB OK.
+```
+
+The wizard validates credentials before writing `.env.compose`:
+
+- **MariaDB** is probed by spinning up a transient `mariadb:11.4`
+  container and running `SELECT 1`. A bad host/user/password aborts
+  the wizard with a clear error.
+- **ClickHouse** is probed via the HTTP interface using host-side
+  `curl`. Same fail-fast behavior.
+
+When at least one DB is external, the wizard also asks for:
+
+- **`TENANT_DEFAULT_ID`** — the UUID present in your
+  `persons.insight_tenant_id`. Required because the canned demo UUID
+  won't match your data.
+- **Seed your external DB?** — defaults to **No**. If you accept,
+  `./dev-compose.sh up` writes the demo dataset into your DB on first
+  run (same content as the local-DB auto-seed). If you decline, the
+  wizard pre-marks the DB as seeded so `up` leaves it alone.
+
+What the wizard sets in `.env.compose`:
+
+```env
+MARIADB_EXTERNAL=true                 # don't start local-mariadb profile
+MARIADB_HOST=db.internal.example      # used inside backend containers
+MARIADB_INTERNAL_PORT=3306            # connect port, NOT the host-mapped one
+MARIADB_USER=insight
+MARIADB_PASSWORD=…
+CLICKHOUSE_EXTERNAL=true
+CLICKHOUSE_HOST=ch.internal.example
+CLICKHOUSE_INTERNAL_HTTP_PORT=8123
+CLICKHOUSE_DATABASE=insight
+CLICKHOUSE_USER=insight
+CLICKHOUSE_PASSWORD=…
+TENANT_DEFAULT_ID=11111111-2222-3333-4444-555555555555
+```
+
+How it's wired:
+
+- Backend services interpolate `${MARIADB_HOST}:${MARIADB_INTERNAL_PORT}`
+  (and the ClickHouse equivalents) into their connection URLs. Defaults
+  preserve the local docker behavior (`mariadb:3306`, `clickhouse:8123`).
+- The `mariadb` and `clickhouse` services sit behind
+  `profiles: ["local-mariadb"]` / `local-clickhouse`. `dev-compose.sh
+  up` adds those profiles only when `*_EXTERNAL != true`.
+- Backend `depends_on` entries use `required: false`, so compose skips
+  the dependency when the profile isn't active.
+
+> **`localhost` gotcha.** If your "external" DB is actually running on
+> the docker host, **don't** type `localhost` — that resolves to the
+> container itself. Use `host.docker.internal` (Mac/Windows) or your
+> LAN IP. The wizard warns you when it sees `localhost`.
+
+To switch later (e.g. start using a local DB after pointing at an
+external one), the easiest path is `./dev-compose.sh prune` and re-run
+the wizard. Or hand-edit `*_EXTERNAL` / `*_HOST` / `*_INTERNAL_PORT`
+in `.env.compose` and `./dev-compose.sh down && ./dev-compose.sh up`.
+
+---
+
 ## Daily workflow
 
 ### Editing backend code
@@ -159,19 +243,15 @@ environment variables defined in `docker-compose.yml`; edit those and
 
 ### Editing the frontend
 
-- `FRONTEND_MODE=dev` (default): Vite is already watching — HMR delivers
+- `FRONTEND_MODE=dev`: Vite is already watching — HMR delivers
   changes to the browser, no manual step.
 - `FRONTEND_MODE=built`: run `./dev-compose.sh build frontend` after
   edits. nginx picks the new files up automatically.
 - `FRONTEND_MODE=ghcr`: the published image is static — switch modes
   to pick up local changes.
 
-### Switching frontend mode without bouncing everything
-
-```bash
-./dev-compose.sh down
-FRONTEND_MODE=built ./dev-compose.sh up --skip-build   # if dist/ is fresh
-```
+See [Frontend modes](#frontend-modes) for how to switch between them
+after the first-run wizard.
 
 ---
 
@@ -235,16 +315,47 @@ published image runs as-is.
 
 ## Frontend modes
 
-`FRONTEND_MODE` in `.env.compose` (or `--frontend-mode=...` on CLI):
+The wizard asks one question with three explicit choices:
 
-| Mode    | What runs                | Auto-reload?    | When to use                              |
-| ------- | ------------------------ | --------------- | ---------------------------------------- |
-| `dev`   | `pnpm dev` in node:24    | Vite HMR        | Default. Active frontend development.    |
-| `built` | nginx + host-built dist  | No — rebuild   | Testing the production build path.       |
-| `ghcr`  | `ghcr.io/...` image      | No              | Backend-only work, save laptop CPU/RAM.  |
+```
+--- Frontend ---
+  How should the frontend run?
+    1) ghcr   — pull the pre-built image (no source needed)
+    2) local  — Vite + HMR against an existing insight-front checkout
+    3) clone  — git clone insight-front, then run Vite + HMR
+```
 
-In `built` mode, run `./dev-compose.sh build frontend` to refresh the
-dist before bringing the stack up (or whenever you change source).
+| Choice | Wizard does                                  | What runs                | Auto-reload? | When to use                              |
+| ------ | -------------------------------------------- | ------------------------ | ------------ | ---------------------------------------- |
+| 1 ghcr | Sets `FRONTEND_MODE=ghcr`                    | `ghcr.io/...` image      | No           | Backend-only work, save laptop CPU/RAM.  |
+| 2 local| Sets `FRONTEND_MODE=dev` + `INSIGHT_FRONT_PATH`. Path must already exist. | `pnpm dev` in node:24    | Vite HMR     | Active frontend development on an existing checkout. |
+| 3 clone| `git clone constructorfabric/insight-front` into the path you pick (refuses to clobber an existing dir), then same as local. | `pnpm dev` in node:24    | Vite HMR     | First-time setup, no checkout yet.       |
+
+There's also a fourth, undocumented-in-wizard `built` mode (nginx +
+host-built dist). To use it, hand-edit `.env.compose`:
+
+```env
+FRONTEND_MODE=built
+```
+
+…then `./dev-compose.sh build frontend` (refreshes `dist/`) and
+`./dev-compose.sh down && ./dev-compose.sh up`. Useful for testing
+the production build path.
+
+### Switching modes after first run
+
+The wizard runs only once. To change FE mode later, either:
+
+- **Edit `.env.compose`** — flip `FRONTEND_MODE` to `dev`/`built`/`ghcr`,
+  set `INSIGHT_FRONT_PATH` if switching to `dev`/`built`, then
+  `./dev-compose.sh down && ./dev-compose.sh up --skip-build` (the
+  `--skip-build` keeps an already-compiled Rust binary in place).
+- **Or override per-run** without touching the file:
+
+  ```bash
+  ./dev-compose.sh up --frontend-mode=ghcr --skip-build
+  ./dev-compose.sh up --no-frontend                # backend-only
+  ```
 
 ---
 
@@ -282,30 +393,42 @@ If you bypass the FE (curl from the host) you must construct the
 same fake bearer yourself, otherwise identity returns
 `401 caller_unresolved`.
 
-## Dev impersonation + demo dataset
+## Seeding + building
 
-A fresh stack has an empty `identity.persons` table. The frontend
-detects this and shows the "Dev impersonation not configured" hint
-until you wire it up.
+### Auto-seed on first `up`
+
+The first successful `./dev-compose.sh up` after the wizard
+automatically populates the demo dataset, then writes
+`SEEDED_LOCAL_MARIA=true` / `SEEDED_LOCAL_CH=true` into `.env.compose`
+so subsequent `up` calls skip the seed step. You don't need to do
+anything extra for the happy path.
+
+For external DBs the wizard asks whether to seed; if you decline, the
+two markers are pre-set to `true` and the stack leaves your DB alone.
+
+### Manual seed / re-seed
+
+`./dev-compose.sh seed` always runs regardless of `SEEDED_LOCAL_*`
+state:
 
 ```bash
-# 1. Set yourself as the dev lead in the demo roster.
-echo 'VITE_DEV_USER_EMAIL=you@yourorg.com' >> .env.compose
-
-# 2. Populate the demo dataset (idempotent).
-./dev-compose.sh seed             # identity + silver — everything
-# or, more selectively:
-./dev-compose.sh seed identity    # just MariaDB: 25 persons + org chart + account map
-./dev-compose.sh seed silver      # just ClickHouse: schema + gold views + ~24k rows
-
-# 3. Restart the frontend container so it picks up VITE_DEV_USER_EMAIL.
-docker compose -f docker-compose.yml --profile front-dev up -d insight-front-dev
+./dev-compose.sh seed            # identity + silver — everything
+./dev-compose.sh seed identity   # just MariaDB: 25 persons + org chart + account map
+./dev-compose.sh seed silver     # just ClickHouse: schema + gold views + ~24k rows
 ```
 
-After `seed identity` runs, the MariaDB has 25 persons:
+To force the next `up` to auto-seed again, set
+`SEEDED_LOCAL_MARIA=` / `SEEDED_LOCAL_CH=` to empty in `.env.compose`
+(or just run `./dev-compose.sh prune` and start fresh).
+
+### What gets seeded
+
+After **identity** runs, MariaDB has 25 persons:
 
 * CEO (`email_ceo@company.nonpresent`) — apex of the org tree.
 * Your `VITE_DEV_USER_EMAIL` person — leads the development team.
+  Default `dev@company.nonpresent`; change it in the wizard or
+  hand-edit before re-seeding to switch identities.
 * 4 team leads (development = you, sales, HR, support).
 * 20 ICs (5 per team, named `email_<team>_<NN>@company.nonpresent`).
 
@@ -313,7 +436,7 @@ Visibility is wired through the BambooHR org-chart source so the
 gateway's per-caller `/v1/persons/{email}` lookups resolve correctly:
 the dev lead sees their 5 direct reports; the CEO sees the whole tree.
 
-After `seed silver` runs, ClickHouse has:
+After **silver** runs, ClickHouse has:
 
 1. Bronze + silver placeholder tables (extracted from the k8s
    `create-bronze-placeholders.sh` workaround).
@@ -323,12 +446,37 @@ After `seed silver` runs, ClickHouse has:
    only for devs, `class_crm_*` only for sales, etc.). The full
    per-team activity table lives in `compose/seed/profiles.py`.
 
-After `seed silver` runs, the analytics-api's schema validator flips
-from "80 metrics error: table_not_found" to "80 ok" and the FE
-dashboards have data to show.
+The analytics-api's schema validator flips from "80 metrics error:
+table_not_found" to "80 ok" and the FE dashboards have data to show.
 
 The script source is in `insight/compose/seed/` — its README explains
 the ruff / mypy / venv setup.
+
+### Building
+
+`./dev-compose.sh up` runs the build phase by default. The targets:
+
+```bash
+./dev-compose.sh build api-gateway     # Rust gateway only
+./dev-compose.sh build analytics-api   # Rust analytics only
+./dev-compose.sh build identity        # .NET 9 publish
+./dev-compose.sh build frontend        # pnpm build → dist/
+./dev-compose.sh build rust            # both Rust services
+./dev-compose.sh build all             # everything
+```
+
+Skip the build when you just want to bounce the stack:
+
+```bash
+./dev-compose.sh up --skip-build
+```
+
+For one-off cargo work without building the binary into compose/build/:
+
+```bash
+docker compose --profile build run --rm build-rust \
+  cargo test -p insight-api-gateway
+```
 
 ## Common tasks
 
@@ -350,10 +498,39 @@ docker compose exec clickhouse clickhouse-client --user insight --password insig
 
 ### Wipe everything and start fresh
 
+Three escalating levels of destructive:
+
 ```bash
-./dev-compose.sh down --volumes
-./dev-compose.sh up
+./dev-compose.sh down              # stop containers, keep volumes and .env.compose
+./dev-compose.sh down --volumes    # also wipe named volumes + compose/build/
+./dev-compose.sh prune             # the full nuke (see below)
 ```
+
+### Prune — full reset including .env.compose
+
+`./dev-compose.sh prune` is the only command that removes
+`.env.compose`. Use it when you want the next `up` to re-run the
+first-run wizard:
+
+```bash
+./dev-compose.sh prune
+```
+
+It's always interactive — there is no `--yes` switch. The flow:
+
+1. Lists what's about to be destroyed (containers, named volumes,
+   `compose/build/`, generated override, `.env.compose`) and asks
+   `Proceed? [y/N]`.
+2. Runs `docker compose down --volumes --remove-orphans` against every
+   profile (so even services not currently active are cleaned up).
+3. Removes `compose/build/`, `compose/override.generated.yml`, and
+   `.env.compose`.
+4. Asks **separately** whether to also remove pulled
+   `ghcr.io/constructorfabric/insight-*` images — defaults to **No**
+   because they're slow to re-pull and most resets don't need to throw
+   them away.
+
+After prune, the next `./dev-compose.sh up` re-runs the wizard.
 
 ### Run a one-off Rust build with custom args
 
@@ -406,7 +583,14 @@ Read `.env.compose.example` end-to-end. The blocks are:
 - **Backend image overrides** — `API_GATEWAY_IMAGE`,
   `ANALYTICS_API_IMAGE`, `IDENTITY_IMAGE` (any unset → built locally)
 - **Host ports** — every published port is configurable
-- **DB credentials** — local-only; in dotenv per project convention
+- **Database mode** — `MARIADB_EXTERNAL`, `MARIADB_HOST`,
+  `MARIADB_INTERNAL_PORT`, `CLICKHOUSE_EXTERNAL`, `CLICKHOUSE_HOST`,
+  `CLICKHOUSE_INTERNAL_HTTP_PORT`, `CLICKHOUSE_DATABASE`. See
+  [Using external MariaDB / ClickHouse](#using-external-mariadb--clickhouse).
+- **DB credentials** — local-only by convention; in dotenv per project
+  policy
+- **Seed bookkeeping** — `SEEDED_LOCAL_MARIA`, `SEEDED_LOCAL_CH`
+  (empty/false → auto-seed on next `up`; true → skip)
 - **Tenant / OIDC** — `TENANT_DEFAULT_ID`, OIDC client info
 - **Log level** — `RUST_LOG`
 
