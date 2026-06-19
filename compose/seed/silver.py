@@ -27,7 +27,7 @@ from pathlib import Path
 
 import clickhouse_connect
 
-from generators import ai, collab, crm, git, hr, people, task
+from generators import ai, collab, crm, git, hr, people, support, task
 from profiles import build_roster, get_dev_user_email
 
 LOG = logging.getLogger("seed.silver")
@@ -138,6 +138,7 @@ def generate_rows(
     totals.update(hr.generate(client, roster, tenant_uuid, days))
     totals.update(ai.generate(client, roster, tenant_uuid, days))
     totals.update(task.generate(client, roster, tenant_uuid, days))
+    totals.update(support.generate(client, roster, tenant_uuid, days))
 
     for table, n in sorted(totals.items()):
         LOG.info("  %-46s %6d rows", table, n)
