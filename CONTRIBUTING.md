@@ -27,6 +27,8 @@ files under `docs/components/<area>/specs/`.
    - [Auto-reload mechanic](#auto-reload-mechanic)
    - [Common operations](#common-operations)
 7. [Seeding](#seeding)
+   - [Compose](#compose)
+   - [Kubernetes](#kubernetes)
 8. [Dev auth chain (no-auth mode)](#dev-auth-chain-no-auth-mode)
 9. [Troubleshooting](#troubleshooting)
 10. [Code style and reviews](#code-style-and-reviews)
@@ -376,40 +378,84 @@ Edit `src/backend/services/api-gateway/config/no-auth.yaml` directly
 
 ## Seeding
 
-`./dev-compose.sh up` auto-seeds on first run after the wizard, then
-flips `SEEDED_LOCAL_MARIA` / `SEEDED_LOCAL_CH` to `true` so subsequent
-`up`s skip it. Re-seed manually:
-
-```bash
-./dev-compose.sh seed            # identity + silver (everything)
-./dev-compose.sh seed identity   # MariaDB: 25 persons + org chart + account map
-./dev-compose.sh seed silver     # ClickHouse: schema + gold views + ~24k rows
-```
-
-To force auto-seed again on next `up`, clear the markers in
-`.env.compose` or `prune`.
+The seed package lives in [`compose/seed/`](compose/seed/) — its
+README documents the ruff / mypy / venv setup. Both deploy paths use
+the same package; only how it's invoked differs.
 
 **Identity content (after `seed identity`):** CEO, your
-`VITE_DEV_USER_EMAIL` person (leads the dev team), 4 team leads
-(dev / sales / HR / support), 20 ICs (5/team). Visibility is wired
-through the BambooHR org-chart source so per-caller
-`/v1/persons/{email}` lookups resolve correctly — dev lead sees their 5
-reports, CEO sees the whole tree.
+`VITE_DEV_USER_EMAIL` person (leads the dev team), 4 team leads (dev /
+sales / HR / support), 20 ICs (5/team). Visibility is wired through
+the BambooHR org-chart source so per-caller `/v1/persons/{email}`
+lookups resolve correctly — dev lead sees their 5 reports, CEO sees
+the whole tree.
 
 **Silver content (after `seed silver`):** bronze + silver placeholder
 tables, every `src/ingestion/scripts/migrations/*.sql` applied
 (produces the `insight.*` gold views), ~24k rows across 16 silver
 tables profile-typed per team (`class_git_*` for devs, `class_crm_*`
 for sales, …). The full per-team activity table is in
-`compose/seed/profiles.py`. analytics-api's schema validator flips
-from "80 metrics error" to "80 ok".
+[`compose/seed/profiles.py`](compose/seed/profiles.py). analytics-api's
+schema validator flips from "80 metrics error" to "80 ok".
 
-Seed package source is `insight/compose/seed/` (its README documents
-the ruff / mypy / venv setup).
+### Compose
 
-**K8s path:** demo-data seeding is manual — port-forward MariaDB +
-ClickHouse and run `compose/seed/` from the host. The wizard prints
-the exact commands at the end of a successful run.
+`./dev-compose.sh up` auto-seeds on first run after the wizard, then
+flips `SEEDED_LOCAL_MARIA` / `SEEDED_LOCAL_CH` to `true` so subsequent
+`up`s skip it. Re-seed manually:
+
+```bash
+./dev-compose.sh seed            # identity + silver (everything)
+./dev-compose.sh seed identity   # MariaDB only
+./dev-compose.sh seed silver     # ClickHouse only
+```
+
+To force auto-seed on next `up`, clear the `SEEDED_LOCAL_*` markers in
+`.env.compose` or `./dev-compose.sh prune`.
+
+### Kubernetes
+
+No auto-seed. The chart doesn't ship a `seed` Job, so you point the
+same Python package at port-forwarded L2 services from the host. One
+recipe per re-seed:
+
+```bash
+# 1. Port-forward MariaDB + ClickHouse in the background.
+KUBECONFIG=/path/to/config.yaml kubectl -n insight-infra \
+  port-forward svc/mariadb 3306:3306 &
+KUBECONFIG=/path/to/config.yaml kubectl -n insight-infra \
+  port-forward svc/clickhouse 8123:8123 &
+
+# 2. Run the seed package against them. First time only: bootstrap a venv.
+cd compose/seed
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+# Identity + silver. Drop `all` and pass `identity` / `silver` for partial.
+MARIADB_HOST=127.0.0.1     MARIADB_PORT=3306 \
+MARIADB_USER=insight       MARIADB_PASSWORD=insight-local \
+CLICKHOUSE_HOST=127.0.0.1  CLICKHOUSE_HTTP_PORT=8123 \
+CLICKHOUSE_USER=insight    CLICKHOUSE_PASSWORD=insight-local \
+VITE_DEV_USER_EMAIL=dev@company.nonpresent \
+  .venv/bin/python seed.py all
+
+# 3. Kick analytics-api so its schema validator re-runs against the
+#    now-populated silver tables. Without this, schema_status stays
+#    cached at boot-time 'table_not_found' and the FE shows "no peer
+#    data" everywhere (cf/insight#1307).
+KUBECONFIG=/path/to/config.yaml kubectl -n insight \
+  rollout restart deploy/insight-analytics-api
+
+# 4. Stop the port-forwards.
+kill %1 %2
+```
+
+Use the real cluster credentials in place of `insight-local` if you
+switched to external DBs at wizard time — the values are whatever the
+operator stored in `secrets-store.yaml` and `make seal` baked into the
+cluster's `mariadb-creds` / `clickhouse-creds` Secrets.
+
+When `frontend.devUserEmail` (set by the wizard / values overlay) and
+the seeded `VITE_DEV_USER_EMAIL` match, the FE's dev impersonation
+resolves to a real person row and dashboards populate.
 
 ---
 
