@@ -39,7 +39,7 @@ Clone, run one command, answer four prompts, get a fully populated
 stack:
 
 ```bash
-git clone git@github.com:cyberantonz/insight.git
+git clone https://github.com/constructorfabric/insight.git
 cd insight
 ./dev-compose.sh up
 ```
@@ -59,7 +59,7 @@ tables). First run: ~5–15 min cold Rust compile; subsequent runs reuse
 the Cargo cache and finish in seconds.
 
 Open <http://localhost:3000>. `dev@company.nonpresent` leads the dev
-team; CEO sees the whole org tree.
+team; CEO sees the whole org tree. To use CEO more set email to `email_ceo@company.nonpresent`.
 
 ---
 
@@ -77,15 +77,22 @@ No Rust / .NET / Node / pnpm on the host — every build runs in a
 builder container.
 
 **K8s path** — also `kubectl`, `helm`, `kubeseal`, `yq`, `jq`, plus a
-local cluster (OrbStack with Kubernetes / k3d / kind / minikube).
+local cluster (OrbStack with Kubernetes / k3d / kind / minikube). No
+frontend checkout needed — the umbrella chart pulls
+`ghcr.io/constructorfabric/insight-front:<tag>` from GHCR.
 
-**Repo layout** — frontend in a sibling checkout. Override
-`INSIGHT_FRONT_PATH` in `.env.compose` if you keep them elsewhere.
+**Frontend checkout** — only needed for compose with
+`FRONTEND_MODE=dev` (Vite HMR) or `built` (host-built dist). The
+default mode (`ghcr`) pulls the published image, so a fresh laptop with
+only Docker can run the full compose stack. When you do need the
+checkout, the wizard's "clone" option offers to git-clone it for you;
+otherwise it expects a sibling repo (override `INSIGHT_FRONT_PATH` in
+`.env.compose` to point elsewhere):
 
 ```text
 cf/
 ├── insight/         (this repo)
-└── insight-front/   (frontend repo)
+└── insight-front/   (only for FRONTEND_MODE=dev or built)
 ```
 
 ---
