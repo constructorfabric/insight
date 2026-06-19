@@ -34,10 +34,11 @@ LOG = logging.getLogger("seed.silver")
 
 DEFAULT_DAYS = 60
 
-# Bind-mount targets inside the seed-sample container — see
-# docker-compose.yml `seed-sample.volumes`.
-PLACEHOLDERS_SQL = Path("/app/sql/placeholders.sql")
-MIGRATIONS_DIR = Path("/migrations")
+# SQL inputs. Defaults are the compose seed-sample bind-mount targets
+# (see docker-compose.yml `seed-sample.volumes`); host runs override
+# via env to point at the actual filesystem paths.
+PLACEHOLDERS_SQL = Path(os.environ.get("PLACEHOLDERS_SQL") or "/app/sql/placeholders.sql")
+MIGRATIONS_DIR   = Path(os.environ.get("MIGRATIONS_DIR")   or "/migrations")
 
 
 def _ch_client() -> clickhouse_connect.driver.client.Client:
@@ -84,7 +85,9 @@ def apply_placeholders(client: clickhouse_connect.driver.client.Client) -> int:
     if not PLACEHOLDERS_SQL.is_file():
         raise FileNotFoundError(
             f"placeholders SQL not found at {PLACEHOLDERS_SQL}. "
-            "Did the seed-sample container mount /app/sql?"
+            "Did the seed-sample container mount /app/sql? "
+            "(host runs: set PLACEHOLDERS_SQL to "
+            "compose/seed/sql/placeholders.sql.)"
         )
     n = _apply_sql_file(client, PLACEHOLDERS_SQL)
     LOG.info("placeholders: %d statements applied", n)
@@ -96,7 +99,9 @@ def apply_migrations(client: clickhouse_connect.driver.client.Client) -> int:
     if not MIGRATIONS_DIR.is_dir():
         raise FileNotFoundError(
             f"migrations dir not found at {MIGRATIONS_DIR}. "
-            "Did the seed-sample container mount /migrations?"
+            "Did the seed-sample container mount /migrations? "
+            "(host runs: set MIGRATIONS_DIR to "
+            "src/ingestion/scripts/migrations.)"
         )
     migrations = sorted(MIGRATIONS_DIR.glob("*.sql"))
     if not migrations:
