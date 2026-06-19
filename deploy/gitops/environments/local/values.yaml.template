@@ -87,8 +87,13 @@ apiGateway:
   # Sandbox: no OIDC. Real envs flip this to false and supply an
   # `insight-oidc` Secret in the `insight` namespace.
   authDisabled: true
+  # Ingress: empty host matches any Host header — on OrbStack/k3d/kind
+  # the ingress-nginx LoadBalancer takes a host-reachable IP (see
+  # `kubectl -n ingress-nginx get svc`) so `http://<that-ip>/api/...`
+  # works without /etc/hosts entries. Real envs set `host:` to an FQDN
+  # and add TLS via cert-manager.
   ingress:
-    enabled: false
+    enabled: true
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 512Mi }
@@ -123,5 +128,14 @@ identity:
 
 frontend:
   replicaCount: 1
+  # Ingress: same host as apiGateway. Path-based routing in
+  # ingress-nginx — `/api/*` → api-gateway, `/*` → frontend. Empty host
+  # matches any Host header (see apiGateway.ingress comment).
   ingress:
-    enabled: false
+    enabled: true
+  # Dev-impersonation: matches apiGateway.authDisabled=true above. The
+  # FE entrypoint writes a runtime `oidc-config.js` so the browser
+  # builds an unsigned-JWT bearer for this address. Wizard collects the
+  # email and the operator can edit `values.yaml` (gitignored copy)
+  # afterwards. Real envs leave this empty and configure `oidc.*`.
+  devUserEmail: "dev@company.nonpresent"

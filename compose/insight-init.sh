@@ -476,12 +476,16 @@ write_compose() {
 #   environments/local/inventory.yaml   (concrete, gitignored)
 #   environments/local/.env.local       (chain-sourced env vars: airbyte
 #                                        setup creds. gitignored.)
+#   environments/local/values.yaml      (concrete umbrella overlay,
+#                                        cp'd from values.yaml.template
+#                                        then mutated with the wizard's
+#                                        tenant ID. gitignored.)
 #   secrets-store.yaml                  (cleartext, gitignored — read by
 #                                        scripts/secret-fetch.sh during seal)
 #
-# Does NOT provision the cluster, fetch the kubeseal pub-cert, run
-# `helm install`, or write values.yaml. Those happen in subsequent
-# Makefile chain steps (bootstrap → fetch-cert → seal → system → deploy).
+# Does NOT provision the cluster, fetch the kubeseal pub-cert, or run
+# `helm install`. Those happen in subsequent Makefile chain steps
+# (bootstrap → fetch-cert → seal → system → deploy).
 # ──────────────────────────────────────────────────────────────────────
 
 # Auto-detect cluster type from kube-context name, returns one of
@@ -503,27 +507,25 @@ write_k8s_local() {
   local gitops_dir="$ROOT_DIR/deploy/gitops"
   local inventory_out="$gitops_dir/environments/local/inventory.yaml"
   local inventory_tmpl="$gitops_dir/environments/local/inventory.yaml.template"
+  local values_out="$gitops_dir/environments/local/values.yaml"
+  local values_tmpl="$gitops_dir/environments/local/values.yaml.template"
   local env_local_out="$gitops_dir/environments/local/.env.local"
   local secrets_store_out="$gitops_dir/secrets-store.yaml"
   local secrets_store_tmpl="$gitops_dir/secrets-store.yaml.template"
 
-  if [[ -e "$inventory_out" ]]; then
-    echo "ERROR: $inventory_out already exists — delete it first to re-run the wizard." >&2
-    exit 1
-  fi
-  if [[ ! -f "$inventory_tmpl" ]]; then
-    echo "ERROR: $inventory_tmpl is missing — can't bootstrap inventory.yaml." >&2
-    exit 1
-  fi
-  if [[ ! -f "$secrets_store_tmpl" ]]; then
-    echo "ERROR: $secrets_store_tmpl is missing — can't bootstrap secrets-store.yaml." >&2
-    exit 1
-  fi
-  if [[ -e "$secrets_store_out" ]]; then
-    echo "ERROR: $secrets_store_out already exists — delete it first to re-run the wizard." >&2
-    echo "       (Contains cleartext passwords; verify you're not overwriting real state.)" >&2
-    exit 1
-  fi
+  for f in "$inventory_out" "$values_out" "$secrets_store_out"; do
+    if [[ -e "$f" ]]; then
+      echo "ERROR: $f already exists — delete it first to re-run the wizard." >&2
+      [[ "$f" == "$secrets_store_out" ]] && echo "       (Contains cleartext passwords; verify you're not overwriting real state.)" >&2
+      exit 1
+    fi
+  done
+  for f in "$inventory_tmpl" "$values_tmpl" "$secrets_store_tmpl"; do
+    if [[ ! -f "$f" ]]; then
+      echo "ERROR: $f is missing — can't bootstrap from template." >&2
+      exit 1
+    fi
+  done
 
   preflight_k8s
   ask_shared
@@ -769,16 +771,16 @@ EOF
   echo "Wrote $secrets_store_out." >&2
   echo "" >&2
 
-  # ── tenant_default_id wiring into the umbrella overlay ───────────
-  # values.yaml carries .global.tenantDefaultId; mirror the wizard's
-  # collected value unconditionally. Re-running the wizard after
-  # switching from external DBs back to local would otherwise leave a
-  # stale tenant id in values.yaml.
-  local values_file="$gitops_dir/environments/local/values.yaml"
-  if [[ -f "$values_file" ]]; then
-    yq -i ".global.tenantDefaultId = \"$TENANT_DEFAULT_ID\"" "$values_file"
-    echo "Updated .global.tenantDefaultId in $values_file." >&2
-  fi
+  # ── Write values.yaml from template ──────────────────────────────
+  # cp values.yaml.template → values.yaml, then inject the collected
+  # tenant id under .global.tenantDefaultId and the dev impersonation
+  # email under .frontend.devUserEmail. The live values.yaml is
+  # gitignored — the wizard regenerates it per-developer; the template
+  # holds the committed sandbox config.
+  cp "$values_tmpl" "$values_out"
+  yq -i ".global.tenantDefaultId = \"$TENANT_DEFAULT_ID\"" "$values_out"
+  yq -i ".frontend.devUserEmail  = \"$DEV_USER_EMAIL\""    "$values_out"
+  echo "Wrote $values_out." >&2
 
   cat >&2 <<EOF
 

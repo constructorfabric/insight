@@ -47,7 +47,7 @@ deploy/gitops/
 ├── environments/
 │   └── local/                   # sandbox env (also the starter template for new envs)
 │       ├── inventory.yaml.template  # what this cluster has (drives bootstrap / system / seal / deploy)
-│       ├── values.yaml          # umbrella overlay (L3)
+│       ├── values.yaml.template     # umbrella overlay (L3) — wizard cp's to values.yaml on first `make deploy ENV=local`
 │       └── sealed-secrets/
 │           ├── insight-infra/*.yaml.template  # L2 sealed-secret shape (one folder per Kubernetes namespace)
 │           └── insight/*.yaml.template        # L3 sealed-secret shape
@@ -200,7 +200,7 @@ the templates:
 # 1. Bootstrap a new env directory from the local templates.
 mkdir -p environments/<new>
 cp environments/local/inventory.yaml.template environments/<new>/inventory.yaml
-cp environments/local/values.yaml             environments/<new>/values.yaml
+cp environments/local/values.yaml.template    environments/<new>/values.yaml
 
 # 2. Edit environments/<new>/inventory.yaml — kube-context, which L0
 #    controllers / L2 services / secrets this env wants, whether it's

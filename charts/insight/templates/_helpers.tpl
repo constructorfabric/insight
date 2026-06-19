@@ -203,6 +203,19 @@ Invoked from NOTES.txt so they fire on every install.
     {{- end -}}
   {{- end -}}
 
+  {{- /* frontend.devUserEmail is the dev-impersonation escape hatch — the
+         FE entrypoint stamps it into `oidc-config.js` so the browser
+         builds an unsigned-JWT bearer on every /api/* call. Only
+         meaningful when the gateway lets unauthenticated requests
+         through (apiGateway.authDisabled=true). Setting it together
+         with real auth is a misconfiguration — a forgotten value in a
+         prod overlay would silently impersonate every visitor as that
+         address. Catch it loudly at template time. */ -}}
+  {{- $fe := default dict .Values.frontend -}}
+  {{- if and $fe.devUserEmail (not $gw.authDisabled) -}}
+    {{- fail (printf "frontend.devUserEmail (%q) is only valid when apiGateway.authDisabled=true. Either clear devUserEmail (real OIDC flow) or set apiGateway.authDisabled=true (sandbox dev impersonation)." $fe.devUserEmail) -}}
+  {{- end -}}
+
   {{- /* External-mode hosts (deploy=false → consumer must supply host):
          the helper templates `insight.<dep>.host` already `required`-fail
          in this case, so any template that resolves the host before this

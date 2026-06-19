@@ -23,9 +23,12 @@ secrets-store.yaml
 # only; `environments/<other>/sealed-secrets/**/*.yaml` is NOT ignored.
 #
 #   inventory.yaml         — wizard writes from inventory.yaml.template
+#   values.yaml            — wizard writes from values.yaml.template, then
+#                            injects .global.tenantDefaultId
 #   pub-cert.pem           — `make fetch-cert` writes from the cluster
 #   *-sealedsecret.yaml    — `make seal` writes via kubeseal
 environments/local/inventory.yaml
+environments/local/values.yaml
 environments/local/pub-cert.pem
 environments/local/sealed-secrets/*/*-sealedsecret.yaml
 
