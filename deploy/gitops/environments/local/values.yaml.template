@@ -133,3 +133,9 @@ frontend:
   # matches any Host header (see apiGateway.ingress comment).
   ingress:
     enabled: true
+  # Dev-impersonation: matches apiGateway.authDisabled=true above. The
+  # FE entrypoint writes a runtime `oidc-config.js` so the browser
+  # builds an unsigned-JWT bearer for this address. Wizard collects the
+  # email and the operator can edit `values.yaml` (gitignored copy)
+  # afterwards. Real envs leave this empty and configure `oidc.*`.
+  devUserEmail: "dev@company.nonpresent"
