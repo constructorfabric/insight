@@ -201,6 +201,17 @@ class AnalyticsApiProcess:
                 "ANALYTICS__clickhouse_user": self.cfg.ch_user,
                 "ANALYTICS__clickhouse_password": self.cfg.ch_password,
                 "ANALYTICS__bind_addr": bind_addr,
+                # Single-tenant fallback. Since #522 the tenant_middleware
+                # rejects header-less requests (including /health) with 400
+                # unless a non-nil default tenant is configured. The rig sends
+                # no X-Insight-Tenant-Id header, so we pin a non-nil default.
+                # A non-nil value is required — ConfigTenantAuthorization::new
+                # filters out a nil default. Platform metric definitions are
+                # seeded under GLOBAL_TENANT (Uuid::nil()) and remain visible to
+                # any resolved tenant via `InsightTenantId IN [tenant, nil]`,
+                # and the data-plane queries skip tenant isolation in MVP, so
+                # this default never has to match the seeded bronze tenant.
+                "ANALYTICS__metric_catalog__tenant_default_id": "00000000-0000-0000-0000-000000000001",
                 # No identity_url / redis_url — leave defaults (empty strings)
                 "RUST_LOG": env.get("RUST_LOG", "info"),
             },

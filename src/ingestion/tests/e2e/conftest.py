@@ -101,12 +101,36 @@ def compose_stack(session_cfg: SessionConfig):
             LOG.info("E2E_KEEP_CONTAINERS=1 — leaving containers up")
 
 
+# Silver/staging tables that a fixture may READ via a gold view but NOT seed
+# (each collab fixture seeds at most one of the four class_collab_* tables, yet
+# insight.collab_bullet_rows reads all four). The per-test ledger only truncates
+# what a fixture seeds, so on a WARM ClickHouse (re-running `./e2e.sh test`
+# without `down`) the first collab fixture would inherit a prior session's rows
+# in the tables it does not seed — and stale rows in the dbt-rebuilt
+# class_collab_email_activity would skew its neighbours. Truncating these once
+# at session start makes warm re-runs deterministic; CI starts fresh anyway.
+_SESSION_START_TRUNCATE = [
+    ("silver", "class_collab_email_activity"),
+    ("silver", "class_collab_chat_activity"),
+    ("silver", "class_collab_meeting_activity"),
+    ("silver", "class_collab_document_activity"),
+    ("staging", "m365__collab_email_activity"),
+    ("staging", "m365__collab_chat_activity"),
+    ("staging", "m365__collab_meeting_activity"),
+    ("staging", "m365__collab_document_activity_onedrive"),
+    ("staging", "m365__collab_document_activity_sharepoint"),
+]
+
+
 @pytest.fixture(scope="session")
 def ch_migrations_applied(compose_stack: SessionConfig) -> SessionConfig:
-    """Apply ClickHouse migrations once at session start."""
+    """Apply ClickHouse migrations once at session start, then reset the
+    multi-reader silver/staging tables so warm re-runs are deterministic."""
     cfg = compose_stack
     if _IS_PRIMARY:
         apply_ch_migrations(cfg)
+        for schema, table in _SESSION_START_TRUNCATE:
+            ch.execute(cfg, f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
     return cfg
 
 

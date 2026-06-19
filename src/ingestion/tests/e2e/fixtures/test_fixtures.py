@@ -24,7 +24,7 @@ from e2e_lib.ch_seeder import CHSeeder
 from e2e_lib.csv_asserter import assert_matches, update_snapshot
 from e2e_lib.dbt_runner import DbtRunner
 from e2e_lib.fixture_loader import Fixture
-from e2e_lib.migration_applier import refresh_intermediates
+from e2e_lib.migration_applier import refresh_intermediates, reapply_migrations
 from e2e_lib.worker import WorkerContext
 
 
@@ -50,7 +50,39 @@ def test_fixture(
     # Some fixtures read view-only metrics (e.g. insight.people) — they
     # don't need any dbt model and omit dbt_selector entirely.
     if fixture.spec.dbt_selector:
-        dbt_runner.build(fixture.spec.dbt_selector, worker_ctx=worker_ctx)
+        tokens = fixture.spec.dbt_selector.split()
+        silver = [t for t in tokens if t.strip("+").startswith("class_")]
+        upstream = [t for t in tokens if not t.strip("+").startswith("class_")]
+        # Two-pass build when the selector names both staging/promotion models
+        # and silver `class_*` models. The on-run-start hook
+        # `drop_silver_placeholders_at_start` only drops a silver placeholder
+        # once its staging model is materialised; in a single `dbt build` that
+        # also builds the staging, that condition is false at on-run-start, so
+        # the placeholder survives and the silver model then inserts its real
+        # (different) schema into the placeholder → ClickHouse column mismatch.
+        # Prod converges across successive dbt runs; the rig does one build per
+        # fixture, so we stage it explicitly: materialise upstream first, then
+        # build the silver models against the now-present staging.
+        if silver and upstream:
+            dbt_runner.build(" ".join(upstream), worker_ctx=worker_ctx)
+            dbt_runner.build(" ".join(silver), worker_ctx=worker_ctx)
+        else:
+            dbt_runner.build(fixture.spec.dbt_selector, worker_ctx=worker_ctx)
+        # dbt materializes silver tables that are NOT in the CSV-seed ledger, so
+        # truncate_touched() would not clear them before the next test — they
+        # would leak into a later fixture whose gold view reads the same silver
+        # table (e.g. a meeting fixture seeing a prior email fixture's
+        # dbt-built class_collab_email_activity). Record every `class_*` model
+        # named in the selector so the next test's truncate_touched() clears it.
+        for name in (t.strip("+") for t in silver):
+            ch_seeder.ledger.record("silver", name)
+
+        # Step 3a: recreate gold views against the now-real silver schema. dbt
+        # rebuilt silver with its real (Nullable) schema, but the views were
+        # CREATE-d at session start against the placeholder schema; reading them
+        # under a date-filter subquery would otherwise raise a Nullable-structure
+        # mismatch (see reapply_migrations docstring; confirmed clean on dev).
+        reapply_migrations(ch_seeder.cfg)
 
     # Step 3b: refresh materialized intermediates (task_issue_current_state etc).
     # These are MVs with a 1-hour refresh schedule in prod; we trigger sync now

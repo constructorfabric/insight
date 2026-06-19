@@ -1,0 +1,39 @@
+# Reusable email-activity record templates (bronze_m365.email_activity).
+# Carry ONLY the boilerplate (identity). The fields under test (reportRefreshDate,
+# sendCount, unique_key) are set in each test's `bronze`.
+#
+# The base record lists EVERY schema field so a merged bronze row is complete;
+# unused fields default to null. The 4 `_airbyte_*` CDK columns are included too
+# (non-nullable) — transformations rely on them (latest-row dedup keys off
+# `_airbyte_extracted_at`).
+templates:
+  m365_email:
+    fields:
+      _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+      _airbyte_extracted_at: "2026-01-05T00:00:00"
+      _airbyte_meta: "{}"
+      _airbyte_generation_id: 0
+      tenant_id: "00000000-0000-0000-0000-000000000000"
+      source_id: "m365-test"
+      unique_key: null
+      userPrincipalName: null
+      displayName: null
+      reportPeriod: "D1"
+      reportRefreshDate: null
+      lastActivityDate: null
+      assignedProducts: null
+      isDeleted: false
+      sendCount: null
+      receiveCount: null
+      readCount: null
+      meetingCreatedCount: null
+      meetingInteractedCount: null
+  alice_email:
+    extend: { $ref: "#/templates/m365_email" }
+    fields: { userPrincipalName: "alice@example.com" }
+  bob_email:
+    extend: { $ref: "#/templates/m365_email" }
+    fields: { userPrincipalName: "bob@example.com" }
+  carol_email:
+    extend: { $ref: "#/templates/m365_email" }
+    fields: { userPrincipalName: "carol@example.com" }

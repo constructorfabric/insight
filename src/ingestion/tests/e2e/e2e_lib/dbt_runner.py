@@ -111,7 +111,10 @@ class DbtRunner:
                 "outputs": {
                     "test": {
                         "type": "clickhouse",
-                        "host": "127.0.0.1",
+                        # Derive from session config — `127.0.0.1` only works in
+                        # host mode; in docker mode the runner reaches ClickHouse
+                        # at the compose service name (`clickhouse`).
+                        "host": self.cfg.ch_host,
                         "port": self.cfg.ch_http_port,
                         "schema": "default",
                         "user": self.cfg.ch_user,
