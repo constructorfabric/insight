@@ -86,8 +86,9 @@ def apply_placeholders(client: clickhouse_connect.driver.client.Client) -> int:
         raise FileNotFoundError(
             f"placeholders SQL not found at {PLACEHOLDERS_SQL}. "
             "Did the seed-sample container mount /app/sql? "
-            "(host runs: set PLACEHOLDERS_SQL to "
-            "compose/seed/sql/placeholders.sql.)"
+            "(host runs: set PLACEHOLDERS_SQL to an existing "
+            "placeholders.sql path, e.g. ./sql/placeholders.sql when "
+            "running from compose/seed.)"
         )
     n = _apply_sql_file(client, PLACEHOLDERS_SQL)
     LOG.info("placeholders: %d statements applied", n)
@@ -100,8 +101,9 @@ def apply_migrations(client: clickhouse_connect.driver.client.Client) -> int:
         raise FileNotFoundError(
             f"migrations dir not found at {MIGRATIONS_DIR}. "
             "Did the seed-sample container mount /migrations? "
-            "(host runs: set MIGRATIONS_DIR to "
-            "src/ingestion/scripts/migrations.)"
+            "(host runs: set MIGRATIONS_DIR to an existing migrations "
+            "directory, e.g. ../../src/ingestion/scripts/migrations "
+            "when running from compose/seed.)"
         )
     migrations = sorted(MIGRATIONS_DIR.glob("*.sql"))
     if not migrations:
