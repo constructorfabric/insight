@@ -585,9 +585,10 @@ prints which file it's using at startup so you can abort and retry with
 the right path if the context list looks wrong.
 
 On the first run the wizard generates `environments/local/inventory.yaml`,
-`secrets-store.yaml`, and — when Airbyte is enabled —
-`environments/local/.env.local` (carries the post-install setup creds the
-`make system-airbyte` step needs). Subsequent runs skip the wizard and
+`environments/local/values.yaml`, `secrets-store.yaml`, and — when
+Airbyte is enabled — `environments/local/.env.local` (carries the
+post-install setup creds the `make system-airbyte` step needs).
+Subsequent runs skip the wizard and
 just reconcile the stack. The wizard asks the same MariaDB/ClickHouse/
 tenant questions as the compose path, plus kube-context and which L2
 services to install (Airbyte/Argo/redpanda-console/observability).
