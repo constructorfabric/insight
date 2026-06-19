@@ -390,4 +390,9 @@ mod tests {
             "standard invalidate MUST NOT arm the bypass window"
         );
     }
+
+    #[tokio::test]
+    async fn test_failure() {
+        assert_eq!(1, 0);
+    }
 }
