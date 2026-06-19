@@ -19,18 +19,21 @@
 //! installs leave it unset and tenant-less requests fail with a canonical
 //! `invalid_argument` envelope carried by `TENANT_UNRESOLVED`.
 //!
-//! ## Admin gate is a STUB until real Auth wires in
+//! ## Admin gate: same-tenant enforced, ROLE still a stub
 //!
-//! `ConfigTenantAuthorization::is_tenant_admin` returns `true` for every
-//! resolved session. This matches the DESIGN's literal "stub" wording
-//! (`cpt-metric-cat-constraint-auth-trait`) and unblocks the catalog
-//! release; production deployment MUST swap this implementation for the
-//! real Auth-service-backed one before going live, otherwise the admin
-//! CRUD surface is open to any authenticated tenant member. The catalog
-//! never relies on the stub being correct for security; the admin path is
-//! also defended at the DB-row level (cross-tenant writes are rejected
-//! because the row's `tenant_id` mismatch surfaces a `not_tenant_admin`
-//! envelope regardless of what `is_tenant_admin` returns).
+//! `ConfigTenantAuthorization::is_tenant_admin` enforces a **same-tenant**
+//! gate: a session resolved to tenant T is admin for T, and is denied for any
+//! other tenant. This closes the cross-tenant privilege-escalation surface at
+//! this layer (defense-in-depth alongside the DB-row `tenant_id` check, which
+//! already rejects cross-tenant writes with a `not_tenant_admin` envelope).
+//!
+//! What is STILL a stub is the **role** dimension: every *same-tenant* session
+//! is treated as admin (`cpt-metric-cat-constraint-auth-trait` "stub" wording),
+//! which unblocks the catalog release and keeps the dev/staging admin surface
+//! working. Production MUST swap in the real Auth-service-backed implementor
+//! before go-live, otherwise the admin CRUD surface is open to any
+//! authenticated *member of the same tenant*. The catalog never relies on the
+//! stub for cross-tenant security — that is enforced here and at the row level.
 //!
 //! ## Security invariant
 //!
@@ -115,10 +118,19 @@ impl TenantAuthorization for ConfigTenantAuthorization {
         session_tenant.or(self.default)
     }
 
-    fn is_tenant_admin(&self, _tenant_id: Uuid, _ctx: &SecurityContext) -> bool {
-        // Stub: every resolved session is treated as tenant-admin until the
-        // real Auth wiring lands. See module doc-comment.
-        true
+    fn is_tenant_admin(&self, tenant_id: Uuid, ctx: &SecurityContext) -> bool {
+        // Same-tenant gate. Every caller passes `ctx.insight_tenant_id` (a
+        // non-nil, server-resolved tenant), so same-tenant admin operations are
+        // unchanged — this stays `true` for them. The CROSS-tenant case (a
+        // caller asking to admin a tenant different from the one their session
+        // resolved to) is denied here, as defense-in-depth alongside the
+        // repository row-tenant check, so no layer certifies cross-tenant admin.
+        //
+        // The ROLE dimension — is this same-tenant member actually an admin? —
+        // is STILL a stub pending the real Auth wiring (every same-tenant
+        // session is treated as admin, preserving the dev/staging admin
+        // surface). Land that as a separate `TenantAuthorization` implementor.
+        !tenant_id.is_nil() && tenant_id == ctx.insight_tenant_id
     }
 
     fn actor_subject(&self, ctx: &SecurityContext) -> ActorSubject {
@@ -185,20 +197,26 @@ mod tests {
     }
 
     #[test]
-    fn stub_grants_admin_for_every_resolved_session() {
-        // The v1 stub returns `true` unconditionally. This pins that
-        // behaviour so a refactor that adds gating logic without wiring
-        // the real Auth backend trips the test — silently flipping to
-        // "deny by default" would brick the admin surface in dev/staging
-        // and silently change production behaviour the moment real Auth
-        // lands. The right path is to land the real impl as a separate
-        // `TenantAuthorization` implementor, not to reshape the stub.
+    fn admin_is_same_tenant_only_never_cross_tenant() {
+        // SECURITY INVARIANT (red-then-green guard for the cross-tenant
+        // privilege-escalation surface): a session resolved to tenant T1 is
+        // admin for its OWN tenant but NEVER for a different tenant T2.
+        //
+        // Previously `is_tenant_admin` returned `true` unconditionally and a
+        // unit test pinned that as correct — i.e. CI certified that a T1 caller
+        // is admin for T2. This test fails against that stub (red) and passes
+        // against the same-tenant gate (green). The role dimension (is this
+        // same-tenant member actually an admin?) is still a stub pending real
+        // Auth — every same-tenant session is treated as admin, which preserves
+        // the dev/staging admin surface; only the cross-tenant escalation is
+        // closed here, as defense-in-depth alongside the repository row check.
         let auth = ConfigTenantAuthorization::new(None);
+        // same-tenant session is still treated as admin (dev/staging unblock kept)
         assert!(auth.is_tenant_admin(T1, &ctx(T1, Uuid::nil())));
-        // Even when target tenant ≠ session tenant the stub returns true;
-        // cross-tenant rejection lives at the row-tenant check in the
-        // admin repository, not in the stub.
-        assert!(auth.is_tenant_admin(T2, &ctx(T1, Uuid::nil())));
+        // cross-tenant MUST be denied
+        assert!(!auth.is_tenant_admin(T2, &ctx(T1, Uuid::nil())));
+        // a nil target tenant can never be admin
+        assert!(!auth.is_tenant_admin(Uuid::nil(), &ctx(T1, Uuid::nil())));
     }
 
     #[test]
