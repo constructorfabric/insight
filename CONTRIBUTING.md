@@ -597,6 +597,59 @@ The k8s and compose stacks can coexist — they use disjoint host ports
 by default. Demo-data seeding on the k8s path is manual — see the wizard
 output for the port-forward + `compose/seed/` commands.
 
+### Non-interactive deploy (CI, scripted, headless)
+
+The wizard hard-errors when stdin isn't a TTY. To run the same chain
+from CI / Ansible / a Dockerfile, pre-populate the files the wizard
+would have generated — `make deploy ENV=local` skips the wizard
+whenever `environments/local/inventory.yaml` already exists.
+
+```bash
+cd deploy/gitops
+
+# 1. Inventory: cluster topology + bootstrap/system toggles.
+cp environments/local/inventory.yaml.template environments/local/inventory.yaml
+# Edit:
+#   kubeContext: <ctx>                 # required
+#   bootstrap.{ingressNginx,certManager,sealedSecrets}: true|false
+#     (set each to false when an existing non-Helm install of that
+#      controller is on the cluster — see deploy/gitops/README.md
+#      "Prerequisites" §3)
+#   system.{airbyte,argoWorkflows,redpandaConsole,loki,alloy,grafana}: true|false
+
+# 2. Umbrella overlay: image tags / OIDC / global.tenantDefaultId.
+cp environments/local/values.yaml.template environments/local/values.yaml
+# Edit:
+#   global.tenantDefaultId: <UUID>     # required when using external DBs
+#                                      # with pre-seeded persons rows
+#   apiGateway.authDisabled: true      # local sandbox; flip for real OIDC
+#   <l2>.host / <l2>.port              # only when <l2>.deploy=false and
+#                                      # the L2 service lives elsewhere
+
+# 3. Secret store: cleartext Secret manifests the seal step reads.
+cp secrets-store.yaml.template secrets-store.yaml
+# Edit each `insight-local-*-creds:` block, replacing REPLACE_* with
+# real cleartext passwords. The seal step pipes these through kubeseal
+# into committable sealed manifests under
+# environments/local/sealed-secrets/.
+
+# 4. Airbyte setup creds (only when inventory.system.airbyte=true).
+cat > environments/local/.env.local <<'EOF'
+AIRBYTE_SETUP_EMAIL=admin@example.com
+AIRBYTE_SETUP_ORG=Insight
+EOF
+
+# 5. Run the chain. The wizard sees inventory.yaml present and skips
+#    itself; bootstrap → fetch-cert → seal → system → deploy-app runs
+#    as on an interactive operator's machine.
+KUBECONFIG=/path/to/config.yaml make deploy ENV=local
+```
+
+Idempotent — re-running on the same cluster is a near-no-op (helm
+upgrade --install on converged releases). For CI the relevant smoke
+check is "exit 0 on a fresh cluster"; helm's `--wait` ensures every
+Deployment is Ready before the chain returns.
+
 ---
 
 ## Settings reference (`.env.compose`)
