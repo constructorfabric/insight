@@ -28,8 +28,8 @@ clean-targets:
 on-run-start:
   - "{{ create_task_field_history_staging() }}"
   # Drop init.sh-created silver placeholders BEFORE any model
-  # materialization starts. Three-factor detection (placeholder marker +
-  # 0 rows + at least one staging model materialised for the matching
+  # materialization starts. Two-factor detection (placeholder marker +
+  # at least one staging model materialised for the matching
   # `silver:<id>` tag) — see drop_silver_placeholders_at_start macro for
   # rationale. Lives in on-run-start, NOT a per-model pre-hook, because
   # dbt-clickhouse captures the target's existence at materialization

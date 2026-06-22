@@ -16,9 +16,13 @@
 -- NULL (not-ingested, e.g. visited_page_count on OneDrive) is intentionally
 -- NOT flagged — NULL < 0 is NULL, not a violation; honest NULLs are handled
 -- separately. Read FINAL so transient ReplacingMergeTree duplicates can't
--- surface as repeated violations of the same row.
+-- surface as repeated violations of the same row. `date` is selected purely
+-- as triage context in the stored-failure rows (the activity day of the bad
+-- count) — it is not a filter: a negative count is corruption on any partition,
+-- so the check stays unbounded over the full table.
 SELECT
     unique_key,
+    date,
     viewed_or_edited_count,
     synced_count,
     shared_internally_count,

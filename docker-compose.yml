@@ -1,8 +1,8 @@
 # Insight platform — local docker-compose dev stack.
 #
-# This is the docker-compose path for working on Insight on a developer
-# laptop. The Kind/helmfile path (dev-up.sh) is being retired in favour
-# of this; see CONTRIBUTING.md.
+# This is the default path for working on Insight on a developer laptop.
+# For the Kubernetes path (Airbyte / Argo Workflows, real cluster shape)
+# see CONTRIBUTING.md and deploy/gitops/.
 #
 # Quick start:
 #   cp .env.compose.example .env.compose

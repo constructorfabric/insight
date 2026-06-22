@@ -37,13 +37,20 @@ spec:
         - name: wait-for-mariadb
           image: "{{ .Values.waitForMariadb.image.repository }}:{{ .Values.waitForMariadb.image.tag }}"
           imagePullPolicy: IfNotPresent
+          envFrom:
+            # The umbrella publishes MARIADB_HOST + MARIADB_PORT here via
+            # `insight.mariadb.host` / `.port` helpers — works for both
+            # mariadb.deploy=true and =false. The chart is published only
+            # as part of the umbrella, so this ref is hardcoded.
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
           command:
             - sh
             - -c
             - |
               set -eu
-              host="{{ default (printf "%s-mariadb" .Release.Name) .Values.waitForMariadb.host }}"
-              port="{{ .Values.waitForMariadb.port }}"
+              host="$MARIADB_HOST"
+              port="${MARIADB_PORT:-3306}"
               timeout={{ .Values.waitForMariadb.timeoutSeconds }}
               elapsed=0
               echo "wait-for-mariadb: ${host}:${port} (timeout=${timeout}s)"

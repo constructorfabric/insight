@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "source-gitlab-insight"
+version = "0.1.0"
+description = "Airbyte source connector for self-hosted GitLab (CDK, typed)"
+requires-python = ">=3.10"
+dependencies = [
+    "airbyte-cdk>=7.23.1",
+    "requests>=2.34.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10",
+    "ruff>=0.5",
+    "types-requests",
+    "pytest>=8.0",
+]
+
+[project.scripts]
+source-gitlab-insight = "source_gitlab.source:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["source_gitlab*"]
+
+[tool.setuptools.package-data]
+source_gitlab = ["spec.json"]
+"source_gitlab.streams" = ["*.schema.json"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["airbyte_cdk.*"]
+ignore_missing_imports = true
+implicit_reexport = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# get_json_schema mirrors airbyte_cdk Stream's own cached override; stream
+# instances live for the whole sync, so the B019 leak concern does not apply.
+"source_gitlab/streams/base.py" = ["B019"]
