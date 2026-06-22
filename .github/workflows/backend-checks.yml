@@ -1,22 +1,23 @@
 name: Backend Lint & Test
 
 on:
-  # PR-only: every change touching the backend must pass these checks before
-  # it lands. Re-running the same suite on the merge commit just burns minutes
-  # — the PR already proved the tree is green, and branch protection ensures
-  # nothing reaches `main` without that PR. Use workflow_dispatch for an
-  # explicit manual rerun against `main` (e.g. after a runner-image rollover
-  # that might shift behaviour).
+  # Runs on PRs touching the backend (the lint/test gate) AND on push to main —
+  # GitHub's native code coverage compares each PR against the default-branch
+  # baseline, so main must upload coverage too. workflow_dispatch = manual rerun.
   pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/**"
+      - ".github/workflows/backend-checks.yml"
+  push:
     branches: [main]
     paths:
       - "src/backend/**"
       - ".github/workflows/backend-checks.yml"
   workflow_dispatch:
 
-# A new push to a PR obsoletes any run still in flight for the same ref. Cancel
-# it so a rebase/force-push (or rapid re-pushes) doesn't leave a stale, slow
-# instrumented coverage build burning runner minutes in parallel.
+# A new push obsoletes any run still in flight for the same ref — cancel it so a
+# rebase/force-push doesn't leave a slow instrumented build burning minutes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,11 +26,11 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
-# The coverage steps post a sticky PR comment, which needs write access to the
-# pull request. Everything else in this workflow only reads the repo.
+# Uploading to GitHub's native code-coverage API needs code-quality: write;
+# everything else only reads the repo.
 permissions:
   contents: read
-  pull-requests: write
+  code-quality: write
 
 jobs:
   check:
@@ -41,6 +42,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Check out the PR head (not the merge commit) so coverage line
+          # numbers map to the diff; falls back to the pushed SHA on main.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -61,54 +66,24 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features
 
-      # cargo-llvm-cov runs the suite under LLVM source-based coverage
-      # instrumentation — this replaces the plain `cargo test --all`, so the
-      # tests still run and we capture coverage from the same pass. The
-      # instrumented build uses different RUSTFLAGS than the clippy/test cache,
-      # so it recompiles the workspace and runs slower than a bare test pass.
       - uses: taiki-e/install-action@cargo-llvm-cov
 
+      # cargo-llvm-cov runs the suite under coverage instrumentation (this
+      # replaces the plain `cargo test`, so tests still run) and emits a single
+      # Cobertura report for upload.
       - name: Run tests with coverage
         run: |
           cargo llvm-cov --no-report --all-features --workspace
-          cargo llvm-cov report --html
           cargo llvm-cov report --cobertura --output-path cobertura.xml
-          cargo llvm-cov report --summary-only
 
-      # cargo-llvm-cov already emitted the source-annotated HTML report under
-      # target/llvm-cov/html (best fidelity for Rust). ReportGenerator (a .NET
-      # global tool, hence the SDK install) is used only to render the aggregate
-      # Cobertura numbers as a GitHub markdown summary for the PR comment.
-      - uses: actions/setup-dotnet@v4
+      - name: Upload coverage to GitHub
+        uses: actions/upload-code-coverage@v1
         with:
-          dotnet-version: "9.0.x"
-
-      - name: Generate markdown coverage summary
-        run: |
-          dotnet tool install --global dotnet-reportgenerator-globaltool
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          reportgenerator \
-            -reports:cobertura.xml \
-            -targetdir:coverage-report \
-            -reporttypes:"MarkdownSummaryGithub" \
-            -title:"Rust backend"
-
-      - name: Upload HTML coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-backend-coverage-html
-          path: src/backend/target/llvm-cov/html
-
-      # Report-only: posts/updates a sticky comment, never fails the job
-      # (continue-on-error keeps fork PRs — read-only token — green).
-      - name: Post coverage PR comment
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: rust-backend-coverage
-          recreate: true
-          path: src/backend/coverage-report/SummaryGithub.md
+          file: src/backend/cobertura.xml
+          language: Rust
+          label: code-coverage/rust
+          # Report-only: a coverage-upload hiccup must never fail the gate.
+          fail-on-error: false
 
   dotnet-identity:
     name: .NET — Identity Service Build & Test
@@ -119,6 +94,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -150,29 +127,18 @@ jobs:
           --no-build --configuration Release
           --collect:"XPlat Code Coverage" --results-directory ./coverage
 
-      # Merge the unit + integration Cobertura outputs into one HTML report
-      # (artifact) plus a GitHub markdown summary (PR comment). Report-only.
-      - name: Generate coverage report
+      # The two test runs each emit a Cobertura file for the same assemblies;
+      # merge them into one report (the upload action takes a single file).
+      - name: Merge coverage
         run: |
-          dotnet tool install --global dotnet-reportgenerator-globaltool
+          dotnet tool install --global dotnet-coverage
           export PATH="$PATH:$HOME/.dotnet/tools"
-          reportgenerator \
-            -reports:"coverage/**/coverage.cobertura.xml" \
-            -targetdir:coverage/report \
-            -reporttypes:"Html;MarkdownSummaryGithub" \
-            -title:"Identity (.NET)"
+          dotnet-coverage merge -f cobertura -o merged.cobertura.xml coverage/*/coverage.cobertura.xml
 
-      - name: Upload HTML coverage report
-        uses: actions/upload-artifact@v4
+      - name: Upload coverage to GitHub
+        uses: actions/upload-code-coverage@v1
         with:
-          name: dotnet-identity-coverage-html
-          path: src/backend/services/identity/coverage/report
-
-      - name: Post coverage PR comment
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: dotnet-identity-coverage
-          recreate: true
-          path: src/backend/services/identity/coverage/report/SummaryGithub.md
+          file: src/backend/services/identity/merged.cobertura.xml
+          language: C#
+          label: code-coverage/identity
+          fail-on-error: false
