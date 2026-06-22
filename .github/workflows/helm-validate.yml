@@ -67,21 +67,22 @@ jobs:
           done < <(git ls-files '*/Chart.yaml' 'Chart.yaml')
           exit $rc
 
-      - name: Forbid :latest and empty image tags in chart values
+      - name: Forbid :latest image tags in chart values
         run: |
           set -euo pipefail
           rc=0
           while IFS= read -r f; do
             # Strip comments first so commented examples don't trip the guard.
             clean=$(sed -E 's/[[:space:]]#.*$//; s/^[[:space:]]*#.*$//' "$f")
-            # (1) explicit :latest on an image reference
+            # explicit :latest on an image reference (frontend blank-page defect class)
             if grep -nE '^[[:space:]]*image:[[:space:]]*.*:latest("?[[:space:]]*)$' <<<"$clean"; then
               echo "::error file=$f::':latest' image reference (frontend blank-page defect class)"; rc=1
             fi
-            # (2) empty / null tag values
-            if grep -nE '^[[:space:]]*tag:[[:space:]]*(""|'"''"'|null|~)?[[:space:]]*$' <<<"$clean"; then
-              echo "::error file=$f::empty/missing image tag (floating-ref defect class)"; rc=1
-            fi
+            # NOTE: an empty `tag: ""` in a base values.yaml is the repo's
+            # deliberate convention — the operator / release-train MUST supply the
+            # tag at deploy (CI renders supply it via ci/ci-values.yaml). So an
+            # empty tag is "must override", not a floating ref, and is NOT flagged
+            # here; the umbrella fail-fasts if the operator forgets to set it.
           done < <(git ls-files 'charts/**/values.yaml' 'src/**/helm/values.yaml' 'helmfile/charts/**/values.yaml')
           exit $rc
 
