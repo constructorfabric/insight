@@ -64,7 +64,7 @@
         "order": 6
       },
       "gitlab_max_workers": {
-        "type": "integer",
+        "type": ["integer", "string"],
         "title": "Max Concurrent Requests",
         "description": "Maximum number of GitLab API requests in flight at once. Higher values speed up large syncs but put more load on the instance; the connector still backs off reactively on HTTP 429. Raise it for a controlled self-hosted instance, lower it for a shared one.",
         "default": 8,
