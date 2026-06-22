@@ -14,6 +14,13 @@ on:
       - ".github/workflows/backend-checks.yml"
   workflow_dispatch:
 
+# A new push to a PR obsoletes any run still in flight for the same ref. Cancel
+# it so a rebase/force-push (or rapid re-pushes) doesn't leave a stale, slow
+# instrumented coverage build burning runner minutes in parallel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
