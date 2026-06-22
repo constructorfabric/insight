@@ -37,7 +37,7 @@ def is_metric_path(node: dict) -> bool:
     name = node.get("name") or ""
     tags = node.get("tags") or []
     return (
-        schema in ("silver", "gold", "bronze")
+        schema in ("silver", "gold")
         or name.endswith("__bronze_promoted")
         or any(t == "silver" or t.startswith("silver:") for t in tags)
     )
@@ -56,13 +56,13 @@ def main() -> None:
     manifest = json.loads(manifest_path.read_text())
     nodes = manifest.get("nodes", {})
 
-    # --- Bronze sources: every Airbyte source should declare freshness ---
+    # --- Sources: every declared source should carry a freshness check ---
     sources = manifest.get("sources", {})
     if sources:
         fresh = sum(1 for s in sources.values() if s.get("freshness") and s.get("loaded_at_field"))
-        print(f"bronze sources: {len(sources)} — freshness declared: {fresh}/{len(sources)} "
+        print(f"sources: {len(sources)} — freshness declared: {fresh}/{len(sources)} "
               f"({100 * fresh // len(sources)}%)")
-        for uid, s in sorted(sources.items(), key=lambda kv: kv[1].get("name", "")):
+        for s in sorted(sources.values(), key=lambda s: s.get("name", "")):
             if not (s.get("freshness") and s.get("loaded_at_field")):
                 print(f"  ✗ source {s.get('source_name')}.{s.get('name')}: no freshness check")
 

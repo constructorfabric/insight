@@ -50,7 +50,9 @@ jobs:
           CLICKHOUSE_PASSWORD: ci-noconnect
           DBT_PROFILES_DIR: ${{ github.workspace }}/src/ingestion/dbt
         run: |
-          [ -f packages.yml ] && dbt deps || true
+          if [ -f packages.yml ]; then
+            dbt deps
+          fi
           dbt parse --no-version-check
 
       - name: Data-contract & test coverage report
@@ -60,7 +62,7 @@ jobs:
           {
             echo '## dbt data-contract coverage'
             echo '```'
-            grep -E 'metric-path models|enforced contract|key tests|bronze sources|freshness declared' /tmp/dbt-coverage.txt
+            grep -E 'metric-path models|enforced contract|key tests|^sources:|freshness declared' /tmp/dbt-coverage.txt || true
             echo '```'
             echo '_Report-only. Dev fills contracts; flip the gate step to `--check` per domain to enforce._'
           } >> "$GITHUB_STEP_SUMMARY"
