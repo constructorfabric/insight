@@ -652,7 +652,7 @@ K8s Cluster
     │   ├── Argo Server (API + UI)
     │   └── Argo Controller (workflow execution)
     └── Helm release: insight (chart: charts/insight, this repo)
-        ├── ClickHouse (subchart helmfile/charts/clickhouse — StatefulSet)
+        ├── ClickHouse (StatefulSet — separate L2 release, see §4 below)
         ├── MariaDB (Bitnami subchart — per-service databases:
         │              analytics-api owns `insight`, identity-resolution
         │              owns `identity` per ADR-0006)
@@ -669,8 +669,8 @@ Key deployment decisions:
 - Argo Workflows stores state in K8s etcd — no external database required.
 - Airbyte ships its own bundled PostgreSQL for connector metadata (managed by the `airbyte/airbyte` chart, not by the umbrella).
 - Helm charts: Airbyte via `airbyte/airbyte`, Argo via `argo/argo-workflows`, the Insight platform via `charts/insight` in this repo. On Cyberfabric-operated and local clusters all three are installed by the gitops Makefile (`cd deploy/gitops && make deploy ENV=<env>` — Airbyte/Argo as L2 system releases, the umbrella as the L3 app release); external consumers install them with their own tooling.
-- ClickHouse, MariaDB, Redis and Redpanda are all umbrella subcharts under `charts/insight/Chart.yaml` (`<dep>.deploy: true|false`). The unified shape `<dep>.host / .port / .database / .username / .passwordSecret` works whether the dep is bundled or external — see `charts/insight/values.yaml`.
-- ClickHouse is a StatefulSet (`insight-clickhouse`) created by `helmfile/charts/clickhouse`; access is via Service `insight-clickhouse:8123` inside the cluster. Health probes use HTTP GET `/ping` (not `clickhouse-client` exec — avoids CLI flag parsing issues with auto-generated passwords).
+- ClickHouse, MariaDB, Redis and Redpanda are deployed as separate L2 releases in `insight-infra` (gitops `make system-*`); the umbrella no longer bundles them as subcharts (removed in chart `0.2.0`). The umbrella consumes them through the unified `<dep>.host / .port / .database / .username / .passwordSecret` shape — see `charts/insight/values.yaml`.
+- ClickHouse is a StatefulSet (`insight-clickhouse`) deployed as a separate L2 release (gitops `make system-clickhouse`); access is via Service `insight-clickhouse:8123` inside the cluster. Health probes use HTTP GET `/ping` (not `clickhouse-client` exec — avoids CLI flag parsing issues with auto-generated passwords).
 - MariaDB per-service databases are provisioned via the bundled bitnami `mariadb.initdbScriptsConfigMap` (see `charts/insight/templates/mariadb-initdb-scripts.yaml`) — bitnami runs every script in that ConfigMap on the FIRST MariaDB pod boot, mounted at `/docker-entrypoint-initdb.d`. The data lives in the PVC after that, so restarts and helm upgrades are no-ops. Each owning service then runs its own SeaORM migrations at startup — see §4.4.2 and [ADR-0006](ADR/0006-service-owned-migrations.md).
 - CDK connector build script (`airbyte-toolkit/build-connector.sh`) uses `CLUSTER_NAME` env var (default `insight`) for Kind image loading — not hardcoded.
 - Airbyte port-forward uses `nohup ... & disown` to avoid blocking the terminal.

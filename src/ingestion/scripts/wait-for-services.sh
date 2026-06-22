@@ -21,7 +21,7 @@ kubectl wait --for=condition=ready pod \
 
 echo "  Waiting for Airbyte..."
 # `airbyte-server` is the chart's actual pod label
-# (app.kubernetes.io/name=airbyte-server, see deploy/airbyte/README.md);
+# (app.kubernetes.io/name=airbyte-server, see deploy/gitops/system/airbyte);
 # the previous `name=server` selector matched no pods and silently fell
 # through to the curl localhost:8001 fallback below — which only works
 # when the caller has already started a port-forward, an undocumented
