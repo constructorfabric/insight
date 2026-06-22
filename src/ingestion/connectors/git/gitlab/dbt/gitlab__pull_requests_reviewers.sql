@@ -23,8 +23,8 @@ WITH proj AS (
     FROM {{ source('bronze_gitlab', 'projects') }} FINAL
 )
 SELECT
-    a.tenant_id,
-    a.source_id,
+    a.tenant_id AS tenant_id,
+    a.source_id AS source_id,
     concat(
         COALESCE(a.tenant_id, ''), ':',
         COALESCE(a.source_id, ''), ':',
