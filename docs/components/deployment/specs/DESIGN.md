@@ -29,16 +29,16 @@ date: 2026-05-12
 
 ### 1.1 Architectural Vision
 
-The Deployment subsystem is a **two-layer** distribution pipeline. Layer one is the artifact: a single Helm umbrella chart at `charts/insight/`, built and published per merge to `main` of `constructorfabric/insight` as `oci://ghcr.io/constructorfabric/charts/insight:<semver>` by the Chart Publishing CI workflow, alongside per-service application images at `ghcr.io/constructorfabric/insight-<service>:<buildtag>`. Layer two is the set of consumers: the private `infra/insight-gitops` repository (driving every Cyberfabric-operated cluster — internal `dev`/`test`/`stage` and each customer-named production cluster), the `dev-up.sh` wrapper (driving a local Kind/OrbStack cluster), and any external Helm consumer (Constructor Platform tenants, evaluators, partners) who pulls the chart and runs it with their own tooling. The architectural rationale for publishing the chart this way is captured in [ADR-0001](./ADR/0001-chart-publishing-on-merge.md); the operational contract for the gitops consumer is captured in the [gitops SPEC](../gitops/README.md).
+The Deployment subsystem is a **two-layer** distribution pipeline. Layer one is the artifact: a single Helm umbrella chart at `charts/insight/`, built and published per merge to `main` of `constructorfabric/insight` as `oci://ghcr.io/constructorfabric/charts/insight:<semver>` by the Chart Publishing CI workflow, alongside per-service application images at `ghcr.io/constructorfabric/insight-<service>:<buildtag>`. Layer two is the set of consumers: the private `infra/insight-gitops` repository (driving every Cyberfabric-operated cluster — internal `dev`/`test`/`stage` and each customer-named production cluster, and the same path run locally against a Kind/OrbStack cluster via `make deploy ENV=local`), and any external Helm consumer (Constructor Platform tenants, evaluators, partners) who pulls the chart and runs it with their own tooling. Day-to-day backend / frontend development uses a separate Docker Compose stack (`dev-compose.sh`) that does not consume the chart. The architectural rationale for publishing the chart this way is captured in [ADR-0001](./ADR/0001-chart-publishing-on-merge.md); the operational contract for the gitops consumer is captured in the [gitops SPEC](../gitops/README.md).
 
 The artifact is deliberately thin: the umbrella owns the chart-shape contract but does not own controllers or CRDs. It orchestrates eight subcharts (four infra + four app services), emits one bridge object (`{release}-platform` ConfigMap), emits Argo `WorkflowTemplate` objects when gated, and runs a fail-fast `insight.validate` template at render time. Every infra subchart is pluggable via the `<svc>.deploy: true|false` toggle plus the same flat `<svc>.host` / `.port` / `.passwordSecret` shape — read identically whether the subchart is bundled or external. That dual-purpose toggle is what makes one chart serve two install shapes.
 
 The chart serves two install shapes selected by the consumer:
 
-- **Single-namespace fat install** (`<svc>.deploy: true` for every infra block). The umbrella renders MariaDB, ClickHouse, Redis, Redpanda **and** the app services into a single namespace. `dev-up.sh` runs this shape locally. An external consumer who wants everything in one namespace can also flip the toggles `true`.
+- **Single-namespace fat install** (`<svc>.deploy: true` for every infra block). The umbrella renders MariaDB, ClickHouse, Redis, Redpanda **and** the app services into a single namespace. An external consumer who wants everything in one namespace flips the toggles `true`.
 - **Layered app-only install** (`<svc>.deploy: false` for every infra block). The umbrella renders the app services only into the `insight` namespace; infra comes from L2 (gitops production: `insight-infra` namespace) or from managed external endpoints / a separate team's namespace (Constructor Platform, external customers). This shape is driven by the gitops Makefile per the [L0/L2/L3 model](../gitops/README.md#15-layer-model).
 
-Tenant separation across customers is at the **cluster boundary** for gitops production — one Insight install per cluster, the customer's identity in the kube-context name (`insight-<env>`) and in the gitops repo's `environments/<env>/` directory, never in the namespace. The two well-known namespaces (`insight-infra`, `insight`) are the same on every cluster. Tenant separation on a shared cluster (`dev-up.sh` parallel branches, Constructor Platform tenants) is at the namespace boundary, with `controller.instanceID` scoping Argo workflows.
+Tenant separation across customers is at the **cluster boundary** for gitops production — one Insight install per cluster, the customer's identity in the kube-context name (`insight-<env>`) and in the gitops repo's `environments/<env>/` directory, never in the namespace. The two well-known namespaces (`insight-infra`, `insight`) are the same on every cluster — including the local `ENV=local` cluster. Tenant separation on a shared cluster (Constructor Platform tenants) is at the namespace boundary, with `controller.instanceID` scoping Argo workflows.
 
 ### 1.2 Architecture Drivers
 
@@ -63,12 +63,12 @@ Tenant separation across customers is at the **cluster boundary** for gitops pro
 | `cpt-insightspec-fr-dep-dual-purpose-toggle` | `<svc>.deploy: true|false` toggles on the four infra subcharts. Same chart, two install shapes; cross-namespace wiring uses the same `<svc>.host` / `.port` shape as Constructor Platform external mode. Documented in the chart README and the gitops SPEC §1.5. |
 | `cpt-insightspec-fr-dep-layered-architecture` | The gitops SPEC §1.5 layer model (L0 Bootstrap / L2 System / L3 App) is the consumer-side contract; this DESIGN documents how the chart's dual-purpose toggle makes the layered shape possible (app services in `insight`, infra elsewhere by L2 or managed). |
 | `cpt-insightspec-fr-dep-customer-named-envs` | Implemented in the gitops Makefile (`PROTECTED_ENVS` + `CONFIRM=yes-deploy-<env>` token), documented in the [gitops SPEC §6.3](../gitops/README.md#63-pre-flight-safety-checks); the chart itself is environment-agnostic. |
-| `cpt-insightspec-fr-dep-namespace-convention` | Chart assumes release name `insight`; cross-namespace helpers default L2 host to `<release>.insight-infra.svc.cluster.local` for the layered shape. `dev-up.sh` uses the same release name in the same `insight` namespace. |
-| `cpt-insightspec-fr-dep-dev-wrapper` | `dev-up.sh` scripts the Kind/OrbStack bootstrap, backend image builds + `kind load`, frontend build from `insight-front_symlink` with arch-aware fallback, applies `deploy/values-dev.yaml` (which flips `<svc>.deploy: true`), installs Airbyte + Argo via dev-helper scripts, and opens the documented port-forwards. |
-| `cpt-insightspec-fr-dep-dev-namespace-param` | `dev-up.sh`, `dev-down.sh` and `init.sh` read `INSIGHT_NAMESPACE` (default `insight`). |
+| `cpt-insightspec-fr-dep-namespace-convention` | Chart assumes release name `insight`; cross-namespace helpers default L2 host to `<release>.insight-infra.svc.cluster.local` for the layered shape. The local gitops cluster (`ENV=local`) uses the same release name in the same `insight` namespace. |
+| `cpt-insightspec-fr-dep-dev-wrapper` | The Docker Compose dev stack (`dev-compose.sh` + `docker-compose.yml`) builds the backend services and frontend from source in builder containers (or pulls published images), runs them with bundled MariaDB / ClickHouse / Redis / Redpanda containers, auto-reloads on rebuild, and auto-seeds a demo dataset. It does not consume the umbrella chart. |
+| `cpt-insightspec-fr-dep-dev-namespace-param` | The compose stack's published host ports and frontend / backend image sources are overridable via `.env.compose`, so multiple stacks (or a stack pointed at external DBs) can coexist on one host. |
 | `cpt-insightspec-fr-dep-tenant-isolation-boundary` | Cluster-per-customer for gitops production (kube-context `insight-<env>`); namespace-per-tenant on shared clusters with `controller.instanceID.explicitID=$RELEASE-$NAMESPACE` and `controller.workflowNamespaces[0]=$NAMESPACE`. No ClusterRole / ClusterRoleBinding from L3. |
 | `cpt-insightspec-fr-dep-empty-credentials-default` | `charts/insight/values.yaml` ships no inline passwords. With `credentials.autoGenerate=true` (default) the umbrella creates `insight-db-creds` on first install via `lookup` + `randAlphaNum 24` and reuses it on every upgrade. BYO mode: an operator-supplied `insight-db-creds` is auto-detected via absence of the `app.kubernetes.io/managed-by=Helm` label, in which case the chart skips its own Secret-template emission so Helm does not attempt ownership transfer. With `autoGenerate=false` and no pre-existing Secret the install fails fast. OIDC fields are empty and the validator refuses any render that doesn't either set `apiGateway.oidc.existingSecret` or all three of `issuer`/`clientId`/`redirectUri`. |
-| `cpt-insightspec-fr-dep-dev-overlay-isolation` | Eval credentials live only in `deploy/values-dev.yaml`; applied by `dev-up.sh` exclusively. Production credentials reach the cluster through sealed secrets (gitops Passbolt → SealedSecret) or operator-managed Secrets, never via committed values files. |
+| `cpt-insightspec-fr-dep-dev-overlay-isolation` | Eval credentials live only in local-only artifacts — `.env.compose` (compose, gitignored) or wizard-generated values (local gitops). Production credentials reach the cluster through sealed secrets (gitops Passbolt → SealedSecret) or operator-managed Secrets, never via committed values files. |
 
 #### NFR Allocation
 
@@ -92,20 +92,20 @@ Tenant separation across customers is at the **cluster boundary** for gitops pro
                 │     :<semver>                                │
                 └────────────────────────┬─────────────────────┘
                                          │ pull oci://… by tag
-       ┌─────────────────────────────────┼──────────────────────────────┐
-       │                                 │                              │
-       ▼                                 ▼                              ▼
-┌───────────────────┐         ┌────────────────────────┐      ┌──────────────────┐
-│ Cyberfabric SRE   │         │ Platform Developer     │      │ External chart   │
-│ (gitops repo)     │         │ (dev-up.sh)            │      │ consumer         │
-│                   │         │                        │      │ (helm / ArgoCD / │
-│  make deploy ENV  │         │  Kind / OrbStack       │      │  Flux / …)       │
-│  L0 / L2 / L3     │         │  <svc>.deploy: true    │      │                  │
-│  insight-infra +  │         │  single-namespace fat  │      │  Operator picks  │
-│  insight ns       │         │  in insight ns         │      │  own tooling     │
-└────────┬──────────┘         └───────────┬────────────┘      └────────┬─────────┘
-         │                                │                            │
-         ▼                                ▼                            ▼
+              ┌──────────────────────────┴──────────────────────────┐
+              │                                                     │
+              ▼                                                     ▼
+┌──────────────────────────────┐                      ┌──────────────────┐
+│ gitops (Cyberfabric SRE +     │                      │ External chart   │
+│ local dev `ENV=local`)        │                      │ consumer         │
+│                               │                      │ (helm / ArgoCD / │
+│  make deploy ENV=<env>        │                      │  Flux / …)       │
+│  L0 / L2 / L3                 │                      │                  │
+│  <svc>.deploy: false (layered)│                      │  Operator picks  │
+│  insight-infra + insight ns   │                      │  own tooling     │
+└────────────┬──────────────────┘                      └────────┬─────────┘
+             │                                                  │
+             ▼                                                  ▼
                   ┌─────────────────────────────────────────────────────┐
                   │ Insight umbrella chart                              │
                   │  - subcharts: clickhouse, mariadb, redis, redpanda  │
@@ -122,8 +122,8 @@ Tenant separation across customers is at the **cluster boundary** for gitops pro
 |-------|---------------|------------|
 | Artifact (CI) | Build images, bump subchart `appVersion`s, patch-bump umbrella, package, push to GHCR, auto-commit version bumps. | GitHub Actions, Docker buildx, Helm 3.14+, GHCR. |
 | Artifact (chart) | Aggregate subcharts, emit `{release}-platform` ConfigMap, emit Argo `WorkflowTemplate` objects, run fail-fast validation, bridge bundled/external mode via helpers. | Helm chart (apiVersion v2), Go-template helpers. |
-| Consumer (gitops) | Pull chart from OCI pinned to `.insight-version`; drive L0 bootstrap + L2 system services + L3 app deploy per env via the Makefile. | Private `infra/insight-gitops` repo on GitLab; bash Makefile; Passbolt + sealed-secrets-controller. |
-| Consumer (dev) | Bootstrap Kind/OrbStack, build images from source, install the umbrella with `<svc>.deploy: true` plus Airbyte + Argo via dev-helper scripts, open port-forwards. | bash, Kind/OrbStack, Helm, kubectl. |
+| Consumer (gitops) | Pull chart from OCI pinned to `.insight-version`; drive L0 bootstrap + L2 system services + L3 app deploy per env via the Makefile — on production clusters and on a local Kind/OrbStack cluster (`make deploy ENV=local`). | Private `infra/insight-gitops` repo on GitLab; bash Makefile; Passbolt + sealed-secrets-controller. |
+| Local development | Day-to-day backend / frontend work runs the Docker Compose stack (`dev-compose.sh`), which does **not** consume the chart; chart and ingestion validation runs the gitops path locally (`make deploy ENV=local`). | Docker Compose; Kind/OrbStack for the local gitops cluster. |
 | Consumer (external) | Pull chart from OCI by tag, install with their own values + tooling (helm, ArgoCD, Flux, Terraform Helm provider, …). | Consumer's choice. |
 | Subcharts | Ship the actual Kubernetes workloads (StatefulSets, Deployments, Services, HPAs). | Bitnami / Bitnamilegacy (MariaDB, Redis), upstream Redpanda, local wrapper for ClickHouse, in-repo charts for app services. |
 
@@ -143,7 +143,7 @@ The product is the umbrella chart. Everything that ships together is declared as
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-dep-dual-purpose-chart`
 
-The chart's `<svc>.deploy: true|false` toggle is the dev-vs-prod switch. `dev-up.sh` flips it `true` for a single-namespace fat install; gitops production flips it `false` for an app-only layered install with infra in `insight-infra` (L2) or managed externally. Both shapes render through the same templates and the same helpers, so a bug in app rendering surfaces on the developer's laptop before it reaches a customer cluster.
+The chart's `<svc>.deploy: true|false` toggle selects the install shape. An external consumer who wants everything in one namespace flips it `true` for a single-namespace fat install; gitops (production and local) flips it `false` for an app-only layered install with infra in `insight-infra` (L2) or managed externally. Both shapes render through the same templates and the same helpers, so a bug in app rendering surfaces on a developer's local `make deploy ENV=local` cluster before it reaches a customer cluster.
 
 **ADRs**: none.
 
@@ -151,7 +151,7 @@ The chart's `<svc>.deploy: true|false` toggle is the dev-vs-prod switch. `dev-up
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-dep-single-artifact-ref`
 
-Every consumer addresses the chart by the same OCI URL (`oci://ghcr.io/constructorfabric/charts/insight`) and a semver tag. No sibling-checkout dependency, no curl-from-GitHub at deploy time, no per-consumer publishing flow. Cyberfabric SRE, Constructor Platform tenants, external customers and `dev-up.sh` (for testing the published artifact) all pull from the same place.
+Every consumer addresses the chart by the same OCI URL (`oci://ghcr.io/constructorfabric/charts/insight`) and a semver tag. No sibling-checkout dependency, no curl-from-GitHub at deploy time, no per-consumer publishing flow. Cyberfabric SRE (production and local `ENV=local`), Constructor Platform tenants and external customers all pull from the same place.
 
 **ADRs**: [ADR-0001](./ADR/0001-chart-publishing-on-merge.md).
 
@@ -183,7 +183,7 @@ The gitops repo has no generic "prod". Internal envs (`dev`, `test`, `stage`) an
 
 - [ ] `p2` - **ID**: `cpt-insightspec-principle-dep-convergent-paths`
 
-The developer wrapper and the gitops production path share the umbrella chart artifact. The dev shape is one set of values overlays (`<svc>.deploy: true`, eval creds, port-forwards); the production shape is another (`<svc>.deploy: false`, sealed creds, ingress). A change that breaks production rendering surfaces in `helm template` on the developer path first.
+The local gitops path (`make deploy ENV=local`) and the gitops production path are the same Makefile and the same umbrella chart artifact — they differ only in the per-env values overlay (local: wizard-generated creds, dev-friendly toggles; production: sealed creds, ingress). A change that breaks production rendering surfaces in `helm template` on the local path first.
 
 **ADRs**: none.
 
@@ -201,7 +201,7 @@ The umbrella chart declares `kubeVersion: ">=1.27.0-0"`. Consumers on older Kube
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-dep-helm-version`
 
-OCI chart pulls require Helm 3.14+. This applies to every consumer (gitops Makefile, `dev-up.sh`, ArgoCD/Flux instances rendering the chart, customer-side helm installs).
+OCI chart pulls require Helm 3.14+. This applies to every chart consumer (gitops Makefile on production and local clusters, ArgoCD/Flux instances rendering the chart, customer-side helm installs).
 
 **ADRs**: [ADR-0001](./ADR/0001-chart-publishing-on-merge.md).
 
@@ -225,7 +225,7 @@ Airbyte chart pinned to 1.8.5+ (app 1.8.5+) at the consumer side. Chart 1.9.x wa
 
 - [ ] `p3` - **ID**: `cpt-insightspec-constraint-dep-frontend-amd64`
 
-The published `ghcr.io/constructorfabric/insight-front` image ships only a linux/amd64 manifest. The dev wrapper works around this by rebuilding from the sibling `insight-front` checkout on arm64 hosts. Production installs on amd64 clusters are unaffected; the publish workflow does not bump frontend image tags automatically (the frontend source lives in a separate repo).
+The published `ghcr.io/constructorfabric/insight-front` image ships only a linux/amd64 manifest. The Docker Compose dev stack works around this on arm64 hosts by rebuilding from the sibling `insight-front` checkout (`FRONTEND_MODE=dev` / `built`); the default `ghcr` mode runs the amd64 image under QEMU. Production installs on amd64 clusters are unaffected; the publish workflow does not bump frontend image tags automatically (the frontend source lives in a separate repo).
 
 **ADRs**: none.
 
@@ -246,7 +246,7 @@ Deployment has no runtime domain model — it neither stores nor serves data. Th
 - **Chart artifact**: a packaged Helm chart (`insight-<version>.tgz`) addressable by `(oci://ghcr.io/constructorfabric/charts/insight, version)`. One produced per merge to `main`. Immutable once published.
 - **Service image**: a container image at `ghcr.io/constructorfabric/insight-<service>:<buildtag>`. Referenced by exactly one subchart's `appVersion`.
 - **Subchart**: a Helm subchart aggregated under the umbrella, identified by `name`, optionally `alias`, `version`, `repository`, and (for infra) `condition: <alias>.deploy`.
-- **Release**: a Helm release applied by a consumer (the L3 umbrella release, the L2 per-service releases in the gitops shape, the Airbyte/Argo releases in `dev-up.sh`). Identified by `(namespace, release-name)`.
+- **Release**: a Helm release applied by a consumer (the L3 umbrella release, the L2 per-service releases in the gitops shape including Airbyte/Argo). Identified by `(namespace, release-name)`.
 - **Values file**: a YAML file that parameterises a release. The chart's `values.yaml` is the canonical reference; consumer overlays compose on top.
 - **Platform ConfigMap**: the single bridge object emitted by the umbrella. Maps resolved infra coordinates into environment variables for every pod in the namespace.
 - **Infra contract**: a single flat `<dep>` block (`deploy`, `host`, `port`, `database`, `username`, `passwordSecret`) — same shape whether the umbrella runs the dep itself or consumes an externally-provided one.
@@ -269,8 +269,7 @@ graph TB
     end
 
     subgraph Consumers["Consumers"]
-        Gitops[infra/insight-gitops Makefile]
-        DevUp[dev-up.sh]
+        Gitops[infra/insight-gitops Makefile<br/>production + local ENV=local]
         External[External Helm consumer]
     end
 
@@ -293,10 +292,8 @@ graph TB
 
     Publish --> GHCR
     GHCR -.-> Gitops
-    GHCR -.-> DevUp
     GHCR -.-> External
     Gitops -->|helm upgrade --install| Umbrella
-    DevUp -->|helm upgrade --install| Umbrella
     External -->|helm/argocd/flux| Umbrella
     Umbrella --> Helpers
     Umbrella --> PlatformCM
@@ -329,10 +326,10 @@ Every consumer of Insight — Cyberfabric SRE pinning one version per cluster, C
 ##### Responsibility boundaries
 
 - Does not ship CRDs or controllers.
-- Does not install Airbyte or Argo Workflows — those are separate Helm releases driven by the consumer (`dev-up.sh` for dev, `make system-airbyte` / `make system-argo` in the gitops repo for production).
+- Does not install Airbyte or Argo Workflows — those are separate Helm releases driven by the consumer (`make system-airbyte` / `make system-argo` in the gitops repo, on production and local clusters; external consumers by their own means).
 - Does not create ClusterRoles, ClusterRoleBindings or any cross-namespace resources.
 - Does not own runtime behaviour of the subcharts; their configuration lives in their own values blocks exposed here.
-- Is not tied to any one consumer; the chart is the same artifact in OCI whether pulled by the gitops Makefile, by `dev-up.sh`, by ArgoCD/Flux, or by `helm install` directly.
+- Is not tied to any one consumer; the chart is the same artifact in OCI whether pulled by the gitops Makefile, by ArgoCD/Flux, or by `helm install` directly.
 
 ##### Related components (by ID)
 
@@ -446,33 +443,32 @@ Every pod in the namespace needs the same set of resolved coordinates. Pushing t
 - `cpt-insightspec-component-dep-service-resolution-helpers` — depends on.
 - `cpt-insightspec-component-dep-umbrella-chart` — owned by.
 
-#### Dev Wrapper (`dev-up.sh`)
+#### Docker Compose Dev Stack (`dev-compose.sh`)
 
 - [ ] `p3` - **ID**: `cpt-insightspec-component-dep-dev-wrapper`
 
 ##### Why this component exists
 
-Developers iterate faster when the platform bring-up is one command. The wrapper adds what production consumers do not need — cluster bootstrap, image builds from source, Kind image loading, port-forwards — while installing the *same* umbrella chart that production consumes, just with the `<svc>.deploy: true` toggles flipped on for a single-namespace fat install. That keeps dev and production paths convergent.
+Day-to-day backend / frontend work needs a fast loop with no Kubernetes overhead — no cluster bootstrap, no image registry, no chart rendering. The Docker Compose stack brings the application services up from source (or from published images) alongside their bundled databases on a developer laptop with only Docker installed. It deliberately does **not** consume the umbrella chart; chart-shape and ingestion validation is done on the local gitops cluster (`make deploy ENV=local`), which exercises the same artifact production consumes.
 
 ##### Responsibility scope
 
-- Bootstraps a Kind/OrbStack cluster named `insight` if absent. The cluster config (`k8s/kind-config.yaml`) pins a specific `kindest/node` image so the dev path is independent of the host's installed `kind` binary version. Recent kind defaults (`v1.32+`) require cgroup v2, which Docker Desktop on Windows and several Linux distros do not provide; pinning to a cgroup-v1-compatible image keeps the bring-up working on stock developer hosts. Bumping the pin requires validating Argo / Airbyte / bitnami subchart compatibility against the new node image.
-- Builds backend images and loads them with `kind load docker-image`.
-- Builds the frontend image from the sibling `insight-front` checkout with native-arch try + `linux/amd64` fallback; on pull-only paths uses `docker pull --platform`.
-- Installs Airbyte and Argo Workflows into the same local `insight` namespace via `deploy/scripts/install-airbyte.sh` and `deploy/scripts/install-argo.sh` (internal helpers; not a public deploy path).
-- Installs the umbrella chart with `deploy/values-dev.yaml` (`<svc>.deploy: true` for the infra subcharts plus eval credentials).
-- Opens port-forwards for Frontend :8003, API Gateway :8080, Airbyte UI :8002, Airbyte API :8001, Argo UI :2746, ClickHouse HTTP :8123.
-- `dev-down.sh` tears the cluster down; `init.sh` bootstraps `.env.*` defaults.
+- Runs `docker-compose.yml`: api-gateway + analytics-api (Rust) + identity (.NET 9) + frontend, plus bundled MariaDB / ClickHouse / Redis / Redpanda containers.
+- Builds the backend services and (optionally) the frontend in builder containers — no Rust / .NET / Node toolchain on the host. Per-service `<SVC>_IMAGE` overrides in `.env.compose` (or `--from-ghcr=<svc>`) pull a published image instead of building.
+- Auto-reloads each backend service in ~1 second on rebuild via `watchexec` when `ENABLE_AUTO_RELOAD=true` (compose-only; never set in a Kubernetes manifest).
+- Auto-seeds a demo dataset (identity + silver) on first `up`, tracked via `SEEDED_LOCAL_*` markers in `.env.compose`.
+- A first-run wizard generates `.env.compose`, capturing local-vs-external MariaDB / ClickHouse, the dev-user email, the tenant id, and the frontend mode. Re-run by deleting `.env.compose` or `./dev-compose.sh prune`.
+- Publishes the web services on configurable host ports (Frontend :3000, API Gateway :8080, Analytics API :8081, Identity :8082, ClickHouse :8123, MariaDB :3306, Redis :6379).
 
 ##### Responsibility boundaries
 
-- Not for production use. `dev-up.sh` is explicitly local-only; production consumers either go through the gitops repo or pull the chart from OCI directly.
-- The `deploy/scripts/install-*.sh` helpers under `dev-up.sh` are internal to this wrapper, not a documented public deploy path. They exist to install Airbyte / Argo into the local cluster — production consumers install Airbyte / Argo by whatever means matches their environment (the gitops Makefile's `make system-airbyte` / `make system-argo` for Cyberfabric clusters; the consumer's own choice for external installs).
-- Does not persist state outside the Kind/OrbStack cluster; nothing leaks to the host.
+- Not for production use; explicitly local-only.
+- Does not consume the umbrella chart and does not ship Airbyte or Argo Workflows — ingestion work that needs them runs on the local gitops cluster (`make deploy ENV=local`).
+- Eval credentials live in `.env.compose` (gitignored); nothing leaks into the canonical chart values or any published artifact.
 
 ##### Related components (by ID)
 
-- `cpt-insightspec-component-dep-umbrella-chart` — consumes.
+- None — the compose stack is independent of the umbrella chart. Chart consumers are documented under `cpt-insightspec-component-dep-umbrella-chart`.
 
 ### 3.3 API Contracts
 
@@ -522,22 +518,26 @@ The dual-purpose intent of the four `<infra>.deploy` toggles is documented in [`
 
 Per-tag artifacts are immutable; the Chart Publishing CI does not overwrite. GHCR retention may delete old tags — consumers pinning a specific version SHOULD mirror to their own registry for long-term reproducibility (tracked in the gitops SPEC §8 open items).
 
-#### Dev wrapper environment contract
+#### Compose dev stack settings contract
 
 - [ ] `p2` - **ID**: `cpt-insightspec-interface-dep-dev-wrapper-env`
 
-- **Technology**: shell environment variables read by the dev wrapper.
-- **Location**: [dev-up.sh](../../../../dev-up.sh), [dev-down.sh](../../../../dev-down.sh), [init.sh](../../../../init.sh).
+- **Technology**: dotenv settings read by `dev-compose.sh` and `docker-compose.yml`, generated by the first-run wizard.
+- **Location**: [dev-compose.sh](../../../../dev-compose.sh), [docker-compose.yml](../../../../docker-compose.yml), [.env.compose.example](../../../../.env.compose.example).
 
 **Endpoints Overview**:
 
-| Variable | Used by | Description | Stability |
-|----------|---------|-------------|-----------|
-| `INSIGHT_NAMESPACE` | dev-up.sh, dev-down.sh, init.sh | Target Kubernetes namespace (default `insight`). | stable |
-| `DEV_MODE` | dev-up.sh helpers | When `1`, merges `deploy/argo/values-dev.yaml` for the local Argo install (auth-mode=server for eval). | stable |
-| `INSIGHT_VALUES_FILES` | dev-up.sh | Colon-separated list of `-f` files for the local umbrella install. `dev-up.sh` defaults this to include `deploy/values-dev.yaml`. | stable |
+| Variable | Description | Stability |
+|----------|-------------|-----------|
+| `ENABLE_AUTO_RELOAD` | Wraps each backend entrypoint in `watchexec --restart` for ~1s reload. Compose-only — never set in a Kubernetes manifest. | stable |
+| `FRONTEND_MODE` | `ghcr` (published image, default), `dev` (Vite HMR from `INSIGHT_FRONT_PATH`), or `built` (host-built dist). | stable |
+| `<SVC>_IMAGE` | Pull a published image for a backend service instead of building it (e.g. `API_GATEWAY_IMAGE`). | stable |
+| `*_PORT` | Host port for each published service (Frontend :3000, gateway :8080, …); override on conflict. | stable |
+| `MARIADB_EXTERNAL` / `_HOST` / `_INTERNAL_PORT`, ClickHouse equivalents | Point the stack at an external DB instead of the bundled container. | stable |
+| `TENANT_DEFAULT_ID` | Tenant UUID used by the seed and the dev caller context. | stable |
+| `SEEDED_LOCAL_MARIA` / `SEEDED_LOCAL_CH` | First-run seed bookkeeping; clear to force a re-seed on next `up`. | stable |
 
-The dev wrapper's internal `deploy/scripts/install-*.sh` helpers are not a documented public surface; they exist solely to install Airbyte and Argo into the local cluster. Production consumers do not use them.
+`.env.compose.example` documents the full settings contract. The stack is local-only; none of these settings reach the canonical chart values or any published artifact.
 
 ### 3.4 Internal Dependencies
 
@@ -550,7 +550,6 @@ The dev wrapper's internal `deploy/scripts/install-*.sh` helpers are not a docum
 | `helmfile/charts/clickhouse` | Helm subchart (local wrapper) | ClickHouse OLAP store. |
 | `charts/insight/templates/ingestion/*.yaml` | First-class Helm templates | Ingestion WorkflowTemplate sources, gated by `ingestion.templates.enabled`; consume umbrella helpers directly via `include`. |
 | `.github/workflows/build-images.yml` (`publish-chart` job) | GitHub Actions workflow | Chart Publishing CI — produces the published umbrella artifact per merge to `main`. |
-| `helmfile.yaml.gotmpl` | Repo-root helmfile (legacy, EXPERIMENTAL) | Pre-consolidation alternative install path. Structurally incompatible with the post-consolidation umbrella + bitnami-subcharts + Secret-emission pattern. Header warning in the file documents the issues; retained for reference only and may be removed entirely in a follow-up cleanup. **Not on any supported install path.** |
 | `src/ingestion/airbyte-toolkit/lib/env.sh` | Read `AIRBYTE_API_URL` from the platform ConfigMap | Ingestion scripts consume Airbyte coordinates from the ConfigMap rather than hard-coding. |
 
 **Dependency Rules**:
@@ -565,13 +564,13 @@ The dev wrapper's internal `deploy/scripts/install-*.sh` helpers are not a docum
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|---------|
-| `airbyte/airbyte` chart 1.8.5+ | Helm release | Data extraction engine; installed as a separate release. Lives in `insight-infra` (gitops production L2) or in the local `insight` namespace (`dev-up.sh`). |
+| `airbyte/airbyte` chart 1.8.5+ | Helm release | Data extraction engine; installed as a separate L2 release in `insight-infra` by the gitops path, on production and local (`ENV=local`) clusters. |
 
 #### Argo Workflows
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|---------|
-| `argo/argo-workflows` chart 0.45.x | Helm release | Workflow engine for ingestion pipelines; installed as a separate release. Lives in `insight-infra` (gitops production L2) or in the local `insight` namespace (`dev-up.sh`). |
+| `argo/argo-workflows` chart 0.45.x | Helm release | Workflow engine for ingestion pipelines; installed as a separate L2 release in `insight-infra` by the gitops path, on production and local (`ENV=local`) clusters. |
 
 #### Bitnami Helm charts (MariaDB, Redis)
 
@@ -705,47 +704,43 @@ sequenceDiagram
 
 **Use cases**: `cpt-insightspec-usecase-dep-eval-install`, `cpt-insightspec-usecase-dep-dev-inner-loop`.
 
-**Actors**: `cpt-insightspec-actor-platform-developer`, `cpt-insightspec-actor-kubernetes`.
+**Actors**: `cpt-insightspec-actor-platform-developer`.
 
 ```mermaid
 sequenceDiagram
     actor Dev as Platform Developer
-    participant DevUp as dev-up.sh
-    participant Kind as Kind / OrbStack
-    participant Helm as Helm
-    participant K8s as Cluster (insight ns)
+    participant CLI as dev-compose.sh
+    participant Compose as Docker Compose
+    participant Watch as watchexec (in container)
 
-    Dev->>DevUp: ./dev-up.sh --env local
-    DevUp->>Kind: kind create cluster --name insight (if absent)
-    DevUp->>DevUp: docker build backend + frontend
-    DevUp->>Kind: kind load docker-image <images>
-    DevUp->>Helm: helm upgrade --install airbyte airbyte/airbyte -n insight
-    DevUp->>Helm: helm upgrade --install argo-workflows argo/argo-workflows -n insight (DEV_MODE)
-    DevUp->>Helm: helm upgrade --install insight charts/insight -n insight -f deploy/values-dev.yaml
-    Note over Helm: values-dev flips <svc>.deploy: true for the four infra subcharts
-    Helm->>K8s: render single-namespace fat install
-    K8s-->>DevUp: Ready
-    DevUp->>DevUp: open port-forwards (UI :8003, API :8080, Argo :2746, ...)
-    DevUp-->>Dev: ready; open http://localhost:8003
+    Dev->>CLI: ./dev-compose.sh up
+    Note over CLI: first run only — wizard generates .env.compose
+    CLI->>CLI: build backend (+ frontend) in builder containers
+    CLI->>Compose: docker compose up -d (backend + frontend + MariaDB/ClickHouse/Redis/Redpanda)
+    Compose-->>CLI: containers healthy
+    CLI->>CLI: auto-seed demo dataset (first run)
+    CLI-->>Dev: ready; open http://localhost:3000
+    Dev->>CLI: edit code; ./dev-compose.sh build <service>
+    CLI->>Watch: bind-mounted binary changes
+    Watch->>Compose: SIGTERM + respawn (~1s)
 ```
 
-**Description**: The dev wrapper installs the same umbrella chart that production consumers pull from OCI, just with `<svc>.deploy: true` overlays for a single-namespace fat install. Airbyte and Argo are installed via internal `dev-up.sh` helpers into the same `insight` namespace (local-only convenience; production deploys put them in `insight-infra` via the gitops Makefile, but the chart values surface — `airbyte.apiUrl`, Argo SA name — is identical).
+**Description**: The Docker Compose stack runs the application services and bundled databases as containers on the laptop — it does not consume the umbrella chart. After the first-run wizard generates `.env.compose`, `up` builds from source (or pulls published images), seeds a demo dataset, and exposes the frontend on :3000. The edit-build loop relies on `watchexec` restarting the bind-mounted binary in ~1 second. Chart-shape and ingestion validation against the real cluster topology is a separate flow — `make deploy ENV=local` — covered by the "Gitops deploy from OCI pin" sequence above.
 
 ### 3.7 Database schemas & tables
 
-Not applicable. The Deployment subsystem stores no data; it produces a chart artifact and a dev wrapper. Runtime data stores (ClickHouse, MariaDB, Redpanda) are introduced by subcharts but their schemas are owned elsewhere (Backend DESIGN for MariaDB; Ingestion Layer DESIGN and Connector DESIGNs for ClickHouse).
+Not applicable. The Deployment subsystem stores no data; it produces a chart artifact and a Docker Compose dev stack. Runtime data stores (ClickHouse, MariaDB, Redpanda) are introduced by subcharts but their schemas are owned elsewhere (Backend DESIGN for MariaDB; Ingestion Layer DESIGN and Connector DESIGNs for ClickHouse).
 
 ## 4. Additional context
 
-**Lessons learned from the first-run debugging cycle.** The `DEVLOG.md` at the repo root captures the twelve issues discovered during the first end-to-end run of `dev-up.sh` on a fresh Apple-Silicon laptop. The ones that fed back into the design:
+**Lessons that fed into the chart design.** Early end-to-end runs on a fresh Apple-Silicon laptop surfaced several issues that shaped the current chart and deploy model:
 
-1. Airbyte auth was off in the curated values. Now `global.auth.enabled: true`; the chart generates a random admin password on first install into `airbyte-auth-secrets/instance-admin-password`. The dev wrapper picks it up.
-2. The Airbyte webapp port-forward was missing from `dev-up.sh`. Now port 8002 is opened.
-3. DB passwords are not auto-generated. Canonical `values.yaml` intentionally leaves infra credentials empty; dev bring-up supplies eval values via `deploy/values-dev.yaml`. This is a deliberate choice over `randAlphaNum` hooks because reproducibility across dev runs beats marginal "security" on a throwaway cluster.
-4. Frontend image is linux/amd64 only. The dev wrapper builds from the sibling `insight-front` checkout on arm64 hosts with a `docker pull --platform linux/amd64` fallback; follow-up is to publish multi-arch images (infra team).
-5. Argo's chart expects `controller.instanceID` as a sub-object (`enabled` + `explicitID`), not a plain string. The dev-up Argo install uses the dotted-key form.
-6. Argo's supplemental RBAC requires a namespace-scoped Role + Binding for the workflow service account. Shipped as `deploy/argo/rbac.yaml` for `dev-up.sh`; gitops production ships `bootstrap/argo-rbac.yaml.tmpl` with `${NAMESPACE}` / `${WORKFLOW_SA}` placeholders substituted via `envsubst`.
-7. The umbrella chart's internal DNS references are keyed off `.Release.Name`; a non-default release name breaks inline URLs in `values.yaml`. Acknowledged as tech debt; the planned follow-up migrates all app services to read the platform ConfigMap via `envFrom` so inline URLs disappear from values.
+1. Airbyte auth was off in the curated values. Now `global.auth.enabled: true`; the Airbyte L2 release generates a random admin password on first install into `airbyte-auth-secrets/instance-admin-password`, which consumers read from that Secret.
+2. DB passwords are not auto-generated for local use. Canonical `values.yaml` intentionally leaves infra credentials empty; local development supplies eval values out-of-band (`.env.compose` for the compose stack; wizard-generated values for a local gitops cluster). This is a deliberate choice over `randAlphaNum` hooks because reproducibility across local runs beats marginal "security" on a throwaway environment.
+3. Frontend image is linux/amd64 only. The Docker Compose stack can build the frontend from the sibling `insight-front` checkout on arm64 hosts (`FRONTEND_MODE=dev` / `built`); the default `ghcr` mode runs the amd64 image under QEMU. Follow-up is to publish multi-arch images (infra team).
+4. Argo's chart expects `controller.instanceID` as a sub-object (`enabled` + `explicitID`), not a plain string. The gitops Argo (L2) install uses the dotted-key form.
+5. Argo's supplemental RBAC requires a namespace-scoped Role + Binding for the workflow service account. The gitops path ships `bootstrap/argo-rbac.yaml.tmpl` with `${NAMESPACE}` / `${WORKFLOW_SA}` placeholders substituted via `envsubst`.
+6. The umbrella chart's internal DNS references are keyed off `.Release.Name`; a non-default release name breaks inline URLs in `values.yaml`. Acknowledged as tech debt; the planned follow-up migrates all app services to read the platform ConfigMap via `envFrom` so inline URLs disappear from values.
 
 **Known gaps (post-consolidation)**:
 

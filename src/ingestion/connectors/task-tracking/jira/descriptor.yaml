@@ -3,7 +3,13 @@ name: jira
 # runtime auto-discovery; per-project partitioning resets incremental state —
 # reconcile dispatches a full refresh on major bumps (ADR-0015), which is the
 # intended migration.
-version: "2.0.0"
+# 2.0.1 (patch): force global_substream_cursor on jira_issue/jira_issue_keys —
+# 2.0.0's per-partition cursor did not persist, making every sync a full
+# re-sync. Bump required so reconcile republishes the manifest.
+# 2.0.2 (patch): widen jira_project_discovery cursor_datetime_formats so it can
+# parse child-stream cursor values carried in parent_state (was crashing with
+# "No format ['%Y-%m-%dT%H:%M:%S.%f%z'] matching 2026-06-15 02:00").
+version: "2.0.2"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is

@@ -5,16 +5,9 @@
 
 Helm Hook Job that provisions each backend service's owned MariaDB
 database — CREATE DATABASE + GRANT — against whatever `mariadb.host`
-resolves to. Works in both modes from a single source of truth:
-
-- Bundled (`mariadb.deploy=true`):     bitnami subchart starts the
-                                       MariaDB pod; this Job waits for
-                                       it to accept connections, then
-                                       runs the SQL.
-- External (`mariadb.deploy=false`):   MariaDB is hosted out-of-chart
-                                       (layered L2, managed RDS / Cloud
-                                       SQL, …); this Job dials
-                                       `mariadb.host` directly.
+resolves to. MariaDB is external (out-of-chart L2 — layered L2, managed
+RDS / Cloud SQL, …); this Job dials `mariadb.host` directly, waits for
+it to accept connections, then runs the SQL.
 
 Hook timing: `pre-install,pre-upgrade`. The DB must exist BEFORE the
 application pods (identity, etc.) start — otherwise their migration
@@ -68,9 +61,10 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: db-init
-          # Track the bundled MariaDB minor so client/server protocols
+          # MariaDB client image, pinned independently — bump in lockstep
+          # with the external L2 MariaDB minor so client/server protocols
           # align. Bitnami legacy image namespace (post-2025 Bitnami
-          # licensing change — see umbrella `mariadb.image.repository`).
+          # licensing change).
           image: docker.io/bitnamilegacy/mariadb:11.4.4-debian-12-r0
           imagePullPolicy: IfNotPresent
           env:
