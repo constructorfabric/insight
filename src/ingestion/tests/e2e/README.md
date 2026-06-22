@@ -88,7 +88,7 @@ These ports avoid conflict with `dev-up.sh` (which uses 8123 / 3306) and the dbt
 
 ## `cases` / `expect` (declarative YAML rig)
 
-Tests are `specs/**/*.test.yaml`; each `case` POSTs a batch to `/v1/metrics/queries` and checks an `expect` list of rules. A rule selects with `in` (batch result by `id`) + a Mongo-style `find`, then asserts via `equal` (subset of fields, exact / `null`) or `assert` (a CEL boolean). See the [yaml-rig FEATURE](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md) and the `/metric-e2e-test` skill.
+Tests are `specs/**/*.test.yaml`; each `case` POSTs a batch to `/v1/metrics/queries` and checks an `expect` list of rules. A rule selects with `in` (batch result by `id`) + an exact-equality `find` (`{field: value}`), then asserts via `equal` (subset of fields, exact / `null`) or `assert` (a CEL boolean). Anything richer than equality (inequalities, counts, predicates) goes in a CEL `assert` — the rig deliberately has no second selector language. See the [yaml-rig FEATURE](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md) and the `/metric-e2e-test` skill.
 
 Variables available in an `assert` (CEL) expression — assembled in `e2e_lib/expect_engine.py::evaluate_case` (the `bindings` dict), converted to CEL in `_eval_cel`:
 
@@ -100,7 +100,7 @@ Variables available in an `assert` (CEL) expression — assembled in `e2e_lib/ex
 | `results` | the full `results[]` of the batch | always |
 | `status` | the batch HTTP status code (int) | always |
 
-Numbers under `it`/`items`/`result`/`results` are float-coerced (CEL won't compare `int` to `double`) — compare metric values with float literals (`it.value > 39.5`); `status` and `size(...)` stay `int`. Use `equal` for exact / `null` comparisons.
+CEL is strictly typed and will not compare an `int` to a `double`. Bindings are passed through unchanged, so when a metric value may be integral (e.g. `40`) and you compare against a fractional literal, cast it: `double(it.value) > 39.5`. `status` and `size(...)` are integers — compare them with integer literals. Use `equal` for exact / `null` comparisons (it uses Python `==`).
 
 ### What is CEL
 
@@ -118,7 +118,7 @@ Examples:
   assert: "size(items) == 20"                               # row count
 - in: collaboration
   find: { metric_key: m365_emails_sent }
-  assert: "it.value > 39.5 && it.value < 40.5"              # float window (avoids exact-float compare)
+  assert: "double(it.value) > 39.5 && double(it.value) < 40.5"   # cast to double for fractional compare
 - in: collaboration
   find: { metric_key: slack_dm_ratio }
   assert: "it.value == null"                                # explicit null

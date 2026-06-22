@@ -5,15 +5,18 @@ Implements `cpt-bronze-to-api-e2e-algo-yaml-eval-expect`
 
 Each rule:
   in:     select the batch result by request id (omit when one query)
-  find:   Mongo-style selector → exactly one row of result.items  (binds `it`)
+  find:   exact field-equality selector → exactly one row of result.items (binds `it`)
   then ONE of:
     equal:  subset equality on the matched row (explicit null supported)
     assert: CEL boolean over bindings `it`, `items`, `result`, `results`, `status`
+
+`find` is intentionally exact-equality only — anything richer (inequalities,
+counts, predicates) is expressed in a CEL `assert`, so the rig does not carry a
+second selector mini-language (CEL is already the assertion language).
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import celpy
@@ -24,43 +27,12 @@ class ExpectError(AssertionError):
 
 
 # ---------------------------------------------------------------------------
-# Mongo-style selector
+# find — exact field equality
 # ---------------------------------------------------------------------------
 
-_FIND_OPS = {"$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$regex", "$exists"}
-
-
-def _match_value(actual: Any, cond: Any) -> bool:
-    if isinstance(cond, dict) and any(k.startswith("$") for k in cond):
-        for op, operand in cond.items():
-            if op not in _FIND_OPS:
-                raise ExpectError(
-                    f"unknown find operator {op!r} (supported: {sorted(_FIND_OPS)})"
-                )
-            if op == "$eq" and not (actual == operand):
-                return False
-            elif op == "$ne" and not (actual != operand):
-                return False
-            elif op == "$gt" and not (actual is not None and actual > operand):
-                return False
-            elif op == "$gte" and not (actual is not None and actual >= operand):
-                return False
-            elif op == "$lt" and not (actual is not None and actual < operand):
-                return False
-            elif op == "$lte" and not (actual is not None and actual <= operand):
-                return False
-            elif op == "$in" and actual not in operand:
-                return False
-            elif op == "$regex" and (actual is None or not re.search(operand, str(actual))):
-                return False
-            elif op == "$exists" and ((actual is not None) != bool(operand)):
-                return False
-        return True
-    return actual == cond
-
-
 def _find(items: list[dict], selector: dict) -> list[dict]:
-    return [it for it in items if all(_match_value(it.get(f), c) for f, c in selector.items())]
+    """Rows whose every selected field equals the given value (exact match)."""
+    return [it for it in items if all(it.get(f) == v for f, v in selector.items())]
 
 
 # ---------------------------------------------------------------------------
@@ -70,29 +42,10 @@ def _find(items: list[dict], selector: dict) -> list[dict]:
 _CEL_ENV = celpy.Environment()
 
 
-def _floatify(obj: Any) -> Any:
-    """Coerce JSON numbers to float so CEL comparisons on metric values work
-    regardless of whether the API serialized e.g. `40` or `40.0` (CEL is strictly
-    typed and will not compare IntType to DoubleType). `bool` is left intact."""
-    if isinstance(obj, bool):
-        return obj
-    if isinstance(obj, int):
-        return float(obj)
-    if isinstance(obj, dict):
-        return {k: _floatify(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_floatify(v) for v in obj]
-    return obj
-
-
 def _eval_cel(expr: str, bindings: dict) -> bool:
     ast = _CEL_ENV.compile(expr)
     prog = _CEL_ENV.program(ast)
-    # Float-normalize the response-bound values (it/items/result/results); keep
-    # `status` an int so `status == 200` and `size(items) == N` stay int-typed.
-    activation = {}
-    for k, v in bindings.items():
-        activation[k] = celpy.json_to_cel(v if k == "status" else _floatify(v))
+    activation = {k: celpy.json_to_cel(v) for k, v in bindings.items()}
     result = prog.evaluate(activation)
     return bool(result)
 

@@ -28,7 +28,7 @@
 
 ## Changelog
 
-- **v1.1** (current): Authoring format moves from per-folder CSV (`bronze/*.csv` + `spec.yaml` + `expected/response.csv`) to a single declarative `<name>.test.yaml` (see `cpt-bronze-to-api-e2e-feature-yaml-rig`). Adds three components — `ref-resolver` (composition via `$ref` + sibling overrides), `schema-validator` (per-table JSON schema, padding, validation), `expect-engine` (Mongo-style `find` + `equal` subset + CEL `assert` over the batch response) — and retires `csv-asserter`. `fixture-loader` is repurposed to load `*.test.yaml`. The API roundtrip targets the batch endpoint `POST /v1/metrics/queries`. The transformation path (bronze→silver→gold→API) is unchanged; only the authoring format and assertion engine change.
+- **v1.1** (current): Authoring format moves from per-folder CSV (`bronze/*.csv` + `spec.yaml` + `expected/response.csv`) to a single declarative `<name>.test.yaml` (see `cpt-bronze-to-api-e2e-feature-yaml-rig`). Adds three components — `ref-resolver` (composition via `$ref` + sibling overrides), `schema-validator` (per-table JSON schema, padding, validation), `expect-engine` (exact-equality `find` + `equal` subset + CEL `assert` over the batch response) — and retires `csv-asserter`. `fixture-loader` is repurposed to load `*.test.yaml`. The API roundtrip targets the batch endpoint `POST /v1/metrics/queries`. The transformation path (bronze→silver→gold→API) is unchanged; only the authoring format and assertion engine change.
 - **v1.0**: Initial design. Establishes 7 components (fixture-loader, ch-seeder, dbt-runner, migration-applier, api-client, csv-asserter, session-rig), the data plane (docker compose with ClickHouse + MariaDB), the service plane (`analytics-api` binary on host with `cargo build --release`), and the assertion plane (pandas). Vertically slices through the bronze→silver→gold→API path defined in `cpt-dataflow-design-pipeline`.
 
 ## 1. Architecture Overview
@@ -339,11 +339,11 @@ Does **NOT**: coerce values to ClickHouse types (that's `ch-seeder` at INSERT ti
 
 ##### Why this component exists
 
-Replaces `csv-asserter`. Dashboard metrics return many rows over a batch of queries; an author asserts a few fields/conditions, not a whole CSV. This component owns selection (`in` + Mongo-style `find`) and verdict (`equal` subset or CEL `assert`).
+Replaces `csv-asserter`. Dashboard metrics return many rows over a batch of queries; an author asserts a few fields/conditions, not a whole CSV. This component owns selection (`in` + exact-equality `find`) and verdict (`equal` subset or CEL `assert`). Richer matching than equality is expressed in the CEL `assert`, so the rig carries no second selector language.
 
 ##### Responsibility scope
 
-Implements `cpt-bronze-to-api-e2e-algo-yaml-eval-expect`: selects a batch result by `id`; filters `result.items` by a Mongo-style selector to exactly one row; compares a subset of fields (`equal`, explicit `null`) or evaluates a CEL boolean (`assert`). Renders a precise failing-rule report.
+Implements `cpt-bronze-to-api-e2e-algo-yaml-eval-expect`: selects a batch result by `id`; filters `result.items` to exactly one row by exact field equality; compares a subset of fields (`equal`, explicit `null`) or evaluates a CEL boolean (`assert`). Renders a precise failing-rule report.
 
 The CEL `assert` bindings are assembled in `e2e_lib/expect_engine.py::evaluate_case` (the `bindings` dict) and converted to CEL in `_eval_cel`:
 
@@ -355,7 +355,7 @@ The CEL `assert` bindings are assembled in `e2e_lib/expect_engine.py::evaluate_c
 | `results` | the full `results[]` of the batch | always |
 | `status` | the batch HTTP status code (int) | always |
 
-Response numbers under `it`/`items`/`result`/`results` are float-coerced in `_eval_cel` (CEL won't compare `int` to `double`), so metric-value comparisons use float literals; `status` and `size(...)` stay `int`. Exact / `null` comparisons belong in `equal`.
+CEL is strictly typed and won't compare `int` to `double`; bindings pass through unchanged, so an author casts a possibly-integral metric value (`double(it.value) > 39.5`). `status` and `size(...)` are `int`. Exact / `null` comparisons belong in `equal`.
 
 ##### Responsibility boundaries
 

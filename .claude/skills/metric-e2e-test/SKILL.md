@@ -112,7 +112,7 @@ cases:
 ```
 
 - `in` — select the batch result by request `id` (omit when there is one query).
-- `find` — Mongo-style: `{field: value}` + `$gt/$gte/$lt/$lte/$ne/$in/$regex/$exists`.
+- `find` — exact field equality: `{field: value}` (selects one row). Anything richer (inequalities, counts, predicates) goes in a CEL `assert` — there is no second selector language.
 - `equal` — subset equality; use for exact ints / `null`.
 - `assert` — CEL boolean; use for inequalities / floats / counts.
 
@@ -129,10 +129,11 @@ converted to CEL in `_eval_cel`:
 | `results` | the full `results[]` of the batch | always |
 | `status` | the batch HTTP status code (int) | always |
 
-Numbers under `it`/`items`/`result`/`results` are float-coerced (CEL won't compare
-`int` to `double`) → compare metric values with float literals (`it.value > 39.5`);
-`status` and `size(...)` are ints. For exact / `null`, use `equal` (Python `==`), not
-`assert`. CEL macros available: `size()`, `has()`, `.exists()`, `.all()`, `.map()`, `.filter()`.
+CEL is strictly typed and won't compare an `int` to a `double` — when a metric
+value may be integral (`40`) and you compare against a fractional literal, cast it:
+`double(it.value) > 39.5`. `status`/`size(...)` are ints (compare with int literals).
+For exact / `null`, use `equal` (Python `==`), not `assert`. CEL macros available:
+`size()`, `has()`, `.exists()`, `.all()`, `.map()`, `.filter()`.
 
 ## Scaffolding a new test
 

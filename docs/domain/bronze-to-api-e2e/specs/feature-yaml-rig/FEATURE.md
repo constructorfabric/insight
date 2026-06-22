@@ -46,7 +46,7 @@ The readability goals are:
 
 - **Small surface, full data on demand.** A bronze row is written as a `$ref` to a reusable record template plus only the fields the test actually exercises. After resolution the row is padded to every column of the table schema, so the seeded record is complete without the author spelling out 29 columns.
 - **Reusable building blocks in separate files.** Per-table JSON schemas live in `specs/schemas/<table>.yaml`; record templates live in `specs/templates/*.yaml`. A test references them with the standard `$ref: "<file>#/<json-pointer>"` form.
-- **Assert what matters, not the whole body.** `expect` is a list of rules; each selects a row with a Mongo-style `find` and either compares a subset of fields (`equal`) or evaluates a CEL boolean (`assert`).
+- **Assert what matters, not the whole body.** `expect` is a list of rules; each selects a row with an exact-equality `find` and either compares a subset of fields (`equal`) or evaluates a CEL boolean (`assert`). Anything richer than equality lives in the CEL `assert`, so there is no second selector language.
 
 This feature supersedes `feature-csv-rig` end to end: the `spec.yaml`/CSV loader, the `csv-asserter`, and the per-folder fixture layout are removed. The bronze→silver→gold→API path itself is unchanged — only the authoring format and the assertion engine change.
 
@@ -183,7 +183,7 @@ The CSV rig proved the path but was verbose (one CSV per table, full column rows
 
 1. [ ] - `p1` - **IF** `rule.in` present → `result` = the element of `results[]` whose `id == rule.in` (**IF** absent → Fail) - `inst-eval-in`
 2. [ ] - `p1` - **ELSE IF** exactly one result exists → `result` = that result **ELSE** `result` = none (rule operates on the whole response) - `inst-eval-sole`
-3. [ ] - `p1` - **IF** `rule.find` present → filter `result.items` by the Mongo-style selector (equality + `$gt/$gte/$lt/$lte/$ne/$in/$regex/$exists`); **IF** not exactly one match → Fail; `it` = the match - `inst-eval-find`
+3. [ ] - `p1` - **IF** `rule.find` present → filter `result.items` to rows whose every selected field exactly equals the given value; **IF** not exactly one match → Fail; `it` = the match - `inst-eval-find`
 4. [ ] - `p1` - **IF** `rule.equal` present → for each `(field, exp)` assert `it[field] == exp` (subset; `null` compared explicitly); collect mismatches - `inst-eval-equal`
 5. [ ] - `p1` - **ELSE IF** `rule.assert` present → evaluate the CEL expression with bindings `it`, `items`, `result`, `results`, `status`; **IF** not `true` → Fail - `inst-eval-assert`
 6. [ ] - `p1` - **RETURN** Pass | Fail(field/expr, expected, actual) - `inst-eval-return`
@@ -200,10 +200,11 @@ converted to CEL in `_eval_cel`:
 | `results` | the full `results[]` of the batch response | always |
 | `status` | the batch HTTP status code (int) | always |
 
-Numbers under `it`/`items`/`result`/`results` are coerced to float in `_eval_cel`
-(CEL is strictly typed and will not compare `int` to `double`), so compare metric
-values with float literals (`it.value > 39.5`); `status` stays an int and `size(...)`
-returns an int. Exact / `null` checks belong in `equal` (Python `==`), not `assert`.
+CEL is strictly typed and will not compare an `int` to a `double`. Bindings are
+passed through unchanged, so cast a possibly-integral metric value when comparing
+against a fractional literal: `double(it.value) > 39.5`. `status` and `size(...)`
+are integers (compare with integer literals). Exact / `null` checks belong in
+`equal` (Python `==`), not `assert`.
 
 ## 4. States (CDSL)
 
@@ -298,7 +299,7 @@ The system **MUST** POST `case.request.body` (`{ queries: [...] }`) to `POST /v1
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-dod-yaml-expect-engine`
 
-The system **MUST** evaluate `expect` rules per `cpt-bronze-to-api-e2e-algo-yaml-eval-expect`: `in` selects a batch result by id (optional when one query); `find` selects exactly one row via a Mongo-style selector; `equal` compares a subset of fields (explicit `null` supported); `assert` evaluates a CEL boolean with bindings `it` / `items` / `result` / `results` / `status`. A failing rule **MUST** report the case, rule, selector, and expected-vs-actual.
+The system **MUST** evaluate `expect` rules per `cpt-bronze-to-api-e2e-algo-yaml-eval-expect`: `in` selects a batch result by id (optional when one query); `find` selects exactly one row via exact field equality; `equal` compares a subset of fields (explicit `null` supported); `assert` evaluates a CEL boolean with bindings `it` / `items` / `result` / `results` / `status`. A failing rule **MUST** report the case, rule, selector, and expected-vs-actual.
 
 **Implements**: `cpt-bronze-to-api-e2e-algo-yaml-eval-expect`
 
