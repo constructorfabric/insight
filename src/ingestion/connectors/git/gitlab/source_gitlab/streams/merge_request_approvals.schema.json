@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["unique_key"],
+  "properties": {
+    "unique_key": { "type": "string" },
+    "tenant_id": { "type": ["string", "null"] },
+    "source_id": { "type": ["string", "null"] },
+    "data_source": { "type": ["string", "null"] },
+    "collected_at": { "type": ["string", "null"] },
+    "project_id": { "type": ["integer", "null"] },
+    "mr_iid": { "type": ["integer", "null"] },
+    "mr_updated_at": { "type": ["string", "null"] },
+    "approvals_required": { "type": ["integer", "null"] },
+    "approvals_left": { "type": ["integer", "null"] },
+    "approved": { "type": ["boolean", "null"] },
+    "approved_by": { "type": ["string", "null"] }
+  }
+}

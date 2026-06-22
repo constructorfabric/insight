@@ -154,24 +154,24 @@ For one cluster carrying environment `<env>`:
 | `insight-infra` | L2 | mariadb, clickhouse, redis, redpanda, redpanda-console, airbyte, argo-workflows (each as its own Helm release) |
 | `insight` | L3 | the umbrella chart (api-gateway, analytics-api, identity-resolution, frontend) |
 
-Each cluster hosts exactly one Insight install. The cluster's identity (which env it represents) lives in the kube-context name (`insight-<env>`) and the gitops repo's `environments/<env>/` directory — not in the namespace. Operationally this keeps the two well-known namespace names (`insight`, `insight-infra`) the same across every install, matching the `dev-up.sh` local-Kind convention and any external chart consumer's expectation of a single `insight` release.
+Each cluster hosts exactly one Insight install. The cluster's identity (which env it represents) lives in the kube-context name (`insight-<env>`) and the gitops repo's `environments/<env>/` directory — not in the namespace. Operationally this keeps the two well-known namespace names (`insight`, `insight-infra`) the same across every install — including the local cluster (`ENV=local`) — and matches any external chart consumer's expectation of a single `insight` release.
 
 #### Dual-purpose umbrella: `<service>.deploy` toggles
 
-The umbrella chart in `constructorfabric/insight` keeps its infrastructure subcharts (`clickhouse`, `mariadb`, `redis`, `redpanda`) **gated by per-service `<service>.deploy: true|false` flags**. The flag is the dev-vs-prod switch:
+The umbrella chart in `constructorfabric/insight` keeps its infrastructure subcharts (`clickhouse`, `mariadb`, `redis`, `redpanda`) **gated by per-service `<service>.deploy: true|false` flags**. The flag selects the install shape:
 
 | Caller | `<svc>.deploy` | Result |
 |--------|----------------|--------|
-| `dev-up.sh` (Kind / OrbStack local) | `true` for all infra subcharts | Single fat Helm release in the `insight` namespace; the umbrella renders MariaDB, ClickHouse, Redis, Redpanda **and** the app services together. Convenient for one-command local bring-up. |
-| Gitops production (any cluster managed by this repo) | `false` for every infra subchart | Umbrella renders the app services only, into the `insight` namespace. L2 services come from one of: (a) `make system-<service>` Helm releases in `insight-infra` per [§3.5](#35-engineer-provisions-the-system-layer-l2); (b) managed external endpoints (RDS, MSK, …); (c) a separate team's infra namespace. App values point at the actual host. |
+| External consumer wanting a single-namespace install | `true` for all infra subcharts | Single fat Helm release in the `insight` namespace; the umbrella renders MariaDB, ClickHouse, Redis, Redpanda **and** the app services together. Self-contained, no separate L2. |
+| Gitops (any cluster managed by this repo — production and local `ENV=local`) | `false` for every infra subchart | Umbrella renders the app services only, into the `insight` namespace. L2 services come from one of: (a) `make system-<service>` Helm releases in `insight-infra` per [§3.5](#35-engineer-provisions-the-system-layer-l2); (b) managed external endpoints (RDS, MSK, …); (c) a separate team's infra namespace. App values point at the actual host. |
 
 Why dual-purpose instead of two charts:
 
-- **One chart shape** — `dev-up.sh` exercises the same templates that production renders. Bugs in app rendering are caught locally.
+- **One chart shape** — the local gitops cluster (`make deploy ENV=local`) exercises the same templates and layered shape that production renders. Bugs in app rendering are caught locally.
 - **Customers can choose** — an external chart consumer who is fine running everything in one namespace can flip the toggles `true` and get a self-contained install. A consumer with managed infra flips them `false`.
 - **No flag conflicts** — the existing `<service>.deploy: false` path already wires the app to look up `<service>.host` / `<service>.port` from values, so cross-namespace DNS (`<release>.insight-infra.svc.cluster.local`) is just one well-formed hostname away.
 
-Airbyte and Argo Workflows are **not** subcharts of the umbrella in either mode — they are always installed as separate Helm releases (see `deploy/scripts/install-{airbyte,argo}.sh` for dev, `make system-{airbyte,argo}` for production). The same release goes to `insight` (dev) or `insight-infra` (prod) depending on the caller; no chart change required.
+Airbyte and Argo Workflows are **not** subcharts of the umbrella in either mode — on every gitops cluster (production and local) they are installed as separate Helm releases via `make system-{airbyte,argo}` into `insight-infra`; no chart change required.
 
 ## 2. Tagging & Versioning
 
@@ -857,7 +857,7 @@ These are accepted gaps that do not block the MVP but must be tracked.
 - **Audit log of deploys.** `make deploy` writes a local log file; there is no central audit. A trivial follow-up posts the log to a `#deploys` Slack channel via the poller's bot token; deferred until the team needs it.
 - **Rollback-by-tag.** `make rollback` calls `helm rollback` to the previous revision. Rolling back to an arbitrary historical state is `git checkout <deploy-tag> && make deploy`, which works but has not been rehearsed.
 - **Cross-namespace defaults in the umbrella.** The umbrella keeps its infra subcharts gated by `<service>.deploy: true|false` (see [§1.5 dual-purpose umbrella](#15-layer-model)). For the gitops production case (`.deploy: false`), the app's connection helpers must default the host to `<release>.insight-infra.svc.cluster.local` when no explicit `<service>.host` is supplied — so a values file that only says `<service>.deploy: false` "just works" against `insight-infra`. Verify the helpers do this; if not, a small chart-template change is needed. Also document the dual-purpose intent in `charts/insight/README.md` so external chart consumers understand the toggle.
-- **dev-up.sh Airbyte/Argo namespace.** `dev-up.sh` installs Airbyte and Argo Workflows into the same namespace as the umbrella (`insight` for local). Production gitops puts them in `insight-infra`. The chart values surface for both is identical (Airbyte API URL, Argo SA name) — confirm by render. If anything still hard-codes the `insight` namespace in templates, parameterise it.
+- **Airbyte/Argo namespace assumptions.** On every gitops cluster (production and local `ENV=local`) Airbyte and Argo Workflows run as L2 releases in `insight-infra`, while the umbrella runs in `insight`. The chart's helpers must therefore resolve the Airbyte API URL and Argo SA name across namespaces — confirm by render. If anything still hard-codes the `insight` namespace for these in templates, parameterise it.
 - **L2 chart-pin policy.** System service chart versions (`MARIADB_VERSION`, `CLICKHOUSE_VERSION`, etc.) are Makefile constants today; bumping is a deliberate PR. A future enhancement: split each service's pin into its own `system/<service>/.version` file (mirroring `.insight-version`) so a poller could pre-flight version compatibility against published Bitnami / Redpanda / Airbyte releases. Out of scope for v0.
 - **Per-cluster L2 inventory.** When a cluster swaps a self-hosted service for a managed endpoint (e.g. a managed database instead of `system/mariadb`), the gitops repo currently has no machine-readable record of "this cluster runs MariaDB on-cluster vs. external." A small `environments/<env>/inventory.yaml` listing which `system-*` targets to run on this cluster would make `make doctor` able to validate that the cluster matches the expected inventory, and would make it possible to render a per-customer install runbook from the repo. Captured.
 

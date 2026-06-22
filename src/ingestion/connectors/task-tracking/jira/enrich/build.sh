@@ -10,7 +10,7 @@ set -euo pipefail
 #   JIRA_ENRICH_IMAGE=ghcr.io/myorg/jira:v1 ./build.sh  # full registry/repo:tag override
 #
 # JIRA_ENRICH_IMAGE wins over IMAGE_NAME / IMAGE_TAG when set, so callers
-# (dev-up.sh) can pass a full registry/repo:tag without losing the registry
+# can pass a full registry/repo:tag without losing the registry
 # prefix to a tag-only override.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

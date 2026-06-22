@@ -1,6 +1,6 @@
 """Salesforce sobject and field-type constants.
 
-The blocklists (``UNSUPPORTED_BULK_API_SALESFORCE_OBJECTS`` etc.) reflect
+The blocklists (``QUERY_RESTRICTED_SALESFORCE_OBJECTS`` etc.) reflect
 platform-wide API limitations maintained by Salesforce; our curated
 ``CRM_STREAMS`` sits on top of them.
 """
@@ -122,56 +122,6 @@ QUERY_INCOMPATIBLE_SALESFORCE_OBJECTS = [
     "UserRecordAccess",
 ]
 
-UNSUPPORTED_BULK_API_SALESFORCE_OBJECTS = [
-    "AcceptedEventRelation",
-    "AssetTokenEvent",
-    "Attachment",
-    "AttachedContentNote",
-    "CaseStatus",
-    "ContractStatus",
-    "DeclinedEventRelation",
-    "EventWhoRelation",
-    "FieldSecurityClassification",
-    "KnowledgeArticle",
-    "KnowledgeArticleVersion",
-    "KnowledgeArticleVersionHistory",
-    "KnowledgeArticleViewStat",
-    "KnowledgeArticleVoteStat",
-    "OrderStatus",
-    "PartnerRole",
-    "QuoteTemplateRichTextData",
-    "RecentlyViewed",
-    "ServiceAppointmentStatus",
-    "ShiftStatus",
-    "SolutionStatus",
-    "TaskPriority",
-    "TaskStatus",
-    "TaskWhoRelation",
-    "UndecidedEventRelation",
-    "WorkOrderLineItemStatus",
-    "WorkOrderStatus",
-    "UserRecordAccess",
-    "OwnedContentDocument",
-    "OpenActivity",
-    "NoteAndAttachment",
-    "Name",
-    "LookedUpFromActivity",
-    "FolderedContentDocument",
-    "ContentFolderItem",
-    "CombinedAttachment",
-    "CaseTeamTemplateRecord",
-    "CaseTeamTemplateMember",
-    "CaseTeamTemplate",
-    "CaseTeamRole",
-    "CaseTeamMember",
-    "AttachedContentDocument",
-    "AggregateResult",
-    "ChannelProgramLevelShare",
-    "AccountBrandShare",
-    "AccountFeed",
-    "AssetFeed",
-]
-
 UNSUPPORTED_FILTERING_STREAMS = [
     "ActivityFieldHistory",
     "ApiEvent",
@@ -214,7 +164,7 @@ PARENT_SALESFORCE_OBJECTS = {
 # ------- Token / request limits -----------------------------------------------
 
 # Refresh Salesforce access token every 30 minutes, well before the default
-# 2-hour session timeout. Prevents INVALID_SESSION_ID mid-sync on large Bulk jobs.
+# 2-hour session timeout. Prevents INVALID_SESSION_ID mid-sync on large syncs.
 TOKEN_REFRESH_INTERVAL_SECONDS = 1800
 
 # SF request size limit (SOQL query length).
@@ -226,12 +176,13 @@ PARALLEL_TASKS_SIZE = 100
 
 # ------- Curated stream list (Insight-specific) -------------------------------
 
-# Streams collected by default for CRM analytics + HubSpot-parity.
-# Operator can override via config.salesforce_streams to add/remove.
+# Streams collected for CRM analytics + HubSpot-parity. This list is the
+# single source of truth for what syncs — changing it is a code change so
+# Silver/dbt coverage ships alongside.
 #
 # Cut to a 10-stream "max value per stream" set. Entries commented out below
-# remain supported by the connector — re-enable by moving them into the active
-# list (or per-tenant via ``salesforce_streams`` config).
+# remain supported by the connector — re-enable by moving them into the
+# active list.
 CRM_STREAMS = [
     # Core deal lifecycle
     "Account",

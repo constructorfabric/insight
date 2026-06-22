@@ -374,3 +374,97 @@ models:
         description: "When the record was collected"
         tests:
           - not_null
+
+  - name: class_ai_overage
+    description: >
+      Unified per-person per-month AI spend-vs-limit (overage) across vendors.
+      Grain: one row per (tenant, source, seat, billing month). Answers "how
+      much did each person spend above their monthly limit". Homogeneous
+      monetary contract in minor units (cents) + ISO currency so seats from
+      Claude Team and future sources (OpenAI / ChatGPT) are directly
+      comparable. overage_cents = max(0, used_amount_cents - credit_limit_cents),
+      NULL when no limit is known (honest-NULL). First/only source today:
+      Claude Team (claude_team__ai_overage, from /overage_spend_limits via the
+      claude-team-proxy, billing:view/Owner-gated). OpenAI joins later by
+      emitting the same 19 columns under tag silver:class_ai_overage.
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-seat-YYYY-MM (per source/month)"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: >
+          Seat work email (lowercased). Present for Claude Team (every seat
+          carries an email). For sources where overage is only attributable
+          via an API/account id, email MAY be NULL and account_id carries the
+          identity proxy (resolved in Silver Step 2).
+      - name: account_id
+        description: "Stable vendor seat/account id (Claude: account_uuid). Identity proxy / join anchor."
+      - name: period_month
+        description: "First day of the billing month (UTC). Monthly billing grain."
+        tests:
+          - not_null
+      - name: tool
+        description: "AI vendor discriminator."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude', 'chatgpt', 'openai']
+      - name: seat_tier
+        description: "Vendor plan/seat tier (free text per vendor). NULL when not exposed."
+      - name: currency
+        description: >
+          ISO currency of the *_cents monetary columns. 'USD' today (both
+          Claude Team and OpenAI bill in USD); extend accepted_values when a
+          non-USD billing tenant first appears.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['USD']
+      - name: credit_limit_cents
+        description: >
+          Monthly spend/credit limit in minor units (cents). NULL when no limit
+          applies or the limit is unknown for the source.
+      - name: used_amount_cents
+        description: "Spend so far in the period, in minor units (cents)."
+        tests:
+          - not_null
+      - name: overage_cents
+        description: >
+          Spend beyond the limit: max(0, used_amount_cents - credit_limit_cents).
+          NULL (not 0) when credit_limit_cents is unknown — overage is
+          uncomputable without a limit.
+      - name: is_over_limit
+        description: "1 when used_amount_cents > credit_limit_cents (soft overage). NULL when limit unknown."
+      - name: is_enabled
+        description: "Whether overage / extra-usage is enabled for the seat. NULL when not exposed."
+      - name: overage_metrics_json
+        description: >
+          Raw vendor-specific extras kept out of the positional contract.
+          Claude Team: limit_type / used_credits_basis / out_of_credits / seat_tier.
+      - name: source
+        description: "Staging-model discriminator."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_team', 'openai', 'chatgpt_team']
+      - name: data_source
+        description: "Framework source discriminator."
+        tests:
+          - not_null
+      - name: collected_at
+        description: "When the record was collected (_airbyte_extracted_at)."
+        tests:
+          - not_null

@@ -51,7 +51,7 @@ It exists so that a developer changing any layer of the pipeline (dbt model, mig
 
 ### 1.2 Background / Problem Statement
 
-Today the only automated coverage of Insight's transformation pipeline is dbt's own generic tests (`unique`, `not_null`) plus a small set of hand-written assertion tests under `src/ingestion/dbt/tests/`. They catch dbt-level invariants on silver tables but they don't observe the gold views (created by ClickHouse migrations in `src/ingestion/scripts/migrations/`) and they don't observe the analytics-api response shape that the UI actually reads. A typical regression — a renamed column in a dbt model, a changed `argMax` in a migration view, a tightened OData filter parser in the Rust service — sneaks past CI and gets caught either by a developer in `dev-up.sh` or by a tenant in production.
+Today the only automated coverage of Insight's transformation pipeline is dbt's own generic tests (`unique`, `not_null`) plus a small set of hand-written assertion tests under `src/ingestion/dbt/tests/`. They catch dbt-level invariants on silver tables but they don't observe the gold views (created by ClickHouse migrations in `src/ingestion/scripts/migrations/`) and they don't observe the analytics-api response shape that the UI actually reads. A typical regression — a renamed column in a dbt model, a changed `argMax` in a migration view, a tightened OData filter parser in the Rust service — sneaks past CI and gets caught either by a developer running the stack locally or by a tenant in production.
 
 The transformation chain has four authoring surfaces:
 
@@ -162,7 +162,7 @@ The related "is the data correct?" question (whether a metric value is semantica
 - Requires Python ≥ 3.12 (matches `dbt` runtime in the repo)
 - Requires `cargo` toolchain to build the `analytics-api` binary once per session
 - Requires ClickHouse and MariaDB versions pinned to production parity — the framework MUST NOT silently downgrade to an older container image
-- Tests cannot run inside K8s — the framework is local-host only; for K8s integration use `dev-up.sh`
+- Tests cannot run inside K8s — the framework is local-host only; for K8s integration use the local gitops deploy (`cd deploy/gitops && make deploy ENV=local`)
 
 ## 4. Scope
 

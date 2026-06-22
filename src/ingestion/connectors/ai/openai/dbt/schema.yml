@@ -2,9 +2,31 @@ version: 2
 
 sources:
   - name: bronze_openai
+    # Source freshness (TAF #1322). INFERRED, NOT live-verified — bronze_openai
+    # has no rows in any reachable install, and connector config is not a
+    # reliable windowed/incremental signal (cf. M365, which declared
+    # lookback_window: P0D yet re-fetches a 24-day window). The usage/cost
+    # streams are incremental on `bucket_start_time` (the OpenAI usage API's
+    # business bucket), so anchor source-level on it with the report tier;
+    # `users` is a full-refresh roster with no bucket column, overridden to the
+    # sync-liveness default. Confirm against live data once OpenAI is ingested.
+    #
+    # `bucket_start_time` is Unix **seconds** (an integer), not a date string —
+    # see the connector's own dbt models (to_ai_cost.sql / to_ai_tool_usage.sql:
+    # `toDate(fromUnixTimestamp(CAST(bucket_start_time AS UInt32)))`). Use the
+    # matching epoch conversion here; `parseDateTimeBestEffortOrNull` would fail
+    # on an integer.
+    freshness:
+      warn_after: {count: 72, period: hour}
+      error_after: {count: 120, period: hour}
+    loaded_at_field: fromUnixTimestamp(CAST(bucket_start_time AS UInt32))
     schema: bronze_openai
     tables:
-      - name: users
+      - name: users   # roster — no bucket column; sync-liveness default
+        loaded_at_field: _airbyte_extracted_at
+        freshness:
+          warn_after: {count: 36, period: hour}
+          error_after: {count: 72, period: hour}
       - name: usage_completions
       - name: usage_embeddings
       - name: usage_moderations

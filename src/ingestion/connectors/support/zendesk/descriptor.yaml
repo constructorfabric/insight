@@ -1,0 +1,73 @@
+# Zendesk connector descriptor — INSIGHT-459.
+#
+# Loaded by insight-toolbox at reconcile time to create/update the Airbyte
+# connection for this connector.
+#
+# Streams: support_tickets, support_ticket_ids (slim audit-substream parent),
+# support_agents, zendesk_satisfaction_ratings, support_ticket_events (Ticket
+# Audits, fanned out over support_ticket_ids). TBD: zendesk_ticket_ext, Guide articles.
+
+name: zendesk
+# Strict semver per ADR-0015. 1.0.0: Phase-1 Bronze (tickets/agents/CSAT).
+# 1.1.0: Silver layer added (bronze→RMT promotion + person×date
+#   class_support_activity + dim_support_agent/ticket) — MINOR bump so
+#   reconcile re-runs the dbt step now that tag:zendesk+ spans real models.
+# 1.2.0: Ticket Audits stream (support_ticket_events) enabled +
+#   zendesk__support_event activated (explode/classify) → actor-attributed
+#   activity counts (updates/public/private/solved) are now LIVE, not NULL.
+# 1.2.1: support_ticket_events error_handler — IGNORE 404 (deleted tickets still
+#   appear in the incremental export but their audits 404, which would otherwise
+#   fail the whole sync) + RATE_LIMITED 429/503 on the per-ticket audits
+#   substream. PATCH: no schema/stream change.
+# 1.2.2: null-safe metric_set extraction in support_tickets. Zendesk computes
+#   metric_set ASYNC, so on re-syncs the object/sub-objects are present-but-null;
+#   `.get(k, {})` returned None and the chained .get() threw "'None' has no
+#   attribute 'get'", failing every incremental sync. Switched to `(... or {})`.
+#   PATCH: no schema/stream change.
+# 1.2.3: lookback_window P1D on support_tickets + zendesk_satisfaction_ratings
+#   cursors. The incremental export is eventually-consistent at the boundary;
+#   without a lookback a record at the edge is permanently skipped (for a
+#   ticket, its whole audit activity). cf. jira #1316. PATCH: no schema change,
+#   cursor state stays valid (lookback only widens the start each run).
+# 1.3.0: review #1304 — audit fan-out hardening. New slim key-only parent
+#   stream `support_ticket_ids` (id + updated_at, no metadata payload) is now
+#   the SubstreamPartitionRouter parent for support_ticket_events instead of the
+#   heavyweight support_tickets stream (jira/confluence cache-bloat silent-hang
+#   pattern) + incremental_dependency: true + top-level concurrency_level
+#   default_concurrency 4 (jira: 1 self-deadlocks at ~10k partitions). Also
+#   is_active emits int, group_name emits NULL. MINOR: adds a bronze stream +
+#   changes substream topology (resets the audit substream's parent state).
+# 1.3.1: review #1304 (CodeRabbit) — optional ids (assignee/requester/group/
+#   organization/default_group/author) emit NULL not ''; author_id schema
+#   nullable. (The agent-dim join now keys on tenant+source+id — silver dbt, not
+#   the manifest.) PATCH: no schema/stream change.
+# 1.3.2: review #1304 (CodeRabbit) — add support_ticket_ids to
+#   metadata.autoImportSchema (was omitted when the stream was added). PATCH.
+# `nocode` = declarative-manifest connector (connector.yaml published to the
+# Airbyte builder), as opposed to `cdk` (a pre-built Python image registered
+# from images.cdk.image). MUST be `nocode`/absent for declarative connectors:
+# reconcile only branches on `nocode` vs `cdk` — any other value (e.g.
+# `declarative`) falls through to the cdk image path and fails with no image.
+version: "1.3.2"
+type: nocode
+schedule: "0 5 * * *"       # 05:00 UTC daily
+workflow: sync               # Argo workflow template: ingestion-pipeline
+
+# Scope the dbt step to this connector's models (and their downstream) so the
+# Silver run never touches other connectors' models. Selects zendesk__* staging
+# (bronze_promoted, support_agent/ticket/activity) + the event-grain
+# zendesk__support_event (tagged ['zendesk','silver'] now that the Ticket
+# Audits stream is live, so it IS in tag:zendesk+) + their downstream silver
+# unions (class_support_activity, dim_support_*).
+dbt_select: "tag:zendesk+"
+
+connection:
+  namespace: "bronze_zendesk"
+
+secret:
+  required_fields:
+    - zendesk_subdomain
+    - zendesk_email
+    - zendesk_api_token
+  optional_fields:
+    - start_date

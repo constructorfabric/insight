@@ -301,6 +301,19 @@ CREATE TABLE IF NOT EXISTS silver.class_wiki_activity (
     minor_edits   Nullable(UInt32),
     _version      UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+CREATE TABLE IF NOT EXISTS silver.class_support_activity (
+    insight_tenant_id String,
+    person_key        String,
+    date              Date,
+    data_source       String,
+    updates           Nullable(Float64),
+    public_comments   Nullable(Float64),
+    private_comments  Nullable(Float64),
+    solved            Nullable(Float64),
+    csat_good         Nullable(Float64),
+    csat_total        Nullable(Float64),
+    _version          UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 CREATE TABLE IF NOT EXISTS silver.mtr_git_person_totals (
     insight_tenant_id    String,
     person_key           String,
