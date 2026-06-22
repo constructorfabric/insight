@@ -91,12 +91,31 @@ jobs:
         run: |
           pip install --quiet 'pip-audit==2.10.1'
           rc=0
+          # Transitive advisories we cannot fix from here — same suppression
+          # policy as the Rust audit above (fix, or tracked in-repo waiver).
+          # Every connector depends on airbyte-cdk (>=7.23.1,<8.0.0), whose
+          # latest 7.x (7.23.2) HARD-PINS nltk==3.9.1 and caps cryptography
+          # <47.0.0, so the upstream fixes (nltk 3.9.4, cryptography 48.0.1) are
+          # unreachable until airbyte-cdk bumps them. Waivers tracked in
+          # constructorfabric/insight#1339 — remove each as the CDK fixes it.
+          IGNORES=(
+            # nltk 3.9.1 (airbyte-cdk pin: nltk==3.9.1)
+            --ignore-vuln PYSEC-2026-96
+            --ignore-vuln PYSEC-2026-97
+            --ignore-vuln PYSEC-2026-98
+            --ignore-vuln PYSEC-2026-99
+            --ignore-vuln GHSA-rf74-v2fm-23pw
+            --ignore-vuln CVE-2026-33230
+            --ignore-vuln CVE-2026-33231
+            # cryptography 46.0.7 (airbyte-cdk cap: cryptography<47.0.0)
+            --ignore-vuln GHSA-537c-gmf6-5ccf
+          )
           # Audit every Python project manifest in the ingestion tree.
           while IFS= read -r f; do
             echo "::group::pip-audit $f"
             case "$f" in
-              *requirements*.txt) pip-audit -r "$f" || rc=1 ;;
-              *pyproject.toml)    (cd "$(dirname "$f")" && pip-audit .) || rc=1 ;;
+              *requirements*.txt) pip-audit "${IGNORES[@]}" -r "$f" || rc=1 ;;
+              *pyproject.toml)    (cd "$(dirname "$f")" && pip-audit "${IGNORES[@]}" .) || rc=1 ;;
             esac
             echo "::endgroup::"
           done < <(find src/ingestion -name 'pyproject.toml' -o -name 'requirements*.txt' | grep -v node_modules)
