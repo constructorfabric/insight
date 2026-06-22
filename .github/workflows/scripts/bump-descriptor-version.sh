@@ -3,8 +3,7 @@
 # descriptor.yaml by one minor increment per ADR-0015 (strict semver) and
 # ADR-0016 (descriptor.images: block).
 #
-# Called by the CI `bump-descriptors` job and by
-# `scripts/bootstrap-connector-images.sh` whenever an image tag in
+# Called by the CI `bump-descriptors` job whenever an image tag in
 # `descriptor.yaml.images.<key>.image` is updated. The minor bump makes
 # reconcile re-discover the source catalog on the next deploy (per
 # ADR-0015 §catalog-refresh-on-bump) but stays below the major-bump

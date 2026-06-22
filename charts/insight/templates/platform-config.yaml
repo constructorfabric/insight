@@ -49,7 +49,7 @@ data:
   # ─── Redpanda (Kafka-compatible) ───
   REDPANDA_BROKERS: {{ include "insight.redpanda.brokers" . | quote }}
 
-  # ─── Airbyte (separate release in the SAME namespace, see deploy/airbyte) ───
+  # ─── Airbyte (separate L2 release, see deploy/gitops/system/airbyte) ───
   AIRBYTE_API_URL:          {{ include "insight.airbyte.url" . | quote }}
   AIRBYTE_JWT_SECRET_NAME:  {{ .Values.airbyte.jwtSecret.name  | quote }}
   AIRBYTE_JWT_SECRET_KEY:   {{ .Values.airbyte.jwtSecret.key   | quote }}

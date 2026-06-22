@@ -34,7 +34,7 @@ First session bootstraps `cargo build --release -p analytics-api` (~3-5 min). Su
 
 ## Run (advanced — host-local)
 
-If you prefer to develop on the host (faster iteration on the test code itself), install Python deps and rust on the host. The session-rig falls back to `E2E_RUN_MODE=host` which brings compose up via published ports on 127.0.0.1:30523/30506 (avoiding `dev-up.sh` port-forwards).
+If you prefer to develop on the host (faster iteration on the test code itself), install Python deps and rust on the host. The session-rig falls back to `E2E_RUN_MODE=host` which brings compose up via published ports on 127.0.0.1:30523/30506 (avoiding the in-cluster port-forwards).
 
 ```bash
 python3.12 -m venv .venv
@@ -79,7 +79,7 @@ e2e/
 | MariaDB | `127.0.0.1:30506` | 3306 |
 | analytics-api | `127.0.0.1:<random>` | — |
 
-These ports avoid conflict with `dev-up.sh` (which uses 8123 / 3306) and the dbt local profile (30123).
+These ports avoid conflict with a local gitops dev cluster (which forwards 8123 / 3306) and the dbt local profile (30123).
 
 ## Notes for fixture authors
 
