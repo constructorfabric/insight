@@ -87,6 +87,10 @@ class GitlabStream(HttpStream, ABC):
     def url_base(self) -> str:
         return f"{self._base_url}/api/v4/"
 
+    @property
+    def is_resumable(self) -> bool:
+        return self.supports_incremental
+
     def request_headers(
         self,
         stream_state: Mapping[str, Any] | None = None,

@@ -1,5 +1,5 @@
 name: gitlab
-version: "1.1.0"
+version: "1.2.0"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
@@ -8,7 +8,7 @@ images:
     name: source-gitlab-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.06.18.13.01-731bd71"
+    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.06.22.10.05-d2ecb62"
 dbt_select: "tag:gitlab+"
 connection:
   namespace: "bronze_gitlab"
