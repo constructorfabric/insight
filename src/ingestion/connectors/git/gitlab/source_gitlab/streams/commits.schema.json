@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["unique_key"],
+  "properties": {
+    "unique_key": { "type": "string" },
+    "tenant_id": { "type": ["string", "null"] },
+    "source_id": { "type": ["string", "null"] },
+    "data_source": { "type": ["string", "null"] },
+    "collected_at": { "type": ["string", "null"] },
+    "project_id": { "type": ["integer", "null"] },
+    "id": { "type": ["string", "null"] },
+    "short_id": { "type": ["string", "null"] },
+    "title": { "type": ["string", "null"] },
+    "title_truncated": { "type": ["boolean", "null"] },
+    "message": { "type": ["string", "null"] },
+    "message_truncated": { "type": ["boolean", "null"] },
+    "author_name": { "type": ["string", "null"] },
+    "author_email": { "type": ["string", "null"] },
+    "authored_date": { "type": ["string", "null"] },
+    "committer_name": { "type": ["string", "null"] },
+    "committer_email": { "type": ["string", "null"] },
+    "committed_date": { "type": ["string", "null"] },
+    "parent_count": { "type": ["integer", "null"] },
+    "stats_additions": { "type": ["integer", "null"] },
+    "stats_deletions": { "type": ["integer", "null"] },
+    "stats_total": { "type": ["integer", "null"] }
+  }
+}

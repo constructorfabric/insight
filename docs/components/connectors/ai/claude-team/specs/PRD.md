@@ -87,7 +87,11 @@ Proxy source code, Dockerfile, and deployment instructions:
 
 - Proxy implementation. Lives in `secure-enclave`. The Insight side
   treats it as an opaque HTTP endpoint.
-- Silver / Gold transformations. `dbt_select: ''` in descriptor.
+- Silver / Gold transformations were out of scope for the Bronze MVP
+  but have since landed (`dbt_select: 'tag:claude-team+'`): Silver
+  `claude_team__ai_dev_usage` → `class_ai_dev_usage` (INSIGHT-458) and
+  `claude_team__ai_overage` → `class_ai_overage` (descriptor 1.3.0,
+  Gold bullet `cc_overage`). See DESIGN §4.4.
 - Real-time / streaming sync. Daily cron only.
 - Multi-org. One connector instance per claude.ai org. To serve
   multiple orgs, deploy multiple proxy containers (one per org) and

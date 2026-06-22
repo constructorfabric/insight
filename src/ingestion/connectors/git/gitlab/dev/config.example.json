@@ -1,0 +1,8 @@
+{
+  "insight_tenant_id": "00000000-0000-0000-0000-000000000000",
+  "insight_source_id": "gitlab-main",
+  "gitlab_url": "https://gitlab.example.com",
+  "gitlab_token": "glpat-xxxxxxxxxxxxxxxxxxxx",
+  "gitlab_groups": ["my-group"],
+  "gitlab_start_date": "2024-01-01"
+}

@@ -27,17 +27,18 @@ from pathlib import Path
 
 import clickhouse_connect
 
-from generators import ai, collab, crm, git, hr, people, task
+from generators import ai, collab, crm, git, hr, people, support, task
 from profiles import build_roster, get_dev_user_email
 
 LOG = logging.getLogger("seed.silver")
 
 DEFAULT_DAYS = 60
 
-# Bind-mount targets inside the seed-sample container — see
-# docker-compose.yml `seed-sample.volumes`.
-PLACEHOLDERS_SQL = Path("/app/sql/placeholders.sql")
-MIGRATIONS_DIR = Path("/migrations")
+# SQL inputs. Defaults are the compose seed-sample bind-mount targets
+# (see docker-compose.yml `seed-sample.volumes`); host runs override
+# via env to point at the actual filesystem paths.
+PLACEHOLDERS_SQL = Path(os.environ.get("PLACEHOLDERS_SQL") or "/app/sql/placeholders.sql")
+MIGRATIONS_DIR   = Path(os.environ.get("MIGRATIONS_DIR")   or "/migrations")
 
 
 def _ch_client() -> clickhouse_connect.driver.client.Client:
@@ -84,7 +85,10 @@ def apply_placeholders(client: clickhouse_connect.driver.client.Client) -> int:
     if not PLACEHOLDERS_SQL.is_file():
         raise FileNotFoundError(
             f"placeholders SQL not found at {PLACEHOLDERS_SQL}. "
-            "Did the seed-sample container mount /app/sql?"
+            "Did the seed-sample container mount /app/sql? "
+            "(host runs: set PLACEHOLDERS_SQL to an existing "
+            "placeholders.sql path, e.g. ./sql/placeholders.sql when "
+            "running from compose/seed.)"
         )
     n = _apply_sql_file(client, PLACEHOLDERS_SQL)
     LOG.info("placeholders: %d statements applied", n)
@@ -96,7 +100,10 @@ def apply_migrations(client: clickhouse_connect.driver.client.Client) -> int:
     if not MIGRATIONS_DIR.is_dir():
         raise FileNotFoundError(
             f"migrations dir not found at {MIGRATIONS_DIR}. "
-            "Did the seed-sample container mount /migrations?"
+            "Did the seed-sample container mount /migrations? "
+            "(host runs: set MIGRATIONS_DIR to an existing migrations "
+            "directory, e.g. ../../src/ingestion/scripts/migrations "
+            "when running from compose/seed.)"
         )
     migrations = sorted(MIGRATIONS_DIR.glob("*.sql"))
     if not migrations:
@@ -133,6 +140,7 @@ def generate_rows(
     totals.update(hr.generate(client, roster, tenant_uuid, days))
     totals.update(ai.generate(client, roster, tenant_uuid, days))
     totals.update(task.generate(client, roster, tenant_uuid, days))
+    totals.update(support.generate(client, roster, tenant_uuid, days))
 
     for table, n in sorted(totals.items()):
         LOG.info("  %-46s %6d rows", table, n)

@@ -1,0 +1,11 @@
+dev/config*.json
+!dev/config.example.json
+dev/*.local.json
+dev/state*.json
+dev/catalog.*.json
+*.egg-info/
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.ruff_cache/

@@ -2,11 +2,30 @@ version: 2
 
 sources:
   - name: bronze_zoom
+    # Source freshness (TAF #1322). Source-level default = _airbyte_extracted_at
+    # (sync-liveness) for the roster table. The event tables are WINDOWED — the
+    # connector re-fetches a 30-day window (lookback_window: P7D, step: P30D), so
+    # extracted_at is false-green; they override below to anchor on the event
+    # time. event tier (96h/168h) absorbs legitimately quiet weekends/holidays
+    # where zero meetings is normal. (columns from connector.yaml / participants
+    # verified in ClickHouse; windowed behavior inferred — meetings empty in Eternal.)
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
     schema: bronze_zoom
     tables:
-      - name: users
-      - name: meetings
-      - name: participants
+      - name: users   # roster — sync-liveness default is correct
+      - name: meetings   # inferred windowed (event)
+        loaded_at_field: parseDateTimeBestEffortOrNull(end_time)
+        freshness:
+          warn_after: {count: 96, period: hour}
+          error_after: {count: 168, period: hour}
+      - name: participants   # inferred windowed (event)
+        loaded_at_field: parseDateTimeBestEffortOrNull(join_time)
+        freshness:
+          warn_after: {count: 96, period: hour}
+          error_after: {count: 168, period: hour}
 
 models:
   - name: zoom__meeting_sessions

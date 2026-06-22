@@ -187,6 +187,21 @@ streams:
           is_enabled: { type: boolean }
           monthly_credit_limit: { type: [number, "null"] }
           used_credits: { type: number }
+          # Monetary unit of monthly_credit_limit / used_credits. Confirmed
+          # 'USD' on live data; the numbers are minor units (cents,
+          # decimal_places=2 per the sibling /usage extra_usage payload),
+          # e.g. monthly_credit_limit=10000 ⇒ $100.00.
+          currency: { type: [string, "null"] }
+          # True once a seat has exhausted its monthly credit limit (hard
+          # block). Distinct from used_credits > monthly_credit_limit, which
+          # only flags soft overage. Often null.
+          out_of_credits: { type: [boolean, "null"] }
+          # Whether used_credits is measured before or after discount
+          # (e.g. 'post_discount').
+          used_credits_basis: { type: [string, "null"] }
+          # 'seat_tier' = limit inherited from the plan tier default;
+          # 'member' = per-member override.
+          limit_type: { type: [string, "null"] }
     retriever:
       type: SimpleRetriever
       requester:

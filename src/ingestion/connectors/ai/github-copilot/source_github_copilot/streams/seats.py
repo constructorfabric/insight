@@ -60,23 +60,31 @@ class CopilotSeatsStream(CopilotRestStream):
         return params
 
     def next_page_token(self, response: requests.Response) -> Optional[Mapping[str, Any]]:
-        """Advance until a page returns < 100 seats."""
+        """Follow GitHub's `Link: rel="next"` header (authoritative); fall back to a
+        count heuristic only when the header is absent.
+
+        The previous count-only rule ("stop when < 100") wastes one empty request
+        when total is an exact multiple of 100, and would truncate if the API ever
+        returned a short non-final page. The Link header is the correct signal.
+        """
         if not isinstance(response, requests.Response) or response.status_code != 200:
             return None
+        from urllib.parse import parse_qs, urlparse
+
+        next_url = (response.links or {}).get("next", {}).get("url")
+        if next_url:
+            page = (parse_qs(urlparse(next_url).query).get("page") or [None])[0]
+            if page:
+                # int for type-parity with the fallback branch below
+                return {"page": int(page)}
+        # Fallback: no Link header — stop when the page is under-full.
         try:
-            payload = response.json()
+            seats = (response.json() or {}).get("seats") or []
         except ValueError:
             return None
-        seats = payload.get("seats") or []
         if len(seats) < 100:
-            return None  # Last page
-        # Recover current page from the request URL and increment
-        try:
-            from urllib.parse import parse_qs, urlparse
-            qs = parse_qs(urlparse(response.url).query)
-            current_page = int((qs.get("page") or ["1"])[0])
-        except Exception:
-            current_page = 1
+            return None
+        current_page = int((parse_qs(urlparse(response.url).query).get("page") or ["1"])[0])
         return {"page": current_page + 1}
 
     def parse_response(self, response: requests.Response, **kwargs) -> Iterable[Mapping[str, Any]]:

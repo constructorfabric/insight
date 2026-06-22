@@ -2,12 +2,34 @@ version: 2
 
 sources:
   - name: bronze_claude_admin
+    # Source freshness (TAF #1322). INFERRED, NOT live-verified — bronze_claude_admin
+    # has no rows in any reachable install (config is not a reliable signal, cf.
+    # M365). Source-level default = _airbyte_extracted_at (sync-liveness) for the
+    # roster/lookup tables (full-refresh → extracted_at stays fresh, so it still
+    # catches a stopped sync). The daily usage tables are WINDOWED (incremental on
+    # `date`) and override below. Confirm against live data once ingested.
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
     schema: bronze_claude_admin
     tables:
       - name: claude_admin_users
-      - name: claude_admin_messages_usage
-      - name: claude_admin_cost_report
-      - name: claude_admin_code_usage
+      - name: claude_admin_messages_usage   # inferred windowed (date)
+        loaded_at_field: parseDateTimeBestEffortOrNull(date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
+      - name: claude_admin_cost_report   # inferred windowed (date)
+        loaded_at_field: parseDateTimeBestEffortOrNull(date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
+      - name: claude_admin_code_usage   # inferred windowed (date)
+        loaded_at_field: parseDateTimeBestEffortOrNull(date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
       - name: claude_admin_api_keys
       - name: claude_admin_workspaces
       - name: claude_admin_workspace_members
