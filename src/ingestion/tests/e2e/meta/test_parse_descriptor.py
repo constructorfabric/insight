@@ -152,7 +152,6 @@ def test_fallback_parses_real_jira_descriptor(
         "jira_instance_url",
         "jira_email",
         "jira_api_token",
-        "jira_project_keys",
     ]
 
 
