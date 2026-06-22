@@ -2,7 +2,7 @@
 
 Credentials are randomized per-session so concurrent sessions on the same host
 don't share access. Ports default to the e2e-reserved range (30500-30999) to
-avoid the dev-up.sh port-forwards and the dbt-local-profile NodePort.
+avoid the local cluster port-forwards and the dbt-local-profile NodePort.
 """
 
 from __future__ import annotations

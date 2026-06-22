@@ -55,21 +55,13 @@
         "examples": ["2024-01-01", "2024-01-01T00:00:00Z"],
         "order": 5
       },
-      "salesforce_streams": {
-        "type": "array",
-        "items": { "type": "string" },
-        "title": "Streams Override",
-        "description": "Optional list of SF sobject names to sync. If set, overrides the curated default (Account, Contact, Opportunity, etc.). Use for per-tenant customization (add Lead types, custom objects).",
-        "default": [],
-        "order": 6
-      },
       "salesforce_stream_slice_step": {
         "type": "string",
         "title": "Stream Slice Step",
         "description": "ISO-8601 duration for concurrent cursor slice width. Smaller = more parallelism, more API calls. Default P30D (30 days).",
         "pattern": "^P(?:\\d+[YMWD])+(?:T(?:\\d+[HMS])+)?$",
         "default": "P30D",
-        "order": 7
+        "order": 6
       },
       "salesforce_lookback_window": {
         "type": "string",
@@ -77,23 +69,14 @@
         "description": "ISO-8601 duration to re-read before the cursor position each sync (accounts for Salesforce SystemModstamp eventual consistency). Default PT10M.",
         "pattern": "^P(?:\\d+[YMWD])*(?:T(?:\\d+[HMS])+)?$",
         "default": "PT10M",
-        "order": 8
-      },
-      "salesforce_force_use_bulk_api": {
-        "type": "boolean",
-        "title": "Force Bulk API",
-        "description": "Force Bulk API 2.0 even for sobjects with compound/base64 fields (those fields will be dropped from CSV output). Default false: Bulk used when safe, REST fallback otherwise.",
-        "default": false,
-        "order": 9
+        "order": 7
       },
       "salesforce_num_workers": {
-        "type": "integer",
+        "type": "string",
         "title": "Concurrent Workers",
-        "description": "Max concurrent Bulk jobs + REST slice fetches. Clamped to [1, 50]. Default 20.",
-        "default": 20,
-        "minimum": 1,
-        "maximum": 50,
-        "order": 10
+        "description": "Max concurrent REST slice fetches, as a numeric string. Clamped to [1, 50] in code. Default 1 (sequential).",
+        "default": "1",
+        "order": 8
       }
     }
   }

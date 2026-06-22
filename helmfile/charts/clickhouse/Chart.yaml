@@ -1,6 +1,0 @@
-apiVersion: v2
-name: clickhouse
-description: ClickHouse single-node for local development
-type: application
-version: 0.1.0
-appVersion: "25.3"

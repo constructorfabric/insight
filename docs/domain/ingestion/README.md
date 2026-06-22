@@ -4,15 +4,18 @@ End-to-end data pipeline from external source APIs to unified Silver tables. Bui
 
 ## Quick Start
 
-```bash
-cd src/ingestion
+Ingestion needs Airbyte, Argo Workflows, and ClickHouse, which the Docker Compose
+dev path does not provide. The local-dev path for ingestion is therefore the
+Kubernetes (gitops) path, which installs Airbyte + Argo Workflows and the umbrella chart.
 
-# 1. Copy and fill tenant credentials
+```bash
+# 1. Bring up the full stack on a local Kind/OrbStack cluster
+cd deploy/gitops && make deploy ENV=local
+
+# 2. Copy and fill tenant credentials
+cd src/ingestion
 cp connections/example-tenant.yaml.example connections/my-tenant.yaml
 # Edit: fill in real API keys
-
-# 2. Start everything
-./dev-up.sh
 
 # 3. Run a sync manually
 ./run-sync.sh m365 my-tenant
@@ -20,18 +23,19 @@ cp connections/example-tenant.yaml.example connections/my-tenant.yaml
 
 ## Prerequisites
 
-- Docker Desktop
-- `kubectl`, `helm`, `kind` (`brew install kubectl helm kind`)
+- Docker Desktop (or OrbStack)
+- `kubectl`, `helm`, `kind`, `make` (`brew install kubectl helm kind make`)
 
 ## Commands
 
 ### Lifecycle
 
+The stack lifecycle is managed by the gitops deploy from `deploy/gitops` (see
+[deploy/gitops SPEC](../../../deploy/gitops/README.md)).
+
 | Command | What it does |
 |---------|-------------|
-| `./dev-up.sh` | Start all services. Idempotent — safe to re-run |
-| `./dev-down.sh` | Stop all services. Data preserved |
-| `./cleanup.sh` | Delete cluster and all data. Asks for confirmation |
+| `cd deploy/gitops && make deploy ENV=local` | Install/upgrade all services on the local cluster. Idempotent — safe to re-run |
 
 ### Operations
 
@@ -46,7 +50,8 @@ cp connections/example-tenant.yaml.example connections/my-tenant.yaml
 
 ```bash
 # Full setup from scratch
-./dev-up.sh
+cd deploy/gitops && make deploy ENV=local
+cd src/ingestion
 
 # Update M365 connector manifest after editing connector.yaml
 ./update-connectors.sh
@@ -60,17 +65,21 @@ cp connections/example-tenant.yaml.example connections/my-tenant.yaml
 # Run M365 sync for example-tenant right now
 ./run-sync.sh m365 example_tenant
 
-# Monitor in Argo UI
-open http://localhost:30500
+# Monitor in Argo UI (port-forward, then open the printed URL)
+kubectl -n insight port-forward svc/argo-server 2746:2746
 ```
 
 ## Services
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| Airbyte | http://localhost:8000 | Printed by `dev-up.sh` |
-| Argo UI | http://localhost:30500 | No auth (local) |
-| ClickHouse | http://localhost:30123 | user: `default`, password: `clickhouse` |
+On the gitops path these are exposed via cluster ingress or reached with
+`kubectl port-forward`. See the [deploy/gitops SPEC](../../../deploy/gitops/README.md)
+for ingress hostnames and the services/ports it provisions.
+
+| Service | Access | Credentials |
+|---------|--------|-------------|
+| Airbyte | ingress or `kubectl -n insight port-forward svc/airbyte-webapp-svc 8000:80` | from gitops secrets |
+| Argo UI | ingress or `kubectl -n insight port-forward svc/argo-server 2746:2746` | No auth (local) |
+| ClickHouse | ingress or `kubectl -n insight port-forward svc/insight-clickhouse 8123:8123` | user: `default`, password: `clickhouse` |
 
 ## Configuration
 
