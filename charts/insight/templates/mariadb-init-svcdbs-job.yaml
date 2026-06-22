@@ -20,7 +20,7 @@ Prerequisite: `insight-db-creds` must exist in the namespace BEFORE
 helm install/upgrade runs. In gitops mode (`apply-app-secrets` step
 of `make deploy`) and on upgrades in autoGenerate mode (Secret
 persists across releases), this holds. Fresh autoGenerate-mode
-installs (dev-up.sh path on a brand-new namespace) need a separate
+installs on a brand-new namespace need a separate
 fix — likely converting the Secret template into a hook itself with
 hook-weight < 5 — tracked separately.
 
