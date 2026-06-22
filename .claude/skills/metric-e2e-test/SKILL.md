@@ -11,12 +11,14 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 This skill writes and validates `*.test.yaml` fixtures that drive the full
 `bronze → dbt silver → gold view → analytics-api` path and assert the result.
 
-## Source of truth (read THIS turn before authoring)
+## Source of truth (reference — open only if you need the detail)
+
+This skill is self-contained for authoring. Consult these only when you need the
+precise algorithm/DoD, or when this file and the spec disagree (the spec wins) —
+no need to load them every time:
 
 - FEATURE: [docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md](../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md) — flows, the `resolve` algorithm, the expect engine, DoD.
 - DESIGN: [docs/domain/bronze-to-api-e2e/specs/DESIGN.md](../../../docs/domain/bronze-to-api-e2e/specs/DESIGN.md) — principles `record-composition`, `schema-is-truth`; components `ref-resolver`, `schema-validator`, `expect-engine`.
-
-If the spec and this file disagree, the spec wins — derive behavior from it.
 
 ## Commands
 
@@ -182,5 +184,11 @@ For exact / `null`, use `equal` (Python `==`), not `assert`. CEL macros availabl
 
 ```bash
 cd src/ingestion/tests/e2e
-./e2e.sh test -k <name>        # on a fresh CH; ./e2e.sh down first if re-running warm
+ls specs/*.test.yaml                       # list existing tests
+./e2e.sh test                              # run all tests (specs/ + meta/)
+./e2e.sh test -k <name>                    # run one test by name
+./e2e.sh test -k <name> -v                 # verbose (per-step log)
+./e2e.sh down                              # reset the stack; do this before a warm re-run
 ```
+
+`<name>` is the file stem (e.g. `collab_emails_sent` for `specs/collab_emails_sent.test.yaml`). Run on a fresh ClickHouse; `./e2e.sh down` first if re-running on a warm stack.
