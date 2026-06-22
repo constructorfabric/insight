@@ -19,7 +19,14 @@ jobs:
         with:
           python-version: '3.11'
       - name: Connector -> silver coverage
-        run: python scripts/ci/connector_silver_coverage.py --check
+        # Ratchet: blocks any NEW bronze-only connector, while waiving the
+        # already-known ones so this gate can land. Each waiver is a tracked,
+        # accepted gap (bronze ingests, no silver:class_* consumer yet):
+        #   ai/openai              — usage/cost stream has no silver consumer (dead-end)
+        #   task-tracking/youtrack — silver class_task_* projections not built yet (WIP)
+        #   ui-design/figma        — staging exists, no silver class consumer yet
+        # Remove a name from --waive once its silver:class_* union lands.
+        run: python scripts/ci/connector_silver_coverage.py --check --waive ai/openai,task-tracking/youtrack,ui-design/figma
 
   # Warehouse-dependent gates (dbt contracts/tests, gold-view resolution, presence).
   # Report-only until the dbt CI profile is pointed at the service container; then
