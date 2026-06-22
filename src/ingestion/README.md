@@ -204,7 +204,9 @@ After the platform is up:
 
 **Production:** password from K8s Secret `clickhouse-credentials` in namespace `data` (see [Production Deployment](#production-deployment)).
 
-**Local (Kind):** falls back to default password `clickhouse` from `k8s/clickhouse/configmap.yaml` when Secret is absent.
+**Local (compose):** ClickHouse uses the default password `clickhouse`; credentials come from `.env.compose` (see `.env.compose.example`).
+
+**Local (gitops):** the L2 ClickHouse release reads the `clickhouse-creds` Secret in `insight-infra` (see `deploy/gitops/system/clickhouse/SECRETS.md`).
 
 **Any environment:**
 
