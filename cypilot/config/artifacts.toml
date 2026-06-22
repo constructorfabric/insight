@@ -89,11 +89,6 @@ name = "Bitbucket Server Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/git/gitlab.md"
-name = "GitLab Connector Specification"
-
-[[systems.artifacts]]
-kind = "DESIGN"
 path = "docs/components/connectors/hr-directory/README.md"
 name = "HR Silver Layer"
 

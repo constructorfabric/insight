@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["unique_key"],
+  "properties": {
+    "unique_key": { "type": "string" },
+    "tenant_id": { "type": ["string", "null"] },
+    "source_id": { "type": ["string", "null"] },
+    "data_source": { "type": ["string", "null"] },
+    "collected_at": { "type": ["string", "null"] },
+    "id": { "type": ["integer", "null"] },
+    "username": { "type": ["string", "null"] },
+    "name": { "type": ["string", "null"] },
+    "state": { "type": ["string", "null"] },
+    "email": { "type": ["string", "null"] },
+    "public_email": { "type": ["string", "null"] },
+    "bot": { "type": ["boolean", "null"] },
+    "web_url": { "type": ["string", "null"] }
+  }
+}

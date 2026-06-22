@@ -3,11 +3,9 @@
  Umbrella helpers
 ==============================================================================
 Central place for release/component names (DRY) and service-reference
-resolution. No separate `internal` vs `external` paths — each dep has a
-single `host`/`port` field that either carries a default (empty → compute
-from release name) or a user-supplied value (e.g. a Constructor Platform
-hostname). The `deploy` flag only controls whether the umbrella itself
-runs the dep as a subchart.
+resolution. L2 infra (ClickHouse/MariaDB/Redis/Redpanda) is always
+external — deployed out-of-chart at L2 — so each dep's `host`/`brokers`
+field MUST be supplied; the helpers `required`-fail when it is empty.
 
 Every fail-fast check lives in `insight.validate` at the bottom.
 ==============================================================================
@@ -30,66 +28,51 @@ app.kubernetes.io/part-of: insight
 ==============================================================================
  SERVICE RESOLUTION
 ==============================================================================
-Contract per dep:
-  - `<dep>.host` — if empty, defaults to the internal service name.
+Contract per dep (all infra is external — out-of-chart L2):
+  - `<dep>.host` — required (the helper `required`-fails when empty).
   - `<dep>.port` — required (has a value in values.yaml default).
   - `<dep>.url`  — composed "<scheme>://<host>:<port>" via helpers below.
-  - `<dep>.fqdn` — fully-qualified DNS when the dep is internal, host
-                   verbatim when external — useful for services that live
-                   OUTSIDE the cluster but are resolved via kubelet.
+  - `<dep>.fqdn` — the operator-supplied host verbatim.
 ==============================================================================
 */}}
 
 {{/* ---------- ClickHouse ---------- *
      `host` resolution is fail-fast at the helper level (defense-in-depth):
-     - deploy=true  → if .host is empty, default to `{release}-clickhouse`
-                      (the bundled subchart Service name).
-     - deploy=false → .host MUST be supplied; we `required`-fail right here
-                      so any consumer that resolves the host before the
-                      validator template renders still gets a readable
-                      error rather than an empty/stale value. */}}
+     CH is external (out-of-chart L2), so `.host` MUST be supplied; we
+     `required`-fail right here so any consumer that resolves the host
+     before the validator template renders still gets a readable error
+     rather than an empty/stale value. */}}
 {{- define "insight.clickhouse.host" -}}
-{{- if .Values.clickhouse.deploy -}}
-{{- default (printf "%s-clickhouse" .Release.Name) .Values.clickhouse.host -}}
-{{- else -}}
-{{- required "clickhouse.host is required when clickhouse.deploy=false" .Values.clickhouse.host -}}
-{{- end -}}
+{{- required "clickhouse.host is required" .Values.clickhouse.host -}}
 {{- end -}}
 
 {{- define "insight.clickhouse.port" -}}
 {{- required "clickhouse.port is required" .Values.clickhouse.port -}}
 {{- end -}}
 
+{{/* External CH: the FQDN is the operator-supplied host verbatim. */}}
 {{- define "insight.clickhouse.fqdn" -}}
-{{- if .Values.clickhouse.deploy -}}
-{{ include "insight.clickhouse.host" . }}.{{ .Release.Namespace }}.svc.cluster.local
-{{- else -}}
 {{ include "insight.clickhouse.host" . }}
-{{- end -}}
 {{- end -}}
 
 {{- define "insight.clickhouse.url" -}}
-http://{{ include "insight.clickhouse.host" . }}:{{ include "insight.clickhouse.port" . }}
+{{ include "insight.clickhouse.protocol" . }}://{{ include "insight.clickhouse.host" . }}:{{ include "insight.clickhouse.port" . }}
 {{- end -}}
 
 {{- define "insight.clickhouse.database" -}}
 {{- required "clickhouse.database is required" .Values.clickhouse.database -}}
 {{- end -}}
 
-{{/* Wire protocol (http|https) for the Bronze ClickHouse destination. The
-     bundled ClickHouse serves plain HTTP on 8123, matching the http:// in
-     insight.clickhouse.url above; override clickhouse.protocol for a TLS CH. */}}
+{{/* Wire protocol (http|https) for the Bronze ClickHouse destination.
+     Defaults to plain HTTP (matching the http:// in insight.clickhouse.url
+     above); override clickhouse.protocol for a TLS CH. */}}
 {{- define "insight.clickhouse.protocol" -}}
 {{- default "http" .Values.clickhouse.protocol -}}
 {{- end -}}
 
-{{/* ---------- MariaDB ---------- */}}
+{{/* ---------- MariaDB (external) ---------- */}}
 {{- define "insight.mariadb.host" -}}
-{{- if .Values.mariadb.deploy -}}
-{{- default (printf "%s-mariadb" .Release.Name) .Values.mariadb.host -}}
-{{- else -}}
-{{- required "mariadb.host is required when mariadb.deploy=false" .Values.mariadb.host -}}
-{{- end -}}
+{{- required "mariadb.host is required" .Values.mariadb.host -}}
 {{- end -}}
 
 {{- define "insight.mariadb.port" -}}
@@ -100,13 +83,9 @@ http://{{ include "insight.clickhouse.host" . }}:{{ include "insight.clickhouse.
 {{- required "mariadb.database is required" .Values.mariadb.database -}}
 {{- end -}}
 
-{{/* ---------- Redis ---------- */}}
+{{/* ---------- Redis (external) ---------- */}}
 {{- define "insight.redis.host" -}}
-{{- if .Values.redis.deploy -}}
-{{- default (printf "%s-redis-master" .Release.Name) .Values.redis.host -}}
-{{- else -}}
-{{- required "redis.host is required when redis.deploy=false" .Values.redis.host -}}
-{{- end -}}
+{{- required "redis.host is required" .Values.redis.host -}}
 {{- end -}}
 
 {{- define "insight.redis.port" -}}
@@ -117,19 +96,13 @@ http://{{ include "insight.clickhouse.host" . }}:{{ include "insight.clickhouse.
 redis://{{ include "insight.redis.host" . }}:{{ include "insight.redis.port" . }}
 {{- end -}}
 
-{{/* ---------- Redpanda ----------
-     The Redpanda Helm chart exposes Kafka on two listeners:
-       - 9093 — INTERNAL (in-cluster clients connect here)
-       - 9092 — EXTERNAL (outside-cluster; goes through NodePort/LB)
-     We resolve to the internal listener by default. Override via
-     redpanda.brokers when pointing at an external cluster.
+{{/* ---------- Redpanda (external) ----------
+     The external Redpanda cluster's bootstrap brokers, as a single
+     comma-separated host:port string (in-cluster clients use the
+     internal listener, conventionally :9093).
 */}}
 {{- define "insight.redpanda.brokers" -}}
-{{- if .Values.redpanda.deploy -}}
-{{- default (printf "%s-redpanda:9093" .Release.Name) .Values.redpanda.brokers -}}
-{{- else -}}
-{{- required "redpanda.brokers is required when redpanda.deploy=false" .Values.redpanda.brokers -}}
-{{- end -}}
+{{- required "redpanda.brokers is required" .Values.redpanda.brokers -}}
 {{- end -}}
 
 {{/*
@@ -203,29 +176,24 @@ Invoked from NOTES.txt so they fire on every install.
     {{- end -}}
   {{- end -}}
 
-  {{- /* External-mode hosts (deploy=false → consumer must supply host):
-         the helper templates `insight.<dep>.host` already `required`-fail
-         in this case, so any template that resolves the host before this
-         validator runs gets a readable error. We keep the redpanda check
-         here because `insight.redpanda.brokers` covers it the same way. */ -}}
-
-  {{- /* MariaDB top-level vs subchart drift. The umbrella's secrets.yaml
-         interpolates `mariadb.username` / `mariadb.database` into
-         ANALYTICS__database_url; the bitnami subchart actually creates
-         the user and database from `mariadb.auth.username` /
-         `mariadb.auth.database`. values.yaml is not Helm-templated, so
-         we cannot reference one from the other — operators must keep
-         them in sync, and this validator catches drift loudly. */ -}}
-  {{- if .Values.mariadb.deploy -}}
-    {{- $mdb := .Values.mariadb -}}
-    {{- $mdbAuth := default dict $mdb.auth -}}
-    {{- if ne (default "" $mdb.username) (default "" $mdbAuth.username) -}}
-      {{- fail (printf "mariadb.username (%q) and mariadb.auth.username (%q) must match. The umbrella uses the former for ANALYTICS__database_url; the bitnami subchart uses the latter to CREATE USER. Set both to the same value (or unset both)." $mdb.username $mdbAuth.username) -}}
-    {{- end -}}
-    {{- if ne (default "" $mdb.database) (default "" $mdbAuth.database) -}}
-      {{- fail (printf "mariadb.database (%q) and mariadb.auth.database (%q) must match. Set both to the same value (or unset both)." $mdb.database $mdbAuth.database) -}}
-    {{- end -}}
+  {{- /* frontend.devUserEmail is the dev-impersonation escape hatch — the
+         FE entrypoint stamps it into `oidc-config.js` so the browser
+         builds an unsigned-JWT bearer on every /api/* call. Only
+         meaningful when the gateway lets unauthenticated requests
+         through (apiGateway.authDisabled=true). Setting it together
+         with real auth is a misconfiguration — a forgotten value in a
+         prod overlay would silently impersonate every visitor as that
+         address. Catch it loudly at template time. */ -}}
+  {{- $fe := default dict .Values.frontend -}}
+  {{- if and $fe.devUserEmail (not $gw.authDisabled) -}}
+    {{- fail (printf "frontend.devUserEmail (%q) is only valid when apiGateway.authDisabled=true. Either clear devUserEmail (real OIDC flow) or set apiGateway.authDisabled=true (sandbox dev impersonation)." $fe.devUserEmail) -}}
   {{- end -}}
+
+  {{- /* External hosts (L2 infra is out-of-chart → consumer must supply
+         host/brokers): the helper templates `insight.<dep>.host` and
+         `insight.redpanda.brokers` already `required`-fail when empty, so
+         any template that resolves the host before this validator runs
+         gets a readable error. */ -}}
 
   {{- /* Passwords live in Secrets — never inline. Validate that the
          passwordSecret reference is present; the actual Secret may be

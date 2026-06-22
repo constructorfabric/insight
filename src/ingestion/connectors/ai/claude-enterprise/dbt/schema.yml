@@ -2,9 +2,23 @@ version: 2
 
 sources:
   - name: bronze_claude_enterprise
+    # Source freshness (TAF #1322). INFERRED, NOT live-verified — bronze_claude_enterprise
+    # has no rows in any reachable install (config is not a reliable signal, cf.
+    # M365). Source-level default = _airbyte_extracted_at (sync-liveness) for the
+    # roster/lookup tables. The daily usage summaries table is WINDOWED
+    # (incremental on `date`) and overrides below. Confirm against live data
+    # once Claude Enterprise is ingested.
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
     schema: bronze_claude_enterprise
     tables:
-      - name: claude_enterprise_summaries
+      - name: claude_enterprise_summaries   # inferred windowed (date)
+        loaded_at_field: parseDateTimeBestEffortOrNull(date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
       - name: claude_enterprise_users
       - name: claude_enterprise_chat_projects
       - name: claude_enterprise_skills

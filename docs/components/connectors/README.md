@@ -34,7 +34,7 @@ Per-source deep-dive specifications for Constructor Insight connectors. Each fil
 | Git (unified schema) | [`git/README.md`](git/README.md) | Draft |
 | GitHub | [`git/github.md`](git/github.md) | Draft |
 | Bitbucket | [`git/bitbucket.md`](git/bitbucket.md) | Draft |
-| GitLab | [`git/gitlab.md`](git/gitlab.md) | Draft |
+| GitLab | [`git/gitlab/specs/DESIGN.md`](git/gitlab/specs/DESIGN.md) | Draft |
 
 ### Task Tracking
 

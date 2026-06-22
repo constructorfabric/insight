@@ -1,5 +1,5 @@
 name: bitbucket-cloud
-version: "1.1.0"
+version: "1.2.0"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
@@ -9,7 +9,7 @@ images:
     name: source-bitbucket-cloud-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-bitbucket-cloud-insight:2026.06.10.11.55-376321d"
+    image: "ghcr.io/constructorfabric/source-bitbucket-cloud-insight:2026.06.17.08.56-25bb740"
 dbt_select: "tag:bitbucket-cloud+"
 connection:
   namespace: "bronze_bitbucket_cloud"

@@ -80,8 +80,13 @@ SELECT
 FROM org_metrics
 WHERE day IS NOT NULL AND day != ''
 {% if is_incremental() %}
+  -- 7-day re-process window: must be >= the connector's metrics_lookback_days
+  -- (default 7, source_github_copilot) so days the connector re-fetches when a
+  -- Copilot report lands late or is restated actually reach Silver. A narrower
+  -- window would let those days sit in Bronze but be dropped here (older than
+  -- max(day) - N), wasting the connector lookback. (Refs #1354.)
   AND toDate(parseDateTimeBestEffortOrNull(day)) > (
-      SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
+      SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 7 DAY
       FROM {{ this }}
   )
 {% endif %}
