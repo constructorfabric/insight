@@ -618,13 +618,14 @@ if ! ch_table_exists silver mtr_git_person_weekly; then
   echo "  Creating placeholder: silver.mtr_git_person_weekly"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.mtr_git_person_weekly (
-    insight_tenant_id String,
+    tenant_id         String,
     person_key        String,
     week              Date,
+    unique_key        String,
     commits           UInt64,
-    lines_added       Int64,
-    lines_removed     Int64,
-    prs_merged        Float64,
+    prs_merged        UInt64,
+    code_loc          Int64,
+    spec_lines        Int64,
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, week) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL

@@ -22,9 +22,9 @@ WITH proj AS (
     FROM {{ source('bronze_gitlab', 'projects') }} FINAL
 )
 SELECT
-    n.tenant_id,
-    n.source_id,
-    n.unique_key,
+    n.tenant_id AS tenant_id,
+    n.source_id AS source_id,
+    n.unique_key AS unique_key,
     COALESCE(p.project_key, '') AS project_key,
     COALESCE(p.repo_slug, '') AS repo_slug,
     COALESCE(n.mr_iid, 0) AS pr_id,

@@ -7,11 +7,11 @@
 Release:    {{ .Release.Name }}
 Revision:   {{ .Release.Revision }}
 
-Resolved infra endpoints (see ConfigMap {{ .Release.Name }}-platform):
-  ClickHouse:  {{ include "insight.clickhouse.url" . }}  {{ if not .Values.clickhouse.deploy }}[external]{{ end }}
-  MariaDB:     {{ include "insight.mariadb.host" . }}:{{ include "insight.mariadb.port" . }}  {{ if not .Values.mariadb.deploy }}[external]{{ end }}
-  Redis:       {{ include "insight.redis.url" . }}  {{ if not .Values.redis.deploy }}[external]{{ end }}
-  Redpanda:    {{ include "insight.redpanda.brokers" . }}  {{ if not .Values.redpanda.deploy }}[external]{{ end }}
+Resolved infra endpoints (external L2, see ConfigMap {{ .Release.Name }}-platform):
+  ClickHouse:  {{ include "insight.clickhouse.url" . }}
+  MariaDB:     {{ include "insight.mariadb.host" . }}:{{ include "insight.mariadb.port" . }}
+  Redis:       {{ include "insight.redis.url" . }}
+  Redpanda:    {{ include "insight.redpanda.brokers" . }}
   Airbyte:     {{ include "insight.airbyte.url" . }}
 
 Application services (always-on):

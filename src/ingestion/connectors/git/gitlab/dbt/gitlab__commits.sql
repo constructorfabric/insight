@@ -34,9 +34,9 @@ fc AS (
     GROUP BY tenant_id, source_id, project_id, commit_sha
 )
 SELECT
-    c.tenant_id,
-    c.source_id,
-    c.unique_key,
+    c.tenant_id AS tenant_id,
+    c.source_id AS source_id,
+    c.unique_key AS unique_key,
     COALESCE(p.project_key, '') AS project_key,
     COALESCE(p.repo_slug, '') AS repo_slug,
     COALESCE(c.id, '') AS commit_hash,
