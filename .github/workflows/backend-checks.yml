@@ -18,6 +18,12 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
+# The coverage steps post a sticky PR comment, which needs write access to the
+# pull request. Everything else in this workflow only reads the repo.
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   check:
     name: Lint & Test
@@ -35,7 +41,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95.0"
-          components: rustfmt, clippy
+          # llvm-tools-preview ships the LLVM coverage tooling cargo-llvm-cov drives.
+          components: rustfmt, clippy, llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -47,8 +54,54 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features
 
-      - name: Run tests
-        run: cargo test --all
+      # cargo-llvm-cov runs the suite under LLVM source-based coverage
+      # instrumentation — this replaces the plain `cargo test --all`, so the
+      # tests still run and we capture coverage from the same pass. The
+      # instrumented build uses different RUSTFLAGS than the clippy/test cache,
+      # so it recompiles the workspace and runs slower than a bare test pass.
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run tests with coverage
+        run: |
+          cargo llvm-cov --no-report --all-features --workspace
+          cargo llvm-cov report --html
+          cargo llvm-cov report --cobertura --output-path cobertura.xml
+          cargo llvm-cov report --summary-only
+
+      # cargo-llvm-cov already emitted the source-annotated HTML report under
+      # target/llvm-cov/html (best fidelity for Rust). ReportGenerator (a .NET
+      # global tool, hence the SDK install) is used only to render the aggregate
+      # Cobertura numbers as a GitHub markdown summary for the PR comment.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Generate markdown coverage summary
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            -reports:cobertura.xml \
+            -targetdir:coverage-report \
+            -reporttypes:"MarkdownSummaryGithub" \
+            -title:"Rust backend"
+
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-backend-coverage-html
+          path: src/backend/target/llvm-cov/html
+
+      # Report-only: posts/updates a sticky comment, never fails the job
+      # (continue-on-error keeps fork PRs — read-only token — green).
+      - name: Post coverage PR comment
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rust-backend-coverage
+          recreate: true
+          path: src/backend/coverage-report/SummaryGithub.md
 
   dotnet-identity:
     name: .NET — Identity Service Build & Test
@@ -82,8 +135,37 @@ jobs:
         run: >
           dotnet test tests/Insight.Identity.Tests.Unit/Insight.Identity.Tests.Unit.csproj
           --no-build --configuration Release
+          --collect:"XPlat Code Coverage" --results-directory ./coverage
 
       - name: Integration tests (Testcontainers MariaDB)
         run: >
           dotnet test tests/Insight.Identity.Tests.Integration/Insight.Identity.Tests.Integration.csproj
           --no-build --configuration Release
+          --collect:"XPlat Code Coverage" --results-directory ./coverage
+
+      # Merge the unit + integration Cobertura outputs into one HTML report
+      # (artifact) plus a GitHub markdown summary (PR comment). Report-only.
+      - name: Generate coverage report
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            -reports:"coverage/**/coverage.cobertura.xml" \
+            -targetdir:coverage/report \
+            -reporttypes:"Html;MarkdownSummaryGithub" \
+            -title:"Identity (.NET)"
+
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-identity-coverage-html
+          path: src/backend/services/identity/coverage/report
+
+      - name: Post coverage PR comment
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: dotnet-identity-coverage
+          recreate: true
+          path: src/backend/services/identity/coverage/report/SummaryGithub.md
