@@ -196,9 +196,21 @@ allowed via `additionalProperties: true`.
 
 ### 4.4 Silver layer
 
-Out of scope for MVP. `descriptor.dbt_select: ''`. When Silver lands
-(Phase 6+), models will be tagged `claude-team` and selected with
-`tag:claude-team+`.
+Out of scope for the **Bronze MVP** — but Silver has since landed
+(`descriptor.dbt_select: 'tag:claude-team+'`, not `''`). Models are
+tagged `claude-team` and contribute to shared Silver classes:
+
+- `claude_team__ai_dev_usage` → `class_ai_dev_usage` (per-user-per-day
+  Claude Code usage from `claude_team_code_metrics`; INSIGHT-458).
+- `claude_team__ai_overage` → `class_ai_overage` (per-seat-per-month
+  spend over the monthly credit limit from `claude_team_overage_spend`;
+  descriptor 1.3.0). `overage_cents = max(0, used_credits −
+  monthly_credit_limit)`, units already cents (no ×100). Gold surfaces
+  it as the `cc_overage` AI bullet. See the cross-connector contract in
+  `docs/components/connectors/ai/README.md` and `src/ingestion/silver/ai/schema.yml`.
+
+`bronze_promoted` (ADR-0002) promotes all populated Bronze streams,
+including `claude_team_overage_spend`, to ReplacingMergeTree.
 
 ## 5. Operational limitations (MVP)
 

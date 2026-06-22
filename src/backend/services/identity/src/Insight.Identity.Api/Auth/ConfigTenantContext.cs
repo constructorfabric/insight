@@ -7,7 +7,7 @@ namespace Insight.Identity.Api.Auth;
 /// <summary>
 /// Falls back to the <c>identity.tenant_default_id</c> setting (env
 /// <c>IDENTITY__tenant_default_id</c>). Useful for single-tenant
-/// development clusters and the local helmfile environment.
+/// development clusters and the local gitops environment.
 /// </summary>
 public sealed class ConfigTenantContext : ITenantContext
 {

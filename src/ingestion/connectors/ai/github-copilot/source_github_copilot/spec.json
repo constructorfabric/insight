@@ -41,6 +41,15 @@
         "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
         "examples": ["2026-01-01"],
         "order": 4
+      },
+      "metrics_lookback_days": {
+        "type": "integer",
+        "title": "Metrics Re-fetch Lookback (days)",
+        "description": "On each incremental run, the org/user daily-metrics streams re-query this many days before the saved cursor. Copilot daily reports lag (often >24-48h; weekends later) and can be restated, so without a lookback a recent day that returned HTTP 204 (report not ready yet) would be permanently skipped once the cursor advanced past it. Re-fetched days are deduped downstream by unique_key (ReplacingMergeTree), so the overlap is idempotent. Default 7.",
+        "minimum": 0,
+        "default": 7,
+        "examples": [7],
+        "order": 5
       }
     }
   }

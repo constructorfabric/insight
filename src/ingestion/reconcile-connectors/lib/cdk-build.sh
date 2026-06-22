@@ -177,7 +177,8 @@ cdk_build() {
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -euo pipefail
-  # Resolve project root: lib/ is two levels below src/ingestion/reconcile-connectors/
-  cd "${_CDK_LIB_DIR}/../../.."
+  # Resolve the ingestion root (connectors/ lives there): lib/ is two levels
+  # below src/ingestion/.
+  cd "${_CDK_LIB_DIR}/../.."
   cdk_build "$@"
 fi

@@ -173,6 +173,9 @@ This feeds the **planned** `class_ai_org_usage` (see below).
 | `class_ai_api_usage` (existing) | ❌ N/A | ✅ feeds | ✅ feeds | ❌ tagged as `openai`, not silver-class | ❌ N/A (flat-seat) | ❌ no API | ❌ N/A | ❌ N/A | ❌ N/A |
 | `class_ai_assistant_usage` (proposed, NEW) | ❌ N/A | ❌ N/A | ✅ feeds (chat/cowork/office/web_search) | ❌ N/A | ✅ feeds (planned — Compliance Logs `conversations` events) | ❌ no API | ❌ N/A | 🟡 chat surface | ❌ N/A |
 | `class_ai_cost` (proposed, NEW) | ❌ | ✅ feeds | ❌ | ✅ feeds | ❌ (flat-seat, not exposed) | ❌ | ❌ | ✅ `promptCreditsUsed` | ❌ |
+| `class_ai_overage` (NEW — Claude Team BUILT †) | ❌ | ❌ | ❌ | 🟡 `credits_used` vs quota | ❌ | 🟡 `credits_used` vs quota | ❌ | 🟡 `promptCreditsUsed` vs plan | ❌ |
+
+† **Claude Team** is the first live source for `class_ai_overage` but is **not a column above** (this matrix predates the claude-team connector). Source `claude_team__ai_overage` reads `/overage_spend_limits` via the customer proxy: per-seat `used_credits` vs `monthly_credit_limit` (already cents, USD) → `overage_cents = max(0, used − limit)`. Verified live (149 seats, Owner role required). See the dedicated section below.
 
 ## Known gaps (todo backlog)
 
@@ -193,15 +196,16 @@ This feeds the **planned** `class_ai_org_usage` (see below).
 
 Goal: each class is one **product domain** with a homogeneous schema. No NULL-padded columns from sources that "don't expose this kind of data". When a provider grows (Anthropic adds Compliance API, OpenAI splits ChatGPT/Codex, etc.) — rows get added to existing classes or a new class appears, but **existing class schemas don't get smeared**.
 
-## Proposed structure (5 core + 2 optional classes)
+## Proposed structure (6 core + 2 optional classes)
 
-```
+```text
 silver/
 ├── ai/
 │   ├── class_ai_dev_usage         (per-person-day code activity)
 │   ├── class_ai_assistant_usage   (per-person-day chat/cowork/office/web)
 │   ├── class_ai_api_usage         (per-key-or-project-day tokens + multi-modal API)
-│   ├── class_ai_cost              (per-line-item-day financial)
+│   ├── class_ai_cost              (per-line-item-day financial — org/project total)
+│   ├── class_ai_overage           (per-person-month spend-over-limit — BUILT: Claude Team)
 │   └── class_ai_audit_log         (event-stream — admin actions, compliance)
 └── _shared/
     ├── class_people               (existing) — identity unification
@@ -318,6 +322,31 @@ provider, source, data_source, collected_at
 | Claude Admin | `claude_admin__ai_cost` (existing `cost_report` stream — needs new staging tagged `silver:class_ai_cost`) |
 | Claude Enterprise | ❌ (no cost data) |
 | OpenAI | `openai__ai_cost` (existing `to_ai_cost.sql` — re-tag `silver:class_ai_cost`) |
+
+### 4a. `class_ai_overage` (NEW — sibling of `class_ai_cost`; **BUILT for Claude Team**)
+
+**Grain:** `(insight_tenant_id, source, account/email, billing month)` — one row per person × month.
+
+**Why separate from `class_ai_cost`:** `class_ai_cost` answers *"how much did the org/project spend"* (financial line items, per-project/day, not attributable to a person). `class_ai_overage` answers *"how much did **each person** spend **above their own monthly limit**"* — a per-seat budget-vs-actual comparison. Overage needs a per-seat **limit** that cost line items don't carry, and is the metric product asked for ("сколько денег человек потратил свыше лимита"). Keeping it separate avoids smearing a per-person limit column across the org-grain cost class.
+
+**Schema (19 positional cols — first contributor `claude_team__ai_overage` defines the contract; vendor extras → `overage_metrics_json`, never new columns):**
+```text
+insight_tenant_id, source_id, unique_key, email, account_id
+period_month, tool, seat_tier, currency
+credit_limit_cents, used_amount_cents, overage_cents   -- minor units (cents); overage = max(0, used − limit), honest-NULL if no limit
+is_over_limit, is_enabled, overage_metrics_json
+source, data_source, collected_at, _version
+```
+
+**Provider feeding:**
+
+| Provider | Source | Status |
+|---|---|---|
+| **Claude Team** | `claude_team__ai_overage` — `/overage_spend_limits` per-seat `used_credits` vs `monthly_credit_limit` (already cents, USD) | ✅ **BUILT** (needs proxy sessionKey with `billing:view`/Owner — verified live, 149 seats) |
+| OpenAI / ChatGPT | `openai__ai_overage` (FUTURE) — `chat_activity.credits_used` + codex `credits` per user | 🟡 needs per-seat included quota + credit→$ rate (product input); `overage_cents` stays NULL until quota known |
+| Windsurf | `windsurf__ai_overage` (FUTURE) — `promptCreditsUsed` per user vs plan | 🟡 possible if plan limit is known |
+
+**Units:** `used_credits` / `monthly_credit_limit` from the Claude web API are **already cents** (USD, `decimal_places=2`) — mapped straight to `*_cents` with **no ×100** (unlike `claude_team__ai_dev_usage.cost_cents`, which ×100 a dollar-string). **Month grain:** the endpoint is a current-period snapshot with no period field → `period_month = toStartOfMonth(_airbyte_extracted_at)`, latest snapshot per (seat, month) kept (month in `unique_key`) so history accrues and the in-flight month stays idempotent.
 
 ### 5. `class_ai_audit_log` (NEW)
 

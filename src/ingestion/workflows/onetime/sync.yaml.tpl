@@ -21,7 +21,7 @@ metadata:
 spec:
   # Workflow steps need write access to argoproj.io/workflowtaskresults.
   # The argo chart creates this ServiceAccount via workflow.serviceAccount.create=true;
-  # supplemental Role/Binding (deploy/argo/rbac.yaml) grants the necessary verbs.
+  # supplemental Role/Binding (provisioned with the Argo system release) grants the necessary verbs.
   serviceAccountName: argo-workflow
   entrypoint: run
   templates:

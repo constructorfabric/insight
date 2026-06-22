@@ -9,7 +9,6 @@ CDK retries.
 from __future__ import annotations
 
 import logging
-import re
 import sys
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Union
 
@@ -24,8 +23,6 @@ from airbyte_cdk.sources.streams.http.error_handlers import (
     ResponseAction,
 )
 from airbyte_cdk.sources.streams.http.exceptions import DefaultBackoffException
-
-from source_salesforce.exceptions import BulkNotSupportedException
 
 if TYPE_CHECKING:
     from source_salesforce.api import SalesforceTokenProvider
@@ -75,9 +72,6 @@ class SalesforceErrorHandler(ErrorHandler):
     - 401 + INVALID_SESSION_ID  -> force token refresh + retry
     - 406/420/429 + 5xx         -> retry
     - 429/REQUEST_LIMIT_EXCEEDED on data endpoints -> FAIL (rolling 24h quota)
-    - Bulk job creation errors classified into:
-      * BulkNotSupportedException (caller falls back to REST)
-      * Config error (permission / policy)
     - Login endpoint errors -> config error with remediation hint
     - TXN_SECURITY_METERING_ERROR -> config error with remediation hint
     """
@@ -112,21 +106,10 @@ class SalesforceErrorHandler(ErrorHandler):
 
         if isinstance(response, requests.Response):
             if response.ok:
-                if self._is_bulk_job_status_check(response):
-                    try:
-                        body = response.json()
-                    except (ValueError, exceptions.JSONDecodeError):
-                        body = {}
-                    if body.get("state") == "Failed":
-                        # A failed Bulk job is terminal; no retry. Surface as
-                        # BulkNotSupported so the caller can try REST.
-                        raise BulkNotSupportedException(
-                            f"Query job with id: `{body.get('id')}` failed"
-                        )
                 return ErrorResolution(ResponseAction.IGNORE, None, None)
 
             if response.status_code == 401:
-                error_code, _ = self._extract_error_code_and_message(response)
+                error_code, error_message = self._extract_error_code_and_message(response)
                 if error_code == "INVALID_SESSION_ID":
                     if self._token_provider is None:
                         # Without a refresh provider, retrying replays the
@@ -143,6 +126,15 @@ class SalesforceErrorHandler(ErrorHandler):
                         FailureType.transient_error,
                         "Salesforce session expired; token refreshed, retrying.",
                     )
+                return ErrorResolution(
+                    ResponseAction.FAIL,
+                    FailureType.config_error,
+                    (
+                        f"Salesforce authentication failed (HTTP 401, code {error_code}): "
+                        f"{error_message}. Check instance_url, client_id, client_secret "
+                        "and the Run-As user permissions."
+                    ),
+                )
 
             if (
                 not (400 <= response.status_code < 500)
@@ -175,21 +167,11 @@ class SalesforceErrorHandler(ErrorHandler):
                 and error_code == "REQUEST_LIMIT_EXCEEDED"
             ):
                 # SF rate limit is rolling-24h; retrying immediately rarely helps
-                # and we want clean sync-failed signals for ops. Check this before
-                # the bulk-creation branch so a 403 REQUEST_LIMIT_EXCEEDED on the
-                # Bulk create endpoint isn't reinterpreted as BulkNotSupported.
+                # and we want clean sync-failed signals for ops.
                 return ErrorResolution(
                     ResponseAction.FAIL,
                     FailureType.transient_error,
                     f"Salesforce request limit reached (HTTP {response.status_code}): {response.text}",
-                )
-
-            if self._is_bulk_job_creation(response) and response.status_code in (
-                codes.FORBIDDEN,
-                codes.BAD_REQUEST,
-            ):
-                return self._handle_bulk_job_creation_endpoint_specific_errors(
-                    response, error_code, error_message
                 )
 
             if (
@@ -214,94 +196,6 @@ class SalesforceErrorHandler(ErrorHandler):
         )
 
     # ------- Response classification helpers ---------------------------------
-
-    @staticmethod
-    def _is_bulk_job_status_check(response: requests.Response) -> bool:
-        """True iff the response is a Bulk 2.0 GET /jobs/query/{id} status call."""
-        return (
-            response.request.method == "GET"
-            and bool(
-                re.compile(r"/services/data/v\d{2}\.\d/jobs/query/[^/]+$").search(
-                    response.url
-                )
-            )
-        )
-
-    @staticmethod
-    def _is_bulk_job_creation(response: requests.Response) -> bool:
-        return (
-            response.request.method == "POST"
-            and bool(
-                re.compile(r"services/data/v\d{2}\.\d/jobs/query/?$").search(
-                    response.url
-                )
-            )
-        )
-
-    def _handle_bulk_job_creation_endpoint_specific_errors(
-        self,
-        response: requests.Response,
-        error_code: Optional[str],
-        error_message: str,
-    ) -> ErrorResolution:
-        """Classify Bulk create failures into: REST-fallback vs. config-error.
-
-        Three common failure modes (SF version-dependent):
-        1) sobject genuinely not supported by Bulk API
-        2) sobject not accessible to the Run-As user
-        3) sobject not queryable directly (only as subquery)
-        All three -> BulkNotSupportedException; caller switches to REST.
-
-        Plus:
-        - "Implementation restriction" -> config error (add View All Data)
-        - LIMIT_EXCEEDED -> treat as Bulk-not-available for now
-        - REQUEST_LIMIT_EXCEEDED -> same
-        """
-        if error_message == "Selecting compound data not supported in Bulk Query" or (
-            error_code == "INVALIDENTITY"
-            and "is not supported by the Bulk API" in error_message
-        ):
-            logger.error(
-                f"Bulk API rejected '{self._stream_name}' "
-                f"(options={self._sobject_options}): {error_message}"
-            )
-            raise BulkNotSupportedException()
-
-        if response.status_code == codes.BAD_REQUEST:
-            if error_message.endswith("does not support query"):
-                logger.error(
-                    f"'{self._stream_name}' is not queryable via Bulk "
-                    f"(options={self._sobject_options}): {error_message}"
-                )
-                raise BulkNotSupportedException()
-            if error_code == "API_ERROR" and error_message.startswith(
-                "Implementation restriction"
-            ):
-                return ErrorResolution(
-                    ResponseAction.FAIL,
-                    FailureType.config_error,
-                    (
-                        f"Unable to sync '{self._stream_name}'. Grant the "
-                        'authenticated user the "View All Data" permission.'
-                    ),
-                )
-            if error_code == "LIMIT_EXCEEDED":
-                logger.error(
-                    "Salesforce API key has reached its 24h limit. "
-                    "Replication will resume after the limit window elapses."
-                )
-                raise BulkNotSupportedException()
-
-        if response.status_code == codes.FORBIDDEN:
-            logger.error(
-                f"Bulk API forbidden for '{self._stream_name}' "
-                f"(options={self._sobject_options}, code={error_code}): {error_message}"
-            )
-            raise BulkNotSupportedException()
-
-        return ErrorResolution(
-            ResponseAction.FAIL, FailureType.system_error, error_message
-        )
 
     @staticmethod
     def _extract_error_code_and_message(

@@ -49,7 +49,15 @@ def main() -> int:
     # operators can see what the workflow is for in Argo UI; only
     # `jira` triggers the enriched branch.
     data_source = args.connector
-    dbt_select_staging = "tag:jira-staging" if args.connector == "jira" else ""
+    # Intersection of the `staging` and `jira` tags = exactly the jira staging
+    # models (jira__changelog_items, jira__issue_field_snapshot). The old
+    # "tag:jira-staging" matched NO model (no such tag exists — they are tagged
+    # ['staging', 'jira']), so the nightly staging step ran zero models and the
+    # enrich/silver steps ran on empty/stale staging (jira_issue_field_snapshot
+    # stayed at 0 rows, changelog_items frozen). Manual run-sync.sh uses
+    # "tag:jira", which is why local runs worked but reconcile-rendered crons
+    # did not.
+    dbt_select_staging = "tag:staging,tag:jira" if args.connector == "jira" else ""
 
     env = {
         "CONNECTOR": args.connector,
