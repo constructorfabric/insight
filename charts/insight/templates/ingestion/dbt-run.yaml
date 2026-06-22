@@ -29,8 +29,8 @@ spec:
             default: "false"
           # Operator-pinned values from umbrella chart. Submitter may override
           # per-call but typically just submits and gets these defaults baked in
-          # at chart-render time. `insight.<dep>.host/port` helpers know whether
-          # to emit cluster-internal FQDN or external host based on `<dep>.deploy`.
+          # at chart-render time. `insight.<dep>.host/port` helpers resolve the
+          # operator-supplied external L2 host/port.
           - name: toolbox_image
             default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
           - name: clickhouse_host

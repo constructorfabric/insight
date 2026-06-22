@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "source-salesforce-insight"
 version = "2.0.0"
-description = "Airbyte source connector for Salesforce (CDK-native, Bulk API 2.0 with REST fallback)"
+description = "Airbyte source connector for Salesforce (CDK-native, REST queryAll)"
 requires-python = ">=3.10"
 dependencies = [
-    "airbyte-cdk>=7.16.0",
-    "requests>=2.31.0",
+    "airbyte-cdk>=7.23.1,<8.0.0",
+    "requests>=2.34.2",
     "pendulum>=3.0.0",
 ]
 

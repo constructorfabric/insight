@@ -20,6 +20,7 @@ sources:
         freshness:
           warn_after: {count: 72, period: hour}
           error_after: {count: 120, period: hour}
+      - name: claude_team_overage_spend   # per-seat spend snapshot — sync-liveness default
 
 models:
   - name: claude_team__ai_dev_usage
@@ -125,5 +126,92 @@ models:
           - not_null
       - name: _version
         description: "ReplacingMergeTree version — toUnixTimestamp64Milli(_airbyte_extracted_at) per ADR-0001."
+        tests:
+          - not_null
+
+  - name: claude_team__ai_overage
+    description: >
+      Bronze → Silver: Claude Team per-seat credit spend vs limit →
+      class_ai_overage. Sourced from claude_team_overage_spend
+      (/api/organizations/{org}/overage_spend_limits via the claude-team-proxy;
+      requires billing:view / Owner on the proxy sessionKey, else empty).
+      First contributor to class_ai_overage — DEFINES its 19-column positional
+      contract. One row per (tenant, seat, billing month): latest snapshot per
+      seat per month. UNITS: used_credits / monthly_credit_limit are already
+      cents (USD) — mapped straight to *_cents with NO ×100 (unlike
+      claude_team__ai_dev_usage.cost_cents).
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-account_uuid-YYYY-MM"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "Seat work email (lowercased) — identity key"
+        tests:
+          - not_null
+      - name: account_id
+        description: "claude.ai account_uuid — stable vendor seat id / join anchor"
+        tests:
+          - not_null
+      - name: period_month
+        description: "First day of the billing month the snapshot was observed in (UTC)"
+        tests:
+          - not_null
+      - name: tool
+        description: "Always 'claude'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude']
+      - name: seat_tier
+        description: "Vendor plan tier (team_standard / team_tier_1 / unassigned / …)"
+      - name: currency
+        description: "ISO currency of the *_cents amounts — 'USD' for Claude Team (Anthropic bills Team plans in USD)"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['USD']
+      - name: credit_limit_cents
+        description: >
+          Monthly credit limit in cents (monthly_credit_limit, already minor
+          units). NULL when no limit applies (unassigned seats).
+      - name: used_amount_cents
+        description: "Credits spent this period in cents (used_credits, already minor units)"
+        tests:
+          - not_null
+      - name: overage_cents
+        description: "max(0, used_amount_cents - credit_limit_cents). NULL when limit unknown (honest-NULL)"
+      - name: is_over_limit
+        description: "1 when used > limit (soft overage). NULL when limit unknown"
+      - name: is_enabled
+        description: "Whether overage/extra-usage is enabled for the seat"
+      - name: overage_metrics_json
+        description: "Raw vendor extras: limit_type, used_credits_basis, out_of_credits, seat_tier"
+      - name: source
+        description: "Always 'claude_team'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_team']
+      - name: data_source
+        description: "Passed through from bronze (always 'insight_claude_team')"
+        tests:
+          - not_null
+      - name: collected_at
+        description: "_airbyte_extracted_at"
+        tests:
+          - not_null
+      - name: _version
+        description: "ReplacingMergeTree version — toUnixTimestamp64Milli(_airbyte_extracted_at)"
         tests:
           - not_null

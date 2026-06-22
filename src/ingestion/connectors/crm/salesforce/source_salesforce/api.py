@@ -4,7 +4,7 @@ The ``Salesforce`` class handles auth via OAuth 2.0 Client Credentials flow
 (operator supplies ``instance_url``, ``client_id``, ``client_secret``) and
 exposes ``describe()`` plus ``generate_schema()`` used by streams to build
 SOQL and advertise shapes to the destination. ``SalesforceTokenProvider``
-keeps the access token fresh across long Bulk API syncs.
+keeps the access token fresh across long syncs.
 """
 
 import concurrent.futures
@@ -20,6 +20,9 @@ from requests.exceptions import RequestException
 from airbyte_cdk.models import ConfiguredAirbyteCatalog, FailureType, StreamDescriptor
 from airbyte_cdk.sources.declarative.auth.token_provider import TokenProvider
 from airbyte_cdk.sources.streams.http import HttpClient
+from airbyte_cdk.sources.streams.http.requests_native_auth.abstract_token import (
+    AbstractHeaderAuthenticator,
+)
 from airbyte_cdk.utils import AirbyteTracedException
 
 from source_salesforce.constants import (
@@ -45,7 +48,7 @@ class SalesforceTokenProvider(TokenProvider):
     """Token provider that proactively refreshes the Salesforce access token.
 
     The default CDK InterpolatedStringTokenProvider captures the token as a
-    static string at init time and never refreshes. For long-running Bulk syncs
+    static string at init time and never refreshes. For long-running syncs
     that exceed the Salesforce session timeout (default 2 hours), the stale
     token causes INVALID_SESSION_ID. This provider wraps the Salesforce client
     and re-calls ``login()`` every :data:`TOKEN_REFRESH_INTERVAL_SECONDS`.
@@ -100,6 +103,29 @@ class SalesforceTokenProvider(TokenProvider):
                 )
 
 
+class SalesforceAuthenticator(AbstractHeaderAuthenticator):
+    """Per-request bearer auth that re-reads the token from the provider.
+
+    A static ``TokenAuthenticator`` freezes the token string at stream
+    construction, so neither the proactive 30-minute refresh nor the 401
+    ``force_refresh()`` ever reaches in-flight requests — syncs longer than
+    the Salesforce session timeout die in a retry loop. Reading the token
+    through :class:`SalesforceTokenProvider` on every request picks up both
+    refresh paths.
+    """
+
+    def __init__(self, token_provider: SalesforceTokenProvider) -> None:
+        self._token_provider = token_provider
+
+    @property
+    def auth_header(self) -> str:
+        return "Authorization"
+
+    @property
+    def token(self) -> str:
+        return f"Bearer {self._token_provider.get_token()}"
+
+
 class Salesforce:
     """Thin Salesforce REST client: login, describe, schema generation.
 
@@ -132,8 +158,7 @@ class Salesforce:
         self.start_date = start_date
 
         self.session = requests.Session()
-        # Pool sized for parallel describe() + parallel slice fetches. Official
-        # connector uses 100; matches our PARALLEL_TASKS_SIZE.
+        # Pool sized for parallel describe() + parallel slice fetches; matches PARALLEL_TASKS_SIZE.
         adapter = request_adapters.HTTPAdapter(
             pool_connections=self.parallel_tasks_size,
             pool_maxsize=self.parallel_tasks_size,
@@ -348,7 +373,6 @@ class Salesforce:
 
     def get_validated_streams(
         self,
-        config: Mapping[str, Any],
         catalog: Optional[ConfiguredAirbyteCatalog] = None,
     ) -> Mapping[str, Any]:
         """Return ``{stream_name: sobject_options}`` for streams to sync.
@@ -356,8 +380,8 @@ class Salesforce:
         Selection precedence:
         1. If catalog is provided (incremental sync), honor it intersected with
            queryable sobjects.
-        2. Else if config.salesforce_streams is non-empty, use that list.
-        3. Else fall back to :data:`CRM_STREAMS` (curated default).
+        2. Else use :data:`CRM_STREAMS` (curated list; changing it is a code
+           change so Silver/dbt coverage ships alongside).
 
         In every case the full global describe is used to filter out sobjects
         that are not queryable, are ChangeEvents, or are on our blocklists.
@@ -381,7 +405,7 @@ class Salesforce:
                 if cs.stream.name in stream_objects
             }
 
-        requested: List[str] = list(config.get("salesforce_streams") or []) or list(CRM_STREAMS)
+        requested: List[str] = list(CRM_STREAMS)
         missing = [n for n in requested if n not in stream_objects]
         if missing:
             self.logger.warning(
