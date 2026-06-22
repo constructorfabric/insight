@@ -13,12 +13,17 @@ ingestion:
     tenantId: "ci-validate"
 
 clickhouse:
+  # Render-only placeholder: the chart leaves host UNSET ("MUST be set") and
+  # fail-fasts, so supply an in-cluster FQDN purely so the umbrella renders.
+  host: "clickhouse.insight.svc.cluster.local"
   database: "insight"
   username: "default"
   image:
     tag: "25.3"
 
 mariadb:
+  # Render-only placeholder (host is UNSET / "MUST be set" in the chart).
+  host: "mariadb.insight.svc.cluster.local"
   database: "identity"
   username: "identity"
   # The bitnami subchart creates the user from auth.*; the umbrella validator
@@ -26,6 +31,13 @@ mariadb:
   auth:
     username: "identity"
     database: "identity"
+
+# Render-only placeholders for the remaining infra hosts the chart leaves UNSET.
+redis:
+  host: "redis.insight.svc.cluster.local"
+
+redpanda:
+  brokers: "redpanda.insight.svc.cluster.local:9093"
 
 # Render without requiring real OIDC wiring (the validator demands all four
 # OIDC fields when auth is on); CI only needs the manifests to render + validate.
