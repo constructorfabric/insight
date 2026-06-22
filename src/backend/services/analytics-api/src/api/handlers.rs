@@ -244,8 +244,12 @@ async fn execute_metric_query(
     // 1. Load metric definition (must be enabled)
     let metric = find_enabled_metric(state, ctx.insight_tenant_id, id).await?;
 
-    // 2. Validate $top
-    let top = req.top.clamp(1, 200);
+    // 2. Validate $top. Ceiling raised from 200 to accommodate per-person
+    //    "member values" metrics scoped by `person_id IN (roster)`, which emit
+    //    one long row per (person, metric_key) — up to roster_size × metric_count.
+    //    Default ($top=25) and all existing callers (≤200) are unaffected by the
+    //    higher ceiling; only callers that explicitly request more get it.
+    let top = req.top.clamp(1, 5000);
 
     // 4. Build ClickHouse query from structured metric fields.
     //
@@ -259,7 +263,7 @@ async fn execute_metric_query(
     // have resolved person_id columns).
     //
     // TODO: Full implementation should also:
-    // - Validate org_unit_id from $filter against AccessScope (IDOR prevention)
+    // - Validate person_id / person_id IN values from $filter against AccessScope (IDOR prevention)
     // - Resolve person_ids when identity_url is set
     // - Parse $select to restrict returned columns
     // - Implement cursor-based pagination (decode $skip → keyset)
@@ -289,7 +293,7 @@ async fn execute_metric_query(
 
     // If the FROM clause is a subquery, we inject the metric_date range INSIDE the
     // subquery (before its GROUP BY). Keeps per-person aggregation bounded to the
-    // selected period. Outer person_id/org_unit_id filters still apply post-aggregate.
+    // selected period. Outer person_id (eq / IN) filters still apply post-aggregate.
     let (effective_from, date_pushed) = if let Some(ref filter) = req.filter {
         let date_from = extract_odata_value(filter, "metric_date", "ge");
         // Accept both `lt` (exclusive) and `le` (inclusive) — the FE's
@@ -362,18 +366,33 @@ async fn execute_metric_query(
             sql.push_str(" AND person_id = ?");
             params.push(person_id);
         }
-        // Org-unit filter — used by Team View to scope to a single team.
-        if let Some(org_unit_id) = extract_odata_value(filter, "org_unit_id", "eq") {
-            sql.push_str(" AND org_unit_id = ?");
-            params.push(org_unit_id);
+        // Roster-scoped team aggregates: the FE passes the identity-tree
+        // subtree's person_ids as `person_id in ('a','b',…)` so a team's
+        // sections aggregate over exactly the members shown — the transitive,
+        // active subtree, matching the heatmap. One bound `?` per id; never
+        // interpolated.
+        if let Some(ids) = extract_odata_in_values(filter, "person_id") {
+            let placeholders = vec!["?"; ids.len()].join(", ");
+            let _ = write!(sql, " AND person_id IN ({placeholders})");
+            params.extend(ids);
+        }
+        // Department-scoped distribution metrics: the FE passes the
+        // org_unit_ids of the departments represented in the roster as
+        // `org_unit_id in ('a','b',…)` so the per-department distribution
+        // metrics return only the relevant departments. `org_unit_id` is a
+        // column of the FROM, so this lands in the outer WHERE before the
+        // re-appended GROUP BY. One bound `?` per id; never interpolated.
+        if let Some(ids) = extract_odata_in_values(filter, "org_unit_id") {
+            let placeholders = vec!["?"; ids.len()].join(", ");
+            let _ = write!(sql, " AND org_unit_id IN ({placeholders})");
+            params.extend(ids);
         }
         // Drill filter — used by IC Dashboard drill modal.
         if let Some(drill_id) = extract_odata_value(filter, "drill_id", "eq") {
             sql.push_str(" AND drill_id = ?");
             params.push(drill_id);
         }
-        // Per-metric scoping filters used by ic_histogram, ic_section_trend,
-        // peer_cohort_stats, and ic_kpi_peer_median catalog seeds.
+        // Per-metric scoping filters used by ic_histogram and ic_section_trend.
         if let Some(metric_key) = extract_odata_value(filter, "metric_key", "eq") {
             sql.push_str(" AND metric_key = ?");
             params.push(metric_key);
@@ -381,14 +400,6 @@ async fn execute_metric_query(
         if let Some(section_id) = extract_odata_value(filter, "section_id", "eq") {
             sql.push_str(" AND section_id = ?");
             params.push(section_id);
-        }
-        if let Some(kind) = extract_odata_value(filter, "kind", "eq") {
-            sql.push_str(" AND kind = ?");
-            params.push(kind);
-        }
-        if let Some(cohort_seed) = extract_odata_value(filter, "cohort_seed", "eq") {
-            sql.push_str(" AND cohort_seed = ?");
-            params.push(cohort_seed);
         }
     }
 
@@ -502,6 +513,28 @@ fn extract_odata_value(filter: &str, field: &str, op: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Parse an `OData` `field in ('a','b',…)` list into its values. `person_id`s are
+/// emails (no `)`/`,` inside), so the paren group is delimited simply. Returns
+/// `None` for an absent or empty list; the caller binds each value as a `?`.
+fn extract_odata_in_values(filter: &str, field: &str) -> Option<Vec<String>> {
+    let pattern = format!("{field} in (");
+    let start = filter.find(&pattern)?;
+    let rest = &filter[start + pattern.len()..];
+    let end = rest.find(')')?;
+    let values: Vec<String> = rest[..end]
+        .split(',')
+        .filter_map(|tok| {
+            let t = tok.trim().strip_prefix('\'')?.strip_suffix('\'')?;
+            Some(t.replace("''", "'"))
+        })
+        .collect();
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
 }
 
 /// Parse `query_ref` into (`select_expr`, `from_clause`, `group_by`).
@@ -1224,6 +1257,38 @@ fn model_to_column(m: entities::table_columns::Model) -> TableColumn {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── extract_odata_in_values ─────────────────────────────
+
+    #[test]
+    fn extract_in_list_parses_quoted_person_ids() {
+        let f = "metric_date ge '2026-03-04' and person_id in ('a@x.com', 'b@y.com', 'c@z.com')";
+        assert_eq!(
+            extract_odata_in_values(f, "person_id"),
+            Some(vec!["a@x.com".into(), "b@y.com".into(), "c@z.com".into()])
+        );
+    }
+
+    #[test]
+    fn extract_in_list_absent_or_empty_is_none() {
+        assert_eq!(
+            extract_odata_in_values("person_id eq 'a@x.com'", "person_id"),
+            None
+        );
+        assert_eq!(
+            extract_odata_in_values("person_id in ()", "person_id"),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_in_list_parses_quoted_org_unit_ids() {
+        let f = "metric_date ge '2026-03-04' and org_unit_id in ('eng', 'sales', 'ops')";
+        assert_eq!(
+            extract_odata_in_values(f, "org_unit_id"),
+            Some(vec!["eng".into(), "sales".into(), "ops".into()])
+        );
+    }
 
     // ── parse_query_ref ─────────────────────────────────────
 
