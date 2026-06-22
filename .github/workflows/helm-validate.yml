@@ -83,7 +83,7 @@ jobs:
             # tag at deploy (CI renders supply it via ci/ci-values.yaml). So an
             # empty tag is "must override", not a floating ref, and is NOT flagged
             # here; the umbrella fail-fasts if the operator forgets to set it.
-          done < <(git ls-files 'charts/**/values.yaml' 'src/**/helm/values.yaml' 'helmfile/charts/**/values.yaml')
+          done < <(git ls-files 'charts/**/values.yaml' 'src/**/helm/values.yaml')
           exit $rc
 
       - name: helm lint (strict) — umbrella and all local subcharts
@@ -91,8 +91,12 @@ jobs:
           set -euo pipefail
           helm dependency update charts/insight
           helm lint --strict charts/insight
-          for c in src/backend/services/*/helm src/frontend/helm helmfile/charts/*; do
-            [ -f "$c/Chart.yaml" ] && helm lint --strict "$c"
+          # helmfile/ was removed (#1431); only the umbrella + service subcharts
+          # remain. `|| continue` so an unmatched glob's false test can't become
+          # the loop's (and the step's) exit status under `set -e`.
+          for c in src/backend/services/*/helm src/frontend/helm; do
+            [ -f "$c/Chart.yaml" ] || continue
+            helm lint --strict "$c"
           done
 
       - name: helm template — full render must succeed with CI values
