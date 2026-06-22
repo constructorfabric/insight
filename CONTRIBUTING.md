@@ -1,112 +1,188 @@
 # Contributing to Insight
 
-This document covers how to get a working dev environment, the two
-deployment paths (compose vs. k8s/helm), the daily edit-build-run loop,
-and a few sharp edges to know about.
+Two deployment paths — Docker Compose for day-to-day dev, Kubernetes
+when you need Airbyte / Argo Workflows. Both share a single first-run
+wizard at [`compose/insight-init.sh`](compose/insight-init.sh).
 
-Open a PR after reading [AGENTS.md](AGENTS.md) and the relevant
-spec files under `docs/components/<area>/specs/`.
+Open a PR after reading [AGENTS.md](AGENTS.md) and the relevant spec
+files under `docs/components/<area>/specs/`.
+
+## Contents
+
+1. [Quick start](#quick-start)
+2. [Prerequisites](#prerequisites)
+3. [Deployment paths](#deployment-paths)
+   - [Docker Compose (default)](#docker-compose-default)
+   - [Kubernetes — interactive](#kubernetes--interactive)
+   - [Kubernetes — non-interactive (CI)](#kubernetes--non-interactive-ci)
+4. [What's in the compose stack](#whats-in-the-compose-stack)
+5. [Compose configuration](#compose-configuration)
+   - [First-run wizard + re-runs](#first-run-wizard--re-runs)
+   - [External MariaDB / ClickHouse](#external-mariadb--clickhouse)
+   - [Frontend modes](#frontend-modes)
+   - [Backend image fallback (ghcr)](#backend-image-fallback-ghcr)
+   - [Settings reference (`.env.compose`)](#settings-reference-envcompose)
+6. [Daily workflow](#daily-workflow)
+   - [Edit code](#edit-code)
+   - [Auto-reload mechanic](#auto-reload-mechanic)
+   - [Common operations](#common-operations)
+7. [Seeding](#seeding)
+   - [Compose](#compose)
+   - [Kubernetes](#kubernetes)
+8. [Dev auth chain (no-auth mode)](#dev-auth-chain-no-auth-mode)
+9. [Troubleshooting](#troubleshooting)
+10. [Code style and reviews](#code-style-and-reviews)
 
 ---
 
-## TL;DR — happy path, all defaults
+## Quick start
 
 Clone, run one command, answer four prompts, get a fully populated
 stack:
 
 ```bash
-git clone git@github.com:cyberantonz/insight.git
+git clone https://github.com/constructorfabric/insight.git
 cd insight
 ./dev-compose.sh up
 ```
 
-The first `up` runs an interactive wizard because `.env.compose`
-doesn't exist yet. With defaults accepted everywhere, the answers are:
+First-run wizard prompts (Enter accepts defaults):
 
-| Prompt                                | Default | Effect                                  |
-| ------------------------------------- | ------- | --------------------------------------- |
-| Use local MariaDB in docker compose?  | Y       | Compose starts mariadb on :3306         |
-| Use local ClickHouse in docker compose? | Y     | Compose starts clickhouse on :8123      |
-| `VITE_DEV_USER_EMAIL`                 | `dev@company.nonpresent` | Dev-team lead in the seed roster |
-| Frontend choice                       | `1` (ghcr) | Pulls the published `insight-front:latest` image |
+| Prompt | Default | Effect |
+| --- | --- | --- |
+| Use local MariaDB? | Y | Compose starts mariadb on :3306 |
+| Use local ClickHouse? | Y | Compose starts clickhouse on :8123 |
+| `VITE_DEV_USER_EMAIL` | `dev@company.nonpresent` | Dev-team lead in the seed roster |
+| Frontend mode | `1` (ghcr) | Pulls the published `insight-front:latest` image |
 
-The wizard writes `.env.compose`, then the script:
+Then the script builds host artefacts, brings up the stack, auto-seeds
+the demo dataset (25 persons + ~24k ClickHouse rows across 16 silver
+tables). First run: ~5–15 min cold Rust compile; subsequent runs reuse
+the Cargo cache and finish in seconds.
 
-1. Builds host artefacts (Rust + .NET; frontend is pulled if you picked
-   ghcr). First run: 5–15 minutes (cold Rust compile).
-2. Brings every service up (`docker compose up -d`).
-3. Auto-seeds the demo dataset — 25 persons in MariaDB + ~24k rows
-   across 16 ClickHouse silver tables.
-4. Flips `SEEDED_LOCAL_MARIA` / `SEEDED_LOCAL_CH` in `.env.compose` so
-   later `up` calls don't re-seed.
-
-Open <http://localhost:3000>. The dashboards have data;
-`dev@company.nonpresent` is the dev-team lead, CEO sees the whole org
-tree, every team has 60 days of activity.
-
-Daily workflow:
-
-```bash
-./dev-compose.sh build api-gateway     # rebuild one Rust service after a code edit
-./dev-compose.sh build all             # rebuild everything
-./dev-compose.sh seed silver           # refresh ClickHouse demo data only
-./dev-compose.sh down                  # stop everything; data preserved
-./dev-compose.sh down --volumes        # also wipe DB volumes + build/ artefacts
-./dev-compose.sh prune                 # destructive wipe + remove .env.compose
-```
-
-> **First-run timing.** The cold Rust compile is the slow part — count
-> on ~5–15 minutes depending on your machine (it's downloading the
-> crates.io tree and compiling the whole workspace once). Subsequent
-> runs reuse the Cargo cache volume and finish in seconds.
-
-> **Re-running the wizard.** Delete `.env.compose` (or run
-> `./dev-compose.sh prune`) and `up` again. Or hand-edit
-> `.env.compose` — the wizard only runs when the file is missing.
+Open <http://localhost:3000>. `dev@company.nonpresent` leads the dev
+team; CEO sees the whole org tree. To use CEO more set email to `email_ceo@company.nonpresent`.
 
 ---
 
 ## Prerequisites
 
-You need **only Docker** for the compose path:
+**Compose path** — only Docker:
 
-| Tool                | Min version | Install                                       |
-| ------------------- | ----------- | --------------------------------------------- |
-| Docker Engine       | 24+         | Docker Desktop (Mac/Win), OrbStack (Mac), or  |
-|                     |             | distro package (Linux)                        |
-| docker compose v2   | 2.20+       | bundled with Docker Desktop/OrbStack          |
-| git                 | any         | xcode-select / apt / winget                   |
+| Tool | Min | Install |
+| --- | --- | --- |
+| Docker Engine | 24+ | Docker Desktop / OrbStack / distro package |
+| docker compose v2 | 2.20+ | bundled with Docker Desktop/OrbStack |
+| git | any | xcode-select / apt / winget |
 
-You do **NOT** need Rust, .NET, Node, or pnpm on the host. Every build
-runs inside a builder container so a fresh laptop with only Docker can
-spin the whole stack.
+No Rust / .NET / Node / pnpm on the host — every build runs in a
+builder container.
 
-**Repo layout.** The frontend lives in a sibling checkout:
+**K8s path** — also `kubectl`, `helm`, `kubeseal`, `yq`, `jq`, plus a
+local cluster (OrbStack with Kubernetes / k3d / kind / minikube). No
+frontend checkout needed — the umbrella chart pulls
+`ghcr.io/constructorfabric/insight-front:<tag>` from GHCR.
+
+**Frontend checkout** — only needed for compose with
+`FRONTEND_MODE=dev` (Vite HMR) or `built` (host-built dist). The
+default mode (`ghcr`) pulls the published image, so a fresh laptop with
+only Docker can run the full compose stack. When you do need the
+checkout, the wizard's "clone" option offers to git-clone it for you;
+otherwise it expects a sibling repo (override `INSIGHT_FRONT_PATH` in
+`.env.compose` to point elsewhere):
 
 ```text
 cf/
 ├── insight/         (this repo)
-└── insight-front/   (frontend repo)
+└── insight-front/   (only for FRONTEND_MODE=dev or built)
 ```
-
-If you keep them elsewhere, set `INSIGHT_FRONT_PATH` in `.env.compose`.
 
 ---
 
-## Two dev paths
+## Deployment paths
 
-We are currently in transition. Both paths exist; **the compose path is
-the preferred one going forward**.
+| Path | Driver | Use when |
+| --- | --- | --- |
+| **compose** | `./dev-compose.sh up` | Day-to-day backend / frontend work. Default. |
+| **k8s** | `cd deploy/gitops && make deploy ENV=local` | Testing the published umbrella; Airbyte / Argo work; real cluster shape. |
 
-| Path        | Driver               | Use it when                                          |
-| ----------- | -------------------- | ---------------------------------------------------- |
-| **compose** | `dev-compose.sh up`  | Day-to-day backend / frontend work. Default.        |
-| k8s/helm    | `dev-up.sh` (Kind)   | Testing helm charts; ingestion (Airbyte) work;      |
-|             |                      | anything that needs Argo Workflows or a real        |
-|             |                      | cluster shape.                                       |
+Both share the same wizard so the MariaDB / ClickHouse / tenant /
+dev-email answers are identical across them.
 
-The compose path does **not** ship Airbyte or Argo Workflows — see
-[Beyond compose](#beyond-compose) below.
+### Docker Compose (default)
+
+Covered by the [Quick start](#quick-start). See also
+[Compose configuration](#compose-configuration) for the post-wizard
+knobs and [Daily workflow](#daily-workflow) for the edit-build loop.
+
+### Kubernetes — interactive
+
+```bash
+cd deploy/gitops
+make deploy ENV=local
+# or, if your kubeconfig lives elsewhere:
+KUBECONFIG=/path/to/config.yaml make deploy ENV=local
+```
+
+`kubectl` / `helm` / `kubeseal` all honour `$KUBECONFIG`; the wizard
+prints which file it's reading at startup so you can abort and retry
+with a different one if the context list looks wrong.
+
+On first run the wizard generates (and gitignores) the local artifacts:
+
+- `environments/local/inventory.yaml` (cluster topology + toggles)
+- `environments/local/values.yaml` (umbrella overlay)
+- `secrets-store.yaml` (cleartext for the seal step)
+- `environments/local/.env.local` (Airbyte setup creds — only when
+  `system.airbyte=true`)
+
+Then the chain runs: `bootstrap → fetch-cert → seal → system →
+deploy-app`. Subsequent runs skip the wizard and reconcile the stack.
+
+K8s and compose can coexist — disjoint host ports by default. Demo-data
+seeding on k8s is manual (wizard output prints the port-forward +
+`compose/seed/` recipe).
+
+### Kubernetes — non-interactive (CI)
+
+The wizard refuses without a TTY. For CI / scripted runs, pre-populate
+the four files the wizard would have generated; `make deploy ENV=local`
+skips the wizard whenever `environments/local/inventory.yaml` exists.
+
+```bash
+cd deploy/gitops
+
+# 1. Inventory: cluster topology + bootstrap/system toggles.
+cp environments/local/inventory.yaml.template environments/local/inventory.yaml
+# Edit:
+#   kubeContext: <ctx>                       # required
+#   bootstrap.{ingressNginx,certManager,sealedSecrets}: true|false
+#   system.{airbyte,argoWorkflows,redpandaConsole,loki,alloy,grafana}: true|false
+
+# 2. Umbrella overlay: image tags / OIDC / tenant id / L2 hosts.
+cp environments/local/values.yaml.template environments/local/values.yaml
+# Edit:
+#   global.tenantDefaultId: <UUID>           # required for external DBs with seeded persons
+#   apiGateway.authDisabled: true            # local sandbox; flip for real OIDC
+#   <l2>.host / <l2>.port                    # only when <l2>.deploy=false
+
+# 3. Cleartext secret store (read by `make seal`, never committed).
+cp secrets-store.yaml.template secrets-store.yaml
+# Edit each `insight-local-*-creds:` block, replacing REPLACE_* with real passwords.
+
+# 4. Airbyte setup creds — only when inventory.system.airbyte=true.
+cat > environments/local/.env.local <<'EOF'
+AIRBYTE_SETUP_EMAIL=admin@example.com
+AIRBYTE_SETUP_ORG=Insight
+EOF
+
+# 5. Run the chain.
+KUBECONFIG=/path/to/config.yaml make deploy ENV=local
+```
+
+Idempotent — re-running on a converged cluster is near-noop. For CI
+"exit 0 on a fresh cluster" is the smoke check; helm's `--wait` ensures
+every Deployment is Ready before the chain returns.
 
 ---
 
@@ -114,485 +190,310 @@ The compose path does **not** ship Airbyte or Argo Workflows — see
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
-│  Frontend (one of three modes — FRONTEND_MODE=dev|built|ghcr)        │
-│  ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────┐        │
-│  │ Vite dev (HMR)  │ │ nginx + dist    │ │ ghcr pulled img  │        │
-│  │ port 3000       │ │ port 3000       │ │ port 3000        │        │
-│  └─────────────────┘ └─────────────────┘ └──────────────────┘        │
+│  Frontend (FRONTEND_MODE=dev|built|ghcr)                             │
+│  Vite dev (HMR) / nginx+dist / ghcr image — port 3000                │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Backend                                                              │
-│  ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────┐        │
-│  │ api-gateway     │ │ analytics-api   │ │ identity (.NET 9)│        │
-│  │ Rust :8080      │ │ Rust :8081      │ │ :8082            │        │
-│  └─────────────────┘ └─────────────────┘ └──────────────────┘        │
+│  api-gateway (Rust :8080)  analytics-api (Rust :8081)                │
+│  identity (.NET 9 :8082)                                              │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Infra                                                                │
-│  ┌────────┐ ┌────────────┐ ┌───────┐ ┌──────────┐                    │
-│  │MariaDB │ │ ClickHouse │ │ Redis │ │ Redpanda │                    │
-│  │ :3306  │ │ :8123/:9000│ │ :6379 │ │ :19092…  │                    │
-│  └────────┘ └────────────┘ └───────┘ └──────────┘                    │
+│  MariaDB :3306  ClickHouse :8123/:9000  Redis :6379  Redpanda :19092…│
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Every web service publishes a host port — change them in `.env.compose`
-if you have conflicts.
+Every web service publishes a host port; override `*_PORT` in
+`.env.compose` if you have conflicts.
+
+Does **not** ship Airbyte or Argo Workflows — those need k8s. Use the
+[Kubernetes path](#kubernetes--interactive).
 
 ---
 
-## Using external MariaDB / ClickHouse
+## Compose configuration
 
-The wizard's defaults run both DBs in compose. If you already have a
-populated MariaDB or ClickHouse elsewhere (shared dev box, staging
-mirror, your own host install), answer **N** to the relevant wizard
-prompt and you'll be asked for connection details:
+### First-run wizard + re-runs
 
-```
-Use the local MariaDB in docker compose? [Y/n]: n
-  External MariaDB host: db.internal.example
-  External MariaDB port [3306]:
-  MariaDB user [insight]:
-  MariaDB password:        ← hidden
-  Probing MariaDB at db.internal.example:3306…
-  MariaDB OK.
-```
+`.env.compose` is generated by the wizard on first `up`. Re-run by
+deleting it (or `./dev-compose.sh prune`). Hand-edit afterwards — the
+wizard only runs when the file is missing.
 
-The wizard validates credentials before writing `.env.compose`:
+### External MariaDB / ClickHouse
 
-- **MariaDB** is probed by spinning up a transient `mariadb:11.4`
-  container and running `SELECT 1`. A bad host/user/password aborts
-  the wizard with a clear error.
-- **ClickHouse** is probed via the HTTP interface using host-side
-  `curl`. Same fail-fast behavior.
+Answer **N** to the relevant wizard prompt; the wizard asks for host /
+port / user / password, then probes connectivity:
 
-When at least one DB is external, the wizard also asks for:
+- **MariaDB** — spins up a transient `mariadb:11.4` container, runs
+  `SELECT 1`. Bad credentials abort the wizard.
+- **ClickHouse** — host-side `curl` against the HTTP interface. Same
+  fail-fast.
 
-- **`TENANT_DEFAULT_ID`** — the UUID present in your
-  `persons.insight_tenant_id`. Required because the canned demo UUID
-  won't match your data.
-- **Seed your external DB?** — defaults to **No**. If you accept,
-  `./dev-compose.sh up` writes the demo dataset into your DB on first
-  run (same content as the local-DB auto-seed). If you decline, the
-  wizard pre-marks the DB as seeded so `up` leaves it alone.
+When at least one DB is external, the wizard also asks for
+`TENANT_DEFAULT_ID` (UUID in your `persons.insight_tenant_id`) and
+whether to seed the external DB (defaults to **No** — pre-marks
+`SEEDED_LOCAL_*=true` so `up` leaves your DB alone).
 
-What the wizard sets in `.env.compose`:
-
-```env
-MARIADB_EXTERNAL=true                 # don't start local-mariadb profile
-MARIADB_HOST=db.internal.example      # used inside backend containers
-MARIADB_INTERNAL_PORT=3306            # connect port, NOT the host-mapped one
-MARIADB_USER=insight
-MARIADB_PASSWORD=…
-CLICKHOUSE_EXTERNAL=true
-CLICKHOUSE_HOST=ch.internal.example
-CLICKHOUSE_INTERNAL_HTTP_PORT=8123
-CLICKHOUSE_DATABASE=insight
-CLICKHOUSE_USER=insight
-CLICKHOUSE_PASSWORD=…
-TENANT_DEFAULT_ID=11111111-2222-3333-4444-555555555555
-```
-
-How it's wired:
-
-- Backend services interpolate `${MARIADB_HOST}:${MARIADB_INTERNAL_PORT}`
-  (and the ClickHouse equivalents) into their connection URLs. Defaults
-  preserve the local docker behavior (`mariadb:3306`, `clickhouse:8123`).
-- The `mariadb` and `clickhouse` services sit behind
-  `profiles: ["local-mariadb"]` / `local-clickhouse`. `dev-compose.sh
-  up` adds those profiles only when `*_EXTERNAL != true`.
-- Backend `depends_on` entries use `required: false`, so compose skips
-  the dependency when the profile isn't active.
-
-> **`localhost` gotcha.** If your "external" DB is actually running on
-> the docker host, **don't** type `localhost` — that resolves to the
+> **`localhost` gotcha.** Inside the container, `localhost` is the
 > container itself. Use `host.docker.internal` (Mac/Windows) or your
-> LAN IP. The wizard warns you when it sees `localhost`.
+> LAN IP. The wizard warns when it sees `localhost`.
 
-To switch later (e.g. start using a local DB after pointing at an
-external one), the easiest path is `./dev-compose.sh prune` and re-run
-the wizard. Or hand-edit `*_EXTERNAL` / `*_HOST` / `*_INTERNAL_PORT`
-in `.env.compose` and `./dev-compose.sh down && ./dev-compose.sh up`.
+To switch later: `./dev-compose.sh prune` and re-run the wizard, or
+hand-edit `*_EXTERNAL` / `*_HOST` / `*_INTERNAL_PORT` in `.env.compose`
+and bounce the stack.
+
+### Frontend modes
+
+| Mode | Wizard does | What runs | Auto-reload? | When |
+| --- | --- | --- | --- | --- |
+| `ghcr` | `FRONTEND_MODE=ghcr` | published image | no | Backend-only work; save laptop CPU. |
+| `dev` (local) | `FRONTEND_MODE=dev` + checks `INSIGHT_FRONT_PATH` exists | `pnpm dev` in node:24 | Vite HMR | Active FE work on an existing checkout. |
+| `dev` (clone) | `git clone insight-front` then same as above | `pnpm dev` in node:24 | Vite HMR | First-time setup, no checkout yet. |
+
+A fourth `built` mode (nginx + host-built dist) is undocumented in the
+wizard. To use it, hand-edit `FRONTEND_MODE=built` in `.env.compose`,
+`./dev-compose.sh build frontend`, then bounce.
+
+**Switching modes later:** edit `.env.compose` and `down && up
+--skip-build`, or override per-run:
+
+```bash
+./dev-compose.sh up --frontend-mode=ghcr --skip-build
+./dev-compose.sh up --no-frontend                  # backend-only
+```
+
+### Backend image fallback (ghcr)
+
+Skip the local Rust/dotnet build for one or more services:
+
+```bash
+# Per-run flags
+./dev-compose.sh up --from-ghcr=api-gateway,identity
+./dev-compose.sh up --build-only=analytics-api     # invert: build only this
+
+# Or pin in .env.compose
+API_GATEWAY_IMAGE=ghcr.io/constructorfabric/insight-api-gateway:latest
+```
+
+The script writes `compose/override.generated.yml` (gitignored) that
+drops the `build:` + bind-mount for the chosen services.
+
+### Settings reference (`.env.compose`)
+
+`.env.compose.example` documents every knob. Blocks:
+
+- **Auto-reload** — `ENABLE_AUTO_RELOAD` (compose-only, never in k8s)
+- **Frontend** — `FRONTEND_MODE`, `INSIGHT_FRONT_PATH`, `FRONTEND_IMAGE`
+- **Backend image overrides** — `API_GATEWAY_IMAGE`, `ANALYTICS_API_IMAGE`, `IDENTITY_IMAGE`
+- **Host ports** — every published port is configurable
+- **Database mode** — `MARIADB_EXTERNAL`/`_HOST`/`_INTERNAL_PORT`/…, ClickHouse equivalents (see [External DBs](#external-mariadb--clickhouse))
+- **Credentials** — local-only, kept in dotenv per project policy
+- **Seed bookkeeping** — `SEEDED_LOCAL_MARIA`, `SEEDED_LOCAL_CH`
+- **Tenant / OIDC** — `TENANT_DEFAULT_ID`, OIDC client info
+- **Log level** — `RUST_LOG`
 
 ---
 
 ## Daily workflow
 
-### Editing backend code
+### Edit code
 
-1. Edit Rust or C# source.
-2. Rebuild the affected service:
+| Edit | Then | Picked up by |
+| --- | --- | --- |
+| Rust / C# source | `./dev-compose.sh build <service>` | watchexec → ~1s restart |
+| `src/backend/services/api-gateway/config/*.yaml` | save | watchexec → ~1s restart (bind-mounted) |
+| identity / analytics-api env | edit `docker-compose.yml`, `up -d <svc>` | container respawn |
+| Frontend (`dev` mode) | save | Vite HMR |
+| Frontend (`built` mode) | `./dev-compose.sh build frontend` | nginx auto |
+| Frontend (`ghcr` mode) | switch modes | — |
 
-   ```bash
-   ./dev-compose.sh build api-gateway     # or analytics-api / identity / rust / all
-   ```
+Build targets:
 
-3. The running container picks up the new binary automatically because
-   `ENABLE_AUTO_RELOAD=true` wraps the process in `watchexec` (see
-   below). You should see `[Running: ...]` in
-   `docker compose logs -f api-gateway`.
+```bash
+./dev-compose.sh build api-gateway     # Rust gateway
+./dev-compose.sh build analytics-api   # Rust analytics
+./dev-compose.sh build identity        # .NET 9 publish
+./dev-compose.sh build frontend        # pnpm build → dist/
+./dev-compose.sh build rust            # both Rust services
+./dev-compose.sh build all             # everything
+./dev-compose.sh up --skip-build       # bounce without rebuilding
+```
 
-### Editing service YAML (no rebuild)
+### Auto-reload mechanic
 
-The api-gateway's `config/` directory is bind-mounted from
-`src/backend/services/api-gateway/config/` into the container. Edit
-`no-auth.yaml` (or `insight.yaml`) on the host and watchexec restarts
-the gateway in ~1 second — no rebuild, no compose bounce.
-
-The .NET identity and Rust analytics-api take their config from
-environment variables defined in `docker-compose.yml`; edit those and
-`docker compose up -d <service>` to apply.
-
-### Editing the frontend
-
-- `FRONTEND_MODE=dev`: Vite is already watching — HMR delivers
-  changes to the browser, no manual step.
-- `FRONTEND_MODE=built`: run `./dev-compose.sh build frontend` after
-  edits. nginx picks the new files up automatically.
-- `FRONTEND_MODE=ghcr`: the published image is static — switch modes
-  to pick up local changes.
-
-See [Frontend modes](#frontend-modes) for how to switch between them
-after the first-run wizard.
-
----
-
-## Auto-reload: how it works
-
-Each backend container's `ENTRYPOINT` is the shared
-`src/backend/docker-entrypoint.sh`. Its contract:
+Each backend container's `ENTRYPOINT` is
+`src/backend/docker-entrypoint.sh`:
 
 ```text
 docker-entrypoint.sh <watched-path> -- <command> [args...]
 ```
 
-- If `ENABLE_AUTO_RELOAD` is **unset** (production default): the script
-  just `exec`s the command. No watcher, no restart logic.
-- If `ENABLE_AUTO_RELOAD=true` (set in `.env.compose`): the script
-  wraps the command in `watchexec --restart --watch <watched-path>` so
-  any change to the watched file (the bind-mounted binary) triggers
-  SIGTERM and respawn.
+- `ENABLE_AUTO_RELOAD` unset (prod) → `exec`s the command bare.
+- `ENABLE_AUTO_RELOAD=true` (set in `.env.compose`) → wraps in
+  `watchexec --restart --watch <watched-path>`. Any change to the
+  bind-mounted binary triggers SIGTERM + respawn.
 
-**Important** — this is the **only** mechanism that restarts a process.
-Per project policy: **never set `ENABLE_AUTO_RELOAD` in a k8s manifest**.
-Compose-only.
+**Never set `ENABLE_AUTO_RELOAD` in a k8s manifest** — compose-only.
 
-watchexec actually watches the parent **directory** (`/app`) — modern
-watchexec requires a directory, and `/app` only contains the binary +
-config so there's no false-positive surface. When
-`./dev-compose.sh build` writes a new binary to the bind-mounted path,
-mtime changes, watchexec fires, the container's process restarts in
-~1 second.
+watchexec watches the parent **directory** (`/app`), not the file —
+modern watchexec needs a dir. The image pins the musl static build of
+watchexec because bookworm-slim's glibc is older than what stock
+watchexec wants, and `useradd -m` ensures `appuser` has a usable
+`$HOME` (watchexec dies during config resolution without one).
 
-The watchexec binary in each image is the **musl static build** (not
-glibc) — bookworm-slim ships glibc 2.36 and stock watchexec 2.3 binaries
-want glibc 2.39, so we pin the `-unknown-linux-musl` variant. The
-service Dockerfiles also call `useradd -m` so the `appuser` actually has
-a usable `$HOME` — watchexec dies during config resolution if not.
+### Common operations
+
+```bash
+# Tail logs
+docker compose logs -f api-gateway analytics-api identity
+
+# Inspect databases
+docker compose exec mariadb mariadb -uinsight -pinsight-local identity
+docker compose exec clickhouse clickhouse-client --user insight --password insight-local
+
+# Stop / wipe (escalating)
+./dev-compose.sh down                  # stop containers; keep volumes + .env.compose
+./dev-compose.sh down --volumes        # also wipe named volumes + compose/build/
+./dev-compose.sh prune                 # interactive nuke — see below
+
+# One-off cargo work
+docker compose --profile build run --rm build-rust cargo test -p insight-api-gateway
+```
+
+`prune` is the only command that removes `.env.compose`. Always
+interactive — no `--yes` switch. Asks separately whether to also remove
+pulled `ghcr.io/constructorfabric/insight-*` images (defaults to no —
+they're slow to re-pull). After prune, next `up` re-runs the wizard.
+
+### Switch the gateway to real OIDC
+
+Edit `src/backend/services/api-gateway/config/no-auth.yaml` directly
+(bind-mounted):
+
+1. Set `api-gateway.config.auth_disabled: false`.
+2. Fill in `oidc-authn-plugin.config.issuer_url`, `audience`, and the
+   `auth-info` section's `client_id` / `scopes`.
+3. Save — watchexec restarts in ~1 second.
 
 ---
 
-## Backend image fallback (pull from ghcr instead of building locally)
+## Seeding
 
-Three ways to mark a backend service as "pull from ghcr":
+The seed package lives in [`compose/seed/`](compose/seed/) — its
+README documents the ruff / mypy / venv setup. Both deploy paths use
+the same package; only how it's invoked differs.
 
-1. Set the per-service image var in `.env.compose`:
-   ```env
-   API_GATEWAY_IMAGE=ghcr.io/constructorfabric/insight-api-gateway:latest
-   ```
-2. Pass it on the CLI:
-   ```bash
-   ./dev-compose.sh up --from-ghcr=api-gateway,identity
-   ```
-3. Invert via `--build-only` — everything not listed comes from ghcr:
-   ```bash
-   ./dev-compose.sh up --build-only=analytics-api
-   ```
+**Identity content (after `seed identity`):** CEO, your
+`VITE_DEV_USER_EMAIL` person (leads the dev team), 4 team leads (dev /
+sales / HR / support), 20 ICs (5/team). Visibility is wired through
+the BambooHR org-chart source so per-caller `/v1/persons/{email}`
+lookups resolve correctly — dev lead sees their 5 reports, CEO sees
+the whole tree.
 
-The script generates `compose/override.generated.yml` (gitignored) that
-drops the `build:` and bind-mount for the chosen services so the
-published image runs as-is.
+**Silver content (after `seed silver`):** bronze + silver placeholder
+tables, every `src/ingestion/scripts/migrations/*.sql` applied
+(produces the `insight.*` gold views), ~24k rows across 16 silver
+tables profile-typed per team (`class_git_*` for devs, `class_crm_*`
+for sales, …). The full per-team activity table is in
+[`compose/seed/profiles.py`](compose/seed/profiles.py). analytics-api's
+schema validator flips from "80 metrics error" to "80 ok".
 
----
+### Compose
 
-## Frontend modes
+`./dev-compose.sh up` auto-seeds on first run after the wizard, then
+flips `SEEDED_LOCAL_MARIA` / `SEEDED_LOCAL_CH` to `true` so subsequent
+`up`s skip it. Re-seed manually:
 
-The wizard asks one question with three explicit choices:
-
-```
---- Frontend ---
-  How should the frontend run?
-    1) ghcr   — pull the pre-built image (no source needed)
-    2) local  — Vite + HMR against an existing insight-front checkout
-    3) clone  — git clone insight-front, then run Vite + HMR
+```bash
+./dev-compose.sh seed            # identity + silver (everything)
+./dev-compose.sh seed identity   # MariaDB only
+./dev-compose.sh seed silver     # ClickHouse only
 ```
 
-| Choice | Wizard does                                  | What runs                | Auto-reload? | When to use                              |
-| ------ | -------------------------------------------- | ------------------------ | ------------ | ---------------------------------------- |
-| 1 ghcr | Sets `FRONTEND_MODE=ghcr`                    | `ghcr.io/...` image      | No           | Backend-only work, save laptop CPU/RAM.  |
-| 2 local| Sets `FRONTEND_MODE=dev` + `INSIGHT_FRONT_PATH`. Path must already exist. | `pnpm dev` in node:24    | Vite HMR     | Active frontend development on an existing checkout. |
-| 3 clone| `git clone constructorfabric/insight-front` into the path you pick (refuses to clobber an existing dir), then same as local. | `pnpm dev` in node:24    | Vite HMR     | First-time setup, no checkout yet.       |
+To force auto-seed on next `up`, clear the `SEEDED_LOCAL_*` markers in
+`.env.compose` or `./dev-compose.sh prune`.
 
-There's also a fourth, undocumented-in-wizard `built` mode (nginx +
-host-built dist). To use it, hand-edit `.env.compose`:
+### Kubernetes
 
-```env
-FRONTEND_MODE=built
+No auto-seed. The chart doesn't ship a `seed` Job, so you point the
+same Python package at port-forwarded L2 services from the host. One
+recipe per re-seed:
+
+```bash
+# 1. Port-forward MariaDB + ClickHouse in the background.
+KUBECONFIG=/path/to/config.yaml kubectl -n insight-infra \
+  port-forward svc/mariadb 3306:3306 &
+KUBECONFIG=/path/to/config.yaml kubectl -n insight-infra \
+  port-forward svc/clickhouse 8123:8123 &
+
+# 2. Run the seed package against them. First time only: bootstrap a venv.
+cd compose/seed
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+# Identity + silver. Drop `all` and pass `identity` / `silver` for partial.
+# Default paths in seed.py target the compose seed-sample container's
+# bind-mounts (/app/sql, /migrations); host runs override with the
+# actual repo paths.
+MARIADB_HOST=127.0.0.1     MARIADB_PORT=3306 \
+MARIADB_USER=insight       MARIADB_PASSWORD=insight-local \
+CLICKHOUSE_HOST=127.0.0.1  CLICKHOUSE_HTTP_PORT=8123 \
+CLICKHOUSE_USER=insight    CLICKHOUSE_PASSWORD=insight-local \
+VITE_DEV_USER_EMAIL=dev@company.nonpresent \
+PLACEHOLDERS_SQL=./sql/placeholders.sql \
+MIGRATIONS_DIR=../../src/ingestion/scripts/migrations \
+  .venv/bin/python seed.py all
+
+# 3. Kick analytics-api so its schema validator re-runs against the
+#    now-populated silver tables. Without this, schema_status stays
+#    cached at boot-time 'table_not_found' and the FE shows "no peer
+#    data" everywhere (cf/insight#1307).
+KUBECONFIG=/path/to/config.yaml kubectl -n insight \
+  rollout restart deploy/insight-analytics-api
+
+# 4. Stop the port-forwards.
+kill %1 %2
 ```
 
-…then `./dev-compose.sh build frontend` (refreshes `dist/`) and
-`./dev-compose.sh down && ./dev-compose.sh up`. Useful for testing
-the production build path.
+Use the real cluster credentials in place of `insight-local` if you
+switched to external DBs at wizard time — the values are whatever the
+operator stored in `secrets-store.yaml` and `make seal` baked into the
+cluster's `mariadb-creds` / `clickhouse-creds` Secrets.
 
-### Switching modes after first run
-
-The wizard runs only once. To change FE mode later, either:
-
-- **Edit `.env.compose`** — flip `FRONTEND_MODE` to `dev`/`built`/`ghcr`,
-  set `INSIGHT_FRONT_PATH` if switching to `dev`/`built`, then
-  `./dev-compose.sh down && ./dev-compose.sh up --skip-build` (the
-  `--skip-build` keeps an already-compiled Rust binary in place).
-- **Or override per-run** without touching the file:
-
-  ```bash
-  ./dev-compose.sh up --frontend-mode=ghcr --skip-build
-  ./dev-compose.sh up --no-frontend                # backend-only
-  ```
+When `frontend.devUserEmail` (set by the wizard / values overlay) and
+the seeded `VITE_DEV_USER_EMAIL` match, the FE's dev impersonation
+resolves to a real person row and dashboards populate.
 
 ---
 
 ## Dev auth chain (no-auth mode)
 
-When `AUTH_DISABLED=true` and `VITE_DEV_USER_EMAIL=you@yourorg.com`,
-here is what actually carries identity from the browser to the
-downstream service. Knowing the path saves time when something
-401s unexpectedly.
+When `AUTH_DISABLED=true` and `VITE_DEV_USER_EMAIL=you@yourorg.com`:
 
 ```text
-1. Browser  → fetch-with-auth.ts builds an unsigned JWT
-              ({alg:"none"}.{email, sub, preferred_username}.) and sets
-              Authorization: Bearer <jwt> on every request.
-2. Vite     → proxies /api/* to api-gateway via the compose network.
-3. Gateway  → auth_disabled=true skips JWT validation, but the proxy
-              module forwards the Authorization header end-to-end.
-4. Service  → identity's HeaderCallerContext falls back to JWT claims
-              when X-Insight-Person-Id is absent: reads `email` /
-              `sub` / `oid`, looks the value up in `persons`
-              (value_type='email'), returns the matching person_id.
-              Tenant comes from X-Insight-Tenant-Id, or
-              IDENTITY__identity__tenant_default_id when absent.
+1. Browser   → fetch-with-auth.ts builds an unsigned JWT
+               ({alg:"none"}.{email, sub, preferred_username}.) and sets
+               Authorization: Bearer <jwt> on every request.
+2. Vite      → proxies /api/* to api-gateway via the compose network.
+3. Gateway   → auth_disabled=true skips JWT validation but forwards
+               the Authorization header end-to-end.
+4. Service   → identity's HeaderCallerContext falls back to JWT claims
+               when X-Insight-Person-Id is absent: reads email/sub/oid,
+               looks the value up in persons (value_type='email'),
+               returns the matching person_id. Tenant comes from
+               X-Insight-Tenant-Id or
+               IDENTITY__identity__tenant_default_id.
 ```
 
 So three things must all be true for a dev call to succeed:
 
-* `VITE_DEV_USER_EMAIL` is set (FE builds the bearer token).
-* A row in `persons` has `value_type='email'` and `value_id` matching
+- `VITE_DEV_USER_EMAIL` is set (FE builds the bearer token).
+- A row in `persons` has `value_type='email'` and `value_id` matching
   that address (run `./dev-compose.sh seed identity`).
-* The gateway proxies `/api/{prefix}` to the right upstream (see
+- The gateway proxies `/api/{prefix}` to the right upstream (see
   `no-auth.yaml`).
 
-If you bypass the FE (curl from the host) you must construct the
-same fake bearer yourself, otherwise identity returns
+If you bypass the FE (curl from the host), you must construct the same
+fake bearer yourself; otherwise identity returns
 `401 caller_unresolved`.
-
-## Seeding + building
-
-### Auto-seed on first `up`
-
-The first successful `./dev-compose.sh up` after the wizard
-automatically populates the demo dataset, then writes
-`SEEDED_LOCAL_MARIA=true` / `SEEDED_LOCAL_CH=true` into `.env.compose`
-so subsequent `up` calls skip the seed step. You don't need to do
-anything extra for the happy path.
-
-For external DBs the wizard asks whether to seed; if you decline, the
-two markers are pre-set to `true` and the stack leaves your DB alone.
-
-### Manual seed / re-seed
-
-`./dev-compose.sh seed` always runs regardless of `SEEDED_LOCAL_*`
-state:
-
-```bash
-./dev-compose.sh seed            # identity + silver — everything
-./dev-compose.sh seed identity   # just MariaDB: 25 persons + org chart + account map
-./dev-compose.sh seed silver     # just ClickHouse: schema + gold views + ~24k rows
-```
-
-To force the next `up` to auto-seed again, set
-`SEEDED_LOCAL_MARIA=` / `SEEDED_LOCAL_CH=` to empty in `.env.compose`
-(or just run `./dev-compose.sh prune` and start fresh).
-
-### What gets seeded
-
-After **identity** runs, MariaDB has 25 persons:
-
-* CEO (`email_ceo@company.nonpresent`) — apex of the org tree.
-* Your `VITE_DEV_USER_EMAIL` person — leads the development team.
-  Default `dev@company.nonpresent`; change it in the wizard or
-  hand-edit before re-seeding to switch identities.
-* 4 team leads (development = you, sales, HR, support).
-* 20 ICs (5 per team, named `email_<team>_<NN>@company.nonpresent`).
-
-Visibility is wired through the BambooHR org-chart source so the
-gateway's per-caller `/v1/persons/{email}` lookups resolve correctly:
-the dev lead sees their 5 direct reports; the CEO sees the whole tree.
-
-After **silver** runs, ClickHouse has:
-
-1. Bronze + silver placeholder tables (extracted from the k8s
-   `create-bronze-placeholders.sh` workaround).
-2. Every `src/ingestion/scripts/migrations/*.sql` applied to create the
-   `insight.*` gold views the analytics-api reads.
-3. ~24k rows across 16 silver tables, profile-typed per team (`class_git_*`
-   only for devs, `class_crm_*` only for sales, etc.). The full
-   per-team activity table lives in `compose/seed/profiles.py`.
-
-The analytics-api's schema validator flips from "80 metrics error:
-table_not_found" to "80 ok" and the FE dashboards have data to show.
-
-The script source is in `insight/compose/seed/` — its README explains
-the ruff / mypy / venv setup.
-
-### Building
-
-`./dev-compose.sh up` runs the build phase by default. The targets:
-
-```bash
-./dev-compose.sh build api-gateway     # Rust gateway only
-./dev-compose.sh build analytics-api   # Rust analytics only
-./dev-compose.sh build identity        # .NET 9 publish
-./dev-compose.sh build frontend        # pnpm build → dist/
-./dev-compose.sh build rust            # both Rust services
-./dev-compose.sh build all             # everything
-```
-
-Skip the build when you just want to bounce the stack:
-
-```bash
-./dev-compose.sh up --skip-build
-```
-
-For one-off cargo work without building the binary into compose/build/:
-
-```bash
-docker compose --profile build run --rm build-rust \
-  cargo test -p insight-api-gateway
-```
-
-## Common tasks
-
-### Tail logs
-
-```bash
-docker compose logs -f api-gateway analytics-api identity
-```
-
-### Inspect databases
-
-```bash
-# MariaDB (identity, analytics schemas)
-docker compose exec mariadb mariadb -uinsight -pinsight-local identity
-
-# ClickHouse (insight db)
-docker compose exec clickhouse clickhouse-client --user insight --password insight-local
-```
-
-### Wipe everything and start fresh
-
-Three escalating levels of destructive:
-
-```bash
-./dev-compose.sh down              # stop containers, keep volumes and .env.compose
-./dev-compose.sh down --volumes    # also wipe named volumes + compose/build/
-./dev-compose.sh prune             # the full nuke (see below)
-```
-
-### Prune — full reset including .env.compose
-
-`./dev-compose.sh prune` is the only command that removes
-`.env.compose`. Use it when you want the next `up` to re-run the
-first-run wizard:
-
-```bash
-./dev-compose.sh prune
-```
-
-It's always interactive — there is no `--yes` switch. The flow:
-
-1. Lists what's about to be destroyed (containers, named volumes,
-   `compose/build/`, generated override, `.env.compose`) and asks
-   `Proceed? [y/N]`.
-2. Runs `docker compose down --volumes --remove-orphans` against every
-   profile (so even services not currently active are cleaned up).
-3. Removes `compose/build/`, `compose/override.generated.yml`, and
-   `.env.compose`.
-4. Asks **separately** whether to also remove pulled
-   `ghcr.io/constructorfabric/insight-*` images — defaults to **No**
-   because they're slow to re-pull and most resets don't need to throw
-   them away.
-
-After prune, the next `./dev-compose.sh up` re-runs the wizard.
-
-### Run a one-off Rust build with custom args
-
-```bash
-docker compose --profile build run --rm build-rust \
-  cargo test -p insight-api-gateway
-```
-
-### Switch the gateway to real OIDC
-
-Edit `src/backend/services/api-gateway/config/no-auth.yaml` directly
-(it's bind-mounted into the container):
-
-1. Set `api-gateway.config.auth_disabled: false`.
-2. Fill in `oidc-authn-plugin.config.issuer_url`,
-   `audience`, and the `auth-info` section's `client_id` / `scopes`.
-3. Save. watchexec restarts the gateway in ~1 second.
-
-No rebuild, no compose bounce. To revert, undo the edits.
-
----
-
-## Beyond compose
-
-The compose stack ships **9-ish services** but **does NOT include**:
-
-- **Airbyte** — needs k8s. Use `./dev-up.sh ingestion`.
-- **Argo Workflows** — k8s controller; same deal.
-- **dbt scheduling** that depends on Argo Workflows.
-
-To run these, install **one** of:
-
-- OrbStack with Kubernetes (recommended on Mac)
-- k3d (`brew install k3d`)
-- kind (`brew install kind`)
-- minikube (`brew install minikube`)
-
-…and use the existing `dev-up.sh` path. The k8s and compose stacks can
-coexist — they use disjoint host ports by default.
-
----
-
-## Settings reference (`.env.compose`)
-
-Read `.env.compose.example` end-to-end. The blocks are:
-
-- **Auto-reload** — `ENABLE_AUTO_RELOAD`
-- **Frontend mode** — `FRONTEND_MODE`, `INSIGHT_FRONT_PATH`,
-  `FRONTEND_IMAGE`
-- **Backend image overrides** — `API_GATEWAY_IMAGE`,
-  `ANALYTICS_API_IMAGE`, `IDENTITY_IMAGE` (any unset → built locally)
-- **Host ports** — every published port is configurable
-- **Database mode** — `MARIADB_EXTERNAL`, `MARIADB_HOST`,
-  `MARIADB_INTERNAL_PORT`, `CLICKHOUSE_EXTERNAL`, `CLICKHOUSE_HOST`,
-  `CLICKHOUSE_INTERNAL_HTTP_PORT`, `CLICKHOUSE_DATABASE`. See
-  [Using external MariaDB / ClickHouse](#using-external-mariadb--clickhouse).
-- **DB credentials** — local-only by convention; in dotenv per project
-  policy
-- **Seed bookkeeping** — `SEEDED_LOCAL_MARIA`, `SEEDED_LOCAL_CH`
-  (empty/false → auto-seed on next `up`; true → skip)
-- **Tenant / OIDC** — `TENANT_DEFAULT_ID`, OIDC client info
-- **Log level** — `RUST_LOG`
 
 ---
 
@@ -600,23 +501,23 @@ Read `.env.compose.example` end-to-end. The blocks are:
 
 **`docker compose up` says a bind-mount path doesn't exist.**
 You probably skipped the build phase. Re-run `./dev-compose.sh up`
-without `--skip-build`, or run `./dev-compose.sh build all` first.
+without `--skip-build`, or `./dev-compose.sh build all` first.
 
 **Container exits immediately with "exec format error".**
-The bind-mounted binary is the wrong architecture (e.g. you built
-natively on Mac and the container is Linux). Always build via
+The bind-mounted binary is the wrong architecture (e.g. host-built on
+Apple Silicon, container is linux/amd64). Always build via
 `./dev-compose.sh build` — never `cargo build` from the host shell.
 
 **`watchexec: GLIBC_2.39 not found` or `No such file or directory`.**
-The Dockerfile pins the musl static build of watchexec and creates a
-home dir for `appuser`. If you see either error, your image is
-out-of-date — force a rebuild: `docker compose build --no-cache <service>`.
+Image out-of-date (the Dockerfile pins the musl static build of
+watchexec and creates a home dir for `appuser`). Force a rebuild:
+`docker compose build --no-cache <service>`.
 
 **api-gateway exits with `oidc-authn-plugin: issuer_url is required`.**
-The `no-auth.yaml` ships with a placeholder issuer
-(`https://no-auth.local/oauth2/default`) because the plugin module is
-registered in the binary even when `auth_disabled=true`. If you wiped
-that line, restore it — the URL is never actually called.
+`no-auth.yaml` ships with a placeholder issuer because the plugin
+module is registered even when `auth_disabled=true`. Restore the
+`issuer_url: https://no-auth.local/oauth2/default` line — the URL is
+never actually called.
 
 **Frontend dev mode hangs at "pnpm install".**
 First-run installs all deps into the named volume; can take several
@@ -624,12 +525,11 @@ minutes. Subsequent starts are fast. Tail with
 `docker compose logs -f insight-front-dev`.
 
 **Port already in use.**
-Edit the relevant `*_PORT` in `.env.compose` and `./dev-compose.sh up`
-again.
+Edit the relevant `*_PORT` in `.env.compose` and `up` again.
 
-**I need Airbyte / Argo Workflows.**
-See [Beyond compose](#beyond-compose). The compose stack will tell you
-so explicitly if you pass `--start-airbyte` or `--start-argo`.
+**`./dev-compose.sh --start-airbyte` errors out.**
+Compose stack doesn't ship Airbyte / Argo. Use the
+[Kubernetes path](#kubernetes--interactive).
 
 ---
 

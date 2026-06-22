@@ -5,26 +5,13 @@
 
 Helm Hook Job that provisions each database listed in
 `clickhouse.initDatabases` against whatever `clickhouse.host` resolves
-to. Works in both modes from a single source of truth:
+to. ClickHouse is external (out-of-chart L2 — gitops L2, Constructor
+Platform, managed warehouse, …); this Job dials `clickhouse.host`
+directly and waits for `/ping` to succeed before running the DDL.
 
-- Bundled (`clickhouse.deploy=true`):  in-namespace CH StatefulSet
-                                       (`{release}-clickhouse`); this
-                                       Job waits for `/ping` to succeed
-                                       (which means the bundled CH has
-                                       finished bootstrapping
-                                       `CLICKHOUSE_USER` + the
-                                       privileged service user), then
-                                       runs the DDL.
-- External (`clickhouse.deploy=false`): CH is hosted out-of-chart
-                                       (gitops L2, Constructor Platform,
-                                       managed warehouse, …); this Job
-                                       dials `clickhouse.host` directly.
-
-ClickHouse auth model: the service user (`clickhouse.username`, default
-`insight`) is the bootstrap user — there is no separate root in this
-chart's contract. Bundled installs run with
-`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` so the service user has full
-admin (incl. CREATE DATABASE). External installs MUST grant the
+ClickHouse auth model: the service user (`clickhouse.username`, which the
+operator MUST set — no default) is the bootstrap user; there is no
+separate root in this chart's contract. The external CH MUST grant the
 service user CREATE DATABASE — that's the operator-side contract.
 
 Hook timing: `pre-install,pre-upgrade`. Mirrors the MariaDB Hook —
@@ -44,10 +31,9 @@ later runs. Connector-specific bronze databases beyond the configured
 `initDatabases` list are created lazily by the ingestion pipelines
 themselves — this Job owns only the chart-declared list.
 
-Replaces the bundled-only ConfigMap path that was in the CH subchart
-(`helmfile/charts/clickhouse/templates/init-configmap.yaml`), which
-only ran during the CH container's docker-entrypoint-initdb.d phase
-and therefore did nothing for external/layered installs.
+Replaces the legacy bundled-only ConfigMap path that ran during the CH
+container's docker-entrypoint-initdb.d phase and therefore did nothing
+for external/layered installs.
 ==============================================================================
 */}}
 {{- if .Values.clickhouse.initDatabases }}

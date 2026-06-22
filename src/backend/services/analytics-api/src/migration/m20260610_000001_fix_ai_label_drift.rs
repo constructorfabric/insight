@@ -107,8 +107,10 @@ mod tests {
     // asserts every metric_key the gold view emits is classified into exactly
     // one bucket — so adding a connector key without classifying it fails CI.
     // =====================================================================
-    /// `ai_person_period` sum-branch (counters). Mirrors the multiIf in
-    /// 20260610000000_ai-person-period-rollup-fix.sql — keep in sync.
+    /// `ai_person_period` sum-branch (counters). Mirrors the multiIf in the
+    /// latest period-rollup migration (20260618000000_ai-claude-team-overage-gold.sql,
+    /// which re-set the view to add `cc_overage`; previously 20260610000000) —
+    /// keep in sync.
     const SUM_KEYS: &[&str] = &[
         "chatgpt",
         "cc_lines",
@@ -123,6 +125,7 @@ mod tests {
         "cc_offered",
         "cc_tool_accept",
         "cc_cost",
+        "cc_overage",
         "prs_total",
         "prs_with_cc",
         "cursor_offered",
@@ -138,13 +141,17 @@ mod tests {
     ];
 
     /// The `metric_keys` actually EMITTED into `insight.ai_bullet_rows` by the gold
-    /// view 20260609000000 (its ARRAY JOIN branches) — these are the only keys
-    /// that reach `ai_person_period` and must therefore be classified. NB this is
-    /// the GOLD key set, NOT the `query_ref` ARRAY JOIN: the latter also lists
-    /// query_ref-computed ratios (`cursor_acceptance`, `cc_tool_acceptance`,
-    /// `ai_loc_share2`) and the `claude_web` stub, which are never emitted to
-    /// `ai_bullet_rows` and so never hit the period rollup. prs_* were removed
-    /// (honest-NULL) so they are absent here too.
+    /// view (its ARRAY JOIN branches; latest = 20260618000000, branches 1–6) —
+    /// these are the only keys that reach `ai_person_period` and must therefore be
+    /// classified. NB this is the GOLD key set, NOT the `query_ref` ARRAY JOIN: the
+    /// latter also lists query_ref-computed ratios (`cursor_acceptance`,
+    /// `cc_tool_acceptance`, `ai_loc_share2`) and the `claude_web` stub, which are
+    /// never emitted to `ai_bullet_rows` and so never hit the period rollup. prs_*
+    /// were removed (honest-NULL) so they are absent here too.
+    ///
+    /// ⚠️ This list is hand-maintained (mirrors the gold view's branches). A new
+    /// gold branch key MUST be added here AND classified in `SUM_KEYS/MAX_KEYS`, or
+    /// the guard gives false-green (it only checks keys present in this list).
     const BULLET_ROWS_KEYS: &[&str] = &[
         // branch 1 (all dev tools)
         "active_ai_members",
@@ -170,6 +177,8 @@ mod tests {
         // branch 5 (chatgpt chat)
         "chatgpt_active",
         "chatgpt",
+        // branch 6 (claude overage)
+        "cc_overage",
     ];
 
     /// Every key the gold view emits must be classified into EXACTLY one of
@@ -198,5 +207,20 @@ mod tests {
         assert!(MAX_KEYS.contains(&"chatgpt_active"));
         assert!(!SUM_KEYS.contains(&"chatgpt_active"));
         assert!(!MAX_KEYS.contains(&"codex_lines"));
+    }
+
+    /// `cc_overage` is a per-period spend counter (twin of `cc_cost`) → sum, never
+    /// max/avg. Avg would divide a monthly snapshot by active-day count (#1286).
+    #[test]
+    fn cc_overage_sums_like_cc_cost() {
+        assert!(SUM_KEYS.contains(&"cc_overage"), "cc_overage must sum");
+        assert!(
+            !MAX_KEYS.contains(&"cc_overage"),
+            "cc_overage is not an active flag"
+        );
+        assert!(
+            BULLET_ROWS_KEYS.contains(&"cc_overage"),
+            "cc_overage must be listed as an emitted gold key"
+        );
     }
 }
