@@ -1,0 +1,37 @@
+# Local deploy artefacts (rendered manifests, deploy logs)
+.deploy/
+
+# Anything that smells like a raw secret
+*.env
+*.env.local
+secrets.local.*
+*-plain.yaml
+
+# The sample secret store consumed by scripts/secret-fetch.sh. The
+# .template file is committed; the populated copy must never be
+# committed (the sealed manifests in environments/<env>/sealed-secrets/
+# are the only safe-to-commit representation).
+secrets-store.yaml
+
+# Wizard-/make-generated artifacts for the LOCAL sandbox env.
+#
+# Real envs commit all of these — they're the gitops source of truth
+# for that cluster. The `local` env is different: it's the starter
+# template that the first-run wizard regenerates per-developer, so
+# committing the generated files would conflict between contributors
+# and pollute the branch. Narrow path-scoped to `environments/local/`
+# only; `environments/<other>/sealed-secrets/**/*.yaml` is NOT ignored.
+#
+#   inventory.yaml         — wizard writes from inventory.yaml.template
+#   values.yaml            — wizard writes from values.yaml.template, then
+#                            injects .global.tenantDefaultId
+#   pub-cert.pem           — `make fetch-cert` writes from the cluster
+#   *-sealedsecret.yaml    — `make seal` writes via kubeseal
+environments/local/inventory.yaml
+environments/local/values.yaml
+environments/local/pub-cert.pem
+environments/local/sealed-secrets/*/*-sealedsecret.yaml
+
+# Never commit the sealed-secrets-controller's private key.
+*.key
+*.pkcs8

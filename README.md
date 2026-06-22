@@ -22,7 +22,7 @@ This repository is the **monorepo** for the Insight product. It contains:
 - [Connector Coverage](#connector-coverage)
 - [Key Concepts](#key-concepts)
 - [Quick Start](#quick-start)
-  - [Local development (`dev-up.sh`)](#local-development-dev-upsh)
+  - [Local development (Docker Compose)](#local-development-docker-compose)
   - [Cluster deployment](#cluster-deployment)
   - [Configure connectors](#configure-connectors)
   - [Services and ports](#services-and-ports)
@@ -114,12 +114,11 @@ The solution consists of five main components:
 ### Root scripts
 
 ```
-./dev-up.sh               ← Create Kind cluster + deploy all services
-./init.sh             ← Apply secrets + initialize ingestion stack
-./dev-down.sh             ← Stop services (data preserved)
-./cleanup.sh          ← Delete cluster and all data
-k8s/kind-config.yaml  ← Kind cluster configuration
+./dev-compose.sh      ← Docker Compose dev stack (default laptop path)
+deploy/gitops/        ← Kubernetes path: `make deploy ENV=<env>`
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for both paths in full.
 
 ### `src/`
 
@@ -226,43 +225,26 @@ This repo uses [Cypilot](https://github.com/cyberfabric/cyber-pilot) — an AI a
 
 ## Quick Start
 
-Two ways to bring up Insight:
+Two supported paths:
 
-- **Local development** — [`./dev-up.sh`](./dev-up.sh) builds a local Kind cluster from source and runs the full stack with hot reload.
-- **Cluster deployment** — Cyberfabric engineers use the private `infra/insight-gitops` repository (Makefile-driven, OCI-pinned chart). External consumers of the umbrella Helm chart use it directly via `helm`, ArgoCD, Flux, or whatever orchestrator they already have; the chart contract lives at [`charts/insight/README.md`](charts/insight/README.md).
+- **Local development (Docker Compose)** — [`./dev-compose.sh up`](./dev-compose.sh) runs the full stack on a developer laptop with only Docker. Default for day-to-day backend / frontend work.
+- **Cluster deployment** — Cyberfabric engineers use the private `infra/insight-gitops` repository (Makefile-driven, OCI-pinned chart); the same path runs locally on a Kind/OrbStack cluster via `cd deploy/gitops && make deploy ENV=local` when you need Airbyte / Argo Workflows or the real cluster shape. External consumers of the umbrella Helm chart use it directly via `helm`, ArgoCD, Flux, or whatever orchestrator they already have; the chart contract lives at [`charts/insight/README.md`](charts/insight/README.md).
 
-Common prerequisites: `kubectl` ≥ 1.27, `helm` ≥ 3.13, `kubeconfig` for the target cluster. Local development also needs `kind` and `docker`.
+The two paths share a single first-run wizard, so the MariaDB / ClickHouse / tenant / dev-email answers are identical across them. The full guide for both is [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### Local development (`dev-up.sh`)
+### Local development (Docker Compose)
 
-For laptop development. Builds all backend + toolbox images from `src/`, loads them into Kind, deploys the stack with single-replica defaults, and opens stable port-forwards.
+For laptop development. No Rust / .NET / Node on the host — every build runs in a builder container; the only prerequisite is Docker (Engine 24+, compose v2).
 
 ```bash
-brew install kind kubectl helm docker
-
-cp .env.local.example .env.local
-$EDITOR .env.local         # AUTH_DISABLED=true OR fill OIDC_*
-
-./dev-up.sh                # creates Kind, builds images, installs everything
+git clone https://github.com/constructorfabric/insight.git
+cd insight
+./dev-compose.sh up        # first-run wizard, then builds + seeds the stack
 ```
 
-What runs under the hood:
-- Creates Kind cluster `insight` if missing.
-- Installs `ingress-nginx` (skipped when present).
-- Builds backend images (`api-gateway`, `analytics-api`, `identity`, `toolbox`) from local source and `kind load`s them — no registry needed.
-- Generates a temporary Helm overlay from `.env.local` and runs `install-airbyte.sh` → `install-argo.sh` → `install-insight.sh` against the Kind cluster (single namespace `insight`).
-- Starts port-forwards for every service on stable local ports (see [Services and ports](#services-and-ports)).
+The wizard prompts for local-vs-external MariaDB / ClickHouse, a dev-user email, and the frontend mode (defaults pull the published `insight-front` image). First `up` auto-seeds a demo dataset; open <http://localhost:3000>.
 
-Lifecycle commands (run from repo root):
-
-| Command | Description |
-|---|---|
-| `./dev-up.sh` | Full bring-up (idempotent on re-run) |
-| `./dev-up.sh ingestion` | Only Airbyte/Argo/ClickHouse |
-| `./dev-up.sh app` | Only application services |
-| `./dev-up.sh frontend` | Only frontend (skip backend rebuild) |
-| `./dev-down.sh` | Stop port-forwards (Kind cluster + data preserved) |
-| `./cleanup.sh` | Delete Kind cluster and all volumes |
+The compose stack does **not** ship Airbyte or Argo Workflows — for ingestion work use the Kubernetes path below. See [CONTRIBUTING.md](CONTRIBUTING.md) for the edit-build loop, frontend modes, seeding, and the `.env.compose` settings reference.
 
 ### Cluster deployment
 
@@ -315,35 +297,25 @@ kubectl -n insight get workflows -l tenant=default --watch
 
 ### Services and ports
 
-For local development (`dev-up.sh`) all services have stable local port-forwards:
+For local Docker Compose development every web service publishes a host port (override any `*_PORT` in `.env.compose` on conflict):
 
 | Service | URL | Notes |
 |---|---|---|
-| Frontend | http://localhost:8003 | SPA |
-| API Gateway | http://localhost:8080 | `/api/v1`; auth disabled when `AUTH_DISABLED=true` |
-| Airbyte UI/API | http://localhost:8001 | UI and API on the same port (Airbyte ≥ 1.5) |
-| Argo Workflows UI | http://localhost:2746 | `--auth-mode=server` (no Bearer) when `DEV_MODE=1` |
+| Frontend | http://localhost:3000 | SPA |
+| API Gateway | http://localhost:8080 | `/api/v1`; auth disabled in the `no-auth` config |
+| Analytics API | http://localhost:8081 | |
+| Identity | http://localhost:8082 | .NET 9 |
 | ClickHouse HTTP | http://localhost:8123 | `/play` for browser SQL |
 | MariaDB | localhost:3306 | |
 | Redis | localhost:6379 | |
 
-For cluster deployments services are reached via the configured ingress hostname (or set up port-forwards manually).
+The compose stack does not run Airbyte or Argo Workflows — those live on the Kubernetes path. For cluster deployments services are reached via the configured ingress hostname (or `kubectl port-forward`).
 
 ### Image configuration
 
 The chart fails fast if any image tag is empty — there are **no `:latest` defaults** anywhere.
 
-For local development (`dev-up.sh`) tags come from `.env.<name>`:
-
-| `.env` variable | Default | Description |
-|---|---|---|
-| `IMAGE_REGISTRY` | _(empty)_ | Registry prefix (e.g. `ghcr.io/constructorfabric`); empty for local-only Kind builds |
-| `IMAGE_TAG` | `local` | Tag applied to all locally-built images |
-| `<SVC>_IMAGE_TAG` | `$IMAGE_TAG` | Per-service override (`API_GATEWAY_IMAGE_TAG`, …) |
-| `IMAGE_PULL_POLICY` | `IfNotPresent` | Kubernetes pullPolicy |
-| `BUILD_IMAGES` | `true` | Build images locally before deploy |
-| `BUILD_AND_PUSH` | `false` | Push built images to `$IMAGE_REGISTRY` |
-| `IMAGE_PLATFORM` | _(empty)_ | Cross-build platform, e.g. `linux/amd64` |
+For local Docker Compose development each backend service is built locally by default; skip the build for any service and pull its published image instead by setting `<SVC>_IMAGE` in `.env.compose` (e.g. `API_GATEWAY_IMAGE=ghcr.io/constructorfabric/insight-api-gateway:latest`) or with `./dev-compose.sh up --from-ghcr=<svc>`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build targets and frontend modes.
 
 For cluster deployments image tags flow through automatically: the umbrella chart's CI bumps each subchart's `appVersion` on every merge to `main`, and the subchart templates default `image.tag` to `.Chart.AppVersion`. Env overlays only need to pin a tag explicitly for a hotfix scenario (testing one service at a different tag than the one bundled in the umbrella version). Image source repos:
 
