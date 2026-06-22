@@ -22,16 +22,16 @@
 ##    different namespaces — each is self-contained.
 ##
 ## 3. Every INFRA dependency (ClickHouse, MariaDB, Redis, Redpanda) is
-##    configured with ONE unified shape, regardless of who runs it:
-##      <dep>.deploy         — the umbrella runs this dep as a subchart (yes/no)
-##      <dep>.host           — host ("" → default to {release}-<dep>)
+##    deployed OUT-OF-CHART (separate releases in `insight-infra` via
+##    gitops `make system-*`). The umbrella only carries the wiring it
+##    needs to dial them:
+##      <dep>.host           — host (MUST be set)
 ##      <dep>.port           — port
 ##      <dep>.database       — db name (where applicable)
 ##      <dep>.username       — login user
 ##      <dep>.passwordSecret — {name, key} pointing at a K8s Secret
-##    When `deploy: false`, the umbrella DOES NOT install the subchart;
-##    everything else — host/port/creds — is just strings the consumers
-##    read, identical to the `deploy: true` case.
+##    These are just strings the consumers (and the pre-install init-DB
+##    Hook Jobs) read — the umbrella never runs the dep itself.
 ##
 ## 4. Core app services (apiGateway, analyticsApi, frontend) are MANDATORY
 ##    components of the umbrella — no deploy-flag. The gateway is the
@@ -150,7 +150,7 @@ observability:
 #  EXTERNAL — Airbyte (installed as a separate Helm release, SAME namespace)
 # ═══════════════════════════════════════════════════════════════════════════
 airbyte:
-  releaseName: airbyte # Helm release name used by install-airbyte.sh
+  releaseName: airbyte # Helm release name of the L2 Airbyte system release
   apiUrl: "" # "" = compute from releaseName + .Release.Namespace
   jwtSecret:
     name: airbyte-auth-secrets # created by the Airbyte chart itself
@@ -185,9 +185,8 @@ ingestion:
   # The `argo-workflow` ServiceAccount + supplemental RBAC (Role
   # `argo-workflow-executor` granting create/patch on
   # `workflowtaskresults.argoproj.io`) are NOT shipped by this chart —
-  # they come from `deploy/scripts/install-argo.sh` and
-  # `deploy/argo/rbac.yaml`. Run them before `helm install`, or use
-  # `deploy/scripts/install-insight.sh` which orders them for you.
+  # they come from the gitops Argo Workflows system layer
+  # (`deploy/gitops/system/argo-workflows`, applied via `make system-argo`).
   # Otherwise workflow submission fails with
   # `serviceaccount "argo-workflow" not found`.
   templates:
@@ -237,164 +236,57 @@ ingestion:
         cpu: "500m"
         memory: "512Mi"
 # ═══════════════════════════════════════════════════════════════════════════
-#  INFRASTRUCTURE
+#  INFRASTRUCTURE (external — deployed out-of-chart at L2)
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# Shape per dep:
-#   <dep>.deploy           — umbrella runs the dep as a subchart
-#   <dep>.host / .port     — connection target ("" = default internal)
+# ClickHouse, MariaDB, Redis and Redpanda are NOT bundled by this chart.
+# They run as separate releases in `insight-infra` (gitops `make system-*`).
+# The blocks below are pure WIRING — the host/port/creds the app services
+# and the pre-install init-DB Hook Jobs use to reach them:
+#   <dep>.host / .port     — connection target (host MUST be set)
 #   <dep>.database         — db name (where applicable)
 #   <dep>.username         — login user
 #   <dep>.passwordSecret   — {name, key}
-# The fields below each `deploy: true` block are passed through to the
-# bundled subchart and are ignored when `deploy: false`.
 
 # ─── ClickHouse ──────────────────────────────────────────────────────────
-# NO defaults for username / database / image.tag — operator MUST supply.
+# NO defaults for host / username / database — operator MUST supply.
 # Ports are RFC standards and may stay defaulted.
 clickhouse:
-  deploy: true
-  host: "" # deploy=true → host computed by helper from release name; deploy=false → operator MUST set
+  host: "" # MUST be set (external L2 ClickHouse host)
   port: 8123 # RFC standard for CH HTTP
-  protocol: http # http|https for the Bronze airbyte/destination-clickhouse 2.x connection; bundled CH is plain HTTP on 8123
+  protocol: http # http|https for the Bronze airbyte/destination-clickhouse 2.x connection
   database: "" # MUST be set
   username: "" # MUST be set
   passwordSecret:
     # Fixed Secret name — chart convention (one Insight per namespace).
     name: "insight-db-creds"
     key: "clickhouse-password"
-  image:
-    repository: clickhouse/clickhouse-server
-    tag: "" # MUST be set (CH version pin, e.g. "25.3")
-  # Databases the CH wrapper creates on first boot via
-  # /docker-entrypoint-initdb.d/. Connector-specific bronze schemas
-  # (bronze_jira, bronze_slack, …) are created by ingestion pipelines
-  # themselves; only schemas required at startup live here.
+  # Databases the chart's pre-install Hook Job (clickhouse-init-svcdbs-job)
+  # creates against the external ClickHouse via CREATE DATABASE IF NOT
+  # EXISTS. Connector-specific bronze schemas (bronze_jira, bronze_slack, …)
+  # are created by ingestion pipelines themselves; only schemas required
+  # at startup live here.
   initDatabases:
     - insight
-  persistence:
-    size: 10Gi
-  resources:
-    requests: {cpu: 250m, memory: 512Mi}
-    limits: {cpu: "2", memory: 4Gi}
-  auth:
-    # Synced with passwordSecret above; the umbrella's validator enforces
-    # they match. The CH subchart now `required`s both — no fallback to
-    # an inline auth.password.
-    existingSecret: "insight-db-creds"
-    existingSecretPasswordKey: "clickhouse-password"
-# ─── MariaDB (bitnami) ───────────────────────────────────────────────────
-# NB: bitnami removed free images from docker.io/bitnami/* in 2025
-# (see https://github.com/bitnami/charts/issues/30850). We point at the
-# bitnamilegacy repository — same images, still free. For enterprise use
-# your own registry.
+# ─── MariaDB ─────────────────────────────────────────────────────────────
 mariadb:
-  deploy: true
-  host: "" # deploy=true → helper; deploy=false → MUST set
+  host: "" # MUST be set (external L2 MariaDB host)
   port: 3306 # RFC standard for MySQL/MariaDB
   database: "" # MUST be set
   username: "" # MUST be set
   passwordSecret:
     name: "insight-db-creds"
     key: "mariadb-password"
-  # Bitnami chart settings (read only when deploy=true).
-  architecture: standalone
-  image:
-    registry: docker.io
-    repository: bitnamilegacy/mariadb
-  auth:
-    # bitnami/mariadb natively reads `mariadb-password` and
-    # `mariadb-root-password` keys from auth.existingSecret.
-    #
-    # `auth.username` and `auth.database` ARE WHAT bitnami uses to
-    # CREATE USER + CREATE DATABASE on first pod boot. They MUST match
-    # the umbrella's top-level `mariadb.username` / `mariadb.database`
-    # (which downstream secrets.yaml uses for ANALYTICS__database_url).
-    # values.yaml is not Helm-templated, so we cannot reference one from
-    # the other — the umbrella validator (`insight.validate`) checks the
-    # match at render time and fails with a readable error on drift.
-    username: "" # MUST match mariadb.username
-    database: "" # MUST match mariadb.database
-    existingSecret: "insight-db-creds"
-  # Per-service MariaDB databases (ADR-0006 — each backend service owns
-  # its own DB) are now provisioned by a post-install / post-upgrade
-  # Helm Hook Job (see templates/mariadb-init-svcdbs-job.yaml). The Job
-  # authenticates as MariaDB root using `mariadb-root-password` from
-  # `insight-db-creds`, runs idempotent CREATE DATABASE + GRANT against
-  # whatever `mariadb.host` resolves to — works for both bundled
-  # (`mariadb.deploy=true`) and external (layered gitops with
-  # `mariadb.deploy=false`) modes from a SINGLE source of truth.
-  #
-  # Replaces the previous bundled-only `mariadb-initdb-scripts.yaml`
-  # ConfigMap. The earlier `pre-install` Hook had a chicken-and-egg with
-  # the regular-template `insight-db-creds`; the new Hook uses
-  # `post-install` so the Secret is already applied when the Job runs,
-  # and the Job has an internal wait-for-MariaDB loop so the bundled
-  # subchart's first-boot delay doesn't matter.
-  # Reset of a legacy value persisted in helm release storage from a
-  # pre-#406 chart version (`insight-mariadb-initdb-scripts`). The
-  # ConfigMap it referenced was deleted in #406; the bitnami subchart
-  # rendered a `custom-init-scripts` mount as long as this value stayed
-  # truthy, so any MariaDB pod recreation hit FailedMount. Explicit
-  # empty string ensures bitnami emits the StatefulSet without the
-  # mount even when an operator runs `helm upgrade --reuse-values`.
-  initdbScriptsConfigMap: ""
-  primary:
-    persistence:
-      size: 5Gi
-    resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {cpu: 500m, memory: 512Mi}
-# ─── Redis (bitnami) ─────────────────────────────────────────────────────
+# ─── Redis ───────────────────────────────────────────────────────────────
 redis:
-  deploy: true
-  host: "" # deploy=true → helper; deploy=false → MUST set
+  host: "" # MUST be set (external L2 Redis host)
   port: 6379 # RFC standard for Redis
   passwordSecret:
     name: "insight-db-creds"
     key: "redis-password"
-  # Bitnami chart settings (read only when deploy=true).
-  architecture: standalone
-  image:
-    registry: docker.io
-    repository: bitnamilegacy/redis
-  auth:
-    enabled: true
-    existingSecret: "insight-db-creds"
-    existingSecretPasswordKey: "redis-password"
-  master:
-    persistence:
-      size: 1Gi
-    resources:
-      requests: {cpu: 50m, memory: 64Mi}
-      limits: {cpu: 250m, memory: 128Mi}
 # ─── Redpanda ────────────────────────────────────────────────────────────
-# For enterprise: TLS on, SASL on, 3+ replicas.
 redpanda:
-  deploy: true
-  brokers: "" # "" = {release}-redpanda:9092
-  # Redpanda chart settings (read only when deploy=true).
-  statefulset:
-    replicas: 1
-  resources:
-    cpu:
-      cores: 1
-    memory:
-      container:
-        max: 1536Mi
-      redpanda:
-        memory: 1Gi
-        reserveMemory: 256Mi
-  storage:
-    persistentVolume:
-      size: 10Gi
-  tls:
-    enabled: false
-  auth:
-    sasl:
-      enabled: false
-  console:
-    enabled: true
+  brokers: "" # MUST be set (external L2 Redpanda brokers, comma-separated host:port)
 # ═══════════════════════════════════════════════════════════════════════════
 #  APPLICATION SERVICES (mandatory — no deploy-flag)
 # ═══════════════════════════════════════════════════════════════════════════
