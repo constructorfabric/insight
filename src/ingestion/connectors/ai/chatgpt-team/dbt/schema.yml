@@ -2,13 +2,39 @@ version: 2
 
 sources:
   - name: bronze_chatgpt_team
+    # Source freshness (TAF #1322). Source-level default = _airbyte_extracted_at
+    # (sync-liveness) for the roster table; the WINDOWED daily/snapshot tables
+    # override below to anchor on their business date. ChatGPT Team re-emits a
+    # fixed window every sync, so extracted_at is false-green for them — VERIFIED
+    # on live data (extracted_at ~8.6h fresh while `date` 60–85h stale). Report
+    # tier absorbs the vendor publish lag.
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
     schema: bronze_chatgpt_team
     tables:
-      - name: chatgpt_team_seats
-      - name: chatgpt_team_chat_activity
-      - name: chatgpt_team_codex_user_daily
-      - name: chatgpt_team_subscription_usage
-      - name: chatgpt_team_subscription_balance
+      - name: chatgpt_team_seats   # roster — sync-liveness default is correct
+      - name: chatgpt_team_chat_activity      # VERIFIED windowed
+        loaded_at_field: parseDateTimeBestEffortOrNull(date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
+      - name: chatgpt_team_codex_user_daily   # VERIFIED windowed
+        loaded_at_field: parseDateTimeBestEffortOrNull(date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
+      - name: chatgpt_team_subscription_usage    # inferred windowed (snapshot_date)
+        loaded_at_field: parseDateTimeBestEffortOrNull(snapshot_date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
+      - name: chatgpt_team_subscription_balance  # inferred windowed (snapshot_date)
+        loaded_at_field: parseDateTimeBestEffortOrNull(snapshot_date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
 
 models:
   - name: chatgpt_team__ai_dev_usage

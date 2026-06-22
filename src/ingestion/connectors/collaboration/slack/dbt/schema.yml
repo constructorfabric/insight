@@ -2,6 +2,17 @@ version: 2
 
 sources:
   - name: bronze_slack
+    # Source freshness (TAF #1322). WINDOWED connector — Slack
+    # admin.analytics.getFile re-emits a fixed window each sync, so
+    # _airbyte_extracted_at tracks sync liveness, not data freshness. Anchor on
+    # the report's `date` (column verified in ClickHouse; windowed behavior
+    # inferred — no live rows in Eternal). report_extended tier: Slack analytics
+    # has a documented ~3-day publish lag (up to 5 during Slack maintenance).
+    freshness:
+      warn_after: {count: 120, period: hour}
+      error_after: {count: 168, period: hour}
+    # `date` is String 'YYYY-MM-DD'; parse for the freshness timestamp compare.
+    loaded_at_field: parseDateTimeBestEffortOrNull(date)
     schema: bronze_slack
     tables:
       - name: users_details

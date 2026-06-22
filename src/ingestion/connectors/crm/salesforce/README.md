@@ -1,8 +1,6 @@
 # Salesforce Connector
 
-CDK-based Python connector for Salesforce CRM. Pulls data via Bulk API 2.0 with REST `/queryAll` fallback; describe-driven field discovery means no SOQL maintenance as SF orgs evolve; custom (`__c`) fields are captured into a single `custom_fields` JSON column so Bronze stays stable across orgs.
-
-Architecture adapted from the [official Airbyte Salesforce connector](https://github.com/airbytehq/airbyte/tree/master/airbyte-integrations/connectors/source-salesforce) (ELv2). Per-file copyright headers preserved.
+CDK-based Python connector for Salesforce CRM. Pulls data via the REST `/queryAll` API; describe-driven field discovery means no SOQL maintenance as SF orgs evolve; custom (`__c`) fields are captured into a single `custom_fields` JSON column so Bronze stays stable across orgs.
 
 ## Prerequisites
 
@@ -29,7 +27,7 @@ stringData:
   salesforce_client_id: ""                         # OAuth Consumer Key
   salesforce_client_secret: ""                     # OAuth Consumer Secret
   salesforce_start_date: "2024-01-01T00:00:00Z"    # Optional
-  salesforce_num_workers: "20"                     # Optional (1–50)
+  salesforce_num_workers: "1"                      # Optional (1–50), default 1
 ```
 
 ### Fields
@@ -40,11 +38,9 @@ stringData:
 | `salesforce_client_id` | Yes | OAuth Consumer Key |
 | `salesforce_client_secret` | Yes | OAuth Consumer Secret (sensitive) |
 | `salesforce_start_date` | No | Incremental sync start (ISO 8601). Defaults to two years before current date (computed in `source.py`). |
-| `salesforce_streams` | No | JSON array of sobject names to sync. Overrides curated default |
 | `salesforce_stream_slice_step` | No | Concurrent cursor window. Default `P30D` |
 | `salesforce_lookback_window` | No | Re-read window for SystemModstamp consistency. Default `PT10M` |
-| `salesforce_force_use_bulk_api` | No | Force Bulk even for unsupported types. Default `false` |
-| `salesforce_num_workers` | No | Max concurrent jobs (1–50). Default `20` |
+| `salesforce_num_workers` | No | Max concurrent jobs (1–50). Default `1` (sequential; raise once ClickHouse has headroom) |
 
 ### Automatically injected
 
@@ -67,10 +63,10 @@ cp src/ingestion/secrets/connectors/salesforce.yaml.example src/ingestion/secret
 
 ## Streams
 
-Active: 10 sobjects (curated for analytics value vs sync cost). Operator can
-override via `salesforce_streams` config; additional disabled sobjects listed
-at the bottom of `constants.CRM_STREAMS` can be re-enabled there or supplied
-ad-hoc via config.
+Active: 10 sobjects (curated for analytics value vs sync cost). The stream
+set is fixed in `constants.CRM_STREAMS`; additional disabled sobjects listed
+at the bottom of that list can be re-enabled there (a code change, so dbt
+coverage ships alongside).
 
 ### Active
 
@@ -88,7 +84,7 @@ ad-hoc via config.
 | `OpportunityContactRole` | Buyer-committee / multi-threading |
 
 All incremental via `SystemModstamp` (except `OpportunityHistory` → `CreatedDate`).
-Bulk API by default; REST fallback for sobjects with compound / base64 fields.
+All streams use the REST `/queryAll` API (paginated via `nextRecordsUrl`).
 Soft-deleted records (`IsDeleted=true`) included — `queryAll` used throughout.
 
 ### Available, disabled by default
@@ -124,10 +120,10 @@ Silver classes for Lead / Case / OpportunityContactRole / OpportunityLineItem / 
 
 ```bash
 cd src/ingestion
-./airbyte-toolkit/build-connector.sh crm/salesforce   # docker build + Kind load + Airbyte definition update
-./airbyte-toolkit/connect.sh <tenant>                 # create source + connection from K8s Secret
-./run-sync.sh salesforce <tenant>                     # e2e via Argo (sync + dbt)
-./logs.sh -f latest                                   # follow
+bash reconcile-connectors/lib/cdk-build.sh crm/salesforce        # docker build + Kind load + Airbyte definition update
+bash reconcile-connectors/main.sh --connector salesforce         # create/update source + connection from K8s Secret
+./run-sync.sh salesforce <tenant>                                # e2e via Argo (sync + dbt)
+./logs.sh -f latest                                              # follow
 ```
 
 ## Troubleshooting

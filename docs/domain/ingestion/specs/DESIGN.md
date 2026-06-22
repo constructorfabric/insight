@@ -668,20 +668,19 @@ Key deployment decisions:
 - **Single-namespace model**: Airbyte, Argo and the Insight umbrella share the release namespace; cross-release service references resolve via plain DNS (e.g. `airbyte-airbyte-server-svc.insight.svc.cluster.local:8001`). Lifecycle is still independent — each release upgrades on its own schedule.
 - Argo Workflows stores state in K8s etcd — no external database required.
 - Airbyte ships its own bundled PostgreSQL for connector metadata (managed by the `airbyte/airbyte` chart, not by the umbrella).
-- Helm charts: Airbyte via `airbyte/airbyte`, Argo via `argo/argo-workflows`, the Insight platform via `charts/insight` in this repo. The canonical installer chain `deploy/scripts/install.sh` runs all three in order; `dev-up.sh` is the developer wrapper that builds local images and delegates to it.
+- Helm charts: Airbyte via `airbyte/airbyte`, Argo via `argo/argo-workflows`, the Insight platform via `charts/insight` in this repo. On Cyberfabric-operated and local clusters all three are installed by the gitops Makefile (`cd deploy/gitops && make deploy ENV=<env>` — Airbyte/Argo as L2 system releases, the umbrella as the L3 app release); external consumers install them with their own tooling.
 - ClickHouse, MariaDB, Redis and Redpanda are all umbrella subcharts under `charts/insight/Chart.yaml` (`<dep>.deploy: true|false`). The unified shape `<dep>.host / .port / .database / .username / .passwordSecret` works whether the dep is bundled or external — see `charts/insight/values.yaml`.
 - ClickHouse is a StatefulSet (`insight-clickhouse`) created by `helmfile/charts/clickhouse`; access is via Service `insight-clickhouse:8123` inside the cluster. Health probes use HTTP GET `/ping` (not `clickhouse-client` exec — avoids CLI flag parsing issues with auto-generated passwords).
 - MariaDB per-service databases are provisioned via the bundled bitnami `mariadb.initdbScriptsConfigMap` (see `charts/insight/templates/mariadb-initdb-scripts.yaml`) — bitnami runs every script in that ConfigMap on the FIRST MariaDB pod boot, mounted at `/docker-entrypoint-initdb.d`. The data lives in the PVC after that, so restarts and helm upgrades are no-ops. Each owning service then runs its own SeaORM migrations at startup — see §4.4.2 and [ADR-0006](ADR/0006-service-owned-migrations.md).
 - CDK connector build script (`airbyte-toolkit/build-connector.sh`) uses `CLUSTER_NAME` env var (default `insight`) for Kind image loading — not hardcoded.
 - Airbyte port-forward uses `nohup ... & disown` to avoid blocking the terminal.
 - Argo `dbt-run` WorkflowTemplate uses locally-built `insight-toolbox:local` image (with `imagePullPolicy: IfNotPresent`) — not `ghcr.io/constructorfabric/insight-toolbox:latest`. Local builds via `tools/toolbox/build.sh` pick up dbt model changes without requiring a registry push. Template also accepts `full_refresh` parameter (pass `--full-refresh` to recreate tables from scratch).
-- CoreDNS is patched to use public DNS upstream (`8.8.8.8`, `8.8.4.4`) — WSL's `/etc/resolv.conf` points to an internal WSL nameserver that cannot reliably resolve external domains (e.g. `login.microsoftonline.com`). Patch lives in `scripts/dev/patch-coredns-wsl.sh` (idempotent, opt-out via `SKIP_COREDNS_PATCH=1`); invoked from `dev-up.sh` after Kind bootstrap and re-applied by `dev-restart.sh`.
-- `dev-restart.sh` also cleans up stale Airbyte replication-job pods (from previous syncs that did not exit cleanly).
+- CoreDNS is patched to use public DNS upstream (`8.8.8.8`, `8.8.4.4`) — WSL's `/etc/resolv.conf` points to an internal WSL nameserver that cannot reliably resolve external domains (e.g. `login.microsoftonline.com`). Patch lives in `scripts/dev/patch-coredns-wsl.sh` (idempotent, opt-out via `SKIP_COREDNS_PATCH=1`); Windows/WSL+Kind operators run it manually against their cluster after bootstrap.
 - Gold views migration (`20260422000000_gold-views.sql`) references bronze tables from optional connectors (jira, m365, zoom). When the corresponding bronze table does not yet exist (no real connector data ingested yet), `scripts/create-bronze-placeholders.sh` creates empty placeholder tables with a minimal compatible schema so the gold-views migration succeeds on a partial install.
   - **Placeholder handoff caveat**: Airbyte ClickHouse destination v2.0.8+ throws an error on the first sync if the target bronze table exists with a schema that does not match the destination's expected schema for that stream. The placeholder schemas in `create-bronze-placeholders.sh` are intentionally minimal (only the columns referenced by gold views) — they are **not** a drop-in replacement for a native Airbyte-generated table. Before enabling a previously-placeholdered connector, the operator should manually `DROP TABLE` the placeholder(s) in ClickHouse so Airbyte can create them fresh on its first sync.
-  - Script runs automatically via `init.sh` before migrations.
+  - Script runs automatically via `src/ingestion/run-init.sh` before migrations.
 - All credentials managed via Kubernetes Secrets (see §4.1.1).
-- Service access via Ingress (PR #224): the umbrella chart configures `ingress-nginx` routes for Frontend, API Gateway, Airbyte UI and Argo UI; in `dev-up.sh --env local` the Kind cluster maps host ports 80/443 to the ingress controller. Direct port-forwards (`kubectl port-forward`) remain available for debugging.
+- Service access via Ingress (PR #224): the umbrella chart configures `ingress-nginx` routes for Frontend, API Gateway, Airbyte UI and Argo UI; on a local Kubernetes cluster the Kind config maps host ports 80/443 to the ingress controller. Direct port-forwards (`kubectl port-forward`) remain available for debugging.
 
 #### 4.1.1 Infrastructure Secrets
 
@@ -722,37 +721,40 @@ All Insight components share the release namespace (default `insight`); override
    - `full_refresh` streams → `overwrite` (each sync replaces all data — no duplicate accumulation)
    - `incremental` streams → `append_dedup` (appends new records, deduplicates by primary key)
 
-### 4.2 Local Development (Kind K8s Cluster)
+### 4.2 Local Development (local Kubernetes cluster)
 
-All services run inside a single Kind K8s cluster (`insight`), in a single namespace, using the same three-Helm-release model as production:
-- Airbyte installed via Helm chart (`airbyte/airbyte`)
-- Argo Workflows installed via Helm chart (`argo/argo-workflows`)
-- Insight platform installed via the umbrella chart `charts/insight` — bundles ClickHouse, MariaDB, Redis, Redpanda, Analytics API, Identity Resolution, API Gateway and Frontend as subcharts. Image tags for the Rust services are filled by `dev-up.sh` from locally-built images (`kind load docker-image`).
+Ingestion work needs Airbyte and Argo Workflows, which the docker-compose dev
+stack does not ship — so the ingestion inner loop runs against a local
+Kubernetes cluster (Kind / OrbStack / k3d / minikube) brought up by the gitops
+path. (For backend / frontend work that does not touch ingestion, the
+docker-compose stack — `./dev-compose.sh up` — is the lighter default; see
+[CONTRIBUTING.md](../../../../CONTRIBUTING.md).)
+
+The gitops Makefile with `ENV=local` brings up the whole stack:
+- Airbyte installed via Helm chart (`airbyte/airbyte`) as a separate Helm release
+- Argo Workflows installed via Helm chart (`argo/argo-workflows`) as a separate Helm release
+- Insight platform installed via the umbrella chart `charts/insight` — the app services (Analytics API, Identity Resolution, API Gateway, Frontend) plus, depending on the `<svc>.deploy` toggles, the bundled ClickHouse / MariaDB / Redis / Redpanda subcharts or wiring to externally-provided instances.
 - dbt runs as Argo container steps (`insight-toolbox`)
 
-KUBECONFIG: `~/.kube/insight.kubeconfig`
+`ENV=local` runs the wizard once and then the `bootstrap → system → deploy-app`
+chain. The cluster topology, layer model and namespace conventions are owned by
+the [gitops SPEC](../../components/deployment/gitops/README.md).
 
 #### Startup scripts
 
 | Script | Purpose |
 |--------|---------|
-| `./dev-up.sh` | Dev wrapper: builds Docker images from `src/`, creates a local Kind cluster (or targets a dev-owned remote cluster), loads images into the cluster, and delegates to `deploy/scripts/install*.sh` to install Airbyte, Argo Workflows, and the Insight umbrella chart. Uses `.env.<env>` for configuration. Idempotent. |
-| `./dev-down.sh` | Graceful stop: scales all `insight`-namespace deployments to 0, stops the Kind container. Data preserved — `./dev-restart.sh` brings everything back. |
-| `./dev-restart.sh` | Quick restart after WSL/Docker crash or `./dev-down.sh`: restarts the Kind container, scales `insight`-namespace pods back to 1, re-patches CoreDNS, restores port-forwards. Falls back to `./dev-up.sh` if the cluster is gone. Lightweight — no image builds, no helm upgrade. |
-| `deploy/scripts/install.sh` | Production-style installer (canonical path): chains `install-airbyte.sh` → `install-argo.sh` → `install-insight.sh` against the current kubeconfig. Used by `dev-up.sh` and end-user installs from published chart artifacts. |
+| `cd deploy/gitops && make deploy ENV=local` | Brings up the full local stack: bootstrap (L0), Airbyte + Argo Workflows + the L2 system services, then the Insight umbrella chart (L3). Idempotent — re-running reconciles. Honours `$KUBECONFIG`. |
 | `src/ingestion/run-init.sh` | Post-deploy init: verifies secrets, runs ClickHouse migrations, registers connectors, applies Airbyte connections, syncs Argo flows. (MariaDB schema is applied per-service by each backend service's own sea-orm `Migrator` at startup — see §4.4 and [ADR-0006](ADR/0006-service-owned-migrations.md). Per-service databases beyond the umbrella default are provisioned by `charts/insight/templates/mariadb-initdb-scripts.yaml` on the first MariaDB pod boot.) |
 | `src/ingestion/sync-all.sh` | Trigger Airbyte sync for all connections. Reads connection IDs from state, calls Airbyte API. Use after `run-init.sh` to start first data load, or anytime to re-sync all sources. |
 
 **First-time setup**:
-1. Copy `.env.local.example` → `.env.local`
-2. Copy connector secret examples → fill credentials (`src/ingestion/secrets/connectors/`)
-3. `./dev-up.sh` — full stack deployment
-4. `./src/ingestion/run-init.sh` — databases, connectors, connections
-5. `cd src/ingestion && ./sync-all.sh` — trigger first Airbyte sync for all connections
+1. Copy connector secret examples → fill credentials (`src/ingestion/secrets/connectors/`)
+2. `cd deploy/gitops && make deploy ENV=local` — full stack deployment (answer the wizard prompts on first run)
+3. `./src/ingestion/run-init.sh` — databases, connectors, connections
+4. `cd src/ingestion && ./sync-all.sh` — trigger first Airbyte sync for all connections
 
-**After WSL/Docker crash**: `./dev-restart.sh` — one command, restores full state.
-
-**Environment support**: `./dev-up.sh --env <name>` loads `.env.<name>` config. Supports `local` (Kind) and remote (external kubeconfig) modes.
+**Re-running**: `make deploy ENV=local` is idempotent — re-running on a converged cluster reconciles the stack in place.
 
 This enables:
 - Testing connector registration and sync execution
