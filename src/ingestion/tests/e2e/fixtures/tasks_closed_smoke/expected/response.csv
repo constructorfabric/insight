@@ -1,2 +1,2 @@
-person_id,tasks_closed,ai_loc_share_pct,ai_sessions,bugs_fixed,build_success_pct,focus_time_pct,loc,pr_cycle_time_h,prs_merged
-alice@example.com,2.0,0.0,0.0,0.0,,75.0,0.0,,0.0
+person_id,tasks_closed,ai_loc_share_pct,ai_sessions,bugs_fixed,build_success_pct,focus_time_pct,loc,pr_cycle_time_h,prs_merged,ai_loc_share_pct_median,ai_sessions_median,bugs_fixed_median,build_success_pct_median,focus_time_pct_median,loc_median,peer_n,pr_cycle_time_h_median,prs_merged_median,tasks_closed_median
+alice@example.com,2.0,0.0,0.0,0.0,,75.0,,,,0.0,0.0,0.0,,75.0,,1,,,2.0

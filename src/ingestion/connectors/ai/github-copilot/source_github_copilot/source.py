@@ -163,11 +163,19 @@ class SourceGitHubCopilot(AbstractSource):
             "org": config["github_org"],
         }
         start_date = config.get("github_start_date")
+        # Trailing re-fetch window for the daily report streams. Copilot reports
+        # lag (often >24-48h; weekends later) and can be restated, so each run
+        # re-queries the last N days to self-heal late/adjusted days that a plain
+        # cursor+1 would permanently skip. RMT dedup on unique_key makes it idempotent.
+        try:
+            lookback_days = int(config.get("metrics_lookback_days", 7))
+        except (TypeError, ValueError):
+            lookback_days = 7
 
         return [
             CopilotSeatsStream(**shared),
-            CopilotUserMetricsStream(start_date=start_date, **shared),
-            CopilotOrgMetricsStream(start_date=start_date, **shared),
+            CopilotUserMetricsStream(start_date=start_date, lookback_days=lookback_days, **shared),
+            CopilotOrgMetricsStream(start_date=start_date, lookback_days=lookback_days, **shared),
         ]
 
 

@@ -1,5 +1,6 @@
 -- depends_on: {{ ref('github__repository_branches') }}
 -- depends_on: {{ ref('bitbucket_cloud__repository_branches') }}
+-- depends_on: {{ ref('gitlab__repository_branches') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',

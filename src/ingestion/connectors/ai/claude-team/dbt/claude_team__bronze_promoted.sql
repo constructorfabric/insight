@@ -13,7 +13,8 @@
     tags=['claude-team']
 ) }}
 
-{% do promote_bronze_to_rmt(table='bronze_claude_team.claude_team_members',      order_by='unique_key') %}
-{% do promote_bronze_to_rmt(table='bronze_claude_team.claude_team_code_metrics', order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_claude_team.claude_team_members',         order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_claude_team.claude_team_code_metrics',    order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_claude_team.claude_team_overage_spend',   order_by='unique_key') %}
 
 SELECT 1 AS promoted

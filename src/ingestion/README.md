@@ -90,17 +90,15 @@ azure_client_secret: ""   # App registration client secret
 
 ## Prerequisites
 
-The ingestion stack is deployed as part of the Insight platform. Use the **root-level scripts** to manage the cluster:
+The ingestion stack is deployed as part of the Insight platform. Use one of the two supported paths to bring the platform up:
 
 ```bash
 # From the repo root:
-./dev-up.sh          # Create cluster + deploy all services (including ingestion)
-./init.sh        # Apply secrets + initialize ingestion
-./dev-down.sh        # Stop everything
-./cleanup.sh     # Delete cluster and all data
+./dev-compose.sh up                          # Docker Compose dev stack (default)
+cd deploy/gitops && make deploy ENV=local     # Kubernetes via gitops
 ```
 
-See the root [README.md](../../README.md) for full Quick Start instructions.
+See the root [README.md](../../README.md) and [CONTRIBUTING.md](../../CONTRIBUTING.md) for full Quick Start instructions.
 
 ## Ingestion-only Quick Start
 
@@ -194,7 +192,7 @@ open http://localhost:30500
 
 ## Services
 
-After `./dev-up.sh`:
+After the platform is up:
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
@@ -206,7 +204,9 @@ After `./dev-up.sh`:
 
 **Production:** password from K8s Secret `clickhouse-credentials` in namespace `data` (see [Production Deployment](#production-deployment)).
 
-**Local (Kind):** falls back to default password `clickhouse` from `k8s/clickhouse/configmap.yaml` when Secret is absent.
+**Local (compose):** ClickHouse uses the default password `clickhouse`; credentials come from `.env.compose` (see `.env.compose.example`).
+
+**Local (gitops):** the L2 ClickHouse release reads the `clickhouse-creds` Secret in `insight-infra` (see `deploy/gitops/system/clickhouse/SECRETS.md`).
 
 **Any environment:**
 
@@ -310,12 +310,6 @@ src/ingestion/
 │   │   └── ingestion-pipeline.yaml  #     DAG: sync → dbt
 │   └── schedules/
 │       └── sync.yaml.tpl            #   CronWorkflow template (tracked)
-│
-├── k8s/                             # Kubernetes manifests
-│   ├── kind-config.yaml             #   Kind cluster config
-│   ├── airbyte/                     #   Helm values (local + production)
-│   ├── argo/                        #   Helm values + RBAC
-│   └── clickhouse/                  #   Deployment, Service, PVC, ConfigMap
 │
 ├── airbyte-toolkit/                 # Airbyte management module
 │   ├── cdk-build.sh                 #   Build CDK Docker image (push or load into Kind)
@@ -464,7 +458,7 @@ export KUBECONFIG=/path/to/your/kubeconfig
 ### Step 1: Deploy Services
 
 ```bash
-./dev-up.sh   # Uses ENV=production, applies production Helm values
+cd deploy/gitops && make deploy ENV=production   # gitops deploy with production Helm values
 ```
 
 ### Step 2: Build and Load Toolbox Image
