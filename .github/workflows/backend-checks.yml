@@ -1,15 +1,10 @@
 name: Backend Lint & Test
 
 on:
-  # Runs on PRs touching the backend (the lint/test gate) AND on push to main —
-  # GitHub's native code coverage compares each PR against the default-branch
-  # baseline, so main must upload coverage too. workflow_dispatch = manual rerun.
+  # PR-only gate (+ manual dispatch). Coverage is reported self-contained via a
+  # sticky PR comment + job summary — no external service, no default-branch
+  # baseline run needed (works on any plan, including Free).
   pull_request:
-    branches: [main]
-    paths:
-      - "src/backend/**"
-      - ".github/workflows/backend-checks.yml"
-  push:
     branches: [main]
     paths:
       - "src/backend/**"
@@ -26,11 +21,10 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
-# Uploading to GitHub's native code-coverage API needs code-quality: write;
-# everything else only reads the repo.
+# The coverage summary is posted as a sticky PR comment.
 permissions:
   contents: read
-  code-quality: write
+  pull-requests: write
 
 jobs:
   check:
@@ -42,10 +36,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Check out the PR head (not the merge commit) so coverage line
-          # numbers map to the diff; falls back to the pushed SHA on main.
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -70,20 +60,38 @@ jobs:
 
       # cargo-llvm-cov runs the suite under coverage instrumentation (this
       # replaces the plain `cargo test`, so tests still run) and emits a single
-      # Cobertura report for upload.
+      # Cobertura report.
       - name: Run tests with coverage
         run: |
           cargo llvm-cov --no-report --all-features --workspace
           cargo llvm-cov report --cobertura --output-path cobertura.xml
 
-      - name: Upload coverage to GitHub
-        uses: actions/upload-code-coverage@v1
+      # Cobertura -> markdown summary (no HTML, no .NET SDK). This is a Docker
+      # action that runs at the workspace root, so the path is repo-root-relative
+      # and code-coverage-results.md is written there.
+      - name: Coverage summary
+        uses: irongut/CodeCoverageSummary@v1.3.0
         with:
-          file: src/backend/cobertura.xml
-          language: Rust
-          label: code-coverage/rust
-          # Report-only: a coverage-upload hiccup must never fail the gate.
-          fail-on-error: false
+          filename: src/backend/cobertura.xml
+          format: markdown
+          output: both
+          badge: true
+          hide_complexity: true
+          fail_below_min: false # report-only — never fail the job
+          thresholds: "60 80"
+
+      - name: Post coverage PR comment
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rust-backend-coverage
+          recreate: true
+          path: code-coverage-results.md
+
+      - name: Coverage to job summary
+        if: always()
+        run: cat "$GITHUB_WORKSPACE/code-coverage-results.md" >> "$GITHUB_STEP_SUMMARY"
 
   dotnet-identity:
     name: .NET — Identity Service Build & Test
@@ -94,8 +102,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -128,17 +134,33 @@ jobs:
           --collect:"XPlat Code Coverage" --results-directory ./coverage
 
       # The two test runs each emit a Cobertura file for the same assemblies;
-      # merge them into one report (the upload action takes a single file).
+      # merge them into one report (CodeCoverageSummary takes a single file).
       - name: Merge coverage
         run: |
           dotnet tool install --global dotnet-coverage
           export PATH="$PATH:$HOME/.dotnet/tools"
           dotnet-coverage merge -f cobertura -o merged.cobertura.xml coverage/*/coverage.cobertura.xml
 
-      - name: Upload coverage to GitHub
-        uses: actions/upload-code-coverage@v1
+      - name: Coverage summary
+        uses: irongut/CodeCoverageSummary@v1.3.0
         with:
-          file: src/backend/services/identity/merged.cobertura.xml
-          language: C#
-          label: code-coverage/identity
-          fail-on-error: false
+          filename: src/backend/services/identity/merged.cobertura.xml
+          format: markdown
+          output: both
+          badge: true
+          hide_complexity: true
+          fail_below_min: false # report-only — never fail the job
+          thresholds: "60 80"
+
+      - name: Post coverage PR comment
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: dotnet-identity-coverage
+          recreate: true
+          path: code-coverage-results.md
+
+      - name: Coverage to job summary
+        if: always()
+        run: cat "$GITHUB_WORKSPACE/code-coverage-results.md" >> "$GITHUB_STEP_SUMMARY"
