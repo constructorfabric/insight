@@ -32,7 +32,13 @@ spec:
         - name: frontend
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if or .Values.oidc.issuer .Values.oidc.clientId }}
+          {{- /* Refuse OIDC + devUserEmail together — the entrypoint
+                 catches it too, but failing at template time gives a
+                 cleaner error than a CrashLoopBackOff. */}}
+          {{- if and (or .Values.oidc.issuer .Values.oidc.clientId) .Values.devUserEmail }}
+            {{- fail "frontend: devUserEmail and oidc.{issuer,clientId} are mutually exclusive. Set one path, not both." }}
+          {{- end }}
+          {{- if or .Values.oidc.issuer .Values.oidc.clientId .Values.devUserEmail }}
           env:
             {{- if .Values.oidc.issuer }}
             - name: OIDC_ISSUER
@@ -42,8 +48,14 @@ spec:
             - name: OIDC_CLIENT_ID
               value: {{ .Values.oidc.clientId | quote }}
             {{- end }}
+            {{- if or .Values.oidc.issuer .Values.oidc.clientId }}
             - name: OIDC_SCOPES
               value: {{ required "oidc.scopes is required when oidc.issuer or oidc.clientId is set" .Values.oidc.scopes | quote }}
+            {{- end }}
+            {{- if .Values.devUserEmail }}
+            - name: DEV_USER_EMAIL
+              value: {{ .Values.devUserEmail | quote }}
+            {{- end }}
           {{- end }}
           ports:
             - name: http

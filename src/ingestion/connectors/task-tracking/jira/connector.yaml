@@ -129,8 +129,17 @@ definitions:
       type: DatetimeBasedCursor
       cursor_field: last_issue_update_time
       is_client_side_incremental: true
+      # insight.lastIssueUpdateTime is ISO (the first format), but this cursor
+      # also has to parse values flowing through the parent_state of its child
+      # substreams (jira_issue / jira_issue_keys serialise their cursor as
+      # "%Y-%m-%d %H:%M"). With only the ISO format here, reading such a value
+      # crashed the stream: "No format in ['%Y-%m-%dT%H:%M:%S.%f%z'] matching
+      # 2026-06-15 02:00". Accept all three formats the issue streams use so
+      # parent/child cursor values are mutually parseable.
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%d %H:%M"
+        - "%Y-%m-%d"
       datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
       start_datetime:
         type: MinMaxDatetime
@@ -894,6 +903,18 @@ streams:
         - "%Y-%m-%d"
       datetime_format: "%Y-%m-%d %H:%M"
       cursor_granularity: PT1M
+      # Force a single global cursor instead of per-partition state. Since
+      # #1316 made this stream a substream of jira_project_discovery, the CDK
+      # kept per-partition cursor state keyed by project (211 partitions, under
+      # the 10k cap that auto-switches to global). That per-partition state did
+      # NOT persist (committed as `states: []`), so every sync re-pulled all
+      # projects from jira_start_date — ~2.5h, 2M+ records, Argo poll timed out
+      # before dbt. The global cursor is one max(updated) across all projects;
+      # it persists as `{"state":{"updated":...}}` (verified: resume read after
+      # a 5100-record first run pulled only 235). The issue substreams
+      # (history/comments/worklogs) already use a global cursor because their
+      # per-issue partition count exceeds the 10k cap.
+      global_substream_cursor: true
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ config.get('jira_start_date', '2020-01-01') }}"
@@ -8082,6 +8103,18 @@ streams:
         - "%Y-%m-%d"
       datetime_format: "%Y-%m-%d %H:%M"
       cursor_granularity: PT1M
+      # Force a single global cursor instead of per-partition state. Since
+      # #1316 made this stream a substream of jira_project_discovery, the CDK
+      # kept per-partition cursor state keyed by project (211 partitions, under
+      # the 10k cap that auto-switches to global). That per-partition state did
+      # NOT persist (committed as `states: []`), so every sync re-pulled all
+      # projects from jira_start_date — ~2.5h, 2M+ records, Argo poll timed out
+      # before dbt. The global cursor is one max(updated) across all projects;
+      # it persists as `{"state":{"updated":...}}` (verified: resume read after
+      # a 5100-record first run pulled only 235). The issue substreams
+      # (history/comments/worklogs) already use a global cursor because their
+      # per-issue partition count exceeds the 10k cap.
+      global_substream_cursor: true
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ config.get('jira_start_date', '2020-01-01') }}"

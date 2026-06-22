@@ -1,0 +1,76 @@
+version: 2
+
+sources:
+  - name: bronze_zendesk
+    schema: bronze_zendesk
+    description: Raw Zendesk records landed by the declarative connector (ADR-0002 RMT-promoted via zendesk__bronze_promoted).
+    tables:
+      - name: support_tickets
+        description: Ticket snapshot (current state). Context only — not for activity attribution.
+      - name: support_agents
+        description: Internal agents/admins. Carries the email used as the person FK.
+      - name: zendesk_satisfaction_ratings
+        description: CSAT ratings. Attributed to the ticket assignee (CSAT exception, PRD §4).
+      - name: support_ticket_events
+        description: >
+          Ticket Audits stream (actor-attributed). One row per audit with
+          author_id (the actor) + the nested events[] array as JSON;
+          zendesk__support_event explodes + classifies it.
+
+models:
+  - name: zendesk__support_agent
+    description: Zendesk slice of the cross-vendor support-agent dimension (agent → person via lower(email)). Tagged silver:dim_support_agent.
+    columns:
+      - name: unique_key
+        tests: [unique, not_null]
+      - name: person_key
+        description: lower(email) → FK insight.people. Never blank (blank-email agents are filtered).
+        tests:
+          - not_null
+      - name: data_source
+        tests:
+          - accepted_values: { values: ['zendesk'] }
+
+  - name: zendesk__support_ticket
+    description: Zendesk slice of the cross-vendor ticket dimension. CONTEXT ONLY — assignee_person_key is a snapshot, not for attribution. Tagged silver:dim_support_ticket.
+    columns:
+      - name: unique_key
+        tests: [unique, not_null]
+      - name: data_source
+        tests:
+          - accepted_values: { values: ['zendesk'] }
+
+  - name: zendesk__support_activity
+    description: >
+      Person × date support-activity rollup — the signal that sits next to
+      Collaboration metrics. updates/public/private/solved counted from the
+      audit events (actor-attributed) + CSAT (assignee-attributed); only
+      kb_articles_created is honest NULL (no Guide stream yet). Tagged
+      silver:class_support_activity.
+    columns:
+      - name: unique_key
+        tests: [unique, not_null]
+      - name: person_key
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - accepted_values: { values: ['zendesk'] }
+
+  - name: zendesk__support_event
+    description: >
+      EVENT-GRAIN actor-attributed audit fact — one row per classified Ticket
+      Audit event (public_comment / private_comment / solved / update),
+      exploded from support_ticket_events.events[]. Source of the activity
+      counts in zendesk__support_activity.
+    columns:
+      - name: unique_key
+        tests: [unique, not_null]
+      - name: actor_person_key
+        description: lower(email) of the audit author (the actor) → FK insight.people.
+        tests: [not_null]
+      - name: event_type
+        tests:
+          - accepted_values: { values: ['public_comment', 'private_comment', 'solved', 'update'] }
+      - name: data_source
+        tests:
+          - accepted_values: { values: ['zendesk'] }

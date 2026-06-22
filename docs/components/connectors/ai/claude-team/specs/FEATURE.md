@@ -10,7 +10,9 @@
 
 Bring up the `claude-team` declarative Airbyte source against the
 customer-deployed proxy (see PRD §1.2 and DESIGN §1). Land four
-streams in `bronze_claude_team.*`. No Silver, no Gold.
+streams in `bronze_claude_team.*`. (Bronze MVP scope — Silver/Gold
+landed later: `class_ai_dev_usage` per INSIGHT-458 and `class_ai_overage`
+/ Gold `cc_overage` per descriptor 1.3.0; see DESIGN §4.4.)
 
 ## 2. Deliverables
 

@@ -5,7 +5,11 @@
     schema='staging',
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
-    settings={'allow_nullable_key': 1},
+    settings={
+        'allow_nullable_key': 1,
+        'max_bytes_before_external_group_by': 2000000000,
+        'max_bytes_before_external_sort': 2000000000,
+    },
     tags=['staging', 'jira']
 ) }}
 
@@ -42,11 +46,16 @@ WITH issue AS (
         -- so take the raw JSON and let the UNION branch parse it as Array(String).
         JSONExtractRaw(custom_fields_json, 'labels')                 AS labels_raw,
         due_date
-    FROM (
-        SELECT * FROM {{ source('bronze_jira', 'jira_issue') }}
-        ORDER BY _airbyte_extracted_at DESC
-        LIMIT 1 BY source_id, jira_id
-    ) AS ji
+    -- Read + dedup in ONE level, projecting only the small extracted columns.
+    -- The previous form `SELECT * ... ORDER BY ... LIMIT 1 BY` carried the
+    -- ~2 MB custom_fields_json of every row (≈140k issues on this instance)
+    -- through the sort buffer, blowing past ClickHouse's 7.2 GiB query memory
+    -- limit (code 241 MEMORY_LIMIT_EXCEEDED) — the model never built. Here the
+    -- JSON is read per row to compute the projections but only the extracted
+    -- (small) columns enter the ORDER BY / LIMIT 1 BY, so peak memory is tiny.
+    FROM {{ source('bronze_jira', 'jira_issue') }}
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY source_id, jira_id
 )
 
 SELECT

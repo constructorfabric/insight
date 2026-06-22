@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["unique_key"],
+  "properties": {
+    "unique_key": { "type": "string" },
+    "tenant_id": { "type": ["string", "null"] },
+    "source_id": { "type": ["string", "null"] },
+    "data_source": { "type": ["string", "null"] },
+    "collected_at": { "type": ["string", "null"] },
+    "project_id": { "type": ["integer", "null"] },
+    "commit_sha": { "type": ["string", "null"] },
+    "old_path": { "type": ["string", "null"] },
+    "new_path": { "type": ["string", "null"] },
+    "new_file": { "type": ["boolean", "null"] },
+    "deleted_file": { "type": ["boolean", "null"] },
+    "renamed_file": { "type": ["boolean", "null"] },
+    "lines_added": { "type": ["integer", "null"] },
+    "lines_removed": { "type": ["integer", "null"] },
+    "diff_truncated": { "type": ["boolean", "null"] }
+  }
+}

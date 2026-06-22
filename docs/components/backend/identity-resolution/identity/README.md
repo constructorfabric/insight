@@ -15,7 +15,8 @@ and the (forthcoming) reconciliation service.
 
 | Path | Command |
 |---|---|
-| Dev (local kind) | `./dev-up.sh --env local backend` — builds `insight-identity:local`, loads into kind, installs umbrella with `identity.deploy=true`. |
+| Dev (Docker Compose, default) | `./dev-compose.sh up` runs the identity service in a container alongside MariaDB etc. Build the service image with `./dev-compose.sh build identity`. No Kind, no umbrella chart. |
+| Dev (Kubernetes via gitops) | `cd deploy/gitops && make deploy ENV=local` on a local Kind/OrbStack cluster installs the umbrella chart, which includes identity-resolution when `identity.deploy=true`. |
 | Production / staging | Standard umbrella install. Override `identity.deploy=true` and `identity.image.tag=<release>` in your values overlay. |
 | Standalone (no umbrella) | `helm install identity ./src/backend/services/identity/helm` with a pre-created `insight-identity-config` Secret. |
 
