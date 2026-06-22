@@ -1,0 +1,39 @@
+version: 2
+
+sources:
+  - name: bronze_gitlab
+    schema: bronze_gitlab
+    tables:
+      - name: projects
+      - name: branches
+      - name: commits
+      - name: commit_file_changes
+      - name: merge_requests
+      - name: merge_request_commits
+      - name: merge_request_notes
+      - name: merge_request_approvals
+
+models:
+  - name: gitlab__repositories
+    description: "GitLab projects -> staging, feeds class_git_repositories"
+
+  - name: gitlab__repository_branches
+    description: "GitLab branches -> staging, feeds class_git_repository_branches"
+
+  - name: gitlab__commits
+    description: "GitLab commits -> staging, feeds class_git_commits"
+
+  - name: gitlab__file_changes
+    description: "GitLab commit file changes -> staging, feeds class_git_file_changes"
+
+  - name: gitlab__pull_requests
+    description: "GitLab merge requests -> staging, feeds class_git_pull_requests"
+
+  - name: gitlab__pull_requests_comments
+    description: "GitLab merge-request notes (human, non-system) -> staging, feeds class_git_pull_requests_comments"
+
+  - name: gitlab__pull_requests_commits
+    description: "GitLab merge-request commits -> staging, feeds class_git_pull_requests_commits"
+
+  - name: gitlab__pull_requests_reviewers
+    description: "GitLab merge-request approvals -> staging, feeds class_git_pull_requests_reviewers"

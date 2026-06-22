@@ -1,5 +1,5 @@
 name: hubspot
-version: "2.3.0"
+version: "2.4.0"
 type: cdk
 schedule: "0 6 * * *"
 workflow: sync
@@ -11,7 +11,7 @@ images:
     name: source-hubspot-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-hubspot-insight:2026.06.11.17.14-47b6ded"
+    image: "ghcr.io/constructorfabric/source-hubspot-insight:2026.06.17.08.56-25bb740"
 dbt_select: "tag:hubspot+"
 connection:
   namespace: "bronze_hubspot"
