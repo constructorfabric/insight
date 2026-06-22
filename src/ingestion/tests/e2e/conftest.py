@@ -179,7 +179,7 @@ def ch_seeder(ch_migrations_applied: SessionConfig) -> CHSeeder:
 # ----------------------------------------------------------------------
 
 
-_FIXTURES_ROOT = Path(__file__).parent / "fixtures"
+_SPECS_ROOT = Path(__file__).parent / "specs"
 
 
 def pytest_collection_modifyitems(config, items):
@@ -190,7 +190,7 @@ def pytest_collection_modifyitems(config, items):
 def pytest_generate_tests(metafunc):
     """Generate one `test_fixture` invocation per discovered `*.test.yaml`."""
     if "test_yaml" in metafunc.fixturenames and metafunc.function.__name__ == "test_fixture":
-        paths = discover_tests(_FIXTURES_ROOT)
+        paths = discover_tests(_SPECS_ROOT)
         metafunc.parametrize(
             "test_path",
             paths,

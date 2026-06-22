@@ -65,7 +65,7 @@ e2e/
 │   └── config.py               # session config (ports, random creds)
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
-├── fixtures/                   # individual fixture folders go here
+├── specs/                      # <name>.test.yaml + schemas/ + templates/
 └── meta/                       # framework's own smoke tests
     └── test_session_smoke.py
 ```
@@ -88,7 +88,7 @@ These ports avoid conflict with `dev-up.sh` (which uses 8123 / 3306) and the dbt
 
 ## `cases` / `expect` (declarative YAML rig)
 
-Tests are `fixtures/**/*.test.yaml`; each `case` POSTs a batch to `/v1/metrics/queries` and checks an `expect` list of rules. A rule selects with `in` (batch result by `id`) + a Mongo-style `find`, then asserts via `equal` (subset of fields, exact / `null`) or `assert` (a CEL boolean). See the [yaml-rig FEATURE](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md) and the `/metric-e2e-test` skill.
+Tests are `specs/**/*.test.yaml`; each `case` POSTs a batch to `/v1/metrics/queries` and checks an `expect` list of rules. A rule selects with `in` (batch result by `id`) + a Mongo-style `find`, then asserts via `equal` (subset of fields, exact / `null`) or `assert` (a CEL boolean). See the [yaml-rig FEATURE](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md) and the `/metric-e2e-test` skill.
 
 Variables available in an `assert` (CEL) expression — assembled in `e2e_lib/expect_engine.py::evaluate_case` (the `bindings` dict), converted to CEL in `_eval_cel`:
 
@@ -101,3 +101,30 @@ Variables available in an `assert` (CEL) expression — assembled in `e2e_lib/ex
 | `status` | the batch HTTP status code (int) | always |
 
 Numbers under `it`/`items`/`result`/`results` are float-coerced (CEL won't compare `int` to `double`) — compare metric values with float literals (`it.value > 39.5`); `status` and `size(...)` stay `int`. Use `equal` for exact / `null` comparisons.
+
+### What is CEL
+
+`assert` expressions are written in **CEL — the [Common Expression Language](https://github.com/google/cel-spec)** (the same expression language used by Kubernetes admission policies and Envoy). It is a small, side-effect-free language for boolean/value expressions over structured data: no statements, no loops, no I/O — an expression is evaluated against the bindings above and must return a boolean. The rig evaluates it with the [`cel-python`](https://pypi.org/project/cel-python/) library (`celpy`) in `e2e_lib/expect_engine.py::_eval_cel`.
+
+Operators: `== != < <= > >=`, `&& || !`, `+ - * / %`, `in`, ternary `cond ? a : b`. Field/index access: `it.value`, `result.status`, `items[0]`. Useful built-ins & macros: `size(x)`, `has(x.field)`, `x.exists(e, <pred>)`, `x.all(e, <pred>)`, `x.filter(e, <pred>)`, `x.map(e, <expr>)`, string `.startsWith()/.endsWith()/.contains()/.matches(re)`.
+
+Examples:
+
+```yaml
+- assert: "status == 200"                                  # batch HTTP code
+- in: collaboration
+  assert: "result.status == 'ok'"                           # this query's own status
+- in: collaboration
+  assert: "size(items) == 20"                               # row count
+- in: collaboration
+  find: { metric_key: m365_emails_sent }
+  assert: "it.value > 39.5 && it.value < 40.5"              # float window (avoids exact-float compare)
+- in: collaboration
+  find: { metric_key: slack_dm_ratio }
+  assert: "it.value == null"                                # explicit null
+- assert: "results.exists(r, r.status == 'error')"          # any query in the batch failed?
+- in: collaboration
+  assert: "items.all(r, r.range_min <= r.value)"            # invariant across all rows
+```
+
+Prefer `equal` for exact / `null` checks (it uses Python `==`, so `40 == 40.0` and `value: null` work directly); reach for `assert` when you need inequalities, counts, or cross-row predicates.

@@ -20,7 +20,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 include = ["e2e_lib*"]
-exclude = ["fixtures*", "compose*", "seed*", "meta*"]
+exclude = ["specs*", "compose*", "seed*", "meta*"]
 
 [build-system]
 requires = ["setuptools>=68"]

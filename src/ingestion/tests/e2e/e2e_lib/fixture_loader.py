@@ -53,12 +53,12 @@ class TestYaml:
         return out
 
 
-def discover_tests(fixtures_root: Path) -> list[Path]:
-    """Every `**/*.test.yaml` under fixtures/. Shared schemas/templates are excluded
+def discover_tests(specs_root: Path) -> list[Path]:
+    """Every `**/*.test.yaml` under specs/. Shared schemas/templates are excluded
     by the suffix; nothing else is collected as a test."""
-    if not fixtures_root.is_dir():
+    if not specs_root.is_dir():
         return []
-    return sorted(fixtures_root.rglob("*.test.yaml"))
+    return sorted(specs_root.rglob("*.test.yaml"))
 
 
 def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
@@ -107,9 +107,9 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
 
 
 def _find_schemas_dir(test_path: Path) -> Path:
-    """Walk up to the `fixtures/` dir and use its `schemas/` subdir."""
+    """Walk up to the `specs/` dir and use its `schemas/` subdir."""
     for parent in test_path.parents:
-        if parent.name == "fixtures":
+        if parent.name == "specs":
             return parent / "schemas"
         if (parent / "schemas").is_dir():
             return parent / "schemas"

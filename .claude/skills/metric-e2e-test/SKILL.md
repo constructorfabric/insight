@@ -1,6 +1,6 @@
 ---
 name: metric-e2e-test
-description: "Author and validate declarative YAML e2e tests for analytics metrics (src/ingestion/tests/e2e/fixtures/*.test.yaml). Use when asked to write/scaffold/validate an e2e test for a metric, seed bronze data for a test, add a fixture for a dashboard metric, or check a *.test.yaml. Covers schemas/, templates/, $ref+sibling composition, bronze records with duplicates, the batch endpoint POST /v1/metrics/queries, and expect rules (in / mongo-style find / equal subset / CEL assert)."
+description: "Author and validate declarative YAML e2e tests for analytics metrics (src/ingestion/tests/e2e/specs/*.test.yaml). Use when asked to write/scaffold/validate an e2e test for a metric, seed bronze data for a test, add a fixture for a dashboard metric, or check a *.test.yaml. Covers schemas/, templates/, $ref+sibling composition, bronze records with duplicates, the batch endpoint POST /v1/metrics/queries, and expect rules (in / mongo-style find / equal subset / CEL assert)."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
@@ -28,7 +28,7 @@ If the spec and this file disagree, the spec wins — derive behavior from it.
 ## File layout
 
 ```
-src/ingestion/tests/e2e/fixtures/
+src/ingestion/tests/e2e/specs/
   schemas/<db>.<table>.yaml      # one JSON schema per bronze table (all real columns)
   templates/<group>.yaml         # reusable records (people, m365_email, …)
   <name>.test.yaml               # the test (discovered by the *.test.yaml suffix)

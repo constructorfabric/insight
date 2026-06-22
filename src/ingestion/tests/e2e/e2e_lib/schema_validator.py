@@ -2,7 +2,7 @@
 
 Implements the post-step of `cpt-bronze-to-api-e2e-algo-yaml-resolve-refs`
 (DoD `cpt-bronze-to-api-e2e-dod-yaml-schema-resolution`). A schema lives in
-`fixtures/schemas/<table>.yaml` under a top-level `schemas: { <table>: {...} }`.
+`specs/schemas/<table>.yaml` under a top-level `schemas: { <table>: {...} }`.
 After `$ref` resolution a bronze record is padded with every missing schema
 property as `null`, then validated; `additionalProperties:false` catches a
 misspelled column name.
