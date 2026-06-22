@@ -9,10 +9,10 @@ to. ClickHouse is external (out-of-chart L2 — gitops L2, Constructor
 Platform, managed warehouse, …); this Job dials `clickhouse.host`
 directly and waits for `/ping` to succeed before running the DDL.
 
-ClickHouse auth model: the service user (`clickhouse.username`, default
-`insight`) is the bootstrap user — there is no separate root in this
-chart's contract. The external CH MUST grant the service user CREATE
-DATABASE — that's the operator-side contract.
+ClickHouse auth model: the service user (`clickhouse.username`, which the
+operator MUST set — no default) is the bootstrap user; there is no
+separate root in this chart's contract. The external CH MUST grant the
+service user CREATE DATABASE — that's the operator-side contract.
 
 Hook timing: `pre-install,pre-upgrade`. Mirrors the MariaDB Hook —
 the DB must exist BEFORE application pods that read it (analytics-api,

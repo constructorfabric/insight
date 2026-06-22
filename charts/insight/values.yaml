@@ -241,6 +241,8 @@ ingestion:
 #
 # ClickHouse, MariaDB, Redis and Redpanda are NOT bundled by this chart.
 # They run as separate releases in `insight-infra` (gitops `make system-*`).
+# See CONTRIBUTING.md ("Deployment paths" → Kubernetes) and
+# docs/components/deployment/specs/DESIGN.md for the layered L0/L2/L3 model.
 # The blocks below are pure WIRING — the host/port/creds the app services
 # and the pre-install init-DB Hook Jobs use to reach them:
 #   <dep>.host / .port     — connection target (host MUST be set)

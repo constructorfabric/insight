@@ -56,7 +56,7 @@ Contract per dep (all infra is external — out-of-chart L2):
 {{- end -}}
 
 {{- define "insight.clickhouse.url" -}}
-http://{{ include "insight.clickhouse.host" . }}:{{ include "insight.clickhouse.port" . }}
+{{ include "insight.clickhouse.protocol" . }}://{{ include "insight.clickhouse.host" . }}:{{ include "insight.clickhouse.port" . }}
 {{- end -}}
 
 {{- define "insight.clickhouse.database" -}}
