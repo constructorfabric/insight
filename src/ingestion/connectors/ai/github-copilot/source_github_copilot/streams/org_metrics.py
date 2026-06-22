@@ -35,10 +35,12 @@ class CopilotOrgMetricsStream(CopilotReportsStream, IncrementalMixin):
     def __init__(
         self,
         start_date: Optional[str] = None,
+        lookback_days: int = 7,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._start_date = start_date or self._default_start_date()
+        self._lookback_days = max(int(lookback_days), 0)
         self._state: Mapping[str, Any] = {}
 
     @property
@@ -77,7 +79,18 @@ class CopilotOrgMetricsStream(CopilotReportsStream, IncrementalMixin):
         # Prefer in-memory state (advanced per-slice in read_records below) over
         # stream_state argument — see Major #5 fix in user_metrics.py.
         cursor = (self._state or {}).get(self.cursor_field) or (stream_state or {}).get(self.cursor_field)
-        start = self._next_day(cursor) if cursor else self._start_date
+        if cursor:
+            # Re-fetch a trailing lookback window instead of starting at cursor+1.
+            # Copilot daily reports lag (often >24-48h; weekends later) and can be
+            # restated. Starting at cursor+1 would PERMANENTLY skip a day that
+            # returned 204 because its report wasn't ready yet (the cursor still
+            # advances past it). Re-querying the last `lookback_days` keeps the
+            # recent tail self-healing; RMT dedup on unique_key makes the
+            # re-delivery idempotent. (cf. Zendesk lookback_window / Cursor resync.)
+            lb = (date.fromisoformat(cursor) - timedelta(days=self._lookback_days)).isoformat()
+            start = max(lb, self._start_date)  # ISO dates compare chronologically as strings
+        else:
+            start = self._start_date
         end = yesterday_utc()
 
         try:
@@ -90,10 +103,6 @@ class CopilotOrgMetricsStream(CopilotReportsStream, IncrementalMixin):
         while current <= stop:
             yield {"day": current.isoformat()}
             current += timedelta(days=1)
-
-    @staticmethod
-    def _next_day(d: str) -> str:
-        return (date.fromisoformat(d) + timedelta(days=1)).isoformat()
 
     def _record_pk_parts(self, record: dict, day: str) -> List[str]:
         """unique_key composition: {tenant}-{source}-{day}.

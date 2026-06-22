@@ -23,7 +23,7 @@ INSIGHT_NS="${INSIGHT_NAMESPACE}"
 echo "=== Verifying umbrella install ==="
 if ! kubectl get -n "$INSIGHT_NS" statefulset/insight-clickhouse >/dev/null 2>&1; then
   echo "ERROR: insight-clickhouse StatefulSet not found in namespace '$INSIGHT_NS'" >&2
-  echo "  Run: ./dev-up.sh --env local  (or your environment installer)" >&2
+  echo "  Run: ./dev-compose.sh up  (or: cd deploy/gitops && make deploy ENV=local)" >&2
   exit 1
 fi
 if ! kubectl get -n "$INSIGHT_NS" secret insight-db-creds >/dev/null 2>&1; then

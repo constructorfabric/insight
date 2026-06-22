@@ -35,8 +35,6 @@ waitForMariadb:
   image:
     repository: busybox
     tag: "1.36"
-  host: ""          # empty → "{{ .Release.Name }}-mariadb"; set for external MariaDB
-  port: 3306
   timeoutSeconds: 180
 
 livenessProbe:

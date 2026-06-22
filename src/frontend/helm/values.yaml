@@ -27,6 +27,15 @@ oidc:
   # to start otherwise.
   scopes: ""
 
+# Dev-impersonation escape hatch. When set (and OIDC is not configured),
+# the entrypoint writes a runtime `oidc-config.js` carrying
+# `window.__DEV_CONFIG__={devUserEmail:"..."}`; the FE then builds an
+# unsigned-JWT bearer for that email on every /api/* call. Mutually
+# exclusive with `oidc.issuer` / `oidc.clientId` — the entrypoint
+# refuses to start if both are set (so a misconfigured prod can't
+# silently impersonate everyone as this address).
+devUserEmail: ""
+
 resources:
   requests:
     cpu: 50m
