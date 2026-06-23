@@ -1,12 +1,9 @@
 name: Backend Lint & Test
 
 on:
-  # PR-only: every change touching the backend must pass these checks before
-  # it lands. Re-running the same suite on the merge commit just burns minutes
-  # — the PR already proved the tree is green, and branch protection ensures
-  # nothing reaches `main` without that PR. Use workflow_dispatch for an
-  # explicit manual rerun against `main` (e.g. after a runner-image rollover
-  # that might shift behaviour).
+  # PR-only gate (+ manual dispatch). Coverage is reported self-contained via the
+  # GitHub Actions job summary — no external service, and no PR comment (fork PRs
+  # only get a read-only token, so a comment post 403s). Works on any plan.
   pull_request:
     branches: [main]
     paths:
@@ -14,9 +11,20 @@ on:
       - ".github/workflows/backend-checks.yml"
   workflow_dispatch:
 
+# A new push obsoletes any run still in flight for the same ref — cancel it so a
+# rebase/force-push doesn't leave a slow instrumented build burning minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+
+# Coverage goes to the job summary only (no PR comment), so no write scopes are
+# needed — read-only is enough.
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -35,7 +43,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95.0"
-          components: rustfmt, clippy
+          # llvm-tools-preview ships the LLVM coverage tooling cargo-llvm-cov drives.
+          components: rustfmt, clippy, llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -47,8 +56,36 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features
 
-      - name: Run tests
-        run: cargo test --all
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      # cargo-llvm-cov runs the suite under coverage instrumentation (this
+      # replaces the plain `cargo test`, so tests still run) and emits a single
+      # Cobertura report.
+      - name: Run tests with coverage
+        run: |
+          cargo llvm-cov --no-report --all-features --workspace
+          cargo llvm-cov report --cobertura --output-path cobertura.xml
+
+      # Cobertura -> markdown summary (no HTML, no .NET SDK). This is a Docker
+      # action that runs at the workspace root, so the path is repo-root-relative
+      # and code-coverage-results.md is written there.
+      - name: Coverage summary
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: src/backend/cobertura.xml
+          format: markdown
+          output: both
+          badge: true
+          hide_complexity: true
+          fail_below_min: true # gate: fail the job if overall line rate < 60% (lower threshold)
+          thresholds: "60 80"
+
+      - name: Coverage to job summary
+        if: always()
+        run: |
+          f="$GITHUB_WORKSPACE/code-coverage-results.md"
+          if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY";
+          else echo "_No coverage summary produced (tests likely failed before coverage ran)._" >> "$GITHUB_STEP_SUMMARY"; fi
 
   dotnet-identity:
     name: .NET — Identity Service Build & Test
@@ -82,8 +119,36 @@ jobs:
         run: >
           dotnet test tests/Insight.Identity.Tests.Unit/Insight.Identity.Tests.Unit.csproj
           --no-build --configuration Release
+          --collect:"XPlat Code Coverage" --results-directory ./coverage
 
       - name: Integration tests (Testcontainers MariaDB)
         run: >
           dotnet test tests/Insight.Identity.Tests.Integration/Insight.Identity.Tests.Integration.csproj
           --no-build --configuration Release
+          --collect:"XPlat Code Coverage" --results-directory ./coverage
+
+      # The two test runs each emit a Cobertura file for the same assemblies;
+      # merge them into one report (CodeCoverageSummary takes a single file).
+      - name: Merge coverage
+        run: |
+          dotnet tool install --global dotnet-coverage
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet-coverage merge -f cobertura -o merged.cobertura.xml coverage/*/coverage.cobertura.xml
+
+      - name: Coverage summary
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: src/backend/services/identity/merged.cobertura.xml
+          format: markdown
+          output: both
+          badge: true
+          hide_complexity: true
+          fail_below_min: true # gate: fail the job if overall line rate < 60% (lower threshold)
+          thresholds: "60 80"
+
+      - name: Coverage to job summary
+        if: always()
+        run: |
+          f="$GITHUB_WORKSPACE/code-coverage-results.md"
+          if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY";
+          else echo "_No coverage summary produced (tests likely failed before coverage ran)._" >> "$GITHUB_STEP_SUMMARY"; fi
