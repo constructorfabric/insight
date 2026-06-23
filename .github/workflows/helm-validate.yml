@@ -1,0 +1,124 @@
+# Helm chart validation — MANDATORY, BLOCKING.
+#
+# Required status check on `main` (see scripts/ci/enforce-quality-gates.sh).
+#
+# Exists to make two real incident classes impossible to merge:
+#   1. appVersion computed as "---" (fixed in #1303) — guarded by a strict
+#      format check on every Chart.yaml.
+#   2. Charts that lint/template only on the happy path — guarded by
+#      `helm lint --strict` + a full `helm template` render of the umbrella.
+
+name: Helm Validate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "charts/**"
+      - "src/backend/services/*/helm/**"
+      - "src/frontend/helm/**"
+      - "helmfile/charts/**"
+      - ".github/workflows/helm-validate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KUBECONFORM_VERSION: v0.6.7
+  KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
+
+jobs:
+  helm-validate:
+    name: helm-validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.14.0
+
+      - name: Guard appVersion / version format in every Chart.yaml
+        run: |
+          set -euo pipefail
+          rc=0
+          while IFS= read -r chart; do
+            # vendored upstream subcharts (e.g. clickhouse 25.3) carry their own non-semver versions — not ours to enforce
+            case "$chart" in helmfile/charts/*) continue ;; esac
+            app_version=$(yq -r '.appVersion // ""' "$chart")
+            version=$(yq -r '.version // ""' "$chart")
+            # version must be plain semver X.Y.Z — every chart uses that today
+            # (0.1.0 / 0.1.72). Widen here if we ever ship a pre-release suffix.
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error file=$chart::invalid chart version '$version' (expected X.Y.Z)"; rc=1
+            fi
+            # appVersion (when present) must be the release BUILD TAG that
+            # publish-chart stamps: YYYY.MM.DD.HH.MM-<sha7>. This is the only
+            # form our charts use; the check exists to reject the "---"
+            # placeholder (#1303) and anything else that isn't a real build tag.
+            if [[ -n "$app_version" ]] && \
+               ! [[ "$app_version" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7}$ ]]; then
+              echo "::error file=$chart::invalid appVersion '$app_version' (expected build tag YYYY.MM.DD.HH.MM-<sha7>; the '---' bug class)"; rc=1
+            fi
+          done < <(git ls-files '*/Chart.yaml' 'Chart.yaml')
+          exit $rc
+
+      - name: Forbid :latest image tags in chart values
+        run: |
+          set -euo pipefail
+          rc=0
+          while IFS= read -r f; do
+            # Strip comments first so commented examples don't trip the guard.
+            clean=$(sed -E 's/[[:space:]]#.*$//; s/^[[:space:]]*#.*$//' "$f")
+            # explicit :latest on an image reference (frontend blank-page defect class)
+            if grep -nE '^[[:space:]]*image:[[:space:]]*.*:latest("?[[:space:]]*)$' <<<"$clean"; then
+              echo "::error file=$f::':latest' image reference (frontend blank-page defect class)"; rc=1
+            fi
+            # NOTE: an empty `tag: ""` in a base values.yaml is the repo's
+            # deliberate convention — the operator / release-train MUST supply the
+            # tag at deploy (CI renders supply it via ci/ci-values.yaml). So an
+            # empty tag is "must override", not a floating ref, and is NOT flagged
+            # here; the umbrella fail-fasts if the operator forgets to set it.
+          done < <(git ls-files 'charts/**/values.yaml' 'src/**/helm/values.yaml')
+          exit $rc
+
+      - name: helm lint (strict) — umbrella and all local subcharts
+        run: |
+          set -euo pipefail
+          helm dependency update charts/insight
+          helm lint --strict charts/insight
+          # helmfile/ was removed (#1431); only the umbrella + service subcharts
+          # remain. `|| continue` so an unmatched glob's false test can't become
+          # the loop's (and the step's) exit status under `set -e`.
+          for c in src/backend/services/*/helm src/frontend/helm; do
+            [ -f "$c/Chart.yaml" ] || continue
+            helm lint --strict "$c"
+          done
+
+      - name: helm template — full render must succeed with CI values
+        run: |
+          set -euo pipefail
+          # The umbrella fail-fasts without required inputs (infra image tags,
+          # DB names, tenant) — by design, not a bug, so a bare render can't
+          # succeed. ci/ci-values.yaml supplies the minimal set a real deploy
+          # would, giving the render + kubeconform gate valid manifests to
+          # check. These are render-only placeholders, not deploy defaults.
+          helm template insight charts/insight \
+            --namespace insight \
+            -f charts/insight/ci/ci-values.yaml \
+            > /tmp/rendered.yaml
+          echo "rendered $(grep -c '^kind:' /tmp/rendered.yaml) objects"
+
+      - name: kubeconform — rendered manifests must be valid Kubernetes
+        run: |
+          set -euo pipefail
+          # Verified download: fetch to disk, check SHA256, then extract & run.
+          curl -sSL -o kubeconform.tgz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tgz" | sha256sum -c -
+          tar xzf kubeconform.tgz kubeconform
+          ./kubeconform -strict -ignore-missing-schemas -summary /tmp/rendered.yaml

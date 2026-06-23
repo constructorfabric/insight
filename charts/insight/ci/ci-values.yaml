@@ -1,0 +1,59 @@
+# Minimal values that let `helm template` render the umbrella in CI.
+#
+# The chart intentionally leaves infra image tags, DB names and the tenant
+# UNSET (each marked "MUST be set") and fail-fasts without them — that is
+# correct hygiene, not a bug, so a bare `helm template` cannot succeed. This
+# file supplies the smallest set a real deploy would, purely so the render /
+# kubeconform gate has valid manifests to check. These are NOT deploy defaults.
+global:
+  tenantDefaultId: "11111111-1111-1111-1111-111111111111"
+
+ingestion:
+  reconcile:
+    tenantId: "ci-validate"
+
+clickhouse:
+  # Render-only placeholder: the chart leaves host UNSET ("MUST be set") and
+  # fail-fasts, so supply an in-cluster FQDN purely so the umbrella renders.
+  host: "clickhouse.insight.svc.cluster.local"
+  database: "insight"
+  username: "default"
+  image:
+    tag: "25.3"
+
+mariadb:
+  # Render-only placeholder (host is UNSET / "MUST be set" in the chart).
+  host: "mariadb.insight.svc.cluster.local"
+  database: "identity"
+  username: "identity"
+  # The bitnami subchart creates the user from auth.*; the umbrella validator
+  # requires these match the umbrella's mariadb.username / mariadb.database.
+  auth:
+    username: "identity"
+    database: "identity"
+
+# Render-only placeholders for the remaining infra hosts the chart leaves UNSET.
+redis:
+  host: "redis.insight.svc.cluster.local"
+
+redpanda:
+  brokers: "redpanda.insight.svc.cluster.local:9093"
+
+# Render without requiring real OIDC wiring (the validator demands all four
+# OIDC fields when auth is on); CI only needs the manifests to render + validate.
+apiGateway:
+  authDisabled: true
+  image:
+    tag: "0.0.0-ci"
+
+analyticsApi:
+  image:
+    tag: "0.0.0-ci"
+
+identity:
+  image:
+    tag: "0.0.0-ci"
+
+frontend:
+  image:
+    tag: "0.0.0-ci"
