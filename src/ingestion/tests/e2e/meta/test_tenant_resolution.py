@@ -9,17 +9,26 @@ resolving against another tenant's data.
 
 This matrix is the e2e counterpart to the Rust unit parity tests in
 `analytics-api/src/api/tenant_resolution_tests.rs`: it confirms the middleware
-ACCEPTS a resolvable tenant and REJECTS every unresolvable input on EVERY read
-route that traverses the tenant middleware — the three data endpoints:
+ACCEPTS a resolvable tenant and REJECTS every unresolvable input on the three
+tenant-scoped data read routes:
 
 - `POST /v1/metrics/{id}/query`  (single-metric read)
 - `POST /v1/metrics/queries`     (batch read)
 - `POST /v1/catalog/get_metrics` (metric-catalog read)
 
-`/health` is deliberately NOT here: it is a liveness probe mounted OUTSIDE the
-tenant middleware, so it returns 200 with no tenant by design (its own check
-lives in test_session_smoke.py). Asserting it rejects an unresolved tenant would
-be wrong — it never sees the middleware.
+TWO instances, because rejection is config-dependent (it mirrors the parity
+tests' single-tenant vs multi-tenant split):
+- ACCEPT cases run against the default `analytics_api` (a default tenant is
+  configured, so a valid header is admitted);
+- REJECT cases run against `analytics_api_no_default` (NO default tenant), where
+  an unresolvable tenant has nothing to fall back to and gets the canonical 400.
+  Against the default instance the reject path is unobservable — an absent tenant
+  just resolves to the default — which is why a second instance exists.
+
+`/health` is excluded from the matrix: it sits behind the same middleware, but
+it is a liveness probe, not a tenant-scoped data route, so whether a probe should
+require a tenant is a separate question; its own check lives in
+test_session_smoke.py.
 
 It covers only the inputs that are actually transmittable over HTTP. The
 whitespace-padded-accept and whitespace-only-reject cases — which pin
@@ -177,42 +186,42 @@ def test_valid_tenant_is_accepted_on_every_route(analytics_api: AnalyticsApiProc
 # --------------------------------------------------------------------------- #
 
 
-def test_missing_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+def test_missing_tenant_header_is_rejected(analytics_api_no_default: AnalyticsApiProcess) -> None:
     """No `X-Insight-Tenant-Id` header → `read_session_tenant` has no first
-    value → None → unresolved → 400."""
-    _assert_tenant_unresolved_everywhere(analytics_api, {}, "missing header")
+    value → None → unresolved → 400 (no default to fall back to)."""
+    _assert_tenant_unresolved_everywhere(analytics_api_no_default, {}, "missing header")
 
 
-def test_empty_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+def test_empty_tenant_header_is_rejected(analytics_api_no_default: AnalyticsApiProcess) -> None:
     """Empty header value → `Uuid::parse_str("")` fails → None → 400."""
     _assert_tenant_unresolved_everywhere(
-        analytics_api, {TENANT_HEADER: ""}, "empty header"
+        analytics_api_no_default, {TENANT_HEADER: ""}, "empty header"
     )
 
 
-def test_nil_uuid_tenant_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+def test_nil_uuid_tenant_is_rejected(analytics_api_no_default: AnalyticsApiProcess) -> None:
     """Nil UUID is parseable but rejected by the `!is_nil()` filter → None → 400;
     a nil tenant must never pin tenant context."""
     _assert_tenant_unresolved_everywhere(
-        analytics_api, {TENANT_HEADER: NIL_TENANT}, "nil uuid"
+        analytics_api_no_default, {TENANT_HEADER: NIL_TENANT}, "nil uuid"
     )
 
 
-def test_malformed_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+def test_malformed_tenant_header_is_rejected(analytics_api_no_default: AnalyticsApiProcess) -> None:
     """Non-UUID header → `Uuid::parse_str("not-a-uuid")` fails → None → 400."""
     _assert_tenant_unresolved_everywhere(
-        analytics_api, {TENANT_HEADER: "not-a-uuid"}, "malformed header"
+        analytics_api_no_default, {TENANT_HEADER: "not-a-uuid"}, "malformed header"
     )
 
 
-def test_multi_valued_tenant_header_is_rejected(analytics_api: AnalyticsApiProcess) -> None:
+def test_multi_valued_tenant_header_is_rejected(analytics_api_no_default: AnalyticsApiProcess) -> None:
     """TWO `X-Insight-Tenant-Id` values (a header-smuggling vector) → the
     middleware refuses to pick a winner (`iter.next().is_some()`) → None → 400.
     A regression that silently bound to the first value would be a cross-tenant
     request-smuggling bug, so this must reject even though both values are
     individually well-formed."""
     _assert_tenant_unresolved_everywhere(
-        analytics_api,
+        analytics_api_no_default,
         [(TENANT_HEADER, str(TEST_TENANT_ID)), (TENANT_HEADER, OTHER_TENANT)],
         "multi-valued header",
     )

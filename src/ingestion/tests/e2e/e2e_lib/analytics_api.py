@@ -211,10 +211,23 @@ def find_free_port() -> int:
 class AnalyticsApiProcess:
     """A spawned, health-checked analytics-api process bound to loopback."""
 
-    def __init__(self, cfg: SessionConfig, binary: Path, port: int):
+    # Non-nil default tenant for the single-tenant rig: the harness sends no
+    # X-Insight-Tenant-Id, so header-less requests must resolve to *something*.
+    # Pass tenant_default_id=None to spawn an instance with NO default, where the
+    # middleware rejects every unresolvable tenant with 400 (the reject matrix).
+    DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+
+    def __init__(
+        self,
+        cfg: SessionConfig,
+        binary: Path,
+        port: int,
+        tenant_default_id: str | None = DEFAULT_TENANT_ID,
+    ):
         self.cfg = cfg
         self.binary = binary
         self.port = port
+        self.tenant_default_id = tenant_default_id
         # In docker mode the pytest process and the binary live in the same
         # container, so localhost is the same loopback either way.
         self.base_url = f"http://127.0.0.1:{port}"
@@ -234,22 +247,27 @@ class AnalyticsApiProcess:
                 "ANALYTICS__clickhouse_user": self.cfg.ch_user,
                 "ANALYTICS__clickhouse_password": self.cfg.ch_password,
                 "ANALYTICS__bind_addr": bind_addr,
-                # Single-tenant fallback. Since #522 the tenant_middleware
-                # rejects header-less requests (including /health) with 400
-                # unless a non-nil default tenant is configured. The rig sends
-                # no X-Insight-Tenant-Id header, so we pin a non-nil default.
-                # A non-nil value is required — ConfigTenantAuthorization::new
-                # filters out a nil default. Platform metric definitions are
-                # seeded under GLOBAL_TENANT (Uuid::nil()) and remain visible to
-                # any resolved tenant via `InsightTenantId IN [tenant, nil]`,
-                # and the data-plane queries skip tenant isolation in MVP, so
-                # this default never has to match the seeded bronze tenant.
-                "ANALYTICS__metric_catalog__tenant_default_id": "00000000-0000-0000-0000-000000000001",
                 # No identity_url / redis_url — leave defaults (empty strings)
                 "RUST_LOG": env.get("RUST_LOG", "info"),
             },
         )
-        LOG.info("spawning analytics-api on 127.0.0.1:%d", self.port)
+        # Single-tenant fallback. Since #522 the tenant_middleware rejects
+        # header-less requests with 400 unless a non-nil default tenant is
+        # configured. The rig sends no X-Insight-Tenant-Id header, so the default
+        # instance pins a non-nil default (ConfigTenantAuthorization::new filters
+        # out a nil default). Platform metric definitions are seeded under
+        # GLOBAL_TENANT (Uuid::nil()) and stay visible to any resolved tenant via
+        # `InsightTenantId IN [tenant, nil]`, and the data-plane queries skip
+        # tenant isolation in MVP, so this default never has to match the seeded
+        # bronze tenant. A no-default instance (tenant_default_id=None) omits this
+        # so the reject matrix can observe the 400.
+        if self.tenant_default_id is not None:
+            env["ANALYTICS__metric_catalog__tenant_default_id"] = self.tenant_default_id
+        LOG.info(
+            "spawning analytics-api on 127.0.0.1:%d (tenant_default_id=%s)",
+            self.port,
+            self.tenant_default_id or "<none>",
+        )
         self._proc = subprocess.Popen(
             [str(self.binary)],
             env=env,

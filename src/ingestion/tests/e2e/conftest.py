@@ -169,6 +169,34 @@ def analytics_api(ch_migrations_applied: SessionConfig):
 
 
 @pytest.fixture(scope="session")
+def analytics_api_no_default(ch_migrations_applied: SessionConfig):
+    """A second analytics-api instance spawned with NO `tenant_default_id`.
+
+    The primary `analytics_api` fixture pins a default tenant (the harness sends
+    no X-Insight-Tenant-Id header, so header-less requests need something to
+    resolve to). That makes the "unresolvable tenant -> 400" rejection
+    unobservable there: an absent/invalid tenant just falls back to the default.
+
+    This instance omits the default, so the tenant middleware rejects every
+    unresolvable tenant with the canonical 400 / TENANT_UNRESOLVED envelope —
+    which is what the reject matrix in meta/test_tenant_resolution.py asserts.
+    Shares the same warehouse/binary; no metric seeding needed (rejection
+    happens before any data is read).
+    """
+    cfg = ch_migrations_applied
+    from e2e_lib.analytics_api import ApiSpawnError  # local import to keep top clean
+    try:
+        binary = build(cfg)
+    except ApiSpawnError as e:
+        pytest.fail(f"analytics-api binary not buildable: {e}", pytrace=False)
+    port = find_free_port()
+    proc = AnalyticsApiProcess(cfg, binary, port, tenant_default_id=None)
+    proc.start()
+    yield proc
+    proc.stop()
+
+
+@pytest.fixture(scope="session")
 def ch_seeder(ch_migrations_applied: SessionConfig) -> CHSeeder:
     """Session-scoped seeder so its ledger persists across tests in the same worker."""
     return CHSeeder(ch_migrations_applied)
