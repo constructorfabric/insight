@@ -14,6 +14,7 @@ that tenant.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -28,7 +29,6 @@ from typing import Any
 import httpx
 
 from e2e_lib.config import SessionConfig, TENANT_HEADER, TEST_TENANT_ID
-from e2e_lib.fixture_loader import Fixture
 
 LOG = logging.getLogger("e2e.api")
 
@@ -234,6 +234,17 @@ class AnalyticsApiProcess:
                 "ANALYTICS__clickhouse_user": self.cfg.ch_user,
                 "ANALYTICS__clickhouse_password": self.cfg.ch_password,
                 "ANALYTICS__bind_addr": bind_addr,
+                # Single-tenant fallback. Since #522 the tenant_middleware
+                # rejects header-less requests (including /health) with 400
+                # unless a non-nil default tenant is configured. The rig sends
+                # no X-Insight-Tenant-Id header, so we pin a non-nil default.
+                # A non-nil value is required — ConfigTenantAuthorization::new
+                # filters out a nil default. Platform metric definitions are
+                # seeded under GLOBAL_TENANT (Uuid::nil()) and remain visible to
+                # any resolved tenant via `InsightTenantId IN [tenant, nil]`,
+                # and the data-plane queries skip tenant isolation in MVP, so
+                # this default never has to match the seeded bronze tenant.
+                "ANALYTICS__metric_catalog__tenant_default_id": "00000000-0000-0000-0000-000000000001",
                 # No identity_url / redis_url — leave defaults (empty strings)
                 "RUST_LOG": env.get("RUST_LOG", "info"),
             },
@@ -277,22 +288,27 @@ class AnalyticsApiProcess:
             headers={TENANT_HEADER: str(TEST_TENANT_ID)},
         )
 
-    def call_fixture(self, fixture: Fixture) -> ApiResponse:
-        """Build a request from the fixture's spec.yaml, execute it, return ApiResponse.
+    def call_request(self, request: dict) -> tuple[int, Any]:
+        """Execute a `case.request` ({url, method, body}). Return (status_code, json|text).
 
-        Handles `{metric_id}` interpolation in the endpoint and uses the spec's
-        `method` (default POST). The request body is sent as JSON.
+        Used by the YAML rig; the primary endpoint is the batch
+        `POST /v1/metrics/queries`. The body is sent as JSON.
         """
-        endpoint = fixture.spec.resolved_endpoint()
+        url = request["url"]
+        method = str(request.get("method", "POST")).upper()
+        body = request.get("body")
         with self.client() as c:
-            method = fixture.spec.method.upper()
             kwargs: dict[str, Any] = {}
-            if method in ("POST", "PUT") and fixture.spec.request_body:
-                kwargs["json"] = fixture.spec.request_body
-            LOG.info("→ %s %s", method, endpoint)
-            response = c.request(method, endpoint, **kwargs)
+            if body is not None:
+                kwargs["json"] = body
+            LOG.info("→ %s %s", method, url)
+            response = c.request(method, url, **kwargs)
             LOG.info("← %d  (%d bytes)", response.status_code, len(response.content))
-            return ApiResponse.from_httpx(response)
+            try:
+                payload = response.json()
+            except json.JSONDecodeError:
+                payload = response.text
+            return response.status_code, payload
 
     def _wait_healthy(self, *, timeout_s: float) -> None:
         deadline = time.monotonic() + timeout_s

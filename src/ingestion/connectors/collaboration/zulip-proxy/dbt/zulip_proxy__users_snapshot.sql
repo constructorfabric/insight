@@ -3,7 +3,7 @@
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    tags=['zulip_proxy']
+    tags=['zulip-proxy']
 ) }}
 
 {{ snapshot(

@@ -7,7 +7,7 @@
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     schema='staging',
-    tags=['zulip_proxy', 'silver:class_collab_chat_activity']
+    tags=['zulip-proxy', 'silver:class_collab_chat_activity']
 ) }}
 
 -- Zulip-Proxy chat activity rolled up per (tenant, source, sender email, date).
