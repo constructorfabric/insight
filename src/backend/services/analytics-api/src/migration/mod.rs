@@ -38,6 +38,8 @@ mod m20260612_000002_seed_support_catalog;
 mod m20260612_000003_link_support_query_catalog;
 mod m20260618_000001_ai_claude_team_overage_metric;
 mod m20260618_000002_seed_claude_team_overage_catalog;
+mod m20260620_000001_seed_wiki_metrics;
+mod m20260620_000002_seed_wiki_catalog;
 
 #[cfg(test)]
 mod live_tests;
@@ -88,6 +90,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260612_000003_link_support_query_catalog::Migration),
             Box::new(m20260618_000001_ai_claude_team_overage_metric::Migration),
             Box::new(m20260618_000002_seed_claude_team_overage_catalog::Migration),
+            Box::new(m20260620_000001_seed_wiki_metrics::Migration),
+            Box::new(m20260620_000002_seed_wiki_catalog::Migration),
         ]
     }
 }

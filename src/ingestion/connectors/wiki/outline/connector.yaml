@@ -434,6 +434,14 @@ streams:
               header: Retry-After
               max_waiting_time_in_seconds: 600
           response_filters:
+            # Substream child: a document deleted/made inaccessible between the
+            # documents.list enumeration and this revisions.list fetch returns
+            # 404 — skip that partition instead of failing the whole sync
+            # (Jira/Zendesk substream large-data lesson; mirrors confluence).
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes: [404]
+              error_message: "Document not found (deleted mid-sync) — revisions partition skipped."
             - type: HttpResponseFilter
               action: RETRY
               http_codes: [429, 503]
