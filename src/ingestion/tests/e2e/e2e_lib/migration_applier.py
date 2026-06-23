@@ -52,6 +52,31 @@ def apply_all(cfg: SessionConfig) -> int:
     return total
 
 
+def reapply_migrations(cfg: SessionConfig) -> int:
+    """Re-run only the *.sql migrations (no placeholder bootstrap).
+
+    Gold views are CREATE-d at session start against the reduced silver
+    PLACEHOLDER schema. Once a fixture's `dbt build` materialises the real
+    silver schema (different nullability), a view's frozen result structure no
+    longer matches what it now returns, and reading it inside a date-filter
+    subquery raises ClickHouse `INCORRECT_QUERY` (Nullable/`join_use_nulls`
+    mismatch). On a long-lived cluster (dev/prod) the views were created against
+    the real silver, so this never bites there — verified: the same query runs
+    clean against dev. Re-running the migrations after dbt recreates every
+    `DROP VIEW IF EXISTS ... CREATE VIEW` against the now-real silver, realigning
+    the structure. The migrations are idempotent (verified), so this is safe to
+    repeat per fixture.
+    """
+    files = sorted(cfg.migrations_dir.glob("*.sql"))
+    if not files:
+        raise RuntimeError(f"no migration files found under {cfg.migrations_dir}")
+    total = 0
+    for f in files:
+        total += _apply_file(cfg, f)
+    LOG.info("re-applied %d statements from %d migration files (post-dbt view refresh)", total, len(files))
+    return total
+
+
 def apply_bronze_placeholders(cfg: SessionConfig) -> int:
     """Parse `create-bronze-placeholders.sh` heredocs and run the SQL.
 

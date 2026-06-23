@@ -71,7 +71,7 @@ case "$cmd" in
             echo "usage: $0 new <fixture_name> [<bronze_schema>.<table>]" >&2
             exit 2
         fi
-        dir="fixtures/$name"
+        dir="specs/$name"
         if [ -e "$dir" ]; then
             echo "error: $dir already exists" >&2
             exit 1
