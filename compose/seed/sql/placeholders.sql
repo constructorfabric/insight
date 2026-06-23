@@ -158,6 +158,52 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_assistant_usage (
     collected_at             Nullable(DateTime64(3)),
     _version                 UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+-- Added because migration 20260618000000 ai-claude-team-overage-gold creates
+-- the cc_overage gold view from silver.class_ai_overage; the upstream
+-- placeholder script never mirrored this table, so the view recreation fails
+-- with UNKNOWN_TABLE. Columns track the subset the gold views consume from
+-- the real class_ai_overage silver model (email / source / collected_at /
+-- overage_cents); the full model carries the 19-column union contract.
+CREATE TABLE IF NOT EXISTS silver.class_ai_overage (
+    insight_tenant_id  String,
+    source_id          String,
+    unique_key         String,
+    email              String,
+    source             String,
+    currency           Nullable(String),
+    credit_limit_cents Nullable(UInt32),
+    used_amount_cents  Nullable(UInt32),
+    overage_cents      Nullable(UInt32),
+    collected_at       Nullable(DateTime64(3)),
+    _version           UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+-- Added because migration 20260620000000 wiki-bullet-rows creates the
+-- insight.wiki_bullet_rows gold view from these two STABLE wiki Silver
+-- classes; the upstream placeholder script never mirrored them, so the view
+-- creation fails with UNKNOWN_TABLE. Columns track the subset the gold view
+-- consumes (the real models carry the full union-by-tag contract). NB: the
+-- wiki classes key on `tenant_id`, not `insight_tenant_id` — the view joins
+-- engagement→pages on `e.tenant_id = pg.tenant_id`.
+CREATE TABLE IF NOT EXISTS silver.class_wiki_pages (
+    tenant_id      String,
+    source_id      String,
+    unique_key     String,
+    page_id        String,
+    author_id      Nullable(String),
+    author_email   Nullable(String),
+    version_count  UInt32,
+    created_at     Nullable(DateTime64(3)),
+    _version       UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+CREATE TABLE IF NOT EXISTS silver.class_wiki_engagement (
+    tenant_id      String,
+    source_id      String,
+    unique_key     String,
+    page_id        String,
+    day            Date,
+    total_comments UInt32,
+    _version       UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
 CREATE TABLE IF NOT EXISTS silver.class_people (
     unique_key      String,
     email           Nullable(String),
@@ -333,8 +379,10 @@ CREATE TABLE IF NOT EXISTS silver.mtr_git_person_weekly (
     lines_added       Int64,
     lines_removed     Int64,
     prs_merged        Float64,
-    -- spec_lines added because insight.ic_chart_loc and other views
-    -- reference it; upstream placeholder script omits it.
+    -- code_loc / spec_lines added because insight.ic_chart_loc, the IC-KPIs
+    -- git-fanout view, and other views reference them; upstream placeholder
+    -- script omits both.
+    code_loc          Float64,
     spec_lines        Nullable(Float64),
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, week) COMMENT 'INSIGHT_PLACEHOLDER_v1';
