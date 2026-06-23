@@ -92,10 +92,10 @@ mod tests {
 
     type R = Result<(), Box<dyn std::error::Error>>;
 
-    #[test]
-    fn default_top_is_25() {
-        assert_eq!(default_top(), 25);
-    }
+    // (Removed `default_top_is_25` — asserting a function returns its own literal
+    // tests nothing. The default is still covered, meaningfully, by
+    // `query_request_applies_defaults_when_empty` below, which proves the field is
+    // actually wired to default_top() through deserialization.)
 
     #[test]
     fn query_request_maps_odata_params() -> R {

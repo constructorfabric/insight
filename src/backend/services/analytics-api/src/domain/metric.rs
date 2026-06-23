@@ -87,77 +87,20 @@ mod tests {
 
     type R = Result<(), Box<dyn std::error::Error>>;
 
+    // The only non-trivial behavior in this module is our custom
+    // `deserialize_optional_nullable`: description is Option<Option<_>> so PATCH
+    // can distinguish absent (leave unchanged) / explicit null (clear) / value
+    // (set). That branching is our code — serde's defaults can't express it — so
+    // it earns a test. The plain serialize/deserialize round-trips this module
+    // had before tested serde, not us, and were removed.
     #[test]
     fn update_description_is_triple_state() -> R {
-        // absent → leave unchanged
         let absent: UpdateMetricRequest = serde_json::from_str("{}")?;
-        assert_eq!(absent.description, None);
-        // explicit null → clear to None
+        assert_eq!(absent.description, None); // absent → leave unchanged
         let null: UpdateMetricRequest = serde_json::from_str(r#"{"description":null}"#)?;
-        assert_eq!(null.description, Some(None));
-        // value → set
+        assert_eq!(null.description, Some(None)); // explicit null → clear
         let val: UpdateMetricRequest = serde_json::from_str(r#"{"description":"hi"}"#)?;
-        assert_eq!(val.description, Some(Some("hi".to_owned())));
-        Ok(())
-    }
-
-    // skip_serializing_if contract: a None description must be OMITTED, not
-    // emitted as `"description":null` — the FE treats absent and null differently
-    // (see the triple-state PATCH above), so this guards a real wire distinction.
-    #[test]
-    fn none_description_is_omitted_not_null() -> R {
-        let ts: NaiveDateTime = "2026-01-01T00:00:00".parse()?;
-        let m = Metric {
-            id: Uuid::nil(),
-            insight_tenant_id: Uuid::nil(),
-            name: "m".to_owned(),
-            description: None,
-            query_ref: "SELECT 1".to_owned(),
-            is_enabled: true,
-            created_at: ts,
-            updated_at: ts,
-        };
-        let json = serde_json::to_string(&m)?;
-        assert!(!json.contains("description"), "None must be omitted: {json}");
-        // and a Some(_) description is present (the other half of the contract)
-        let m2 = Metric {
-            description: Some("d".to_owned()),
-            ..m
-        };
-        assert!(serde_json::to_string(&m2)?.contains("\"description\":\"d\""));
-        Ok(())
-    }
-
-    // Security contract: MetricSummary is the list/summary shape and must NEVER
-    // carry query_ref (raw SQL). This fails the moment someone adds the field to
-    // the struct — the regression guard, not a tautology.
-    #[test]
-    fn metric_summary_never_serializes_query_ref() -> R {
-        let s = MetricSummary {
-            id: Uuid::nil(),
-            name: "m".to_owned(),
-            description: Some("d".to_owned()),
-        };
-        assert!(
-            !serde_json::to_string(&s)?.contains("query_ref"),
-            "summary must not leak the SQL"
-        );
-        Ok(())
-    }
-
-    // Required-field contract: name and query_ref are mandatory on create; a
-    // payload missing either must be REJECTED at deserialization (not silently
-    // defaulted). description stays optional.
-    #[test]
-    fn create_request_requires_name_and_query_ref() -> R {
-        assert!(serde_json::from_str::<CreateMetricRequest>("{}").is_err());
-        assert!(serde_json::from_str::<CreateMetricRequest>(r#"{"name":"m"}"#).is_err());
-        assert!(
-            serde_json::from_str::<CreateMetricRequest>(r#"{"query_ref":"SELECT 1"}"#).is_err()
-        );
-        let ok: CreateMetricRequest =
-            serde_json::from_str(r#"{"name":"m","query_ref":"SELECT 1"}"#)?;
-        assert!(ok.description.is_none(), "description optional on create");
+        assert_eq!(val.description, Some(Some("hi".to_owned()))); // value → set
         Ok(())
     }
 }

@@ -105,31 +105,12 @@ mod tests {
 
     type R = Result<(), Box<dyn std::error::Error>>;
 
-    #[test]
-    fn default_helpers() {
-        assert_eq!(default_bind_addr(), "0.0.0.0:8081");
-        assert_eq!(default_clickhouse_database(), "insight");
-        assert!(MetricCatalogConfig::default().tenant_default_id.is_none());
-    }
-
-    #[test]
-    fn applies_defaults_for_optional_fields() -> R {
-        let cfg: AppConfig = Figment::new()
-            .merge(Yaml::string(
-                "database_url: mysql://db\nclickhouse_url: http://ch\n",
-            ))
-            .extract()?;
-        assert_eq!(cfg.bind_addr, "0.0.0.0:8081");
-        assert_eq!(cfg.clickhouse_database, "insight");
-        assert_eq!(cfg.database_url, "mysql://db");
-        assert_eq!(cfg.clickhouse_url, "http://ch");
-        assert!(cfg.clickhouse_user.is_none());
-        assert!(cfg.clickhouse_password.is_none());
-        assert!(cfg.identity_url.is_empty());
-        assert!(cfg.redis_url.is_empty());
-        assert!(cfg.metric_catalog.tenant_default_id.is_none());
-        Ok(())
-    }
+    // NOTE: tests that merely asserted the default helpers return their literals
+    // (and that a minimal config extracts to those same literals) were removed —
+    // they tested that constants are constants / that Figment works, not our
+    // config. What's worth guarding is the two real behaviors below: that an
+    // explicit value wins over the default (layering precedence), and that a
+    // field with no default is mandatory (fail-fast on misconfig).
 
     #[test]
     fn explicit_values_override_defaults() -> R {
