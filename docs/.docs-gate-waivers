@@ -1,7 +1,0 @@
-# Documentation-gate waivers — the ONLY way past the docs gate.
-# Format:  <unit path> | <reason> | <expiry YYYY-MM-DD>
-# Expired waivers FAIL the gate by themselves. Reviewed via CODEOWNERS.
-docs/components/connectors | index of per-source specs; per-source PRD/DESIGN exist under each source dir — top-level specs to be added | 2026-07-31
-docs/domain/ingestion-data-flow | DESIGN-only domain (FULL traceability); PRD backlog item | 2026-07-31
-docs/components/frontend | PRD/DESIGN are placeholders not on the canonical template; rewrite + register scheduled | 2026-07-15
-docs/components/orchestrator | DESIGN not on canonical template; align + register scheduled | 2026-07-15
