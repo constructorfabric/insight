@@ -157,12 +157,24 @@ def main() -> None:
     ap.add_argument("--fail-on-stale", action="store_true")
     ap.add_argument("--max-age-hours", type=int, default=48)
     ap.add_argument("--waive-empty", default="", help="comma list of bronze DBs / silver tables allowed to be empty")
+    ap.add_argument(
+        "--skip-if-unreachable",
+        action="store_true",
+        help="exit 0 (SKIPPED) instead of failing when ClickHouse can't be reached "
+        "— for contexts where the warehouse isn't wired yet (e.g. nightly before "
+        "dbt populates the CI container), so an unwired gate is honestly skipped, "
+        "not a red we ignore.",
+    )
     args = ap.parse_args()
     waived = {w.strip() for w in args.waive_empty.split(",") if w.strip()}
 
     try:
         ch("SELECT 1")
     except Exception as e:  # noqa: BLE001
+        if args.skip_if_unreachable:
+            print(f"SKIPPED: ClickHouse unreachable ({e}); warehouse not wired yet. "
+                  "Resolution/dedup are enforced once dbt populates the warehouse.")
+            sys.exit(0)
         print(f"FATAL: cannot reach ClickHouse ({e}). Set CH_HOST/CH_PORT/CH_USER/CH_PASSWORD.")
         sys.exit(2)
 
