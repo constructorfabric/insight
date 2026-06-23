@@ -34,8 +34,15 @@ import argparse
 import json
 import re
 import sys
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+
+# Cobertura reports are CI-generated (trusted), but parse with defusedxml when it
+# is installed for defense-in-depth against XXE / entity-expansion — falling back
+# to the stdlib so this stays a zero-dependency standalone tool.
+try:
+    import defusedxml.ElementTree as ET  # type: ignore[import-untyped]
+except ModuleNotFoundError:
+    import xml.etree.ElementTree as ET
 
 # cobertura branch lines carry e.g. condition-coverage="50% (1/2)" — pull the (a/b).
 _CONDITION = re.compile(r"\((\d+)/(\d+)\)")
@@ -149,6 +156,19 @@ def main() -> int:
     ap.add_argument("--target", type=float, default=None,
                     help="report covered-lines needed to reach this overall %%")
     args = ap.parse_args()
+
+    # Reject nonsensical bounds rather than silently mis-rank: a negative
+    # --min-uncovered passes every row, --top <= 0 empties or reverse-slices the
+    # list, and --target outside 0..100 asks for "lines to exceed 100%".
+    if args.min_uncovered < 0:
+        print("FATAL: --min-uncovered must be >= 0", file=sys.stderr)
+        return 2
+    if args.top <= 0:
+        print("FATAL: --top must be > 0", file=sys.stderr)
+        return 2
+    if args.target is not None and not (0 <= args.target <= 100):
+        print("FATAL: --target must be between 0 and 100", file=sys.stderr)
+        return 2
 
     # A reporter that can't read its input must NOT look like "0 gaps". Fail loud
     # (exit 2) so a broken test run can't pass as a clean coverage report.
