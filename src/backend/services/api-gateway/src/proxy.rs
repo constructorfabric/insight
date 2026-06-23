@@ -465,7 +465,8 @@ mod tests {
             "/v1/h",
             get(|headers: axum::http::HeaderMap| async move {
                 let auth = headers.contains_key("authorization");
-                (StatusCode::OK, format!("auth={auth}"))
+                let conn = headers.contains_key("connection");
+                (StatusCode::OK, format!("auth={auth};conn={conn}"))
             }),
         );
         let addr = spawn_upstream(upstream).await?;
@@ -478,11 +479,8 @@ mod tests {
             .body(Body::empty())?;
         let resp = forward_request(&state, req).await?;
         let body = to_bytes(resp.into_body(), 4096).await?;
-        assert_eq!(
-            &body[..],
-            b"auth=true",
-            "authorization forwarded end-to-end"
-        );
+        // end-to-end header (authorization) forwarded; hop-by-hop (connection) stripped
+        assert_eq!(&body[..], b"auth=true;conn=false");
         Ok(())
     }
 }
