@@ -2,7 +2,7 @@
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    tags=['zulip_proxy', 'silver', 'silver:identity_inputs']
+    tags=['zulip-proxy', 'silver', 'silver:identity_inputs']
 ) }}
 
 {{ identity_inputs_from_history(
