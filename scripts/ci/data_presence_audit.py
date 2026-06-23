@@ -39,18 +39,20 @@ Every property here is true by construction on a freshly seeded e2e/CI database
 (data is always present, deduped, and "now"), so the checks only earn their keep
 against the real accumulated warehouse. Two distinct invocations:
 
-  * PR CI (deterministic, blocking): RESOLUTION + DEDUP only — these hold on any
+  * The e2e rig (e2e-bronze-to-api): RESOLUTION + DEDUP only — these hold on any
     *populated* schema, so they catch gold↔silver drift and un-merged duplicates
-    regardless of dataset. They require a DB that has actually been `dbt build`-ed;
-    run against a blank ClickHouse they pass vacuously and prove nothing.
-        data_presence_audit.py --check          # resolution+dedup are always gated
+    regardless of dataset. They require a DB that has actually been `dbt build`-ed,
+    which the e2e rig does (bronze → silver) before asserting. Run against a blank
+    ClickHouse they pass vacuously and prove nothing — so this is deliberately NOT
+    wired as a standalone job against a throwaway service container.
+        data_presence_audit.py --check          # resolution+dedup
   * Nightly against the deployed environment (the real home): add presence and
     freshness — "a connected source wrote 0 rows" and "newest row older than the
     SLA" only mean "the real sync stopped" against live data, never in seeded CI.
         data_presence_audit.py --check --fail-on-empty --fail-on-stale
 
-So --fail-on-empty / --fail-on-stale are opt-in on purpose: leave them OFF in PR
-CI, turn them ON only for the scheduled deployed run + the post-sync DAG gate.
+So --fail-on-empty / --fail-on-stale are opt-in on purpose: leave them OFF on the
+e2e rig, turn them ON only for the scheduled deployed run + the post-sync DAG gate.
 Query logic validated against the kind-insight cluster.
 """
 from __future__ import annotations
@@ -161,45 +163,16 @@ def main() -> None:
     ap.add_argument("--fail-on-stale", action="store_true")
     ap.add_argument("--max-age-hours", type=int, default=48)
     ap.add_argument("--waive-empty", default="", help="comma list of bronze DBs / silver tables allowed to be empty")
-    ap.add_argument(
-        "--skip-if-unreachable",
-        action="store_true",
-        help="exit 0 (SKIPPED) instead of failing when ClickHouse can't be reached "
-        "— for contexts where the warehouse isn't wired yet (e.g. nightly before "
-        "dbt populates the CI container), so an unwired gate is honestly skipped, "
-        "not a red we ignore.",
-    )
     args = ap.parse_args()
     waived = {w.strip() for w in args.waive_empty.split(",") if w.strip()}
 
+    # This tool runs against a real, populated warehouse (e2e rig or deployed) —
+    # if it can't reach ClickHouse, that's a hard failure, not something to skip.
     try:
         ch("SELECT 1")
     except Exception as e:  # noqa: BLE001
-        if args.skip_if_unreachable:
-            print(f"SKIPPED: ClickHouse unreachable ({e}); warehouse not wired yet. "
-                  "Resolution/dedup are enforced once dbt populates the warehouse.")
-            sys.exit(0)
         print(f"FATAL: cannot reach ClickHouse ({e}). Set CH_HOST/CH_PORT/CH_USER/CH_PASSWORD.")
         sys.exit(2)
-
-    # Reachable but UNWIRED: a blank ClickHouse (no bronze_* dbs, no silver.class_*
-    # tables) would let every resolution/dedup check pass vacuously — a false green
-    # worse than a red. Under --skip-if-unreachable, treat "empty warehouse" the
-    # same as "unreachable": skip honestly rather than report a meaningless PASS.
-    if args.skip_if_unreachable:
-        try:
-            populated = int(ch(
-                r"SELECT count() FROM system.tables "
-                r"WHERE database LIKE 'bronze\_%' "
-                r"OR (database = 'silver' AND name LIKE 'class\_%')"
-            ) or 0)
-        except Exception:  # noqa: BLE001
-            populated = 0
-        if populated == 0:
-            print("SKIPPED: ClickHouse reachable but unpopulated (no bronze_* / "
-                  "silver.class_* tables) — warehouse not wired yet. Resolution/dedup "
-                  "are enforced once dbt populates the warehouse.")
-            sys.exit(0)
 
     fail_empty, fail_dup, fail_stale = [], [], []
 

@@ -33,7 +33,7 @@ COMING_SOON = "ComingSoon"
 
 def round_half_up(value: float) -> int:
     """Round to nearest integer, halves away from zero (4.5→5, -4.5→-5, 4.4→4)."""
-    return int(math.floor(value + 0.5)) if value >= 0 else int(math.ceil(value - 0.5))
+    return math.floor(value + 0.5) if value >= 0 else math.ceil(value - 0.5)
 
 
 def display_value(
