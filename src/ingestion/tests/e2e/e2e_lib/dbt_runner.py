@@ -63,7 +63,11 @@ class DbtRunner:
         """
         if not self._parsed:
             raise DbtError("dbt_runner.setup() must be called before build()")
-        worker_n = worker_ctx.worker_id.removeprefix("gw") if worker_ctx.worker_id != "master" else "0"
+        worker_n = (
+            worker_ctx.worker_id.removeprefix("gw")
+            if worker_ctx.worker_id != "master"
+            else "0"
+        )
         cmd = [
             "dbt",
             "build",
@@ -98,6 +102,86 @@ class DbtRunner:
                 f"stdout tail:\n{result.stdout[-2000:]}\n"
                 f"stderr tail:\n{result.stderr[-1000:]}"
             )
+
+    def run_test(
+        self,
+        selector: str,
+        *,
+        worker_ctx: WorkerContext,
+        timeout_s: float = 120.0,
+    ) -> tuple[str, int]:
+        """Run `dbt test --select <selector>` and return (status, failures) for
+        the matched test node from run_results.json.
+
+        Used to exercise data-quality checks against seeded silver data. The
+        catalog tests are `severity='warn'`, so dbt exits 0 even when rows
+        violate — we read the `failures` count (number of violating rows) and
+        `status` ('pass' | 'warn' | 'fail' | 'error') from run_results.json
+        rather than the process exit code. This mirrors how the deployed
+        data-quality emitter detects findings.
+
+        `--defer --state` resolves the model `ref()` to the already-present
+        silver relation, so the test runs against seeded data without
+        rebuilding (and wiping) the table.
+        """
+        if not self._parsed:
+            raise DbtError("dbt_runner.setup() must be called before run_test()")
+        worker_n = (
+            worker_ctx.worker_id.removeprefix("gw")
+            if worker_ctx.worker_id != "master"
+            else "0"
+        )
+        cmd = [
+            "dbt",
+            "test",
+            "--select",
+            selector,
+            "--profiles-dir",
+            str(self.profiles_dir),
+            "--target",
+            "test",
+            "--target-path",
+            str(self.target_dir),
+            "--defer",
+            "--state",
+            str(self.target_dir),
+            "--vars",
+            json.dumps({"worker_id": worker_n}),
+        ]
+        # Wipe any prior run_results.json BEFORE running: if `dbt test` crashes
+        # (compile error, CH connection timeout) it may not write a fresh one,
+        # and reading a stale file would report a pass/fail from the LAST run.
+        # After the run, an absent file therefore means dbt failed to produce
+        # results at all, not "0 failures".
+        run_results = self.target_dir / "run_results.json"
+        run_results.unlink(missing_ok=True)
+        LOG.info("dbt test --select %s (worker=%s)", selector, worker_ctx.worker_id)
+        result = subprocess.run(
+            cmd,
+            cwd=str(self.dbt_project_dir),
+            capture_output=True,
+            text=True,
+            check=False,  # warn-severity violations exit 0; failures read from run_results
+            timeout=timeout_s,
+        )
+        if not run_results.exists():
+            raise DbtError(
+                f"dbt test produced no run_results.json for selector {selector!r} "
+                f"(likely a compile/connection failure, exit={result.returncode})\n"
+                f"stdout tail:\n{result.stdout[-2000:]}\n"
+                f"stderr tail:\n{result.stderr[-1000:]}"
+            )
+        data = json.loads(run_results.read_text(encoding="utf-8"))
+        matches = [
+            r for r in data.get("results", []) if selector in r.get("unique_id", "")
+        ]
+        if not matches:
+            ran = [r.get("unique_id") for r in data.get("results", [])]
+            raise DbtError(
+                f"dbt test selected no node matching {selector!r}; ran: {ran}"
+            )
+        node = matches[0]
+        return str(node.get("status")), int(node.get("failures") or 0)
 
     # ----------------------------------------------------------------------
     # internals
