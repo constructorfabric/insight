@@ -10,12 +10,16 @@ resolving against another tenant's data.
 This matrix is the e2e counterpart to the Rust unit parity tests in
 `analytics-api/src/api/tenant_resolution_tests.rs`: it confirms the middleware
 ACCEPTS a resolvable tenant and REJECTS every unresolvable input on EVERY read
-route that traverses the middleware — the liveness probe (`/health`) and all
-three data endpoints:
+route that traverses the tenant middleware — the three data endpoints:
 
 - `POST /v1/metrics/{id}/query`  (single-metric read)
 - `POST /v1/metrics/queries`     (batch read)
 - `POST /v1/catalog/get_metrics` (metric-catalog read)
+
+`/health` is deliberately NOT here: it is a liveness probe mounted OUTSIDE the
+tenant middleware, so it returns 200 with no tenant by design (its own check
+lives in test_session_smoke.py). Asserting it rejects an unresolved tenant would
+be wrong — it never sees the middleware.
 
 It covers only the inputs that are actually transmittable over HTTP. The
 whitespace-padded-accept and whitespace-only-reject cases — which pin
@@ -70,9 +74,9 @@ QUERY_METRIC_ID = "00000000-0000-0000-0000-0000face0001"
 
 # (label, method, path, json-body|None) — the full set of middleware-guarded
 # read routes. The isolation boundary must hold identically on every one of
-# them, not just the route that reads no data.
+# them. `/health` is intentionally excluded: it is mounted outside the tenant
+# middleware (liveness probe, always 200), so it is not part of the guarded set.
 ROUTES: list[tuple[str, str, str, dict | None]] = [
-    ("/health", "GET", "/health", None),
     (
         "/v1/metrics/{id}/query",
         "POST",
@@ -96,8 +100,7 @@ def _request(
 
 def _assert_accepted_everywhere(api: AnalyticsApiProcess, headers: HeaderSpec, why: str) -> None:
     """A resolvable tenant must be admitted (200) on every middleware-guarded
-    route — including the data paths where reads actually happen, not just the
-    liveness probe."""
+    data route — where reads actually happen and tenant isolation matters."""
     for label, method, path, body in ROUTES:
         resp = _request(api, headers, method, path, body)
         assert resp.status_code == 200, (
@@ -143,10 +146,9 @@ def _assert_tenant_unresolved_everywhere(
 
 
 def test_valid_tenant_is_accepted_on_every_route(analytics_api: AnalyticsApiProcess) -> None:
-    """A resolvable tenant passes the middleware and reaches every route — the
-    liveness probe AND all three data paths return 200 (empty items with no
-    seeded bronze), proving the boundary admits a valid tenant where reads
-    actually happen, not only on `/health`."""
+    """A resolvable tenant passes the middleware and reaches every guarded data
+    route — all three return 200 (empty items with no seeded bronze), proving the
+    boundary admits a valid tenant where reads actually happen."""
     _assert_accepted_everywhere(
         analytics_api, {TENANT_HEADER: str(TEST_TENANT_ID)}, "valid tenant"
     )
