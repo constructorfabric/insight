@@ -214,11 +214,11 @@ name: <connector_name>
 version: "1.0"
 
 schedule: "0 2 * * *"
-dbt_select: "tag:<connector_name>+"
+dbt_select: "tag:<slug>+"          # <slug> = this descriptor's `name`, hyphen and all (see §3.5 NAMING)
 workflow: sync
 
 connection:
-  namespace: "bronze_<connector_name>"
+  namespace: "bronze_<snake>"      # <snake> = <slug> with '-' → '_'
 ```
 
 All streams from the manifest are synced. Sync mode is auto-detected by Airbyte discover (`incremental` if supported, otherwise `full_refresh`).
@@ -308,12 +308,21 @@ kubectl apply -f src/ingestion/secrets/connectors/<name>.yaml
 
 #### 3.5 `dbt/<connector_name>__<domain>.sql`
 
+> **NAMING — two forms, do not mix them up (this bites hyphenated connectors):**
+> - **slug** = the descriptor `name` exactly, e.g. `zulip-proxy` (keep the hyphen). This is also the Argo `data_source`.
+> - **snake** = slug with `-`→`_`, e.g. `zulip_proxy`.
+>
+> Use **snake** for: model file prefix (`<snake>__<domain>.sql`), `source('bronze_<snake>', …)`, the `bronze_<snake>` namespace, and `source_type='<snake>'`.
+> Use **slug** for: the **first dbt tag** on every model (`tags=['<slug>', …]`) and the descriptor `dbt_select: tag:<slug>+`.
+>
+> WHY the tag must be the slug, not snake: the `ingestion-pipeline` workflow's silver step (`transform-legacy`) HARDCODES its selector as `tag:{{data_source}}+` (= `tag:<slug>+`) and **ignores** descriptor `dbt_select`. A snake-cased tag (`zulip_proxy`) is then never selected → dbt logs `Nothing to do`, silver tables silently never build. For a hyphen-free connector (e.g. `m365`) slug == snake so it doesn't matter; for `zulip-proxy`/`claude-team`/`ms-entra` it does.
+
 ```sql
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
     schema='staging',
-    tags=['<connector_name>', 'silver:class_<domain>']
+    tags=['<slug>', 'silver:class_<domain>']
 ) }}
 
 SELECT
@@ -345,51 +354,53 @@ via the standard three-macro chain. Reference implementations:
 
 ```
 <users bronze table>
-  -> <name>__users_snapshot         snapshot() macro — SCD2, appends a row when
+  -> <snake>__users_snapshot        snapshot() macro — SCD2, appends a row when
                                     tracked columns change
-    -> <name>__users_fields_history fields_history() macro — one row per changed
+    -> <snake>__users_fields_history fields_history() macro — one row per changed
                                     field per version transition
-      -> <name>__identity_inputs    identity_inputs_from_history() macro —
+      -> <snake>__identity_inputs   identity_inputs_from_history() macro —
                                     UPSERT/DELETE observation rows, tagged
                                     silver:identity_inputs
         -> identity.identity_inputs silver/_shared/identity_inputs.sql unions
                                     all contributors via union_by_tag
 ```
 
-Three models to create (snake_case connector name):
+Three models to create. File names / refs use **snake**; the FIRST tag on each
+model uses the **slug** (hyphenated `name`) — see §3.5 NAMING. (`<snake>` and
+`<slug>` differ only for hyphenated connectors.)
 
 ```sql
--- dbt/<name>__users_snapshot.sql
--- depends_on: {{ ref('<name>__bronze_promoted') }}
+-- dbt/<snake>__users_snapshot.sql
+-- depends_on: {{ ref('<snake>__bronze_promoted') }}
 {{ config(materialized='incremental', incremental_strategy='append',
-          schema='staging', tags=['<name>']) }}
+          schema='staging', tags=['<slug>']) }}
 {{ snapshot(
-    source_ref=source('bronze_<name>', '<users_stream>'),
+    source_ref=source('bronze_<snake>', '<users_stream>'),
     unique_key_col='unique_key',
     check_cols=['<email_field>', '<display_name_field>', '<status_field>']
 ) }}
 ```
 
 ```sql
--- dbt/<name>__users_fields_history.sql
-{{ config(materialized='table', schema='staging', tags=['<name>', 'silver']) }}
+-- dbt/<snake>__users_fields_history.sql
+{{ config(materialized='table', schema='staging', tags=['<slug>', 'silver']) }}
 {{ fields_history(
-    snapshot_ref=ref('<name>__users_snapshot'),
-    entity_id_col='<source_user_id_col>',
+    snapshot_ref=ref('<snake>__users_snapshot'),
+    entity_id_col='toString(<source_user_id_col>)',   -- MUST yield String — see Rules below
     fields=['<email_field>', '<display_name_field>', '<status_field>']
 ) }}
 ```
 
 ```sql
--- dbt/<name>__identity_inputs.sql
+-- dbt/<snake>__identity_inputs.sql
 {{ config(materialized='incremental', incremental_strategy='append',
-          schema='staging', tags=['<name>', 'silver', 'silver:identity_inputs']) }}
+          schema='staging', tags=['<slug>', 'silver', 'silver:identity_inputs']) }}
 {{ identity_inputs_from_history(
-    fields_history_ref=ref('<name>__users_fields_history'),
-    source_type='<name>',
+    fields_history_ref=ref('<snake>__users_fields_history'),
+    source_type='<snake>',
     identity_fields=[
-        {'field': '<email_field>', 'value_type': 'email',        'value_field_name': 'bronze_<name>.<users_stream>.<email_field>'},
-        {'field': '<name_field>',  'value_type': 'display_name', 'value_field_name': 'bronze_<name>.<users_stream>.<name_field>'},
+        {'field': '<email_field>', 'value_type': 'email',        'value_field_name': 'bronze_<snake>.<users_stream>.<email_field>'},
+        {'field': '<name_field>',  'value_type': 'display_name', 'value_field_name': 'bronze_<snake>.<users_stream>.<name_field>'},
     ],
     deactivation_condition="field_name = '<status_field>' AND lower(new_value) = '<inactive_value>'"
 ) }}
@@ -399,15 +410,22 @@ Rules:
 - `entity_id_col` is the SOURCE-side stable user id (e.g. `user_id`, `id`) —
   the macro emits the canonical `value_type='id'` binding row from it
   automatically (ADR-0002); do NOT list it in `identity_fields`.
+- `entity_id_col` MUST evaluate to a **String**. The macro emits `entity_id`
+  into the `value` column, which is `String` in every other branch — if the
+  source id is numeric (ClickHouse `Decimal`/`Int`, common when the bronze
+  field is a JSON number, e.g. zulip-proxy `id`), the final `UNION ALL` fails
+  with `Code 386 NO_COMMON_TYPE: no supertype for String, Decimal(…)`. Wrap
+  numeric ids: `entity_id_col='toString(id)'`. (A natively-string id like a
+  GUID or `unique_key` needs no wrap — that's why zoom/ms-entra pass bare `id`.)
 - `check_cols` (snapshot) and `fields` (fields_history) must be the same list —
   every field whose change should produce a history row. Booleans are fine:
   `fields_history` stringifies via `toString()`, so a ClickHouse Bool becomes
   `'true'`/`'false'` — compare with `lower(new_value) = 'true'` in
   `deactivation_condition`.
 - The snapshot reads its source with `FINAL`, so the bronze table MUST already
-  be RMT-promoted (`<name>__bronze_promoted` + the `-- depends_on` header on
+  be RMT-promoted (`<snake>__bronze_promoted` + the `-- depends_on` header on
   the snapshot model).
-- Add `-- depends_on: {{ ref('<name>__identity_inputs') }}` to
+- Add `-- depends_on: {{ ref('<snake>__identity_inputs') }}` to
   `src/ingestion/silver/_shared/identity_inputs.sql` so the first run
   materialises the staging model before the shared union.
 - Document the chain and contributed value types in the connector README.
