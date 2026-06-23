@@ -122,4 +122,9 @@ jobs:
             failing-test reproduction, ⑤ what to check if the hypothesis is
             wrong. Be brief and factual. If no open PR exists for the branch,
             open an issue titled "CI failure investigation" instead.
-          claude_args: "--allowedTools Bash,Read,Grep,Glob --max-turns 30"
+          # Public-repo hardening: NO blanket Bash. The agent gets read/analysis
+          # tools plus only the exact git/gh commands it needs to inspect history
+          # and post its findings — so a prompt-injection in the failing logs
+          # can't run an arbitrary command (e.g. curl out ANTHROPIC_API_KEY).
+          # Layered with CLAUDE_CODE_SUBPROCESS_ENV_SCRUB + the same-repo gate.
+          claude_args: "--allowedTools Read,Grep,Glob,Bash(git log:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh issue create:*),Bash(gh issue list:*) --max-turns 30"
