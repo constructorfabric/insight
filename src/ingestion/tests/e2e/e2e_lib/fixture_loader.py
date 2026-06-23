@@ -1,257 +1,122 @@
-"""Fixture loader: read fixtures/<name>/ into a typed Fixture value.
+"""Load `<name>.test.yaml` into a typed TestYaml value.
 
-A fixture is a folder with:
+A test file (discovered by the `*.test.yaml` suffix) has:
 
-    fixtures/<name>/
-      bronze/<schema>.<table>.csv  - one or more bronze inputs
-      spec.yaml                    - test config (JSON-schema-validated)
-      expected/response.csv        - expected API response shape (flat CSV)
+    bronze:                         # what to seed, keyed by table name
+      <db>.<table>:
+        - $ref: templates/<g>.yaml#/templates/<rec>   # inherit a record
+          <field>: <override>                          # + fields under test
+    cases:                          # batch request → expect rules
+      - name: ...
+        request: { url, method, body: { queries: [...] } }
+        expect: [ {in?, find?, equal?|assert?}, ... ]
 
-The loader is invoked at pytest collection time so misshapen fixtures fail
-fast — long before the docker compose stack even comes up.
+Bronze rows are `$ref`-resolved (`ref_resolver`), padded and validated against
+`schemas/<table>.yaml` (`schema_validator`) at load time, so a bad ref or a
+misspelled column fails at pytest collection — before the stack comes up.
+
+Shared `schemas/` and `templates/` files are NOT tests (no `cases`).
 """
 
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
-import jsonschema
-import pandas as pd
 import yaml
 
-from e2e_lib.spec_schema import SPEC_SCHEMA
+from e2e_lib import ref_resolver, schema_validator
 
 LOG = logging.getLogger("e2e.fixture")
 
 
 class FixtureError(ValueError):
-    """Raised for any malformed fixture — message is shown to pytest at collect time."""
-
-
-# Bronze CSV filename convention: `<schema>.<table>.csv`.
-# Examples:
-#   bronze_bamboohr.employees.csv
-#   bronze_jira.changelogs.csv
-_BRONZE_CSV_NAME = re.compile(r"^(?P<schema>bronze_[a-z0-9_]+)\.(?P<table>[a-z0-9_]+)\.csv$")
-
-# Silver CSV filename convention: just `<table>.csv` (schema is always "silver").
-# Used to bypass Rust enrich for tests that need to start from already-processed
-# silver events (e.g. class_task_field_history). See HOW-TO-ADD-FIXTURE.md.
-_SILVER_CSV_NAME = re.compile(r"^(?P<table>[a-z0-9_]+)\.csv$")
+    """Malformed test file — message is shown to pytest at collect time."""
 
 
 @dataclass(frozen=True)
-class BronzeCsv:
-    """One CSV file mapping onto a bronze table."""
-
-    path: Path
-    schema: str  # e.g. "bronze_bamboohr"
-    table: str   # e.g. "employees"
-
-    @property
-    def full_name(self) -> str:
-        return f"{self.schema}.{self.table}"
-
-
-@dataclass(frozen=True)
-class SilverCsv:
-    """One CSV file mapping onto a silver table.
-
-    Tests that include silver/* files trade some pipeline coverage (the
-    Rust enrich + dbt union steps) for ability to exercise downstream
-    gold views. Use bronze-only when possible; reach for silver/ when the
-    pipeline above silver depends on a Rust binary not in the rig.
-    """
-
-    path: Path
-    table: str   # e.g. "class_task_field_history"
-    schema: str = "silver"
-
-    @property
-    def full_name(self) -> str:
-        return f"{self.schema}.{self.table}"
-
-
-@dataclass(frozen=True)
-class SpecYaml:
-    """Parsed and validated spec.yaml."""
-
-    spec_version: int
-    endpoint: str
-    request_body: dict[str, Any]
-    key_columns: list[str]
-    dbt_selector: str | None = None
-    method: str = "POST"
-    description: str = ""
-    metric_id: str | None = None
-    float_tolerance: float = 1e-6
-
-    @classmethod
-    def from_dict(cls, raw: dict) -> "SpecYaml":
-        # JSON Schema does the heavy lifting; this constructor only translates
-        # validated dict -> dataclass. Defaults mirror the schema's `default` keys.
-        return cls(
-            spec_version=raw["spec_version"],
-            endpoint=raw["endpoint"],
-            request_body=raw["request_body"],
-            dbt_selector=raw.get("dbt_selector"),
-            key_columns=list(raw["key_columns"]),
-            method=raw.get("method", "POST"),
-            description=raw.get("description", ""),
-            metric_id=raw.get("metric_id"),
-            float_tolerance=float(raw.get("float_tolerance", 1e-6)),
-        )
-
-    def resolved_endpoint(self) -> str:
-        """Interpolate `{metric_id}` placeholder if present in `endpoint`."""
-        if "{metric_id}" not in self.endpoint:
-            return self.endpoint
-        if not self.metric_id:
-            raise FixtureError(
-                f"endpoint references {{metric_id}} but no metric_id in spec: {self.endpoint}"
-            )
-        return self.endpoint.replace("{metric_id}", self.metric_id)
-
-
-@dataclass(frozen=True)
-class Fixture:
-    """A loaded fixture folder."""
-
+class TestYaml:
+    __test__ = False  # not a pytest test class despite the `Test` prefix
     name: str
-    root: Path
-    spec: SpecYaml
-    bronze_csvs: list[BronzeCsv] = field(default_factory=list)
-    silver_csvs: list[SilverCsv] = field(default_factory=list)
-    expected_df: pd.DataFrame = field(default_factory=pd.DataFrame)
-
-    @property
-    def touched_schemas(self) -> set[str]:
-        """Schemas this fixture writes into — informs the per-test TRUNCATE set."""
-        return {csv.schema for csv in self.bronze_csvs} | {csv.schema for csv in self.silver_csvs}
+    path: Path
+    # table fqn ("bronze_m365.email_activity") -> list of resolved+padded rows
+    bronze: dict[str, list[dict]] = field(default_factory=dict)
+    cases: list[dict] = field(default_factory=list)
 
     @property
     def touched_tables(self) -> set[tuple[str, str]]:
-        """(schema, table) pairs the fixture touches."""
-        return (
-            {(c.schema, c.table) for c in self.bronze_csvs}
-            | {(c.schema, c.table) for c in self.silver_csvs}
-        )
+        out = set()
+        for fqn in self.bronze:
+            schema, _, table = fqn.partition(".")
+            out.add((schema, table))
+        return out
 
 
-def load(fixture_root: Path) -> Fixture:
-    """Load a single fixture folder. Raises FixtureError on any malformation."""
-    if not fixture_root.is_dir():
-        raise FixtureError(f"fixture directory not found: {fixture_root}")
-
-    spec = _load_spec(fixture_root)
-    bronze_csvs = _enumerate_bronze_csvs(fixture_root)
-    silver_csvs = _enumerate_silver_csvs(fixture_root)
-    expected_df = _load_expected(fixture_root, key_columns=spec.key_columns)
-
-    return Fixture(
-        name=fixture_root.name,
-        root=fixture_root,
-        spec=spec,
-        bronze_csvs=bronze_csvs,
-        silver_csvs=silver_csvs,
-        expected_df=expected_df,
-    )
-
-
-def discover_all(fixtures_root: Path) -> list[Path]:
-    """List candidate fixture folders under `fixtures/` (one level deep)."""
-    if not fixtures_root.is_dir():
+def discover_tests(specs_root: Path) -> list[Path]:
+    """Every `**/*.test.yaml` under specs/. Shared schemas/templates are excluded
+    by the suffix; nothing else is collected as a test."""
+    if not specs_root.is_dir():
         return []
-    candidates = []
-    for child in sorted(fixtures_root.iterdir()):
-        # Skip dotfiles, READMEs, hidden caches
-        if child.name.startswith(".") or child.name.startswith("_"):
-            continue
-        if child.is_dir():
-            candidates.append(child)
-    return candidates
+    return sorted(specs_root.rglob("*.test.yaml"))
 
 
-# ---------------------------------------------------------------------------
-# internals
-# ---------------------------------------------------------------------------
+def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
+    """Load and fully resolve one test file. Raises FixtureError on any problem."""
+    if not path.is_file():
+        raise FixtureError(f"test file not found: {path}")
+    if schemas_dir is None:
+        schemas_dir = _find_schemas_dir(path)
 
-
-def _load_spec(root: Path) -> SpecYaml:
-    spec_path = root / "spec.yaml"
-    if not spec_path.is_file():
-        raise FixtureError(f"missing spec.yaml in {root}")
-    raw_text = spec_path.read_text(encoding="utf-8")
     try:
-        raw = yaml.safe_load(raw_text)
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
-        raise FixtureError(f"{spec_path}: invalid YAML: {e}") from e
-    if not isinstance(raw, dict):
-        raise FixtureError(f"{spec_path}: top-level must be a mapping, got {type(raw).__name__}")
-    try:
-        jsonschema.validate(raw, SPEC_SCHEMA)
-    except jsonschema.ValidationError as e:
-        raise FixtureError(
-            f"{spec_path}: spec.yaml does not match schema:\n  {e.message}\n  at path: {list(e.absolute_path)}"
-        ) from e
-    return SpecYaml.from_dict(raw)
+        raise FixtureError(f"{path}: invalid YAML: {e}") from e
+    if not isinstance(doc, dict):
+        raise FixtureError(f"{path}: top-level must be a mapping")
+    if "cases" not in doc:
+        raise FixtureError(f"{path}: a test must define `cases`")
+
+    bronze_doc = doc.get("bronze") or {}
+    if not isinstance(bronze_doc, dict):
+        raise FixtureError(f"{path}: `bronze` must be a mapping of table → records")
+    bronze: dict[str, list[dict]] = {}
+    for table, rows in bronze_doc.items():
+        if not isinstance(rows, list):
+            raise FixtureError(f"{path}: bronze.{table} must be a list of records")
+        try:
+            schema = schema_validator.load_schema(schemas_dir, table)
+        except schema_validator.SchemaError as e:
+            raise FixtureError(str(e)) from e
+        resolved: list[dict] = []
+        for idx, row in enumerate(rows):
+            try:
+                merged = ref_resolver.resolve(row, path)
+            except ref_resolver.RefError as e:
+                raise FixtureError(f"{path}: bronze.{table}[{idx}]: {e}") from e
+            if not isinstance(merged, dict):
+                raise FixtureError(f"{path}: bronze.{table}[{idx}] did not resolve to a record")
+            try:
+                resolved.append(schema_validator.pad_and_validate(merged, schema, table=table))
+            except schema_validator.SchemaError as e:
+                raise FixtureError(f"{path}: bronze.{table}[{idx}]: {e}") from e
+        bronze[table] = resolved
+
+    cases = doc["cases"]
+    if not isinstance(cases, list) or not cases:
+        raise FixtureError(f"{path}: `cases` must be a non-empty list")
+    for i, case in enumerate(cases):
+        if not isinstance(case, dict) or "request" not in case or "expect" not in case:
+            raise FixtureError(f"{path}: cases[{i}] must be a mapping with `request` and `expect`")
+
+    return TestYaml(name=path.name[: -len(".test.yaml")], path=path, bronze=bronze, cases=cases)
 
 
-def _enumerate_bronze_csvs(root: Path) -> list[BronzeCsv]:
-    bronze_dir = root / "bronze"
-    if not bronze_dir.is_dir():
-        raise FixtureError(f"missing bronze/ directory in {root}")
-    csvs = []
-    for entry in sorted(bronze_dir.iterdir()):
-        if not entry.is_file() or not entry.name.endswith(".csv"):
-            continue
-        m = _BRONZE_CSV_NAME.match(entry.name)
-        if not m:
-            raise FixtureError(
-                f"{entry}: bronze CSV name must match `<bronze_schema>.<table>.csv`, "
-                f"e.g. `bronze_bamboohr.employees.csv`"
-            )
-        csvs.append(BronzeCsv(path=entry, schema=m["schema"], table=m["table"]))
-    if not csvs:
-        raise FixtureError(f"no bronze CSV files found in {bronze_dir}")
-    return csvs
-
-
-def _enumerate_silver_csvs(root: Path) -> list[SilverCsv]:
-    """Optional silver/ directory: files named `<table>.csv` (schema implicit)."""
-    silver_dir = root / "silver"
-    if not silver_dir.is_dir():
-        return []
-    csvs = []
-    for entry in sorted(silver_dir.iterdir()):
-        if not entry.is_file() or not entry.name.endswith(".csv"):
-            continue
-        m = _SILVER_CSV_NAME.match(entry.name)
-        if not m:
-            raise FixtureError(
-                f"{entry}: silver CSV name must match `<table>.csv` "
-                f"(no schema prefix; the schema is always `silver`)"
-            )
-        csvs.append(SilverCsv(path=entry, table=m["table"]))
-    return csvs
-
-
-def _load_expected(root: Path, *, key_columns: list[str]) -> pd.DataFrame:
-    expected = root / "expected" / "response.csv"
-    if not expected.is_file():
-        raise FixtureError(f"missing expected/response.csv in {root}")
-    try:
-        df = pd.read_csv(expected)
-    except Exception as e:
-        raise FixtureError(f"{expected}: failed to read CSV: {e}") from e
-    missing = [c for c in key_columns if c not in df.columns]
-    if missing:
-        raise FixtureError(
-            f"{expected}: key_columns missing from expected CSV: {missing} "
-            f"(have: {list(df.columns)})"
-        )
-    return df
+def _find_schemas_dir(test_path: Path) -> Path:
+    """Walk up to the `specs/` dir and use its `schemas/` subdir."""
+    for parent in test_path.parents:
+        if parent.name == "specs":
+            return parent / "schemas"
+        if (parent / "schemas").is_dir():
+            return parent / "schemas"
+    raise FixtureError(f"{test_path}: could not locate a sibling `schemas/` directory")

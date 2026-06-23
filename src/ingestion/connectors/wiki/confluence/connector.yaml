@@ -38,6 +38,30 @@ definitions:
         action: FAIL
         http_codes: [401, 403]
 
+  # Substream children only: a parent page/comment deleted between the parent
+  # enumeration and the child fetch returns 404 on /pages/{id}/* or
+  # /*-comments/{id}/children. Without IGNORE, one deleted parent fails the
+  # whole sync (the Jira/Zendesk substream lesson). Parents (spaces/pages)
+  # deliberately keep the strict handler so a wrong instance_url (404 on the
+  # list endpoint) surfaces instead of silently syncing empty.
+  child_error_handler:
+    type: DefaultErrorHandler
+    backoff_strategies:
+      - type: WaitTimeFromHeader
+        header: Retry-After
+        max_waiting_time_in_seconds: 600
+    response_filters:
+      - type: HttpResponseFilter
+        action: IGNORE
+        http_codes: [404]
+        error_message: "Parent page/comment not found (deleted mid-sync) — partition skipped."
+      - type: HttpResponseFilter
+        action: RETRY
+        http_codes: [429, 503]
+      - type: HttpResponseFilter
+        action: FAIL
+        http_codes: [401, 403]
+
   base_requester:
     type: HttpRequester
     url_base: "{{ config['confluence_instance_url'] }}"
@@ -381,6 +405,8 @@ streams:
         path: /wiki/api/v2/pages/{{ stream_partition.page_id }}/versions
         request_parameters:
           limit: "{{ config.get('confluence_page_size', 100) }}"
+        error_handler:
+          $ref: "#/definitions/child_error_handler"
       paginator:
         $ref: "#/definitions/confluence_paginator"
       record_selector:
@@ -445,6 +471,8 @@ streams:
         request_parameters:
           limit: "{{ config.get('confluence_page_size', 100) }}"
           body-format: storage
+        error_handler:
+          $ref: "#/definitions/child_error_handler"
       paginator:
         $ref: "#/definitions/confluence_paginator"
       record_selector:
@@ -503,6 +531,8 @@ streams:
         request_parameters:
           limit: "{{ config.get('confluence_page_size', 100) }}"
           body-format: storage
+        error_handler:
+          $ref: "#/definitions/child_error_handler"
       paginator:
         $ref: "#/definitions/confluence_paginator"
       record_selector:
@@ -561,6 +591,8 @@ streams:
         request_parameters:
           limit: "{{ config.get('confluence_page_size', 100) }}"
           body-format: storage
+        error_handler:
+          $ref: "#/definitions/child_error_handler"
       paginator:
         $ref: "#/definitions/confluence_paginator"
       record_selector:
@@ -625,6 +657,8 @@ streams:
         request_parameters:
           limit: "{{ config.get('confluence_page_size', 100) }}"
           body-format: storage
+        error_handler:
+          $ref: "#/definitions/child_error_handler"
       paginator:
         $ref: "#/definitions/confluence_paginator"
       record_selector:

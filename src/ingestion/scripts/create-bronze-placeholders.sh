@@ -595,6 +595,66 @@ CREATE TABLE IF NOT EXISTS silver.class_wiki_activity (
 SQL
 fi
 
+# silver.class_wiki_pages — per-page snapshot. Referenced by the wiki gold
+# view 20260620000000_wiki-bullet-rows.sql; CREATE VIEW fails with
+# UNKNOWN_TABLE on a fresh cluster (migrations run before dbt builds silver)
+# unless this placeholder exists. Columns mirror the dbt model (the view
+# reads tenant_id/page_id/author_id/author_email/version_count/created_at).
+if ! ch_table_exists silver class_wiki_pages; then
+  echo "  Creating placeholder: silver.class_wiki_pages"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_wiki_pages (
+    tenant_id         Nullable(String),
+    source_id         Nullable(String),
+    unique_key        String,
+    page_id           Nullable(String),
+    space_id          Nullable(String),
+    space_name        Nullable(String),
+    title             Nullable(String),
+    status            Nullable(String),
+    author_id         Nullable(String),
+    author_email      Nullable(String),
+    last_editor_id    Nullable(String),
+    last_editor_email Nullable(String),
+    parent_page_id    Nullable(String),
+    version_count     UInt32,
+    created_at        Nullable(DateTime64(3)),
+    updated_at        Nullable(DateTime64(3)),
+    space_url         Nullable(String),
+    source            String,
+    data_source       String,
+    _version          UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_wiki_engagement — per-page per-day comment engagement.
+# Referenced by the wiki gold view 20260620000000_wiki-bullet-rows.sql
+# (reads tenant_id/page_id/day/total_comments). Same fresh-cluster CREATE
+# VIEW guard as class_wiki_pages above.
+if ! ch_table_exists silver class_wiki_engagement; then
+  echo "  Creating placeholder: silver.class_wiki_engagement"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_wiki_engagement (
+    tenant_id               Nullable(String),
+    source_id               Nullable(String),
+    unique_key              String,
+    page_id                 Nullable(String),
+    day                     Nullable(Date),
+    total_comments          UInt32,
+    footer_comments         Nullable(UInt32),
+    inline_comments         Nullable(UInt32),
+    replies                 Nullable(UInt32),
+    unique_commenters       Nullable(UInt32),
+    unresolved_inline_count Nullable(UInt32),
+    source                  String,
+    data_source             String,
+    collected_at            Nullable(DateTime64(3)),
+    _version                UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
 # silver.mtr_git_person_totals — pre-aggregated git person metrics.
 if ! ch_table_exists silver mtr_git_person_totals; then
   echo "  Creating placeholder: silver.mtr_git_person_totals"
@@ -659,51 +719,123 @@ fi
 run_ch <<'SQL'
 CREATE DATABASE IF NOT EXISTS bronze_m365;
 SQL
+# NOTE: column set mirrors the real Airbyte M365 streams (verified against a
+# live dev sync) so the collaboration dbt staging models — which read
+# reportRefreshDate, the message/meeting counters, the ISO-8601 duration
+# strings, etc. — can build from a seeded bronze in the e2e rig. The original
+# minimum-viable placeholders only carried the handful of columns the legacy
+# gold-view migrations type-check; the additional columns are additive and the
+# real Airbyte sync still overwrites the schema in prod. ORDER BY unique_key
+# matches the live engine (Airbyte's per-(user,date) natural key) so RMT
+# collapses re-synced duplicates the same way prod does.
 if ! ch_table_exists bronze_m365 teams_activity; then
   echo "  Creating placeholder: bronze_m365.teams_activity"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_m365.teams_activity (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
     userPrincipalName String,
-    lastActivityDate String,
-    teamChatMessageCount Nullable(Float64),
-    privateChatMessageCount Nullable(Float64),
-    meetingsAttendedCount Nullable(Float64),
-    callCount Nullable(Float64),
+    reportRefreshDate Nullable(String),
+    reportPeriod Nullable(String),
+    lastActivityDate Nullable(String),
+    teamChatMessageCount Nullable(Decimal(38, 9)),
+    privateChatMessageCount Nullable(Decimal(38, 9)),
+    postMessages Nullable(Decimal(38, 9)),
+    replyMessages Nullable(Decimal(38, 9)),
+    urgentMessages Nullable(Decimal(38, 9)),
+    callCount Nullable(Decimal(38, 9)),
+    meetingsAttendedCount Nullable(Decimal(38, 9)),
+    meetingsOrganizedCount Nullable(Decimal(38, 9)),
+    adHocMeetingsAttendedCount Nullable(Decimal(38, 9)),
+    adHocMeetingsOrganizedCount Nullable(Decimal(38, 9)),
+    scheduledOneTimeMeetingsAttendedCount Nullable(Decimal(38, 9)),
+    scheduledOneTimeMeetingsOrganizedCount Nullable(Decimal(38, 9)),
+    scheduledRecurringMeetingsAttendedCount Nullable(Decimal(38, 9)),
+    scheduledRecurringMeetingsOrganizedCount Nullable(Decimal(38, 9)),
+    audioDuration Nullable(String),
+    videoDuration Nullable(String),
+    screenShareDuration Nullable(String),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
-) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY userPrincipalName;
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
+SQL
+fi
+if ! ch_table_exists bronze_m365 email_activity; then
+  echo "  Creating placeholder: bronze_m365.email_activity"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_m365.email_activity (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
+    userPrincipalName String,
+    displayName Nullable(String),
+    reportRefreshDate Nullable(String),
+    reportPeriod Nullable(String),
+    lastActivityDate Nullable(String),
+    assignedProducts Nullable(String),
+    isDeleted Nullable(Bool),
+    sendCount Nullable(Decimal(38, 9)),
+    receiveCount Nullable(Decimal(38, 9)),
+    readCount Nullable(Decimal(38, 9)),
+    meetingCreatedCount Nullable(Decimal(38, 9)),
+    meetingInteractedCount Nullable(Decimal(38, 9)),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
 SQL
 fi
 if ! ch_table_exists bronze_m365 onedrive_activity; then
   echo "  Creating placeholder: bronze_m365.onedrive_activity"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_m365.onedrive_activity (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
     userPrincipalName String,
-    lastActivityDate String,
-    sharedInternallyFileCount Nullable(Float64),
-    sharedExternallyFileCount Nullable(Float64),
+    reportRefreshDate Nullable(String),
+    reportPeriod Nullable(String),
+    lastActivityDate Nullable(String),
+    viewedOrEditedFileCount Nullable(Decimal(38, 9)),
+    syncedFileCount Nullable(Decimal(38, 9)),
+    sharedInternallyFileCount Nullable(Decimal(38, 9)),
+    sharedExternallyFileCount Nullable(Decimal(38, 9)),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
-) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY userPrincipalName;
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
 SQL
 fi
 if ! ch_table_exists bronze_m365 sharepoint_activity; then
   echo "  Creating placeholder: bronze_m365.sharepoint_activity"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_m365.sharepoint_activity (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
     userPrincipalName String,
-    lastActivityDate String,
-    sharedInternallyFileCount Nullable(Float64),
-    sharedExternallyFileCount Nullable(Float64),
+    reportRefreshDate Nullable(String),
+    reportPeriod Nullable(String),
+    lastActivityDate Nullable(String),
+    viewedOrEditedFileCount Nullable(Decimal(38, 9)),
+    syncedFileCount Nullable(Decimal(38, 9)),
+    sharedInternallyFileCount Nullable(Decimal(38, 9)),
+    sharedExternallyFileCount Nullable(Decimal(38, 9)),
+    visitedPageCount Nullable(Decimal(38, 9)),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
-) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY userPrincipalName;
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
 SQL
 fi
 
@@ -767,6 +899,23 @@ CREATE TABLE IF NOT EXISTS bronze_bamboohr.employees (
     jobTitle              Nullable(String),
     supervisorEmail       Nullable(String),
     supervisor            Nullable(String),
+    -- Remaining real BambooHR columns (aligned to the live Airbyte schema so
+    -- the YAML rig can seed full rows). raw_data is JSON in prod; declared
+    -- Nullable(String) here to avoid CH 24.8 experimental-JSON (always null in tests).
+    city                  Nullable(String),
+    country               Nullable(String),
+    location              Nullable(String),
+    hireDate              Nullable(String),
+    originalHireDate      Nullable(String),
+    terminationDate       Nullable(String),
+    lastChanged           Nullable(String),
+    employmentHistoryStatus Nullable(String),
+    supervisorEId         Nullable(String),
+    employeeNumber        Nullable(String),
+    source_id             Nullable(String),
+    tenant_id             Nullable(String),
+    unique_key            Nullable(String),
+    raw_data              Nullable(String),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
