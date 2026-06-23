@@ -65,7 +65,7 @@ e2e/
 │   └── config.py               # session config (ports, random creds)
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
-├── fixtures/                   # individual fixture folders go here
+├── specs/                      # <name>.test.yaml + schemas/ + templates/
 └── meta/                       # framework's own smoke tests
     └── test_session_smoke.py
 ```
@@ -85,3 +85,46 @@ These ports avoid conflict with a local gitops dev cluster (which forwards 8123 
 
 - Auth in `analytics-api` requires no Bearer token, but its tenant middleware rejects requests without a non-nil tenant. The harness sends `X-Insight-Tenant-Id` with `e2e_lib.config.TEST_TENANT_ID` on every request and re-homes seeded metric definitions onto that tenant (`metric_seed.py`). The ClickHouse query path does not filter by tenant yet, so bronze CSV rows may use any tenant value.
 - Metric definitions are auto-seeded by the analytics-api binary's SeaORM migrations. Look up the metric UUID with `GET /v1/metrics` once the session is up, or add overrides in `seed/metrics.yaml`.
+
+## `cases` / `expect` (declarative YAML rig)
+
+Tests are `specs/**/*.test.yaml`; each `case` POSTs a batch to `/v1/metrics/queries` and checks an `expect` list of rules. A rule selects with `in` (batch result by `id`) + an exact-equality `find` (`{field: value}`), then asserts via `equal` (subset of fields, exact / `null`) or `assert` (a CEL boolean). Anything richer than equality (inequalities, counts, predicates) goes in a CEL `assert` — the rig deliberately has no second selector language. See the [yaml-rig FEATURE](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md) and the `/metric-e2e-test` skill.
+
+Variables available in an `assert` (CEL) expression — assembled in `e2e_lib/expect_engine.py::evaluate_case` (the `bindings` dict), converted to CEL in `_eval_cel`:
+
+| Binding | Value | Present when |
+|---------|-------|--------------|
+| `it` | the single row matched by `find` | only with `find` (else `null`) |
+| `items` | the selected result's `items` array | a result is selected (`in` or sole query) |
+| `result` | the selected batch result `{id, status, metric_id, items, page_info}` | a result is selected |
+| `results` | the full `results[]` of the batch | always |
+| `status` | the batch HTTP status code (int) | always |
+
+CEL is strictly typed and will not compare an `int` to a `double`. Bindings are passed through unchanged, so when a metric value may be integral (e.g. `40`) and you compare against a fractional literal, cast it: `double(it.value) > 39.5`. `status` and `size(...)` are integers — compare them with integer literals. Use `equal` for exact / `null` comparisons (it uses Python `==`).
+
+### What is CEL
+
+`assert` expressions are written in **CEL — the [Common Expression Language](https://github.com/google/cel-spec)** (the same expression language used by Kubernetes admission policies and Envoy). It is a small, side-effect-free language for boolean/value expressions over structured data: no statements, no loops, no I/O — an expression is evaluated against the bindings above and must return a boolean. The rig evaluates it with the [`cel-python`](https://pypi.org/project/cel-python/) library (`celpy`) in `e2e_lib/expect_engine.py::_eval_cel`.
+
+Operators: `== != < <= > >=`, `&& || !`, `+ - * / %`, `in`, ternary `cond ? a : b`. Field/index access: `it.value`, `result.status`, `items[0]`. Useful built-ins & macros: `size(x)`, `has(x.field)`, `x.exists(e, <pred>)`, `x.all(e, <pred>)`, `x.filter(e, <pred>)`, `x.map(e, <expr>)`, string `.startsWith()/.endsWith()/.contains()/.matches(re)`.
+
+Examples:
+
+```yaml
+- assert: "status == 200"                                  # batch HTTP code
+- in: collaboration
+  assert: "result.status == 'ok'"                           # this query's own status
+- in: collaboration
+  assert: "size(items) == 20"                               # row count
+- in: collaboration
+  find: { metric_key: m365_emails_sent }
+  assert: "double(it.value) > 39.5 && double(it.value) < 40.5"   # cast to double for fractional compare
+- in: collaboration
+  find: { metric_key: slack_dm_ratio }
+  assert: "it.value == null"                                # explicit null
+- assert: "results.exists(r, r.status == 'error')"          # any query in the batch failed?
+- in: collaboration
+  assert: "items.all(r, r.range_min <= r.value)"            # invariant across all rows
+```
+
+Prefer `equal` for exact / `null` checks (it uses Python `==`, so `40 == 40.0` and `value: null` work directly); reach for `assert` when you need inequalities, counts, or cross-row predicates.

@@ -99,6 +99,32 @@ class DbtRunner:
                 f"stderr tail:\n{result.stderr[-1000:]}"
             )
 
+    def derive_selectors(self, tables: set[tuple[str, str]]) -> tuple[list[str], list[str]]:
+        """From the seeded bronze tables, find the dbt models to build.
+
+        Returns (staging_models, silver_class_models). A staging model is any model
+        whose `source(...)` is one of the seeded bronze tables; the silver targets
+        are read off each staging model's `silver:<class>` tag. The caller builds
+        `+<staging>` first (pulls `<connector>__bronze_promoted`), then the silver
+        class models.
+        """
+        manifest_path = self.target_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        wanted = {f".{schema}.{table}" for schema, table in tables}
+        staging: list[str] = []
+        silver: set[str] = set()
+        for node in manifest.get("nodes", {}).values():
+            if node.get("resource_type") != "model":
+                continue
+            deps = node.get("depends_on", {}).get("nodes", [])
+            if not any(d.startswith("source.") and d.endswith(suffix) for d in deps for suffix in wanted):
+                continue
+            staging.append(node["name"])
+            for tag in node.get("tags", []):
+                if tag.startswith("silver:"):
+                    silver.add(tag.split(":", 1)[1])
+        return sorted(set(staging)), sorted(silver)
+
     # ----------------------------------------------------------------------
     # internals
     # ----------------------------------------------------------------------
@@ -111,7 +137,10 @@ class DbtRunner:
                 "outputs": {
                     "test": {
                         "type": "clickhouse",
-                        "host": "127.0.0.1",
+                        # Derive from session config — `127.0.0.1` only works in
+                        # host mode; in docker mode the runner reaches ClickHouse
+                        # at the compose service name (`clickhouse`).
+                        "host": self.cfg.ch_host,
                         "port": self.cfg.ch_http_port,
                         "schema": "default",
                         "user": self.cfg.ch_user,
