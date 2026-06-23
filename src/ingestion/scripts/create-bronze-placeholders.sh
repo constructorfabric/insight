@@ -595,6 +595,66 @@ CREATE TABLE IF NOT EXISTS silver.class_wiki_activity (
 SQL
 fi
 
+# silver.class_wiki_pages — per-page snapshot. Referenced by the wiki gold
+# view 20260620000000_wiki-bullet-rows.sql; CREATE VIEW fails with
+# UNKNOWN_TABLE on a fresh cluster (migrations run before dbt builds silver)
+# unless this placeholder exists. Columns mirror the dbt model (the view
+# reads tenant_id/page_id/author_id/author_email/version_count/created_at).
+if ! ch_table_exists silver class_wiki_pages; then
+  echo "  Creating placeholder: silver.class_wiki_pages"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_wiki_pages (
+    tenant_id         Nullable(String),
+    source_id         Nullable(String),
+    unique_key        String,
+    page_id           Nullable(String),
+    space_id          Nullable(String),
+    space_name        Nullable(String),
+    title             Nullable(String),
+    status            Nullable(String),
+    author_id         Nullable(String),
+    author_email      Nullable(String),
+    last_editor_id    Nullable(String),
+    last_editor_email Nullable(String),
+    parent_page_id    Nullable(String),
+    version_count     UInt32,
+    created_at        Nullable(DateTime64(3)),
+    updated_at        Nullable(DateTime64(3)),
+    space_url         Nullable(String),
+    source            String,
+    data_source       String,
+    _version          UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_wiki_engagement — per-page per-day comment engagement.
+# Referenced by the wiki gold view 20260620000000_wiki-bullet-rows.sql
+# (reads tenant_id/page_id/day/total_comments). Same fresh-cluster CREATE
+# VIEW guard as class_wiki_pages above.
+if ! ch_table_exists silver class_wiki_engagement; then
+  echo "  Creating placeholder: silver.class_wiki_engagement"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_wiki_engagement (
+    tenant_id               Nullable(String),
+    source_id               Nullable(String),
+    unique_key              String,
+    page_id                 Nullable(String),
+    day                     Nullable(Date),
+    total_comments          UInt32,
+    footer_comments         Nullable(UInt32),
+    inline_comments         Nullable(UInt32),
+    replies                 Nullable(UInt32),
+    unique_commenters       Nullable(UInt32),
+    unresolved_inline_count Nullable(UInt32),
+    source                  String,
+    data_source             String,
+    collected_at            Nullable(DateTime64(3)),
+    _version                UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
 # silver.mtr_git_person_totals — pre-aggregated git person metrics.
 if ! ch_table_exists silver mtr_git_person_totals; then
   echo "  Creating placeholder: silver.mtr_git_person_totals"
