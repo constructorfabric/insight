@@ -10,6 +10,7 @@
 ) }}
 
 -- depends_on: {{ ref('confluence__wiki_engagement') }}
+-- depends_on: {{ ref('outline__wiki_engagement') }}
 
 SELECT * FROM (
     {{ union_by_tag('silver:class_wiki_engagement') }}

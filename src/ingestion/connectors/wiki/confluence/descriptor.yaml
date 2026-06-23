@@ -1,5 +1,9 @@
 name: confluence
-version: "1.1.1"
+# 1.2.0: substream children (versions + footer/inline comments + replies)
+# now IGNORE HTTP 404 — a parent page/comment deleted mid-sync no longer
+# fails the whole sync (Jira/Zendesk substream large-data lesson). Parents
+# (spaces/pages) keep the strict handler. Additive → MINOR per ADR-0015.
+version: "1.2.0"
 schedule: "0 4 * * *"
 workflow: sync
 
