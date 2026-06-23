@@ -86,8 +86,12 @@ def ch(query: str) -> str:
 
     host = os.environ.get("CH_HOST", "127.0.0.1")
     port = os.environ.get("CH_PORT", "8123")
+    # Never send credentials over cleartext: default to https whenever a password
+    # is set (deployed warehouse); plain http only for the password-less local/CI
+    # container. CH_SCHEME overrides if an operator really has a plaintext endpoint.
+    scheme = os.environ.get("CH_SCHEME") or ("https" if os.environ.get("CH_PASSWORD") else "http")
     req = urllib.request.Request(
-        f"http://{host}:{port}/",
+        f"{scheme}://{host}:{port}/",
         data=query.encode(),
         headers={
             "X-ClickHouse-User": os.environ.get("CH_USER", "default"),
@@ -177,6 +181,25 @@ def main() -> None:
             sys.exit(0)
         print(f"FATAL: cannot reach ClickHouse ({e}). Set CH_HOST/CH_PORT/CH_USER/CH_PASSWORD.")
         sys.exit(2)
+
+    # Reachable but UNWIRED: a blank ClickHouse (no bronze_* dbs, no silver.class_*
+    # tables) would let every resolution/dedup check pass vacuously — a false green
+    # worse than a red. Under --skip-if-unreachable, treat "empty warehouse" the
+    # same as "unreachable": skip honestly rather than report a meaningless PASS.
+    if args.skip_if_unreachable:
+        try:
+            populated = int(ch(
+                r"SELECT count() FROM system.tables "
+                r"WHERE database LIKE 'bronze\_%' "
+                r"OR (database = 'silver' AND name LIKE 'class\_%')"
+            ) or 0)
+        except Exception:  # noqa: BLE001
+            populated = 0
+        if populated == 0:
+            print("SKIPPED: ClickHouse reachable but unpopulated (no bronze_* / "
+                  "silver.class_* tables) — warehouse not wired yet. Resolution/dedup "
+                  "are enforced once dbt populates the warehouse.")
+            sys.exit(0)
 
     fail_empty, fail_dup, fail_stale = [], [], []
 

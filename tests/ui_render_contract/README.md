@@ -12,7 +12,7 @@ silently round, drop, or mislabel a value.
 
 ## Unit (no infra)
 
-```
+```bash
 pytest tests/ui_render_contract/test_render_contract.py -v
 ```
 
@@ -24,7 +24,7 @@ null→"—" (not "0%"), not-ingested→"ComingSoon" (not "0"), "0 tasks" (not "
 The app is behind Entra+MFA, so the login is **not** automated. Capture an auth
 state once, by hand:
 
-```
+```bash
 playwright codegen --save-storage=auth.json https://insight-dev.constr.dev/
 # log in (incl. MFA) in the browser that opens, then close it
 INSIGHT_BASE_URL=https://insight-dev.constr.dev \
