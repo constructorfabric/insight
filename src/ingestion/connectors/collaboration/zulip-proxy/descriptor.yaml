@@ -1,7 +1,7 @@
 name: zulip-proxy
 version: "1.0.0"
 schedule: 0 3 * * *
-dbt_select: tag:zulip_proxy+
+dbt_select: tag:zulip-proxy+
 workflow: sync
 connection:
   namespace: bronze_zulip_proxy
