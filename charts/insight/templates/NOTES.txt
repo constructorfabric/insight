@@ -27,9 +27,9 @@ Application services (always-on):
   ✓ Ingestion templates: airbyte-sync, dbt-run, ingestion-pipeline
 {{- end }}
 
-NOT installed by this chart (see deploy/):
-  ✗ Airbyte          → deploy/scripts/install-airbyte.sh
-  ✗ Argo Workflows   → deploy/scripts/install-argo.sh
+NOT installed by this chart (deployed separately via gitops):
+  ✗ Airbyte          → cd deploy/gitops && make system-airbyte
+  ✗ Argo Workflows   → cd deploy/gitops && make system-argo
 
 Next steps:
 

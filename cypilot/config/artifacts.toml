@@ -868,3 +868,9 @@ kind = "FEATURE"
 path = "docs/domain/bronze-to-api-e2e/specs/feature-csv-rig/FEATURE.md"
 name = "Bronze-to-API E2E Tests — CSV Rig Feature"
 traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md"
+name = "Bronze-to-API E2E Tests — Declarative YAML Rig Feature"
+traceability = "FULL"

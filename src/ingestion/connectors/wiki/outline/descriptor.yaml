@@ -1,5 +1,9 @@
 name: outline
-version: "1.0.0"
+# 1.1.0: revisions.list substream now IGNOREs HTTP 404 — a document deleted
+# between documents.list enumeration and the per-doc revisions fetch no
+# longer fails the whole sync (Jira/Zendesk substream large-data lesson;
+# mirrors confluence). Additive → MINOR per ADR-0015.
+version: "1.1.0"
 schedule: "0 4 * * *"
 workflow: sync
 

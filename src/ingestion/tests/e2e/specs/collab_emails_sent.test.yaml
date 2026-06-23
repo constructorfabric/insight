@@ -1,0 +1,85 @@
+spec_version: 1
+description: descr...
+
+# ──────────────────────────────────────────────────────────────────────────
+# A record may carry `$ref: "<file>#/<json-pointer>"` (as in JSON Schema /
+# OpenAPI) to inherit from another record; sibling keys override the base
+# (closest wins). Paths are relative to THIS file; a `$ref` resolves relative
+# to the file it is written in (nested `#/...` refs inside templates/* stay
+# local to that file).
+#
+# Schemas are NOT referenced here — the rig resolves them by table name from
+# schemas/<table>.yaml (the `bronze` key IS the table name).
+# ──────────────────────────────────────────────────────────────────────────
+
+# bronze — seed fixture. Key = TABLE NAME. After `$ref` resolution each row is
+# padded to the full table schema. The fields under test (date + sent count)
+# are given right here. Two identical rows = a real duplicate (Airbyte re-sync).
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_m365.email_activity:
+    - $ref: templates/m365_email.yaml#/templates/alice_email
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-20260105
+      sendCount: 40
+
+    - $ref: templates/m365_email.yaml#/templates/alice_email   # duplicate alice → sum must NOT become 80
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-20260105
+      sendCount: 40
+
+    - $ref: templates/m365_email.yaml#/templates/bob_email
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-bob-20260105
+      sendCount: 20
+
+    - $ref: templates/m365_email.yaml#/templates/carol_email
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-carol-20260105
+      sendCount: 10
+
+# ──────────────────────────────────────────────────────────────────────────
+# cases — "batch request → expectations" (POST /v1/metrics/queries).
+#   in     — which batch result to use (by the request `id` = `results[].id`).
+#   find   — mongo-style selector for a row in that result's items.
+#   then ONE of:
+#     equal  — expected object (subset of fields), or
+#     assert — boolean CEL expression (`it` — the matched row; `items`/`result`/
+#              `results` — the result context; `status` — the batch HTTP code).
+# ──────────────────────────────────────────────────────────────────────────
+cases:
+  # IC Bullet Collaboration (…0012): value = the requested person's own value
+  # (from $filter); median/range = over their team (org_unit). All three are in
+  # Engineering → one team. m365_emails_sent over the team = [alice 40, bob 20,
+  # carol 10]:
+  #   value (alice)        = 40                       (the requested person)
+  #   median = quantileExact(0.5)[10,20,40] = 20      (team median, NOT alice's)
+  #   range  (team)        = [10, 40]
+  # alice is duplicated in bronze — her sum must stay 40 (dedup); otherwise the
+  # value, the median and the range would all drift.
+  - name: m365_emails_sent — IC bullet (alice value vs team median)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: m365_emails_sent }
+        equal: { value: 40, median: 20, range_min: 10, range_max: 40 }
+      - in: collaboration
+        assert: "size(items) == 20"
+      - in: collaboration
+        find: { metric_key: slack_dm_ratio }
+        equal: { value: null }
