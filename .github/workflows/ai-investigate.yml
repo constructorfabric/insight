@@ -45,6 +45,11 @@ jobs:
     # of erroring out inside the action with no key.
     env:
       HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      # Defense-in-depth: best-effort scrub of ANTHROPIC_API_KEY from the
+      # subprocesses the action's Bash tool spawns, so a same-repo branch
+      # can't exfiltrate it via a planted command. The same-repo gate above
+      # already blocks forks; this hardens the same-repo path.
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
     steps:
       # nosemgrep: yaml.github-actions.security.workflow-run-target-code-checkout.workflow-run-target-code-checkout -- mitigated: job gated on head_repository == this repo (same-repo only), persist-credentials:false, no secrets used
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -69,10 +74,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/failure
-          gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --log-failed > /tmp/failure/failed-jobs.log 2>/dev/null || \
-            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log \
-            | tail -800 > /tmp/failure/failed-jobs.log
+          # Best-effort: this is an advisory job, so log retrieval must never
+          # abort it (under pipefail a failing fallback pipeline would, which
+          # then skips the AI step via implicit success()).
+          if ! gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed \
+                 > /tmp/failure/failed-jobs.log 2>/dev/null; then
+            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log 2>/dev/null \
+              | tail -800 > /tmp/failure/failed-jobs.log || true
+          fi
+          [ -s /tmp/failure/failed-jobs.log ] || echo "(no logs retrieved)" > /tmp/failure/failed-jobs.log
           {
             echo "workflow: $WF_NAME"
             echo "branch:   $WF_BRANCH"
@@ -81,11 +91,11 @@ jobs:
 
       - name: AI investigation (full co-located context)
         if: env.HAS_ANTHROPIC_KEY == 'true'
-        # Pinned to the supported moving major @v1 per Anthropic's published
-        # guidance (the v1 tag is the maintained release channel; a frozen SHA
-        # would miss security fixes). This step runs only on workflow_run after
-        # a gate already failed, is advisory, and creates no release artifact.
-        uses: anthropics/claude-code-action@v1
+        # SHA-pinned to v1 per the repo's hash-pin policy (CI supply-chain
+        # hardening — same as actions/checkout above); the trailing `# v1`
+        # documents the channel so Dependabot/Renovate can bump the pin. Runs
+        # only on workflow_run after a gate failed; advisory, no release artifact.
+        uses: anthropics/claude-code-action@30544b674398ee15c84819bd87caf8a87e8c7b55 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
