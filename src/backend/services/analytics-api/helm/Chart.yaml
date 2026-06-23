@@ -2,5 +2,5 @@ apiVersion: v2
 name: insight-analytics-api
 description: Insight Analytics API — query service over ClickHouse views
 version: 0.1.0
-appVersion: "2026.06.22.14.20-ed31fae"
+appVersion: "2026.06.23.14.15-3d0cb39"
 type: application
