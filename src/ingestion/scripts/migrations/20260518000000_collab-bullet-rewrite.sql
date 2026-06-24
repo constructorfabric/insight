@@ -48,10 +48,11 @@
 --                                          ARRAY JOIN (sumIf per source)
 --   3. `class_collab_chat_activity` M365 → 1 key
 --   4. `class_collab_chat_activity` Slack → 3 keys via ARRAY JOIN
+--   4b. `class_collab_chat_activity` Zulip → 1 key (zulip_messages_sent)
 --   5. `class_collab_document_activity`  → 3 keys via ARRAY JOIN
 --   6. cross-class CTE                   → 1 key (m365_active_days)
 --
--- 18 distinct metric_keys after rewrite (down from 20). The two
+-- 19 distinct metric_keys after the Zulip add (was 18). The two
 -- composite-ratio keys (`slack_msgs_per_active_day`, `slack_dm_ratio`)
 -- visible on the FE live ONLY in the `query_ref` projection — they are
 -- not emitted by the view.
@@ -191,6 +192,24 @@ ARRAY JOIN [
 WHERE s.data_source = 'insight_slack'
   AND s.email IS NOT NULL
   AND s.email != ''
+
+UNION ALL
+
+-- ─── Branch 4b: class_collab_chat_activity — Zulip ───────────────────
+-- Single key (zulip_messages_sent), no ARRAY JOIN needed. Mirrors the
+-- m365 Teams branch: one silver row per (person, date) where
+-- data_source = 'insight_zulip_proxy' → period-summed chat messages.
+SELECT
+    lower(z.email)                                  AS person_id,
+    p.org_unit_id                                   AS org_unit_id,
+    z.date                                          AS metric_date,
+    'zulip_messages_sent'                           AS metric_key,
+    toFloat64(ifNull(z.total_chat_messages, 0))     AS metric_value
+FROM silver.class_collab_chat_activity AS z
+LEFT JOIN insight.people AS p ON lower(z.email) = p.person_id
+WHERE z.data_source = 'insight_zulip_proxy'
+  AND z.email IS NOT NULL
+  AND z.email != ''
 
 UNION ALL
 

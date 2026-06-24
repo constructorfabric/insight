@@ -9,9 +9,10 @@
 # sends as X-Insight-Tenant-Id on every request (the analytics-api tenant
 # middleware rejects nil/absent tenants, see e2e_lib/metric_seed.py).
 
-overrides:
-  - id: 00000000-0000-0000-0000-0000face0001
-    name: Smoke — insight.people direct
-    description: Reads insight.people directly, no joins. Used by people_smoke fixture.
-    query_ref: SELECT person_id, display_name, job_title, status FROM insight.people
-    is_enabled: true
+overrides: []
+  # Example (uncomment & adapt for a fixture needing a metric not in the prod catalog):
+  # - id: 00000000-0000-0000-0000-0000face0001
+  #   name: Smoke — insight.people direct
+  #   description: Reads insight.people directly, no joins.
+  #   query_ref: SELECT person_id, display_name, job_title, status FROM insight.people
+  #   is_enabled: true
