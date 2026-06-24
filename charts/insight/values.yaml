@@ -270,6 +270,12 @@ clickhouse:
   # at startup live here.
   initDatabases:
     - insight
+  # Apply the ClickHouse gold-view migrations (scripts/migrations/*.sql) +
+  # bronze placeholders on every install/upgrade via the clickhouse-migrate
+  # Hook Job (host-driven, over the HTTP interface — works for external/layered
+  # CH where there is no in-namespace pod to `kubectl exec` into). Idempotent.
+  # Set false only when migrations are applied out-of-band.
+  applyMigrations: true
 # ─── MariaDB ─────────────────────────────────────────────────────────────
 mariadb:
   host: "" # MUST be set (external L2 MariaDB host)

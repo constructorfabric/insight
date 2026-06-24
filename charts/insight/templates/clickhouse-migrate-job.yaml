@@ -1,0 +1,78 @@
+{{/*
+==============================================================================
+ ClickHouse schema migrations (gold views + bronze placeholders)
+==============================================================================
+
+Helm Hook Job that applies `src/ingestion/scripts/migrations/*.sql` (the gold
+ClickHouse VIEWs) + the bronze placeholder tables to `clickhouse.host` on every
+install/upgrade, via `scripts/apply_ch_migrations.py` (host-driven, HTTP, using
+the toolbox image's bundled `clickhouse-connect`).
+
+Why a Hook Job (not init.sh): `scripts/init.sh` applies these by `kubectl exec`
+into a *bundled* `statefulset/insight-clickhouse` pod. For external / layered
+ClickHouse (a separate `clickhouse` Helm release in another namespace, a managed
+warehouse) there is no in-namespace pod to exec into, so init.sh's migration
+step can't reach the live CH and the views drift — observed: after CH moved to
+`insight-infra`, the Collaboration `collab_bullet_rows` view stayed on its
+pre-deploy definition and every newly-released CH migration silently never
+applied. This Job dials `clickhouse.host` the same way the
+`clickhouse-init-svcdbs` Hook already does for CREATE DATABASE, so migrations
+land regardless of where CH runs.
+
+Hook timing: `post-install,post-upgrade`, weight 10 — AFTER `clickhouse-init-
+svcdbs` (pre-*, weight 5) has created the app database, and after the release's
+ClickHouse is up. The script also retries `SELECT 1` until CH answers. The
+gold views are read at query time (analytics-api does not read them at boot),
+so post-upgrade is safe and avoids blocking app rollout on migration latency.
+
+Idempotent: CREATE DATABASE IF NOT EXISTS, CREATE TABLE IF NOT EXISTS
+placeholders, DROP VIEW IF EXISTS + CREATE VIEW migrations.
+==============================================================================
+*/}}
+{{- if .Values.clickhouse.applyMigrations }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight.fullname" . }}-clickhouse-migrate
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse-migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "insight.fullname" . }}-clickhouse-migrate
+        app.kubernetes.io/component: clickhouse-migrate
+    spec:
+      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
+      # kubelet auto-injects for every Service in the namespace at pod-start.
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: {{ required "ingestion.toolboxImage is required when clickhouse.applyMigrations=true" .Values.ingestion.toolboxImage | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/ingestion/scripts/apply_ch_migrations.py"]
+          env:
+            - name: CLICKHOUSE_HOST
+              value: {{ include "insight.clickhouse.host" . | quote }}
+            - name: CLICKHOUSE_HTTP_PORT
+              value: {{ include "insight.clickhouse.port" . | quote }}
+            - name: CLICKHOUSE_PROTOCOL
+              value: {{ include "insight.clickhouse.protocol" . | quote }}
+            - name: CLICKHOUSE_DATABASE
+              value: {{ include "insight.clickhouse.database" . | quote }}
+            - name: CLICKHOUSE_USER
+              value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                  key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+{{- end }}
