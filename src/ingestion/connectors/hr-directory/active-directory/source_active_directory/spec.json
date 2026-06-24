@@ -1,0 +1,89 @@
+{
+  "documentationUrl": "https://learn.microsoft.com/en-us/windows/win32/adschema/attributes-all",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Active Directory (LDAP) Source",
+    "type": "object",
+    "required": [
+      "insight_tenant_id",
+      "insight_source_id",
+      "ad_server_host",
+      "ad_bind_dn",
+      "ad_bind_password",
+      "ad_search_base"
+    ],
+    "additionalProperties": true,
+    "properties": {
+      "insight_tenant_id": {
+        "type": "string",
+        "title": "Insight Tenant ID",
+        "description": "Tenant isolation identifier (UUID).",
+        "order": 0
+      },
+      "insight_source_id": {
+        "type": "string",
+        "title": "Insight Source ID",
+        "description": "Stable identifier for this AD connector instance (e.g. 'active-directory-corp'). Required non-empty — the composite unique_key depends on it to discriminate multiple AD forests under one tenant.",
+        "examples": ["active-directory-corp"],
+        "order": 1
+      },
+      "ad_server_host": {
+        "type": "string",
+        "title": "Domain Controller Host",
+        "description": "Hostname or IP of a domain controller / LDAP endpoint (no scheme, no port). E.g. 'dc1.corp.example.com'.",
+        "examples": ["dc1.corp.example.com"],
+        "order": 2
+      },
+      "ad_port": {
+        "type": "integer",
+        "title": "LDAP Port",
+        "description": "LDAP port. Defaults to 636 when TLS is enabled, 389 otherwise.",
+        "examples": [636, 389],
+        "order": 3
+      },
+      "ad_use_ssl": {
+        "type": "boolean",
+        "title": "Use LDAPS (TLS)",
+        "description": "Connect over LDAPS/TLS. Strongly recommended — a plaintext bind sends ad_bind_password in the clear.",
+        "default": true,
+        "order": 4
+      },
+      "ad_bind_dn": {
+        "type": "string",
+        "title": "Bind DN",
+        "description": "Service-account bind identity. Accepts a full DN ('CN=svc-insight,OU=Service,DC=corp,DC=example,DC=com') or a UPN ('svc-insight@corp.example.com'). Use a read-only account.",
+        "examples": ["svc-insight@corp.example.com"],
+        "order": 5
+      },
+      "ad_bind_password": {
+        "type": "string",
+        "title": "Bind Password",
+        "description": "Password for the bind account.",
+        "airbyte_secret": true,
+        "order": 6
+      },
+      "ad_search_base": {
+        "type": "string",
+        "title": "Search Base DN",
+        "description": "Base DN to search for users (e.g. 'DC=corp,DC=example,DC=com' or a narrower 'OU=Employees,DC=corp,DC=example,DC=com').",
+        "examples": ["DC=corp,DC=example,DC=com"],
+        "order": 7
+      },
+      "ad_user_filter": {
+        "type": "string",
+        "title": "User LDAP Filter",
+        "description": "LDAP filter selecting user objects. Default targets enabled and disabled person accounts but excludes computers, contacts, and krbtgt.",
+        "default": "(&(objectClass=user)(objectCategory=person)(!(sAMAccountName=krbtgt)))",
+        "order": 8
+      },
+      "ad_page_size": {
+        "type": "integer",
+        "title": "Paged-Search Page Size",
+        "description": "LDAP paged-results page size. AD's default MaxPageSize policy is 1000; 500 is safe.",
+        "default": 500,
+        "minimum": 1,
+        "order": 9
+      }
+    }
+  }
+}

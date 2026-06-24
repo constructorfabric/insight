@@ -1,0 +1,127 @@
+version: 2
+
+sources:
+  - name: bronze_active_directory
+    # Source freshness: the newest Airbyte row must be recent, else the sync
+    # silently stopped and dashboards go stale with no error.
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
+    schema: bronze_active_directory
+    tables:
+      - name: users
+
+models:
+  - name: active_directory__bronze_promoted
+    description: >
+      Bootstrap model that promotes raw `bronze_active_directory.users` to a
+      ReplacingMergeTree table (idempotent). Run before downstream models that
+      depend on RMT semantics.
+
+  - name: active_directory__users_snapshot
+    description: >
+      SCD2 append-only snapshot of Active Directory users. Captures changes in
+      tracked fields (UPN, mail, displayName, employeeId, accountEnabled,
+      sAMAccountName, etc.) so the Identity Manager can observe identity changes
+      over time.
+    columns:
+      - name: unique_key
+        description: Composite (tenant, source, objectGUID, _row_hash) snapshot key.
+        tests:
+          - not_null
+
+  - name: active_directory__users_fields_history
+    description: >
+      Field-level change log for Active Directory users. One row per (entity,
+      field, change). Drives `active_directory__identity_inputs`.
+    columns:
+      - name: entity_id
+        description: AD objectGUID.
+        tests:
+          - not_null
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: field_name
+        tests:
+          - not_null
+      - name: updated_at
+        tests:
+          - not_null
+
+  - name: active_directory__identity_inputs
+    description: >
+      Identity signals emitted to Identity Manager. Each row is one observation
+      (UPSERT or DELETE) of an identity field for a user. Identity Manager
+      consumes these to resolve `objectGUID → person_id`.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: insight_source_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['active-directory']
+      - name: source_account_id
+        description: AD objectGUID.
+        tests:
+          - not_null
+      - name: value_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['id', 'email', 'employee_id', 'display_name', 'sam_account', 'status']
+      - name: operation_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['UPSERT', 'DELETE']
+
+  - name: active_directory__to_class_people
+    description: >
+      Active Directory users → class_people (Silver Step 1).
+      Identity key: `email` (mail with UPN fallback). `source_person_id` is the
+      AD objectGUID — stable across renames and reusable as the directory join key.
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+      - name: source_person_id
+        description: AD objectGUID.
+        tests:
+          - not_null
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['active-directory']
+      - name: workspace_id
+        tests:
+          - not_null
+      - name: status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['active', 'on_leave', 'terminated']
