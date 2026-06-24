@@ -1,0 +1,80 @@
+spec_version: 1
+description: >-
+  Zulip chat activity flows bronze → silver class_collab_chat_activity (via
+  union_by_tag) → gold insight.collab_bullet_rows (Branch 4b,
+  data_source='insight_zulip_proxy') → IC Bullet Collaboration metric_key
+  `zulip_messages_sent`. Mirrors collab_emails_sent: alice's own value vs her
+  team's median/range, with a bronze duplicate that must dedup.
+
+# bronze — seed fixture. Key = TABLE NAME. People (org_unit) come from
+# bamboohr; Zulip users supply the emails that join to them; Zulip messages
+# carry the per-sender counts. alice 40, bob 20, carol 10 (all Engineering →
+# one team) → value(alice)=40, team median=20, range [10,40]. alice has a
+# duplicate `uniq` row (Airbyte re-emit) that must dedup → 40, not 80.
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_zulip_proxy.users:
+    - $ref: templates/zulip.yaml#/templates/alice_user
+    - $ref: templates/zulip.yaml#/templates/bob_user
+    - $ref: templates/zulip.yaml#/templates/carol_user
+
+  bronze_zulip_proxy.messages:
+    - $ref: templates/zulip.yaml#/templates/alice_message
+      uniq: z-alice-20260105
+      unique_key: zulip-msg-alice-20260105
+      count: 40
+
+    - $ref: templates/zulip.yaml#/templates/alice_message   # duplicate uniq → must dedup, NOT sum to 80
+      uniq: z-alice-20260105
+      unique_key: zulip-msg-alice-20260105
+      count: 40
+
+    - $ref: templates/zulip.yaml#/templates/bob_message
+      uniq: z-bob-20260105
+      unique_key: zulip-msg-bob-20260105
+      count: 20
+
+    - $ref: templates/zulip.yaml#/templates/carol_message
+      uniq: z-carol-20260105
+      unique_key: zulip-msg-carol-20260105
+      count: 10
+
+cases:
+  # IC Bullet Collaboration (…0012): value = the requested person's own value
+  # (from $filter); median/range = over their team (org_unit). All three are in
+  # Engineering → one team. zulip_messages_sent over the team = [alice 40,
+  # bob 20, carol 10]:
+  #   value (alice)        = 40                       (the requested person)
+  #   median = quantileExact(0.5)[10,20,40] = 20      (team median, NOT alice's)
+  #   range  (team)        = [10, 40]
+  # alice is duplicated in bronze (same `uniq`) — her sum must stay 40 (dedup);
+  # otherwise the value, the median and the range would all drift.
+  - name: zulip_messages_sent — IC bullet (alice value vs team median, dedup)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: zulip_messages_sent }
+        equal: { value: 40, median: 20, range_min: 10, range_max: 40 }
+      # The Zulip add raises the collaboration bullet from 20 to 21 FE-visible keys.
+      - in: collaboration
+        assert: "size(items) == 21"
+      # No Slack data seeded → the Slack-only DM ratio is null for this person.
+      - in: collaboration
+        find: { metric_key: slack_dm_ratio }
+        equal: { value: null }

@@ -1,0 +1,178 @@
+spec_version: 1
+description: >
+  Per-metric E2E check for m365_emails_read (#1413), exercising the metric
+  query's date-window options — week / month / quarter / custom — with
+  boundary-value and equivalence-partition coverage. Asserts ONLY the target
+  metric (m365_emails_read) on the IC Bullet Collaboration metric (…0012):
+  value = the requested member's period total over the window, median/range =
+  over the members who have data in that window (org_unit = Engineering).
+
+  Test design — alice's reads are placed on/around the bounds of each window so
+  every period sum proves inclusive [ge, le] bounds and exclusion just outside:
+
+    date         read   role in the coverage
+    2025-12-31   999    one day BEFORE quarter/month lower  → excluded (BVA-)
+    2026-01-01     1    quarter & month LOWER bound          → included (BVA, =ge)
+    2026-01-05    10    week LOWER bound                     → included (BVA, =ge)
+    2026-01-08    20    interior of week/month/quarter (duplicated → dedup)
+    2026-01-11     5    week UPPER bound                     → included (BVA, =le)
+    2026-01-12   100    one day AFTER week upper             → excluded from week
+    2026-01-31     3    month UPPER bound                    → included (BVA, =le)
+    2026-02-11    50    interior of quarter; custom window
+    2026-03-31     2    quarter UPPER bound                  → included (BVA, =le)
+    2026-04-01   888    one day AFTER quarter upper          → excluded (BVA+)
+
+  bob/carol each have a single read on 2026-01-08 (inside week/month/quarter but
+  NOT the Feb custom windows), so the cohort is {alice,bob,carol} for the three
+  calendar periods and narrows to {alice} for the Feb windows — exercising that
+  median/range span only members with data in the window. alice's 01-08 row is a
+  verbatim duplicate (same unique_key): it must dedup to 20, otherwise the
+  week/month/quarter sums (and the medians/ranges) would all drift.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_m365.email_activity:
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2025-12-31", unique_key: read-alice-20251231, readCount: 999 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-01", unique_key: read-alice-20260101, readCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-05", unique_key: read-alice-20260105, readCount: 10 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-08", unique_key: read-alice-20260108, readCount: 20 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-08", unique_key: read-alice-20260108, readCount: 20 }  # duplicate → dedup to 20, not 40
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-11", unique_key: read-alice-20260111, readCount: 5 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-12", unique_key: read-alice-20260112, readCount: 100 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-31", unique_key: read-alice-20260131, readCount: 3 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-02-11", unique_key: read-alice-20260211, readCount: 50 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-03-31", unique_key: read-alice-20260331, readCount: 2 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-04-01", unique_key: read-alice-20260401, readCount: 888 }
+    - { $ref: templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-01-08", unique_key: read-bob-20260108,   readCount: 30 }
+    - { $ref: templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-01-08", unique_key: read-carol-20260108, readCount: 15 }
+
+cases:
+  # ── WEEK (7-day window, Mon 01-05 .. Sun 01-11) ──────────────────────────────
+  # alice = 10(05)+20(08)+5(11) = 35  (01-01 below & 01-12 above excluded;
+  #   bounds 01-05/01-11 inclusive). cohort {35,30,15} → median 30, range [15,35]
+  - name: "m365_emails_read — WEEK window (boundary-inclusive lower/upper)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-05' and metric_date le '2026-01-11'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: m365_emails_read }
+        equal: { value: 35, median: 30, range_min: 15, range_max: 35 }
+
+  # ── MONTH (calendar January) ─────────────────────────────────────────────────
+  # alice = 1+10+20+5+100+3 = 139  (12-31 excluded, 02-11 excluded; 01-01/01-31
+  #   bounds inclusive). cohort {139,30,15} → median 30, range [15,139]
+  - name: "m365_emails_read — MONTH window (lower/upper bound inclusive, prior day excluded)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_emails_read }
+        equal: { value: 139, median: 30, range_min: 15, range_max: 139 }
+
+  # ── QUARTER (Q1 2026) ────────────────────────────────────────────────────────
+  # alice = 139(Jan) + 50(02-11) + 2(03-31) = 191  (12-31 & 04-01 excluded;
+  #   03-31 bound inclusive). cohort {191,30,15} → median 30, range [15,191]
+  - name: "m365_emails_read — QUARTER window (full Q1 sum, just-after excluded)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-03-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_emails_read }
+        equal: { value: 191, median: 30, range_min: 15, range_max: 191 }
+
+  # ── CUSTOM (narrow mid-quarter range 02-10 .. 02-12) ─────────────────────────
+  # alice = 50(02-11); bob/carol have no data in range → cohort {50} only
+  - name: "m365_emails_read — CUSTOM narrow window (cohort narrows to members with data)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-02-10' and metric_date le '2026-02-12'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_emails_read }
+        equal: { value: 50, median: 50, range_min: 50, range_max: 50 }
+
+  # ── SINGLE-DAY (degenerate window, ge == le = 02-11) ─────────────────────────
+  # proves an inclusive single-day window; alice = 50
+  - name: "m365_emails_read — SINGLE-DAY window (ge == le)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-02-11' and metric_date le '2026-02-11'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_emails_read }
+        equal: { value: 50, median: 50, range_min: 50, range_max: 50 }
+
+  # ── CROSS-YEAR boundary (12-31 .. 01-01) ─────────────────────────────────────
+  # both bounds inclusive across the year boundary; alice = 999(12-31)+1(01-01)=1000.
+  # confirms 12-31 was excluded from month/quarter only by the date filter.
+  - name: "m365_emails_read — CROSS-YEAR window (both bounds inclusive)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2025-12-31' and metric_date le '2026-01-01'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_emails_read }
+        equal: { value: 1000, median: 1000, range_min: 1000, range_max: 1000 }
+
+  # ── EMPTY window (no data in range) ──────────────────────────────────────────
+  # equivalence class: a valid window that contains no rows → no items returned
+  - name: "m365_emails_read — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-07-01' and metric_date le '2026-07-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"

@@ -72,6 +72,7 @@ CREATE DATABASE IF NOT EXISTS bronze_cursor;
 CREATE DATABASE IF NOT EXISTS bronze_slack;
 CREATE DATABASE IF NOT EXISTS bronze_bamboohr;
 CREATE DATABASE IF NOT EXISTS bronze_bitbucket_cloud;
+CREATE DATABASE IF NOT EXISTS bronze_zulip_proxy;
 SQL
 
 # ---------------------------------------------------------------------------
@@ -983,6 +984,54 @@ CREATE TABLE IF NOT EXISTS bronze_slack.users_details (
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY (email_address, date);
+SQL
+fi
+
+# bronze_zulip_proxy.messages — per-(sender, bucket) aggregated chat counts
+# from the Zulip proxy. zulip_proxy__collab_chat_activity dedups by `uniq`,
+# joins users on sender_id = id, and sums `count` per (sender email, date).
+# The real Airbyte connector overwrites this on first sync (full schema in
+# src/ingestion/connectors/collaboration/zulip-proxy/connector.yaml).
+if ! ch_table_exists bronze_zulip_proxy messages; then
+  echo "  Creating placeholder: bronze_zulip_proxy.messages"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_zulip_proxy.messages (
+    uniq                   String,
+    sender_id              Nullable(Int64),
+    count                  Nullable(Int64),
+    created_at             String,
+    tenant_id              Nullable(String),
+    source_id              Nullable(String),
+    unique_key             String,
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+fi
+
+# bronze_zulip_proxy.users — Zulip user directory (full-refresh each sync).
+# Joined by id = messages.sender_id to attach the sender email.
+if ! ch_table_exists bronze_zulip_proxy users; then
+  echo "  Creating placeholder: bronze_zulip_proxy.users"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_zulip_proxy.users (
+    id                     Nullable(Int64),
+    uuid                   Nullable(String),
+    email                  Nullable(String),
+    full_name              Nullable(String),
+    role                   Nullable(Int64),
+    is_active              Nullable(Bool),
+    recipient_id           Nullable(Int64),
+    tenant_id              Nullable(String),
+    source_id              Nullable(String),
+    unique_key             String,
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
 SQL
 fi
 

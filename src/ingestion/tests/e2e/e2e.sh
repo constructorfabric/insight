@@ -3,7 +3,7 @@
 #
 # Examples:
 #   ./e2e.sh test                       # full suite
-#   ./e2e.sh test -k people_smoke -v    # one fixture
+#   ./e2e.sh test -k collab_emails_sent -v  # one test
 #   ./e2e.sh shell                      # interactive bash inside the runner
 #   ./e2e.sh build                      # rebuild the runner image
 #   ./e2e.sh down                       # stop containers, clear volumes
@@ -63,67 +63,8 @@ case "$cmd" in
     logs)
         docker compose "${COMPOSE_FILES[@]}" logs --tail=200 "$@"
         ;;
-    new)
-        # Scaffold a new fixture folder.
-        # Usage: ./e2e.sh new <fixture_name> [<bronze_schema>.<table>]
-        name="${1:-}"
-        if [ -z "$name" ]; then
-            echo "usage: $0 new <fixture_name> [<bronze_schema>.<table>]" >&2
-            exit 2
-        fi
-        dir="specs/$name"
-        if [ -e "$dir" ]; then
-            echo "error: $dir already exists" >&2
-            exit 1
-        fi
-        bronze_tbl="${2:-bronze_bamboohr.employees}"
-        mkdir -p "$dir/bronze" "$dir/expected"
-
-        cat > "$dir/spec.yaml" <<EOF
-spec_version: 1
-description: >
-  TODO describe what this fixture exercises.
-
-# Look up the UUID from analytics-api seed_metrics migrations OR add a
-# custom metric to ../../seed/metrics.yaml and reference it here.
-metric_id: REPLACE-WITH-UUID
-endpoint: /v1/metrics/{metric_id}/query
-method: POST
-
-request_body:
-  \$top: 50
-
-# Optional: dbt selector. Omit for view-only metrics that read directly
-# from bronze (e.g. \`insight.people\`).
-# dbt_selector: +silver_class_<x>+
-
-key_columns:
-  - REPLACE_WITH_COLUMN
-EOF
-
-        cat > "$dir/bronze/$bronze_tbl.csv" <<EOF
-# TODO: replace with real CSV. First row = column names; empty cell = SQL NULL.
-# See system.columns for the target table schema:
-#   ./e2e.sh shell
-#   clickhouse-client --host clickhouse -u insight --password "\$E2E_CH_PASSWORD" \\
-#     --query "DESCRIBE $bronze_tbl"
-EOF
-        # `.csv` with a leading comment is invalid pandas input — rename so
-        # fixture-loader doesn't pick this up half-baked. Author removes
-        # the `.todo` suffix once the CSV is real.
-        mv "$dir/bronze/$bronze_tbl.csv" "$dir/bronze/$bronze_tbl.csv.todo"
-
-        echo "scaffolded $dir/"
-        echo ""
-        echo "next steps:"
-        echo "  1. edit $dir/spec.yaml (set metric_id + key_columns)"
-        echo "  2. write $dir/bronze/$bronze_tbl.csv (and any other bronze inputs)"
-        echo "     remove the .todo suffix once the CSV is real"
-        echo "  3. generate expected/response.csv:  ./e2e.sh test -k $name --update-snapshots"
-        echo "  4. inspect the generated expected/response.csv, then commit"
-        ;;
     *)
-        echo "usage: $0 {build|test|run|shell|up|down|logs|new} [args...]" >&2
+        echo "usage: $0 {build|test|run|shell|up|down|logs} [args...]" >&2
         exit 2
         ;;
 esac

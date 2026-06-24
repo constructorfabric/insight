@@ -71,7 +71,7 @@ def test_dbt_build_unknown_selector_raises(dbt_runner: DbtRunner) -> None:
 def test_dbt_build_with_worker_context_passes_var(dbt_runner: DbtRunner) -> None:
     """Verify the command is constructed correctly without actually running dbt build.
 
-    Running a real dbt build is exercised end-to-end by feature-csv-rig; here we
+    Running a real dbt build is exercised end-to-end by feature-yaml-rig; here we
     only verify that worker context produces a deterministic --vars payload.
     """
     runner = dbt_runner

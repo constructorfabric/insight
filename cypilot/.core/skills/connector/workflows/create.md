@@ -433,6 +433,69 @@ Rules:
   no emails), skip this section and document in the README how identities
   resolve instead (cross-connector JOIN, Silver Step 2 direct mapping).
 
+#### 3.6c Surfacing the connector in a dashboard metric (silver class → gold → query_ref → catalog)
+
+> **A connector that only reaches silver does NOT appear in the UI.** Tagging a
+> model `silver:class_<X>` makes `union_by_tag` fold it into the shared
+> `silver.class_<X>` table — and that is ALL that is automatic. The gold views,
+> the metric `query_ref`s, and the metric catalog each enumerate their inputs
+> EXPLICITLY; a new source contributes nothing past silver until you wire four
+> more layers by hand. Skip this whole section if the connector is bronze-only
+> or its silver class is not consumed by any gold metric (then say so in the
+> README). Reference implementation: PR constructorfabric/insight#1466 (added
+> Zulip chat to the Collaboration bullet) — open it as a worked example.
+
+The data path for a per-person dashboard metric:
+
+```
+bronze_<snake>.<stream>
+  → <snake>__<class>.sql            (silver, tag silver:class_<X>)   ← §3.5
+    → silver.class_<X>              (union_by_tag — AUTOMATIC)
+      → insight.<section>_bullet_rows   (gold VIEW, CH migration)    ← layer A
+        → metrics.query_ref (…IC/Team/member/dept)  (SeaORM)         ← layer B
+          → metric_catalog row      (label/threshold, SeaORM)        ← layer C
+            → analytics-api → person-profile <Section> card (UI)
+```
+
+What to add (use an EXISTING section like `collab` / `git` / `ai` / `support`
+when the metric fits one; only create a new `<section>_bullet_rows` view +
+metric ids for a genuinely new section):
+
+- **Layer 0 — silver class build edge.** Add
+  `-- depends_on: {{ ref('<snake>__<class>') }}` to
+  `src/ingestion/silver/<domain>/class_<X>.sql`. `union_by_tag` already includes
+  your model at SQL level once its table exists; this edge makes a
+  `tag:<slug>+` prod run rebuild the class (and the e2e rig's `derive_selectors`
+  build it from the `silver:` tag).
+- **Layer A — gold view branch.** In the CH migration that defines
+  `insight.<section>_bullet_rows`
+  (`src/ingestion/scripts/migrations/*-bullet-rewrite.sql`; idempotent
+  `DROP+CREATE`, no tracking table → edit the canonical definition in place),
+  add a branch `... FROM silver.class_<X> WHERE data_source = 'insight_<snake>'`
+  emitting your `metric_key`(s). The `data_source` literal is exactly what your
+  silver model SELECTs (`'insight_<snake>'`). Join `insight.people` on
+  `lower(email) = p.person_id` for `org_unit_id`.
+- **Layer B — query_ref(s).** The bullet `query_ref`s materialize EVERY
+  FE-visible `metric_key` as `sumIf(metric_value, metric_key='<k>') AS <k>_v`
+  then unpivot via `ARRAY JOIN [('<k>', <k>_v), …]`. Add your key to BOTH lists.
+  SeaORM migrations are append-only — write a NEW
+  `m<date>_<n>_<section>_<conn>.rs` that `UPDATE metrics SET query_ref=… WHERE
+  id = UNHEX('<hex>')`, basing the SQL on the LATEST migration that set that
+  query_ref (grep the metric id; a section has SEVERAL copies — IC bullet,
+  Team bullet, member-values `…0041`, dept-distribution `…0045` — update each
+  surface you need). Register the migration in
+  `src/backend/services/analytics-api/src/migration/mod.rs`.
+- **Layer C — catalog row.** New append-only migration
+  `m<date>_<n>_seed_<conn>_<section>_catalog.rs` inserting a `metric_catalog`
+  row (`<section>_bullet_rows.<metric_key>`, label, sublabel, unit,
+  `source_tags: ["<slug>"]`) + a product-default `metric_threshold`. Model it on
+  `m20260620_000002_seed_wiki_catalog.rs`. Register in `mod.rs`.
+
+Then prove the whole chain with a `/metric-e2e-test` fixture (see that skill) —
+seed bronze, query the bullet metric, assert your `metric_key`'s value. Adding a
+key to a shared section raises its `size(items)`, so bump any sibling test that
+asserts the old count.
+
 ### For CDK (`CONNECTOR_TYPE=cdk`):
 
 Create Python scaffold:
