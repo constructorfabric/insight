@@ -670,15 +670,15 @@ Key deployment decisions:
 - Airbyte ships its own bundled PostgreSQL for connector metadata (managed by the `airbyte/airbyte` chart, not by the umbrella).
 - Helm charts: Airbyte via `airbyte/airbyte`, Argo via `argo/argo-workflows`, the Insight platform via `charts/insight` in this repo. On Cyberfabric-operated and local clusters all three are installed by the gitops Makefile (`cd deploy/gitops && make deploy ENV=<env>` — Airbyte/Argo as L2 system releases, the umbrella as the L3 app release); external consumers install them with their own tooling.
 - ClickHouse, MariaDB, Redis and Redpanda are deployed as separate L2 releases in `insight-infra` (gitops `make system-*`); the umbrella no longer bundles them as subcharts (removed in chart `0.2.0`). The umbrella consumes them through the unified `<dep>.host / .port / .database / .username / .passwordSecret` shape — see `charts/insight/values.yaml`.
-- ClickHouse is a StatefulSet (`insight-clickhouse`) deployed as a separate L2 release (gitops `make system-clickhouse`); access is via Service `insight-clickhouse:8123` inside the cluster. Health probes use HTTP GET `/ping` (not `clickhouse-client` exec — avoids CLI flag parsing issues with auto-generated passwords).
-- MariaDB per-service databases are provisioned via the bundled bitnami `mariadb.initdbScriptsConfigMap` (see `charts/insight/templates/mariadb-initdb-scripts.yaml`) — bitnami runs every script in that ConfigMap on the FIRST MariaDB pod boot, mounted at `/docker-entrypoint-initdb.d`. The data lives in the PVC after that, so restarts and helm upgrades are no-ops. Each owning service then runs its own SeaORM migrations at startup — see §4.4.2 and [ADR-0006](ADR/0006-service-owned-migrations.md).
+- ClickHouse runs as a separate L2 release in `insight-infra` (gitops `make system-clickhouse`); the umbrella addresses it through `clickhouse.host`/`.port` (default `clickhouse.insight-infra.svc.cluster.local:8123`) over the HTTP interface. Health probes use HTTP GET `/ping` (not `clickhouse-client` exec — avoids CLI flag parsing issues with auto-generated passwords).
+- MariaDB per-service databases are provisioned by a Helm Hook Job (`charts/insight/templates/mariadb-init-svcdbs-job.yaml`, `pre-install,pre-upgrade`) that dials the external `mariadb.host` and runs `CREATE DATABASE` + `GRANT` for each owned database — idempotent (`IF NOT EXISTS`) across helm upgrades. Each owning service then runs its own SeaORM migrations at startup — see §4.4.2 and [ADR-0006](ADR/0006-service-owned-migrations.md).
 - CDK connector build script (`airbyte-toolkit/build-connector.sh`) uses `CLUSTER_NAME` env var (default `insight`) for Kind image loading — not hardcoded.
 - Airbyte port-forward uses `nohup ... & disown` to avoid blocking the terminal.
 - Argo `dbt-run` WorkflowTemplate uses locally-built `insight-toolbox:local` image (with `imagePullPolicy: IfNotPresent`) — not `ghcr.io/constructorfabric/insight-toolbox:latest`. Local builds via `tools/toolbox/build.sh` pick up dbt model changes without requiring a registry push. Template also accepts `full_refresh` parameter (pass `--full-refresh` to recreate tables from scratch).
 - CoreDNS is patched to use public DNS upstream (`8.8.8.8`, `8.8.4.4`) — WSL's `/etc/resolv.conf` points to an internal WSL nameserver that cannot reliably resolve external domains (e.g. `login.microsoftonline.com`). Patch lives in `scripts/dev/patch-coredns-wsl.sh` (idempotent, opt-out via `SKIP_COREDNS_PATCH=1`); Windows/WSL+Kind operators run it manually against their cluster after bootstrap.
 - Gold views migration (`20260422000000_gold-views.sql`) references bronze tables from optional connectors (jira, m365, zoom). When the corresponding bronze table does not yet exist (no real connector data ingested yet), `scripts/create-bronze-placeholders.sh` creates empty placeholder tables with a minimal compatible schema so the gold-views migration succeeds on a partial install.
   - **Placeholder handoff caveat**: Airbyte ClickHouse destination v2.0.8+ throws an error on the first sync if the target bronze table exists with a schema that does not match the destination's expected schema for that stream. The placeholder schemas in `create-bronze-placeholders.sh` are intentionally minimal (only the columns referenced by gold views) — they are **not** a drop-in replacement for a native Airbyte-generated table. Before enabling a previously-placeholdered connector, the operator should manually `DROP TABLE` the placeholder(s) in ClickHouse so Airbyte can create them fresh on its first sync.
-  - Script runs automatically via `src/ingestion/run-init.sh` before migrations.
+  - Runs automatically inside the `clickhouse-migrate` Helm Hook Job, immediately before the gold-view migrations (see §4.4.1).
 - All credentials managed via Kubernetes Secrets (see §4.1.1).
 - Service access via Ingress (PR #224): the umbrella chart configures `ingress-nginx` routes for Frontend, API Gateway, Airbyte UI and Argo UI; on a local Kubernetes cluster the Kind config maps host ports 80/443 to the ingress controller. Direct port-forwards (`kubectl port-forward`) remain available for debugging.
 
@@ -698,7 +698,7 @@ All Insight components share the release namespace (default `insight`); override
 **Resolution order** (all scripts):
 1. Read from K8s Secret — sole credential source for all environments
 2. If Secret missing → skip connector with error (no inline fallback)
-3. ClickHouse password: inside the StatefulSet pod, the `clickhouse` container picks up `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD` env vars from `insight-db-creds`; ingestion scripts run `clickhouse-client` via `kubectl exec` and inherit those vars without passing `--user` / `--password` explicitly
+3. ClickHouse password: the `clickhouse-migrate` Hook Job and ingestion workflows read `clickhouse-password` from `insight-db-creds` and authenticate to the external ClickHouse over its HTTP interface (ClickHouse `X-ClickHouse-User` / `X-ClickHouse-Key` headers — the password is never placed on the command line)
 
 **Connector credentials** use label-based discovery: `app.kubernetes.io/part-of: insight` label + `insight.cyberfabric.com/connector` annotation. See [ADR-0003](ADR/0003-k8s-secrets-credentials.md) for details.
 
@@ -713,11 +713,11 @@ All Insight components share the release namespace (default `insight`); override
 
 3. **No inline credential fallback.** Scripts do not fall back to reading credentials from tenant YAML. If a Secret is missing, the connector is skipped with an error.
 
-4. **Destination password sync.** `airbyte-toolkit/connect.sh` always updates the ClickHouse destination password from the K8s Secret on every run. This ensures password rotation takes effect without recreating connections.
+4. **Destination password sync.** The reconcile loop (`reconcile-connectors/main.sh`) resolves the Airbyte bronze destination from `insight-db-creds` on every run (ADR-0012), so a rotated ClickHouse password takes effect without recreating connections.
 
-5. **Password rotation procedure.** Update Secret → apply to cluster → restart the ClickHouse StatefulSet (`kubectl rollout restart statefulset/insight-clickhouse -n "${INSIGHT_NAMESPACE:-insight}"`) → run `airbyte-toolkit/connect.sh` (which honours `INSIGHT_NAMESPACE`) to sync the Airbyte destination password.
+5. **Password rotation procedure.** Update `insight-db-creds` → apply to cluster → rotate the credential on the external ClickHouse L2 release in `insight-infra` (owned by that release). The reconcile loop (`reconcile-connectors/main.sh`, run by the reconcile CronWorkflow) then re-syncs the Airbyte bronze-destination password from `insight-db-creds` on its next tick (ADR-0012).
 
-6. **Destination sync modes.** `connect.sh` assigns destination sync modes based on source stream capabilities:
+6. **Destination sync modes.** The reconcile loop assigns destination sync modes based on source stream capabilities:
    - `full_refresh` streams → `overwrite` (each sync replaces all data — no duplicate accumulation)
    - `incremental` streams → `append_dedup` (appends new records, deduplicates by primary key)
 
@@ -745,13 +745,13 @@ the [gitops SPEC](../../components/deployment/gitops/README.md).
 | Script | Purpose |
 |--------|---------|
 | `cd deploy/gitops && make deploy ENV=local` | Brings up the full local stack: bootstrap (L0), Airbyte + Argo Workflows + the L2 system services, then the Insight umbrella chart (L3). Idempotent — re-running reconciles. Honours `$KUBECONFIG`. |
-| `src/ingestion/run-init.sh` | Post-deploy init: verifies secrets, runs ClickHouse migrations, registers connectors, applies Airbyte connections, syncs Argo flows. (MariaDB schema is applied per-service by each backend service's own sea-orm `Migrator` at startup — see §4.4 and [ADR-0006](ADR/0006-service-owned-migrations.md). Per-service databases beyond the umbrella default are provisioned by `charts/insight/templates/mariadb-initdb-scripts.yaml` on the first MariaDB pod boot.) |
+| `src/ingestion/run-init.sh` | Post-deploy init: verifies secrets, registers connectors, applies Airbyte connections, syncs Argo flows. (ClickHouse migrations are applied separately by the `clickhouse-migrate` Helm Hook Job on every install/upgrade — see §4.4.1. MariaDB schema is applied per-service by each backend service's own sea-orm `Migrator` at startup — see §4.4 and [ADR-0006](ADR/0006-service-owned-migrations.md). Per-service MariaDB databases are provisioned by the `mariadb-init-svcdbs` Helm Hook Job against the external `mariadb.host`.) |
 | `src/ingestion/sync-all.sh` | Trigger Airbyte sync for all connections. Reads connection IDs from state, calls Airbyte API. Use after `run-init.sh` to start first data load, or anytime to re-sync all sources. |
 
 **First-time setup**:
 1. Copy connector secret examples → fill credentials (`src/ingestion/secrets/connectors/`)
 2. `cd deploy/gitops && make deploy ENV=local` — full stack deployment (answer the wizard prompts on first run)
-3. `./src/ingestion/run-init.sh` — databases, connectors, connections
+3. `./src/ingestion/run-init.sh` — connectors, connections, Argo flows (ClickHouse migrations run automatically via the `clickhouse-migrate` Hook Job during step 2's helm install)
 4. `cd src/ingestion && ./sync-all.sh` — trigger first Airbyte sync for all connections
 
 **Re-running**: `make deploy ENV=local` is idempotent — re-running on a converged cluster reconciles the stack in place.
@@ -775,9 +775,9 @@ See [Airbyte Connector DESIGN](../../connector/specs/DESIGN.md) for detailed deb
 ### 4.4 Schema Migrations
 
 The project persists data in two stores with two different migration
-mechanisms. **ClickHouse** schema is file-based and invoked from
-`init.sh` (cluster bootstrap path); **MariaDB** schema is service-
-owned — each backend service carries its own embedded `Migrator` and
+mechanisms. **ClickHouse** schema is file-based and applied by the
+`clickhouse-migrate` Helm Hook Job on every install/upgrade; **MariaDB**
+schema is service-owned — each backend service carries its own embedded `Migrator` and
 applies its migrations at startup (see [ADR-0006](ADR/0006-service-owned-migrations.md)).
 The two paths diverge on bookkeeping because of different evolution
 patterns.
@@ -787,11 +787,16 @@ patterns.
 - **Location**: `src/ingestion/scripts/migrations/*.sql`
 - **Naming**: `YYYYMMDDHHMMSS_<description>.sql` — timestamp prefix
   enforces chronological order under lexicographic glob
-- **Runner**: inline loop in `init.sh`, applied via
-  `kubectl exec -i -n "${INSIGHT_NAMESPACE:-insight}" statefulset/insight-clickhouse -- clickhouse-client --multiquery`
-  (override the namespace and pod selector via `INSIGHT_NAMESPACE` / `CLICKHOUSE_POD`)
-- **Bookkeeping**: none — every migration is re-run on every `init.sh`
-  invocation and therefore must be written idempotently
+- **Runner**: the `clickhouse-migrate` Helm Hook Job
+  (`post-install,post-upgrade`, `charts/insight/templates/clickhouse-migrate-job.yaml`)
+  runs `src/ingestion/scripts/apply-ch-migrations.sh` in the toolbox image.
+  It creates the `staging`/`silver`/app databases and the ADR-0007
+  placeholders, then applies each migration in glob order against the
+  external ClickHouse over its HTTP interface (`lib/ch-exec.sh`). (The
+  legacy `init.sh` loop that `kubectl exec`'d into a bundled CH StatefulSet
+  was retired with the StatefulSet in #1428.)
+- **Bookkeeping**: none — every migration is re-run on every helm
+  install/upgrade and therefore must be written idempotently
   (`CREATE ... IF NOT EXISTS`, `ALTER ... IF NOT EXISTS`, etc.)
 - **Rationale**: analytics schema is mostly `CREATE TABLE` / `CREATE
   VIEW` statements where idempotency guards are free, so a
@@ -825,16 +830,15 @@ listener. This provides:
 - **Database isolation**: each service lives in its own MariaDB
   database; cross-service table access is an explicit architectural
   decision, not an accident of shared-schema layout.
-- **No ordering coupling between services**: no single `init.sh` step
+- **No ordering coupling between services**: no central bootstrap step
   must run before any service starts.
 
-Infra responsibility (umbrella chart) stays minimal: the `mariadb`
-subchart provisions the MariaDB instance, and the
-`mariadb.primary.initdbScriptsConfigMap` (rendered from
-`charts/insight/templates/mariadb-initdb-scripts.yaml`) creates the
+Infra responsibility (umbrella chart) stays minimal: MariaDB runs as an
+external L2 release, and a Helm Hook Job
+(`charts/insight/templates/mariadb-init-svcdbs-job.yaml`,
+`pre-install,pre-upgrade`) dials `mariadb.host` and creates the
 per-service databases (e.g. `CREATE DATABASE IF NOT EXISTS identity`)
-and grants the app user access — bitnami runs the scripts on the
-first MariaDB pod boot only, the data persists in the PVC, and
+and grants the app user access — idempotent (`IF NOT EXISTS`), so
 helm upgrades are no-ops on this front. **Schema inside each
 database** is the owning service's job.
 

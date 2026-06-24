@@ -270,6 +270,13 @@ clickhouse:
   # at startup live here.
   initDatabases:
     - insight
+  # When true (default), a post-install/post-upgrade Hook Job
+  # (clickhouse-migrate-job) applies the gold-view migrations
+  # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against
+  # the external ClickHouse, using ingestion.toolboxImage. Set false to own
+  # CH migrations out-of-band (e.g. a managed-warehouse change process).
+  # The Job also no-ops if an overlay explicitly clears ingestion.toolboxImage.
+  runMigrations: true
 # ─── MariaDB ─────────────────────────────────────────────────────────────
 mariadb:
   host: "" # MUST be set (external L2 MariaDB host)

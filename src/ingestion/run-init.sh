@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Initialize the ingestion stack: validate the umbrella install, run dbt
-# database setup + ClickHouse migrations, adopt any pre-existing Airbyte
-# resources, then drive the cluster to the descriptor-declared state via
-# the single reconcile entrypoint.
+# Initialize the ingestion stack: validate the umbrella install, sync Argo
+# workflows, adopt any pre-existing Airbyte resources, then drive the cluster
+# to the descriptor-declared state via the single reconcile entrypoint.
+#
+# ClickHouse migrations are NOT run from here — they are owned by the
+# clickhouse-migrate Helm Hook Job (applied on every helm install/upgrade).
 #
 # Runs from the host machine (requires kubectl, curl, python3).
 # Run AFTER: helm install of the umbrella chart + ./secrets/apply.sh
@@ -21,18 +23,13 @@ INSIGHT_NS="${INSIGHT_NAMESPACE}"
 
 # --- Verify the umbrella is installed ---
 echo "=== Verifying umbrella install ==="
-if ! kubectl get -n "$INSIGHT_NS" statefulset/insight-clickhouse >/dev/null 2>&1; then
-  echo "ERROR: insight-clickhouse StatefulSet not found in namespace '$INSIGHT_NS'" >&2
-  echo "  Run: ./dev-compose.sh up  (or: cd deploy/gitops && make deploy ENV=local)" >&2
-  exit 1
-fi
 if ! kubectl get -n "$INSIGHT_NS" secret insight-db-creds >/dev/null 2>&1; then
   echo "ERROR: insight-db-creds Secret not found in namespace '$INSIGHT_NS'" >&2
   echo "  The umbrella chart should have created it on install." >&2
   exit 1
 fi
 
-# --- Migrations + dbt databases (still managed by scripts/init.sh) ---
+# --- Sync Argo workflows (scripts/init.sh) ---
 source ./scripts/init.sh
 
 # --- Single declarative reconcile chain ---

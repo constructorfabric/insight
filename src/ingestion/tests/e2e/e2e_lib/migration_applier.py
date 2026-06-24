@@ -3,7 +3,7 @@
 Migrations CREATE VIEW objects that reference bronze_*, silver, and staging
 databases. ClickHouse 24.x validates these references at CREATE-time, so we
 must materialize the bronze placeholder schemas BEFORE running migrations —
-mirroring the prod order from src/ingestion/scripts/init.sh:
+mirroring the prod order from src/ingestion/scripts/apply-ch-migrations.sh:
 
     1. CREATE DATABASE staging | silver | insight
     2. Run src/ingestion/scripts/create-bronze-placeholders.sh
@@ -80,8 +80,8 @@ def reapply_migrations(cfg: SessionConfig) -> int:
 def apply_bronze_placeholders(cfg: SessionConfig) -> int:
     """Parse `create-bronze-placeholders.sh` heredocs and run the SQL.
 
-    The prod script invokes `kubectl exec` to talk to the in-cluster CH; we
-    extract just the SQL between `run_ch <<'SQL'` ... `SQL` markers and run
+    The prod script talks to the external CH over HTTP (via lib/ch-exec.sh);
+    we extract just the SQL between `run_ch <<'SQL'` ... `SQL` markers and run
     it via our HTTP client.
     """
     script = cfg.repo_root / "src/ingestion/scripts/create-bronze-placeholders.sh"

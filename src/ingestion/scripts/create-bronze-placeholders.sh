@@ -42,24 +42,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Single-namespace umbrella (PR #224). Override via INSIGHT_NAMESPACE.
-INSIGHT_NS="${INSIGHT_NAMESPACE:-insight}"
-CH_POD="${CLICKHOUSE_POD:-statefulset/insight-clickhouse}"
-
-# clickhouse-client inside the pod inherits CLICKHOUSE_USER /
-# CLICKHOUSE_PASSWORD from the container env, so we do not pass --user /
-# --password.
-run_ch() {
-  kubectl exec -i -n "$INSIGHT_NS" "$CH_POD" -- clickhouse-client --multiquery
-}
-
-ch_table_exists() {
-  local db="$1" tbl="$2"
-  local result
-  result=$(kubectl exec -n "$INSIGHT_NS" "$CH_POD" -- clickhouse-client -q \
-    "SELECT count() FROM system.tables WHERE database='$db' AND name='$tbl'" 2>/dev/null || echo "0")
-  [[ "$result" == "1" ]]
-}
+# ClickHouse access helpers (run_ch, ch_table_exists) that talk to the
+# external ClickHouse over HTTP. Requires CLICKHOUSE_URL/USER/PASSWORD in
+# the env — set by the clickhouse-migrate Hook Job. See lib/ch-exec.sh.
+source "$SCRIPT_DIR/lib/ch-exec.sh"
 
 echo "=== Placeholders (for missing connectors / unbuilt silver) ==="
 

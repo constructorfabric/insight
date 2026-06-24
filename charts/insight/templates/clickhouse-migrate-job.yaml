@@ -1,0 +1,94 @@
+{{/*
+==============================================================================
+ ClickHouse gold-view migrations
+==============================================================================
+
+Helm Hook Job that applies the gold-view migrations
+(`src/ingestion/scripts/migrations/*.sql`) against the external ClickHouse.
+
+Why a Hook Job: the migrations used to be applied by `scripts/init.sh`,
+which `kubectl exec`s into a bundled CH StatefulSet. #1428 dropped the
+bundled L2 subcharts (CH is now always external), so that path can no
+longer reach ClickHouse and nothing else applied the migrations — the
+`clickhouse-init-svcdbs` Hook only runs `CREATE DATABASE`. This Job closes
+that gap: it runs the toolbox image (which bundles the migrations,
+`create-bronze-placeholders.sh`, and `lib/ch-exec.sh`) and dials
+`clickhouse.host` directly over the HTTP interface (CLICKHOUSE_URL selects
+the HTTP backend in lib/ch-exec.sh).
+
+Hook timing: `post-install,post-upgrade`. The post-* phase runs after the
+main release (so the `clickhouse-init-svcdbs` pre-install Hook has created
+the app database and the app pods have rolled). post-* over pre-* is safe
+because gold-view consumers (analytics-api) resolve VIEW source tables
+lazily at query time, so views materialising shortly after pod startup is
+fine. (hook-weight "5" is inert today — it only orders hooks within the
+same phase, and this is currently the only post-* hook; kept as a
+placeholder for ordering future post-* hooks.)
+
+Failure behavior: a failed migration is NOT silently tolerated. Helm blocks
+on the hook Job, so a non-zero exit fails `helm upgrade` (and, under the
+gitops `--rollback-on-failure` default, rolls the release back). That is
+intentional — a broken migration must surface loudly. `backoffLimit` is low
+because migration SQL errors are deterministic, not transient: retrying a
+bad statement just delays the inevitable failure.
+
+Idempotent: migrations are re-run on every upgrade and are CREATE OR
+REPLACE / IF NOT EXISTS; placeholders are guarded by `ch_table_exists`.
+No migration ledger — same contract as the legacy init.sh path.
+
+Gated on `clickhouse.runMigrations` (default true) AND the availability of
+`ingestion.toolboxImage` (the image that ships the migration SQL).
+*/}}
+{{- if and .Values.clickhouse.runMigrations .Values.ingestion.toolboxImage }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight.fullname" . }}-clickhouse-migrate
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse-migrate
+spec:
+  # Low on purpose: migration SQL errors are deterministic (see header).
+  # A couple of attempts still absorbs a transient CH blip mid-run.
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "insight.fullname" . }}-clickhouse-migrate
+        app.kubernetes.io/component: clickhouse-migrate
+    spec:
+      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
+      # kubelet auto-injects for every Service in the namespace at pod-start.
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ .Values.ingestion.toolboxImage | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [bash]
+          args:
+            - "-c"
+            - "bash /ingestion/scripts/apply-ch-migrations.sh"
+          env:
+            # CLICKHOUSE_URL selects the HTTP backend in lib/ch-exec.sh.
+            - name: CLICKHOUSE_URL
+              value: {{ include "insight.clickhouse.url" . | quote }}
+            - name: CLICKHOUSE_DATABASE
+              value: {{ include "insight.clickhouse.database" . | quote }}
+            - name: CLICKHOUSE_USER
+              value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                  key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+{{- end }}
