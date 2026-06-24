@@ -50,6 +50,8 @@ RELEASE          ?= $(shell yq -r '.release             // "insight"'        $(I
 # Back-compat alias for older targets still referencing NAMESPACE.
 NAMESPACE        ?= $(NS_APP)
 CHART            ?= oci://ghcr.io/constructorfabric/charts/insight
+# Local umbrella chart source (this repo's working tree) for validation
+LOCAL_CHART      ?= ../../charts/insight
 INSIGHT_VERSION  ?= $(shell cat .insight-version 2>/dev/null)
 VALUES           ?= environments/$(ENV)/values.yaml
 TIMEOUT          ?= 10m
@@ -357,6 +359,21 @@ apply-app-secrets: vpn-up kube-ctx
 		|| { echo "$(C_RED)ERROR$(C_RST): insight-db-creds never materialised (controller down? sealed manifest invalid?)"; exit 1; }
 	@ENV=$(ENV) NS_APP=$(NS_APP) RELEASE=$(RELEASE) \
 		bash scripts/compose-app-secrets.sh
+
+.PHONY: local-chart-present
+local-chart-present:
+	@test -f $(LOCAL_CHART)/Chart.yaml \
+		|| { echo "$(C_RED)ERROR$(C_RST): local chart not found at $(LOCAL_CHART)/Chart.yaml"; exit 1; }
+
+.PHONY: validate-insight
+validate-insight: values-present local-chart-present
+	@mkdir -p $(RENDER_DIR)
+	@helm dependency build $(LOCAL_CHART) $(HELM_EXTRA_FLAGS)
+	@helm template $(RELEASE) $(LOCAL_CHART) $(HELM_EXTRA_FLAGS) \
+		-n $(NS_APP) -f $(VALUES) \
+		> $(RENDER_DIR)/validate-render-$(ENV).yaml
+	@echo "$(C_GRN)rendered$(C_RST) $(LOCAL_CHART) (local source) → $(RENDER_DIR)/validate-render-$(ENV).yaml"
+	@kubeconform -strict -summary < $(RENDER_DIR)/validate-render-$(ENV).yaml
 
 .PHONY: deploy-insight
 deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present apply-app-secrets
