@@ -3,13 +3,14 @@
 Test framework that exercises the full data path:
 
 ```
-fixtures/<test>/bronze/*.csv  →  bronze tables  →  dbt staging/silver  →
-ClickHouse migration gold-views  →  analytics-api HTTP  →  expected/response.csv
+specs/<name>.test.yaml (bronze records)  →  bronze tables  →  dbt staging/silver  →
+ClickHouse migration gold-views  →  analytics-api HTTP (POST /v1/metrics/queries)  →  expect rules
 ```
 
-Airbyte / Kestra / Argo are NOT exercised — bronze is seeded by direct CSV INSERT.
+Airbyte / Kestra / Argo are NOT exercised — bronze is seeded by direct INSERT of the
+`$ref`-resolved records declared in each `*.test.yaml`.
 
-See specs: [PRD](../../../../docs/domain/bronze-to-api-e2e/specs/PRD.md), [DESIGN](../../../../docs/domain/bronze-to-api-e2e/specs/DESIGN.md), [DECOMPOSITION](../../../../docs/domain/bronze-to-api-e2e/specs/DECOMPOSITION.md), [FEATURE csv-rig](../../../../docs/domain/bronze-to-api-e2e/specs/feature-csv-rig/FEATURE.md).
+See specs: [PRD](../../../../docs/domain/bronze-to-api-e2e/specs/PRD.md), [DESIGN](../../../../docs/domain/bronze-to-api-e2e/specs/DESIGN.md), [DECOMPOSITION](../../../../docs/domain/bronze-to-api-e2e/specs/DECOMPOSITION.md), [FEATURE yaml-rig](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md).
 
 ## Prerequisites
 
@@ -21,8 +22,8 @@ Only one: **Docker Engine ≥ 24**. Everything else (Python 3.12, Rust matching 
 cd src/ingestion/tests/e2e
 
 ./e2e.sh build              # build the runner image (one-time, ~3-5 min cold)
-./e2e.sh test               # full suite (includes people_smoke E2E)
-./e2e.sh test -k people_smoke -v     # one fixture
+./e2e.sh test               # full suite
+./e2e.sh test -k collab_emails_sent -v   # one test
 ./e2e.sh test -n auto       # ⚠️ parallel (pytest-xdist) — NOT supported yet: workers race on shared CH/MariaDB/dbt target
 ./e2e.sh shell              # interactive bash inside the runner
 ./e2e.sh down               # tear down compose stack + volumes
@@ -42,7 +43,7 @@ source .venv/bin/activate
 pip install -e .
 rustup update stable        # must satisfy rust-version in src/backend/Cargo.toml
 
-pytest -k people_smoke -v   # session-rig brings compose up automatically
+pytest -k collab_emails_sent -v   # session-rig brings compose up automatically
 ```
 
 ## Layout
@@ -83,7 +84,7 @@ These ports avoid conflict with a local gitops dev cluster (which forwards 8123 
 
 ## Notes for fixture authors
 
-- Auth in `analytics-api` requires no Bearer token, but its tenant middleware rejects requests without a non-nil tenant. The harness sends `X-Insight-Tenant-Id` with `e2e_lib.config.TEST_TENANT_ID` on every request and re-homes seeded metric definitions onto that tenant (`metric_seed.py`). The ClickHouse query path does not filter by tenant yet, so bronze CSV rows may use any tenant value.
+- Auth in `analytics-api` requires no Bearer token, but its tenant middleware rejects requests without a non-nil tenant. The harness sends `X-Insight-Tenant-Id` with `e2e_lib.config.TEST_TENANT_ID` on every request and re-homes seeded metric definitions onto that tenant (`metric_seed.py`). The ClickHouse query path does not filter by tenant yet, so seeded bronze rows may use any tenant value.
 - Metric definitions are auto-seeded by the analytics-api binary's SeaORM migrations. Look up the metric UUID with `GET /v1/metrics` once the session is up, or add overrides in `seed/metrics.yaml`.
 
 ## `cases` / `expect` (declarative YAML rig)

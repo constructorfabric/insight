@@ -1,66 +1,60 @@
 spec_version: 1
-description: descr...
+description: >
+  Per-metric E2E check for m365_emails_sent (#1413), exercising the metric
+  query's date-window options — week / month / quarter / custom — with
+  boundary-value and equivalence-partition coverage. Asserts ONLY the target
+  metric (m365_emails_sent) on the IC Bullet Collaboration metric (…0012):
+  value = the requested member's period total over the window, median/range =
+  over the members who have data in that window (org_unit = Engineering).
 
-# ──────────────────────────────────────────────────────────────────────────
-# A record may carry `$ref: "<file>#/<json-pointer>"` (as in JSON Schema /
-# OpenAPI) to inherit from another record; sibling keys override the base
-# (closest wins). Paths are relative to THIS file; a `$ref` resolves relative
-# to the file it is written in (nested `#/...` refs inside templates/* stay
-# local to that file).
-#
-# Schemas are NOT referenced here — the rig resolves them by table name from
-# schemas/<table>.yaml (the `bronze` key IS the table name).
-# ──────────────────────────────────────────────────────────────────────────
+  Test design — alice's sends are placed on/around the bounds of each window so
+  every period sum proves inclusive [ge, le] bounds and exclusion just outside:
 
-# bronze — seed fixture. Key = TABLE NAME. After `$ref` resolution each row is
-# padded to the full table schema. The fields under test (date + sent count)
-# are given right here. Two identical rows = a real duplicate (Airbyte re-sync).
+    date         sent   role in the coverage
+    2025-12-31   500    one day BEFORE quarter/month lower  → excluded (BVA-)
+    2026-01-01     3    quarter & month LOWER bound          → included (BVA, =ge)
+    2026-01-05    20    week LOWER bound                     → included (BVA, =ge)
+    2026-01-08    25    interior of week/month/quarter (duplicated → dedup)
+    2026-01-11    12    week UPPER bound                     → included (BVA, =le)
+    2026-01-12   150    one day AFTER week upper             → excluded from week
+    2026-01-31     4    month UPPER bound                    → included (BVA, =le)
+    2026-02-11    60    interior of quarter; custom window
+    2026-03-31     6    quarter UPPER bound                  → included (BVA, =le)
+    2026-04-01   700    one day AFTER quarter upper          → excluded (BVA+)
+
+  bob/carol each have a single send on 2026-01-08 (inside week/month/quarter but
+  NOT the Feb custom windows), so the cohort is {alice,bob,carol} for the three
+  calendar periods and narrows to {alice} for the Feb windows — exercising that
+  median/range span only members with data in the window. alice's 01-08 row is a
+  verbatim duplicate (same unique_key): it must dedup to 25, otherwise the
+  week/month/quarter sums (and the medians/ranges) would all drift.
+
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+
   bronze_m365.email_activity:
-    - $ref: templates/m365_email.yaml#/templates/alice_email
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-20260105
-      sendCount: 40
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2025-12-31", unique_key: sent-alice-20251231, sendCount: 500 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-01", unique_key: sent-alice-20260101, sendCount: 3 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-05", unique_key: sent-alice-20260105, sendCount: 20 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-08", unique_key: sent-alice-20260108, sendCount: 25 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-08", unique_key: sent-alice-20260108, sendCount: 25 }  # duplicate → dedup to 25, not 50
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-11", unique_key: sent-alice-20260111, sendCount: 12 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-12", unique_key: sent-alice-20260112, sendCount: 150 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-31", unique_key: sent-alice-20260131, sendCount: 4 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-02-11", unique_key: sent-alice-20260211, sendCount: 60 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-03-31", unique_key: sent-alice-20260331, sendCount: 6 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-04-01", unique_key: sent-alice-20260401, sendCount: 700 }
+    - { $ref: templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-01-08", unique_key: sent-bob-20260108,   sendCount: 50 }
+    - { $ref: templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-01-08", unique_key: sent-carol-20260108, sendCount: 18 }
 
-    - $ref: templates/m365_email.yaml#/templates/alice_email   # duplicate alice → sum must NOT become 80
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-20260105
-      sendCount: 40
-
-    - $ref: templates/m365_email.yaml#/templates/bob_email
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-bob-20260105
-      sendCount: 20
-
-    - $ref: templates/m365_email.yaml#/templates/carol_email
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-carol-20260105
-      sendCount: 10
-
-# ──────────────────────────────────────────────────────────────────────────
-# cases — "batch request → expectations" (POST /v1/metrics/queries).
-#   in     — which batch result to use (by the request `id` = `results[].id`).
-#   find   — mongo-style selector for a row in that result's items.
-#   then ONE of:
-#     equal  — expected object (subset of fields), or
-#     assert — boolean CEL expression (`it` — the matched row; `items`/`result`/
-#              `results` — the result context; `status` — the batch HTTP code).
-# ──────────────────────────────────────────────────────────────────────────
 cases:
-  # IC Bullet Collaboration (…0012): value = the requested person's own value
-  # (from $filter); median/range = over their team (org_unit). All three are in
-  # Engineering → one team. m365_emails_sent over the team = [alice 40, bob 20,
-  # carol 10]:
-  #   value (alice)        = 40                       (the requested person)
-  #   median = quantileExact(0.5)[10,20,40] = 20      (team median, NOT alice's)
-  #   range  (team)        = [10, 40]
-  # alice is duplicated in bronze — her sum must stay 40 (dedup); otherwise the
-  # value, the median and the range would all drift.
-  - name: m365_emails_sent — IC bullet (alice value vs team median)
+  # ── WEEK (7-day window, Mon 01-05 .. Sun 01-11) ──────────────────────────────
+  # alice = 20(05)+25(08)+12(11) = 57  (01-01 below & 01-12 above excluded;
+  #   bounds 01-05/01-11 inclusive). cohort {57,50,18} → median 50, range [18,57]
+  - name: "m365_emails_sent — WEEK window (boundary-inclusive lower/upper)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -68,18 +62,117 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $top: 50
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
-            $orderby: metric_key
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-05' and metric_date le '2026-01-11'"
     expect:
       - assert: "status == 200"
       - in: collaboration
         assert: "result.status == 'ok'"
       - in: collaboration
         find: { metric_key: m365_emails_sent }
-        equal: { value: 40, median: 20, range_min: 10, range_max: 40 }
+        equal: { value: 57, median: 50, range_min: 18, range_max: 57 }
+
+  # ── MONTH (calendar January) ─────────────────────────────────────────────────
+  # alice = 3+20+25+12+150+4 = 214  (12-31 excluded, 02-11 excluded; 01-01/01-31
+  #   bounds inclusive). cohort {214,50,18} → median 50, range [18,214]
+  - name: "m365_emails_sent — MONTH window (lower/upper bound inclusive, prior day excluded)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
       - in: collaboration
-        assert: "size(items) == 20"
+        find: { metric_key: m365_emails_sent }
+        equal: { value: 214, median: 50, range_min: 18, range_max: 214 }
+
+  # ── QUARTER (Q1 2026) ────────────────────────────────────────────────────────
+  # alice = 214(Jan) + 60(02-11) + 6(03-31) = 280  (12-31 & 04-01 excluded;
+  #   03-31 bound inclusive). cohort {280,50,18} → median 50, range [18,280]
+  - name: "m365_emails_sent — QUARTER window (full Q1 sum, just-after excluded)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-03-31'"
+    expect:
+      - assert: "status == 200"
       - in: collaboration
-        find: { metric_key: slack_dm_ratio }
-        equal: { value: null }
+        find: { metric_key: m365_emails_sent }
+        equal: { value: 280, median: 50, range_min: 18, range_max: 280 }
+
+  # ── CUSTOM (narrow mid-quarter range 02-10 .. 02-12) ─────────────────────────
+  # alice = 60(02-11); bob/carol have no data in range → cohort {60} only
+  - name: "m365_emails_sent — CUSTOM narrow window (cohort narrows to members with data)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-02-10' and metric_date le '2026-02-12'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_emails_sent }
+        equal: { value: 60, median: 60, range_min: 60, range_max: 60 }
+
+  # ── SINGLE-DAY (degenerate window, ge == le = 02-11) ─────────────────────────
+  # proves an inclusive single-day window; alice = 60
+  - name: "m365_emails_sent — SINGLE-DAY window (ge == le)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-02-11' and metric_date le '2026-02-11'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_emails_sent }
+        equal: { value: 60, median: 60, range_min: 60, range_max: 60 }
+
+  # ── CROSS-YEAR boundary (12-31 .. 01-01) ─────────────────────────────────────
+  # both bounds inclusive across the year boundary; alice = 500(12-31)+3(01-01)=503.
+  # confirms 12-31 was excluded from month/quarter only by the date filter.
+  - name: "m365_emails_sent — CROSS-YEAR window (both bounds inclusive)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2025-12-31' and metric_date le '2026-01-01'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_emails_sent }
+        equal: { value: 503, median: 503, range_min: 503, range_max: 503 }
+
+  # ── EMPTY window (no data in range) ──────────────────────────────────────────
+  # equivalence class: a valid window that contains no rows → no items returned
+  - name: "m365_emails_sent — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-07-01' and metric_date le '2026-07-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"

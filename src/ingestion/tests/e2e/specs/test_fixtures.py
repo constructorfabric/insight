@@ -49,11 +49,21 @@ def test_e2e_metric_smoke(
     #    pulls <connector>__bronze_promoted), then the silver class models.
     staging, silver = dbt_runner.derive_selectors(test_yaml.touched_tables)
     if staging:
+        # Record staging models in the ledger BEFORE building. They live in the
+        # `staging` schema and are read by the silver models via union_by_tag, so a
+        # prior test's staging rows (e.g. dates this test doesn't re-seed) would
+        # survive into the silver rebuild and contaminate later tests' gold-view
+        # aggregates. Recording up front (not after) means a build that raises
+        # partway still leaves the table in the truncate ledger so the next test
+        # cleans it; recording a model that never materialised is harmless
+        # (truncate_touched uses TRUNCATE TABLE IF EXISTS).
+        for st in staging:
+            ch_seeder.ledger.record("staging", st)
         dbt_runner.build(" ".join(f"+{m}" for m in staging), worker_ctx=worker_ctx)
     if silver:
-        dbt_runner.build(" ".join(silver), worker_ctx=worker_ctx)
         for cls in silver:
             ch_seeder.ledger.record("silver", cls)
+        dbt_runner.build(" ".join(silver), worker_ctx=worker_ctx)
 
     # 4. Recreate gold views against the now-real silver schema (fixes the rig-only
     #    Code 80 nullability mismatch on date-filtered reads), then refresh MVs.

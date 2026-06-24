@@ -1,0 +1,78 @@
+# Reusable Zulip records (bronze_zulip_proxy.users + .messages).
+# A record is a plain field map; an optional `$ref` inherits from another record
+# and sibling keys override it (closest wins). Nested `$ref: "#/..."` stays local
+# to this file.
+#
+# Each base record lists EVERY schema column so a merged bronze row is complete;
+# unused fields default to null. The 4 `_airbyte_*` CDK columns are included
+# (the chat model dedups by `uniq` ORDER BY `_airbyte_extracted_at`).
+#
+# Identity: messages join users on `sender_id = id` (+ tenant_id/source_id), so
+# the user emails here must match the bamboohr people emails (templates/people.yaml)
+# for the collab bullet's `lower(email) = insight.people.person_id` join.
+templates:
+  # ── users ────────────────────────────────────────────────────────────
+  zulip_user:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "zulip-proxy-test"
+    id: null
+    uuid: null
+    email: null
+    full_name: null
+    role: 400
+    is_active: true
+    recipient_id: null
+    unique_key: null
+
+  alice_user:
+    $ref: "#/templates/zulip_user"
+    id: 1
+    email: alice@example.com
+    full_name: Alice Alpha
+    unique_key: zulip-user-1
+
+  bob_user:
+    $ref: "#/templates/zulip_user"
+    id: 2
+    email: bob@example.com
+    full_name: Bob Beta
+    unique_key: zulip-user-2
+
+  carol_user:
+    $ref: "#/templates/zulip_user"
+    id: 3
+    email: carol@example.com
+    full_name: Carol Gamma
+    unique_key: zulip-user-3
+
+  # ── messages ─────────────────────────────────────────────────────────
+  # The proxy ships one row per (sender, bucket) carrying a `count`. The chat
+  # model dedups by `uniq` then sums `count` per (sender email, date).
+  zulip_message:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "zulip-proxy-test"
+    uniq: null
+    sender_id: null
+    count: null
+    created_at: "2026-01-05T10:00:00"
+    unique_key: null
+
+  alice_message:
+    $ref: "#/templates/zulip_message"
+    sender_id: 1
+
+  bob_message:
+    $ref: "#/templates/zulip_message"
+    sender_id: 2
+
+  carol_message:
+    $ref: "#/templates/zulip_message"
+    sender_id: 3
