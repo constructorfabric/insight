@@ -1,0 +1,153 @@
+# Reusable Jira task-tracker records (bronze_jira.jira_issue + bronze_jira.jira_user).
+#
+# A record is a plain field map; an optional `$ref` inherits from another record
+# and sibling keys override it (closest wins). The nested `$ref: "#/..."` stays
+# local to this file. Each base lists EVERY schema column (incl. the 4 `_airbyte_*`
+# CDK columns) so a merged bronze row is complete; unused string columns default
+# to "" (the placeholder columns are non-nullable String).
+#
+# Scenario: Alice (account_id `alice-jira-acct` → alice@example.com) has TWO issues
+# whose CURRENT state is Closed, both resolved 2026-01-15. Jira nests the
+# status/assignee/issuetype scalars inside `custom_fields_json` — that is exactly
+# what jira__issue_field_snapshot.sql reads (JSONExtract on `status.name`,
+# `assignee.accountId`, `issuetype.name`, …). insight_source_id = `jira-test`
+# everywhere so the class_task_users ⋈ class_task_field_history join lines up.
+templates:
+  jira_issue:
+    id: null
+    source_id: jira-test
+    jira_id: null
+    unique_key: null
+    id_readable: null
+    issue_type: ""
+    created: ""
+    updated: ""
+    due_date: ""
+    parent_id: ""
+    project_key: TST
+    reporter_id: alice-jira-acct
+    custom_fields_json: "{}"
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-15T18:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
+  jira_user:
+    unique_key: null
+    source_id: jira-test
+    account_id: null
+    email: null
+    display_name: null
+    account_type: atlassian
+    active: true
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-15T18:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
+  # ── Issues closed by Alice ───────────────────────────────────────────────
+  alice_task_1:
+    $ref: "#/templates/jira_issue"
+    id: T-1
+    jira_id: T-1
+    unique_key: jira-test-T-1
+    id_readable: TST-1
+    issue_type: Task
+    created: "2026-01-15T09:00:00"
+    custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+  alice_task_2:
+    $ref: "#/templates/jira_issue"
+    id: T-2
+    jira_id: T-2
+    unique_key: jira-test-T-2
+    id_readable: TST-2
+    issue_type: Task
+    created: "2026-01-15T11:30:00"
+    custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+  # ── Identity ─────────────────────────────────────────────────────────────
+  alice_user:
+    $ref: "#/templates/jira_user"
+    unique_key: jira-test-alice-jira-acct
+    account_id: alice-jira-acct
+    email: alice@example.com
+    display_name: Alice Alpha
+
+  # ── Changelog (bronze_jira.jira_issue_history) ───────────────────────────
+  # jira__changelog_items explodes `items` (JSON array of field changes). Each
+  # issue records the status transition into Closed on 2026-01-15; jira-enrich
+  # reverse-applies it onto the snapshot (Closed) so final_close_at = this event.
+  jira_history:
+    unique_key: null
+    source_id: jira-test
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    id_readable: null
+    changelog_id: null
+    created_at: ""
+    author_account_id: alice-jira-acct
+    items: "[]"
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-15T18:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
+  alice_task_1_closed:
+    $ref: "#/templates/jira_history"
+    id_readable: TST-1
+    changelog_id: "10001"
+    unique_key: jira-test-TST-1-10001
+    created_at: "2026-01-15T14:00:00.000+0000"
+    items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+
+  alice_task_2_closed:
+    $ref: "#/templates/jira_history"
+    id_readable: TST-2
+    changelog_id: "10002"
+    unique_key: jira-test-TST-2-10002
+    created_at: "2026-01-15T16:30:00.000+0000"
+    items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+
+  # ── Field catalog (bronze_jira.jira_fields) ──────────────────────────────
+  # Drives jira__task_field_metadata (cardinality / id-ness per field). status,
+  # assignee and issuetype are structured (id+name); duedate is a scalar date.
+  jira_field:
+    unique_key: null
+    source_id: jira-test
+    field_id: null
+    name: null
+    schema_type: ""
+    schema_items: ""
+    schema_custom: ""
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-15T18:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
+  field_status:
+    $ref: "#/templates/jira_field"
+    field_id: status
+    name: Status
+    schema_type: status
+    unique_key: jira-test-field-status
+
+  field_assignee:
+    $ref: "#/templates/jira_field"
+    field_id: assignee
+    name: Assignee
+    schema_type: user
+    unique_key: jira-test-field-assignee
+
+  field_issuetype:
+    $ref: "#/templates/jira_field"
+    field_id: issuetype
+    name: Issue Type
+    schema_type: issuetype
+    unique_key: jira-test-field-issuetype
+
+  field_duedate:
+    $ref: "#/templates/jira_field"
+    field_id: duedate
+    name: Due date
+    schema_type: date
+    unique_key: jira-test-field-duedate

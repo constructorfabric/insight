@@ -1,0 +1,58 @@
+spec_version: 1
+description: >
+  Task Delivery · tasks_completed · JIRA, end-to-end from BRONZE only.
+
+  Seeds bronze_jira.jira_issue (two issues whose current state is Closed,
+  assigned to Alice) + bronze_jira.jira_user (account_id → email). The pipeline
+  under test:
+    bronze_jira.jira_issue  ─dbt→ staging.jira_issue_field_snapshot ─┐
+    bronze_jira.jira_issue_history ─dbt→ staging.jira_changelog_items ┤
+                                              (Rust jira-enrich) ──────┴─→
+        staging.jira__task_field_history ─dbt→ silver.class_task_field_history
+    bronze_jira.jira_user  ─dbt→ silver.class_task_users
+    → insight.task_issue_current_state (MV) → insight.jira_closed_tasks
+    → insight.task_delivery_bullet_rows → IC Bullet Task Delivery (…0011).
+
+  Expected: Alice closed 2 tasks in Jan 2026 → tasks_completed = 2.
+
+  The rig runs the connector enrich step between its staging and silver dbt builds
+  (descriptor.images.enrich → cargo build --features io → run jira-enrich →
+  dbt(descriptor.dbt_select)), so the full bronze→silver path executes here, and
+  this test is expected GREEN.
+
+bronze:
+  bronze_jira.jira_issue:
+    - $ref: templates/jira_task.yaml#/templates/alice_task_1
+    - $ref: templates/jira_task.yaml#/templates/alice_task_2
+  bronze_jira.jira_issue_history:
+    - $ref: templates/jira_task.yaml#/templates/alice_task_1_closed
+    - $ref: templates/jira_task.yaml#/templates/alice_task_2_closed
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: templates/jira_task.yaml#/templates/field_duedate
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # IC Bullet Task Delivery (…0011): value = the requested person's own value.
+  # Alice's two Closed issues sum to tasks_completed = 2 over the period.
+  - name: tasks_completed — IC bullet, jira (alice closed 2)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: tasks_completed }
+        equal: { value: 2 }

@@ -7,11 +7,22 @@
     order_by=['unique_key'],
     settings={
         'allow_nullable_key': 1,
+    },
+    query_settings={
         'max_bytes_before_external_group_by': 2000000000,
         'max_bytes_before_external_sort': 2000000000,
     },
     tags=['staging', 'jira']
 ) }}
+
+{#-
+  `allow_nullable_key` is a MergeTree TABLE setting (CREATE TABLE … SETTINGS).
+  The `max_bytes_before_external_*` spill knobs are QUERY-execution settings, not
+  storage settings — ClickHouse rejects them in a table SETTINGS clause (code 115
+  UNKNOWN_SETTING on stricter builds, e.g. 24.8). They belong in `query_settings`,
+  which dbt-clickhouse applies to the INSERT … SELECT — the statement whose
+  GROUP BY / ORDER BY actually needs the disk spill.
+-#}
 
 -- One row per (issue, field_id) with current value_ids / value_displays.
 -- Consumed by `jira-enrich` to populate `IssueSnapshot.current_fields` so

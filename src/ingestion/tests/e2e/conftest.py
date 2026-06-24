@@ -35,6 +35,7 @@ from e2e_lib.analytics_api import AnalyticsApiProcess, build, find_free_port
 from e2e_lib.ch_seeder import CHSeeder
 from e2e_lib.config import SessionConfig
 from e2e_lib.dbt_runner import DbtRunner
+from e2e_lib.enrich import EnrichRunner
 from e2e_lib.fixture_loader import TestYaml, discover_tests, load as load_test
 from e2e_lib.metric_seed import seed_test_metrics
 from e2e_lib.migration_applier import apply_all as apply_ch_migrations
@@ -118,6 +119,18 @@ _SESSION_START_TRUNCATE = [
     ("staging", "m365__collab_meeting_activity"),
     ("staging", "m365__collab_document_activity_onedrive"),
     ("staging", "m365__collab_document_activity_sharepoint"),
+    # Task-tracking: the bullet/MV chain reads class_task_* even when a fixture
+    # seeds only one connector, and the enrich path writes staging.jira__task_*.
+    # Reset them once at session start so warm re-runs are deterministic (CI is
+    # fresh anyway); per-test TRUNCATE handles cross-test isolation.
+    ("silver", "class_task_field_history"),
+    ("silver", "class_task_users"),
+    ("silver", "class_task_field_metadata"),
+    ("silver", "class_task_worklogs"),
+    ("staging", "jira__task_field_history"),
+    ("staging", "jira_issue_field_snapshot"),
+    ("staging", "jira_changelog_items"),
+    ("staging", "jira__task_field_metadata"),
 ]
 
 
@@ -172,6 +185,12 @@ def analytics_api(ch_migrations_applied: SessionConfig):
 def ch_seeder(ch_migrations_applied: SessionConfig) -> CHSeeder:
     """Session-scoped seeder so its ledger persists across tests in the same worker."""
     return CHSeeder(ch_migrations_applied)
+
+
+@pytest.fixture(scope="session")
+def enrich_runner(ch_migrations_applied: SessionConfig) -> EnrichRunner:
+    """Session-scoped: discovers connector enrich steps once; builds each crate lazily."""
+    return EnrichRunner(ch_migrations_applied)
 
 
 # ----------------------------------------------------------------------

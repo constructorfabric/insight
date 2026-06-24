@@ -692,23 +692,107 @@ SQL
 fi
 
 # bronze_jira — needed by gold-views jira_person_daily, jira_closed_tasks
+# Column set mirrors what the Jira staging dbt models actually read (verified
+# against connectors/task-tracking/jira/dbt/jira__issue_field_snapshot.sql and
+# jira__changelog_items.sql): the snapshot does `LIMIT 1 BY source_id, jira_id`
+# and extracts status/assignee/issuetype/… out of `custom_fields_json`, plus
+# `created`, `parent_id`, `project_key`. The minimum-viable original placeholder
+# only carried the handful of columns the legacy gold-view migrations type-check;
+# the additional columns are additive and the real Airbyte sync still overwrites
+# the schema in prod.
 if ! ch_table_exists bronze_jira jira_issue; then
   echo "  Creating placeholder: bronze_jira.jira_issue"
   run_ch <<'SQL'
 CREATE DATABASE IF NOT EXISTS bronze_jira;
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue (
     id String,
+    source_id String,
+    jira_id String,
     unique_key String,
     id_readable String,
     issue_type String,
+    created String,
     updated String,
     due_date String,
+    parent_id String,
+    project_key String,
+    reporter_id Nullable(String),
     custom_fields_json String,
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY id;
+SQL
+fi
+
+# bronze_jira.jira_user — identity anchor. jira__task_users (silver:class_task_users)
+# is a PURE dbt projection of this table, so seeding it lets the e2e rig resolve a
+# Jira assignee account_id → email without the Rust jira-enrich step. Columns mirror
+# connectors/task-tracking/jira/dbt/jira__task_users.sql.
+if ! ch_table_exists bronze_jira jira_user; then
+  echo "  Creating placeholder: bronze_jira.jira_user"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_user (
+    unique_key String,
+    source_id String,
+    account_id String,
+    email Nullable(String),
+    display_name Nullable(String),
+    account_type Nullable(String),
+    active Nullable(Bool),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+fi
+
+# bronze_jira.jira_issue_history — Jira changelog. jira__changelog_items.sql
+# explodes the `items` JSON array into one row per field change; the Rust
+# jira-enrich binary consumes the resulting staging.jira_changelog_items.
+# Columns mirror what that staging model reads.
+if ! ch_table_exists bronze_jira jira_issue_history; then
+  echo "  Creating placeholder: bronze_jira.jira_issue_history"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_history (
+    unique_key String,
+    source_id String,
+    tenant_id String,
+    id_readable String,
+    changelog_id String,
+    created_at String,
+    author_account_id Nullable(String),
+    items String,
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+fi
+
+# bronze_jira.jira_fields — Jira field catalog. jira__task_field_metadata.sql
+# classifies each field by cardinality/id-ness; jira-enrich reads the resulting
+# staging.jira__task_field_metadata to shape value_ids/value_displays. Columns
+# mirror what that staging model reads (schema_type/schema_items/schema_custom).
+if ! ch_table_exists bronze_jira jira_fields; then
+  echo "  Creating placeholder: bronze_jira.jira_fields"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields (
+    unique_key String,
+    source_id String,
+    field_id String,
+    name String,
+    schema_type String,
+    schema_items String,
+    schema_custom String,
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
 SQL
 fi
 

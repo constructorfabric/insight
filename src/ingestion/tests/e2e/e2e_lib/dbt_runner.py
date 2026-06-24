@@ -125,6 +125,33 @@ class DbtRunner:
                     silver.add(tag.split(":", 1)[1])
         return sorted(set(staging)), sorted(silver)
 
+    def ephemeral_silver_targets(self, tag: str) -> list[str]:
+        """Silver class identifiers produced from an EPHEMERAL staging model tagged `tag`.
+
+        `derive_selectors` only follows non-ephemeral staging whose `source()` is a
+        seeded bronze table, so it misses silver targets fed by an enrich step: the
+        enrich binary writes a `staging.*` table that a THIN EPHEMERAL view
+        (e.g. `jira__task_field_history`, tag `jira` + `silver:class_task_field_history`)
+        exposes to `union_by_tag`. Returns the `<class>` part of each `silver:<class>`
+        tag on those ephemeral, connector-tagged models — exactly the silver tables the
+        enrich output feeds (e.g. `class_task_field_history`). Generic: no per-connector
+        hardcoding.
+        """
+        manifest = json.loads((self.target_dir / "manifest.json").read_text(encoding="utf-8"))
+        out: set[str] = set()
+        for n in manifest.get("nodes", {}).values():
+            if n.get("resource_type") != "model":
+                continue
+            if n.get("config", {}).get("materialized") != "ephemeral":
+                continue
+            tags = n.get("tags", [])
+            if tag not in tags:
+                continue
+            for t in tags:
+                if t.startswith("silver:"):
+                    out.add(t.split(":", 1)[1])
+        return sorted(out)
+
     # ----------------------------------------------------------------------
     # internals
     # ----------------------------------------------------------------------
