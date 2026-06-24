@@ -1,0 +1,23 @@
+# Reusable JSON schema for the table (all real placeholder columns). Resolved
+# by table name. Mirrors bronze_zulip_proxy.users in
+# src/ingestion/scripts/create-bronze-placeholders.sh.
+schemas:
+  bronze_zulip_proxy.users:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      id: { type: [number, "null"] }
+      uuid: { type: [string, "null"] }
+      email: { type: [string, "null"] }
+      full_name: { type: [string, "null"] }
+      role: { type: [number, "null"] }
+      is_active: { type: [boolean, "null"] }
+      recipient_id: { type: [number, "null"] }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: string }

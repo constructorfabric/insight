@@ -192,3 +192,43 @@ ls specs/*.test.yaml                       # list existing tests
 ```
 
 `<name>` is the file stem (e.g. `collab_emails_sent` for `specs/collab_emails_sent.test.yaml`). Warm re-runs are fine — the session resets the multi-reader collab silver/staging tables at start (conftest). `./e2e.sh down` is only the e2e compose teardown (it is not a deploy), for when you want a fully clean ClickHouse.
+
+## New bronze table for a not-yet-seeded connector
+
+The seeder INSERTs into a table that MUST already exist (it reads
+`system.columns` and fails otherwise — it does NOT create from the schema YAML).
+Bronze tables come from `src/ingestion/scripts/create-bronze-placeholders.sh`
+(the rig parses the `run_ch <<'SQL' … SQL` heredocs out of it). So to seed a
+connector that isn't there yet:
+
+1. Add `CREATE DATABASE IF NOT EXISTS bronze_<snake>;` to the database heredoc.
+2. Add a `CREATE TABLE IF NOT EXISTS bronze_<snake>.<stream> (…)` block (inside a
+   `run_ch <<'SQL' … SQL` heredoc) with the columns your dbt model reads + the 4
+   `_airbyte_*` CDK columns. Real Airbyte overwrites it on first sync.
+3. Add a matching `schemas/bronze_<snake>.<stream>.yaml` (every column;
+   `additionalProperties: false`) and a base template covering all of them.
+
+## Gotchas (rig operations + cross-test impact)
+
+- **Stale binary / your migration didn't run.** Historically the biggest trap:
+  `./e2e.sh` builds analytics-api into the `cargo-target` Docker volume, and on
+  Docker Desktop (macOS) the mtimes cargo reads through the bind mount don't
+  reliably advance, so cargo relinked a stale object and the binary silently
+  lacked new SeaORM migrations (symptoms: `query_ref`/catalog changes have no
+  effect, a `find` matches 0 rows, `size(items)` off by your new key). FIXED in
+  `e2e_lib/analytics_api.py::build` — it now `touch`es the analytics-api crate
+  sources before `cargo build`, forcing a recompile every run (~1-2 min, only
+  that crate). So a plain `./e2e.sh test` picks up new migrations now; you should
+  NOT need `down -v` for this. If you still suspect a stale binary, confirm by
+  querying `seaql_migrations` (below) — your migration version must be present.
+- **`1045 Access denied for user 'insight'` at API startup.** Stale
+  `compose/.env` creds vs a persisted MariaDB volume. Same `down -v` fixes it.
+- **Inspect the live DB after a run.** CH + MariaDB stay UP after `./e2e.sh test`
+  (only the runner is `--rm`). Query directly:
+  `docker exec insight-e2e-mariadb mariadb -uroot -p"$(grep ^MARIADB_ROOT_PASSWORD compose/.env|cut -d= -f2)" analytics -e "SELECT version FROM seaql_migrations"`
+  and `docker exec insight-e2e-clickhouse clickhouse-client -q "SELECT … FROM silver.class_<X>"`.
+- **Cross-test impact.** Adding a `metric_key` to a shared bullet section raises
+  that section's `size(items)` for EVERY test that queries it — bump the sibling
+  tests' count assertions in the same change (e.g. the Zulip add moved the
+  Collaboration bullet 20 → 21, so `collab_emails_sent.test.yaml` needed the bump
+  too).

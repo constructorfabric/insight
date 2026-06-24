@@ -179,6 +179,25 @@ def build(cfg: SessionConfig) -> Path:
                 f"rust-version ≥ {required[0]}.{required[1]}. "
                 f"Run `rustup update stable` and retry."
             )
+    # Force cargo to recompile the analytics-api crate from the CURRENT source.
+    #
+    # The repo is bind-mounted into the runner; on Docker Desktop (macOS) the
+    # mtimes cargo reads through that mount do not reliably advance when files
+    # are edited on the host, so cargo's fingerprint check misses new/changed
+    # sources (most painfully: a new SeaORM migration) and relinks a stale
+    # cached object instead of recompiling. The binary then silently lacks the
+    # migration — tests fail with NO_ZULIP / size off-by-one and no `down -v`
+    # short of a full cold rebuild fixes it. Bumping the mtimes here (a real
+    # write the container's FS layer registers) makes cargo recompile the crate
+    # every run. Only the analytics-api crate is affected (it is a leaf bin —
+    # nothing depends on it); its dependencies stay cached, so the cost is one
+    # crate recompile (~1-2 min), not a cold build.
+    crate_src = cfg.repo_root / "src/backend/services/analytics-api/src"
+    touched = 0
+    for rs in crate_src.rglob("*.rs"):
+        rs.touch()
+        touched += 1
+    LOG.info("touched %d analytics-api source files to force a fresh compile", touched)
     LOG.info("cargo build --release -p analytics-api  (cargo=%s, version=%s)", cargo, version)
     try:
         result = subprocess.run(

@@ -79,7 +79,7 @@ cases:
         find: { metric_key: m365_emails_sent }
         equal: { value: 40, median: 20, range_min: 10, range_max: 40 }
       - in: collaboration
-        assert: "size(items) == 20"
+        assert: "size(items) == 21"   # 20 base collab keys + zulip_messages_sent (Branch 4b)
       - in: collaboration
         find: { metric_key: slack_dm_ratio }
         equal: { value: null }

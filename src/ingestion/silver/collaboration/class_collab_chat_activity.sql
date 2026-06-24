@@ -1,5 +1,6 @@
 -- depends_on: {{ ref('m365__collab_chat_activity') }}
 -- depends_on: {{ ref('slack__collab_chat_activity') }}
+-- depends_on: {{ ref('zulip_proxy__collab_chat_activity') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
