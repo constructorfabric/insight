@@ -12,6 +12,7 @@ sources:
       - name: merge_request_commits
       - name: merge_request_notes
       - name: merge_request_approvals
+      - name: users
 
 models:
   - name: gitlab__repositories
