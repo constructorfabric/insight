@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "source-active-directory"
+version = "0.1.0"
+description = "Airbyte source connector for on-prem Active Directory user directory over LDAP (CDK)"
+requires-python = ">=3.10"
+dependencies = [
+    "airbyte-cdk>=7.16.0",
+    "ldap3>=2.9.1",
+]
+
+[project.scripts]
+source-active-directory = "source_active_directory.source:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["source_active_directory*"]
+
+[tool.setuptools.package-data]
+"source_active_directory" = ["spec.json"]
