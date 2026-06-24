@@ -93,7 +93,7 @@ Read connector package files and verify each item:
 - [ ] `name` matches directory name
 - [ ] `version` is bumped in the SAME PR as any `connector.yaml` change — reconcile republishes the nocode manifest only on descriptor-version drift (equal versions → noop), so a manifest edit without a bump silently never reaches Airbyte
 - [ ] `connection.namespace` = `bronze_<name>`
-- [ ] `dbt_select` includes connector tag with `+` suffix (e.g., `tag:m365+`)
+- [ ] `dbt_select` is `tag:<name>+` where `<name>` is the descriptor `name` verbatim (hyphenated slug), e.g. `tag:zulip-proxy+` — must match the model tags above. (Note: the deployed silver step ignores this and derives `tag:{{data_source}}+` itself, but keep them consistent so manual/staging dbt runs select correctly.)
 - [ ] `schedule` is valid cron expression
 - [ ] `workflow` field is present
 - [ ] No `streams` block (streams are owned by Airbyte connector, discovered via `airbyte discover`)
@@ -157,7 +157,8 @@ Read connector package files and verify each item:
 - [ ] Model name follows `<connector>__<domain>.sql` pattern
 - [ ] `materialized='incremental'`
 - [ ] `schema='staging'`
-- [ ] Tags include connector name and `silver:class_<domain>`
+- [ ] First tag is the connector **slug = descriptor `name` verbatim (hyphenated)**, NOT the snake_case file prefix. The silver pipeline step (`transform-legacy` in `ingestion-pipeline`) hardcodes its selector as `tag:{{data_source}}+` (= `tag:<descriptor name>+`) and ignores `dbt_select`; a snake-cased tag (e.g. `zulip_proxy` instead of `zulip-proxy`) is never selected → dbt logs `Nothing to do` and silver silently never builds. Check: every model's first tag === `yq '.name' descriptor.yaml`. (Slug == snake for hyphen-free connectors, so this only bites `zulip-proxy`/`claude-team`/`ms-entra`-style names.)
+- [ ] Plus `silver:class_<domain>` on the silver metric model(s)
 - [ ] SELECT includes `tenant_id`, `source_id`, `unique_key`
 - [ ] Uses `{{ source('bronze_<name>', '<stream>') }}`
 - [ ] Has `{% if is_incremental() %}` block
@@ -171,6 +172,13 @@ Read connector package files and verify each item:
   tagged `silver:identity_inputs`). See `connector-create.md` §3.6b.
 - [ ] `src/ingestion/silver/_shared/identity_inputs.sql` carries a
   `-- depends_on: {{ ref('<name>__identity_inputs') }}` line for the connector.
+- [ ] `fields_history(entity_id_col=…)` evaluates to a **String**. If the source
+  user id is numeric (ClickHouse `Decimal`/`Int` — typical when the bronze field
+  is a JSON number), it MUST be wrapped: `entity_id_col='toString(id)'`. Otherwise
+  `<name>__identity_inputs` fails at run time with `Code 386 NO_COMMON_TYPE`
+  (`String` vs `Decimal`) on the macro's final `UNION ALL`, because `entity_id`
+  is emitted into the String-typed `value` column. `validate-strict` cannot catch
+  this — only a `dbt run` (or per-stream build) against real data does.
 - [ ] If the source has NO user directory, the README documents the
   alternative resolution path instead (e.g. Confluence → jira_user JOIN).
 

@@ -10,7 +10,7 @@
 {{ config(
     materialized='view',
     schema='staging',
-    tags=['zulip_proxy']
+    tags=['zulip-proxy']
 ) }}
 
 {% do promote_bronze_to_rmt(table='bronze_zulip_proxy.users',    order_by='unique_key') %}
