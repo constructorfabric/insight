@@ -6,6 +6,13 @@
 # fixed, or gets an explicit reviewed suppression in-repo
 # (.trivyignore / .semgrepignore / audit.toml). Silent bypass is not a state.
 #
+# DOCUMENTED EXCEPTION (ratchet-in): the `sast` (Semgrep) job is REPORT-ONLY for
+# now — `semgrep scan` runs WITHOUT `--error`, so findings are surfaced but do
+# not block. This is the single sanctioned non-blocking gate while the p/default
+# baseline is triaged (owner: QA/TAF). Exit condition: add `--error` to the
+# semgrep step to make it hard-fail once the baseline is clean. Every OTHER job
+# here blocks.
+#
 # Rationale: both company reference pipelines (gitlab.constr.dev 931666,
 # 929528) carry Trivy scans with allow_failure that have been red for days.
 # The Constructor/Virtuozzo CI/CD Master Plan §2 mandates hard-fail gates.
@@ -39,9 +46,11 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          # PR: fetch enough history to diff base..head. Cron: full history.
-          # String operands: numeric 0 is falsy in &&/|| so it would collapse to 50.
-          fetch-depth: ${{ github.event_name == 'schedule' && '0' || '50' }}
+          # Full history: TruffleHog diffs base.sha..head.sha on PRs, and a
+          # shallow clone (e.g. 50) drops the base commit on any PR with more
+          # commits than the depth — the secrets scan then errors or scans
+          # incompletely. Correctness of a secrets gate beats the CI minutes.
+          fetch-depth: 0
           persist-credentials: false
       - name: TruffleHog (verified secrets are a hard failure)
         uses: trufflesecurity/trufflehog@1aa1871f9ae24a8c8a3a48a9345514acf42beb39 # v3.82.13
@@ -111,7 +120,9 @@ jobs:
             --ignore-vuln GHSA-537c-gmf6-5ccf
           )
           # Audit every Python project manifest in the ingestion tree.
+          n=0
           while IFS= read -r f; do
+            n=$((n + 1))
             echo "::group::pip-audit $f"
             case "$f" in
               *requirements*.txt) pip-audit "${IGNORES[@]}" -r "$f" || rc=1 ;;
@@ -119,6 +130,12 @@ jobs:
             esac
             echo "::endgroup::"
           done < <(find src/ingestion -name 'pyproject.toml' -o -name 'requirements*.txt' | grep -v node_modules)
+          # A gate that audits nothing is a silent bypass — fail if the discovery
+          # found no manifests (tree moved / glob broke) rather than passing green.
+          if [ "$n" -eq 0 ]; then
+            echo "::error::no Python manifests found under src/ingestion — nothing audited; refusing to pass"
+            exit 1
+          fi
           exit $rc
 
   trivy-config:
