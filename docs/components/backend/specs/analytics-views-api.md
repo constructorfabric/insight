@@ -357,12 +357,16 @@ so they need separate seeded metrics with a `GROUP BY date_bucket` in `query_ref
 
 #### LOC Trend Metric (per person, per time bucket)
 
+A git lines-of-code breakdown by file category. The three series are mutually
+exclusive (`code` / `spec` / `config`), so they partition lines added and each
+stay non-negative.
+
 ```sql
 SELECT
   toStartOfWeek(commit_date) AS date_bucket,         -- granularity per UI period
-  SUM(ai_lines_added)        AS ai_loc,              -- [ai-code] class_ai_dev_usage
-  SUM(clean_lines)           AS code_loc,            -- [git]     class_git_commits
-  SUM(spec_lines)            AS spec_lines            -- [git]     class_git_commits (if tracked)
+  SUM(code_lines)            AS code_loc,             -- [git] file_category='code'
+  SUM(spec_lines)            AS spec_lines,           -- [git] file_category='spec'
+  SUM(config_lines)          AS config_loc            -- [git] file_category='config'
 FROM ...
 WHERE person_id = ?
   AND commit_date >= ?
@@ -376,9 +380,9 @@ ORDER BY date_bucket
 ```ts
 type LocTrendRow = {
   date_bucket: string;   // ISO date — FE formats as chart label
-  ai_loc:      number;
   code_loc:    number;
   spec_lines:  number;
+  config_loc:  number;
 };
 ```
 

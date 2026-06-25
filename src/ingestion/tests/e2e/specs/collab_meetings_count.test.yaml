@@ -1,0 +1,103 @@
+spec_version: 1
+description: >
+  Metric: meetings_count — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report + Zoom participant sessions per person
+    • silver: both sources deduped to per-person/day meetings-attended counts
+    • gold:   metric = sum of meetings attended over the window, across Teams + Zoom (additive)
+
+  Team (median/range = the person's department):
+    alice Teams 4 + Zoom 1 = 5 · bob Teams 2 · carol Zoom 1 → median 2, range [1, 5].
+  Cases: alice Teams+Zoom (5) · bob Teams-only (2) · carol Zoom-only (1).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  # Teams side (insight_m365): alice 4, bob 2. (carol has no Teams row → Zoom-only.)
+  bronze_m365.teams_activity:
+    - $ref: templates/m365_teams.yaml#/templates/alice_teams
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-mcount-20260105
+      meetingsAttendedCount: 4
+    - $ref: templates/m365_teams.yaml#/templates/alice_teams  # verbatim duplicate -> must dedup, not double
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-mcount-20260105
+      meetingsAttendedCount: 4
+    - $ref: templates/m365_teams.yaml#/templates/bob_teams
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-bob-mcount-20260105
+      meetingsAttendedCount: 2
+
+  # Zoom side (insight_zoom): alice 1 meeting, carol 1 meeting. meetings_attended =
+  # uniqExact(meeting_uuid) per person/day, so one distinct meeting_uuid → 1.
+  bronze_zoom.participants:
+    - $ref: templates/zoom.yaml#/templates/alice_zoom
+      meeting_uuid: zmtg-alice-mc-1
+      participant_uuid: zp-alice-mc-1
+      join_time: "2026-01-05T10:00:00"
+      leave_time: "2026-01-05T11:00:00"
+    - $ref: templates/zoom.yaml#/templates/alice_zoom   # verbatim duplicate -> must dedup, not double
+      meeting_uuid: zmtg-alice-mc-1
+      participant_uuid: zp-alice-mc-1
+      join_time: "2026-01-05T10:00:00"
+      leave_time: "2026-01-05T11:00:00"
+    - $ref: templates/zoom.yaml#/templates/carol_zoom
+      meeting_uuid: zmtg-carol-mc-1
+      participant_uuid: zp-carol-mc-1
+      join_time: "2026-01-05T14:00:00"
+      leave_time: "2026-01-05T14:30:00"
+
+cases:
+  # ── COMBINED (alice: Teams 4 + Zoom 1 = 5) ───────────────────────────────────
+  # proves meetings_count sums across both sources for the same person/day.
+  - name: "meetings_count — alice COMBINED Teams+Zoom (cross-source sum = 5)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: meetings_count }
+        equal: { value: 5, median: 2, range_min: 1, range_max: 5 }
+
+  # ── Teams-only (bob: 2) ──────────────────────────────────────────────────────
+  - name: "meetings_count — bob Teams-only (2)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: meetings_count }
+        equal: { value: 2, median: 2, range_min: 1, range_max: 5 }
+
+  # ── Zoom-only (carol: 1) ─────────────────────────────────────────────────────
+  - name: "meetings_count — carol Zoom-only (1)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: meetings_count }
+        equal: { value: 1, median: 2, range_min: 1, range_max: 5 }

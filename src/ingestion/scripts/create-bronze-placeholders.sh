@@ -831,15 +831,48 @@ if ! ch_table_exists bronze_zoom participants; then
   echo "  Creating placeholder: bronze_zoom.participants"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_zoom.participants (
+    tenant_id String,
+    source_id String,
     email String,
+    user_name Nullable(String),
     meeting_uuid String,
+    participant_uuid String,
     join_time String,
     leave_time String,
+    camera Nullable(String),
+    share_desktop Nullable(Bool),
+    share_application Nullable(Bool),
+    share_whiteboard Nullable(Bool),
+    video_connection_type Nullable(String),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY email;
+SQL
+fi
+
+# bronze_zoom.meetings — read by zoom__meeting_sessions (session stitching).
+# The meeting-hours path computes duration from participants join/leave, so this
+# table may be empty in tests; it only needs to EXIST so the sessions model builds
+# (the participant→session LEFT JOIN then falls back to meeting_uuid).
+if ! ch_table_exists bronze_zoom meetings; then
+  echo "  Creating placeholder: bronze_zoom.meetings"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_zoom.meetings (
+    tenant_id String,
+    source_id String,
+    id Nullable(String),
+    uuid String,
+    start_time Nullable(String),
+    end_time Nullable(String),
+    has_video Nullable(Bool),
+    has_screen_share Nullable(Bool),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY uuid;
 SQL
 fi
 

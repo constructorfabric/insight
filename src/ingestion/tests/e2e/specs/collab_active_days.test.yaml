@@ -1,0 +1,103 @@
+spec_version: 1
+description: >
+  Metric: m365_active_days — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily M365 reports — email, Teams chat, OneDrive/SharePoint files
+    • silver: deduped to one row per person/day carrying each signal's count
+    • gold:   a day is "active" if any deliberate signal (email sent, chat sent,
+              file engaged/shared) > 0; metric = count of active days in the
+              window — passive emails (received/read) are excluded
+
+  Team (median/range = the person's department):
+    alice EMAIL on 2 days · bob CHAT 1 day · carol DOCS 1 day → median 1, range [1, 2].
+  Cases: alice email-active (2) · bob chat-only (1) · carol docs-only (1).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_m365.email_activity:
+    - $ref: templates/m365_email.yaml#/templates/alice_email      # active day 1 (sent>0)
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-ad-20260105
+      sendCount: 10
+    - $ref: templates/m365_email.yaml#/templates/alice_email      # active day 1 (sent>0)  # verbatim duplicate -> must dedup, not double
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-ad-20260105
+      sendCount: 10
+    - $ref: templates/m365_email.yaml#/templates/alice_email      # active day 2 (sent>0)
+      reportRefreshDate: "2026-01-06"
+      unique_key: m365-alice-ad-20260106
+      sendCount: 10
+    - $ref: templates/m365_email.yaml#/templates/alice_email      # passive day → NOT active (recv/read only)
+      reportRefreshDate: "2026-01-07"
+      unique_key: m365-alice-ad-20260107
+      sendCount: 0
+      receiveCount: 30
+      readCount: 20
+
+  bronze_m365.teams_activity:
+    - $ref: templates/m365_teams.yaml#/templates/bob_teams        # bob active via chat
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-bob-ad-chat-20260105
+      privateChatMessageCount: 5
+
+  bronze_m365.onedrive_activity:
+    - $ref: templates/m365_onedrive.yaml#/templates/carol_onedrive  # carol active via documents
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-carol-ad-od-20260105
+      viewedOrEditedFileCount: 3
+
+cases:
+  # team m365_active_days = [alice 2 (01-05,01-06; 01-07 passive excluded), bob 1, carol 1]
+  #   value (alice) = 2 ; median[1,1,2] = 1 ; range = [1,2]
+  - name: m365_active_days — IC bullet (alice value vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: m365_active_days }
+        equal: { value: 2, median: 1, range_min: 1, range_max: 2 }
+
+  # bob is active via CHAT only (1 day) — proves the chat class path directly
+  - name: m365_active_days — bob CHAT-only (value 1 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_active_days }
+        equal: { value: 1, median: 1, range_min: 1, range_max: 2 }
+
+  # carol is active via DOCS only (1 day) — proves the document class path directly
+  - name: m365_active_days — carol DOCS-only (value 1 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_active_days }
+        equal: { value: 1, median: 1, range_min: 1, range_max: 2 }

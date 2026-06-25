@@ -163,7 +163,7 @@ models:
         tests: [not_null, unique]
 
   - name: mtr_git_person_weekly
-    description: "Per-person per-week git trend: commits, prs_merged, code_loc, spec_lines. Grain: (tenant_id, person_key, week)."
+    description: "Per-person per-week git trend: commits, prs_merged, code_loc, spec_lines, config_loc. Grain: (tenant_id, person_key, week)."
     columns:
       - name: tenant_id
         tests: [not_null]
@@ -174,3 +174,9 @@ models:
       - name: unique_key
         description: "concat(tenant_id, '|', person_key, '|', week) — enforces one row per person per tenant per week"
         tests: [not_null, unique]
+      - name: code_loc
+        description: "Lines added in code-category files (file_category='code')."
+      - name: spec_lines
+        description: "Lines added in spec/test-category files (file_category='spec')."
+      - name: config_loc
+        description: "Lines added in config-category files (file_category='config')."

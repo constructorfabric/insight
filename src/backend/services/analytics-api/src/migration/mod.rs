@@ -42,6 +42,7 @@ mod m20260620_000001_seed_wiki_metrics;
 mod m20260620_000002_seed_wiki_catalog;
 mod m20260624_000001_collab_zulip_chat;
 mod m20260624_000002_seed_zulip_collab_catalog;
+mod m20260624_000003_ic_chart_loc_git_breakdown;
 
 #[cfg(test)]
 mod live_tests;
@@ -96,6 +97,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260620_000002_seed_wiki_catalog::Migration),
             Box::new(m20260624_000001_collab_zulip_chat::Migration),
             Box::new(m20260624_000002_seed_zulip_collab_catalog::Migration),
+            Box::new(m20260624_000003_ic_chart_loc_git_breakdown::Migration),
         ]
     }
 }

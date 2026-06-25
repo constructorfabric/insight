@@ -1,0 +1,65 @@
+spec_version: 1
+description: >
+  Metric: teams_meeting_hours — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report per person (audio/video/screen durations)
+    • silver: deduped to per-person/day durations
+    • gold:   per meeting take the longest single modality; metric = sum of those
+              hours over the window, Teams-only — the M365 slice of meeting_hours
+              (Zoom is filtered out by definition)
+
+  Team (median/range = the person's department):
+    alice greatest(2h audio, 1h video) = 2.0 · bob 1.0 · carol 0.5
+    → median 1.0, range [0.5, 2.0].
+  Cases: alice (2.0 vs the team; longest modality — 2h audio beats 1h video → 2.0, not 3.0).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_m365.teams_activity:
+    - $ref: templates/m365_teams.yaml#/templates/alice_teams
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-tmh-20260105
+      audioDuration: PT2H
+      videoDuration: PT1H
+      screenShareDuration: PT0S
+    - $ref: templates/m365_teams.yaml#/templates/alice_teams  # verbatim duplicate -> must dedup, not double
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-tmh-20260105
+      audioDuration: PT2H
+      videoDuration: PT1H
+      screenShareDuration: PT0S
+    - $ref: templates/m365_teams.yaml#/templates/bob_teams
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-bob-tmh-20260105
+      audioDuration: PT1H
+      videoDuration: PT0S
+      screenShareDuration: PT0S
+    - $ref: templates/m365_teams.yaml#/templates/carol_teams
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-carol-tmh-20260105
+      audioDuration: PT30M
+      videoDuration: PT0S
+      screenShareDuration: PT0S
+
+cases:
+  # alice teams_meeting_hours = 2.0 ; team {2.0,1.0,0.5} → median 1.0, range [0.5,2.0]
+  - name: teams_meeting_hours — IC bullet (alice value vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: teams_meeting_hours }
+        equal: { value: 2.0, median: 1.0, range_min: 0.5, range_max: 2.0 }
