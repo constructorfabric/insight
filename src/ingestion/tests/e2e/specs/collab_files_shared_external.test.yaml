@@ -1,0 +1,94 @@
+spec_version: 1
+description: >
+  Metric: m365_files_shared_external — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily OneDrive and SharePoint file-activity reports per person
+    • silver: each product deduped to per-person/day share counts
+    • gold:   metric = sum of files shared externally over the window, across both products
+
+  Team (median/range = the person's department):
+    alice 2 OneDrive + 1 SharePoint = 3 · bob 1 OneDrive · carol 0 (SharePoint, real zero)
+    → median 1, range [0, 3].
+  Cases: alice cross-product (3) · bob OneDrive-only (1) · carol SharePoint-only (0, real zero).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_m365.onedrive_activity:
+    - $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-od-ext-20260105
+      sharedExternallyFileCount: 2
+    - $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive  # verbatim duplicate -> must dedup, not double
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-od-ext-20260105
+      sharedExternallyFileCount: 2
+    - $ref: templates/m365_onedrive.yaml#/templates/bob_onedrive
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-bob-od-ext-20260105
+      sharedExternallyFileCount: 1
+
+  bronze_m365.sharepoint_activity:
+    - $ref: templates/m365_sharepoint.yaml#/templates/alice_sharepoint
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-sp-ext-20260105
+      sharedExternallyFileCount: 1
+    - $ref: templates/m365_sharepoint.yaml#/templates/carol_sharepoint
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-carol-sp-ext-20260105
+      sharedExternallyFileCount: 0
+
+cases:
+  # team m365_files_shared_external = [alice 2+1=3, bob 1, carol 0]
+  #   value (alice) = 3 ; median[0,1,3] = 1 ; range = [0,3]
+  - name: m365_files_shared_external — alice OneDrive+SharePoint (cross-product sum vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: m365_files_shared_external }
+        equal: { value: 3, median: 1, range_min: 0, range_max: 3 }
+
+  # bob shares externally via OneDrive only — proves the OneDrive product path directly
+  - name: m365_files_shared_external — bob OneDrive-only (value 1 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_shared_external }
+        equal: { value: 1, median: 1, range_min: 0, range_max: 3 }
+
+  # carol has a SharePoint row but shared 0 externally — a real in-team zero member
+  - name: m365_files_shared_external — carol SharePoint-only (real zero, value 0)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_shared_external }
+        equal: { value: 0, median: 1, range_min: 0, range_max: 3 }

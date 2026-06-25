@@ -1,10 +1,15 @@
 spec_version: 1
-description: >-
-  Zulip chat activity flows bronze → silver class_collab_chat_activity (via
-  union_by_tag) → gold insight.collab_bullet_rows (Branch 4b,
-  data_source='insight_zulip_proxy') → IC Bullet Collaboration metric_key
-  `zulip_messages_sent`. Mirrors collab_emails_sent: alice's own value vs her
-  team's median/range, with a bronze duplicate that must dedup.
+description: >
+  Metric: zulip_messages_sent — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: Zulip users (emails) + per-sender message counts from the Zulip proxy
+    • silver: deduped to per-person/day chat-message totals
+    • gold:   metric = sum of Zulip messages sent over the window (chat-only)
+
+  Team (median/range = the person's department):
+    alice 40 · bob 20 · carol 10 → median 20, range [10, 40].
+  Cases: alice (40 vs team; also checks the bullet exposes 21 keys and that
+    slack_dm_ratio is null when no Slack is seeded).
 
 # bronze — seed fixture. Key = TABLE NAME. People (org_unit) come from
 # bamboohr; Zulip users supply the emails that join to them; Zulip messages

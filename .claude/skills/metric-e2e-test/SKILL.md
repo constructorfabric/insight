@@ -70,6 +70,37 @@ templates:
     userPrincipalName: alice@example.com
 ```
 
+### `description` — metric + bronze→silver→gold formula
+
+A folded `>` block stating WHAT the metric is and HOW it's computed, in plain
+language — **not** dbt model / silver-column names. Keep it short. Shape:
+
+```yaml
+description: >
+  Metric: <metric_key> — <bullet name> (…0012), #<issue>.
+  How it's computed (bronze → silver → gold):
+    • bronze: <the raw source report(s) that arrive>
+    • silver: <how they're deduped / normalized to per-person/day counts>
+    • gold:   <the metric rule — the aggregation, exclusions, cross-source sums>
+
+  Team (median/range = the person's department):
+    <one-line member distribution> → median <m>, range [<lo>, <hi>].
+  Cases: <one-line list of what each case proves>.
+```
+
+- The **gold** line carries the metric-specific logic — e.g. "passive emails
+  (received/read) excluded", "Teams + Zoom additive", "longest modality, not the
+  sum", "Teams-only — Zoom excluded". This is where a reader learns the real rule.
+- Describe the *transformation* in human terms; do NOT name staging models or silver
+  columns (`m365__collab_*`, `*_count`) — the **layer flow** is the point, not the
+  artifacts. (To trace the real artifacts, read the staging dbt models + the gold
+  migration; see "Source of truth".)
+- Keep the **Team** line concrete (seeded member values → the resulting
+  median/range) so a reviewer can verify the `equal:` numbers without reading every
+  case. For date-windowed metrics (no single Team), drop the Team line and let the
+  Cases line enumerate the window kinds (see `collab_emails_read.test.yaml`).
+- Canonical example: `collab_active_days.test.yaml`.
+
 ### `bronze` — what to seed
 
 Keyed by table name (the key IS the table + which schema validates it). Each row =
@@ -119,10 +150,10 @@ cases:
 
 The request carries only `id` + `metric_id` + `$filter` (person_id + metric_date `ge`/`le`):
 the live FE sends **no** `$top`/`$orderby`/`org_unit`, and the backend computes the team
-(org_unit) cohort itself. **Assert only the metric under test** — one `metric_key` per file
+(org_unit / department) distribution itself. **Assert only the metric under test** — one `metric_key` per file
 via `find`+`equal`; do NOT assert a fixed positive `size(items)` count or an unrelated
 metric_key. (The team shown in the UI comes from a *separate* identity service and can
-disagree with the analytics cohort — irrelevant to these assertions.)
+disagree with the analytics team (org_unit) — irrelevant to these assertions.)
 
 ### `assert` (CEL) bindings
 
@@ -165,9 +196,9 @@ with a dedicated spec (see `specs/collab_emails_read.test.yaml`):
    (`grep -rn "<label>" src/backend/services/analytics-api/src/migration/*.rs`) and
    the live `query_ref` rewrite for that metric. Note whether it returns a bullet
    (`metric_key`/`value`/`median`/`range_*`) or per-person rows. For the collaboration
-   bullets the median/range cohort is **DEPARTMENT/org_unit-scoped for BOTH** the Team
+   bullets the median/range is **DEPARTMENT/org_unit-scoped for BOTH** the Team
    bullet (`…0005`) and the IC bullet (`…0012`) — `median`/`range_*` come from
-   `quantileExact`/min/max over the person's own `org_unit_id` cohort (live query
+   `quantileExact`/min/max over the person's own `org_unit_id` (department) team (live query
    `m20260604_000002_collab_bullet_distribution.rs`, `GROUP BY metric_key, org_unit_id`
    joined `ON c.org_unit_id = p.org_unit_id`). The two bullets differ only in `value`
    (Team = team average `avg(p.v_period)`/`avg(c.team_*)`; IC = the requested member
@@ -196,30 +227,31 @@ with a dedicated spec (see `specs/collab_emails_read.test.yaml`):
    **Seed the department, not a UUID.** In the GOLD/served layer `org_unit_id` is the
    BambooHR **department STRING** — `insight.people.org_unit_id = argMax(department, …)`,
    keyed `person_id = lower(workEmail)`; it is a UUID only in silver/`person.persons`. So
-   for a team/org_unit-cohort metric set `department: "Engineering"` on the bamboohr
-   `employees` base record (people sharing a department form one cohort), and if you scope
+   for a team/department (org_unit) metric set `department: "Engineering"` on the bamboohr
+   `employees` base record (people sharing a department form one team), and if you scope
    a team-view request use the string (`org_unit_id eq 'Engineering'`), never a UUID.
 
-   **Identity match is load-bearing (silent NULL trap).** Cohort attribution is a LEFT
+   **Identity match is load-bearing (silent NULL trap).** Team/department attribution is a LEFT
    JOIN: `collab_bullet_rows` joins `insight.people` ON `lower(silver.email) = person_id`,
    where `person_id = lower(workEmail)`. There is no `email` column on bronze — bamboohr
    carries `workEmail`, M365 carries `userPrincipalName`, and silver `email` derives from
    `userPrincipalName`. So a seeded person's `userPrincipalName` must equal their bamboohr
    `workEmail` **case-insensitively**; any mismatch → `org_unit_id` resolves NULL, the
-   person silently drops out of the cohort (no error), and the median/range is computed
+   person silently drops out of the team/department (no error), and the median/range is computed
    over the wrong roster. Set the SAME email on both `workEmail` and `userPrincipalName`.
-4. **Write `bronze`** with `$ref`+overrides; include a duplicate row when the metric
-   should dedup.
+4. **Write the `description`** (metric + bronze→silver→gold formula + Team/Cases —
+   see § `description`), then **`bronze`** with `$ref`+overrides; include a duplicate
+   row when the metric should dedup.
 5. **Write `cases`**: one batch `query` per metric under test (and one `metric_key` per
    file — see File layout); assert ONLY the target metric's few fields via `find`+`equal`,
    and counts/inequalities via `assert`.
 6. **Pick numbers that distinguish behaviors** — e.g. for a median test use values
    where median ≠ mean (`[40,20,10]` → median 20, mean 23.33) so the test actually
-   pins the aggregation. Use an **odd-size** cohort: ClickHouse `quantileExact(0.5)`
+   pins the aggregation. Use an **odd-size** team (an odd number of members with data): ClickHouse `quantileExact(0.5)`
    (which both collab bullets use) is NOT the average of the two middle values on an
-   EVEN cohort — it returns the UPPER middle element (index `floor(n/2)`): `{100,200}` →
-   200, not 150. An even cohort whose median you compute as the mean of the middles will
-   produce a wrong `equal:` (this bit the live specs twice), so prefer odd cohorts.
+   EVEN team — it returns the UPPER middle element (index `floor(n/2)`): `{100,200}` →
+   200, not 150. An even team whose median you compute as the mean of the middles will
+   produce a wrong `equal:` (this bit the live specs twice), so prefer odd teams.
 
 ## Validating a test (no ClickHouse needed)
 

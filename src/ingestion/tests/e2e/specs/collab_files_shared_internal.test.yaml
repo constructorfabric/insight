@@ -1,0 +1,94 @@
+spec_version: 1
+description: >
+  Metric: m365_files_shared_internal — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily OneDrive and SharePoint file-activity reports per person
+    • silver: each product deduped to per-person/day share counts
+    • gold:   metric = sum of files shared internally over the window, across both products
+
+  Team (median/range = the person's department):
+    alice 5 OneDrive + 3 SharePoint = 8 · bob 2 OneDrive · carol 1 SharePoint
+    → median 2, range [1, 8].
+  Cases: alice cross-product (8) · bob OneDrive-only (2) · carol SharePoint-only (1).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_m365.onedrive_activity:
+    - $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-od-int-20260105
+      sharedInternallyFileCount: 5
+    - $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive  # verbatim duplicate -> must dedup, not double
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-od-int-20260105
+      sharedInternallyFileCount: 5
+    - $ref: templates/m365_onedrive.yaml#/templates/bob_onedrive
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-bob-od-int-20260105
+      sharedInternallyFileCount: 2
+
+  bronze_m365.sharepoint_activity:
+    - $ref: templates/m365_sharepoint.yaml#/templates/alice_sharepoint
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-sp-int-20260105
+      sharedInternallyFileCount: 3
+    - $ref: templates/m365_sharepoint.yaml#/templates/carol_sharepoint
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-carol-sp-int-20260105
+      sharedInternallyFileCount: 1
+
+cases:
+  # team m365_files_shared_internal = [alice 5+3=8, bob 2, carol 1]
+  #   value (alice) = 8 ; median[1,2,8] = 2 ; range = [1,8]
+  - name: m365_files_shared_internal — alice OneDrive+SharePoint (cross-product sum vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: m365_files_shared_internal }
+        equal: { value: 8, median: 2, range_min: 1, range_max: 8 }
+
+  # bob shares internally via OneDrive only — proves the OneDrive product path directly
+  - name: m365_files_shared_internal — bob OneDrive-only (value 2 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_shared_internal }
+        equal: { value: 2, median: 2, range_min: 1, range_max: 8 }
+
+  # carol shares internally via SharePoint only — proves the SharePoint product path directly
+  - name: m365_files_shared_internal — carol SharePoint-only (value 1 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_shared_internal }
+        equal: { value: 1, median: 2, range_min: 1, range_max: 8 }

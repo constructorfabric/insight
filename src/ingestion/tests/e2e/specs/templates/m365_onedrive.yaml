@@ -1,0 +1,32 @@
+# Reusable OneDrive-activity records (bronze_m365.onedrive_activity).
+# Base lists every schema field (counts null); per-person records override only
+# userPrincipalName. Feeds class_collab_document_activity (product = onedrive).
+templates:
+  m365_onedrive:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "m365-test"
+    unique_key: null
+    userPrincipalName: null
+    reportPeriod: "D1"
+    reportRefreshDate: null
+    lastActivityDate: null
+    viewedOrEditedFileCount: null
+    syncedFileCount: null
+    sharedInternallyFileCount: null
+    sharedExternallyFileCount: null
+
+  alice_onedrive:
+    $ref: "#/templates/m365_onedrive"
+    userPrincipalName: alice@example.com
+
+  bob_onedrive:
+    $ref: "#/templates/m365_onedrive"
+    userPrincipalName: bob@example.com
+
+  carol_onedrive:
+    $ref: "#/templates/m365_onedrive"
+    userPrincipalName: carol@example.com
