@@ -12,6 +12,31 @@ Airbyte / Kestra / Argo are NOT exercised — bronze is seeded by direct INSERT 
 
 See specs: [PRD](../../../../docs/domain/bronze-to-api-e2e/specs/PRD.md), [DESIGN](../../../../docs/domain/bronze-to-api-e2e/specs/DESIGN.md), [DECOMPOSITION](../../../../docs/domain/bronze-to-api-e2e/specs/DECOMPOSITION.md), [FEATURE yaml-rig](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md).
 
+## Data tier — attaches to the root stack
+
+The e2e runner does **not** ship its own ClickHouse + MariaDB. It attaches to the data
+tier defined in the repo-root [`docker-compose.yml`](../../../../docker-compose.yml) on the
+`insight` network:
+
+- If a dev stack is already up (`./dev-compose.sh up`), the runner **reuses** its
+  `clickhouse` + `mariadb` by service name.
+- If not, the runner's `depends_on` **brings up** just those two services (never the
+  backend/frontend services).
+
+Credentials and ports come from a committed, test-specific env file
+[`compose/e2e.env`](compose/e2e.env) (not a developer's personal `.env.compose`). Its
+values match the root compose defaults (`insight` / `insight-local`, ports `8123/9000/3306`),
+so the runner attaches cleanly to a default `./dev-compose.sh up` and to a fresh CI bring-up
+alike. If your dev stack uses custom credentials/ports, point the harness at your own file:
+`E2E_ENV_FILE=../../../../.env.compose ./e2e.sh test`. The runner still **builds + spawns
+its own `analytics-api` from current source** — it never uses the root stack's
+`analytics-api` container.
+
+> Attach mode is destructive to whatever DB you point at: the harness seeds
+> bronze/silver/gold + metric definitions into the root stack's `insight` (CH) and
+> `analytics` (MariaDB) databases. `./e2e.sh down` removes **only the runner** — the data
+> tier is the root stack's to manage (`./dev-compose.sh down`).
+
 ## Prerequisites
 
 Only one: **Docker Engine ≥ 24**. Everything else (Python 3.12, Rust matching `rust-version` in `src/backend/Cargo.toml`, dbt-clickhouse, pytest, all deps) lives inside the runner image.
@@ -26,7 +51,7 @@ cd src/ingestion/tests/e2e
 ./e2e.sh test -k collab_emails_sent -v   # one test
 ./e2e.sh test -n auto       # ⚠️ parallel (pytest-xdist) — NOT supported yet: workers race on shared CH/MariaDB/dbt target
 ./e2e.sh shell              # interactive bash inside the runner
-./e2e.sh down               # tear down compose stack + volumes
+./e2e.sh down               # remove the runner (data tier left running — see above)
 ```
 
 The same image (and the same `./e2e.sh test` invocation) is used in CI — see `.github/workflows/e2e-bronze-to-api.yml`.
@@ -35,7 +60,7 @@ First session bootstraps `cargo build --release -p analytics-api` (~3-5 min). Su
 
 ## Run (advanced — host-local)
 
-If you prefer to develop on the host (faster iteration on the test code itself), install Python deps and rust on the host. The session-rig falls back to `E2E_RUN_MODE=host` which brings compose up via published ports on 127.0.0.1:30523/30506 (avoiding the in-cluster port-forwards).
+If you prefer to develop on the host (faster iteration on the test code itself), install Python deps and rust on the host. The session-rig falls back to `E2E_RUN_MODE=host`, which brings up the root stack's `clickhouse` + `mariadb` and connects via their published loopback ports (`127.0.0.1:8123` / `127.0.0.1:3306`). If your root stack uses non-default credentials, export the matching `E2E_CH_PASSWORD` / `E2E_MARIADB_PASSWORD`.
 
 ```bash
 python3.12 -m venv .venv
@@ -43,7 +68,7 @@ source .venv/bin/activate
 pip install -e .
 rustup update stable        # must satisfy rust-version in src/backend/Cargo.toml
 
-pytest -k collab_emails_sent -v   # session-rig brings compose up automatically
+pytest -k collab_emails_sent -v   # session-rig brings the data tier up automatically
 ```
 
 ## Layout
@@ -54,10 +79,11 @@ e2e/
 ├── pytest.ini                  # pytest config
 ├── conftest.py                 # session-scoped pytest fixtures (the orchestrator)
 ├── compose/
-│   ├── docker-compose.yml      # ClickHouse + MariaDB, loopback-only
-│   └── .env.example            # example creds (real values generated per-session)
+│   ├── docker-compose.runner.yml  # adds ONLY the runner; layered on repo-root docker-compose.yml
+│   ├── e2e.env                    # committed test-specific env (creds/ports for the data tier)
+│   └── Dockerfile.runner          # runner image (python+rust+deps)
 ├── e2e_lib/                    # framework Python package
-│   ├── compose.py              # docker compose up/down + healthcheck wait
+│   ├── compose.py              # brings up the root data tier (host mode) + healthcheck wait
 │   ├── clickhouse.py           # CH HTTP client wrapper
 │   ├── mariadb.py              # MariaDB connection helper
 │   ├── migration_applier.py    # applies src/ingestion/scripts/migrations/*.sql
@@ -71,16 +97,23 @@ e2e/
     └── test_session_smoke.py
 ```
 
-## Ports (loopback only)
+## Ports
 
-| Service | Host port | Container port |
-|---------|-----------|----------------|
-| ClickHouse HTTP | `127.0.0.1:30523` | 8123 |
-| ClickHouse native | `127.0.0.1:30529` | 9000 |
-| MariaDB | `127.0.0.1:30506` | 3306 |
-| analytics-api | `127.0.0.1:<random>` | — |
+In **docker mode** (the default `./e2e.sh test` path) the runner reaches the data tier
+in-network by service name — no host ports are involved:
 
-These ports avoid conflict with a local gitops dev cluster (which forwards 8123 / 3306) and the dbt local profile (30123).
+| Service | In-network endpoint |
+|---------|---------------------|
+| ClickHouse HTTP | `clickhouse:8123` |
+| ClickHouse native | `clickhouse:9000` |
+| MariaDB | `mariadb:3306` |
+| analytics-api | `127.0.0.1:<random>` (inside the runner) |
+
+In **host mode** (host-local pytest) the harness connects to the root stack's published
+loopback ports — `127.0.0.1:8123` / `9000` / `3306` by default (override with the root
+compose's `CLICKHOUSE_HTTP_PORT` / `CLICKHOUSE_NATIVE_PORT` / `MARIADB_PORT`). If you also
+run a local gitops dev cluster that forwards 8123/3306, stop one of the two — they share
+the same host ports now that e2e rides the root stack.
 
 ## Notes for fixture authors
 

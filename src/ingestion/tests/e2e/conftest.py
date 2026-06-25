@@ -79,11 +79,17 @@ def worker_ctx() -> WorkerContext:
 
 @pytest.fixture(scope="session")
 def compose_stack(session_cfg: SessionConfig):
-    """docker compose up at session start, down at session end.
+    """Ensure the root stack's data tier (ClickHouse + MariaDB) is reachable.
 
-    In `host` mode (default): pytest brings compose up and tears it down.
-    In `docker` mode: compose was started by the parent (./e2e.sh) — we just
-    verify CH+MariaDB respond and skip the teardown.
+    `host` mode (default): bring up the root compose's `clickhouse` + `mariadb`
+      (idempotent — attaches to a running `./dev-compose.sh up` if present).
+    `docker` mode: the runner's own compose dependencies already started them;
+      we just verify they respond.
+
+    Attach semantics: the data tier belongs to the root stack, so this fixture
+    NEVER tears it down. Stop it with `./dev-compose.sh down` when finished.
+    (The harness's analytics-api process is owned by the `analytics_api`
+    fixture and stopped there.)
 
     Yields the SessionConfig for downstream fixtures' convenience.
     """
@@ -93,11 +99,6 @@ def compose_stack(session_cfg: SessionConfig):
     if _IS_PRIMARY:
         mariadb.wait_ready(session_cfg)
     yield session_cfg
-    if _IS_PRIMARY and not in_docker:
-        if os.environ.get("E2E_KEEP_CONTAINERS") != "1":
-            compose.down(session_cfg, remove_volumes=True)
-        else:
-            LOG.info("E2E_KEEP_CONTAINERS=1 — leaving containers up")
 
 
 # Silver/staging tables that a fixture may READ via a gold view but NOT seed

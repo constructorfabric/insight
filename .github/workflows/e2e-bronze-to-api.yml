@@ -60,10 +60,12 @@ jobs:
         run: ./e2e.sh build
 
       # ─── Pre-pull data plane images in parallel with whatever else ──────
+      # Tags track the repo-root docker-compose.yml data tier — the runner
+      # attaches to those services rather than its own pinned pair.
       - name: Pre-pull ClickHouse + MariaDB
         run: |
-          docker pull clickhouse/clickhouse-server:24.8.4.13 &
-          docker pull mariadb:11.4.4 &
+          docker pull clickhouse/clickhouse-server:24.8 &
+          docker pull mariadb:11.4 &
           wait
 
       # ─── Run the suite inside the runner ────────────────────────────────

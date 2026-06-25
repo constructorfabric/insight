@@ -90,8 +90,32 @@ def apply_bronze_placeholders(cfg: SessionConfig) -> int:
 
     statements = _extract_heredoc_sql(script.read_text(encoding="utf-8"))
     for stmt in statements:
-        ch.execute(cfg, stmt)
+        ch.execute(cfg, _force_fresh_placeholder(stmt))
     return len(statements)
+
+
+def _force_fresh_placeholder(stmt: str) -> str:
+    """Rewrite placeholder `CREATE TABLE IF NOT EXISTS` → `CREATE OR REPLACE TABLE`.
+
+    The prod script uses `IF NOT EXISTS`, which is correct on a fresh ClickHouse.
+    But the e2e runner now ATTACHES to the repo-root stack, whose `clickhouse-data`
+    volume PERSISTS across runs. A stale placeholder (or a dev's real dbt-built
+    table) left from a previous session would survive with an OUTDATED schema and
+    `IF NOT EXISTS` would skip recreating it — breaking gold-view creation (e.g.
+    `insight.ic_kpis` referencing `silver.mtr_git_person_weekly.code_loc` that a
+    week-old placeholder lacks). `CREATE OR REPLACE TABLE` re-materialises every
+    placeholder with the current schema each session, restoring the determinism
+    the old ephemeral `down -v` stack gave. e2e-only — the prod script is untouched.
+    Only the leading `CREATE TABLE IF NOT EXISTS` is rewritten; `CREATE DATABASE
+    IF NOT EXISTS` statements pass through unchanged.
+    """
+    return re.sub(
+        r"^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b",
+        "CREATE OR REPLACE TABLE",
+        stmt,
+        count=1,
+        flags=re.IGNORECASE,
+    )
 
 
 def discover_refreshable_views(cfg: SessionConfig) -> list[str]:
@@ -115,7 +139,8 @@ def refresh_intermediates(cfg: SessionConfig, *, timeout_s: float = 30.0) -> int
     API. `SYSTEM REFRESH VIEW` is fire-and-forget in CH 24.8 — we poll
     `system.view_refreshes` until each MV's status is `Finished`.
     `SYSTEM WAIT VIEW` only landed in CH 24.10+; this implementation is
-    compatible with 24.8 (prod version pinned in compose/docker-compose.yml).
+    compatible with 24.8 (the ClickHouse version in the repo-root
+    docker-compose.yml data tier the runner attaches to).
     """
     import time
 

@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 # Single-command wrapper for the Bronze-to-API E2E test framework.
 #
+# The data tier (ClickHouse + MariaDB) comes from the repo-root
+# docker-compose.yml — the e2e runner ATTACHES to it on the `insight` network.
+# If you already have the dev stack up (`./dev-compose.sh up`) the runner reuses
+# it; otherwise the runner brings up clickhouse + mariadb as dependencies.
+# Either way the runner builds + spawns its own analytics-api from current
+# source.
+#
 # Examples:
-#   ./e2e.sh test                       # full suite
+#   ./e2e.sh test                           # full suite
 #   ./e2e.sh test -k collab_emails_sent -v  # one test
-#   ./e2e.sh shell                      # interactive bash inside the runner
-#   ./e2e.sh build                      # rebuild the runner image
-#   ./e2e.sh down                       # stop containers, clear volumes
+#   ./e2e.sh shell                          # interactive bash inside the runner
+#   ./e2e.sh build                          # rebuild the runner image
+#   ./e2e.sh up                             # bring up just CH+MariaDB (host-mode dev)
+#   ./e2e.sh down                           # remove the runner (data tier left intact)
 #
 # The runner image bakes in python+rust+deps so no host setup is required
 # beyond Docker. See compose/Dockerfile.runner.
@@ -15,53 +23,58 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-# Resolve repo root once and export it so compose can use it for the runner's
-# build context (which sits 4 levels up from compose/).
+# Repo root — exported so the runner override can use it for the build context
+# and the /workspace bind-mount.
 INSIGHT_REPO_ROOT="$(cd ../../../.. && pwd)"
 export INSIGHT_REPO_ROOT
 
-COMPOSE_FILES=(-f compose/docker-compose.yml -f compose/docker-compose.runner.yml)
-ENV_FILE=compose/.env
+ROOT_COMPOSE="$INSIGHT_REPO_ROOT/docker-compose.yml"
+RUNNER_OVERRIDE="compose/docker-compose.runner.yml"
 
-# Generate a .env if one is not present — every session needs a password.
-if [ ! -f "$ENV_FILE" ]; then
-    cat <<EOF > "$ENV_FILE"
-CLICKHOUSE_DB=insight
-CLICKHOUSE_USER=insight
-CLICKHOUSE_PASSWORD=$(openssl rand -hex 12)
-MARIADB_DATABASE=analytics
-MARIADB_USER=insight
-MARIADB_PASSWORD=$(openssl rand -hex 12)
-MARIADB_ROOT_PASSWORD=$(openssl rand -hex 12)
-EOF
-    echo "wrote $ENV_FILE (random per-host credentials)"
-fi
+# Credentials + ports come from a committed, test-specific env file (decoupled
+# from a developer's personal .env.compose). Its defaults match the root compose
+# defaults, so the runner attaches to a default `./dev-compose.sh up` and a
+# fresh CI bring-up alike. Override with E2E_ENV_FILE (e.g. point it at your own
+# .env.compose if your dev stack uses custom credentials).
+ENV_FILE="${E2E_ENV_FILE:-compose/e2e.env}"
+
+# The e2e data tier always uses the LOCAL clickhouse + mariadb (never the
+# *_EXTERNAL profiles), so enable both profiles regardless of .env.compose.
+COMPOSE=(docker compose
+    --env-file "$ENV_FILE"
+    -f "$ROOT_COMPOSE"
+    -f "$RUNNER_OVERRIDE"
+    --profile local-clickhouse
+    --profile local-mariadb)
 
 cmd=${1:-test}
 shift || true
 
 case "$cmd" in
     build)
-        docker compose "${COMPOSE_FILES[@]}" build runner
+        "${COMPOSE[@]}" build runner
         ;;
     test|run)
         # `--rm` removes the runner container on exit; clickhouse + mariadb keep
-        # running so a follow-up `test` invocation is fast (no re-init).
-        docker compose "${COMPOSE_FILES[@]}" run --rm runner pytest "$@"
+        # running so a follow-up invocation is fast (no re-init) and a dev stack
+        # is left untouched.
+        "${COMPOSE[@]}" run --rm runner pytest "$@"
         ;;
     shell)
-        docker compose "${COMPOSE_FILES[@]}" run --rm runner bash
+        "${COMPOSE[@]}" run --rm runner bash
         ;;
     up)
-        # Bring up CH+MariaDB without launching the runner — useful when
-        # iterating on tests from outside Docker.
-        docker compose "${COMPOSE_FILES[@]}" up -d clickhouse mariadb
+        # Bring up CH+MariaDB only (not the backend/frontend services) — useful
+        # when iterating on tests from the host (E2E_RUN_MODE=host).
+        "${COMPOSE[@]}" up -d clickhouse mariadb
         ;;
     down)
-        docker compose "${COMPOSE_FILES[@]}" down -v
+        # Attach mode: remove ONLY the runner. The data tier belongs to the
+        # root stack — tear it down with `./dev-compose.sh down` when you want.
+        "${COMPOSE[@]}" rm -sf runner
         ;;
     logs)
-        docker compose "${COMPOSE_FILES[@]}" logs --tail=200 "$@"
+        "${COMPOSE[@]}" logs --tail=200 "$@"
         ;;
     *)
         echo "usage: $0 {build|test|run|shell|up|down|logs} [args...]" >&2

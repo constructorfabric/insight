@@ -1,6 +1,3 @@
-# Generated per session
-compose/.env
-
 # Python virtualenvs
 .venv/
 __pycache__/
