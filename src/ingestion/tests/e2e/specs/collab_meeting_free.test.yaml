@@ -1,27 +1,15 @@
 spec_version: 1
 description: >
   Metric: meeting_free — IC Bullet Collaboration (…0012), #1413.
-  meeting_free counts a person's meeting-free DAYS: per day it is 1 when a
-  meeting-activity row EXISTS but total duration is zero
-  (audio + video + screenShare = 0), else 0; summed over the period. A day with
-  any duration counts 0, and a day with NO row is not counted — so "row exists,
-  zero duration" is what distinguishes a free day from an absent one.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report + Zoom participant sessions per person
+    • silver: both sources deduped to per-person/day meeting durations (audio/video/screen)
+    • gold:   a day is "meeting-free" if a meeting row exists but total duration = 0;
+              metric = count of such days over the window (no row at all does not count)
 
-  Path (bronze → silver → gold):
-    • bronze_m365.teams_activity → staging m365__collab_meeting_activity → silver.class_collab_meeting_activity
-    • bronze_zoom.participants   → staging zoom__collab_meeting_activity  → silver.class_collab_meeting_activity
-    → insight.collab_bullet_rows (gold) → metric …0012.
-
-  Team (department `org_unit_id` — the peer group the median/range span):
-    • alice — zero-duration row (PT0S/PT0S/PT0S) → free = 1
-    • bob   — PT1H audio                         → free = 0
-    • carol — PT30M audio                        → free = 0
-    team {1, 0, 0} → median 0, range [0, 1].
-
-  One case, asserting alice (value = member, median/range = team):
-    value 1, median 0, range [0, 1]. Teeth: alice's zero-duration row is
-    duplicated → must dedup (still 1 free day, not 2); bob/carol have nonzero
-    duration → not free.
+  Team (median/range = the person's department):
+    alice zero-duration day = 1 · bob 1h = 0 · carol 30m = 0 → median 0, range [0, 1].
+  Cases: alice (1 meeting-free day vs the team).
 
 bronze:
   bronze_bamboohr.employees:

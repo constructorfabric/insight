@@ -1,29 +1,16 @@
 spec_version: 1
 description: >
-  Per-metric E2E check for meeting_hours (#1413) across its TWO data sources —
-  Teams (bronze_m365.teams_activity, data_source insight_m365) and Zoom
-  (bronze_zoom.participants, data_source insight_zoom) — which union into
-  silver.class_collab_meeting_activity. The IC Bullet Collaboration metric (…0012)
-  computes meeting_hours = Σ greatest(audio, video, screenShare) seconds / 3600
-  over the person's rows, summed ACROSS both sources (Teams + Zoom are additive;
-  Zulip is chat-only and does NOT feed meeting_hours).
+  Metric: meeting_hours — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report + Zoom participant sessions per person
+    • silver: both sources deduped to per-person/day durations (audio/video/screen)
+    • gold:   per meeting take the longest single modality; metric = sum of those
+              hours over the window, across Teams + Zoom (additive; Zulip is chat-only)
 
-  Path (bronze → silver → gold):
-    • bronze_m365.teams_activity → staging m365__collab_meeting_activity → silver.class_collab_meeting_activity
-    • bronze_zoom.participants   → staging zoom__collab_meeting_activity  → silver.class_collab_meeting_activity
-    → insight.collab_bullet_rows (gold) → metric …0012.
-
-  Data-source matrix via a one-department (Engineering) roster, one case per person:
-    • alice — Teams (1.0h) + Zoom (1.0h)  → COMBINED 2.0h  (proves cross-source sum)
-    • bob   — Teams only (1.5h)
-    • carol — Zoom only (0.5h)
-  department {2.0, 1.5, 0.5} → median 1.5, range [0.5, 2.0].
-
-  Teams duration = greatest of audio/video/screenShare ISO-8601 durations. Zoom
-  duration = dateDiff(join_time, leave_time) as audio (video gated by `camera`,
-  screen-share by share_* flags — both 0 here). Dedup teeth on BOTH sources:
-  alice's Teams row (same unique_key) and Zoom row (same meeting_uuid/
-  participant_uuid/join_time) are each duplicated and must collapse, not double.
+  Team (median/range = the person's department):
+    alice Teams 1.0 + Zoom 1.0 = 2.0 · bob Teams 1.5 · carol Zoom 0.5
+    → median 1.5, range [0.5, 2.0].
+  Cases: alice Teams+Zoom (2.0) · bob Teams-only (1.5) · carol Zoom-only (0.5).
 
 bronze:
   bronze_bamboohr.employees:

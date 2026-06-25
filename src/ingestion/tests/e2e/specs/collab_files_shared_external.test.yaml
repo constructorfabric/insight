@@ -1,24 +1,15 @@
 spec_version: 1
 description: >
   Metric: m365_files_shared_external — IC Bullet Collaboration (…0012), #1413.
-  m365_files_shared_external = Σ shared_externally_count over the period, summed
-  ACROSS both document products (OneDrive + SharePoint).
+  How it's computed (bronze → silver → gold):
+    • bronze: daily OneDrive and SharePoint file-activity reports per person
+    • silver: each product deduped to per-person/day share counts
+    • gold:   metric = sum of files shared externally over the window, across both products
 
-  Path (bronze → silver → gold):
-    • bronze_m365.onedrive_activity   → staging m365__collab_document_activity_onedrive   → silver.class_collab_document_activity
-    • bronze_m365.sharepoint_activity → staging m365__collab_document_activity_sharepoint → silver.class_collab_document_activity
-    → insight.collab_bullet_rows (gold) → metric …0012.
-
-  Team (department `org_unit_id` — the peer group the median/range span):
-    • alice — 2 OneDrive + 1 SharePoint = 3  (cross-product sum)
-    • bob   — 1 OneDrive                = 1
-    • carol — 0 (a real zero in the team)
-    team {3, 1, 0} → median 1, range [0, 3].
-
-  One case, asserting alice (value = member, median/range = team):
-    value 3, median 1, range [0, 3]. Teeth: alice's OneDrive row is a verbatim
-    duplicate → must dedup (still 3, not 5); carol's 0 is a real in-team zero,
-    pinning range_min = 0.
+  Team (median/range = the person's department):
+    alice 2 OneDrive + 1 SharePoint = 3 · bob 1 OneDrive · carol 0 (SharePoint, real zero)
+    → median 1, range [0, 3].
+  Cases: alice cross-product (3) · bob OneDrive-only (1) · carol SharePoint-only (0, real zero).
 
 bronze:
   bronze_bamboohr.employees:
@@ -53,7 +44,7 @@ bronze:
 cases:
   # team m365_files_shared_external = [alice 2+1=3, bob 1, carol 0]
   #   value (alice) = 3 ; median[0,1,3] = 1 ; range = [0,3]
-  - name: m365_files_shared_external — IC bullet (alice value vs team median/range)
+  - name: m365_files_shared_external — alice OneDrive+SharePoint (cross-product sum vs team median/range)
     request:
       url: /v1/metrics/queries
       method: POST
@@ -69,3 +60,35 @@ cases:
       - in: collaboration
         find: { metric_key: m365_files_shared_external }
         equal: { value: 3, median: 1, range_min: 0, range_max: 3 }
+
+  # bob shares externally via OneDrive only — proves the OneDrive product path directly
+  - name: m365_files_shared_external — bob OneDrive-only (value 1 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_shared_external }
+        equal: { value: 1, median: 1, range_min: 0, range_max: 3 }
+
+  # carol has a SharePoint row but shared 0 externally — a real in-team zero member
+  - name: m365_files_shared_external — carol SharePoint-only (real zero, value 0)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_shared_external }
+        equal: { value: 0, median: 1, range_min: 0, range_max: 3 }

@@ -1,26 +1,16 @@
 spec_version: 1
 description: >
   Metric: m365_active_days — IC Bullet Collaboration (…0012), #1413.
-  m365_active_days = count of distinct days with DELIBERATE m365 activity (email
-  sent, chat sent, file engaged/shared); passive signals (receiveCount/readCount)
-  are EXCLUDED.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily M365 reports — email, Teams chat, OneDrive/SharePoint files
+    • silver: deduped to one row per person/day carrying each signal's count
+    • gold:   a day is "active" if any deliberate signal (email sent, chat sent,
+              file engaged/shared) > 0; metric = count of active days in the
+              window — passive emails (received/read) are excluded
 
-  Path (bronze → silver → gold):
-    • bronze_m365.email_activity    → staging m365__collab_email_activity        → silver.class_collab_email_activity
-    • bronze_m365.teams_activity    → staging m365__collab_chat_activity         → silver.class_collab_chat_activity
-    • bronze_m365.onedrive_activity → staging m365__collab_document_activity_*    → silver.class_collab_document_activity
-    → insight.collab_bullet_rows (gold) → metric …0012.
-
-  Team (department `org_unit_id` — the peer group the median/range span;
-  cross-class coverage exercises all three silver classes):
-    • alice — active via EMAIL on 2 days (01-05, 01-06)  → 2
-    • bob   — active via CHAT  (1 day)                    → 1
-    • carol — active via DOCS  (1 day)                    → 1
-    team {2, 1, 1} → median 1, range [1, 2].
-
-  One case, asserting alice (value = member, median/range = team):
-    value 2, median 1, range [1, 2]. Teeth: a recv/read-only day (01-07,
-    sendCount=0) must NOT count; a duplicate 01-05 row must dedup, not double.
+  Team (median/range = the person's department):
+    alice EMAIL on 2 days · bob CHAT 1 day · carol DOCS 1 day → median 1, range [1, 2].
+  Cases: alice email-active (2) · bob chat-only (1) · carol docs-only (1).
 
 bronze:
   bronze_bamboohr.employees:
@@ -79,3 +69,35 @@ cases:
       - in: collaboration
         find: { metric_key: m365_active_days }
         equal: { value: 2, median: 1, range_min: 1, range_max: 2 }
+
+  # bob is active via CHAT only (1 day) — proves the chat class path directly
+  - name: m365_active_days — bob CHAT-only (value 1 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_active_days }
+        equal: { value: 1, median: 1, range_min: 1, range_max: 2 }
+
+  # carol is active via DOCS only (1 day) — proves the document class path directly
+  - name: m365_active_days — carol DOCS-only (value 1 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_active_days }
+        equal: { value: 1, median: 1, range_min: 1, range_max: 2 }

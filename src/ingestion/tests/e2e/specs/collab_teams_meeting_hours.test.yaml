@@ -1,26 +1,17 @@
 spec_version: 1
 description: >
   Metric: teams_meeting_hours — IC Bullet Collaboration (…0012), #1413.
-  teams_meeting_hours = sumIf(greatest(audio, video, screenShare) seconds / 3600,
-  data_source = insight_m365) — the M365-only slice of meeting_hours. Per row the
-  duration is the LONGEST modality (not the sum). Equal to meeting_hours here (no
-  Zoom data).
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report per person (+ Zoom sessions, filtered out below)
+    • silver: meeting durations per person/day, tagged by source (Teams vs Zoom)
+    • gold:   per meeting take the longest single modality; metric = sum of those hours
+              over the window, Teams-only — Zoom is excluded (the M365 slice of meeting_hours)
 
-  Path (bronze → silver → gold):
-    • bronze_m365.teams_activity → staging m365__collab_meeting_activity → silver.class_collab_meeting_activity
-      (Zoom rows excluded — teams_meeting_hours filters data_source = insight_m365)
-    → insight.collab_bullet_rows (gold) → metric …0012.
-
-  Team (department `org_unit_id` — the peer group the median/range span):
-    • alice — greatest(2h audio, 1h video, 0) = 2.0h
-    • bob   — 1h audio                        = 1.0h
-    • carol — 30m audio                       = 0.5h
-    team {2.0, 1.0, 0.5} → median 1.0, range [0.5, 2.0].
-
-  One case, asserting alice (value = member, median/range = team):
-    value 2.0, median 1.0, range [0.5, 2.0]. Teeth: alice's row is a verbatim
-    duplicate → must dedup (still 2.0, not 4.0); duration is the longest modality
-    (alice's 2h audio beats 1h video → 2.0, not 3.0).
+  Team (median/range = the person's department):
+    alice greatest(2h audio, 1h video) = 2.0 · bob 1.0 · carol 0.5
+    → median 1.0, range [0.5, 2.0].
+  Cases: alice Teams slice (2.0, a seeded Zoom hour is excluded) · same fixture's
+    cross-source meeting_hours = 3.0 (Zoom counts there) proves the exclusion.
 
 bronze:
   bronze_bamboohr.employees:
@@ -54,10 +45,19 @@ bronze:
       videoDuration: PT0S
       screenShareDuration: PT0S
 
+  # Zoom side (insight_zoom): alice's 1h session (audio only). EXCLUDED from
+  # teams_meeting_hours (m365-only) but INCLUDED in the cross-source meeting_hours.
+  bronze_zoom.participants:
+    - $ref: templates/zoom.yaml#/templates/alice_zoom
+      meeting_uuid: zmtg-alice-tmh-1
+      participant_uuid: zp-alice-tmh-1
+      join_time: "2026-01-05T10:00:00"
+      leave_time: "2026-01-05T11:00:00"
+
 cases:
-  # alice 2.0h, bob 1.0h, carol 0.5h (all m365)
-  #   value (alice) = 2.0 ; median[0.5,1.0,2.0] = 1.0 ; range = [0.5,2.0]
-  - name: teams_meeting_hours — IC bullet (alice value vs team median/range)
+  # alice teams_meeting_hours = 2.0 (Zoom EXCLUDED by data_source filter)
+  #   team {2.0,1.0,0.5} → median 1.0, range [0.5,2.0]
+  - name: teams_meeting_hours — alice m365-only slice (Zoom excluded → value 2.0)
     request:
       url: /v1/metrics/queries
       method: POST
@@ -73,3 +73,20 @@ cases:
       - in: collaboration
         find: { metric_key: teams_meeting_hours }
         equal: { value: 2.0, median: 1.0, range_min: 0.5, range_max: 2.0 }
+
+  # SAME fixture: meeting_hours INCLUDES the Zoom session → alice = 2.0 Teams + 1.0 Zoom = 3.0
+  #   team {3.0,1.0,0.5} → median 1.0, range [0.5,3.0]. Proves the Zoom row landed.
+  - name: teams_meeting_hours — Zoom counts in cross-source meeting_hours (value 3.0)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: meeting_hours }
+        equal: { value: 3.0, median: 1.0, range_min: 0.5, range_max: 3.0 }

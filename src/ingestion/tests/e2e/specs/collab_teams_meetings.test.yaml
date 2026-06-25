@@ -1,23 +1,16 @@
 spec_version: 1
 description: >
   Metric: teams_meetings — IC Bullet Collaboration (…0012), #1413.
-  teams_meetings = sumIf(meetings_attended, data_source = insight_m365) — the
-  M365-only slice of meetings_count. Equal to meetings_count here (no Zoom data).
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report per person (+ Zoom sessions, filtered out below)
+    • silver: meetings-attended per person/day, tagged by source (Teams vs Zoom)
+    • gold:   metric = sum of meetings attended over the window, Teams-only —
+              Zoom is excluded (the M365 slice of meetings_count)
 
-  Path (bronze → silver → gold):
-    • bronze_m365.teams_activity → staging m365__collab_meeting_activity → silver.class_collab_meeting_activity
-      (Zoom rows excluded — teams_meetings filters data_source = insight_m365)
-    → insight.collab_bullet_rows (gold) → metric …0012.
-
-  Team (department `org_unit_id` — the peer group the median/range span):
-    • alice — 4 meetings
-    • bob   — 2
-    • carol — 1
-    team {4, 2, 1} → median 2, range [1, 4].
-
-  One case, asserting alice (value = member, median/range = team):
-    value 4, median 2, range [1, 4]. Teeth: alice's row is a verbatim duplicate
-    (same unique_key) → must dedup to 4, not 8.
+  Team (median/range = the person's department):
+    alice 4 · bob 2 · carol 1 → median 2, range [1, 4].
+  Cases: alice Teams slice (4, a seeded Zoom meeting is excluded) · same fixture's
+    cross-source meetings_count = 5 (Zoom counts there) proves the exclusion.
 
 bronze:
   bronze_bamboohr.employees:
@@ -43,10 +36,19 @@ bronze:
       unique_key: m365-carol-tm-20260105
       meetingsAttendedCount: 1
 
+  # Zoom side (insight_zoom): alice attends 1 Zoom meeting. It must be EXCLUDED from
+  # teams_meetings (m365-only) but INCLUDED in the cross-source meetings_count.
+  bronze_zoom.participants:
+    - $ref: templates/zoom.yaml#/templates/alice_zoom
+      meeting_uuid: zmtg-alice-tm-1
+      participant_uuid: zp-alice-tm-1
+      join_time: "2026-01-05T10:00:00"
+      leave_time: "2026-01-05T11:00:00"
+
 cases:
-  # team teams_meetings = [alice 4, bob 2, carol 1]
-  #   value (alice) = 4 ; median[1,2,4] = 2 ; range = [1,4]
-  - name: teams_meetings — IC bullet (alice value vs team median/range)
+  # alice teams_meetings = 4 (Zoom EXCLUDED by data_source filter)
+  #   team {4,2,1} → median 2, range [1,4]
+  - name: teams_meetings — alice m365-only slice (Zoom excluded → value 4)
     request:
       url: /v1/metrics/queries
       method: POST
@@ -62,3 +64,20 @@ cases:
       - in: collaboration
         find: { metric_key: teams_meetings }
         equal: { value: 4, median: 2, range_min: 1, range_max: 4 }
+
+  # SAME fixture: meetings_count INCLUDES the Zoom meeting → alice = 4 Teams + 1 Zoom = 5
+  #   team {5,2,1} → median 2, range [1,5]. Proves the Zoom row landed.
+  - name: teams_meetings — Zoom counts in cross-source meetings_count (value 5)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: meetings_count }
+        equal: { value: 5, median: 2, range_min: 1, range_max: 5 }

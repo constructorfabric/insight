@@ -1,23 +1,15 @@
 spec_version: 1
 description: >
   Metric: m365_files_engaged — IC Bullet Collaboration (…0012), #1413.
-  m365_files_engaged = Σ viewed_or_edited_count over the period, summed ACROSS
-  both document products (OneDrive + SharePoint).
+  How it's computed (bronze → silver → gold):
+    • bronze: daily OneDrive and SharePoint file-activity reports per person
+    • silver: each product deduped to per-person/day file counts (viewed/edited, shared)
+    • gold:   metric = sum of files viewed or edited over the window, across both products
 
-  Path (bronze → silver → gold):
-    • bronze_m365.onedrive_activity   → staging m365__collab_document_activity_onedrive   → silver.class_collab_document_activity
-    • bronze_m365.sharepoint_activity → staging m365__collab_document_activity_sharepoint → silver.class_collab_document_activity
-    → insight.collab_bullet_rows (gold) → metric …0012.
-
-  Team (department `org_unit_id` — the peer group the median/range span):
-    • alice — 30 OneDrive + 20 SharePoint = 50  (pins the cross-product sum)
-    • bob   — 15 OneDrive                 = 15
-    • carol —  5 SharePoint               =  5
-    team {50, 15, 5} → median 15, range [5, 50].
-
-  One case, asserting alice (value = member, median/range = team):
-    value 50, median 15, range [5, 50]. Teeth: alice's OneDrive row is a verbatim
-    duplicate → must dedup (still 50, not 80).
+  Team (median/range = the person's department):
+    alice 30 OneDrive + 20 SharePoint = 50 · bob 15 OneDrive · carol 5 SharePoint
+    → median 15, range [5, 50].
+  Cases: alice cross-product (50) · bob OneDrive-only (15) · carol SharePoint-only (5).
 
 bronze:
   bronze_bamboohr.employees:
@@ -52,7 +44,7 @@ bronze:
 cases:
   # team m365_files_engaged = [alice 30+20=50, bob 15, carol 5]
   #   value (alice) = 50 ; median[5,15,50] = 15 ; range = [5,50]
-  - name: m365_files_engaged — IC bullet (alice value vs team median/range)
+  - name: m365_files_engaged — alice OneDrive+SharePoint (cross-product sum vs team median/range)
     request:
       url: /v1/metrics/queries
       method: POST
@@ -68,3 +60,35 @@ cases:
       - in: collaboration
         find: { metric_key: m365_files_engaged }
         equal: { value: 50, median: 15, range_min: 5, range_max: 50 }
+
+  # bob is engaged via OneDrive only — proves the OneDrive product path directly
+  - name: m365_files_engaged — bob OneDrive-only (value 15 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_engaged }
+        equal: { value: 15, median: 15, range_min: 5, range_max: 50 }
+
+  # carol is engaged via SharePoint only — proves the SharePoint product path directly
+  - name: m365_files_engaged — carol SharePoint-only (value 5 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_engaged }
+        equal: { value: 5, median: 15, range_min: 5, range_max: 50 }

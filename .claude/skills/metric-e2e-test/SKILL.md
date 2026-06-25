@@ -70,6 +70,37 @@ templates:
     userPrincipalName: alice@example.com
 ```
 
+### `description` — metric + bronze→silver→gold formula
+
+A folded `>` block stating WHAT the metric is and HOW it's computed, in plain
+language — **not** dbt model / silver-column names. Keep it short. Shape:
+
+```yaml
+description: >
+  Metric: <metric_key> — <bullet name> (…0012), #<issue>.
+  How it's computed (bronze → silver → gold):
+    • bronze: <the raw source report(s) that arrive>
+    • silver: <how they're deduped / normalized to per-person/day counts>
+    • gold:   <the metric rule — the aggregation, exclusions, cross-source sums>
+
+  Team (median/range = the person's department):
+    <one-line member distribution> → median <m>, range [<lo>, <hi>].
+  Cases: <one-line list of what each case proves>.
+```
+
+- The **gold** line carries the metric-specific logic — e.g. "passive emails
+  (received/read) excluded", "Teams + Zoom additive", "longest modality, not the
+  sum", "Teams-only — Zoom excluded". This is where a reader learns the real rule.
+- Describe the *transformation* in human terms; do NOT name staging models or silver
+  columns (`m365__collab_*`, `*_count`) — the **layer flow** is the point, not the
+  artifacts. (To trace the real artifacts, read the staging dbt models + the gold
+  migration; see "Source of truth".)
+- Keep the **Team** line concrete (seeded member values → the resulting
+  median/range) so a reviewer can verify the `equal:` numbers without reading every
+  case. For date-windowed metrics (no single Team), drop the Team line and let the
+  Cases line enumerate the window kinds (see `collab_emails_read.test.yaml`).
+- Canonical example: `collab_active_days.test.yaml`.
+
 ### `bronze` — what to seed
 
 Keyed by table name (the key IS the table + which schema validates it). Each row =
@@ -208,8 +239,9 @@ with a dedicated spec (see `specs/collab_emails_read.test.yaml`):
    `workEmail` **case-insensitively**; any mismatch → `org_unit_id` resolves NULL, the
    person silently drops out of the team/department (no error), and the median/range is computed
    over the wrong roster. Set the SAME email on both `workEmail` and `userPrincipalName`.
-4. **Write `bronze`** with `$ref`+overrides; include a duplicate row when the metric
-   should dedup.
+4. **Write the `description`** (metric + bronze→silver→gold formula + Team/Cases —
+   see § `description`), then **`bronze`** with `$ref`+overrides; include a duplicate
+   row when the metric should dedup.
 5. **Write `cases`**: one batch `query` per metric under test (and one `metric_key` per
    file — see File layout); assert ONLY the target metric's few fields via `find`+`equal`,
    and counts/inequalities via `assert`.
