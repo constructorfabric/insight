@@ -9,7 +9,7 @@ name: jira
 # 2.0.2 (patch): widen jira_project_discovery cursor_datetime_formats so it can
 # parse child-stream cursor values carried in parent_state (was crashing with
 # "No format ['%Y-%m-%dT%H:%M:%S.%f%z'] matching 2026-06-15 02:00").
-version: "2.1.0"
+version: "2.2.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
@@ -24,7 +24,7 @@ images:
     name: insight-jira-enrich
     dockerfile: ./enrich/Dockerfile
     context: ./enrich
-    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.06.22.16.03-1ed8648"
+    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.06.25.14.20-be5e76e"
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
 # package, not by this connector. The pipeline runs the jira-rust path:
 # dbt(tag:jira) → tt-enrich-jira-run → dbt(tag:silver,tag:jira+). This
