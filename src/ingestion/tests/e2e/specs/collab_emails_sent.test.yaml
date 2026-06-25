@@ -1,33 +1,13 @@
 spec_version: 1
 description: >
-  Per-metric E2E check for m365_emails_sent (#1413), exercising the metric
-  query's date-window options — week / month / quarter / custom — with
-  boundary-value and equivalence-partition coverage. Asserts ONLY the target
-  metric (m365_emails_sent) on the IC Bullet Collaboration metric (…0012):
-  value = the requested member's period total over the window, median/range =
-  over the members who have data in that window (org_unit = Engineering).
+  Metric: m365_emails_sent — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily M365 email-activity report per person (send/receive/read counts)
+    • silver: deduped to one row per person/day with the sent-email count
+    • gold:   metric = sum of emails sent over the window
 
-  Test design — alice's sends are placed on/around the bounds of each window so
-  every period sum proves inclusive [ge, le] bounds and exclusion just outside:
-
-    date         sent   role in the coverage
-    2025-12-31   500    one day BEFORE quarter/month lower  → excluded (BVA-)
-    2026-01-01     3    quarter & month LOWER bound          → included (BVA, =ge)
-    2026-01-05    20    week LOWER bound                     → included (BVA, =ge)
-    2026-01-08    25    interior of week/month/quarter (duplicated → dedup)
-    2026-01-11    12    week UPPER bound                     → included (BVA, =le)
-    2026-01-12   150    one day AFTER week upper             → excluded from week
-    2026-01-31     4    month UPPER bound                    → included (BVA, =le)
-    2026-02-11    60    interior of quarter; custom window
-    2026-03-31     6    quarter UPPER bound                  → included (BVA, =le)
-    2026-04-01   700    one day AFTER quarter upper          → excluded (BVA+)
-
-  bob/carol each have a single send on 2026-01-08 (inside week/month/quarter but
-  NOT the Feb custom windows), so the cohort is {alice,bob,carol} for the three
-  calendar periods and narrows to {alice} for the Feb windows — exercising that
-  median/range span only members with data in the window. alice's 01-08 row is a
-  verbatim duplicate (same unique_key): it must dedup to 25, otherwise the
-  week/month/quarter sums (and the medians/ranges) would all drift.
+  Cases (median/range = department members with data in the window): week · month
+  · quarter · custom · single-day · cross-year · empty window.
 
 bronze:
   bronze_bamboohr.employees:
@@ -53,7 +33,7 @@ bronze:
 cases:
   # ── WEEK (7-day window, Mon 01-05 .. Sun 01-11) ──────────────────────────────
   # alice = 20(05)+25(08)+12(11) = 57  (01-01 below & 01-12 above excluded;
-  #   bounds 01-05/01-11 inclusive). cohort {57,50,18} → median 50, range [18,57]
+  #   bounds 01-05/01-11 inclusive). team {57,50,18} → median 50, range [18,57]
   - name: "m365_emails_sent — WEEK window (boundary-inclusive lower/upper)"
     request:
       url: /v1/metrics/queries
@@ -73,7 +53,7 @@ cases:
 
   # ── MONTH (calendar January) ─────────────────────────────────────────────────
   # alice = 3+20+25+12+150+4 = 214  (12-31 excluded, 02-11 excluded; 01-01/01-31
-  #   bounds inclusive). cohort {214,50,18} → median 50, range [18,214]
+  #   bounds inclusive). team {214,50,18} → median 50, range [18,214]
   - name: "m365_emails_sent — MONTH window (lower/upper bound inclusive, prior day excluded)"
     request:
       url: /v1/metrics/queries
@@ -91,7 +71,7 @@ cases:
 
   # ── QUARTER (Q1 2026) ────────────────────────────────────────────────────────
   # alice = 214(Jan) + 60(02-11) + 6(03-31) = 280  (12-31 & 04-01 excluded;
-  #   03-31 bound inclusive). cohort {280,50,18} → median 50, range [18,280]
+  #   03-31 bound inclusive). team {280,50,18} → median 50, range [18,280]
   - name: "m365_emails_sent — QUARTER window (full Q1 sum, just-after excluded)"
     request:
       url: /v1/metrics/queries
@@ -108,8 +88,8 @@ cases:
         equal: { value: 280, median: 50, range_min: 18, range_max: 280 }
 
   # ── CUSTOM (narrow mid-quarter range 02-10 .. 02-12) ─────────────────────────
-  # alice = 60(02-11); bob/carol have no data in range → cohort {60} only
-  - name: "m365_emails_sent — CUSTOM narrow window (cohort narrows to members with data)"
+  # alice = 60(02-11); bob/carol have no data in range → team {60} only
+  - name: "m365_emails_sent — CUSTOM narrow window (median/range narrows to members with data)"
     request:
       url: /v1/metrics/queries
       method: POST
