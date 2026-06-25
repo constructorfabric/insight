@@ -111,10 +111,12 @@ export KUBECONFIG=~/.kube/insight.kubeconfig
 # Apply secrets (if not already done)
 ./secrets/apply.sh
 
-# Initialize (register connectors, create connections, sync workflows)
-./run-init.sh
+# Reconcile connectors/connections to the descriptor + Secret state.
+# (The in-cluster reconcile CronWorkflow also runs this on a schedule and
+#  owns the per-connector sync CronWorkflows — no manual init step needed.)
+./reconcile-connectors.sh
 
-# Run a sync
+# Run a one-shot sync for a single connector
 ./run-sync.sh m365 my-tenant
 ```
 
@@ -126,7 +128,6 @@ export KUBECONFIG=~/.kube/insight.kubeconfig
 |---------|-------------|
 | `helm install` (umbrella chart) | Deploy services. See [umbrella chart README](../../charts/insight/) |
 | `./secrets/apply.sh` | Apply K8s Secrets (infra + connectors). Run after helm install |
-| `./run-init.sh` | Initialize: dbt databases + `reconcile-connectors.sh adopt` + `reconcile-connectors.sh`. Run after secrets |
 | `./down.sh` | Stop all services. **Data preserved** |
 | `./cleanup.sh` | Delete cluster and all data. Asks for confirmation |
 
@@ -138,7 +139,6 @@ export KUBECONFIG=~/.kube/insight.kubeconfig
 | `./reconcile-connectors.sh` | Reconcile all Airbyte resources to descriptor-declared state (idempotent) |
 | `./reconcile-connectors.sh --dry-run` | Print diff report without applying changes |
 | `./reconcile-connectors.sh --connector <name>` | Limit reconcile to a single connector |
-| `./update-workflows.sh [tenant]` | Regenerate CronWorkflow schedules |
 
 ### Reconcile
 
@@ -177,8 +177,9 @@ Common flags: `--dry-run` (preview only), `--connector <name>` (limit scope), `-
 ./secrets/apply.sh --connectors-only
 ./reconcile-connectors.sh --connector m365
 
-# Update after changing schedule in descriptor.yaml
-./update-workflows.sh
+# After changing a schedule in descriptor.yaml, reconcile re-renders the
+# connector's CronWorkflow:
+./reconcile-connectors.sh --connector <name>
 
 # Full re-sync from scratch for a connector (breaking schema change):
 # delete its K8s Secret, re-apply, then reconcile (this drops + recreates the source).
@@ -263,14 +264,13 @@ kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp --no-headers
 ```
 src/ingestion/
 │
-├── up.sh / down.sh / cleanup.sh    # Cluster lifecycle
-├── run-init.sh                      # Initialize after secrets applied
-│                                    #   (validate.sh && reconcile adopt && reconcile)
-├── run-sync.sh                      # Manual pipeline run
+├── run-sync.sh                      # Manual one-shot pipeline run (single connector)
+├── run-tt-enrich-jira.sh            # Manual Jira silver re-run (no Airbyte sync)
 ├── reconcile-connectors.sh          # Single declarative entrypoint
 │                                    #   [adopt|reconcile] [--dry-run]
 │                                    #   [--connector NAME] [--no-gc]
-├── update-workflows.sh              # Regenerate CronWorkflow schedules
+│                                    #   (also runs in-cluster on a schedule, and
+│                                    #    owns the per-connector sync CronWorkflows)
 │
 ├── connectors/                      # Insight Connector packages
 │   └── collaboration/m365/
@@ -304,25 +304,21 @@ src/ingestion/
 │   └── crm/                         #   class_crm_*
 │
 ├── workflows/
-│   ├── templates/                   #   Argo WorkflowTemplates (tracked)
-│   │   ├── airbyte-sync.yaml        #     Trigger sync + poll
-│   │   ├── dbt-run.yaml             #     Run dbt in container
-│   │   └── ingestion-pipeline.yaml  #     DAG: sync → dbt
-│   └── schedules/
-│       └── sync.yaml.tpl            #   CronWorkflow template (tracked)
+│   └── onetime/                     #   One-shot Workflow templates for the manual
+│       ├── sync.yaml.tpl            #     run-sync.sh / run-tt-enrich-jira.sh tools
+│       └── tt-enrich-jira.yaml.tpl  #     (shared WorkflowTemplates are chart-owned)
 │
-├── airbyte-toolkit/                 # Airbyte management module
-│   ├── cdk-build.sh                 #   Build CDK Docker image (push or load into Kind)
-│   └── lib/                         #   Reconcile engine libraries
-│       ├── env.sh                   #     JWT token + workspace resolution
-│       ├── airbyte.sh               #     HTTP client + Airbyte API helpers
-│       ├── discover.sh              #     Read descriptors, K8s Secrets, Airbyte state
-│       ├── adopt.sh                 #     One-shot annotation pass for legacy resources
-│       └── reconcile.sh             #     Diff + apply (definitions, sources, connections)
+├── reconcile-connectors/            # Declarative reconcile engine (also runs in-cluster
+│   ├── main.sh                      #   via the reconcile CronWorkflow). Entrypoint:
+│   │                                #   [adopt|reconcile] [--dry-run] [--connector N]
+│   └── lib/                         #   env, airbyte, discover, adopt, reconcile, argo,
+│                                    #   secrets, validate, cdk-build, …
 │
-├── scripts/                         # Internal scripts (run inside toolbox)
-│   ├── init.sh                      #   dbt database bootstrap
-│   ├── sync-flows.sh                #   Generate + apply CronWorkflows
+├── scripts/                         # ClickHouse migrations + in-toolbox helpers
+│   ├── migrations/                  #   gold-view migrations (*.sql)
+│   ├── apply-ch-migrations.sh       #   migration runner (clickhouse-migrate Hook Job)
+│   ├── create-bronze-placeholders.sh #  ADR-0007 fresh-cluster placeholders
+│   ├── lib/ch-exec.sh               #   ClickHouse HTTP exec helpers
 │   └── wait-for-services.sh         #   kubectl wait for pods
 │
 └── tools/
@@ -389,8 +385,7 @@ Drift in either field is the **only** signal that change is needed; no other sta
 
 3. Deploy:
    ```bash
-   ./reconcile-connectors.sh             # Registers manifest, creates source + connection
-   ./update-workflows.sh
+   ./reconcile-connectors.sh             # Registers manifest, creates source + connection + CronWorkflow
    ```
 
 ### CDK (Python)
@@ -410,8 +405,7 @@ Drift in either field is the **only** signal that change is needed; no other sta
 3. Deploy:
    ```bash
    ./airbyte-toolkit/cdk-build.sh {category}/{name}   # Build image + load/push
-   ./reconcile-connectors.sh                          # Register definition, create source + connection
-   ./update-workflows.sh
+   ./reconcile-connectors.sh                          # Register definition, create source + connection + CronWorkflow
    ```
 
 ### Re-sync from scratch (breaking schema change)
@@ -439,7 +433,7 @@ Then deploy:
 
 ```bash
 ./secrets/apply.sh --connectors-only
-./run-init.sh
+./reconcile-connectors.sh
 ```
 
 Override at runtime with `INSIGHT_TENANT_ID=acme ./reconcile-connectors.sh` (env wins over ConfigMap).
@@ -491,13 +485,14 @@ Apply all secrets at once:
 ./secrets/apply.sh --connectors-only  # Only connector secrets
 ```
 
-### Step 4: Initialize
+### Step 4: Reconcile connectors
 
 ```bash
-./run-init.sh   # Validates Secrets, adopts existing Airbyte resources, then reconciles to descriptor state
+./reconcile-connectors.sh adopt   # one-shot: annotate any pre-existing Airbyte resources
+./reconcile-connectors.sh         # full reconcile to descriptor + Secret state
 ```
 
-`run-init.sh` chains: `secrets/validate.sh` (Secret schema check) → `reconcile-connectors.sh adopt` (one-shot annotation pass for any pre-existing legacy resources) → `reconcile-connectors.sh` (full reconcile to descriptor + Secret state). Re-run any time after Secret or descriptor changes — all three stages are idempotent.
+Both passes are idempotent — re-run any time after a Secret or descriptor change. Secret validation is an internal pre-step of reconcile (`valsec_check_secret`), not a separate script. The in-cluster reconcile CronWorkflow runs the same reconcile on a schedule, so this manual step is only needed to converge immediately.
 
 ### Required Secrets Summary
 

@@ -27,7 +27,8 @@ clean-targets:
 # keeps connector-specific table lists co-located with the connector code.
 on-run-start:
   - "{{ create_task_field_history_staging() }}"
-  # Drop init.sh-created silver placeholders BEFORE any model
+  # Drop the silver placeholders (created by create-bronze-placeholders.sh,
+  # run from the clickhouse-migrate Hook Job) BEFORE any model
   # materialization starts. Two-factor detection (placeholder marker +
   # at least one staging model materialised for the matching
   # `silver:<id>` tag) — see drop_silver_placeholders_at_start macro for
