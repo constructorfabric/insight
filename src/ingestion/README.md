@@ -25,7 +25,7 @@ Insight Connector = Airbyte Connector + descriptor + dbt transformations + crede
 | `dbt/` | Bronze → Silver transformations | Connector developer |
 | `ConfigMap insight-config` (key `tenant_id`) | Tenant identity for the cluster | Platform admin |
 
-Connector developers create the package. Credentials are managed via K8s Secrets — never in repo. The cluster's tenant identity is read from the `insight-config` ConfigMap in namespace `data` (or overridden with the `INSIGHT_TENANT_ID` env var).
+Connector developers create the package. Credentials are managed via K8s Secrets — never in repo. The cluster's tenant identity is read from the `insight-config` ConfigMap in namespace `insight` (or overridden with the `INSIGHT_TENANT_ID` env var).
 
 ### Credential Separation
 
@@ -46,12 +46,12 @@ secrets/connectors/                       # K8s Secret templates
 Tenant identity lives in the cluster, not in a repo file:
 
 ```yaml
-# kubectl -n data get cm insight-config -o yaml
+# kubectl -n insight get cm insight-config -o yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: insight-config
-  namespace: data
+  namespace: insight
 data:
   tenant_id: acme_corp
 ```
@@ -155,7 +155,7 @@ Common flags: `--dry-run` (preview only), `--connector <name>` (limit scope), `-
 
 | Command | Description |
 |---------|-------------|
-| `./airbyte-toolkit/cdk-build.sh <path> [--push]` | Build Docker image, push to registry (or load into Kind). Reconcile picks up the new `dockerImageTag` on the next run. |
+| `./reconcile-connectors/lib/cdk-build.sh <path> [--push]` | Build Docker image, push to registry (or load into Kind). Reconcile picks up the new `dockerImageTag` on the next run. |
 
 ### Examples
 
@@ -169,7 +169,7 @@ Common flags: `--dry-run` (preview only), `--connector <name>` (limit scope), `-
 ./reconcile-connectors.sh                      # apply
 
 # Build/rebuild a CDK connector image (Airbyte registration is handled by reconcile)
-./airbyte-toolkit/cdk-build.sh git/github
+./reconcile-connectors/lib/cdk-build.sh git/github
 ./reconcile-connectors.sh --connector github
 
 # After changing connector credentials (rotate K8s Secret), the cfg-hash tag drifts
@@ -183,7 +183,7 @@ Common flags: `--dry-run` (preview only), `--connector <name>` (limit scope), `-
 
 # Full re-sync from scratch for a connector (breaking schema change):
 # delete its K8s Secret, re-apply, then reconcile (this drops + recreates the source).
-kubectl delete secret insight-github-main -n data
+kubectl delete secret insight-github-main -n insight
 ./secrets/apply.sh --connectors-only
 ./reconcile-connectors.sh
 
@@ -203,7 +203,7 @@ After the platform is up:
 
 ### ClickHouse Credentials
 
-**Production:** password from K8s Secret `clickhouse-credentials` in namespace `data` (see [Production Deployment](#production-deployment)).
+**Production:** password from K8s Secret `clickhouse-credentials` in namespace `insight` (see [Production Deployment](#production-deployment)).
 
 **Local (compose):** ClickHouse uses the default password `clickhouse`; credentials come from `.env.compose` (see `.env.compose.example`).
 
@@ -213,10 +213,10 @@ After the platform is up:
 
 ```bash
 # Read password from Secret (production)
-kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' | base64 -d
+kubectl get secret clickhouse-credentials -n insight -o jsonpath='{.data.password}' | base64 -d
 
 # Quick test
-kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$(kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' | base64 -d 2>/dev/null || echo clickhouse)" --query "SELECT currentUser()"
+kubectl exec -n insight deploy/clickhouse -- clickhouse-client --password "$(kubectl get secret clickhouse-credentials -n insight -o jsonpath='{.data.password}' | base64 -d 2>/dev/null || echo clickhouse)" --query "SELECT currentUser()"
 ```
 
 ### Airbyte Credentials
@@ -227,7 +227,7 @@ kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$(kubect
 
 ```bash
 # Sets AIRBYTE_API, AIRBYTE_TOKEN, WORKSPACE_ID
-source ./airbyte-toolkit/lib/env.sh
+source ./reconcile-connectors/lib/env.sh
 
 # Quick test
 curl -s -H "Authorization: Bearer $AIRBYTE_TOKEN" "$AIRBYTE_API/api/v1/health"
@@ -284,7 +284,6 @@ src/ingestion/
 │
 ├── secrets/                         # K8s Secrets (all gitignored, examples tracked)
 │   ├── apply.sh                     #   Apply all secrets (infra + connectors)
-│   ├── validate.sh                  #   Validate cluster Secrets vs *.yaml.example
 │   ├── clickhouse.yaml.example      #   ClickHouse password
 │   ├── airbyte.yaml.example         #   Airbyte admin credentials
 │   └── connectors/                  #   Per-connector secrets
@@ -404,8 +403,8 @@ Drift in either field is the **only** signal that change is needed; no other sta
 
 3. Deploy:
    ```bash
-   ./airbyte-toolkit/cdk-build.sh {category}/{name}   # Build image + load/push
-   ./reconcile-connectors.sh                          # Register definition, create source + connection + CronWorkflow
+   ./reconcile-connectors/lib/cdk-build.sh {category}/{name}   # Build image + load/push
+   ./reconcile-connectors.sh                                   # Register definition, create source + connection + CronWorkflow
    ```
 
 ### Re-sync from scratch (breaking schema change)
@@ -413,7 +412,7 @@ Drift in either field is the **only** signal that change is needed; no other sta
 When you need a clean slate (drop Bronze tables, rebuild source/connection from zero), drop the K8s Secret and re-apply — reconcile will recreate everything on the next pass:
 
 ```bash
-kubectl delete secret insight-{connector}-{source-id} -n data
+kubectl delete secret insight-{connector}-{source-id} -n insight
 # Edit secrets/connectors/{connector}.yaml as needed, then:
 ./secrets/apply.sh --connectors-only
 ./reconcile-connectors.sh
@@ -424,7 +423,7 @@ kubectl delete secret insight-{connector}-{source-id} -n data
 A cluster has exactly one tenant identity, stored in the `insight-config` ConfigMap. To set or change it:
 
 ```bash
-kubectl -n data create configmap insight-config \
+kubectl -n insight create configmap insight-config \
   --from-literal=tenant_id=acme \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
@@ -458,11 +457,11 @@ cd deploy/gitops && make deploy ENV=production   # gitops deploy with production
 ### Step 2: Build and Load Toolbox Image
 
 Argo workflow templates use `insight-toolbox:local` for dbt jobs.
-The image is built locally and loaded into the cluster:
+The image is built manually (or by CI) and loaded into the cluster:
 
 ```bash
 cd src/ingestion
-./tools/toolbox/build.sh   # Builds and loads into Kind (done automatically by up.sh)
+./tools/toolbox/build.sh   # Builds and loads into Kind (run manually or by CI)
 ```
 
 ### Step 3: Create and Apply Secrets
@@ -498,9 +497,9 @@ Both passes are idempotent — re-run any time after a Secret or descriptor chan
 
 | Secret | Namespace | Keys | Created by |
 |--------|-----------|------|------------|
-| `clickhouse-credentials` | `data` + `argo` | `username`, `password` | `secrets/apply.sh` |
+| `clickhouse-credentials` | `insight` + `argo` | `username`, `password` | `secrets/apply.sh` |
 | `airbyte-auth-secrets` | `airbyte` | `instance-admin-password`, ... | Helm chart (auto) |
-| `insight-{connector}-{source-id}` | `data` | Connector-specific | `secrets/apply.sh` |
+| `insight-{connector}-{source-id}` | `insight` | Connector-specific | `secrets/apply.sh` |
 
 ### Password Rotation
 
@@ -510,12 +509,12 @@ To change ClickHouse password:
 # 1. Update Secret file
 vim secrets/clickhouse.yaml   # set new password
 
-# 2. Apply to cluster (both data and argo namespaces)
+# 2. Apply to cluster (both insight and argo namespaces)
 ./secrets/apply.sh --infra-only
 
 # 3. Restart ClickHouse to pick up new password
-kubectl rollout restart deployment/clickhouse -n data
-kubectl rollout status deployment/clickhouse -n data
+kubectl rollout restart deployment/clickhouse -n insight
+kubectl rollout status deployment/clickhouse -n insight
 
 # 4. Reconcile — picks up the new password and updates the Airbyte destination
 ./reconcile-connectors.sh
