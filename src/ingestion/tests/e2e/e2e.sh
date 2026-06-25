@@ -37,46 +37,15 @@ EOF
     echo "wrote $ENV_FILE (random per-host credentials)"
 fi
 
-# Build each connector's enrich binary FROM ITS OWN Dockerfile (the same one that
-# ships the prod image — no build-logic duplication) and stage the extracted binary
-# under tests/e2e/target/enrich/ for the runner to execute at test time. Discovery
-# comes from the descriptors via `python -m e2e_lib.enrich --plan`, run inside the
-# freshly-built runner image (it has python+pyyaml); the `docker build`/`docker cp`
-# run here on the host — the runner has no Docker daemon (no docker-in-docker).
-stage_enrich_binaries() {
-    local stage_dir="target/enrich"
-    mkdir -p "$stage_dir"
-    local plan
-    plan="$(docker compose "${COMPOSE_FILES[@]}" run --rm --no-deps -T \
-        --entrypoint python3 runner -m e2e_lib.enrich --plan)" || {
-        echo "enrich: failed to compute build plan" >&2; return 1; }
-    if [ -z "$plan" ]; then
-        echo "enrich: no connector declares images.enrich; nothing to stage"
-        return 0
-    fi
-    while IFS=$'\t' read -r name dockerfile context binary_name; do
-        [ -z "$name" ] && continue
-        local tag="insight-e2e-enrich-${name}:local"
-        echo "=== enrich: building ${name} from ${dockerfile} ==="
-        docker build -t "$tag" -f "${INSIGHT_REPO_ROOT}/${dockerfile}" "${INSIGHT_REPO_ROOT}/${context}"
-        # The binary's path inside the image is its ENTRYPOINT[0].
-        local binpath cid
-        binpath="$(docker inspect --format '{{index .Config.Entrypoint 0}}' "$tag")"
-        cid="$(docker create "$tag")"
-        docker cp "${cid}:${binpath}" "${stage_dir}/${binary_name}"
-        docker rm -f "$cid" >/dev/null
-        chmod +x "${stage_dir}/${binary_name}"
-        echo "    staged -> ${stage_dir}/${binary_name}"
-    done <<< "$plan"
-}
-
 cmd=${1:-test}
 shift || true
 
 case "$cmd" in
     build)
+        # Builds the runner image; its `additional_contexts` pull each connector's
+        # enrich binary from that connector's own build-only service (compiled FROM
+        # ITS OWN Dockerfile) and bake it in via COPY --from. No docker-in-docker.
         docker compose "${COMPOSE_FILES[@]}" build runner
-        stage_enrich_binaries
         ;;
     test|run)
         # `--rm` removes the runner container on exit; clickhouse + mariadb keep

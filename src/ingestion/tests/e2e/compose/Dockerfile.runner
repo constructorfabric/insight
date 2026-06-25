@@ -51,6 +51,13 @@ RUN mkdir -p e2e_lib && touch e2e_lib/__init__.py \
     && pip install --no-cache-dir -e . \
     && rm -rf e2e_lib
 
+# ── Connector enrich binaries ────────────────────────────────────────────
+# Baked in from each connector's own enrich image (built FROM ITS OWN Dockerfile,
+# wired as a named build context in docker-compose.runner.yml). The rig executes
+# these between the staging and silver dbt builds; it does NOT compile them.
+# One COPY per enrich connector (matches the `additional_contexts` entries).
+COPY --from=jira-enrich /usr/local/bin/jira-enrich /usr/local/bin/jira-enrich
+
 # ── Defaults ────────────────────────────────────────────────────────────
 ENV E2E_RUN_MODE=docker
 ENV PYTHONPATH=/workspace/src/ingestion/tests/e2e
