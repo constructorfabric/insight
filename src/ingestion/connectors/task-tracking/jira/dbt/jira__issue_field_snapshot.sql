@@ -165,9 +165,14 @@ FROM (
 
     UNION ALL
 
-    -- due_date
+    -- duedate. Emit the Jira-native field_id `duedate` (NOT `due_date`): the
+    -- changelog stream uses Jira's `fieldId="duedate"`, jira__task_field_metadata
+    -- carries `duedate` from bronze jira_fields, and the downstream consumer
+    -- `insight.task_issue_current_state` filters `field_id = 'duedate'`. Emitting
+    -- the underscored `due_date` here made snapshot-only due dates (set at creation,
+    -- never changed in the changelog) silently invisible to due_date_compliance.
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
-           'due_date',
+           'duedate',
            if(i.due_date IS NULL OR i.due_date = '', [], [toString(i.due_date)]),
            if(i.due_date IS NULL OR i.due_date = '', [], [toString(i.due_date)])
     FROM issue i
