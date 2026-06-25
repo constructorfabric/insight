@@ -152,6 +152,43 @@ class DbtRunner:
                     out.add(t.split(":", 1)[1])
         return sorted(out)
 
+    def enrich_output_tables(self, tag: str) -> list[tuple[str, str]]:
+        """`(schema, table)` of the staging tables an enrich step WRITES.
+
+        The enrich binary writes `staging.*` tables that are declared as dbt
+        SOURCES (not models) and exposed to silver via a thin EPHEMERAL view
+        tagged `tag` + `silver:<class>` (e.g. `jira__task_field_history` reading
+        `source('staging_jira', 'jira__task_field_history')`). dbt never rebuilds
+        these (they are sources), and the binary INSERTs (appends), so without
+        explicit truncation their rows accumulate across tests and inflate
+        absolute-count metrics (e.g. tasks_completed counted 10 instead of 2 when
+        three jira tests ran back-to-back). Resolve them from the ephemeral
+        models' `source()` dependencies so the caller can truncate per test.
+        Generic: no per-connector hardcoding.
+        """
+        manifest = json.loads((self.target_dir / "manifest.json").read_text(encoding="utf-8"))
+        sources = manifest.get("sources", {})
+        out: set[tuple[str, str]] = set()
+        for n in manifest.get("nodes", {}).values():
+            if n.get("resource_type") != "model":
+                continue
+            if n.get("config", {}).get("materialized") != "ephemeral":
+                continue
+            tags = n.get("tags", [])
+            if tag not in tags or not any(t.startswith("silver:") for t in tags):
+                continue
+            for dep in n.get("depends_on", {}).get("nodes", []):
+                if not dep.startswith("source."):
+                    continue
+                src = sources.get(dep)
+                if not src:
+                    continue
+                schema = src.get("schema")
+                table = src.get("identifier") or src.get("name")
+                if schema and table:
+                    out.add((schema, table))
+        return sorted(out)
+
     # ----------------------------------------------------------------------
     # internals
     # ----------------------------------------------------------------------

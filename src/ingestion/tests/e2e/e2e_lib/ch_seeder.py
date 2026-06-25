@@ -61,6 +61,13 @@ class CHSeeder:
             self._truncate(schema, table)
         return len(drained)
 
+    def truncate_table(self, schema: str, table: str) -> None:
+        """Public one-off TRUNCATE for tables dbt does not rebuild — e.g. the
+        enrich-output staging tables, which the enrich binary appends to and dbt
+        never owns, so they must be cleared between tests to avoid accumulation.
+        """
+        self._truncate(schema, table)
+
     def seed_bronze(self, bronze: dict[str, list[dict]]) -> None:
         """Seed every `<db>.<table>: [records]` entry of a TestYaml."""
         for table_fqn, rows in bronze.items():
@@ -99,7 +106,24 @@ class CHSeeder:
     # ------------------------------------------------------------------
 
     def _truncate(self, schema: str, table: str) -> None:
+        # Views are stateless — they hold no data of their own, so there is
+        # nothing to TRUNCATE (and ClickHouse rejects `TRUNCATE … View` with
+        # NOT_IMPLEMENTED, code 48). Several staging models are materialized as
+        # views over overwrite-mode bronze (e.g. jira__task_users,
+        # jira__bronze_promoted): the bronze table underneath is itself in the
+        # ledger and gets truncated, which clears the view's content. Skipping
+        # the view keeps per-test isolation correct without erroring.
+        engine = self._fetch_engine(schema, table)
+        if engine is not None and "View" in engine:
+            return
         ch.execute(self.cfg, f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
+
+    def _fetch_engine(self, schema: str, table: str) -> str | None:
+        rows = ch.query(
+            self.cfg,
+            f"SELECT engine FROM system.tables WHERE database = '{schema}' AND name = '{table}'",
+        )
+        return rows[0][0] if rows else None
 
     def _fetch_column_types(self, schema: str, table: str) -> dict[str, str]:
         rows = ch.query(

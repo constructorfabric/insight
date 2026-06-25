@@ -73,6 +73,14 @@ def test_e2e_metric_smoke(
         source_ids = enrich_runner.discover_source_ids(step, test_yaml.touched_tables)
         if not source_ids:
             continue
+        # The enrich binary APPENDS into its staging output tables, and dbt never
+        # rebuilds them (they are sources, not models), so a prior test's rows for
+        # the same source_id would survive into this test's silver rebuild and
+        # inflate absolute-count metrics. Clear them before enriching so each test
+        # starts from a clean enrich output (the silver class table read from them
+        # is already truncated via the ledger above).
+        for schema, table in dbt_runner.enrich_output_tables(step.name):
+            ch_seeder.truncate_table(schema, table)
         enrich_runner.run(step, source_ids)
         ran_enrich_steps.append(step)
 
