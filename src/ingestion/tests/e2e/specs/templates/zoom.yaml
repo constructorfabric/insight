@@ -1,0 +1,34 @@
+# Reusable Zoom participant records (bronze_zoom.participants).
+# The base carries EVERY schema column (so a merged row is complete); the fields
+# under test (join_time / leave_time / meeting_uuid / participant_uuid) are set in
+# each test's `bronze`. Meeting duration = dateDiff(join_time, leave_time); video is
+# gated by `camera` (NULL/'' => 0) and screen-share by the share_* flags, so a
+# participant with audio only contributes audio seconds as the longest modality.
+# There is NO bronze unique_key column — silver derives its own key.
+templates:
+  zoom_participant:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "zoom-test"
+    email: null
+    user_name: null
+    meeting_uuid: null
+    participant_uuid: null
+    join_time: null
+    leave_time: null
+    camera: null
+    share_desktop: null
+    share_application: null
+    share_whiteboard: null
+    video_connection_type: null
+
+  alice_zoom:
+    $ref: "#/templates/zoom_participant"
+    email: alice@example.com
+
+  carol_zoom:
+    $ref: "#/templates/zoom_participant"
+    email: carol@example.com

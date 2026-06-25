@@ -101,13 +101,16 @@ def compose_stack(session_cfg: SessionConfig):
 
 
 # Silver/staging tables that a fixture may READ via a gold view but NOT seed
-# (each collab fixture seeds at most one of the four class_collab_* tables, yet
-# insight.collab_bullet_rows reads all four). The per-test ledger only truncates
-# what a fixture seeds, so on a WARM ClickHouse (re-running `./e2e.sh test`
-# without `down`) the first collab fixture would inherit a prior session's rows
-# in the tables it does not seed — and stale rows in the dbt-rebuilt
-# class_collab_email_activity would skew its neighbours. Truncating these once
-# at session start makes warm re-runs deterministic; CI starts fresh anyway.
+# (each collab fixture seeds at most one class_collab_* table, yet
+# insight.collab_bullet_rows reads all four — and each class_collab_* unions
+# several per-source staging feeders). The per-test ledger only truncates what a
+# fixture seeds, so on a WARM ClickHouse (re-running `./e2e.sh test` without
+# `down`) the first collab fixture would inherit a prior session's rows in the
+# tables it does not seed — stale rows in a dbt-rebuilt class_collab_* would skew
+# its neighbours. The zoom staging models are also `incremental`/`append`, so a
+# warm rebuild would ALSO accumulate duplicate unique_keys (failing their dbt
+# `unique` test). Truncating these once at session start makes warm re-runs
+# deterministic; CI starts fresh anyway.
 _SESSION_START_TRUNCATE = [
     ("silver", "class_collab_email_activity"),
     ("silver", "class_collab_chat_activity"),
@@ -118,6 +121,9 @@ _SESSION_START_TRUNCATE = [
     ("staging", "m365__collab_meeting_activity"),
     ("staging", "m365__collab_document_activity_onedrive"),
     ("staging", "m365__collab_document_activity_sharepoint"),
+    # Zoom feeds class_collab_meeting_activity (cross-source meeting_hours).
+    ("staging", "zoom__collab_meeting_activity"),
+    ("staging", "zoom__meeting_sessions"),
 ]
 
 

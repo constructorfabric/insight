@@ -1,0 +1,50 @@
+# Reusable Teams-activity records (bronze_m365.teams_activity).
+# A record is a plain field map; an optional `$ref` inherits from another record
+# and sibling keys override it. The base lists EVERY schema field so a merged
+# bronze row is complete; unused fields default to null. The 4 `_airbyte_*` CDK
+# columns are included (non-nullable). Carry ONLY identity boilerplate; the
+# fields under test (reportRefreshDate, unique_key, chat/meeting counters,
+# durations) are set in each test's `bronze`. teams_activity feeds BOTH
+# class_collab_chat_activity AND class_collab_meeting_activity.
+templates:
+  m365_teams:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "m365-test"
+    unique_key: null
+    userPrincipalName: null
+    reportPeriod: "D1"
+    reportRefreshDate: null
+    lastActivityDate: null
+    teamChatMessageCount: null
+    privateChatMessageCount: null
+    postMessages: null
+    replyMessages: null
+    urgentMessages: null
+    callCount: null
+    meetingsAttendedCount: null
+    meetingsOrganizedCount: null
+    adHocMeetingsAttendedCount: null
+    adHocMeetingsOrganizedCount: null
+    scheduledOneTimeMeetingsAttendedCount: null
+    scheduledOneTimeMeetingsOrganizedCount: null
+    scheduledRecurringMeetingsAttendedCount: null
+    scheduledRecurringMeetingsOrganizedCount: null
+    audioDuration: null
+    videoDuration: null
+    screenShareDuration: null
+
+  alice_teams:
+    $ref: "#/templates/m365_teams"
+    userPrincipalName: alice@example.com
+
+  bob_teams:
+    $ref: "#/templates/m365_teams"
+    userPrincipalName: bob@example.com
+
+  carol_teams:
+    $ref: "#/templates/m365_teams"
+    userPrincipalName: carol@example.com
