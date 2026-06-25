@@ -630,7 +630,7 @@ Airbyte REST API (v1) for programmatic management of sources, destinations, conn
 **Main Flow**:
 
 1. Workspace admin provides credentials in `connections/{tenant}.yaml`
-2. Platform engineer runs `./reconcile-connectors.sh` — creates the source + destination + connection in Airbyte and the per-connector CronWorkflow in Argo (idempotent; the in-cluster reconcile CronWorkflow does the same on a schedule)
+2. Platform engineer runs `./reconcile-connectors.sh` — creates the source and connection in Airbyte (the shared bronze destination is resolved, created once, per ADR-0012) and applies the per-connector CronWorkflow in Argo (idempotent; the in-cluster reconcile CronWorkflow does the same on a schedule)
 3. CronWorkflow picks up the new connection on next scheduled run
 
 **Postconditions**:

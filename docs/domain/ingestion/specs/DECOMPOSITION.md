@@ -292,7 +292,7 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 
 - **Scope**:
   - Shared WorkflowTemplates: `airbyte-sync`, `dbt-run`, `ingestion-pipeline` (DAG)
-  - Per-connector CronWorkflows rendered from `reconcile-connectors/templates/cron-workflow.yaml.tpl`
+  - Per-connector CronWorkflows rendered from `src/ingestion/reconcile-connectors/templates/cron-workflow.yaml.tpl`
   - Schedule and `dbt_select` read from connector `descriptor.yaml`
   - `connection_id` resolved from state (K8s ConfigMap)
   - Retry policy via Argo `retryStrategy`
