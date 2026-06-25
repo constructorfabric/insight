@@ -8,6 +8,12 @@ use types::{
     FieldId, FieldMeta, FieldValue, IssueSnapshot, LastState, synthetic_initial_event_id,
 };
 
+/// Sentinel `field_id` for the per-issue creation marker. NOT a real Jira field — downstream
+/// field-filters (which only match real fields like status/assignee/…) ignore it, and the only
+/// consumer that picks it up is `task_issue_current_state.created_at = minIf(event_at,
+/// event_kind = 'synthetic_initial')`, where it carries the issue's creation timestamp.
+const CREATED_FIELD_ID: &str = "created";
+
 pub fn process_issue(
     meta: &HashMap<FieldId, FieldMeta>,
     snapshot: &IssueSnapshot,
@@ -22,10 +28,20 @@ pub fn process_issue(
 
 /// Bootstrap path — called when the issue has no rows yet in `task_tracker_field_history`.
 ///
-/// Emits a `synthetic_initial` row for **every** field present in the snapshot, including
-/// ones that were never touched by the changelog. Fields that did change are additionally
-/// reverse-applied so that the initial row shows the *original* value (before the earliest
-/// changelog event), not the current value.
+/// Emits, in order:
+///   1. ONE **creation marker** row (`field_id = "created"`, `event_kind = synthetic_initial`,
+///      `seq = 0`) representing "the task was created". This is a cross-source contract: it is
+///      the single, distinct, stably-ordered record of issue creation. (When the `YouTrack`
+///      enrich is built it MUST emit the same marker so silver `class_task_field_history` is
+///      uniform across sources.) The marker is a pure who/when row — `author_id`/`event_at`
+///      carry the reporter and creation time; it has no value. `"created"` is a sentinel, not a
+///      real Jira field, so downstream field-filters ignore it; only
+///      `task_issue_current_state.created_at` (a `minIf` over `synthetic_initial`) reads it.
+///   2. A `synthetic_initial` row for **every** field present in the snapshot, including ones
+///      that were never touched by the changelog, with `seq = 1 ..= N` in `field_id`-ASC order.
+///      Fields that did change are reverse-applied so the initial row shows the *original* value
+///      (before the earliest changelog event), not the current value.
+///   3. The changelog rows (`event_kind = changelog`, `seq = 0`; they sort after by `event_at`).
 fn bootstrap(
     meta: &HashMap<FieldId, FieldMeta>,
     snapshot: &IssueSnapshot,
@@ -38,8 +54,14 @@ fn bootstrap(
     // Deterministic order: fields sorted by field_id ASC, `seq` is the index.
     let mut ordered: BTreeMap<&FieldId, &FieldValue> = initial.iter().collect();
 
-    let mut out = Vec::with_capacity(ordered.len() + events_sorted.len());
+    let mut out = Vec::with_capacity(1 + ordered.len() + events_sorted.len());
+
+    // Per-issue creation marker is always the first row (seq = 0).
+    out.push(emit_creation_row(snapshot));
+
+    // Per-field synthetic_initial rows follow, starting at seq = 1.
     for (seq, (field_id, value)) in ordered.iter_mut().enumerate() {
+        let seq = seq + 1;
         let meta_entry = meta.get(*field_id);
         let (cardinality, value_id_type, field_name) = match meta_entry {
             Some(m) => (m.cardinality, m.value_id_type, m.field_name.clone()),
@@ -216,6 +238,35 @@ pub(crate) fn reverse_delta(
             s
         }
         (Delta::Add { .. } | Delta::Remove { .. }, FieldCardinality::Single) => FieldValue::empty(),
+    }
+}
+
+/// Per-issue creation marker. A synthetic `event_kind = synthetic_initial` row with the
+/// sentinel `field_id = "created"`, `seq = 0`, no value — it records only *who* created the
+/// issue (`author_id = reporter`) and *when* (`event_at = created_at`). Shares the
+/// `initial:<issue_id>` event_id with the per-field synthetic rows; `unique_key` stays distinct
+/// because `field_id` differs. See `bootstrap` for the cross-source contract.
+fn emit_creation_row(snapshot: &IssueSnapshot) -> FieldHistoryRecord {
+    FieldHistoryRecord {
+        insight_source_id: snapshot.insight_source_id.clone(),
+        data_source: DataSource::Jira,
+        issue_id: snapshot.issue_id.clone(),
+        id_readable: snapshot.id_readable.clone(),
+        event_id: synthetic_initial_event_id(&snapshot.issue_id),
+        event_at: snapshot.created_at,
+        event_kind: EventKind::SyntheticInitial,
+        seq: 0,
+        author_id: snapshot.reporter_id.clone(),
+        author_display: None,
+        field_id: CREATED_FIELD_ID.to_owned(),
+        field_name: "Created".to_owned(),
+        field_cardinality: FieldCardinality::Single,
+        delta_action: DeltaAction::Set,
+        delta_value_id: None,
+        delta_value_display: None,
+        value_ids: Vec::new(),
+        value_displays: Vec::new(),
+        value_id_type: types::ValueIdType::None,
     }
 }
 

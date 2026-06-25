@@ -295,36 +295,44 @@ fn bootstrap_reconstructs_initial_state() {
 
     let out = process_issue(&meta, &snapshot, &events, None);
 
-    // 2 synthetic_initial rows (labels=empty sorted first by field_id, status=To Do) + 4 changelog.
-    assert_eq!(out.len(), 6);
+    // 1 creation marker + 2 synthetic_initial rows (labels=empty sorted first by field_id,
+    // status=To Do) + 4 changelog.
+    assert_eq!(out.len(), 7);
 
-    // synthetic_initial rows are sorted by field_id ASC → "labels" comes before "status".
+    // Creation marker is always first (seq=0).
     assert_eq!(out[0].event_kind, EventKind::SyntheticInitial);
-    assert_eq!(out[0].field_id, "labels");
+    assert_eq!(out[0].field_id, "created");
     assert_eq!(out[0].seq, 0);
-    assert!(out[0].value_displays.is_empty()); // empty labels at creation
     assert_eq!(out[0].event_id, "initial:10042");
 
+    // synthetic_initial rows are sorted by field_id ASC → "labels" comes before "status",
+    // now starting at seq=1.
     assert_eq!(out[1].event_kind, EventKind::SyntheticInitial);
-    assert_eq!(out[1].field_id, "status");
+    assert_eq!(out[1].field_id, "labels");
     assert_eq!(out[1].seq, 1);
-    assert_eq!(out[1].value_displays, vec!["To Do".to_string()]);
+    assert!(out[1].value_displays.is_empty()); // empty labels at creation
+    assert_eq!(out[1].event_id, "initial:10042");
+
+    assert_eq!(out[2].event_kind, EventKind::SyntheticInitial);
+    assert_eq!(out[2].field_id, "status");
+    assert_eq!(out[2].seq, 2);
+    assert_eq!(out[2].value_displays, vec!["To Do".to_string()]);
 
     // Changelog events follow, in chronological order (seq=0 for all changelog).
-    assert_eq!(out[2].event_id, "cl-1");
-    assert_eq!(out[2].value_ids, vec!["2".to_string()]);
-    assert_eq!(out[2].seq, 0);
+    assert_eq!(out[3].event_id, "cl-1");
+    assert_eq!(out[3].value_ids, vec!["2".to_string()]);
+    assert_eq!(out[3].seq, 0);
 
-    assert_eq!(out[3].event_id, "cl-2");
-    assert_eq!(out[3].delta_action, DeltaAction::Add);
-    assert_eq!(out[3].value_ids, vec!["backend".to_string()]);
+    assert_eq!(out[4].event_id, "cl-2");
+    assert_eq!(out[4].delta_action, DeltaAction::Add);
+    assert_eq!(out[4].value_ids, vec!["backend".to_string()]);
 
-    assert_eq!(out[4].event_id, "cl-3");
-    assert_eq!(out[4].value_ids, vec!["3".to_string()]);
+    assert_eq!(out[5].event_id, "cl-3");
+    assert_eq!(out[5].value_ids, vec!["3".to_string()]);
 
-    assert_eq!(out[5].event_id, "cl-4");
+    assert_eq!(out[6].event_id, "cl-4");
     assert_eq!(
-        out[5].value_ids,
+        out[6].value_ids,
         vec!["backend".to_string(), "urgent".to_string()]
     );
 }
@@ -344,9 +352,14 @@ fn bootstrap_emits_only_initial_when_changelog_empty() {
     );
 
     let out = process_issue(&meta, &snapshot, &[], None);
-    assert_eq!(out.len(), 1);
+    // 1 creation marker (seq 0) + 1 synthetic_initial for status (seq 1).
+    assert_eq!(out.len(), 2);
     assert_eq!(out[0].event_kind, EventKind::SyntheticInitial);
-    assert_eq!(out[0].field_id, "status");
+    assert_eq!(out[0].field_id, "created");
+    assert_eq!(out[0].seq, 0);
+    assert_eq!(out[1].event_kind, EventKind::SyntheticInitial);
+    assert_eq!(out[1].field_id, "status");
+    assert_eq!(out[1].seq, 1);
 }
 
 #[test]
@@ -370,18 +383,22 @@ fn bootstrap_emits_empty_initial_values() {
     let events = vec![ev("cl-1", ts(2026, 1, 2, 9), &status, set(None, Some("1")))];
 
     let out = process_issue(&meta, &snapshot, &events, None);
-    // 2 synthetic_initial (labels=[backend], status=empty) + 1 changelog for status = 3 rows.
-    assert_eq!(out.len(), 3);
-    assert_eq!(out[0].field_id, "labels");
+    // 1 creation marker + 2 synthetic_initial (labels=[backend], status=empty)
+    // + 1 changelog for status = 4 rows.
+    assert_eq!(out.len(), 4);
+    assert_eq!(out[0].field_id, "created");
     assert_eq!(out[0].seq, 0);
-    assert_eq!(out[0].value_displays, vec!["backend".to_string()]);
-    assert_eq!(out[1].field_id, "status");
+    assert_eq!(out[1].field_id, "labels");
     assert_eq!(out[1].seq, 1);
-    assert!(out[1].value_ids.is_empty()); // status empty at creation
-    assert_eq!(out[2].event_id, "cl-1");
-    assert_eq!(out[2].event_kind, EventKind::Changelog);
+    assert_eq!(out[1].value_displays, vec!["backend".to_string()]);
+    assert_eq!(out[2].field_id, "status");
+    assert_eq!(out[2].seq, 2);
+    assert!(out[2].value_ids.is_empty()); // status empty at creation
+    assert_eq!(out[3].event_id, "cl-1");
+    assert_eq!(out[3].event_kind, EventKind::Changelog);
     assert_eq!(out[0].event_kind, EventKind::SyntheticInitial);
     assert_eq!(out[1].event_kind, EventKind::SyntheticInitial);
+    assert_eq!(out[2].event_kind, EventKind::SyntheticInitial);
 }
 
 // ---------------- process_issue incremental ----------------
@@ -535,13 +552,16 @@ fn sprint_snapshot_delta_replaces_full_value() {
     )];
 
     let out = process_issue(&meta, &snapshot, &events, None);
-    // 1 initial (Sprint 24) + 1 changelog (Sprint 24, Sprint 25)
-    assert_eq!(out.len(), 2);
+    // 1 creation marker + 1 initial (Sprint 24) + 1 changelog (Sprint 24, Sprint 25)
+    assert_eq!(out.len(), 3);
     assert_eq!(out[0].event_kind, EventKind::SyntheticInitial);
-    assert_eq!(out[0].value_ids, vec!["24".to_string()]);
-    assert_eq!(out[1].event_kind, EventKind::Changelog);
+    assert_eq!(out[0].field_id, "created");
+    assert_eq!(out[1].event_kind, EventKind::SyntheticInitial);
+    assert_eq!(out[1].field_id, "customfield_10020");
+    assert_eq!(out[1].value_ids, vec!["24".to_string()]);
+    assert_eq!(out[2].event_kind, EventKind::Changelog);
     assert_eq!(
-        out[1].value_ids,
+        out[2].value_ids,
         vec!["24".to_string(), "25".to_string()]
     );
 }
@@ -567,7 +587,14 @@ fn unknown_field_is_skipped_with_warning() {
     )];
 
     let out = process_issue(&meta, &snapshot, &events, None);
-    assert!(out.is_empty());
+    // Empty snapshot + only an unknown-field event → just the creation marker; the unknown
+    // field produces no synthetic_initial and no changelog row.
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].field_id, "created");
+    assert!(
+        out.iter().all(|r| r.field_id != "customfield_99999"),
+        "no row should reference the unknown field"
+    );
 }
 
 #[test]
@@ -584,8 +611,11 @@ fn data_source_is_always_jira() {
         ts(2026, 1, 1, 10),
     );
     let out = process_issue(&meta, &snapshot, &[], None);
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].data_source, DataSource::Jira);
+    // 1 creation marker + 1 synthetic_initial for status.
+    assert_eq!(out.len(), 2);
+    for row in &out {
+        assert_eq!(row.data_source, DataSource::Jira);
+    }
 }
 
 // ---------------- apply/reverse matrix completion ----------------
@@ -933,13 +963,18 @@ fn bootstrap_status_reopen_toggle() {
     ];
 
     let out = process_issue(&meta, &snapshot, &events, None);
-    // 1 synthetic_initial + 4 changelog.
-    assert_eq!(out.len(), 5);
+    // 1 creation marker + 1 synthetic_initial + 4 changelog.
+    assert_eq!(out.len(), 6);
 
     assert_eq!(out[0].event_kind, EventKind::SyntheticInitial);
-    assert_eq!(out[0].field_id, "status");
-    assert_eq!(out[0].value_ids, vec!["1".to_string()]); // reconstructed initial = To Do
-    assert_eq!(out[0].value_displays, vec!["To Do".to_string()]);
+    assert_eq!(out[0].field_id, "created");
+    assert_eq!(out[0].seq, 0);
+
+    assert_eq!(out[1].event_kind, EventKind::SyntheticInitial);
+    assert_eq!(out[1].field_id, "status");
+    assert_eq!(out[1].seq, 1);
+    assert_eq!(out[1].value_ids, vec!["1".to_string()]); // reconstructed initial = To Do
+    assert_eq!(out[1].value_displays, vec!["To Do".to_string()]);
 
     let expected = [
         ("cl-1", "2", "In Progress"),
@@ -948,7 +983,7 @@ fn bootstrap_status_reopen_toggle() {
         ("cl-4", "3", "Done"),
     ];
     for (i, (event_id, id, disp)) in expected.iter().enumerate() {
-        let row = &out[i + 1];
+        let row = &out[i + 2];
         assert_eq!(row.event_id, *event_id);
         assert_eq!(row.event_kind, EventKind::Changelog);
         assert_eq!(row.value_ids, vec![(*id).to_string()]);
@@ -1005,30 +1040,33 @@ fn bootstrap_multi_add_remove_interplay() {
     ];
 
     let out = process_issue(&meta, &snapshot, &events, None);
-    assert_eq!(out.len(), 4); // 1 initial + 3 changelog
+    assert_eq!(out.len(), 5); // 1 creation marker + 1 initial + 3 changelog
 
     assert_eq!(out[0].event_kind, EventKind::SyntheticInitial);
-    assert_eq!(out[0].field_id, "labels");
-    assert!(out[0].value_ids.is_empty()); // reconstructed initial = []
-    assert!(out[0].value_displays.is_empty());
+    assert_eq!(out[0].field_id, "created");
 
-    assert_eq!(out[1].event_id, "cl-1");
-    assert_eq!(out[1].value_ids, vec!["backend".to_string()]);
-    assert_eq!(out[1].value_displays, vec!["backend".to_string()]);
+    assert_eq!(out[1].event_kind, EventKind::SyntheticInitial);
+    assert_eq!(out[1].field_id, "labels");
+    assert!(out[1].value_ids.is_empty()); // reconstructed initial = []
+    assert!(out[1].value_displays.is_empty());
 
-    assert_eq!(out[2].event_id, "cl-2");
+    assert_eq!(out[2].event_id, "cl-1");
+    assert_eq!(out[2].value_ids, vec!["backend".to_string()]);
+    assert_eq!(out[2].value_displays, vec!["backend".to_string()]);
+
+    assert_eq!(out[3].event_id, "cl-2");
     assert_eq!(
-        out[2].value_ids,
+        out[3].value_ids,
         vec!["backend".to_string(), "urgent".to_string()]
     );
     assert_eq!(
-        out[2].value_displays,
+        out[3].value_displays,
         vec!["backend".to_string(), "urgent".to_string()]
     );
 
-    assert_eq!(out[3].event_id, "cl-3");
-    assert_eq!(out[3].value_ids, vec!["urgent".to_string()]);
-    assert_eq!(out[3].value_displays, vec!["urgent".to_string()]);
+    assert_eq!(out[4].event_id, "cl-3");
+    assert_eq!(out[4].value_ids, vec!["urgent".to_string()]);
+    assert_eq!(out[4].value_displays, vec!["urgent".to_string()]);
 }
 
 #[test]
@@ -1072,19 +1110,24 @@ fn bootstrap_mixed_known_and_unknown_field() {
 
     let out = process_issue(&meta, &snapshot, &events, None);
 
-    // 1 synthetic_initial (status) + 1 changelog (status). Unknown field produces NO rows.
-    assert_eq!(out.len(), 2);
+    // 1 creation marker + 1 synthetic_initial (status) + 1 changelog (status).
+    // Unknown field produces NO rows.
+    assert_eq!(out.len(), 3);
     assert!(
-        out.iter().all(|r| r.field_id == "status"),
+        out.iter().all(|r| r.field_id == "status" || r.field_id == "created"),
         "no row should reference the unknown field"
     );
 
     assert_eq!(out[0].event_kind, EventKind::SyntheticInitial);
-    assert_eq!(out[0].value_ids, vec!["1".to_string()]); // initial = To Do
+    assert_eq!(out[0].field_id, "created");
 
-    assert_eq!(out[1].event_id, "cl-known");
-    assert_eq!(out[1].value_ids, vec!["2".to_string()]);
-    assert_eq!(out[1].value_displays, vec!["In Progress".to_string()]);
+    assert_eq!(out[1].event_kind, EventKind::SyntheticInitial);
+    assert_eq!(out[1].field_id, "status");
+    assert_eq!(out[1].value_ids, vec!["1".to_string()]); // initial = To Do
+
+    assert_eq!(out[2].event_id, "cl-known");
+    assert_eq!(out[2].value_ids, vec!["2".to_string()]);
+    assert_eq!(out[2].value_displays, vec!["In Progress".to_string()]);
 }
 
 #[test]
@@ -1104,10 +1147,13 @@ fn bootstrap_meta_absent_field_infers_multi_cardinality() {
     );
 
     let out = process_issue(&meta, &snapshot, &[], None);
-    assert_eq!(out.len(), 1);
-    let row = &out[0];
+    // 1 creation marker + 1 synthetic_initial for the meta-absent field.
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].field_id, "created");
+    let row = &out[1];
     assert_eq!(row.event_kind, EventKind::SyntheticInitial);
     assert_eq!(row.field_id, "weirdfield");
+    assert_eq!(row.seq, 1);
     assert_eq!(row.field_cardinality, FieldCardinality::Multi);
     assert_eq!(row.value_id_type, ValueIdType::None);
     assert_eq!(row.delta_action, DeltaAction::Add);
@@ -1143,7 +1189,8 @@ fn synthetic_initial_metadata_is_correct() {
     );
 
     let out = process_issue(&meta, &snapshot, &[], None);
-    assert_eq!(out.len(), 2);
+    // 1 creation marker + 2 per-field synthetic_initial rows.
+    assert_eq!(out.len(), 3);
 
     for row in &out {
         assert_eq!(row.event_kind, EventKind::SyntheticInitial);
@@ -1151,6 +1198,10 @@ fn synthetic_initial_metadata_is_correct() {
         assert_eq!(row.event_at, ts(2026, 1, 1, 10)); // snapshot.created_at
         assert_eq!(row.event_id, "initial:10042");
     }
+
+    // The creation marker is first.
+    assert_eq!(out[0].field_id, "created");
+    assert_eq!(out[0].seq, 0);
 
     // Sorted by field_id ASC: labels (Multi) before status (Single).
     let labels_row = out.iter().find(|r| r.field_id == "labels").unwrap();
@@ -1241,4 +1292,187 @@ fn incremental_new_field_first_seen_after_hwm_starts_empty() {
     // Started from empty (labels not in existing) then Add backend.
     assert_eq!(out[0].value_ids, vec!["backend".to_string()]);
     assert_eq!(out[0].value_displays, vec!["backend".to_string()]);
+}
+
+// ---------------- creation marker ----------------
+
+#[test]
+fn bootstrap_emits_creation_marker_first() {
+    let meta = meta_map();
+    let snapshot = snap(
+        HashMap::from([(
+            "status".to_string(),
+            FieldValue {
+                ids: vec!["1".into()],
+                displays: vec!["To Do".into()],
+            },
+        )]),
+        ts(2026, 1, 1, 10),
+    );
+
+    let out = process_issue(&meta, &snapshot, &[], None);
+
+    let marker = &out[0];
+    assert_eq!(marker.field_id, "created");
+    assert_eq!(marker.field_name, "Created");
+    assert_eq!(marker.event_kind, EventKind::SyntheticInitial);
+    assert_eq!(marker.seq, 0);
+    assert_eq!(marker.event_id, "initial:10042");
+    assert_eq!(marker.event_at, ts(2026, 1, 1, 10)); // snapshot.created_at
+    assert_eq!(marker.author_id, Some("acc-1".to_string())); // snapshot.reporter_id
+    assert_eq!(marker.author_display, None);
+    assert!(marker.value_ids.is_empty());
+    assert!(marker.value_displays.is_empty());
+    assert_eq!(marker.delta_value_id, None);
+    assert_eq!(marker.delta_value_display, None);
+    assert_eq!(marker.delta_action, DeltaAction::Set);
+    assert_eq!(marker.value_id_type, ValueIdType::None);
+    assert_eq!(marker.field_cardinality, FieldCardinality::Single);
+    assert_eq!(marker.data_source, DataSource::Jira);
+}
+
+#[test]
+fn bootstrap_creation_marker_present_with_empty_changelog() {
+    let meta = meta_map();
+    let snapshot = snap(
+        HashMap::from([(
+            "status".to_string(),
+            FieldValue {
+                ids: vec!["1".into()],
+                displays: vec!["To Do".into()],
+            },
+        )]),
+        ts(2026, 1, 1, 10),
+    );
+
+    let out = process_issue(&meta, &snapshot, &[], None);
+
+    // Exactly 2 rows: creation marker (seq 0) then the single field (seq 1).
+    assert_eq!(out.len(), 2);
+
+    assert_eq!(out[0].field_id, "created");
+    assert_eq!(out[0].event_kind, EventKind::SyntheticInitial);
+    assert_eq!(out[0].seq, 0);
+
+    assert_eq!(out[1].field_id, "status");
+    assert_eq!(out[1].event_kind, EventKind::SyntheticInitial);
+    assert_eq!(out[1].seq, 1);
+}
+
+#[test]
+fn bootstrap_stable_order_three_fields() {
+    let meta = meta_map();
+    let status = meta_status();
+
+    // Three fields in the snapshot: status, labels, customfield_10020 (sprint).
+    let snapshot = snap(
+        HashMap::from([
+            (
+                "status".to_string(),
+                FieldValue {
+                    ids: vec!["1".into()],
+                    displays: vec!["To Do".into()],
+                },
+            ),
+            (
+                "labels".to_string(),
+                FieldValue {
+                    ids: vec!["backend".into()],
+                    displays: vec!["backend".into()],
+                },
+            ),
+            (
+                "customfield_10020".to_string(),
+                FieldValue {
+                    ids: vec!["24".into()],
+                    displays: vec!["Sprint 24".into()],
+                },
+            ),
+        ]),
+        ts(2026, 1, 1, 10),
+    );
+
+    // A small changelog so we can also assert synthetic-before-changelog ordering.
+    let events = vec![ev(
+        "cl-1",
+        ts(2026, 1, 2, 9),
+        &status,
+        set_full(Some(("1", "To Do")), Some(("2", "In Progress"))),
+    )];
+
+    let out = process_issue(&meta, &snapshot, &events, None);
+
+    // out[0] = creation marker (seq 0).
+    assert_eq!(out[0].field_id, "created");
+    assert_eq!(out[0].seq, 0);
+    assert_eq!(out[0].event_kind, EventKind::SyntheticInitial);
+
+    // out[1..=3] = the three fields in field_id-ASC order, with CONTIGUOUS seq 1,2,3.
+    // ASC: customfield_10020 < labels < status.
+    let expected_fields = ["customfield_10020", "labels", "status"];
+    for (i, field_id) in expected_fields.iter().enumerate() {
+        let row = &out[i + 1];
+        assert_eq!(row.field_id, *field_id);
+        assert_eq!(row.seq, u32::try_from(i + 1).unwrap());
+        assert_eq!(row.event_kind, EventKind::SyntheticInitial);
+    }
+
+    // Every synthetic row precedes every changelog row.
+    let last_synthetic = out
+        .iter()
+        .rposition(|r| r.event_kind == EventKind::SyntheticInitial)
+        .unwrap();
+    let first_changelog = out
+        .iter()
+        .position(|r| r.event_kind == EventKind::Changelog)
+        .unwrap();
+    assert!(
+        last_synthetic < first_changelog,
+        "all synthetic rows must precede all changelog rows"
+    );
+}
+
+#[test]
+fn incremental_emits_no_creation_marker() {
+    let meta = meta_map();
+    let status = meta_status();
+
+    let snapshot = snap(
+        HashMap::from([(
+            "status".to_string(),
+            FieldValue {
+                ids: vec!["3".into()],
+                displays: vec!["Done".into()],
+            },
+        )]),
+        ts(2026, 1, 1, 10),
+    );
+
+    let events = vec![
+        ev("cl-1", ts(2026, 1, 2, 9), &status, set(Some("1"), Some("2"))),
+        ev("cl-2", ts(2026, 1, 3, 9), &status, set(Some("2"), Some("3"))),
+    ];
+
+    let existing = HashMap::from([(
+        "status".to_string(),
+        LastState {
+            value: FieldValue {
+                ids: vec!["1".into()],
+                displays: vec!["To Do".into()],
+            },
+            last_event_at: ts(2026, 1, 1, 12),
+        },
+    )]);
+
+    let out = process_issue(&meta, &snapshot, &events, Some(&existing));
+
+    assert!(!out.is_empty());
+    assert!(
+        out.iter().all(|r| r.field_id != "created"),
+        "incremental must not emit the creation marker"
+    );
+    assert!(
+        out.iter().all(|r| r.event_kind == EventKind::Changelog),
+        "incremental must emit only changelog rows"
+    );
 }
