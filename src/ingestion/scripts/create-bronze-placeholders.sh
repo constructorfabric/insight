@@ -1137,13 +1137,13 @@ if ! ch_table_exists bronze_claude_team claude_team_code_metrics; then
   echo "  Creating placeholder: bronze_claude_team.claude_team_code_metrics"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_claude_team.claude_team_code_metrics (
-    tenant_id                  String,
-    source_id                  String,
+    tenant_id                  Nullable(String),
+    source_id                  Nullable(String),
     unique_key                 String,
     collected_at               Nullable(String),
-    data_source                String,
+    data_source                Nullable(String),
     metric_date                Nullable(String),
-    email                      String,
+    email                      Nullable(String),
     api_key_name               Nullable(String),
     status                     Nullable(String),
     avg_cost_per_day           Nullable(String),

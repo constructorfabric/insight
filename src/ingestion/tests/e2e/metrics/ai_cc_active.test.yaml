@@ -13,6 +13,9 @@ bronze:
     - $ref: templates/claude_team_usage.yaml#/templates/alice
       unique_key: claude-alice-20260105
       metric_date: "2026-01-05"
+    - $ref: templates/claude_team_usage.yaml#/templates/alice   # re-sync dup → must dedup (active stays 1, not 2)
+      unique_key: claude-alice-20260105
+      metric_date: "2026-01-05"
     - $ref: templates/claude_team_usage.yaml#/templates/bob
       unique_key: claude-bob-20260105
       metric_date: "2026-01-05"
