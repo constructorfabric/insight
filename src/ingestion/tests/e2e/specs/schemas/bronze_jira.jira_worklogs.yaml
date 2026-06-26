@@ -1,0 +1,22 @@
+# Reusable JSON schema for the table (all real fields). Resolved by table name.
+# Mirrors the bronze_jira.jira_worklogs placeholder DDL (columns read by
+# jira__task_worklogs.sql, tag silver:class_task_worklogs).
+schemas:
+  bronze_jira.jira_worklogs:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      unique_key: { type: string }
+      source_id: { type: string }
+      worklog_id: { type: string }
+      id_readable: { type: string }
+      author_account_id: { type: string }
+      started: { type: string }
+      time_spent_seconds: { type: [integer, "null"] }
+      comment: { type: [string, "null"] }
+      collected_at: { type: string }
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
