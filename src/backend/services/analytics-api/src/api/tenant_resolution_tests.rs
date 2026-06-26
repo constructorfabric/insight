@@ -178,6 +178,57 @@ async fn nil_uuid_header_is_treated_as_unset() -> TestResult {
 }
 
 #[tokio::test]
+async fn whitespace_padded_tenant_is_trimmed_and_resolved() -> TestResult {
+    // `read_session_tenant` trims the raw header before parsing, so a valid
+    // UUID with surrounding whitespace still resolves. This branch is NOT
+    // reachable over real HTTP — a header value carries no leading/trailing
+    // OWS on the wire (RFC 9110 §5.5) — so it can only be exercised by
+    // building the request directly, which is why the e2e mirror in
+    // `tests/e2e/meta/test_tenant_resolution.py` cannot cover it.
+    let app = router_with_default(None);
+
+    let req = Request::builder()
+        .uri("/_tenant_echo")
+        .method("GET")
+        .header(TENANT_HEADER, format!("  {T1}  "))
+        .body(Body::empty())?;
+    let resp = app.oneshot(req).await?;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await?;
+    assert_eq!(
+        body["tenant_id"],
+        T1.to_string(),
+        "a valid UUID padded with whitespace must trim and resolve"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn whitespace_only_tenant_header_is_treated_as_unset() -> TestResult {
+    // Complements the padded-accept case: padding around a valid UUID is fine,
+    // padding around nothing is not. A whitespace-only header trims to "",
+    // `Uuid::parse_str` fails → None → with no configured default the request
+    // is rejected with the canonical TENANT_UNRESOLVED envelope.
+    let app = router_with_default(None);
+
+    let req = Request::builder()
+        .uri("/_tenant_echo")
+        .method("GET")
+        .header(TENANT_HEADER, "   ")
+        .body(Body::empty())?;
+    let resp = app.oneshot(req).await?;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await?;
+    assert_eq!(
+        body["context"]["field_violations"][0]["reason"],
+        "TENANT_UNRESOLVED"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn multi_valued_tenant_header_is_refused() -> TestResult {
     // A hostile or misbehaving upstream sending two `X-Insight-Tenant-Id`
     // values must not silently bind to the first. Without a configured
@@ -190,6 +241,36 @@ async fn multi_valued_tenant_header_is_refused() -> TestResult {
         .method("GET")
         .header(TENANT_HEADER, T1.to_string())
         .header(TENANT_HEADER, T2.to_string())
+        .body(Body::empty())?;
+    let resp = app.oneshot(req).await?;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await?;
+    assert_eq!(
+        body["context"]["field_violations"][0]["reason"],
+        "TENANT_UNRESOLVED"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn non_visible_ascii_tenant_header_is_treated_as_unset() -> TestResult {
+    // A header value carrying bytes that are not valid visible ASCII makes
+    // `HeaderValue::to_str()` fail, so `read_session_tenant`'s `to_str().ok()?`
+    // arm short-circuits to None → with no configured default the request is
+    // rejected with the canonical TENANT_UNRESOLVED envelope. Like the
+    // whitespace cases this is unreachable over real HTTP (h11 refuses such
+    // bytes), but a misbehaving in-process caller could construct it, so the
+    // error arm must resolve to "unset", never panic or leak.
+    let app = router_with_default(None);
+
+    // 0xC3 0x28 is a non-UTF-8, non-visible-ASCII byte sequence; `from_bytes`
+    // accepts opaque header bytes while `to_str` rejects them.
+    let value = axum::http::HeaderValue::from_bytes(&[0xC3, 0x28])?;
+    let req = Request::builder()
+        .uri("/_tenant_echo")
+        .method("GET")
+        .header(TENANT_HEADER, value)
         .body(Body::empty())?;
     let resp = app.oneshot(req).await?;
 
