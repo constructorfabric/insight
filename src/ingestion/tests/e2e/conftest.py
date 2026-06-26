@@ -137,6 +137,11 @@ _SESSION_START_TRUNCATE = [
     ("staging", "jira_issue_field_snapshot"),
     ("staging", "jira_changelog_items"),
     ("staging", "jira__task_field_metadata"),
+    # claude_team specs build staging.claude_team__ai_dev_usage — an incremental
+    # `append` model with a dbt `unique` test on unique_key. Session-start reset
+    # keeps warm re-runs (reused CH volume, no `./e2e.sh down`) from accumulating
+    # duplicate keys.
+    ("staging", "claude_team__ai_dev_usage"),
 ]
 
 

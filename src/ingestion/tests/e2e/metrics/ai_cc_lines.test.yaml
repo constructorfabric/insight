@@ -1,0 +1,49 @@
+spec_version: 1
+description: >
+  cc_lines (Claude Code Accepted Lines) — Σ lines_added per person
+  (lines_added ← total_lines_accepted). bronze_claude_team.claude_team_code_metrics
+  → claude_team__ai_dev_usage (tool='claude_code') → silver class_ai_dev_usage →
+  gold insight.ai_bullet_rows → IC Bullet AI (…0013).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_claude_team.claude_team_code_metrics:
+    - $ref: templates/claude_team_usage.yaml#/templates/alice
+      unique_key: claude-alice-20260105
+      metric_date: "2026-01-05"
+      total_lines_accepted: 40
+    - $ref: templates/claude_team_usage.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: claude-alice-20260105
+      metric_date: "2026-01-05"
+      total_lines_accepted: 40
+    - $ref: templates/claude_team_usage.yaml#/templates/bob
+      unique_key: claude-bob-20260105
+      metric_date: "2026-01-05"
+      total_lines_accepted: 20
+    - $ref: templates/claude_team_usage.yaml#/templates/carol
+      unique_key: claude-carol-20260105
+      metric_date: "2026-01-05"
+      total_lines_accepted: 10
+
+cases:
+  - name: cc_lines — IC bullet (alice value vs team median, dedup holds)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        find: { metric_key: cc_lines }
+        equal: { value: 40, median: 20, range_min: 10, range_max: 40 }
