@@ -1,0 +1,81 @@
+spec_version: 1
+description: >
+  Task Delivery · task_dev_time · JIRA, end-to-end from BRONZE only.
+
+  Metric: task_dev_time — IC Bullet Task Delivery (…0011). Hours an issue spent
+  in DEV-active statuses (In Progress, Review, QA, …) over its lifetime.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: one Jira issue + its status changelog (the transitions between
+      statuses, each with its timestamp).
+    • silver: the changelog is reconstructed into a per-field event log; adjacent
+      status events are paired into (start, end) intervals.
+    • gold:   per closed issue, sum the seconds spent in dev-active statuses
+      (`task_dev_seconds_per_issue.dev_seconds`) → hours; the …0011 query_ref
+      takes the period MEDIAN of those per-issue hours for the person.
+
+  One issue (ALICE), all drivers inline below; templates only carry invariant
+  scaffolding (source_id, reporter, _airbyte_*, account→email map, field catalog).
+  Status timeline (the changelog reverse-applies onto the Closed snapshot, so the
+  initial status reconstructs to "Open"):
+    created 2026-01-05 09:00  status "Open"        (synthetic_initial)
+    2026-01-07 09:00          → "In Progress"      (changelog)
+    2026-01-12 09:00          → "Closed"           (changelog, = final close)
+  Intervals: Open 2d · In Progress 5d · Closed 0d.
+  dev_seconds = the In Progress interval = 5 d = 432000 s → 432000/3600 = 120.0 h.
+  Median over Alice's one closed issue = 120.0.
+
+  Only `value` is asserted (cohort median/range depend on unseeded HR org_unit).
+
+bronze:
+  bronze_jira.jira_issue:
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DV-1
+      jira_id: DV-1
+      unique_key: jira-test-DV-1
+      id_readable: TSV-1
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+  bronze_jira.jira_issue_history:
+    # Two status transitions: Open → In Progress (2026-01-07), In Progress → Closed
+    # (2026-01-12). The Closed event is final_close_at.
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSV-1
+      changelog_id: "40001"
+      unique_key: jira-test-TSV-1-40001
+      created_at: "2026-01-07T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"In Progress","to":"3"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSV-1
+      changelog_id: "40002"
+      unique_key: jira-test-TSV-1-40002
+      created_at: "2026-01-12T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # IC Bullet Task Delivery (…0011): value = the requested person's own value.
+  # Alice's single closed issue spent 5 days (120 h) In Progress → task_dev_time = 120.
+  - name: task_dev_time — IC bullet, jira (alice 120h in dev statuses)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: task_dev_time }
+        equal: { value: 120 }
