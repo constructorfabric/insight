@@ -1,0 +1,308 @@
+name: Functional K3s Smoke
+
+# Fork-safe deployment smoke for the Insight umbrella chart:
+# 1. create a GitHub-hosted ephemeral K3s cluster
+# 2. install required L2 infra as separate releases
+# 3. render and deploy the current Insight app umbrella chart
+# 4. dump Kubernetes/Helm diagnostics on failure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  K3D_VERSION: v5.9.0
+  K3S_IMAGE: rancher/k3s:v1.36.1-k3s1
+  CLUSTER_NAME: insight-functional
+  FUNCTIONAL_VALUES: .github/ci/insight-functional-values.yaml
+  INSIGHT_NAMESPACE: insight
+  INFRA_NAMESPACE: insight-infra
+  MARIADB_CHART_VERSION: 25.1.1
+  CLICKHOUSE_CHART_VERSION: 9.4.4
+  REDIS_CHART_VERSION: 25.5.2
+  CLICKHOUSE_PASSWORD: insightpass123
+  MARIADB_PASSWORD: insightpass123
+  MARIADB_ROOT_PASSWORD: insightroot123
+  REDIS_PASSWORD: insightpass123
+
+jobs:
+  cluster-smoke:
+    name: K3s Helm Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Install k3d
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh \
+            | TAG="${K3D_VERSION}" bash
+          k3d version
+
+      - name: Create K3s cluster
+        run: |
+          set -euo pipefail
+          k3d cluster create "${CLUSTER_NAME}" \
+            --image "${K3S_IMAGE}" \
+            --k3s-arg "--disable=traefik@server:0" \
+            --agents 1 \
+            --wait \
+            --timeout 120s
+
+      - name: Verify cluster health
+        run: |
+          set -euo pipefail
+          kubectl cluster-info
+          kubectl get nodes -o wide
+          kubectl -n kube-system get pods -o wide
+
+          kubectl wait nodes --all --for=condition=Ready --timeout=120s
+
+          deadline=$((SECONDS + 120))
+          while (( SECONDS < deadline )); do
+            unhealthy="$(
+              kubectl get pods -A \
+                --field-selector=status.phase!=Succeeded \
+                -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.status.phase}{"\t"}{range .status.containerStatuses[*]}{.ready}{":"}{.state.waiting.reason}{":"}{.state.terminated.reason}{" "}{end}{"\n"}{end}' \
+                | awk '
+                    $2 != "Running" { print; next }
+                    {
+                      for (i = 3; i <= NF; i++) {
+                        split($i, s, ":")
+                        if (s[1] != "true" || s[2] != "" || s[3] != "") {
+                          print
+                          next
+                        }
+                      }
+                    }
+                  '
+            )"
+
+            if [[ -z "$unhealthy" ]]; then
+              echo "Cluster is healthy."
+              exit 0
+            fi
+
+            echo "Waiting for healthy cluster:"
+            echo "$unhealthy"
+            sleep 5
+          done
+
+          echo "Cluster did not become healthy before timeout." >&2
+          kubectl get pods -A -o wide >&2
+          kubectl get events -A --sort-by=.lastTimestamp >&2
+          exit 1
+
+      - name: Create namespaces and credentials
+        run: |
+          set -euo pipefail
+          kubectl create namespace "${INFRA_NAMESPACE}"
+          kubectl create namespace "${INSIGHT_NAMESPACE}"
+
+          kubectl -n "${INFRA_NAMESPACE}" create secret generic clickhouse-creds \
+            --from-literal=admin-password="${CLICKHOUSE_PASSWORD}"
+          kubectl -n "${INFRA_NAMESPACE}" create secret generic mariadb-creds \
+            --from-literal=mariadb-root-password="${MARIADB_ROOT_PASSWORD}" \
+            --from-literal=mariadb-password="${MARIADB_PASSWORD}"
+          kubectl -n "${INFRA_NAMESPACE}" create secret generic redis-creds \
+            --from-literal=redis-password="${REDIS_PASSWORD}"
+
+          # The app chart's pre-install hook jobs read this Secret before
+          # regular chart templates are applied, so CI uses the documented
+          # BYO-secret path.
+          kubectl -n "${INSIGHT_NAMESPACE}" create secret generic insight-db-creds \
+            --from-literal=clickhouse-password="${CLICKHOUSE_PASSWORD}" \
+            --from-literal=mariadb-password="${MARIADB_PASSWORD}" \
+            --from-literal=mariadb-root-password="${MARIADB_ROOT_PASSWORD}" \
+            --from-literal=redis-password="${REDIS_PASSWORD}"
+
+      - name: Install L2 infra
+        run: |
+          set -euo pipefail
+          dump_infra_diagnostics() {
+            echo "::group::infra helm releases"
+            helm -n "${INFRA_NAMESPACE}" list || true
+            helm -n "${INFRA_NAMESPACE}" status mariadb || true
+            helm -n "${INFRA_NAMESPACE}" status redis || true
+            helm -n "${INFRA_NAMESPACE}" status clickhouse || true
+            echo "::endgroup::"
+
+            echo "::group::infra resources"
+            kubectl -n "${INFRA_NAMESPACE}" get all,pvc,secret,configmap,job,pod -o wide || true
+            echo "::endgroup::"
+
+            echo "::group::infra pod descriptions"
+            kubectl -n "${INFRA_NAMESPACE}" describe pods || true
+            echo "::endgroup::"
+
+            echo "::group::infra pod logs"
+            while IFS= read -r pod; do
+              echo "----- ${pod} -----"
+              kubectl -n "${INFRA_NAMESPACE}" logs "${pod}" --all-containers --prefix --tail=200 || true
+            done < <(kubectl -n "${INFRA_NAMESPACE}" get pods -o name 2>/dev/null || true)
+            echo "::endgroup::"
+
+            echo "::group::cluster events"
+            kubectl get events -A --sort-by=.lastTimestamp || true
+            echo "::endgroup::"
+          }
+
+          trap dump_infra_diagnostics ERR
+
+          helm upgrade --install mariadb oci://registry-1.docker.io/bitnamicharts/mariadb \
+            --namespace "${INFRA_NAMESPACE}" \
+            --version "${MARIADB_CHART_VERSION}" \
+            -f deploy/gitops/system/mariadb/values.yaml \
+            --set primary.persistence.size=1Gi \
+            --set primary.resources.requests.cpu=50m \
+            --set primary.resources.requests.memory=128Mi \
+            --set primary.resources.limits.cpu=500m \
+            --set primary.resources.limits.memory=512Mi \
+            --wait \
+            --timeout 5m
+
+          helm upgrade --install redis oci://registry-1.docker.io/bitnamicharts/redis \
+            --namespace "${INFRA_NAMESPACE}" \
+            --version "${REDIS_CHART_VERSION}" \
+            -f deploy/gitops/system/redis/values.yaml \
+            --set master.persistence.size=512Mi \
+            --set master.resources.requests.cpu=25m \
+            --set master.resources.requests.memory=64Mi \
+            --set master.resources.limits.cpu=250m \
+            --set master.resources.limits.memory=256Mi \
+            --wait \
+            --timeout 5m
+
+          helm upgrade --install clickhouse oci://registry-1.docker.io/bitnamicharts/clickhouse \
+            --namespace "${INFRA_NAMESPACE}" \
+            --version "${CLICKHOUSE_CHART_VERSION}" \
+            -f deploy/gitops/system/clickhouse/values.yaml \
+            --set persistence.size=1Gi \
+            --set resources.requests.cpu=100m \
+            --set resources.requests.memory=512Mi \
+            --set resources.limits.cpu=1 \
+            --set resources.limits.memory=2Gi \
+            --wait \
+            --timeout 5m
+
+      - name: Render Insight chart
+        run: |
+          set -euo pipefail
+          helm dependency update charts/insight
+          helm template insight charts/insight \
+            --namespace "${INSIGHT_NAMESPACE}" \
+            -f "${FUNCTIONAL_VALUES}" \
+            >/tmp/insight-rendered.yaml
+          test -s /tmp/insight-rendered.yaml
+
+      - name: Deploy Insight chart
+        run: |
+          set -euo pipefail
+          dump_insight_diagnostics() {
+            echo "::group::helm status"
+            helm -n "${INSIGHT_NAMESPACE}" status insight || true
+            echo "::endgroup::"
+
+            echo "::group::insight resources"
+            kubectl -n "${INSIGHT_NAMESPACE}" get all,pvc,secret,configmap,job,pod -o wide || true
+            echo "::endgroup::"
+
+            echo "::group::insight pod descriptions"
+            kubectl -n "${INSIGHT_NAMESPACE}" describe pods || true
+            echo "::endgroup::"
+
+            echo "::group::insight pod logs"
+            while IFS= read -r pod; do
+              echo "----- ${pod} -----"
+              kubectl -n "${INSIGHT_NAMESPACE}" logs "${pod}" --all-containers --prefix --tail=200 || true
+            done < <(kubectl -n "${INSIGHT_NAMESPACE}" get pods -o name 2>/dev/null || true)
+            echo "::endgroup::"
+
+            echo "::group::cluster events"
+            kubectl get events -A --sort-by=.lastTimestamp || true
+            echo "::endgroup::"
+          }
+
+          trap dump_insight_diagnostics ERR
+
+          helm upgrade --install insight charts/insight \
+            --namespace "${INSIGHT_NAMESPACE}" \
+            -f "${FUNCTIONAL_VALUES}" \
+            --wait \
+            --wait-for-jobs \
+            --timeout 5m
+
+      - name: Verify Insight workloads
+        run: |
+          set -euo pipefail
+          kubectl -n "${INSIGHT_NAMESPACE}" get pods -o wide
+          kubectl -n "${INSIGHT_NAMESPACE}" get svc
+
+          while IFS= read -r deployment; do
+            kubectl -n "${INSIGHT_NAMESPACE}" rollout status "${deployment}" --timeout=5m
+          done < <(kubectl -n "${INSIGHT_NAMESPACE}" get deployments -o name)
+
+          while IFS= read -r statefulset; do
+            kubectl -n "${INSIGHT_NAMESPACE}" rollout status "${statefulset}" --timeout=5m
+          done < <(kubectl -n "${INSIGHT_NAMESPACE}" get statefulsets -o name)
+
+          while IFS= read -r job; do
+            kubectl -n "${INSIGHT_NAMESPACE}" wait "${job}" \
+              --for=condition=Complete \
+              --timeout=5m
+          done < <(kubectl -n "${INSIGHT_NAMESPACE}" get jobs -o name)
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo "::group::all pods"
+          kubectl get pods -A -o wide || true
+          echo "::endgroup::"
+
+          echo "::group::infra resources"
+          kubectl -n "${INFRA_NAMESPACE}" get all,pvc,secret,configmap,job,pod -o wide || true
+          echo "::endgroup::"
+
+          echo "::group::insight resources"
+          kubectl -n "${INSIGHT_NAMESPACE}" get all,pvc,secret,configmap,job,pod -o wide || true
+          echo "::endgroup::"
+
+          echo "::group::pod descriptions"
+          kubectl -n "${INFRA_NAMESPACE}" describe pods || true
+          kubectl -n "${INSIGHT_NAMESPACE}" describe pods || true
+          echo "::endgroup::"
+
+          echo "::group::pod logs"
+          for namespace in "${INFRA_NAMESPACE}" "${INSIGHT_NAMESPACE}"; do
+            while IFS= read -r pod; do
+              echo "----- ${namespace}/${pod} -----"
+              kubectl -n "${namespace}" logs "${pod}" --all-containers --prefix --tail=200 || true
+            done < <(kubectl -n "${namespace}" get pods -o name 2>/dev/null || true)
+          done
+          echo "::endgroup::"
+
+          echo "::group::cluster events"
+          kubectl get events -A --sort-by=.lastTimestamp || true
+          echo "::endgroup::"
+
+          echo "::group::helm status"
+          helm -n "${INFRA_NAMESPACE}" list || true
+          helm -n "${INSIGHT_NAMESPACE}" status insight || true
+          echo "::endgroup::"
+
+      - name: Delete K3s cluster
+        if: always()
+        run: |
+          set -euo pipefail
+          k3d cluster delete "${CLUSTER_NAME}" || true
