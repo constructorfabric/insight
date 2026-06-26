@@ -19,7 +19,7 @@ The stack must be up first (`./dev-compose.sh up`). Then:
 ## Develop on it
 
 ```bash
-cd insight/compose/seed
+cd insight/deploy/seed
 python3 -m venv .venv                              # one-time
 .venv/bin/pip install -r requirements-dev.txt
 

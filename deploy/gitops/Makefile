@@ -322,7 +322,7 @@ local-wizard:
 	@if [ -f $(INVENTORY) ]; then \
 	  exit 0; \
 	fi; \
-	WIZARD="$$(cd ../.. && pwd)/compose/insight-init.sh"; \
+	WIZARD="$$(cd ../.. && pwd)/deploy/compose/insight-init.sh"; \
 	if [ ! -f "$$WIZARD" ]; then \
 	  echo "$(C_RED)ERROR$(C_RST): wizard not found at $$WIZARD"; exit 1; \
 	fi; \
