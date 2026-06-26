@@ -1,0 +1,212 @@
+# Reusable HubSpot CRM bronze records (owners + deals + the four engagement
+# streams). A record is a plain field map; an optional `$ref` inherits from
+# another record and sibling keys override it (closest wins). The nested
+# `$ref: "#/..."` below stays local to this file.
+#
+# Each base record lists EVERY schema column so a merged bronze row is complete;
+# unused fields default to null. The four `_airbyte_*` CDK columns are included
+# (transforms read updatedAt → `_version`, createdAt → metric_date, etc.).
+#
+# Per the test-composition rule, templates carry ONLY invariant scaffolding:
+# the envelope (source_id/tenant_id/_airbyte_*), and the owner identity records
+# (id/userId/email — the join keys). Every scenario field that drives an
+# assertion (amounts, dates, is_won, activity_type counts, owner attribution)
+# is written INLINE in each *.test.yaml via `$ref` + sibling overrides.
+#
+# Identity wiring (see crm-gold-views.sql):
+#   * owner `id`     → deals/activities `properties_hubspot_owner_id`  (owner side; deals + calls)
+#   * owner `userId` → `hs_user_id` (toString) ↔ `properties_hs_created_by_user_id` (creator side; emails/meetings/tasks)
+#   * person_id      = lower(owner.email); org_unit_id = department of the matching bamboohr employee
+#     → the owner email MUST equal the bamboohr workEmail case-insensitively.
+templates:
+  # ---- owners (→ silver.class_crm_users) -----------------------------------
+  hubspot_owner:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: hubspot-test
+    unique_key: null
+    id: null
+    email: null
+    userId: null
+    firstName: null
+    lastName: null
+    archived: false
+    createdAt: null
+    updatedAt: "2026-01-01T00:00:00"
+    archivedAt: null
+    collected_at: "2026-01-05T00:00:00"
+    data_source: hubspot
+
+  alice_owner:
+    $ref: "#/templates/hubspot_owner"
+    id: own-alice
+    unique_key: hubspot-owner-alice
+    email: alice@example.com
+    userId: 101
+    firstName: Alice
+    lastName: Alpha
+
+  bob_owner:
+    $ref: "#/templates/hubspot_owner"
+    id: own-bob
+    unique_key: hubspot-owner-bob
+    email: bob@example.com
+    userId: 102
+    firstName: Bob
+    lastName: Beta
+
+  carol_owner:
+    $ref: "#/templates/hubspot_owner"
+    id: own-carol
+    unique_key: hubspot-owner-carol
+    email: carol@example.com
+    userId: 103
+    firstName: Carol
+    lastName: Gamma
+
+  # ---- deals (→ silver.class_crm_deals) ------------------------------------
+  hubspot_deal:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: hubspot-test
+    unique_key: null
+    id: null
+    archived: false
+    createdAt: null
+    updatedAt: "2026-01-01T00:00:00"
+    archivedAt: null
+    collected_at: "2026-01-05T00:00:00"
+    data_source: hubspot
+    associations_companies: null
+    properties_dealname: null
+    properties_dealstage: null
+    properties_dealtype: null
+    properties_pipeline: null
+    properties_closedate: null
+    properties_amount: null
+    properties_amount_in_home_currency: null
+    properties_hs_acv: null
+    properties_hs_tcv: null
+    properties_hs_arr: null
+    properties_hs_is_closed: "false"
+    properties_hs_is_closed_won: "false"
+    properties_hubspot_owner_id: null
+    properties_hs_created_by_user_id: null
+    properties_hs_analytics_source: null
+    properties_hs_deal_stage_probability: null
+    properties_hs_manual_forecast_category: null
+    properties_closed_lost_reason: null
+
+  # ---- engagement: calls (→ silver.class_crm_activities) -------------------
+  hubspot_call:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: hubspot-test
+    unique_key: null
+    id: null
+    archived: false
+    createdAt: null
+    updatedAt: "2026-01-01T00:00:00"
+    archivedAt: null
+    collected_at: "2026-01-05T00:00:00"
+    data_source: hubspot
+    associations_contacts: null
+    associations_deals: null
+    associations_companies: null
+    properties_hubspot_owner_id: null
+    properties_hs_created_by_user_id: null
+    properties_hs_timestamp: null
+    properties_hs_call_duration: null
+    properties_hs_call_disposition: null
+    properties_hs_call_title: null
+    properties_hs_call_direction: null
+
+  # ---- engagement: emails --------------------------------------------------
+  hubspot_email:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: hubspot-test
+    unique_key: null
+    id: null
+    archived: false
+    createdAt: null
+    updatedAt: "2026-01-01T00:00:00"
+    archivedAt: null
+    collected_at: "2026-01-05T00:00:00"
+    data_source: hubspot
+    associations_contacts: null
+    associations_deals: null
+    associations_companies: null
+    properties_hubspot_owner_id: null
+    properties_hs_created_by_user_id: null
+    properties_hs_timestamp: null
+    properties_hs_email_status: null
+    properties_hs_email_subject: null
+    properties_hs_email_direction: null
+
+  # ---- engagement: meetings ------------------------------------------------
+  hubspot_meeting:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: hubspot-test
+    unique_key: null
+    id: null
+    archived: false
+    createdAt: null
+    updatedAt: "2026-01-01T00:00:00"
+    archivedAt: null
+    collected_at: "2026-01-05T00:00:00"
+    data_source: hubspot
+    associations_contacts: null
+    associations_deals: null
+    associations_companies: null
+    properties_hubspot_owner_id: null
+    properties_hs_created_by_user_id: null
+    properties_hs_timestamp: null
+    properties_hs_meeting_start_time: null
+    properties_hs_meeting_end_time: null
+    properties_hs_meeting_outcome: null
+    properties_hs_meeting_title: null
+    properties_hs_meeting_location: null
+
+  # ---- engagement: tasks ---------------------------------------------------
+  hubspot_task:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: hubspot-test
+    unique_key: null
+    id: null
+    archived: false
+    createdAt: null
+    updatedAt: "2026-01-01T00:00:00"
+    archivedAt: null
+    collected_at: "2026-01-05T00:00:00"
+    data_source: hubspot
+    associations_contacts: null
+    associations_deals: null
+    associations_companies: null
+    properties_hubspot_owner_id: null
+    properties_hs_created_by_user_id: null
+    properties_hs_timestamp: null
+    properties_hs_task_status: null
+    properties_hs_task_subject: null
+    properties_hs_task_priority: null
+    properties_hs_task_type: null

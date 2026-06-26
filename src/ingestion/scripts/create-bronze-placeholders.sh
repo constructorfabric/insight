@@ -59,6 +59,7 @@ CREATE DATABASE IF NOT EXISTS bronze_slack;
 CREATE DATABASE IF NOT EXISTS bronze_bamboohr;
 CREATE DATABASE IF NOT EXISTS bronze_bitbucket_cloud;
 CREATE DATABASE IF NOT EXISTS bronze_zulip_proxy;
+CREATE DATABASE IF NOT EXISTS bronze_hubspot;
 SQL
 
 # ---------------------------------------------------------------------------
@@ -1149,6 +1150,215 @@ CREATE TABLE IF NOT EXISTS bronze_zulip_proxy.users (
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+fi
+
+# bronze_hubspot — needed by the CRM gold views (insight.crm_kpis,
+# crm_chart_flow, crm_bullet_rows, crm_pipeline_now) via the HubSpot dbt
+# staging models (hubspot__crm_{deals,users,activities}). Column sets mirror
+# the live Airbyte HubSpot streams (verified against a dev sync) but carry
+# only the columns the dbt staging models actually read plus the four CDK
+# columns — the real sync overwrites the schema (hundreds of `properties_*`)
+# in place on first run. HubSpot properties land as Nullable(String); dbt
+# coerces with toFloat64OrNull / parseDateTime64BestEffortOrNull. ORDER BY
+# unique_key matches the per-record natural key the envelope assigns, so RMT
+# collapses re-synced duplicates the same way prod does.
+run_ch <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_hubspot;
+SQL
+if ! ch_table_exists bronze_hubspot deals; then
+  echo "  Creating placeholder: bronze_hubspot.deals"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_hubspot.deals (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
+    id Nullable(String),
+    archived Nullable(Bool),
+    createdAt Nullable(DateTime64(3)),
+    updatedAt Nullable(DateTime64(3)),
+    archivedAt Nullable(DateTime64(3)),
+    collected_at Nullable(DateTime64(3)),
+    data_source Nullable(String),
+    associations_companies Nullable(String),
+    properties_dealname Nullable(String),
+    properties_dealstage Nullable(String),
+    properties_dealtype Nullable(String),
+    properties_pipeline Nullable(String),
+    properties_closedate Nullable(String),
+    properties_amount Nullable(String),
+    properties_amount_in_home_currency Nullable(String),
+    properties_hs_acv Nullable(String),
+    properties_hs_tcv Nullable(String),
+    properties_hs_arr Nullable(String),
+    properties_hs_is_closed Nullable(String),
+    properties_hs_is_closed_won Nullable(String),
+    properties_hubspot_owner_id Nullable(String),
+    properties_hs_created_by_user_id Nullable(String),
+    properties_hs_analytics_source Nullable(String),
+    properties_hs_deal_stage_probability Nullable(String),
+    properties_hs_manual_forecast_category Nullable(String),
+    properties_closed_lost_reason Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
+SQL
+fi
+if ! ch_table_exists bronze_hubspot owners; then
+  echo "  Creating placeholder: bronze_hubspot.owners"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_hubspot.owners (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
+    id Nullable(String),
+    email Nullable(String),
+    userId Nullable(Int64),
+    firstName Nullable(String),
+    lastName Nullable(String),
+    archived Nullable(Bool),
+    createdAt Nullable(DateTime64(3)),
+    updatedAt Nullable(DateTime64(3)),
+    archivedAt Nullable(DateTime64(3)),
+    collected_at Nullable(DateTime64(3)),
+    data_source Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
+SQL
+fi
+if ! ch_table_exists bronze_hubspot engagements_calls; then
+  echo "  Creating placeholder: bronze_hubspot.engagements_calls"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_calls (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
+    id Nullable(String),
+    archived Nullable(Bool),
+    createdAt Nullable(DateTime64(3)),
+    updatedAt Nullable(DateTime64(3)),
+    archivedAt Nullable(DateTime64(3)),
+    collected_at Nullable(DateTime64(3)),
+    data_source Nullable(String),
+    associations_contacts Nullable(String),
+    associations_deals Nullable(String),
+    associations_companies Nullable(String),
+    properties_hubspot_owner_id Nullable(String),
+    properties_hs_created_by_user_id Nullable(String),
+    properties_hs_timestamp Nullable(String),
+    properties_hs_call_duration Nullable(String),
+    properties_hs_call_disposition Nullable(String),
+    properties_hs_call_title Nullable(String),
+    properties_hs_call_direction Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
+SQL
+fi
+if ! ch_table_exists bronze_hubspot engagements_emails; then
+  echo "  Creating placeholder: bronze_hubspot.engagements_emails"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_emails (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
+    id Nullable(String),
+    archived Nullable(Bool),
+    createdAt Nullable(DateTime64(3)),
+    updatedAt Nullable(DateTime64(3)),
+    archivedAt Nullable(DateTime64(3)),
+    collected_at Nullable(DateTime64(3)),
+    data_source Nullable(String),
+    associations_contacts Nullable(String),
+    associations_deals Nullable(String),
+    associations_companies Nullable(String),
+    properties_hubspot_owner_id Nullable(String),
+    properties_hs_created_by_user_id Nullable(String),
+    properties_hs_timestamp Nullable(String),
+    properties_hs_email_status Nullable(String),
+    properties_hs_email_subject Nullable(String),
+    properties_hs_email_direction Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
+SQL
+fi
+if ! ch_table_exists bronze_hubspot engagements_meetings; then
+  echo "  Creating placeholder: bronze_hubspot.engagements_meetings"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_meetings (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
+    id Nullable(String),
+    archived Nullable(Bool),
+    createdAt Nullable(DateTime64(3)),
+    updatedAt Nullable(DateTime64(3)),
+    archivedAt Nullable(DateTime64(3)),
+    collected_at Nullable(DateTime64(3)),
+    data_source Nullable(String),
+    associations_contacts Nullable(String),
+    associations_deals Nullable(String),
+    associations_companies Nullable(String),
+    properties_hubspot_owner_id Nullable(String),
+    properties_hs_created_by_user_id Nullable(String),
+    properties_hs_timestamp Nullable(String),
+    properties_hs_meeting_start_time Nullable(String),
+    properties_hs_meeting_end_time Nullable(String),
+    properties_hs_meeting_outcome Nullable(String),
+    properties_hs_meeting_title Nullable(String),
+    properties_hs_meeting_location Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
+SQL
+fi
+if ! ch_table_exists bronze_hubspot engagements_tasks; then
+  echo "  Creating placeholder: bronze_hubspot.engagements_tasks"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_tasks (
+    tenant_id Nullable(String),
+    source_id Nullable(String),
+    unique_key Nullable(String),
+    id Nullable(String),
+    archived Nullable(Bool),
+    createdAt Nullable(DateTime64(3)),
+    updatedAt Nullable(DateTime64(3)),
+    archivedAt Nullable(DateTime64(3)),
+    collected_at Nullable(DateTime64(3)),
+    data_source Nullable(String),
+    associations_contacts Nullable(String),
+    associations_deals Nullable(String),
+    associations_companies Nullable(String),
+    properties_hubspot_owner_id Nullable(String),
+    properties_hs_created_by_user_id Nullable(String),
+    properties_hs_timestamp Nullable(String),
+    properties_hs_task_status Nullable(String),
+    properties_hs_task_subject Nullable(String),
+    properties_hs_task_priority Nullable(String),
+    properties_hs_task_type Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
 SQL
 fi
 

@@ -1,0 +1,228 @@
+spec_version: 1
+description: >
+  Metric: crm_bullet_activity — outreach-activity bullets (…0023), sales-rep dashboard.
+  Emits four keys: calls, emails, meetings, comms_per_won.
+  How it's computed (bronze → silver → gold):
+    • bronze: HubSpot engagements (calls/emails/meetings/tasks) + won deals
+    • silver: activities/deals deduped; owner email → person_id; department → org_unit_id
+    • gold:   insight.crm_bullet_rows emits one row per engagement (calls via OWNER,
+              emails/meetings/tasks via CREATOR) + one deals_won row per won deal.
+              query_ref re-aggregates per person → calls/emails/meetings = counts,
+              comms_per_won = (calls+emails+meetings+tasks)/deals_won. value = the
+              requested rep; median/min/max = the rep's department team.
+
+  Team = department "Sales" {alice, bob, carol} (odd team → unambiguous median):
+    calls         alice 2 · bob 1 · carol 3 → median 2, range [1, 3]
+    emails        alice 2 · bob 1 · carol 3 → median 2, range [1, 3]
+    meetings      alice 2 · bob 1 · carol 3 → median 2, range [1, 3]
+    comms_per_won alice 4 ((2+2+2+2)/2 won) · bob 3 ((1+1+1+0)/1) · carol 9 ((3+3+3+0)/1)
+                  → median 4, range [3, 9]
+  Tasks feed comms_per_won only (not a bullet key). Cases: alice's value + the
+  department median/range for each of the four keys.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+      department: Sales
+    - $ref: templates/people.yaml#/templates/bob
+      department: Sales
+    - $ref: templates/people.yaml#/templates/carol
+      department: Sales
+
+  bronze_hubspot.owners:
+    - $ref: templates/hubspot.yaml#/templates/alice_owner
+    - $ref: templates/hubspot.yaml#/templates/bob_owner
+    - $ref: templates/hubspot.yaml#/templates/carol_owner
+
+  # Won deals → deals_won denominator for comms_per_won (alice 2, bob 1, carol 1).
+  bronze_hubspot.deals:
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-aw1
+      unique_key: hubspot-deal-aw1
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-05T09:00:00"
+      properties_closedate: "2026-01-10T00:00:00Z"
+      properties_amount_in_home_currency: "10000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "true"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-aw2
+      unique_key: hubspot-deal-aw2
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-06T09:00:00"
+      properties_closedate: "2026-01-20T00:00:00Z"
+      properties_amount_in_home_currency: "30000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "true"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-bw1
+      unique_key: hubspot-deal-bw1
+      properties_hubspot_owner_id: own-bob
+      createdAt: "2026-01-05T09:00:00"
+      properties_closedate: "2026-01-09T00:00:00Z"
+      properties_amount_in_home_currency: "8000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "true"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-cw1
+      unique_key: hubspot-deal-cw1
+      properties_hubspot_owner_id: own-carol
+      createdAt: "2026-01-02T09:00:00"
+      properties_closedate: "2026-01-22T00:00:00Z"
+      properties_amount_in_home_currency: "40000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "true"
+
+  # calls — attributed via OWNER (properties_hubspot_owner_id). alice 2, bob 1, carol 3.
+  bronze_hubspot.engagements_calls:
+    - $ref: templates/hubspot.yaml#/templates/hubspot_call
+      id: call-aa1
+      unique_key: hubspot-call-aa1
+      properties_hubspot_owner_id: own-alice
+      properties_hs_timestamp: "2026-01-12T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_call
+      id: call-aa2
+      unique_key: hubspot-call-aa2
+      properties_hubspot_owner_id: own-alice
+      properties_hs_timestamp: "2026-01-12T10:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_call
+      id: call-ba1
+      unique_key: hubspot-call-ba1
+      properties_hubspot_owner_id: own-bob
+      properties_hs_timestamp: "2026-01-12T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_call
+      id: call-ca1
+      unique_key: hubspot-call-ca1
+      properties_hubspot_owner_id: own-carol
+      properties_hs_timestamp: "2026-01-12T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_call
+      id: call-ca2
+      unique_key: hubspot-call-ca2
+      properties_hubspot_owner_id: own-carol
+      properties_hs_timestamp: "2026-01-12T10:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_call
+      id: call-ca3
+      unique_key: hubspot-call-ca3
+      properties_hubspot_owner_id: own-carol
+      properties_hs_timestamp: "2026-01-12T11:00:00Z"
+
+  # emails — attributed via CREATOR (properties_hs_created_by_user_id). alice 2, bob 1, carol 3.
+  # owner_id is also set (non-null silver constraint) to the same rep; unused for attribution.
+  bronze_hubspot.engagements_emails:
+    - $ref: templates/hubspot.yaml#/templates/hubspot_email
+      id: email-aa1
+      unique_key: hubspot-email-aa1
+      properties_hubspot_owner_id: own-alice
+      properties_hs_created_by_user_id: "101"
+      properties_hs_timestamp: "2026-01-13T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_email
+      id: email-aa2
+      unique_key: hubspot-email-aa2
+      properties_hubspot_owner_id: own-alice
+      properties_hs_created_by_user_id: "101"
+      properties_hs_timestamp: "2026-01-13T10:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_email
+      id: email-ba1
+      unique_key: hubspot-email-ba1
+      properties_hubspot_owner_id: own-bob
+      properties_hs_created_by_user_id: "102"
+      properties_hs_timestamp: "2026-01-13T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_email
+      id: email-ca1
+      unique_key: hubspot-email-ca1
+      properties_hubspot_owner_id: own-carol
+      properties_hs_created_by_user_id: "103"
+      properties_hs_timestamp: "2026-01-13T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_email
+      id: email-ca2
+      unique_key: hubspot-email-ca2
+      properties_hubspot_owner_id: own-carol
+      properties_hs_created_by_user_id: "103"
+      properties_hs_timestamp: "2026-01-13T10:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_email
+      id: email-ca3
+      unique_key: hubspot-email-ca3
+      properties_hubspot_owner_id: own-carol
+      properties_hs_created_by_user_id: "103"
+      properties_hs_timestamp: "2026-01-13T11:00:00Z"
+
+  # meetings — attributed via CREATOR. alice 2, bob 1, carol 3.
+  bronze_hubspot.engagements_meetings:
+    - $ref: templates/hubspot.yaml#/templates/hubspot_meeting
+      id: meeting-aa1
+      unique_key: hubspot-meeting-aa1
+      properties_hubspot_owner_id: own-alice
+      properties_hs_created_by_user_id: "101"
+      properties_hs_timestamp: "2026-01-14T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_meeting
+      id: meeting-aa2
+      unique_key: hubspot-meeting-aa2
+      properties_hubspot_owner_id: own-alice
+      properties_hs_created_by_user_id: "101"
+      properties_hs_timestamp: "2026-01-14T10:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_meeting
+      id: meeting-ba1
+      unique_key: hubspot-meeting-ba1
+      properties_hubspot_owner_id: own-bob
+      properties_hs_created_by_user_id: "102"
+      properties_hs_timestamp: "2026-01-14T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_meeting
+      id: meeting-ca1
+      unique_key: hubspot-meeting-ca1
+      properties_hubspot_owner_id: own-carol
+      properties_hs_created_by_user_id: "103"
+      properties_hs_timestamp: "2026-01-14T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_meeting
+      id: meeting-ca2
+      unique_key: hubspot-meeting-ca2
+      properties_hubspot_owner_id: own-carol
+      properties_hs_created_by_user_id: "103"
+      properties_hs_timestamp: "2026-01-14T10:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_meeting
+      id: meeting-ca3
+      unique_key: hubspot-meeting-ca3
+      properties_hubspot_owner_id: own-carol
+      properties_hs_created_by_user_id: "103"
+      properties_hs_timestamp: "2026-01-14T11:00:00Z"
+
+  # tasks — attributed via CREATOR; feed comms_per_won only. alice 2, bob/carol 0.
+  bronze_hubspot.engagements_tasks:
+    - $ref: templates/hubspot.yaml#/templates/hubspot_task
+      id: task-aa1
+      unique_key: hubspot-task-aa1
+      properties_hubspot_owner_id: own-alice
+      properties_hs_created_by_user_id: "101"
+      properties_hs_timestamp: "2026-01-15T09:00:00Z"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_task
+      id: task-aa2
+      unique_key: hubspot-task-aa2
+      properties_hubspot_owner_id: own-alice
+      properties_hs_created_by_user_id: "101"
+      properties_hs_timestamp: "2026-01-15T10:00:00Z"
+
+cases:
+  - name: "crm_bullet_activity — alice value + Sales team median/range (4 keys)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: crm
+            metric_id: 00000000-0000-0000-0001-000000000023
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: crm
+        assert: "result.status == 'ok'"
+      - in: crm
+        find: { metric_key: calls }
+        equal: { value: 2, median: 2, range_min: 1, range_max: 3 }
+      - in: crm
+        find: { metric_key: emails }
+        equal: { value: 2, median: 2, range_min: 1, range_max: 3 }
+      - in: crm
+        find: { metric_key: meetings }
+        equal: { value: 2, median: 2, range_min: 1, range_max: 3 }
+      - in: crm
+        find: { metric_key: comms_per_won }
+        equal: { value: 4, median: 4, range_min: 3, range_max: 9 }
