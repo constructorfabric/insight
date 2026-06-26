@@ -96,7 +96,7 @@ This feature implements the operator-facing CLI (`reconcile-connectors.sh`) that
 | Actor | Role in Feature |
 |-------|-----------------|
 | `cpt-insightspec-actor-platform-engineer` | Invokes `reconcile-connectors.sh`, reviews dry-run output, edits `descriptor.yaml.version` |
-| `cpt-insightspec-actor-ci-pipeline` | Runs `reconcile-connectors.sh adopt && reconcile-connectors.sh` from `run-init.sh` during cluster bootstrap and as pre-sync step |
+| `cpt-insightspec-actor-ci-pipeline` | Runs `reconcile-connectors.sh adopt && reconcile-connectors.sh` on a schedule via the in-cluster reconcile CronWorkflow; the same reconcile command can also be run manually from the host when needed |
 | `cpt-insightspec-actor-airbyte-api` | Receives definition/source/connection patches from the reconcile engine |
 | `cpt-insightspec-actor-k8s-api` | Provides K8s Secrets and `ConfigMap insight-config` (tenant_id) |
 

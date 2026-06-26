@@ -745,13 +745,13 @@ the [gitops SPEC](../../components/deployment/gitops/README.md).
 | Script | Purpose |
 |--------|---------|
 | `cd deploy/gitops && make deploy ENV=local` | Brings up the full local stack: bootstrap (L0), Airbyte + Argo Workflows + the L2 system services, then the Insight umbrella chart (L3). Idempotent — re-running reconciles. Honours `$KUBECONFIG`. |
-| `src/ingestion/run-init.sh` | Post-deploy init: verifies secrets, registers connectors, applies Airbyte connections, syncs Argo flows. (ClickHouse migrations are applied separately by the `clickhouse-migrate` Helm Hook Job on every install/upgrade — see §4.4.1. MariaDB schema is applied per-service by each backend service's own sea-orm `Migrator` at startup — see §4.4 and [ADR-0006](ADR/0006-service-owned-migrations.md). Per-service MariaDB databases are provisioned by the `mariadb-init-svcdbs` Helm Hook Job against the external `mariadb.host`.) |
-| `src/ingestion/sync-all.sh` | Trigger Airbyte sync for all connections. Reads connection IDs from state, calls Airbyte API. Use after `run-init.sh` to start first data load, or anytime to re-sync all sources. |
+| `src/ingestion/reconcile-connectors.sh` | Declarative connector reconcile: `adopt` pre-existing Airbyte resources, then create / update / GC definitions, sources, connections, and per-connector sync CronWorkflows to match descriptor + Secret state. Idempotent; also runs in-cluster on a schedule via the reconcile CronWorkflow. (ClickHouse migrations are applied separately by the `clickhouse-migrate` Helm Hook Job on every install/upgrade — see §4.4.1. MariaDB schema is applied per-service by each backend service's own sea-orm `Migrator` at startup — see §4.4 and [ADR-0006](ADR/0006-service-owned-migrations.md). Per-service MariaDB databases are provisioned by the `mariadb-init-svcdbs` Helm Hook Job against the external `mariadb.host`.) |
+| `src/ingestion/sync-all.sh` | Trigger Airbyte sync for all connections. Reads connection IDs from state, calls Airbyte API. Use after the first reconcile to start the first data load, or anytime to re-sync all sources. |
 
 **First-time setup**:
 1. Copy connector secret examples → fill credentials (`src/ingestion/secrets/connectors/`)
 2. `cd deploy/gitops && make deploy ENV=local` — full stack deployment (answer the wizard prompts on first run)
-3. `./src/ingestion/run-init.sh` — connectors, connections, Argo flows (ClickHouse migrations run automatically via the `clickhouse-migrate` Hook Job during step 2's helm install)
+3. `./src/ingestion/reconcile-connectors.sh` — connectors, connections, per-connector CronWorkflows (ClickHouse migrations run automatically via the `clickhouse-migrate` Hook Job during step 2's helm install)
 4. `cd src/ingestion && ./sync-all.sh` — trigger first Airbyte sync for all connections
 
 **Re-running**: `make deploy ENV=local` is idempotent — re-running on a converged cluster reconciles the stack in place.

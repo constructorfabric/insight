@@ -79,10 +79,11 @@ On host: `airbyte-toolkit/state.yaml`. In K8s: ConfigMap `airbyte-state` in name
 ## Phase 3: Create Workflows
 
 ```bash
-./update-workflows.sh <tenant>
+./reconcile-connectors.sh --connector <name>
 ```
 
-Generates CronWorkflow from `descriptor.yaml` schedule.
+Reconcile renders and applies the connector's CronWorkflow from the
+`descriptor.yaml` schedule (also done in-cluster by the reconcile CronWorkflow).
 
 ## Phase 4: Run First Sync
 

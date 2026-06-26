@@ -7,6 +7,15 @@ cpt:
 
 # PRD — Airbyte Toolkit
 
+> ⚠️ **OBSOLETE / SUPERSEDED.** This document describes the legacy *Airbyte
+> Toolkit* host-script design (the `state.yaml` file contract and the
+> `init.sh` / `sync-flows.sh` / `run-init.sh` host scripts). That toolkit was
+> replaced by the in-cluster reconcile engine at
+> `src/ingestion/reconcile-connectors/`, run on a schedule by the reconcile
+> CronWorkflow; those host scripts have been deleted. For current behaviour
+> see the reconcile ADRs in this directory (`ADR/0001`, `ADR/0012`, …) and
+> `feature-reconcile/FEATURE.md`. Retained for historical context only.
+
 <!-- toc -->
 
 - [1. Overview](#1-overview)
