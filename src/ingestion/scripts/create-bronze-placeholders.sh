@@ -60,6 +60,7 @@ CREATE DATABASE IF NOT EXISTS bronze_bamboohr;
 CREATE DATABASE IF NOT EXISTS bronze_bitbucket_cloud;
 CREATE DATABASE IF NOT EXISTS bronze_zulip_proxy;
 CREATE DATABASE IF NOT EXISTS bronze_claude_team;
+CREATE DATABASE IF NOT EXISTS bronze_claude_enterprise;
 SQL
 
 # ---------------------------------------------------------------------------
@@ -1211,6 +1212,61 @@ CREATE TABLE IF NOT EXISTS bronze_zulip_proxy.users (
     tenant_id              Nullable(String),
     source_id              Nullable(String),
     unique_key             String,
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+fi
+
+# bronze_claude_enterprise.claude_enterprise_users — per-user/day Claude Enterprise
+# usage (admin Analytics API). claude_enterprise__ai_dev_usage (tool='claude_code')
+# reads user_email/date/code_*; tool_use_accepted ← code_tool_accepted_count,
+# tool_use_offered ← code_tool_accepted_count + code_tool_rejected_count. Mirrors
+# the connector InlineSchemaLoader (unique_key + date are non-null String).
+if ! ch_table_exists bronze_claude_enterprise claude_enterprise_users; then
+  echo "  Creating placeholder: bronze_claude_enterprise.claude_enterprise_users"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_users (
+    unique_key                   String,
+    tenant_id                    Nullable(String),
+    source_id                    Nullable(String),
+    date                         String,
+    user_id                      Nullable(String),
+    user_email                   Nullable(String),
+    chat_conversation_count      Nullable(Int64),
+    chat_message_count           Nullable(Int64),
+    chat_projects_created_count  Nullable(Int64),
+    chat_projects_used_count     Nullable(Int64),
+    chat_files_uploaded_count    Nullable(Int64),
+    chat_artifacts_created_count Nullable(Int64),
+    chat_thinking_message_count  Nullable(Int64),
+    chat_skills_used_count       Nullable(Int64),
+    chat_connectors_used_count   Nullable(Int64),
+    code_commit_count            Nullable(Int64),
+    code_pull_request_count      Nullable(Int64),
+    code_lines_added             Nullable(Int64),
+    code_lines_removed           Nullable(Int64),
+    code_session_count           Nullable(Int64),
+    code_tool_accepted_count     Nullable(Int64),
+    code_tool_rejected_count     Nullable(Int64),
+    web_search_count             Nullable(Int64),
+    excel_session_count          Nullable(Int64),
+    excel_message_count          Nullable(Int64),
+    powerpoint_session_count     Nullable(Int64),
+    powerpoint_message_count     Nullable(Int64),
+    cowork_session_count         Nullable(Int64),
+    cowork_message_count         Nullable(Int64),
+    cowork_action_count          Nullable(Int64),
+    cowork_dispatch_turn_count   Nullable(Int64),
+    cowork_skills_used_count     Nullable(Int64),
+    chat_metrics_json            Nullable(String),
+    claude_code_metrics_json     Nullable(String),
+    office_metrics_json          Nullable(String),
+    cowork_metrics_json          Nullable(String),
+    collected_at                 Nullable(String),
+    data_source                  Nullable(String),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',

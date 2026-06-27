@@ -1,0 +1,69 @@
+# Reusable Claude Enterprise per-user/day usage records
+# (bronze_claude_enterprise.claude_enterprise_users). Base carries every schema column
+# (unused = null) incl. the 4 _airbyte_* CDK columns. claude_enterprise__ai_dev_usage
+# (tool='claude_code') emits a row when code activity > 0; the fields under test
+# (date, unique_key, code_tool_accepted_count, code_tool_rejected_count) are set per test.
+# tool_use_accepted ← code_tool_accepted_count; tool_use_offered ← accepted + rejected.
+# Variants override identity (user_email) only.
+templates:
+  ent_user:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    unique_key: null
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "claude-enterprise-test"
+    date: null
+    user_id: null
+    user_email: null
+    chat_conversation_count: null
+    chat_message_count: null
+    chat_projects_created_count: null
+    chat_projects_used_count: null
+    chat_files_uploaded_count: null
+    chat_artifacts_created_count: null
+    chat_thinking_message_count: null
+    chat_skills_used_count: null
+    chat_connectors_used_count: null
+    code_commit_count: null
+    code_pull_request_count: null
+    code_lines_added: null
+    code_lines_removed: null
+    code_session_count: null
+    code_tool_accepted_count: null
+    code_tool_rejected_count: null
+    web_search_count: null
+    excel_session_count: null
+    excel_message_count: null
+    powerpoint_session_count: null
+    powerpoint_message_count: null
+    cowork_session_count: null
+    cowork_message_count: null
+    cowork_action_count: null
+    cowork_dispatch_turn_count: null
+    cowork_skills_used_count: null
+    chat_metrics_json: null
+    claude_code_metrics_json: null
+    office_metrics_json: null
+    cowork_metrics_json: null
+    collected_at: "2026-01-05T00:00:00Z"
+    data_source: "insight_claude_enterprise"
+
+  # user_id MUST be distinct per person: the staging model dedups with
+  # `LIMIT 1 BY tenant_id, source_id, user_id, date`, so a shared/NULL user_id
+  # collapses all three seats into one row (cohort of 1 → wrong team median).
+  alice:
+    $ref: "#/templates/ent_user"
+    user_email: alice@example.com
+    user_id: user-alice
+
+  bob:
+    $ref: "#/templates/ent_user"
+    user_email: bob@example.com
+    user_id: user-bob
+
+  carol:
+    $ref: "#/templates/ent_user"
+    user_email: carol@example.com
+    user_id: user-carol
