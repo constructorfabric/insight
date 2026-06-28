@@ -63,6 +63,7 @@ e2e/
 │   ├── migration_applier.py    # applies src/ingestion/scripts/migrations/*.sql
 │   ├── analytics_api.py        # builds + spawns the analytics-api binary
 │   ├── worker.py               # WorkerContext (resolves pytest-xdist worker id)
+│   ├── metric_coverage.py      # metric-coverage gate logic + inline SKIP_LIST (used by scripts/ci/metric_coverage.sh)
 │   └── config.py               # session config (ports, random creds)
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
@@ -70,6 +71,26 @@ e2e/
 └── meta/                       # framework's own smoke tests
     └── test_session_smoke.py
 ```
+
+## Metric coverage gate
+
+The gate runs as a **standalone CI job** ([`scripts/ci/metric_coverage.sh`](../../../../scripts/ci/metric_coverage.sh), workflow `.github/workflows/metric-coverage.yml`) — deliberately *not* part of this pytest suite. It boots just MariaDB + analytics-api (no ClickHouse/dbt/pytest), reads the metric universe from the **API** (`GET /v1/metrics` — the enabled metric_ids `POST /v1/metrics/queries` serves, seeded by the analytics-api migrations), and cross-checks it, **by `metric_id`**, against the `metric_id`s the tests send.
+
+The verdict per metric is **binary**:
+
+- **covered** (a `metrics/*.test.yaml` queries it) → **PASS**
+- **skip-listed** (in the inline `SKIP_LIST` in [`lib/metric_coverage.py`](lib/metric_coverage.py)) → **PASS** (baseline)
+- **neither** → **FAIL** — a new / unlisted metric must get a test or a `SKIP_LIST` entry.
+
+`SKIP_LIST` is the accepted baseline and the single source of truth (no side-car file, no categories — just `(metric_id, name, reason)`). It's kept honest: a **stale** entry (id no longer served) or a **redundant** one (now covered by a test) also fails the gate, so you remove it. The overall gate is PASS iff there are no FAILs. To add/remove a skip, edit `SKIP_LIST`.
+
+```bash
+bash scripts/ci/metric_coverage.sh      # the gate: build+boot analytics-api, diff, exit non-zero on failure
+# ad hoc against a running analytics-api:
+ANALYTICS_API_URL=http://localhost:18081 python3 lib/metric_coverage.py --md
+```
+
+Coverage is by `metric_id`; one metric_id (e.g. a bullet) emits many `metric_key`s, so a covered metric_id does not guarantee every key is asserted — finer `metric_key`-level coverage can be layered on later.
 
 ## Ports (loopback only)
 

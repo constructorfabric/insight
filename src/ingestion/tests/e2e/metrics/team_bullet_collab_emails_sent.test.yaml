@@ -1,0 +1,49 @@
+spec_version: 1
+description: >
+  Metric: m365_emails_sent — Team Bullet Collaboration (…0005), the TEAM variant
+  of the tested IC bullet (…0012).
+  How it's computed (bronze → silver → gold):
+    • bronze: daily M365 email-activity report per person (send/receive/read counts)
+    • silver: deduped to one row per person/day with the sent-email count
+    • gold:   per person, v_period = Σ emails sent over the window; the TEAM bullet's
+              value = the team AVERAGE of those per-person sums (the IC bullet …0012
+              returns the requested member's own sum instead). median/range are the
+              department (org_unit) distribution — identical scope to the IC bullet.
+
+  Team (single department "Engineering"): alice Σ60 · bob Σ20 · carol Σ10
+    → value = avg(60, 20, 10) = 30 ; median = quantileExact(0.5) of [10, 20, 60] = 20
+      (odd team → upper-middle element) ; range [10, 60].
+  Cases: Team-variant value (the team average) over the seeded department.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_m365.email_activity:
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-08", unique_key: team-sent-alice-20260108, sendCount: 60 }
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-01-08", unique_key: team-sent-alice-20260108, sendCount: 60 }  # verbatim duplicate → dedup to 60, not 120
+    - { $ref: templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-01-08", unique_key: team-sent-bob-20260108,   sendCount: 20 }
+    - { $ref: templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-01-08", unique_key: team-sent-carol-20260108, sendCount: 10 }
+
+cases:
+  # Team Bullet Collaboration (…0005): value = the team average of the per-person
+  # sums (NOT a single member). team {alice 60, bob 20, carol 10} → avg 30,
+  # median 20, range [10, 60]. Filtered by the department (org_unit) string.
+  - name: "m365_emails_sent — TEAM bullet (value = team average over the department)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000005
+            $filter: "org_unit_id eq 'Engineering' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: m365_emails_sent }
+        equal: { value: 30, median: 20, range_min: 10, range_max: 60 }

@@ -1,0 +1,44 @@
+# Minimal 2-service stack for the metric-coverage gate: MariaDB + analytics-api.
+#
+# analytics-api auto-applies its SeaORM migrations on startup (seeding the
+# `metrics` catalog) and serves `GET /v1/metrics` — the metric universe. No
+# ClickHouse / dbt / connectors: the gate only needs the metric_id list, which
+# is a MariaDB-only read. Driven by scripts/ci/metric_coverage.sh.
+#
+# The analytics-api image is provided by the caller via $ANALYTICS_API_IMAGE
+# (the script builds insight-analytics-api:coverage when none is given), so this
+# file stays pure-runtime and the workflow controls build caching.
+
+services:
+  mariadb:
+    image: mariadb:11.4.4
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?set by metric_coverage.sh}
+      MARIADB_DATABASE: analytics
+      MARIADB_USER: insight
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:?set by metric_coverage.sh}
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+  analytics-api:
+    image: ${ANALYTICS_API_IMAGE:-insight-analytics-api:coverage}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      # SeaORM connection; migrations run on startup against this DB.
+      ANALYTICS__database_url: "mysql://insight:${MARIADB_PASSWORD:?set}@mariadb:3306/analytics"
+      ANALYTICS__bind_addr: "0.0.0.0:8081"
+      # Non-nil default tenant so the tenant middleware resolves header-less
+      # /health and so GET /v1/metrics returns the GLOBAL-tenant seeded metrics.
+      ANALYTICS__metric_catalog__tenant_default_id: "00000000-0000-0000-0000-000000000001"
+      # /v1/metrics is a MariaDB-only read; CH is never queried, but the client
+      # is constructed at boot, so point it somewhere harmless.
+      ANALYTICS__clickhouse_url: "http://localhost:8123"
+      RUST_LOG: "warn"
+    ports:
+      - "${ANALYTICS_API_PORT:-18081}:8081"

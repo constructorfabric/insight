@@ -1,0 +1,81 @@
+spec_version: 1
+description: >
+  Metric: tasks_completed — Team Bullet Task Delivery (…0003), the TEAM variant
+  of the tested IC bullet (…0011).
+  How it's computed (bronze → silver → gold):
+    • bronze: bronze_jira.jira_issue (current state Closed) + jira_issue_history
+              (the Status→Closed event) + jira_user (account_id → email)
+    • silver: jira-enrich reverse-applies the changelog → close time; one closed
+              task per issue, attributed to its assignee
+    • gold:   per person, v_period = COUNT of tasks closed in the window; the TEAM
+              bullet's value = the team AVERAGE of those per-person counts (the IC
+              bullet …0011 returns the requested member's own count instead).
+              median/range are the department (org_unit) distribution.
+
+  Team (single department "Engineering"): alice closes 6 · bob 2 · carol 1
+    → value = avg(6, 2, 1) = 3 ; median = quantileExact(0.5) of [1, 2, 6] = 2
+      (odd team → upper-middle element) ; range [1, 6].
+  Cases: Team-variant value (the team average) over the seeded department.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+    - $ref: templates/jira_task.yaml#/templates/bob_user
+    - $ref: templates/jira_task.yaml#/templates/carol_user
+
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: templates/jira_task.yaml#/templates/field_duedate
+
+  bronze_jira.jira_issue:
+    # alice — 6 closed tasks
+    - { $ref: templates/jira_task.yaml#/templates/closed_task_alice, id: TA-1, jira_id: TA-1, unique_key: jira-test-TA-1, id_readable: TST-A1 }
+    - { $ref: templates/jira_task.yaml#/templates/closed_task_alice, id: TA-2, jira_id: TA-2, unique_key: jira-test-TA-2, id_readable: TST-A2 }
+    - { $ref: templates/jira_task.yaml#/templates/closed_task_alice, id: TA-3, jira_id: TA-3, unique_key: jira-test-TA-3, id_readable: TST-A3 }
+    - { $ref: templates/jira_task.yaml#/templates/closed_task_alice, id: TA-4, jira_id: TA-4, unique_key: jira-test-TA-4, id_readable: TST-A4 }
+    - { $ref: templates/jira_task.yaml#/templates/closed_task_alice, id: TA-5, jira_id: TA-5, unique_key: jira-test-TA-5, id_readable: TST-A5 }
+    - { $ref: templates/jira_task.yaml#/templates/closed_task_alice, id: TA-6, jira_id: TA-6, unique_key: jira-test-TA-6, id_readable: TST-A6 }
+    # bob — 2 closed tasks
+    - { $ref: templates/jira_task.yaml#/templates/closed_task_bob,   id: TB-1, jira_id: TB-1, unique_key: jira-test-TB-1, id_readable: TST-B1 }
+    - { $ref: templates/jira_task.yaml#/templates/closed_task_bob,   id: TB-2, jira_id: TB-2, unique_key: jira-test-TB-2, id_readable: TST-B2 }
+    # carol — 1 closed task
+    - { $ref: templates/jira_task.yaml#/templates/closed_task_carol, id: TC-1, jira_id: TC-1, unique_key: jira-test-TC-1, id_readable: TST-C1 }
+
+  bronze_jira.jira_issue_history:
+    - { $ref: templates/jira_task.yaml#/templates/closed_hist, id_readable: TST-A1, changelog_id: "20001", unique_key: jira-test-TST-A1-20001, author_account_id: alice-jira-acct }
+    - { $ref: templates/jira_task.yaml#/templates/closed_hist, id_readable: TST-A2, changelog_id: "20002", unique_key: jira-test-TST-A2-20002, author_account_id: alice-jira-acct }
+    - { $ref: templates/jira_task.yaml#/templates/closed_hist, id_readable: TST-A3, changelog_id: "20003", unique_key: jira-test-TST-A3-20003, author_account_id: alice-jira-acct }
+    - { $ref: templates/jira_task.yaml#/templates/closed_hist, id_readable: TST-A4, changelog_id: "20004", unique_key: jira-test-TST-A4-20004, author_account_id: alice-jira-acct }
+    - { $ref: templates/jira_task.yaml#/templates/closed_hist, id_readable: TST-A5, changelog_id: "20005", unique_key: jira-test-TST-A5-20005, author_account_id: alice-jira-acct }
+    - { $ref: templates/jira_task.yaml#/templates/closed_hist, id_readable: TST-A6, changelog_id: "20006", unique_key: jira-test-TST-A6-20006, author_account_id: alice-jira-acct }
+    - { $ref: templates/jira_task.yaml#/templates/closed_hist, id_readable: TST-B1, changelog_id: "20007", unique_key: jira-test-TST-B1-20007, author_account_id: bob-jira-acct }
+    - { $ref: templates/jira_task.yaml#/templates/closed_hist, id_readable: TST-B2, changelog_id: "20008", unique_key: jira-test-TST-B2-20008, author_account_id: bob-jira-acct }
+    - { $ref: templates/jira_task.yaml#/templates/closed_hist, id_readable: TST-C1, changelog_id: "20009", unique_key: jira-test-TST-C1-20009, author_account_id: carol-jira-acct }
+
+cases:
+  # Team Bullet Task Delivery (…0003): value = the team average of per-person
+  # closed-task counts. team {alice 6, bob 2, carol 1} → avg 3, median 2,
+  # range [1, 6]. Filtered by the department (org_unit) string.
+  - name: "tasks_completed — TEAM bullet (value = team average over the department)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000003
+            $filter: "org_unit_id eq 'Engineering' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: tasks_completed }
+        equal: { value: 3, median: 2, range_min: 1, range_max: 6 }
