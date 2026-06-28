@@ -29,6 +29,8 @@ set (host needs only pyyaml + httpx). Ad hoc:
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import sys
 from dataclasses import dataclass, field
@@ -161,13 +163,22 @@ def skip_index() -> dict[str, str]:
     return out
 
 
+def _universe_from_body(body: object) -> dict[str, str]:
+    """Parse a `POST /v1/catalog/get_metrics` body into `{metric_key: label}`.
+
+    Response shape: `{"metrics": [{"metric_key", "label", ...}]}`.
+    """
+    metrics = body.get("metrics", []) if isinstance(body, dict) else []
+    return {str(m["metric_key"]): str(m.get("label", "")) for m in metrics}
+
+
 def universe_from_url(base_url: str, tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, str]:
     """`{metric_key: label}` from `POST {base_url}/v1/catalog/get_metrics` — the
     enabled product metric_keys (dotted `<table>.<column>`).
 
     Sourced from the API (not a raw `metric_catalog` SELECT) so the gate checks
     the contract consumers see; the endpoint already returns exactly the enabled
-    catalog rows. Response shape: `{"metrics": [{"metric_key", "label", ...}]}`.
+    catalog rows.
     """
     import httpx  # local import: keeps the pure logic importable without httpx
 
@@ -175,8 +186,15 @@ def universe_from_url(base_url: str, tenant_id: str = DEFAULT_TENANT_ID) -> dict
         resp = c.post("/v1/catalog/get_metrics", json={})
         resp.raise_for_status()
         body = resp.json()
-    metrics = body.get("metrics", []) if isinstance(body, dict) else []
-    return {str(m["metric_key"]): str(m.get("label", "")) for m in metrics}
+    return _universe_from_body(body)
+
+
+def universe_from_file(path: str | Path) -> dict[str, str]:
+    """`{metric_key: label}` from a saved `POST /v1/catalog/get_metrics` response
+    — the `catalog_metrics.json` artifact the e2e run collects. Lets the CI gate
+    analyse the universe from a file without booting analytics-api.
+    """
+    return _universe_from_body(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 def asserted_keys_from_tests(metrics_dir: Path = METRICS_DIR) -> dict[str, set[str]]:
@@ -424,33 +442,44 @@ def render_markdown(r: CoverageReport) -> str:
 def main(argv: list[str] | None = None) -> int:
     """CLI: print the coverage table/report; exit non-zero on any gate failure.
 
-    `--md` prints the markdown status table (default: the plain-text report).
-    Reads the universe over HTTP from a running analytics-api: set
-    `ANALYTICS_API_URL` (and optionally `ANALYTICS_TENANT_ID`). The standalone
-    script `scripts/ci/metric_coverage.sh` sets these for you. This module never
-    spawns analytics-api itself.
+    Two universe sources:
+      --universe-file <catalog_metrics.json>  the artifact the e2e run collects
+                                               (CI gate — no analytics-api boot)
+      else $ANALYTICS_API_URL                  fetch live (local standalone runs)
+    `--md` renders the markdown status table (default: the plain-text report).
+    This module never spawns analytics-api itself.
     """
-    args = argv if argv is not None else sys.argv[1:]
-    url = os.environ.get("ANALYTICS_API_URL")
-    if not url:
-        print(
-            "metric coverage: set ANALYTICS_API_URL to a running analytics-api, then "
-            "re-run. The gate `scripts/ci/metric_coverage.sh` does this for you.",
-            file=sys.stderr,
-        )
-        return 2
-    universe = universe_from_url(url, os.environ.get("ANALYTICS_TENANT_ID", DEFAULT_TENANT_ID))
+    p = argparse.ArgumentParser(description="Metric-coverage gate (by metric_key).")
+    p.add_argument("--md", action="store_true", help="render Markdown instead of plain text")
+    p.add_argument(
+        "--universe-file",
+        help="catalog_metrics.json (a saved POST /v1/catalog/get_metrics response); "
+        "default: fetch from $ANALYTICS_API_URL",
+    )
+    args = p.parse_args(argv)
+
+    if args.universe_file:
+        universe = universe_from_file(args.universe_file)
+    else:
+        url = os.environ.get("ANALYTICS_API_URL")
+        if not url:
+            print(
+                "metric coverage: pass --universe-file <catalog_metrics.json> or set "
+                "ANALYTICS_API_URL to a running analytics-api.",
+                file=sys.stderr,
+            )
+            return 2
+        universe = universe_from_url(url, os.environ.get("ANALYTICS_TENANT_ID", DEFAULT_TENANT_ID))
 
     report = build_report(universe)
     if not report.universe:
         print(
-            "metric coverage: POST /v1/catalog/get_metrics returned no metrics — the "
-            "catalog isn't seeded. Check analytics-api startup / migrations.",
+            "metric coverage: empty universe — the catalog isn't seeded (live) or the "
+            "collected catalog_metrics.json is empty.",
             file=sys.stderr,
         )
         return 1
-    as_md = "--md" in args
-    print(render_markdown(report) if as_md else render_text(report))
+    print(render_markdown(report) if args.md else render_text(report))
     return 0 if report.passed else 1
 
 

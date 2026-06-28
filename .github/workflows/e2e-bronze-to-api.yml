@@ -7,6 +7,13 @@ name: E2E — Bronze to API
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
 # image is used for local development via src/ingestion/tests/e2e/e2e.sh.
 #
+# Topology: ONE heavy job (`e2e`) boots the stack, runs the suite, and — while
+# analytics-api is already up — collects three gate inputs into `.artifacts/`,
+# which it uploads. Three lightweight gate jobs then analyse those artifacts as
+# pure-Python checks (no Docker, no app boot): they each surface as their own
+# required-able status. See src/ingestion/tests/e2e/lib/{api_coverage,metric_coverage}.py
+# and scripts/ci/openapi_spec.py.
+#
 # Specs: docs/domain/bronze-to-api-e2e/specs/
 # Code:  src/ingestion/tests/e2e/
 
@@ -73,65 +80,26 @@ jobs:
       # migrations, and the shared dbt target/ dir is deleted by whichever
       # worker finishes first). Wall-time cost is negligible: the runner image
       # build (which compiles analytics-api + enrich) dominates the job.
+      #
+      # The suite ALSO emits .artifacts/ while analytics-api is up:
+      #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook ledger)
+      #   • openapi.live.json + catalog_metrics.json  (api/test_coverage_artifacts.py)
+      # The gate jobs below analyse these — no second app boot.
       - name: Run E2E suite
         run: ./e2e.sh test --tb=short -q
 
-      # ─── Metric coverage gate (folded in from the old metric-coverage.yml) ─
-      # Reuses the analytics-api image `./e2e.sh build` already produced
-      # (insight-e2e-analytics-api:local) — no second compile. Boots a throwaway
-      # MariaDB + analytics-api, reads the catalog from POST /v1/catalog/get_metrics,
-      # and fails if any metric_key's value is neither asserted by a test nor in
-      # SKIP_LIST. Runs
-      # even if the suite above failed, so both signals report (it doesn't depend
-      # on the suite — only on the built image).
-      - name: Set up Python (coverage gate)
+      # ─── Hand the collected inputs to the gate jobs ─────────────────────
+      # Uploaded even if the suite failed (sessionfinish + the collection test
+      # still run), so the gates report alongside a red suite. `path` is workspace-
+      # relative (actions ignore defaults.run.working-directory).
+      - name: Upload coverage inputs
         if: ${{ !cancelled() }}
-        uses: actions/setup-python@v5
+        uses: actions/upload-artifact@v4
         with:
-          python-version: "3.12"
-
-      - name: Metric coverage gate
-        if: ${{ !cancelled() }}
-        working-directory: ${{ github.workspace }}
-        env:
-          ANALYTICS_API_IMAGE: insight-e2e-analytics-api:local
-        run: |
-          pip install --quiet pyyaml httpx
-          bash scripts/ci/metric_coverage.sh
-
-      # ─── OpenAPI spec drift gate ────────────────────────────────────────
-      # Fetches GET /openapi.json from the live analytics-api (the same built
-      # image) and fails if docs/components/backend/analytics-api/openapi.json
-      # has drifted from the router — so adding/changing a route without
-      # regenerating the committed spec (bash scripts/ci/openapi_spec.sh update)
-      # blocks merge. Runs even if the suite failed (independent of it).
-      - name: OpenAPI spec drift gate
-        if: ${{ !cancelled() }}
-        working-directory: ${{ github.workspace }}
-        env:
-          ANALYTICS_API_IMAGE: insight-e2e-analytics-api:local
-        run: |
-          pip install --quiet httpx
-          bash scripts/ci/openapi_spec.sh check
-
-      # ─── API endpoint coverage gate ─────────────────────────────────────
-      # Diffs the endpoints the suite actually exercised — recorded by the httpx
-      # hook in AnalyticsApiProcess.client() and dumped at pytest_sessionfinish to
-      # .artifacts/observed_endpoints.json — against the committed OpenAPI spec.
-      # Fails if a documented operation is neither exercised nor in SKIP_LIST.
-      # Pure stdlib: reads two files, no Docker/network/deps.
-      - name: API endpoint coverage gate
-        if: ${{ !cancelled() }}
-        working-directory: ${{ github.workspace }}
-        run: |
-          python3 src/ingestion/tests/e2e/lib/api_coverage.py \
-            --observed src/ingestion/tests/e2e/.artifacts/observed_endpoints.json \
-            --spec docs/components/backend/analytics-api/openapi.json \
-            --md | tee api_endpoint_coverage.md
-          rc=${PIPESTATUS[0]}
-          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat api_endpoint_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
-          if [ "$rc" -ne 0 ]; then echo "::error::API endpoint coverage gate failed — a documented route is exercised by no test and not in SKIP_LIST (or a skip is stale). See the report above."; fi
-          exit "$rc"
+          name: coverage-inputs
+          path: src/ingestion/tests/e2e/.artifacts/
+          if-no-files-found: warn
+          retention-days: 7
 
       # ─── Diagnostics on failure ─────────────────────────────────────────
       - name: Dump compose logs on failure
@@ -147,3 +115,83 @@ jobs:
       - name: Tear down
         if: always()
         run: ./e2e.sh down || true
+
+  # ─── Gate jobs — pure-Python analysis of the collected artifacts ──────────
+  # Each runs only after `e2e` (needs), downloads `coverage-inputs`, and reads
+  # plain files. No Docker, no analytics-api boot. `!cancelled()` so they still
+  # report when the suite itself failed (the artifacts are usually present).
+
+  metric-coverage-gate:
+    name: Metric coverage gate
+    needs: e2e
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs
+          path: coverage-inputs
+      - name: Analyse metric coverage
+        run: |
+          pip install --quiet pyyaml
+          python3 src/ingestion/tests/e2e/lib/metric_coverage.py \
+            --universe-file coverage-inputs/catalog_metrics.json --md | tee metric_coverage.md
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat metric_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::metric coverage gate failed — a metric_key is value-tested by no test and not in SKIP_LIST (or a skip is stale). See the report."; fi
+          exit "$rc"
+
+  openapi-spec-drift-gate:
+    name: OpenAPI spec drift gate
+    needs: e2e
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs
+          path: coverage-inputs
+      - name: Check committed spec vs live router
+        run: |
+          python3 scripts/ci/openapi_spec.py check \
+            --live-file coverage-inputs/openapi.live.json | tee openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::OpenAPI spec drift — docs/components/backend/analytics-api/openapi.json is stale. Run: bash scripts/ci/openapi_spec.sh update"; fi
+          exit "$rc"
+
+  api-endpoint-coverage-gate:
+    name: API endpoint coverage gate
+    needs: e2e
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs
+          path: coverage-inputs
+      - name: Analyse endpoint coverage
+        run: |
+          python3 src/ingestion/tests/e2e/lib/api_coverage.py \
+            --observed coverage-inputs/observed_endpoints.json \
+            --spec docs/components/backend/analytics-api/openapi.json \
+            --md | tee api_endpoint_coverage.md
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat api_endpoint_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::API endpoint coverage gate failed — a documented route is exercised by no test and not in SKIP_LIST (or a skip is stale). See the report."; fi
+          exit "$rc"

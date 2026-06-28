@@ -69,25 +69,38 @@ def main() -> int:
         help="X-Insight-Tenant-Id header (default: $ANALYTICS_TENANT_ID; "
         "optional — the route is public)",
     )
+    p.add_argument(
+        "--live-file",
+        help="read the live spec from this saved GET /openapi.json (the "
+        "openapi.live.json artifact the e2e run collects) instead of fetching — "
+        "lets the CI gate run with no analytics-api boot",
+    )
     args = p.parse_args()
 
-    # Required input — fail fast, no silent fallback (code-conventions §No defaults).
-    base_url = args.url or os.environ.get("ANALYTICS_API_URL")
-    if not base_url:
-        print(
-            "ERROR: analytics-api URL required — pass --url or set ANALYTICS_API_URL",
-            file=sys.stderr,
-        )
-        return 2
-    tenant = args.tenant or os.environ.get("ANALYTICS_TENANT_ID")
+    # Live spec source: a collected file (CI gate — no boot) or a live fetch.
+    if args.live_file:
+        live = normalize(json.loads(Path(args.live_file).read_text(encoding="utf-8")))
+        source = args.live_file
+    else:
+        # Required input — fail fast, no silent fallback (code-conventions §No defaults).
+        base_url = args.url or os.environ.get("ANALYTICS_API_URL")
+        if not base_url:
+            print(
+                "ERROR: pass --live-file <openapi.live.json>, or --url / "
+                "$ANALYTICS_API_URL to fetch a running analytics-api",
+                file=sys.stderr,
+            )
+            return 2
+        tenant = args.tenant or os.environ.get("ANALYTICS_TENANT_ID")
+        live = normalize(fetch_live_spec(base_url, tenant))
+        source = f"{base_url}{SPEC_ROUTE}"
 
-    live = normalize(fetch_live_spec(base_url, tenant))
     path = Path(args.file)
 
     if args.mode == "write":
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(live, encoding="utf-8")
-        print(f"wrote {path} ({len(live.splitlines())} lines) from {base_url}{SPEC_ROUTE}")
+        print(f"wrote {path} ({len(live.splitlines())} lines) from {source}")
         return 0
 
     # check
@@ -100,7 +113,7 @@ def main() -> int:
         return 2
     committed = path.read_text(encoding="utf-8")
     if committed == live:
-        print(f"OK: {path} matches the live spec at {base_url}{SPEC_ROUTE}")
+        print(f"OK: {path} matches the live spec ({source})")
         return 0
 
     sys.stdout.writelines(
@@ -108,7 +121,7 @@ def main() -> int:
             committed.splitlines(keepends=True),
             live.splitlines(keepends=True),
             fromfile=f"{path} (committed)",
-            tofile=f"{base_url}{SPEC_ROUTE} (live)",
+            tofile=f"{source} (live)",
         )
     )
     print(
