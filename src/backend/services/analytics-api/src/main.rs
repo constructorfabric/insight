@@ -191,7 +191,7 @@ async fn run_server(cfg: config::AppConfig) -> anyhow::Result<()> {
     };
 
     // Build router
-    let app = api::router(state);
+    let app = api::router(state)?;
 
     // Start server. The HTTP listener binds first — `/health` returns 200
     // unconditionally, so readiness is satisfied before the validator's

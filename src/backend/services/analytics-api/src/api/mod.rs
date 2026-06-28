@@ -53,7 +53,7 @@ pub struct AppState {
     pub admin_threshold: AdminThresholdService,
 }
 
-/// OpenAPI document metadata served at `/openapi.json` and baked into the
+/// `OpenAPI` document metadata served at `/openapi.json` and baked into the
 /// committed `docs/components/backend/analytics-api/openapi.json`.
 ///
 /// `version` is the **API contract** version (stable) — deliberately NOT
@@ -95,12 +95,12 @@ fn openapi_info() -> OpenApiInfo {
 // One `OperationBuilder` chain per endpoint makes this a long-but-flat route
 // table; splitting it across helpers would only obscure the 1:1 route↔handler map.
 #[allow(clippy::too_many_lines)]
-pub fn router(state: AppState) -> Router {
+pub fn router(state: AppState) -> anyhow::Result<Router> {
     let state = Arc::new(state);
 
     // In-process OpenAPI registry. Required by `OperationBuilder::register`;
-    // not yet exposed over HTTP (follow-up: serve `build_openapi(..)` at
-    // `/openapi.json`).
+    // each route below records its spec here. Served at `/openapi.json` at the
+    // end of this function (see the `build_openapi` call near the merge).
     let openapi = OpenApiRegistryImpl::new();
 
     let mut router: Router<Arc<AppState>> = Router::new();
@@ -359,9 +359,7 @@ pub fn router(state: AppState) -> Router {
     // the contract without an `X-Insight-Tenant-Id` header. The committed copy at
     // `docs/components/backend/analytics-api/openapi.json` is regenerated from
     // this route by `scripts/ci/openapi_spec.sh` (a CI gate fails on drift).
-    let spec = openapi
-        .build_openapi(&openapi_info())
-        .expect("analytics-api: OpenAPI document failed to build");
+    let spec = openapi.build_openapi(&openapi_info())?;
     let openapi_doc = Router::new().route(
         "/openapi.json",
         get(move || {
@@ -370,5 +368,5 @@ pub fn router(state: AppState) -> Router {
         }),
     );
 
-    api.merge(health).merge(openapi_doc).with_state(state)
+    Ok(api.merge(health).merge(openapi_doc).with_state(state))
 }
