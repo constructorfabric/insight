@@ -74,7 +74,7 @@ e2e/
 
 ## Metric coverage gate
 
-The gate runs as a **standalone CI job** ([`scripts/ci/metric_coverage.sh`](../../../../scripts/ci/metric_coverage.sh), workflow `.github/workflows/metric-coverage.yml`) — deliberately *not* part of this pytest suite. It boots just MariaDB + analytics-api (no ClickHouse/dbt/pytest), reads the metric universe from the **API** (`GET /v1/metrics` — the enabled metric_ids `POST /v1/metrics/queries` serves, seeded by the analytics-api migrations), and cross-checks it, **by `metric_id`**, against the `metric_id`s the tests send.
+The gate runs as a dedicated step in the **E2E — Bronze to API** workflow (`.github/workflows/e2e-bronze-to-api.yml`), after the suite — via [`scripts/ci/metric_coverage.sh`](../../../../scripts/ci/metric_coverage.sh), *not* as a pytest test. It boots just MariaDB + analytics-api (reusing the `insight-e2e-analytics-api:local` image `./e2e.sh build` already produced — no ClickHouse/dbt/pytest, no second compile), reads the metric universe from the **API** (`GET /v1/metrics` — the enabled metric_ids `POST /v1/metrics/queries` serves, seeded by the analytics-api migrations), and cross-checks it, **by `metric_id`**, against the `metric_id`s the tests send.
 
 The verdict per metric is **binary**:
 

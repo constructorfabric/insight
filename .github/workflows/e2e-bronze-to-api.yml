@@ -76,6 +76,28 @@ jobs:
       - name: Run E2E suite
         run: ./e2e.sh test --tb=short -q
 
+      # ─── Metric coverage gate (folded in from the old metric-coverage.yml) ─
+      # Reuses the analytics-api image `./e2e.sh build` already produced
+      # (insight-e2e-analytics-api:local) — no second compile. Boots a throwaway
+      # MariaDB + analytics-api, reads the universe from GET /v1/metrics, and
+      # fails if any served metric_id is neither tested nor in SKIP_LIST. Runs
+      # even if the suite above failed, so both signals report (it doesn't depend
+      # on the suite — only on the built image).
+      - name: Set up Python (coverage gate)
+        if: ${{ !cancelled() }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Metric coverage gate
+        if: ${{ !cancelled() }}
+        working-directory: ${{ github.workspace }}
+        env:
+          ANALYTICS_API_IMAGE: insight-e2e-analytics-api:local
+        run: |
+          pip install --quiet pyyaml httpx
+          bash scripts/ci/metric_coverage.sh
+
       # ─── Diagnostics on failure ─────────────────────────────────────────
       - name: Dump compose logs on failure
         if: failure()
