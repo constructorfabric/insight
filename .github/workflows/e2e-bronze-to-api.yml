@@ -146,7 +146,7 @@ jobs:
         run: |
           pip install --quiet pyyaml
           python3 src/ingestion/tests/e2e/lib/metric_coverage.py \
-            --universe-file coverage-inputs/catalog_metrics.json --md | tee metric_coverage.md
+            --universe-file coverage-inputs/catalog_metrics.json | tee metric_coverage.md
           rc=${PIPESTATUS[0]}
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat metric_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then echo "::error::metric coverage gate failed — a metric_key is value-tested by no test and not in SKIP_LIST (or a skip is stale). See the report."; fi
@@ -176,28 +176,8 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "::error::OpenAPI spec drift — docs/components/backend/analytics-api/openapi.json is stale. Regenerate locally: ./e2e.sh test && python3 scripts/ci/openapi_spec.py update"; fi
           exit "$rc"
 
-  api-endpoint-coverage-gate:
-    name: API endpoint coverage gate
-    needs: e2e
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@v4
-        with:
-          name: coverage-inputs
-          path: coverage-inputs
-      - name: Analyse endpoint coverage
-        run: |
-          python3 src/ingestion/tests/e2e/lib/api_coverage.py \
-            --observed coverage-inputs/observed_endpoints.json \
-            --spec docs/components/backend/analytics-api/openapi.json \
-            --md | tee api_endpoint_coverage.md
-          rc=${PIPESTATUS[0]}
-          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat api_endpoint_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
-          if [ "$rc" -ne 0 ]; then echo "::error::API endpoint coverage gate failed — a documented route is exercised by no test and not in SKIP_LIST (or a skip is stale). See the report."; fi
-          exit "$rc"
+  # NOTE: endpoint coverage is NOT a blocking gate. The suite records the routes
+  # it exercises (httpx hook -> observed_endpoints.json, in the coverage-inputs
+  # artifact) for observability; `./e2e.sh gates` prints the report locally. A
+  # read-only metric suite touches few routes (most are write/admin), so a pass/fail
+  # gate there would be ~all skip-list — not worth blocking merge.

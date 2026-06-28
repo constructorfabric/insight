@@ -318,24 +318,6 @@ def _skips_by_reason(r: CoverageReport) -> list[tuple[str, int]]:
     return sorted(counts.items(), key=lambda x: (-x[1], x[0]))
 
 
-def render_text(r: CoverageReport) -> str:
-    cov, skp, tot = len(r.covered), len(r.skipped_active), len(r.universe)
-    backlog = [k for k in r.skipped_active if _is_reachable(r.skips[k])]
-    lines = [
-        f"Metric coverage (by metric_key): {'PASS' if r.passed else 'FAIL'}  "
-        f"({cov}/{tot} validated {_pct(cov, tot)}, {skp} skipped [{len(backlog)} reachable], "
-        f"{len(r.uncovered)} missing)",
-    ]
-    for t, keys in sorted(_by_table(r.universe).items()):
-        c = sum(1 for k in keys if k in r.covered)
-        lines.append(f"  {_vector_name(t):20} {c}/{len(keys)}")
-    for reason, n in _skips_by_reason(r):
-        lines.append(f"  skip[{n:>2}] {reason}")
-    for v in gate_violations(r):
-        lines.append(f"  ✗ {v}")
-    return "\n".join(lines)
-
-
 def render_markdown(r: CoverageReport) -> str:
     """Markdown report: a per-vector summary + the reachable backlog up top, then
     the full per-key detail (collapsed), then a skip-list-hygiene footer."""
@@ -417,11 +399,9 @@ def main(argv: list[str] | None = None) -> int:
       --universe-file <catalog_metrics.json>  the artifact the e2e run collects
                                                (CI gate — no analytics-api boot)
       else $ANALYTICS_API_URL                  fetch live (local standalone runs)
-    `--md` renders the markdown status table (default: the plain-text report).
     This module never spawns analytics-api itself.
     """
     p = argparse.ArgumentParser(description="Metric-coverage gate (by metric_key).")
-    p.add_argument("--md", action="store_true", help="render Markdown instead of plain text")
     p.add_argument(
         "--universe-file",
         help="catalog_metrics.json (a saved POST /v1/catalog/get_metrics response); "
@@ -450,7 +430,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    print(render_markdown(report) if args.md else render_text(report))
+    print(render_markdown(report))
     return 0 if report.passed else 1
 
 

@@ -76,17 +76,17 @@ e2e/
 
 ## Coverage gates
 
-Three gates run as **separate jobs** in the **E2E — Bronze to API** workflow (`.github/workflows/e2e-bronze-to-api.yml`), *not* as pytest tests. The `e2e` job runs the suite and — while analytics-api is up — collects three inputs into `.artifacts/` (uploaded as the `coverage-inputs` artifact); three lightweight gate jobs then analyse those files (no Docker, no second app boot):
+Coverage checks run as **separate jobs** in the **E2E — Bronze to API** workflow (`.github/workflows/e2e-bronze-to-api.yml`), *not* as pytest tests. The `e2e` job runs the suite and — while analytics-api is up — collects three inputs into `.artifacts/` (uploaded as the `coverage-inputs` artifact); the gate jobs then analyse those files (no Docker, no second app boot):
 
-- **metric-coverage-gate** — every product `metric_key` the catalog exposes (`POST /v1/catalog/get_metrics` → `catalog_metrics.json`) has its value asserted by a test, or a `SKIP_LIST` entry.
-- **openapi-spec-drift-gate** — the committed `docs/components/backend/analytics-api/openapi.json` matches the live router (`GET /openapi.json` → `openapi.live.json`).
-- **api-endpoint-coverage-gate** — every documented route is exercised by a test (recorded via the httpx hook → `observed_endpoints.json`), or skip-listed.
+- **metric-coverage-gate** (blocking) — every product `metric_key` the catalog exposes (`POST /v1/catalog/get_metrics` → `catalog_metrics.json`) has its value asserted by a test, or a `SKIP_TABLES`/`SKIP_LIST` entry.
+- **openapi-spec-drift-gate** (blocking) — the committed `docs/components/backend/analytics-api/openapi.json` matches the live router (`GET /openapi.json` → `openapi.live.json`).
+- **endpoint coverage** (observability, **non-blocking**) — the suite records which routes it exercises (httpx hook → `observed_endpoints.json`). `lib/api_coverage.py` reports covered-vs-spec, but it is NOT a CI gate: a read-only metric suite touches few routes (most are write/admin), so a pass/fail there would be ~all skip-list. `./e2e.sh gates` prints it as info.
 
 Locally, after a run:
 
 ```bash
 ./e2e.sh test     # runs the suite + collects .artifacts/{catalog_metrics,openapi.live,observed_endpoints}.json
-./e2e.sh gates    # runs all three gates against .artifacts/ (inside the runner image; no DB)
+./e2e.sh gates    # metric + openapi gates (blocking) + endpoint report, against .artifacts/ (in the runner image; no DB)
 python3 scripts/ci/openapi_spec.py update   # regenerate the committed OpenAPI doc from .artifacts/openapi.live.json
 ```
 

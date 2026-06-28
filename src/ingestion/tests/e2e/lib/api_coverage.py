@@ -173,9 +173,6 @@ class CoverageReport:
     def passed(self) -> bool:
         return not (self.missing or self.redundant_skips or self.stale_skips)
 
-    def validated_count(self) -> int:
-        return sum(1 for op in self.covered)
-
 
 def build_report(spec: dict, observed: list[dict]) -> CoverageReport:
     spec_ops = spec_operations(spec)
@@ -236,30 +233,10 @@ def render_markdown(r: CoverageReport) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_text(r: CoverageReport) -> str:
-    total = len(r.spec_ops)
-    out = [
-        f"API endpoint coverage: {len(r.covered)}/{total} exercised, "
-        f"{len(r.skipped)} skipped, {len(r.missing)} missing "
-        f"→ {'PASS' if r.passed else 'FAIL'}",
-    ]
-    for op in sorted(r.spec_ops):
-        if op in r.validated:
-            out.append(f"  [x] {op}  (saw {_statuses(r.validated[op])})")
-        elif op in r.skips:
-            out.append(f"  [-] {op}  ({r.skips[op]})")
-        else:
-            out.append(f"  [!] {op}  MISSING")
-    for v in gate_violations(r):
-        out.append(f"  !! {v}")
-    return "\n".join(out) + "\n"
-
-
 def main() -> int:
-    p = argparse.ArgumentParser(description="API endpoint coverage gate.")
+    p = argparse.ArgumentParser(description="API endpoint coverage report.")
     p.add_argument("--observed", required=True, help="path to observed_endpoints.json from the suite")
     p.add_argument("--spec", required=True, help="path to the committed OpenAPI spec")
-    p.add_argument("--md", action="store_true", help="render Markdown instead of plain text")
     args = p.parse_args()
 
     observed_path = Path(args.observed)
@@ -274,7 +251,7 @@ def main() -> int:
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
 
     report = build_report(spec, observed)
-    sys.stdout.write(render_markdown(report) if args.md else render_text(report))
+    sys.stdout.write(render_markdown(report))
     return 0 if report.passed else 1
 
 
