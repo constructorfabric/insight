@@ -173,7 +173,7 @@ jobs:
             --live-file coverage-inputs/openapi.live.json | tee openapi_drift.txt
           rc=${PIPESTATUS[0]}
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
-          if [ "$rc" -ne 0 ]; then echo "::error::OpenAPI spec drift — docs/components/backend/analytics-api/openapi.json is stale. Regenerate locally: ./e2e.sh test && bash scripts/ci/openapi_spec.sh update"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::OpenAPI spec drift — docs/components/backend/analytics-api/openapi.json is stale. Regenerate locally: ./e2e.sh test && python3 scripts/ci/openapi_spec.py update"; fi
           exit "$rc"
 
   api-endpoint-coverage-gate:

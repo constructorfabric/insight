@@ -87,7 +87,7 @@ Locally, after a run:
 ```bash
 ./e2e.sh test     # runs the suite + collects .artifacts/{catalog_metrics,openapi.live,observed_endpoints}.json
 ./e2e.sh gates    # runs all three gates against .artifacts/ (inside the runner image; no DB)
-bash scripts/ci/openapi_spec.sh update   # regenerate the committed OpenAPI doc from .artifacts/openapi.live.json
+python3 scripts/ci/openapi_spec.py update   # regenerate the committed OpenAPI doc from .artifacts/openapi.live.json
 ```
 
 The verdict per **metric_key** (each individual number) is **binary**:
