@@ -2,17 +2,35 @@ spec_version: 1
 description: >
   Metric: crm_pipeline_now — open-deal snapshot (…0028), sales-rep dashboard.
   How it's computed (bronze → silver → gold):
-    • bronze: HubSpot deals (owner_id, is_closed, amount_home)
+    • bronze: HubSpot deals (owner_id, is_closed, close_date, amount_home)
     • silver: deals deduped to one row per record; owner email → person_id
     • gold:   per rep — pipeline_count = deals with is_closed = 0;
               pipeline_value = round(Σ amount_home of open deals).
-  STOCK metric — the view exposes NO metric_date column, so the FE (and this
-  test) query it WITHOUT a period filter; analytics-api's date-filter injection
-  no-ops on a date-less view.
 
-  Single rep (alice). 2 open deals (20k + 50k) + 1 closed-won (excluded).
-  Cases: alice snapshot — count 2, value 70000; a duplicate open deal re-sync
-         must dedup (count/value unchanged); closed deal must NOT count.
+  STOCK metric — the view exposes NO metric_date column, and openness is decided
+  purely by the static `is_closed` flag (no date logic at all). The FE queries
+  it WITHOUT a period.
+
+  Consequences pinned by the cases below (CURRENT behavior):
+    • the only valid call is date-less → the open snapshot (count + Σ value);
+    • supplying ANY metric_date bound (start and/or end) makes the per-query
+      result NON-ok: analytics-api wraps the bare view and injects
+      `WHERE metric_date …`, but the view has no such column → the query errors
+      (batch HTTP stays 200). So neither a start nor an end can be passed today;
+    • a closed deal is excluded from the pipeline regardless of its close_date,
+      and is counted in the closed metric instead (see crm_kpis deals_closed).
+
+  ⚠️ DIVERGENCE FROM THE "as of end_date" SPEC: ideally Pipeline Now would accept
+  the period END and be a point-in-time snapshot — a deal whose close_date is
+  AFTER end_date would count as still-open and appear here, while one closed
+  on/before end_date would not (and the start would be irrelevant). The current
+  view is is_closed-based and date-less, so deal-p4 (closed with a FUTURE
+  close_date) is EXCLUDED rather than included, and a period can't be supplied at
+  all. These tests intentionally lock the current behavior; making the metric
+  end-date-aware is a backend change tracked separately.
+
+  Single rep (alice). 2 open deals (20k + 50k) + 1 closed-won (past close) +
+  1 closed with a future close date. Pipeline = the 2 open deals only.
 
 bronze:
   bronze_bamboohr.employees:
@@ -50,7 +68,8 @@ bronze:
       properties_amount_in_home_currency: "50000"
       properties_hs_is_closed: "false"
       properties_hs_is_closed_won: "false"
-    # P3 closed-won — must be EXCLUDED from the open pipeline
+    # P3 closed-won (past close 2026-01-10) — EXCLUDED from the open pipeline,
+    # counted in the closed metric instead (crm_kpis deals_closed/deals_won).
     - $ref: templates/hubspot.yaml#/templates/hubspot_deal
       id: deal-p3
       unique_key: hubspot-deal-p3
@@ -60,10 +79,23 @@ bronze:
       properties_amount_in_home_currency: "99999"
       properties_hs_is_closed: "true"
       properties_hs_is_closed_won: "true"
+    # P4 closed with a FUTURE close_date (2026-12-31). Under the desired
+    # "as of end_date" spec this would be still-open as of a Jan end_date and
+    # belong in the pipeline; the current is_closed-based view EXCLUDES it.
+    # Asserted excluded below to document the gap.
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-p4
+      unique_key: hubspot-deal-p4
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-08T09:00:00"
+      properties_closedate: "2026-12-31T00:00:00Z"
+      properties_amount_in_home_currency: "88888"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "false"
 
 cases:
-  # No metric_date in the filter — pipeline_now is a date-less stock view.
-  - name: "crm_pipeline_now — alice snapshot (count 2, value 70000; closed excluded, dup deduped)"
+  # ── 1. No period (how the FE calls it today) ──────────────────────────────
+  - name: "crm_pipeline_now — alice snapshot, no period (count 2, value 70000; closed + future-closed excluded, dup deduped)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -83,3 +115,23 @@ cases:
         assert: "int(it.pipeline_count) == 2 && double(it.pipeline_value) == 70000.0"
       - in: crm
         assert: "size(items) == 1"
+
+  # ── 2. Supplying a period (start+end) → per-query NON-ok ───────────────────
+  # The view is date-less; injecting metric_date references a non-existent column
+  # so the query errors (batch HTTP still 200). Documents that Pipeline Now can
+  # take neither a start nor an end today — the "as of end_date" semantics the
+  # product wants would require a backend change. If that lands, this assertion
+  # flips and is the reminder to update the metric's contract + this test.
+  - name: "crm_pipeline_now — supplying a metric_date period is rejected (date-less view)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: crm
+            metric_id: 00000000-0000-0000-0001-000000000028
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"          # batch HTTP stays 200 on a per-query error
+      - in: crm
+        assert: "result.status != 'ok'"  # this query itself errors (no metric_date column)
