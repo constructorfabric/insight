@@ -194,7 +194,10 @@ if ! ch_table_exists silver class_ai_dev_usage; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     insight_tenant_id    String,
+    source_id            String,
+    unique_key           String,
     email                String,
+    api_key_id           Nullable(String),
     day                  Date,
     tool                 String,
     is_active            UInt8,
@@ -203,14 +206,22 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     tool_use_offered     Nullable(Float64),
     tool_use_accepted    Nullable(Float64),
     lines_added          Nullable(Float64),
+    lines_removed        Nullable(Float64),
     total_lines_added    Nullable(Float64),
+    total_lines_removed  Nullable(Float64),
     accepted_lines_added Nullable(Float64),
     spec_lines           Nullable(Float64),
     session_count        Nullable(Float64),
     total_chat_messages  Nullable(Float64),
     cost_cents           Nullable(UInt32),
+    commits_count        Nullable(UInt32),
+    pull_requests_count  Nullable(UInt32),
     prs_with_cc_count    Nullable(UInt32),
     prs_total_count      Nullable(UInt32),
+    tool_action_breakdown_json Nullable(String),
+    source               String,
+    data_source          String,
+    collected_at         Nullable(DateTime64(3)),
     _version             UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
