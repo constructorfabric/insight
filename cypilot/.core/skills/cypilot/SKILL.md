@@ -5,439 +5,229 @@ description: "Invoke when user asks to do something with Cypilot, or wants to an
 
 # Cypilot Unified Tool
 
+
+<!-- toc -->
+
+- [Cypilot Unified Tool](#cypilot-unified-tool)
+  - [Goal](#goal)
+  - [Preconditions](#preconditions)
+  - [⚠️ MUST Instruction Semantics ⚠️](#️-must-instruction-semantics-️)
+  - [Agent Acknowledgment](#agent-acknowledgment)
+  - [Execution Logging](#execution-logging)
+  - [Variables](#variables)
+    - [Template Variable Resolution](#template-variable-resolution)
+  - [CLI Resolution](#cli-resolution)
+  - [Protocol Guard](#protocol-guard)
+  - [Cypilot Mode](#cypilot-mode)
+  - [Agent-Safe Invocation](#agent-safe-invocation)
+  - [Quick Commands](#quick-commands)
+    - [Direct CLI Commands (No Workflow Routing)](#direct-cli-commands-no-workflow-routing)
+    - [Workflow Shortcuts](#workflow-shortcuts)
+  - [Workflow Routing](#workflow-routing)
+  - [Command Reference](#command-reference)
+  - [Auto-Configuration](#auto-configuration)
+  - [Project Configuration](#project-configuration)
+
+<!-- /toc -->
+
 ## Goal
 
-Cypilot provides: artifact validation, cross-reference validation, code traceability, spec coverage measurement, ID search/navigation, kit management (install/update with file-level diff), TOC generation/validation, multi-agent integration, and design-to-code implementation with `@cpt-*` markers.
+Cypilot provides artifact validation, cross-reference validation, code traceability, spec coverage measurement, ID search/navigation, kit management, TOC generation/validation, multi-agent integration, and design-to-code implementation with `@cpt-*` markers.
 
 ## Preconditions
 
 - `cpt` available (preferred) or `python3` as fallback
-- Target paths exist and readable
+- Target paths exist and are readable
 
 ---
 
 ## ⚠️ MUST Instruction Semantics ⚠️
 
-**MUST** = **MANDATORY**. NOT optional. NOT recommended. NOT suggested.
-
-**ALWAYS** = **MANDATORY**. Equivalent to MUST. Used for action-gated instructions.
-
-**If you skip ANY MUST instruction**:
-- 🚫 Your execution is **INVALID**
-- 🚫 Output must be **DISCARDED**
-- 🚫 You are **NOT following Cypilot**
-
-**One skipped MUST = entire workflow FAILED**
-
-**All MUST instructions are CRITICAL without exception.**
-
----
+**MUST** and **ALWAYS** are mandatory. Skipping any MUST instruction invalidates execution, the output must be discarded, and the workflow fails.
 
 ## Agent Acknowledgment
 
-**Before proceeding with ANY Cypilot work, confirm you understand**:
+- [ ] MUST/ALWAYS are mandatory; skipping any MUST invalidates execution.
+- [ ] I will read all required files before proceeding.
+- [ ] I will follow workflows step-by-step without shortcuts.
+- [ ] I will not create or modify files, or execute any other write-capable Cypilot command, without explicit user confirmation, and I will not add auto-approval flags unless the user explicitly asks for them.
+- [ ] I will list Cypilot files read, why, and the triggering instruction before any approval prompt.
 
-- [ ] MUST = MANDATORY, not optional
-- [ ] Skipping ANY MUST instruction = INVALID execution
-- [ ] INVALID execution = output must be DISCARDED
-- [ ] I will read ALL required files BEFORE proceeding
-- [ ] I will follow workflows step-by-step WITHOUT shortcuts
-- [ ] I will NOT create files without user confirmation (operation workflows)
-- [ ] I will include a list of Cypilot files read while producing the response, why each file was read, and which initial instruction triggered opening each file — ALWAYS placed BEFORE any user action prompt (approve all, yes/no, proceed, modify, etc.) so the user sees context before deciding
-
-**By proceeding with Cypilot work, I acknowledge and accept these requirements.**
-
----
+By proceeding with Cypilot work, I acknowledge and accept these requirements.
 
 ALWAYS SET {cypilot_mode} = `on` FIRST when loading this skill
 
 ## Execution Logging
 
-ALWAYS provide execution visibility
+ALWAYS provide execution visibility:
+- Notify the user when entering any H2 section of a Cypilot prompt.
+- Notify the user when completing any `- [ ]` checklist task.
+- Use `- [CONTEXT]: MESSAGE`; set context to the file/section and message to the action + why.
+- Logging must help the user understand loaded prompts, routing decisions, debugging state, and workflow progress.
 
-ALWAYS notify the user WHEN entering a major section (H2 heading `##`) of any Cypilot prompt (workflow, rules, requirements).
-
-ALWAYS notify the user WHEN completing a checklist task (a Markdown task line starting with `- [ ]`).
-
-ALWAYS use this notification format WHEN emitting execution logs:
-
-```
-- [CONTEXT]: MESSAGE
-```
-
-ALWAYS set **CONTEXT** to the file or section being executed WHEN emitting execution logs (e.g., `{cypilot_path}/.core/workflows/generate.md`, `DESIGN rules`, `execution-protocol`).
-
-ALWAYS set **MESSAGE** to what Cypilot is doing and why WHEN emitting execution logs.
-
-ALWAYS ensure execution logging supports these goals WHEN Cypilot is enabled:
-- Help the user understand which Cypilot prompts are being followed
-- Help the user track decision points and branching logic
-- Help the user debug unexpected behavior
-- Help the user learn the Cypilot workflow
-
-ALWAYS consider these examples as valid execution logs WHEN Cypilot is enabled:
-
-```
+Example:
+```text
 - [execution-protocol]: Entering "Load Rules" — target is CODE, loading codebase/rules.md
 - [DESIGN rules]: Completing "Validate structure" — all required sections present
 - [workflows/generate.md]: Entering "Determine Target" — user requested code implementation
 ```
 
----
-
 ## Variables
 
-**While Cypilot is enabled**, remember these variables:
-
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `{cypilot_path}` | Directory containing this `../../SKILL.md`| Project root for Cypilot navigation |
+| Variable | Value | Use |
+|---|---|---|
+| `{cypilot_path}` | Directory path resolved from root `AGENTS.md` | Base path for all Cypilot-relative references |
 | `{cypilot_mode}` | `on` or `off` | Current Cypilot mode state |
-| `{cpt_cmd}` | `cpt` or `python3 {cypilot_path}/.core/skills/cypilot/scripts/cypilot.py` | Resolved CLI entrypoint (set during CLI Resolution) |
+| `{cpt_cmd}` | `cpt` or `python3 {cypilot_path}/.core/skills/cypilot/scripts/cypilot.py` | Resolved CLI entrypoint |
 | `{cpt_installed}` | `true` or `false` | Whether the `cpt` CLI is available |
 
-**Setting `{cypilot_mode}`**:
-- Explicit command: `cypilot on` / `cypilot off`
-- Cypilot prompts that activate/deactivate Cypilot workflows
-
-Use `{cypilot_path}` as the base path for all relative Cypilot file references.
+Setting `{cypilot_mode}`: explicit `cypilot on/off` or a prompt that activates/deactivates Cypilot workflows.
 
 ### Template Variable Resolution
 
-Kit markdown files (SKILL.md, AGENTS.md, rules.md, workflows) use template variables like `{adr_template}`, `{scripts}`, `{workflow_pr_review}`, etc. These are **resource identifiers** declared in the kit's `manifest.toml` and registered in `core.toml` after installation.
-
-**How to resolve variables**:
-
-1. **From `info` output** (automatic during Protocol Guard): The `info` command includes a `variables` dict that maps every template variable to its absolute path. Parse the `variables` field from the JSON output.
-
-2. **Dedicated command** (when you need a fresh or filtered variable map):
-```bash
-{cpt_cmd} --json resolve-vars
-```
-
-**Variable sources** (merged in order):
-- **System**: `cypilot_path`, `project_root`
-- **Kit resources**: all resource IDs from installed kits (e.g., `adr_template`, `scripts`, `workflow_pr_review`)
-
-ALWAYS use the resolved absolute path WHEN encountering a `{variable}` reference in any Cypilot markdown file.
-
-ALWAYS resolve variables from the `info` output first — the `variables` dict is already available after Protocol Guard.
+- Resolve variables from `{cpt_cmd} --json info` first; parse the returned `variables` dict.
+- Use `{cpt_cmd} --json resolve-vars` only when a fresh or filtered map is needed.
+- Variable sources: system (`cypilot_path`, `project_root`) + installed kit resources.
+- ALWAYS resolve `{variable}` references to absolute paths before using kit markdown files.
 
 ## CLI Resolution
 
-ALWAYS run BEFORE Protocol Guard WHEN `{cypilot_mode}` is `on`:
+Run before Protocol Guard when `{cypilot_mode}` is `on`:
+1. `command -v cpt` → `{cpt_cmd} = cpt`, `{cpt_installed} = true`
+2. Otherwise `{cpt_cmd} = python3 {cypilot_path}/.core/skills/cypilot/scripts/cypilot.py`, `{cpt_installed} = false`
+3. If `{cpt_installed}` is `false` and the marker file `~/.cypilot/cache/cpt-prompt-dismissed` does not exist, display this prompt verbatim and wait for input:
+   `Install cpt to enable the short 'cpt' command? Reply 'yes' or 'no' [y/N]:`
+   - `y` or `yes` (case-insensitive) → run `pipx install git+https://github.com/cyberfabric/cyber-pilot.git`; on success set `{cpt_cmd} = cpt` and `{cpt_installed} = true`
+   - `n` or `no` (case-insensitive) → decline; keep `{cpt_cmd} = python3 {cypilot_path}/.core/skills/cypilot/scripts/cypilot.py` and create the marker file `~/.cypilot/cache/cpt-prompt-dismissed` so the prompt is not shown again
+   - Pressing Enter with no input → use the default `no` (the capital `N` in `[y/N]` indicates the default); treat as decline and create the marker file
+   - `Ctrl+C` / interrupt → treat as decline/abort: do not install, create the marker file, and continue with the long-path invocation
+4. Re-offer installation (re-display the prompt above and, on dismissal, refresh the marker file) only when the user later asks about the long invocation path `python3 {cypilot_path}/.core/skills/cypilot/scripts/cypilot.py`; otherwise the marker file suppresses re-prompting
 
-1. Run `command -v cpt` — if found: `{cpt_cmd}` = `cpt`, `{cpt_installed}` = `true`
-2. If not found: `{cpt_cmd}` = `python3 {cypilot_path}/.core/skills/cypilot/scripts/cypilot.py`, `{cpt_installed}` = `false`
-3. If not found AND `~/.cypilot/cache/cpt-prompt-dismissed` does NOT exist: inform user that `cpt` can be installed via `pipx install git+https://github.com/cyberfabric/cyber-pilot.git`, offer to install or continue; on dismiss create `~/.cypilot/cache/cpt-prompt-dismissed`
-4. If user later asks about the long invocation path, re-offer `cpt` installation
-
-ALWAYS use `{cpt_cmd}` for ALL Cypilot CLI invocations after resolution.
+ALWAYS use `{cpt_cmd}` for all later CLI invocations.
 
 ## Protocol Guard
 
-ALWAYS FIRST open and remember `{cypilot_path}/.gen/AGENTS.md`
-
-ALWAYS open and follow `{cypilot_path}/config/AGENTS.md` WHEN it exists
-
-ALWAYS open and follow `{cypilot_path}/.gen/SKILL.md` WHEN it exists
-
-ALWAYS open and follow `{cypilot_path}/config/SKILL.md` WHEN it exists
-
-ALWAYS FIRST run `{cpt_cmd} --json info` BEFORE any Cypilot workflow action
-
-ALWAYS store the `variables` dict from `info` output — use it to resolve `{variable}` references in kit files (AGENTS.md, SKILL.md, rules.md, workflows)
-
-ALWAYS FIRST read `{cypilot_path}/.gen/AGENTS.md` WHEN cypilot status is FOUND
-
-ALWAYS resolve `{variable}` references in loaded kit files using the `variables` dict from `info` output
-
-ALWAYS FIRST parse and load ALL matched WHEN clause specs BEFORE proceeding with workflow
-
-ALWAYS include Cypilot Context block WHEN editing code:
-```
+- ALWAYS FIRST open and remember `{cypilot_path}/.gen/AGENTS.md`
+- ALWAYS open and follow `{cypilot_path}/config/AGENTS.md` when it exists
+- ALWAYS open and follow `{cypilot_path}/.gen/SKILL.md` when it exists
+- ALWAYS open and follow `{cypilot_path}/config/SKILL.md` when it exists
+- ALWAYS FIRST run `{cpt_cmd} --json info` before any Cypilot workflow action
+- ALWAYS store the `variables` dict from `info` output and use it to resolve `{variable}` references in AGENTS/SKILL/rules/workflows
+- ALWAYS follow this load order: `info` → registry/intent/target/rules resolution from `execution-protocol.md` → matched WHEN-clause specs
+- ALWAYS load matched WHEN-clause specs only after registry understanding, target determination, and `rules.md` resolution provide enough context to match safely
+- ALWAYS FIRST parse and load all matched WHEN-clause specs before proceeding
+- MUST NOT preload every AGENTS/SKILL/spec file up front; load only the smallest set needed for the current request
+- Before opening a large AGENTS/SKILL/spec file, estimate size and prefer chunked reads of matched sections over full-file reads
+- If safe WHEN-clause matching is not yet possible, stop after registry/target/rules resolution and continue only when enough context exists to load specs boundedly
+- If required Protocol Guard context would exceed the current turn budget, checkpoint or escalate instead of proceeding with partial or unbounded spec loading
+- ALWAYS include this block when editing code:
+```text
 Cypilot Context:
 - Cypilot: {path}
 - Target: {artifact|codebase}
 - Specs loaded: {list paths or "none required"}
 ```
-
-ALWAYS STOP and re-run Protocol Guard WHEN specs should be loaded but weren't listed
-
----
+- ALWAYS stop and re-run Protocol Guard when required specs should have been loaded but were not
+- ALWAYS open and follow `{cypilot_path}/.core/requirements/language-complexity.md` for the global UX rule on output language complexity. Resolved level (`low` / `middle` / `high`, default `middle`) applies to ALL Cypilot user-facing output across every workflow / methodology / skill — chat messages AND user-facing artifact / documentation bodies. Source quotes from input artifacts and spec/normative files (workflows, requirements, kits, agent definitions) are exempt. Resolution: mid-session override `change language complexity to {X}` → `[language] complexity` in `{cypilot_path}/config/core.toml` → default `middle`. Override `remember new language complexity` persists to `core.toml`.
 
 ## Cypilot Mode
 
-ALWAYS set `{cypilot_mode}` = `on` FIRST WHEN user invokes `cypilot {prompt}`
-
-ALWAYS run `info` WHEN enabling Cypilot mode
-
-ALWAYS show status after enabling:
-```
+- ALWAYS set `{cypilot_mode} = on` first when user invokes `cypilot {prompt}`
+- ALWAYS run `info` when enabling Cypilot mode
+- ALWAYS show:
+```text
 Cypilot Mode Enabled
 Cypilot: {FOUND at path | NOT_FOUND}
 ```
----
 
 ## Agent-Safe Invocation
 
-ALWAYS use the resolved CLI entrypoint:
-```bash
-{cpt_cmd} --json <subcommand> [options]
-```
+- ALWAYS use `{cpt_cmd} --json <subcommand> [options]` for agent-driven CLI calls unless a command-specific exception below says otherwise
+- ALWAYS pass `--json` immediately after `{cpt_cmd}` and before the subcommand when using machine-output mode
+- EXCEPTION: NEVER run `{cpt_cmd} init` with `--json`; always invoke `{cpt_cmd} init ...` without `--json`
+- EXCEPTION: NEVER run `{cpt_cmd} delegate` with `--json`; always invoke `{cpt_cmd} delegate <plan_dir> ...` without `--json`
+- EXCEPTION: NEVER run `{cpt_cmd} update` with `--json`; always invoke `{cpt_cmd} update ...` without `--json`
+- ALWAYS use `=` form for pattern args starting with `-` (example: `--pattern=-req-`)
+- MUST obtain explicit user confirmation before executing any write-capable command, including direct CLI commands that do not route through a workflow
+- MUST NOT add auto-approval flags such as `--yes`, `-y`, or `--force` to write-capable commands unless the user explicitly requested that non-interactive behavior
 
-ALWAYS pass `--json` as the FIRST argument (before the subcommand) WHEN invoking any Cypilot CLI command from an AI agent. This ensures machine-readable JSON output on stdout. Without `--json`, the CLI produces human-friendly output intended for interactive terminal use.
+## Quick Commands
 
-ALWAYS use `=` form for pattern args starting with `-`: `--pattern=-req-`
+### Direct CLI Commands (No Workflow Routing)
 
----
+No workflow routing skips workflow selection only. It does not waive confirmation: obtain explicit user confirmation before executing any write-capable direct CLI command below. When asking for that confirmation, explain why the command is needed now, tell the user exactly how to approve or decline, state what approval will do next, and mark the suggested path when one option is clearly safer or more relevant.
 
-## Quick Commands (No Protocol)
+| User invocation | Direct action |
+|---|---|
+| `cypilot init` | After explicit user confirmation, run `{cpt_cmd} init` without `--json` |
+| `cypilot update` | After explicit user confirmation, run `{cpt_cmd} update` without `--json` |
+| `cypilot agents <name>` | Run `{cpt_cmd} --json agents --agent <name>` |
+| `cypilot generate-agents <name>` | After explicit user confirmation, run `{cpt_cmd} --json generate-agents --agent <name>` |
+| `cypilot workspace init` | After explicit user confirmation, run `{cpt_cmd} --json workspace-init [--root <dir>] [--output <path>] [--inline] [--force] [--max-depth <N>] [--dry-run]` |
+| `cypilot workspace add` | After explicit user confirmation, run `{cpt_cmd} --json workspace-add --name <name> (--path <path> \| --url <url>) [--branch <branch>] [--role <role>] [--adapter <path>] [--inline] [--force]` |
+| `cypilot workspace info` | Run `{cpt_cmd} --json workspace-info` |
+| `cypilot workspace sync` | After explicit user confirmation, run `{cpt_cmd} --json workspace-sync [--source <name>] [--dry-run] [--force]`; `--force` is destructive |
 
-ALWAYS SKIP Protocol Guard and workflow loading WHEN user invokes quick commands
+### Workflow Shortcuts
 
-ALWAYS run `{cpt_cmd} --json init --yes` directly WHEN user invokes `cypilot init`
-
-ALWAYS run `{cpt_cmd} --json generate-agents --agent <name>` directly WHEN user invokes `cypilot generate-agents <name>`
-
-ALWAYS open and follow `{cypilot_path}/.core/workflows/generate.md` directly WHEN user invokes `cypilot auto-config` or `cypilot configure` — generate.md will trigger the auto-config methodology
-
-ALWAYS run `{cpt_cmd} --json workspace-init [--root <dir>] [--output <path>] [--inline] [--force] [--max-depth <N>] [--dry-run]` directly WHEN user invokes `cypilot workspace init`
-
-ALWAYS run `{cpt_cmd} --json workspace-add --name <name> (--path <path> | --url <url>) [--branch <branch>] [--role <role>] [--adapter <path>] [--inline] [--force]` directly WHEN user invokes `cypilot workspace add` — auto-detects inline workspace and routes accordingly when `--inline` is not specified. Use `--inline` to force adding to `config/core.toml` (Git URL sources not supported in inline mode). Returns error if source name already exists unless `--force` is specified.
-
-ALWAYS run `{cpt_cmd} --json workspace-info` directly WHEN user invokes `cypilot workspace info`
-
-ALWAYS run `{cpt_cmd} --json workspace-sync [--source <name>] [--dry-run] [--force]` directly WHEN user invokes `cypilot workspace sync` — **WARNING: `--force` is DESTRUCTIVE** — it discards uncommitted changes and may lose local commits
-
----
+| User invocation | Action |
+|---|---|
+| `cypilot auto-config` / `cypilot configure` | Open and follow `{cypilot_path}/.core/workflows/generate.md` |
 
 ## Workflow Routing
 
-Cypilot has exactly **THREE** core workflows plus specialized sub-workflows. No exceptions.
+Cypilot has exactly three core workflows plus specialized sub-workflows and dedicated capability agents. Routing priority is `delegate` > `compile-phase` > `execute-phase` > `plan` > `generate`/`analyze`. Delegation intent MUST route to the `cypilot-ralphex` capability agent rather than falling through to generic planning or generation. Generated-plan phase compilation intent MUST route to the dedicated `cypilot-phase-compiler` capability agent, and generated-plan phase execution intent MUST route to the dedicated `cypilot-phase-runner` capability agent rather than back into generic planning.
 
-ALWAYS open and follow `{cypilot_path}/.core/workflows/plan.md` FIRST WHEN user intent is PLAN: plan, let's plan, create a plan, execution plan, break down, decompose — **check this BEFORE generate/analyze** because "plan to generate X" means PLAN, not GENERATE
+Oversized-input invariant: if the raw task input exceeds `500` total lines across the direct prompt text, attached or provided files, or one large file, Cypilot MUST explicitly offer `/cypilot-plan` before any direct `/cypilot-generate` or `/cypilot-analyze` execution continues. Line count = sum( lines in direct prompt text if present + lines in each attached or provided file ); when stdin is used the direct prompt text is included in this sum as `input/direct-prompt.md`; intermediate/generated chunk files are excluded from this count (only raw user inputs are counted). If the user chooses the plan path, the planner MUST first compute the input signature using the read-only `{cpt_cmd} --json chunk-input ... --dry-run` mode (which writes no files) to check for existing package reuse, and MUST obtain explicit user approval before materializing that input under `{cypilot_path}/.plans/{task-slug}/input/` using the write-capable `{cpt_cmd} --json chunk-input ... --max-lines 300 --threshold-lines 500` command (without `--dry-run`). The planner MUST pass `--include-stdin` when direct prompt text must be packaged together with provided files; when stdin is used, it MUST also preserve that raw prompt as `input/direct-prompt.md`. The emitted chunk files become mandatory plan inputs for the relevant phases. If the user declines plan escalation, Cypilot MAY continue in the direct workflow only after an explicit warning that reduced guarantees apply.
 
-ALWAYS open and follow `{cypilot_path}/.core/workflows/generate.md` WHEN user intent is WRITE: create, edit, fix, update, implement, refactor, delete, add, setup, configure, build, code — AND the user did NOT say "plan"
+Completion invariants for workflow outputs:
+- A `/cypilot-plan` run is not complete until it reaches one of three valid stopping points defined by `workflows/plan.md`: `(a)` the raw-input approval checkpoint, where the planner has identified oversized input and presented the `Proceed with raw-input materialization? [y/n]` prompt — the user may approve (`y`) to continue on the plan path or reject (`n`) to decline raw-input materialization with no filesystem mutations; `(b)` the brief checkpoint where `plan.toml` and every required `brief-*` file exist on disk and the response presents the explicit next-step choice set; or `(c)` the fully compiled plan state where every corresponding `phase-*` file also exists on disk after the user chose inline generation or `cypilot-phase-compiler` execution.
+- A `/cypilot-generate` run that wrote or updated any files is not complete until the final response includes both `Plan Review Prompt` and `Direct Review Prompt` blocks. This applies on both the validated success path and the RELAXED explicitly unvalidated recovery path.
+- A `/cypilot-analyze` run with any actionable issue is not complete until the final response includes both `Fix Prompt` and `Plan Prompt` blocks.
+- A `/cypilot delegate` run is not complete until the final response includes delegation status, handoff result or error details, and next-step options.
+- A native plan-phase compilation run is not complete until the final response includes compiled phase identity, output file path, and compile-time validation outcome.
+- A native plan-phase execution run is not complete until the final response includes executed phase status, manifest update outcome, and the next-phase handoff or recovery action.
+- MUST NOT end a workflow response immediately after the summary, analysis report, or next-step options when one of the required prompt pairs is still missing.
 
-ALWAYS open and follow `{cypilot_path}/.core/workflows/analyze.md` WHEN user intent is READ: analyze, validate, review, analyze, check, inspect, audit, compare, list, show, find — AND the user did NOT say "plan"
+| Intent | Match | Action |
+|---|---|---|
+| Delegate | `delegate`, `delegate to ralphex`, `ralphex execute`, `ralphex review`, `hand off to ralphex`, `run with ralphex`, `ralphex delegation` | Open and follow `{cypilot_path}/.core/skills/cypilot/agents/cypilot-ralphex.md` |
+| Compile phase | `compile phase`, `compile next phase`, `compile plan phase`, `generate phase file`, `compile from brief`, `build phase from brief` | Open and follow `{cypilot_path}/.core/skills/cypilot/agents/cypilot-phase-compiler.md` |
+| Execute phase | `execute phase`, `run next phase`, `continue plan`, `resume plan`, `execute plan phase`, `run plan phase`, `execute the next phase` | Open and follow `{cypilot_path}/.core/skills/cypilot/agents/cypilot-phase-runner.md` |
+| Plan | `plan`, `create a plan`, `execution plan`, `break down`, `decompose`, or `plan to ...` | Open and follow `{cypilot_path}/.core/workflows/plan.md` first |
+| Generate | `create`, `edit`, `fix`, `update`, `implement`, `refactor`, `delete`, `add`, `setup`, `configure`, `build`, `code` and user did not say `plan` | Open and follow `{cypilot_path}/.core/workflows/generate.md` |
+| Analyze | `analyze`, `validate`, `review`, `check`, `inspect`, `audit`, `compare`, `list`, `show`, `find`, `explain`, `tell me about`, `walk me through`, `teach me`, `present`, `introduce`, `let's understand`, `make sense of` (or equivalents in any user language; intent matching is language-agnostic) and user did not say `plan` | Open and follow `{cypilot_path}/.core/workflows/analyze.md` (storytelling intent activates `EXPLAIN_MODE=true` via the WHEN-rule for `requirements/storytelling.md`) |
+ | Workspace | `workspace`, `multi-repo`, `add source`, `add repo`, `cross-reference`, `cross-repo` | Open and follow `{cypilot_path}/.core/workflows/workspace.md` |
+ | Unclear | `help`, `look at`, `work with`, `handle` | Ask `Why this input is needed: I need the Cypilot mode to route your request correctly. Reply with plan / generate / analyze. plan = phased execution for large or multi-step work; generate = create or modify files; analyze = read-only inspection or review. Suggested: generate for requested changes; analyze for inspection-only requests.` and stop if the user cancels |
+ 
+ `configure` and `auto-config` are workflow shortcuts, not direct no-protocol commands; both route through `generate.md`, which may auto-trigger `requirements/auto-config.md` for brownfield projects with no project-specific rules.
+ 
+ ## Command Reference
 
-ALWAYS open and follow `{cypilot_path}/.core/workflows/workspace.md` (specialized sub-workflow) WHEN user intent is WORKSPACE: workspace, multi-repo, add source, add repo, cross-reference, cross-repo
+Entrypoint: `{cpt_cmd} <command> [options]`
+Machine output: add `--json` immediately after `{cpt_cmd}` and before the subcommand, except for `init`, `delegate`, and `update`, which MUST run without `--json`. Exit codes: `0 = PASS`, `1 = filesystem/config error`, `2 = FAIL`.
+Legacy aliases: `validate-code` = `validate`; `validate-rules` = `validate-kits`.
 
-ALWAYS ask user "plan (phased execution) / generate (modify) / analyze (read-only)?" WHEN intent is UNCLEAR: help, look at, work with, handle and STOP WHEN user cancel or exit
+| Category | Commands |
+|---|---|
+| Validation | `validate`, `validate-kits`, `validate-toc`, `self-check`, `spec-coverage` |
+| Search | `list-ids`, `list-id-kinds`, `get-content`, `where-defined`, `where-used` |
+| Kit management | `kit install`, `kit update` |
+| Delegation | `delegate <plan_dir>` |
+| Utilities | `toc`, `chunk-input`, `info`, `resolve-vars`, `init`, `update`, `agents`, `generate-agents` |
+| Migration | `migrate`, `migrate-config` |
+| Workspace | `workspace-init`, `workspace-add`, `workspace-info`, `workspace-sync` |
 
-> **Routing priority**: plan > generate/analyze. If the user says "plan to generate/analyze X", the primary intent is PLAN — the generate/analyze keyword describes WHAT to plan, not what to do now.
+Use `validate` for artifact or code validation, `toc` for Markdown TOC generation, `chunk-input` for oversized workflow inputs, `info` and `resolve-vars` for discovery/path resolution, and `generate-agents` for integration generation. Use `kit update` for file-level kit refresh, `delegate` for ralphex handoff, and workspace commands for multi-repo setup.
 
-> **Note**: `generate.md` auto-triggers the auto-config methodology (`requirements/auto-config.md`) when it detects a brownfield project with no project-specific rules. "configure" intent routes through generate.md.
+See `{cypilot_path}/.core/skills/cypilot/cypilot.clispec` for full syntax, arguments, options, exit semantics, and examples.
 
-## Command Reference
+ ---
 
-All commands use the entrypoint:
-```bash
-{cpt_cmd} <command> [options]
-```
+ ## Auto-Configuration
 
-All commands output JSON to stdout when invoked with `--json`. Without `--json`, output is human-friendly. Exit codes: 0=PASS, 1=filesystem/config error, 2=FAIL.
-
-### Validation Commands
-
-#### validate
-```bash
-validate [--artifact <path>] [--skip-code] [--verbose] [--output <path>] [--local-only] [--source <name>]
-```
-Validates artifacts and code with deterministic checks (structure, cross-refs, task statuses, traceability markers — pairing, coverage, orphans). Use `--local-only` to skip cross-repo workspace validation. Use `--source <name>` to validate a specific workspace source. Note: `--local-only` and `--source` are independent and can be combined — `--source` narrows which artifacts are validated, `--local-only` controls whether cross-repo IDs are included as reference context.
-
-Legacy aliases: `validate-code` (same behavior), `validate-rules` (alias for `validate-kits`).
-
-#### validate-kits
-```bash
-validate-kits [--kit <id>] [--template <path>] [--verbose]
-```
-Validates kit configuration — template frontmatter, constraints, resource paths.
-
-#### validate-toc
-```bash
-validate-toc <files...> [--max-level <N>] [--verbose]
-```
-Validates Table of Contents in Markdown files — TOC exists, anchors point to real headings, all headings covered, not stale.
-
-#### self-check
-```bash
-self-check [--kit <id>] [--verbose]
-```
-Validates example artifacts against their templates (template QA). Ensures templates and examples remain synchronized.
-
-#### spec-coverage
-```bash
-spec-coverage [--system <slug>] [--min-coverage <N>] [--min-file-coverage <N>] [--min-granularity <N>] [--verbose] [--output <path>]
-```
-Measures CDSL marker coverage in codebase files. Reports coverage percentage, granularity score, per-file details, and uncovered line ranges. Use `--system` to limit to specific system slug(s). Use `--min-file-coverage` to enforce per-file minimum.
-
-### Search Commands
-
-#### list-ids
-```bash
-list-ids [--artifact <path>] [--pattern <string>] [--regex] [--kind <string>] [--all] [--include-code] [--source <name>]
-```
-Lists all Cypilot IDs from registered artifacts. Supports filtering by pattern, kind, and optional code scanning. Use `--source <name>` to list IDs from a specific workspace source.
-
-#### list-id-kinds
-```bash
-list-id-kinds [--artifact <path>]
-```
-Lists ID kinds that exist in artifacts with counts and template mappings.
-
-#### get-content
-```bash
-get-content (--artifact <path> | --code <path>) --id <string> [--inst <string>]
-```
-Retrieves content block for a specific Cypilot ID from artifacts or code files.
-
-#### where-defined
-```bash
-where-defined --id <id> [--artifact <path>]
-```
-Finds where a Cypilot ID is defined.
-
-#### where-used
-```bash
-where-used --id <id> [--artifact <path>] [--include-definitions]
-```
-Finds all references to a Cypilot ID.
-
-### Kit Management Commands
-
-#### kit install
-```bash
-kit install <source-path> [--dry-run] [--yes]
-```
-Installs a kit from a source directory. Copies kit files to `config/kits/{slug}/`.
-
-#### kit update
-```bash
-kit update [--kit <slug>] [--dry-run] [--yes] [--auto-approve]
-```
-Updates kit files in `config/kits/{slug}/` with file-level diff. Interactive prompts for modified files: accept/decline/accept-all/decline-all.
-
-### Utility Commands
-
-#### toc
-```bash
-toc <files...> [--max-level <N>] [--indent <N>] [--dry-run] [--skip-validate]
-```
-Generates or updates Table of Contents in Markdown files between `<!-- toc -->` markers.
-
-#### info
-```bash
-info [--root <path>] [--cypilot-root <path>]
-```
-Discovers Cypilot configuration and shows project status (cypilot_dir, project_name, specs, kits). Includes a `variables` dict mapping all template variables to absolute paths.
-
-#### resolve-vars
-```bash
-resolve-vars [--root <path>] [--kit <slug>] [--flat]
-```
-Resolves all template variables (`{adr_template}`, `{scripts}`, etc.) to absolute file paths. Sources: system variables (`cypilot_path`, `project_root`) + kit resource bindings from `core.toml`. Use `--kit` to filter to a single kit. Use `--flat` for a plain variable→path dict.
-
-#### init
-```bash
-init [--project-root <path>] [--cypilot-root <path>] [--project-name <string>] [--yes] [--dry-run] [--force]
-```
-Initializes Cypilot config directory (`.core/`, `.gen/`, `config/`) and root `AGENTS.md`.
-
-#### update
-```bash
-update [--source <path>] [--force] [--dry-run]
-```
-Updates `.core/` from cache, updates kit files in `config/kits/` with file-level diff, regenerates `.gen/` aggregates, ensures `config/` scaffold.
-
-#### agents
-```bash
-agents --agent <name> [--root <path>] [--cypilot-root <path>] [--dry-run]
-```
-Generates agent-specific workflow proxies and skill entry points.
-Supported: windsurf, cursor, claude, copilot, openai.
-
-Generates workflow commands, skill outputs, and **subagents** (isolated agent definitions with scoped tools and dedicated prompts). Two subagents are created for tools that support them: `cypilot-codegen` (full write access, worktree isolation) and `cypilot-pr-review` (read-only). Windsurf does not support subagents and is gracefully skipped.
-
-Shortcut: `agents --openai`
-
-### Migration Commands
-
-#### migrate
-```bash
-migrate [--project-root <path>] [--cypilot-root <path>] [--dry-run] [--yes]
-```
-Migrates Cypilot v2 projects to v3 (adapter-based → blueprint-based, artifacts.json → artifacts.toml, three-directory layout).
-
-#### migrate-config
-```bash
-migrate-config [--project-root <path>] [--dry-run]
-```
-Converts legacy JSON config files to TOML format.
-
-### Workspace Commands
-
-Workspaces are either **standalone** (`.cypilot-workspace.toml` at project root) or **inline** (`[workspace]` section in `config/core.toml`). The two types cannot be mixed.
-
-#### workspace-init
-```bash
-workspace-init [--root <dir>] [--output <path>] [--inline] [--force] [--max-depth <N>] [--dry-run]
-```
-Initialize a multi-repo workspace by scanning nested sub-directories for repos with cypilot directories. Rejects cross-type conflicts (inline vs standalone) and requires `--force` to reinitialize an existing workspace. Scanning depth is limited by `--max-depth` (default 3) to prevent unbounded traversal; symlinks are skipped.
-
-#### workspace-add
-```bash
-workspace-add --name <name> (--path <path> | --url <url>) [--branch <branch>] [--role <role>] [--adapter <path>] [--inline] [--force]
-```
-Add a source to a workspace config. Auto-detects standalone vs inline workspace. Use `--inline` to force adding to `config/core.toml`. Git URL sources are not supported in inline mode. `--path` is validated at add-time; returns error if directory not found. Returns error if source name already exists unless `--force` is specified.
-
-#### workspace-info
-```bash
-workspace-info
-```
-Display workspace config, list sources, show per-source status (cypilot dir found, artifact count, reachability).
-
-#### workspace-sync
-```bash
-workspace-sync [--source <name>] [--dry-run] [--force]
-```
-Fetch and update worktrees for Git URL sources. Use `--source` to sync a single source. Use `--dry-run` to preview without network operations. Use `--force` to skip dirty worktree check (**WARNING: DESTRUCTIVE** — uncommitted changes will be discarded via `git reset --hard` and local commits may be lost via `git checkout -B`). Local path sources are skipped. Source resolution does not perform network operations for existing repos — use `workspace-sync` to explicitly update.
-
----
-
-## Auto-Configuration
-
-Cypilot can scan a brownfield project and generate project-specific rules automatically.
-
-**What it does**:
-- Scans project structure, entry points, conventions, patterns
-- Generates per-system rule files → `{cypilot_path}/config/rules/{slug}.md`
-- Adds WHEN rules to `{cypilot_path}/config/AGENTS.md`
-- Registers detected systems in `{cypilot_path}/config/artifacts.toml`
-
-**When to use**:
-- After `cypilot init` on an existing (brownfield) project
-- When Cypilot doesn't know your project conventions yet
-- When you want to reconfigure after major project changes
-
-**How to invoke**:
-- `cypilot auto-config` — run auto-config workflow
-- `cypilot configure` — alias
-- Automatic — `generate.md` offers auto-config when brownfield + no rules detected
-
----
+Use auto-config after `cypilot init` on a brownfield project, when project conventions are unknown, or after major structural changes. It scans structure/conventions, generates `{cypilot_path}/config/rules/{slug}.md`, adds WHEN rules to `{cypilot_path}/config/AGENTS.md`, and registers systems in `{cypilot_path}/config/artifacts.toml`. Invoke via `cypilot auto-config`, `cypilot configure`, or the automatic offer inside `generate.md`.
 
 ## Project Configuration
 
-Project configuration is stored in `{cypilot_path}/config/core.toml`:
-- System definitions (name, slug)
-- Kit registrations and paths
-- Ignore lists for validation
-
-Artifact registry: `{cypilot_path}/config/artifacts.toml`
-- Artifact paths, kinds, and system mappings
-- Codebase paths for traceability scanning
-- Autodetect rules for artifact discovery
-
-All commands output JSON when invoked with `--json`. Exit codes: 0=PASS, 1=filesystem error, 2=FAIL.
+Project configuration lives in `{cypilot_path}/config/core.toml` (systems, kits, ignore lists). Artifact registry lives in `{cypilot_path}/config/artifacts.toml` (artifact paths, kinds, system mappings, codebase paths, autodetect rules). All commands output JSON when invoked with `--json`. Exit codes: 0=PASS, 1=filesystem error, 2=FAIL.

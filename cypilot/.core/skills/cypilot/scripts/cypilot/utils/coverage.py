@@ -14,12 +14,11 @@ Measures two metrics:
 # @cpt-begin:cpt-cypilot-algo-spec-coverage-scan:p1:inst-scan-datamodel
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .codebase import CodeFile, _SCOPE_MARKER_RE, _BLOCK_BEGIN_RE, _BLOCK_END_RE
+from .codebase import _SCOPE_MARKER_RE, _BLOCK_BEGIN_RE, _BLOCK_END_RE
 from .language_config import EXTENSION_COMMENT_DEFAULTS
 
 # ---------------------------------------------------------------------------
@@ -133,7 +132,7 @@ def scan_file_coverage(path: Path) -> Optional[FileCoverage]:
     """
     try:
         text = path.read_text(encoding="utf-8")
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         return None
 
     lines = text.splitlines()

@@ -80,12 +80,12 @@ def cmd_validate(argv: List[str]) -> int:
     Performs deterministic validation checks (structure, cross-references,
     task statuses, traceability markers) and produces a machine-readable report.
     """
-    from ..utils.context import get_context
+    from ..utils.context import get_context, _resolve_loaded_kit_constraints_path
 
     # @cpt-begin:cpt-cypilot-flow-traceability-validation-validate:p1:inst-user-validate
     p = argparse.ArgumentParser(
         prog="validate",
-        description="Validate Cypilot artifacts and code traceability (structure + cross-refs + traceability)",
+        description="Validate Cypilot artifacts and code traceability (structure + cross-references + traceability)",
     )
     p.add_argument("--artifact", default=None, help="Path to specific Cypilot artifact (if omitted, validates all registered Cypilot artifacts)")
     p.add_argument("--skip-code", action="store_true", help="Skip code traceability validation")
@@ -156,7 +156,7 @@ def cmd_validate(argv: List[str]) -> int:
                 }
                 ui.result(out)
                 return 2 if rc == 2 else 1
-        except Exception as e:
+        except (OSError, ValueError, KeyError) as e:
             out = {
                 "status": "ERROR",
                 "message": "self-check failed to run",
@@ -316,8 +316,15 @@ def cmd_validate(argv: List[str]) -> int:
         constraints_path = None
         if loaded_kit:
             try:
-                constraints_path = (project_root / str(loaded_kit.kit.path or "").strip().strip("/") / "constraints.toml").resolve()
-            except Exception:
+                adapter_dir = getattr(ctx, "adapter_dir", None)
+                if not isinstance(adapter_dir, Path):
+                    adapter_dir = project_root
+                constraints_path = _resolve_loaded_kit_constraints_path(
+                    adapter_dir,
+                    project_root,
+                    loaded_kit,
+                )
+            except (OSError, ValueError, KeyError):
                 constraints_path = None
 
         artifact_records.append(ArtifactRecord(path=artifact_path, artifact_kind=str(artifact_type), constraints=constraints_for_kind))
@@ -355,7 +362,7 @@ def cmd_validate(argv: List[str]) -> int:
                 _hits = scan_cpt_ids(artifact_path)
                 artifact_report["id_definitions"] = len([h for h in _hits if h.get("type") == "definition"])
                 artifact_report["id_references"] = len([h for h in _hits if h.get("type") == "reference"])
-            except Exception:
+            except (OSError, ValueError):
                 artifact_report["id_definitions"] = 0
                 artifact_report["id_references"] = 0
 
@@ -382,6 +389,15 @@ def cmd_validate(argv: List[str]) -> int:
             if args.verbose and isinstance(rep.get("warnings"), list):
                 rep["warnings"].append(issue)
     # @cpt-end:cpt-cypilot-flow-traceability-validation-validate:p1:inst-validate-helpers
+
+    # Content language check — runs after per-artifact structure validation.
+    # Skipped if structure has already failed (all_errors non-empty) so language
+    # issues never obscure structural errors.
+    if not all_errors:
+        _lang_errs = _run_content_language_check(artifacts_to_validate, project_root)
+        for _le in _lang_errs:
+            all_errors.append(_le)
+            _attach_issue_to_artifact_report(_le, is_error=True)
 
     # @cpt-begin:cpt-cypilot-flow-traceability-validation-validate:p1:inst-if-structure-fail
     # Stop early: cross-artifact reference checks and code traceability checks are run only
@@ -476,7 +492,7 @@ def cmd_validate(argv: List[str]) -> int:
                 if h.get("type") != "definition" or not h.get("id"):
                     continue
                 full_ids_to_check.add(str(h["id"]))
-        except Exception:
+        except (OSError, ValueError):
             continue
 
     strict_code_validation = not args.artifact
@@ -544,7 +560,7 @@ def cmd_validate(argv: List[str]) -> int:
                 # Apply registry root ignore rules as a hard visibility filter.
                 try:
                     rel = file_path.resolve().relative_to(project_root).as_posix()
-                except Exception:
+                except ValueError:
                     rel = None
                 if rel and meta.is_ignored(rel):
                     continue
@@ -610,7 +626,7 @@ def cmd_validate(argv: List[str]) -> int:
                             artifact_instances_all.setdefault(pid, set()).add(inst)
                             if checked:
                                 artifact_instances.setdefault(pid, set()).add(inst)
-                except Exception:
+                except (OSError, ValueError):
                     continue
 
             cv = cross_validate_code(
@@ -645,7 +661,7 @@ def cmd_validate(argv: List[str]) -> int:
                     if not rid:
                         continue
                     refs_by_id.setdefault(rid, set()).add(kind)
-            except Exception:
+            except (OSError, ValueError):
                 continue
 
         # Enforce rule for validated artifacts with no constraints.
@@ -662,7 +678,7 @@ def cmd_validate(argv: List[str]) -> int:
 
             try:
                 defs = [h for h in scan_cpt_ids(art.path) if h.get("type") == "definition" and h.get("id")]
-            except Exception:
+            except (OSError, ValueError):
                 defs = []
 
             for d in defs:
@@ -786,7 +802,7 @@ def _enrich_target_artifact_paths(
     - ``target_artifact_suggested_path`` set → artifact missing, autodetect knows where → "create `path`"
     - neither set → no autodetect rule → prompt asks LLM to request path from user
     """
-    from ..utils.artifacts_meta import ArtifactsMeta, SystemNode, AutodetectRule
+    from ..utils.artifacts_meta import ArtifactsMeta, SystemNode
 
     if not isinstance(meta, ArtifactsMeta):
         return
@@ -889,6 +905,91 @@ def _suggest_path_from_autodetect(node: object, target_kind: str) -> Optional[st
 
     return None
 # @cpt-end:cpt-cypilot-flow-traceability-validation-validate:p1:inst-validate-helpers
+
+# ---------------------------------------------------------------------------
+# Content language check helper
+# ---------------------------------------------------------------------------
+
+def _run_content_language_check(
+    artifacts_to_validate: list,
+    project_root: "Path",
+) -> list:
+    """Return language-violation error dicts for all validated .md artifacts.
+
+    Uses project_root to discover the workspace config so the check works in
+    both workspace mode and single-repo mode.  Returns an empty list when
+    allowed_content_languages is not configured.
+
+    Config failures (malformed .cypilot-workspace.toml) are surfaced as
+    FILE_LOAD_ERROR entries rather than silently disabling validation.
+    """
+    try:
+        from ..utils.constraints import error as _error
+        from ..utils import error_codes as _EC
+    except ImportError:
+        return []
+
+    try:
+        from ..utils.workspace import find_workspace_config as _find_ws
+        _ws_cfg, _ws_err = _find_ws(project_root)
+    except (ImportError, OSError, AttributeError) as exc:
+        return [_error(
+            "language",
+            f"Cannot load workspace config for language check: {exc}",
+            path=project_root,
+            line=1,
+            code=_EC.FILE_LOAD_ERROR,
+        )]
+
+    if _ws_err:
+        return [_error(
+            "language",
+            f"Workspace config error, language validation skipped: {_ws_err}",
+            path=project_root,
+            line=1,
+            code=_EC.FILE_LOAD_ERROR,
+        )]
+
+    if _ws_cfg is None or _ws_cfg.validation is None:
+        return []
+    allowed_langs = _ws_cfg.validation.allowed_content_languages
+    if not allowed_langs:
+        return []
+
+    try:
+        from ..utils.content_language import (
+            LangScanError as _LangScanError,
+            build_allowed_ranges,
+            scan_file as _scan_file,
+        )
+    except ImportError:
+        return []
+
+    allowed_ranges = build_allowed_ranges(allowed_langs)
+    results = []
+    for artifact_path, _template_path, _artifact_type, _traceability, _kit_id in artifacts_to_validate:
+        if artifact_path.suffix.lower() != ".md":
+            continue
+        try:
+            for v in _scan_file(artifact_path, allowed_ranges):
+                results.append(_error(
+                    "language",
+                    f"Non-allowed characters [{v.bad_chars_preview()}] — {v.line_preview()}",
+                    path=artifact_path,
+                    line=v.lineno,
+                    code=_EC.CONTENT_LANGUAGE_VIOLATION,
+                    allowed_languages=allowed_langs,
+                ))
+        except _LangScanError as exc:
+            results.append(_error(
+                "language",
+                f"Cannot read file for language check: {exc.cause}",
+                path=artifact_path,
+                line=1,
+                code=_EC.FILE_READ_ERROR,
+            ))
+    return results
+
 
 # ---------------------------------------------------------------------------
 # Human-friendly formatter

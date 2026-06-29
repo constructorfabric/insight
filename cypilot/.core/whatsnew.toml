@@ -168,5 +168,118 @@ details = """\
 - **Mandatory plan validation gate** — Phase 4.1 requires self-validation against checklist before execution; reports per-category PASS/FAIL
 - **Plan completion lifecycle** — explicit lifecycle strategy execution (gitignore/cleanup/archive/manual) with user prompts
 - **Abandoned plan recovery** — plan.toml serves as checkpoint; recovery prompt for resuming incomplete plans
-- **New plan-checklist.md** — 7-category validation checklist for plan quality assurance
+- **New plan-checklist.md** — 7-category validation checklist for plan quality assurance\
+"""
+
+["v3.2.0-beta"]
+summary = "Prompt compactification across workflows, requirements, and SKILL.md"
+details = """\
+- **Aggressive prompt compactification release** — reduced the main prompt/instruction set from `9538` lines to `3851` lines (`-59.6%`) across `17` canonical files in `workflows/`, `requirements/`, and `skills/cypilot/SKILL.md`
+- **Core workflow compaction** — condensed `workflows/analyze.md`, `workflows/generate.md`, `workflows/plan.md`, and `workflows/workspace.md` while preserving deterministic validation gates, plan escalation, lifecycle handoff, and recovery flow
+- **Requirements compaction** — compressed execution infrastructure, plan support docs, methodologies, checklists, and workspace guidance in `requirements/` to reduce token load while keeping operational constraints and validation structure explicit
+- **SKILL and workspace guidance compacted** — shortened `skills/cypilot/SKILL.md`, `requirements/workspace.md`, and `workflows/workspace.md` so agents load less context during normal routing and execution
+- **Checklist and methodology normalization** — streamlined `code-checklist.md`, `consistency-checklist.md`, `plan-checklist.md`, `prompt-engineering.md`, `reverse-engineering.md`, and `auto-config.md` into denser formats optimized for agent consumption
+- **Post-compaction TOC fix** — marker-based `validate-toc` now expects the same heading set that `toc` generates, so documents with secondary `H1` sections such as `# MUST HAVE` / `# MUST NOT HAVE` validate correctly with `--max-level 2`
+- **Regression coverage added** — test coverage now includes the marker-based TOC validation case with secondary `H1` sections in a single document\
+"""
+
+["v3.2.1-beta"]
+summary = "Compact root markers, unified CLAUDE.md injection"
+details = """\
+- **Compact root marker blocks** — removed verbose navigation rules from `AGENTS.md` and `CLAUDE.md` managed blocks; now contains only the `cypilot_path` TOML definition
+- **Unified CLAUDE.md injection** — `_inject_root_claude()` now reuses `_inject_managed_block()` for consistent block generation
+- **Variable description fix** — `{cypilot_path}` documentation updated to clarify it's resolved from root `AGENTS.md`\
+"""
+
+["v3.2.2-beta"]
+summary = "Shared whatsnew handling, Claude skill routing cleanup"
+details = """\
+- **Shared whatsnew utility** — extracted core/kit whatsnew parsing, semantic version filtering, ANSI formatting, and acknowledgment prompts into `skills/cypilot/scripts/cypilot/utils/whatsnew.py`
+- **`cpt update` now shows kit release notes** — main update flow displays `whatsnew.toml` entries for installed kits before running `update_kit`; interactive users can skip a kit after reviewing changes
+- **Claude skill routing cleanup** — `generate-agents` now emits Claude entry points via `.claude/skills/.../SKILL.md`, removes replaced legacy `.claude/commands/*.md` shims, and reports deleted legacy files in the result summary
+"""
+
+["v3.3.0-beta"]
+summary = "Authoritative kit paths, bug-finding methodologies, workflow hardening"
+details = """\
+- **Authoritative installed kit roots** — kit install/update/migrate/validate flows now consistently treat `config/core.toml` kit paths as the source of truth, preserve custom kit roots, and handle inaccessible absolute paths and cross-platform absolute-path semantics more safely
+- **Manifest and migration error hardening** — binding-resolution failures surface explicitly, rollback/cleanup paths are tighter, and kit/manifest validation now reports invalid path scenarios more deterministically
+- **New bug-finding methodologies** — added compact high-recall `requirements/bug-finding.md` for source-code review and `requirements/prompt-bug-finding.md` for prompt/instruction review, with workflow integration for bounded, evidence-driven analysis
+- **Workflow and prompt-quality tightening** — `SKILL.md`, `workflows/analyze.md`, `workflows/generate.md`, and `workflows/plan.md` now better enforce task-matched dependency loading, compact prompt context, and terminal response-completion gates to avoid premature completion
+"""
+
+["v3.4.0-beta"]
+summary = "RalphEx delegation, native phase agents, plan brief-first flow"
+details = """\
+- **`cpt delegate <plan_dir>`** — new command: compiles a Cypilot plan into ralphex-compatible format and delegates execution (modes: execute, tasks-only, review)
+- **`cpt doctor`** — new command: environment health check with PASS/WARN/FAIL results (currently checks ralphex availability)
+- **Native phase agents** — new `cypilot-phase-compiler` and `cypilot-phase-runner` subagents for plan-phase compilation and execution without ralphex
+- **Plan workflow: brief-first flow** — plan generation now pauses after manifest + briefs with a 4-way choice: compile inline, emit per-brief prompts, run phase-compiler subagents, or stop
+- **Fix: Codex agent generation (#125)** — `cpt generate-agents` now creates one `.toml` per agent (was single combined file causing Codex CLI warnings) and generates all 5 skill entries (was 1)
+- **Fix: workspace git timeouts** — default timeout increased from 120s to 300s; new `GIT_TIMEOUT` env var for slow networks
+- **Fix: zip-slip in kit download** — tarfile extraction now validates member paths against directory traversal before extracting
+- **Fix: silent error swallowing** — ~15 broad `except Exception` handlers replaced with specific types so unexpected errors surface instead of being hidden
+- **Configuration guide** — new `guides/CONFIGURATION.md` covering core.toml, artifacts.toml, rules, WHEN-rules, and traceability\
+"""
+
+["v3.5.0-beta"]
+summary = "Chunk-input command, input signature reuse, project-level extensibility"
+details = """\
+- **`cpt chunk-input`** — new command: splits oversized workflow input into line-bounded Markdown chunks for phased execution plans; includes dry-run mode for input signature computation
+- **Input signature reuse** — plan metadata now tracks `input_signature`; existing packages are reused when signatures match, avoiding redundant re-packaging
+- **Fix: backup preserved on preservation failure** — `chunk-input` now keeps the backup directory when file preservation fails, preventing user data loss
+- **Project-level extensibility** — manifest v2 with multi-layer pipeline enables project-level customization of agents, skills, and workflows through layered configuration\
+"""
+
+["v3.5.1-beta"]
+summary = "RalphEx version discovery fix"
+details = """\
+- **Fix: ralphex version discovery** — version regex now accepts semver build metadata suffixes (e.g. `v0.26.2-7a637fa-20260331T171815`), fixing false "incompatible" reports for valid binaries
+- **Fix: ralphex URL references** — updated all ralphex URLs from cyberfabric to umputun
+"""
+
+["v3.6.0-beta"]
+summary = "Telemetry, agent generation hardening, skills migration, project extensibility fixes"
+details = """\
+- **Non-blocking usage telemetry** — CLI proxy now collects optional usage telemetry without blocking command execution
+- **Agent generation hardening** — subagents and legacy_skills included in dry-run preview; frontmatter and workflow target validated in legacy cleanup to prevent over-deletion; UnicodeDecodeError handled in file detection helpers; unified skill frontmatter generation
+- **Skills location consolidation** — skills now live exclusively in `.claude/skills/` and `.agents/skills/`; legacy locations removed
+- **Project extensibility fixes** — worktree boundary detection, master-layer source trust, and `append_file` support for multi-layer pipelines
+- **Architecture docs** — consolidated agent integration model with shared skill stubs; documented project extensibility / workspace federation relationship\
+"""
+
+["v3.7.0-beta"]
+summary = "Language validation, Python compatibility improvements, and documentation refresh"
+details = """\
+- **`cpt check-language` and `LANG001` validation** — added a dedicated command for scanning Markdown artifacts for disallowed Unicode scripts, with workspace-configured allowed languages and CLI overrides
+- **Analyze workflow language gate with ignore patterns** — `analyze` now runs `check-language` when content-language validation is configured, and both the workflow and scanner support ignore patterns for files that should be excluded
+- **Validation hardening and error visibility** — workspace config errors, unknown language codes, and TOML helper issues now surface explicitly instead of being silently skipped; related tests and traceability/spec markers were added
+- **Python <3.11 TOML compatibility** — added a shared `_tomllib_compat.py` shim and updated whatsnew / update-related code paths to use it, so core update and whatsnew flows work on older supported Python runtimes
+"""
+
+["v3.8.0-beta"]
+summary = "Prompt compactification round 2, list-ids kind inference fix, deterministic self-check"
+details = """\
+- **Major prompt compactification** — second compaction pass across `skills/cypilot/SKILL.md`, `workflows/analyze.md`, `workflows/generate.md`, `workflows/plan.md`, `workflows/workspace.md`, and the `cypilot-codegen` / `cypilot-pr-review` / `cypilot-ralphex` agent definitions; SKILL.md trimmed by ~200 lines, plan.md by ~190 lines while preserving validation gates, escalation logic, and lifecycle handoff
+- **`prompt-engineering.md` loadable-resource-budget rule** — expanded with explicit exemptions and measurement clarifications so agents apply the budget consistently; **`agent-compliance.md`** progress-checkpoint persistence requirements tightened; **`raw-input-overflow.md`** clarifies the chunk-input approval flow and its interaction with the single-context bypass
+- **Plan workflow Phase 0 variable checkpoint** — variables resolved during Phase 0 are now persisted to `plan.toml` `[meta]` so phase runners and recovery flows reuse the same context
+- **Fix: `list-ids` kind inference (#157)** — `_infer_kind` now picks the first matching kind token (matching the canonical `cpt-{system}-{kind}-{slug}` grammar) instead of the last, fixing wrong-kind reports for slugs containing kind keywords (e.g. `interface-component-registry`)
+- **Fix: kit examples validation coverage and determinism (#154)** — `self-check` now collects every `*.md` example file via `sorted(Path(examples_dir).glob("*.md"))` and runs `validate_artifact_file` on each (instead of validating only one file); the result dict gains `example_paths` and `examples_checked`, and the legacy `example_path` field stays for backward-compat as the first sorted file
+- **`self-check` JSON output schema documented in `cypilot.clispec`** — full schema for machine-readable self-check results; interactive TTY accept test expanded to verify all six prompt lines
+- **Test coverage** — added unit tests covering both branches of `_prompt_kit_install_flag` (non-interactive, no-tty, accept/decline, full-word accept, EOF) to keep `init.py` per-file coverage above the 90% threshold
+- **Compact CLI prompts** — `cpt-install` prompt collapsed to one-line format; `whatsnew` continue prompt simplified; `agents.py` copilot-instructions.md template marker order fixed
+- **Project metadata** — `NOTICE` file added with copyright and license information; copyright year updated; README version badge bumped\
+"""
+
+["v3.9.0"]
+summary = "Storytelling/explain methodology, language-complexity UX setting, agent-generation/delegation polish"
+details = """\
+- **Storytelling methodology (`EXPLAIN_MODE`)** — new pedagogical companion for `analyze`: `cypilot analyze: explain <target>` (also `walk me through`, `teach me`, `present`, `onboard me to`, `quiz me on`, `explain --resume {session-id}`) delivers an artifact / PR / codebase region in line-bounded portions with 6-slot navigation (Next / Deeper / Lateral / Recap / Ask / Wrap), audience-adapted diagrams, clickable source refs, and an immediate-effect open-questions buffer that is author-routed (no Cypilot-generated `Fix Prompt` / `Plan Prompt`)
+- **Six storytelling modes** — `presentation` (default; explain & teach), `review` (panel critique with line-anchored comments), `onboarding`, `decision` (alternatives + recommendation + dissenting opinions), `socratic` (agent quizzes you), `change-impact`; mode resolution is **always interactive** at session start — intent verbs / artifact KIND only suggest a default
+- **`EXPLAIN_EXPORT` package generation** — `cypilot generate: explain package for <target>` (also `make a README from <target>` / `build onboarding doc set for <target>` / `training material for ...`) writes a navigable folder of Markdown files under `{cypilot_path}/.cache/explain/packages/` with `index.md` Mermaid navigation graph, per-portion files, and mode-specific extras (reading roadmap / impact map / review-comments file / dissenting opinions)
+- **Methodology specs** — new `requirements/storytelling.md` (router) plus four modules: `storytelling-phases.md` (E0–E5 protocol), `storytelling-modes.md`, `storytelling-export.md`, `storytelling-preferences.md`; `analyze.md` integrates `EXPLAIN_MODE` (skips Phase 2 / 3 / 5 + Fix/Plan prompts; uses Storytelling Output schema in Phase 4) with a fail-stop routing invariant — any answer-style content emitted before E1 gates resolve is INVALID
+- **Plain `analyze` stays plain** — ordinary `review my changes` / `audit this design` / `inspect this code` requests are NOT auto-promoted into `EXPLAIN_MODE`; storytelling requires explicit explain-family verbs, and `EXPLAIN_MODE` + `PROMPT_REVIEW` are mutually exclusive (agent must disambiguate)
+- **Language complexity UX setting** — new global `language_complexity` level (`low` / `middle` (default) / `high`) governs ALL Cypilot user-facing output (chat + artifact bodies); set in `{cypilot_path}/config/core.toml` under `[language] complexity = "..."`, with mid-session override `change language complexity to {low|middle|high}` and persistence via `remember new language complexity`; spec/normative files and source quotes from input artifacts are exempt; full rule in `requirements/language-complexity.md`
+- **`generate-agents` preview tracks deletions** — preview pass now counts deleted files (and workflow renames as deletions) alongside creates/updates; user prompt and dry-run reports now show `Will create N file(s), update N file(s), delete N file(s)`; up-to-date detection treats zero-delta as no-op
+- **`cypilot-ralphex` delegation status semantics clarified** — `"ready"` is dry-run only (ralphex NOT invoked, no exit code, Post-Run Handoff is SKIPPED); `"delegated"` means ralphex executed with returncode 0 and lifecycle transitioned to `completed` (`returncode` / `stdout` / `stderr` populated); `"error"` covers preconditions and non-zero ralphex exits; agent self-test updated to match
 """

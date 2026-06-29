@@ -11,7 +11,6 @@ covered, and the TOC is not stale.  Thin CLI wrapper around
 
 # @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-toc:p1:inst-toc-imports
 import argparse
-import json
 from pathlib import Path
 from typing import List
 

@@ -9,13 +9,11 @@ pass the same heading contract and constraint checks used for user artifacts.
 @cpt-dod:cpt-cypilot-dod-developer-experience-self-check:p1
 """
 
-import argparse
-import json
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from ..utils.artifacts_meta import ArtifactsMeta, load_artifacts_meta
+from ..utils.artifacts_meta import ArtifactsMeta
 from ..utils.constraints import (
     error as constraints_error,
     heading_constraint_ids_by_line,
@@ -24,8 +22,6 @@ from ..utils.constraints import (
 )
 from ..utils import error_codes as EC
 from ..utils.document import read_text_safe
-from ..utils.files import find_cypilot_directory, find_project_root
-from ..utils.ui import ui
 
 
 # @cpt-begin:cpt-cypilot-flow-developer-experience-self-check:p1:inst-user-self-check
@@ -72,7 +68,7 @@ def run_self_check_from_meta(
         constraints_path = None
         try:
             constraints_path = (kit_base / "constraints.toml").resolve()
-        except Exception:
+        except OSError:
             constraints_path = None
 
         # 1) Heading contract must hold for templates too.
@@ -382,11 +378,14 @@ def run_self_check_from_meta(
             continue
         if kit_obj is None:
             continue
-
+    
         kit_path_str = str(getattr(kit_obj, "path", "") or "").strip()
         if not kit_path_str:
             continue
 
+        # NOTE: This still reconstructs the kit root from the registry path.
+        # Keep it aligned with the authoritative loaded-kit resolution used by
+        # validate/validate-kits for custom registered roots.
         kit_base = (adapter_dir / kit_path_str).resolve()
         if not kit_base.is_dir():
             kit_base = (project_root / kit_path_str).resolve()
@@ -431,13 +430,16 @@ def run_self_check_from_meta(
             template_path = None
             examples_dir = None
             if kit_obj is not None:
+                # NOTE: These manual adapter/project fallbacks mirror older
+                # registry semantics rather than authoritative loaded-kit path
+                # resolution.
                 try:
                     rel = kit_obj.get_template_path(kind)
                     candidate = (adapter_dir / rel).resolve()
                     if not candidate.is_file():
                         candidate = (project_root / rel).resolve()
                     template_path = candidate
-                except Exception:
+                except (OSError, ValueError, KeyError):
                     template_path = None
                 try:
                     rel = kit_obj.get_examples_path(kind)
@@ -445,7 +447,7 @@ def run_self_check_from_meta(
                     if not candidate.exists():
                         candidate = (project_root / rel).resolve()
                     examples_dir = candidate
-                except Exception:
+                except (OSError, ValueError, KeyError):
                     examples_dir = None
 
             # Fallback to legacy layout if explicit paths are unavailable.
@@ -455,23 +457,26 @@ def run_self_check_from_meta(
             if examples_dir is None:
                 examples_dir = (kind_dir / "examples").resolve()
 
-            # Pick any .md file in examples path (directory or single file)
-            example_path = None
+            example_paths: List[Path] = []
             try:
                 if examples_dir is not None and examples_dir.exists():
                     if examples_dir.is_file():
-                        example_path = examples_dir
+                        example_paths = [examples_dir]
                     else:
-                        md_files = list(Path(examples_dir).glob("*.md"))
-                        if md_files:
-                            example_path = md_files[0]
-            except Exception:
-                example_path = None
+                        example_paths = sorted(
+                            [p for p in Path(examples_dir).glob("*.md") if p.is_file()],
+                        )
+            except OSError:
+                example_paths = []
+
+            example_path = example_paths[0] if example_paths else None
 
             item: Dict[str, object] = {
                 "kit": str(kit_id),
                 "kind": kind,
                 "example_path": example_path.as_posix() if example_path else None,
+                "example_paths": [p.as_posix() for p in example_paths],
+                "examples_checked": len(example_paths),
                 "status": "PASS",
             }
 
@@ -492,7 +497,7 @@ def run_self_check_from_meta(
                 errs.extend(list(trep.get("errors", []) or []))
                 warns.extend(list(trep.get("warnings", []) or []))
 
-            if not example_path:
+            if not example_paths:
                 pass  # No example for this kind — skip example checks
             else:
                 constraints_for_kind = None
@@ -500,19 +505,24 @@ def run_self_check_from_meta(
                     constraints_for_kind = kit_constraints.by_kind[str(kind).upper()]
                 constraints_path = None
                 try:
+                    # NOTE: This assumes self-check constraints live at
+                    # kit_base / "constraints.toml". If self-check is unified
+                    # with loaded-kit semantics, use the shared authoritative
+                    # constraints-path resolver here.
                     constraints_path = (kit_base / "constraints.toml").resolve()
-                except Exception:
+                except OSError:
                     constraints_path = None
-                rep = validate_artifact_file(
-                    artifact_path=example_path,
-                    artifact_kind=str(kind),
-                    constraints=constraints_for_kind,
-                    registered_systems=None,
-                    constraints_path=constraints_path,
-                    kit_id=str(kit_id),
-                )
-                errs.extend(list(rep.get("errors", []) or []))
-                warns.extend(list(rep.get("warnings", []) or []))
+                for example_path in example_paths:
+                    rep = validate_artifact_file(
+                        artifact_path=example_path,
+                        artifact_kind=str(kind),
+                        constraints=constraints_for_kind,
+                        registered_systems=None,
+                        constraints_path=constraints_path,
+                        kit_id=str(kit_id),
+                    )
+                    errs.extend(list(rep.get("errors", []) or []))
+                    warns.extend(list(rep.get("warnings", []) or []))
 
             if errs:
                 item["status"] = "FAIL"

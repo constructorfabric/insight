@@ -69,7 +69,7 @@ def find_project_root(start: Path) -> Optional[Path]:
         if agents.is_file():
             try:
                 head = agents.read_text(encoding="utf-8")[:512]
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 head = ""
             if _MARKER_START in head:
                 return current
@@ -98,7 +98,7 @@ def _read_cypilot_var(project_root: Path) -> Optional[str]:
         return None
     try:
         content = agents_file.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     if _MARKER_START not in content:
         return None
@@ -121,7 +121,7 @@ def load_project_config(project_root: Path) -> Optional[dict]:
         return None
     try:
         return toml_utils.load(core_toml)
-    except Exception:
+    except (OSError, ValueError, KeyError):
         return None
 # @cpt-end:cpt-cypilot-algo-core-infra-config-management:p1:inst-cfg-load-core
 
@@ -225,7 +225,7 @@ def find_cypilot_directory(start: Path, cypilot_root: Optional[Path] = None) -> 
                     # Or check for rule/spec references in content
                     if "rule" in content_lower or "spec" in content_lower:
                         return True
-        except Exception:
+        except (OSError, UnicodeDecodeError):
             pass  # Expected: search continues if file read fails
 
         # Fallback: verify it has rules/ or specs/ directory (strong structural indicator)
@@ -284,7 +284,7 @@ def load_cypilot_config(adapter_dir: Path) -> Dict[str, object]:
                 if line.startswith("# Cypilot Adapter:"):
                     config["project_name"] = line.replace("# Cypilot Adapter:", "").strip()
                     break
-        except Exception:
+        except (OSError, UnicodeDecodeError):
             pass  # Expected: project_name is optional metadata
 
     # List available rules (config/ layout, fallback to flat)
@@ -320,7 +320,7 @@ def load_artifacts_registry(adapter_dir: Path) -> Tuple[Optional[dict], Optional
         else:
             raw = path.read_text(encoding="utf-8")
             cfg = json.loads(raw)
-    except Exception as e:
+    except (OSError, ValueError, KeyError) as e:
         return None, f"Failed to read artifacts registry {path}: {e}"
     if not isinstance(cfg, dict):
         return None, f"Invalid artifacts registry (expected dict): {path}"
@@ -390,6 +390,6 @@ def load_text(path: Path) -> Tuple[str, Optional[str]]:
         return "", f"Not a file: {path}"
     try:
         return path.read_text(encoding="utf-8"), None
-    except Exception as e:
+    except (OSError, UnicodeDecodeError) as e:
         return "", f"Failed to read {path}: {e}"
 # @cpt-end:cpt-cypilot-algo-core-infra-config-management:p1:inst-cfg-helpers

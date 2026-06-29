@@ -1,6 +1,5 @@
 # @cpt-begin:cpt-cypilot-flow-traceability-validation-query:p1:inst-query-imports
 import argparse
-import json
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -137,14 +136,13 @@ def cmd_list_ids(argv: List[str]) -> int:
         parts = [p for p in remainder.split("-") if p]
         if not parts:
             return None
-        # Prefer latest known kind token in composite IDs
-        best = None
+        # Infer kind by scanning left-to-right and returning the first token
+        # that matches `known_kinds` (to avoid slug tokens overriding earlier matches).
         for part in parts:
             k = part.lower()
-            if known_kinds and k not in known_kinds:
-                continue
-            best = k
-        return best
+            if known_kinds and k in known_kinds:
+                return k
+        return None
 
     for artifact_path, artifact_type in artifacts_to_scan:
         for fh in scan_cpt_ids(artifact_path):
@@ -188,7 +186,7 @@ def cmd_list_ids(argv: List[str]) -> int:
                 # Apply registry root ignore rules as a hard visibility filter.
                 try:
                     rel = file_path.resolve().relative_to(ctx.project_root).as_posix()
-                except Exception:
+                except (OSError, ValueError):
                     rel = None
                 if rel and ctx.meta.is_ignored(rel):
                     continue

@@ -334,7 +334,7 @@ RELATED:
 
 COMMAND generate-agents
 SYNOPSIS: python3 scripts/cypilot.py generate-agents --agent <name> [options]
-DESCRIPTION: Generate/update agent-specific workflow proxies and skill outputs. Creates unified proxy files for workflows (cypilot-generate, cypilot-analyze) and the cypilot skill entry point. Supports windsurf, cursor, claude, copilot, openai.
+DESCRIPTION: Generate/update agent-specific workflow proxies and skill outputs. Creates unified proxy files for workflows (cypilot-generate, cypilot-analyze, cypilot-plan, cypilot-workspace) and the cypilot skill entry point. Supports windsurf, cursor, claude, copilot, openai.
 ARGUMENTS:
 
 OPTIONS:
@@ -371,7 +371,7 @@ RELATED:
 
 COMMAND self-check
 SYNOPSIS: python3 scripts/cypilot.py self-check [--kit <id>] [--verbose]
-DESCRIPTION: Validate example artifacts against their templates (template QA). For each kit package, checks that example.md passes validation against template.md. Ensures templates and examples remain synchronized. (Legacy flag alias: --rule)
+DESCRIPTION: Validate example artifacts against their templates (template QA). For each kit package, checks that all example markdown artifacts pass validation against the corresponding template.md. Ensures templates and examples remain synchronized. (Legacy flag alias: --rule)
 WORKFLOW: kits
 
 ARGUMENTS:
@@ -386,14 +386,25 @@ EXIT CODES:
   2  One or more examples failed validation
 
 OUTPUT:
-  JSON object with:
-  - status: PASS or FAIL
+  JSON object emitted by `commands/self_check.py` with the following top-level fields:
+  - status: PASS or FAIL (overall — FAIL if any per-template result fails)
+  - project_root: Absolute path of the resolved project root
+  - cypilot_dir: Absolute path of the resolved Cypilot adapter directory
   - kits_checked: Number of kits checked
-  - templates_checked: Number of templates checked
-  - results: Per-template results
-  - pass_count: Examples that passed
-  - fail_count: Examples that failed
-  - failures: List of failed examples with error details
+  - templates_checked: Number of per-template results returned (length of `results`)
+  - results: Array of per-template result objects (one per `(kit, kind)` checked)
+
+  Each `results[i]` object contains:
+  - kit (string): Kit ID this result belongs to
+  - kind (string): Artifact kind validated (e.g. "PRD", "DESIGN")
+  - example_path (string | null): Path of the first validated example for this kit/kind, or null when no example file exists; preserved for backward compatibility with single-example consumers
+  - example_paths (array of string): All example paths validated for this kit/kind, in deterministic sorted order — reflects the updated "check all examples" behavior (a single-example checker would return at most one entry; the full set is validated when multiple exist)
+  - examples_checked (integer): Count of examples validated for this kit/kind (`len(example_paths)`); `0` when the kind has no examples on disk
+  - status (string): PASS or FAIL for this kit/kind
+  - error_count (integer, optional): Present only when status is FAIL; total error count across all validated examples for this kit/kind
+  - errors (array of object, optional): Present only when status is FAIL; aggregated validator errors
+  - warning_count (integer, optional): Present when warnings were produced
+  - warnings (array of object, optional): Present when status is FAIL or `--verbose` was passed
 
 EXAMPLE:
   $ python3 scripts/cypilot.py self-check
@@ -438,6 +449,62 @@ EXAMPLE:
 RELATED:
   - @CLI.validate
   - @CLI.validate-toc
+
+---
+
+COMMAND chunk-input
+SYNOPSIS: python3 scripts/cypilot.py chunk-input [<path> ...] --output-dir <path> [--dry-run] [options]
+DESCRIPTION: Chunk oversized workflow input into deterministic line-bounded Markdown files for phased execution plans. Accepts one or more input files. If no paths are provided, the command reads direct prompt text from stdin; when file paths are provided, direct prompt text is added as an extra source only if `--include-stdin` is passed. When stdin is used, the raw direct prompt is preserved as a special `direct-prompt.md` file in the output directory before the numbered markdown chunk files are emitted. The command reports whether the total input size exceeds the planning threshold.
+
+ARGUMENTS:
+  path  <path>  optional  One or more input files to chunk; omit all paths to read only from stdin
+
+OPTIONS:
+  --output-dir  <path>  required  Directory where chunk files will be written
+  --max-lines  <number>  [default: 300]  Maximum lines per emitted chunk file
+  --threshold-lines  <number>  [default: 500]  Raw-input threshold above which planning is required
+  --stdin-label  <string>  Logical source label used when reading from stdin (default: direct-input)
+  --include-stdin  flag  When file paths are provided, also read direct prompt text from stdin as an extra input source; when passed with no file paths, silently falls back to stdin-only mode (same as passing no arguments at all)
+  --dry-run  flag  Evaluate inputs and compute the input signature without writing any files. Reports the same source metadata plus plan_required and input_signature so callers can check for package reuse before requesting user approval. The output-dir path is still validated (must not be an existing non-directory) but no directories or files are created.
+
+EXIT CODES:
+  0  Chunking completed successfully; in dry-run mode, evaluation completed successfully
+  1  Error (including parser validation failures such as missing required args, unreadable input, write failure, or output-dir pointing to an existing non-directory)
+
+OUTPUT:
+  JSON object with:
+  - status: OK or ERROR
+  - message: Present on ERROR outputs, including parser validation failures such as missing `--output-dir`
+  - output_dir: Absolute path where chunk files were (or would be) written
+  - total_sources: Number of input sources processed
+  - total_lines: Total raw input lines across all sources
+  - max_lines: Applied chunk line limit
+  - threshold_lines: Applied planning threshold
+  - input_signature: Content hash of all input sources for package reuse checks
+  - plan_required: true when total_lines exceeds threshold_lines
+
+  Write-mode only (omitted when --dry-run):
+  - package_manifest: Absolute path to `manifest.json` in the output directory
+  - direct_prompt_file: Absolute path to `direct-prompt.md` when raw prompt text came from stdin
+  - chunk_count: Number of markdown chunk files written
+  - chunks: Per-chunk metadata (path, source, part number, line range, line_count)
+
+  Dry-run only (omitted in write mode):
+  - dry_run: true
+
+  Both modes:
+  - sources: Per-source metadata (kind, display_name, label, path, line_count, chunk_count); write mode additionally includes stored_path
+
+EXAMPLE:
+  $ python3 scripts/cypilot.py chunk-input docs/request.md --output-dir .bootstrap/.plans/my-plan/input --dry-run
+  $ python3 scripts/cypilot.py chunk-input docs/request.md --output-dir .bootstrap/.plans/my-plan/input
+  $ python3 scripts/cypilot.py chunk-input architecture/PRD.md architecture/DESIGN.md --output-dir .bootstrap/.plans/review/input
+  $ cat prompt.txt | python3 scripts/cypilot.py chunk-input docs/request.md --output-dir .bootstrap/.plans/mixed/input --include-stdin --stdin-label prompt
+  $ cat request.txt | python3 scripts/cypilot.py chunk-input --output-dir .bootstrap/.plans/direct-input/input --stdin-label request
+
+RELATED:
+  - @CLI.info
+  - @Workflow.cypilot-plan
 ---
 
 COMMAND validate-toc
@@ -872,6 +939,50 @@ RELATED:
   - @CLI.workspace-add
   - @CLI.workspace-sync
   - @CLI.validate
+---
+
+COMMAND delegate
+SYNOPSIS: python3 scripts/cypilot.py delegate <plan_dir> [options]
+DESCRIPTION: Compile a Cypilot plan and delegate to ralphex for autonomous execution. Discovers ralphex, validates availability, exports the plan, and invokes the delegation command. Supports dry-run mode to assemble the command without invoking.
+
+ARGUMENTS:
+  plan_dir  <path>  required  Path to the Cypilot plan directory containing plan.toml
+
+OPTIONS:
+  --mode  <string>  Delegation mode: execute, tasks-only, or review (default: execute)
+  --worktree  <boolean>  Request worktree isolation (execute and tasks-only only)
+  --serve / --no-serve  <boolean>  Enable or disable dashboard serving (default: True)
+  --dry-run  <boolean>  Assemble the command without invoking ralphex
+  --default-branch  <string>  Default branch for review precondition (default: main)
+  --plans-dir  <path>  Override plans directory (highest precedence)
+  --root  <path>  Project root directory (default: current directory)
+
+EXIT CODES:
+  0  Delegation successful (or dry-run command assembled)
+  1  Input error (missing plan directory, missing plan.toml, invalid root)
+  2  Delegation error (ralphex not found, validation failed, ralphex non-zero exit)
+
+OUTPUT:
+  JSON object with:
+  - status: ready (dry-run), delegated (success), or error
+  - ralphex_path: Discovered ralphex executable path
+  - validation: Ralphex availability validation result
+  - bootstrap: Bootstrap gate check result
+  - plan_file: Path to the written exported plan
+  - command: Assembled delegation command list
+  - mode: Delegation mode used
+  - lifecycle_state: Final lifecycle state
+  - error: Error message (when status is error)
+
+EXAMPLE:
+  $ python3 scripts/cypilot.py delegate .bootstrap/.plans/my-plan --dry-run
+  $ python3 scripts/cypilot.py delegate .bootstrap/.plans/my-plan --mode tasks-only
+  $ python3 scripts/cypilot.py delegate .bootstrap/.plans/my-plan --worktree --serve
+  $ python3 scripts/cypilot.py delegate .bootstrap/.plans/my-plan --root /path/to/project
+
+RELATED:
+  - @CLI.validate
+  - @CLI.info
 ---
 
 COMMAND workspace-sync

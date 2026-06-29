@@ -34,7 +34,7 @@ _json_mode: bool = False
 
 
 def set_json_mode(enabled: bool) -> None:
-    global _json_mode
+    global _json_mode  # pylint: disable=global-statement  # module-level output mode flag toggled once at CLI startup
     _json_mode = enabled
 
 

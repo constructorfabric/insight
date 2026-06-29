@@ -369,7 +369,6 @@ def _build_fixing_prompt(issue: Dict[str, object], project_root: Optional[Path] 
     loc = _rel_loc(issue, project_root)
     cpt_id = str(issue.get("id") or "")
     id_kind = str(issue.get("id_kind") or "")
-    artifact_kind = str(issue.get("artifact_kind") or "")
     target_kind = str(issue.get("target_kind") or "")
     parent_id = str(issue.get("parent_id") or "")
     tpl = _tpl_hint(issue)

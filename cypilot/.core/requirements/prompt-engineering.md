@@ -2,799 +2,412 @@
 cypilot: true
 type: requirement
 name: Prompt Engineering Review Methodology
-version: 1.0
-purpose: Systematic methodology for reviewing and improving agent instructions
+version: 1.4
+purpose: Systematic methodology for reviewing and improving agent instructions with compact-prompts optimization, interaction UX quality, and router-based decomposition
 ---
 
 # Prompt Engineering Review Methodology
 
-**Scope**: Any file containing agent instructions — system prompts, skills, workflows, requirements, AGENTS.md, methodologies
 
-**Out of scope**: This document does not provide a “best prompt” template or produce production prompts; it defines a review methodology and reporting format.
+<!-- toc -->
 
----
+- [Overview](#overview)
+- [Layer Map](#layer-map)
+- [L1: Document Classification](#l1-document-classification)
+- [L2: Clarity & Specificity](#l2-clarity--specificity)
+- [L3: Structure & Organization](#l3-structure--organization)
+- [L4: Completeness Analysis](#l4-completeness-analysis)
+- [L5: Anti-Pattern Detection](#l5-anti-pattern-detection)
+  - [Specification](#specification)
+  - [Context & Memory](#context--memory)
+  - [Execution & Output](#execution--output)
+  - [Interaction UX](#interaction-ux)
+  - [Maintainability](#maintainability)
+- [L6: Context Engineering](#l6-context-engineering)
+- [L7: Testability Assessment](#l7-testability-assessment)
+- [L8: User Interaction UX](#l8-user-interaction-ux)
+- [L9: Agent Ergonomics](#l9-agent-ergonomics)
+- [L10: Improvement Synthesis](#l10-improvement-synthesis)
+- [Execution Protocol](#execution-protocol)
+- [Integration with Cypilot](#integration-with-cypilot)
+- [References](#references)
+- [Validation](#validation)
+
+<!-- /toc -->
+
+**Scope**: Any file containing agent instructions — system prompts, skills, workflows, requirements, `AGENTS.md`, and methodologies.
+
+**Out of scope**: This does not provide a “best prompt” template or generate production prompts; it defines a review method and report format.
+
+**Companion methodology**: for bug hunting, hidden failure modes, unsafe behavior, regressions, instruction conflicts, or root-cause analysis in prompts and agent instructions, also use `prompt-bug-finding.md` as the behavioral defect search procedure.
 
 ## Overview
 
-This methodology provides a systematic approach to reviewing and improving any agent instruction document. Each layer analyzes a specific aspect of prompt quality, building toward actionable improvements.
+Agent instructions are executable policy for agent behavior and user interaction. Review them like software: classify the artifact, test for ambiguity, verify structure, identify missing contracts, detect anti-patterns, manage context budget, confirm testability, check interaction UX, check model ergonomics, then synthesize prioritized fixes.
 
-**Core Principle**: Agent instructions are code for human cognition. They require the same rigor as software engineering — clear specifications, explicit contracts, testable outcomes, and systematic debugging.
+**High-priority rule**: for analysis and generation work, aggressively reduce loaded context whenever behavior, determinism, constraints, safety, output contracts, and recovery rules remain intact.
 
----
+**CRITICAL interaction UX rule**: whenever instructions ask the user for input, confirmation, or a choice, review whether the prompt explains why the input is needed, what the user is expected to provide, what each option leads to, which option is suggested in the current context, and exactly how the user should reply.
 
-## Table of Contents
+## Layer Map
 
-1. [Layer 1: Document Classification](#layer-1-document-classification)
-2. [Layer 2: Clarity & Specificity](#layer-2-clarity--specificity-analysis)
-3. [Layer 3: Structure & Organization](#layer-3-structure--organization)
-4. [Layer 4: Completeness Analysis](#layer-4-completeness-analysis)
-5. [Layer 5: Anti-Pattern Detection](#layer-5-anti-pattern-detection)
-6. [Layer 6: Context Engineering](#layer-6-context-engineering)
-7. [Layer 7: Testability Assessment](#layer-7-testability-assessment)
-8. [Layer 8: Agent Ergonomics](#layer-8-agent-ergonomics)
-9. [Layer 9: Improvement Synthesis](#layer-9-improvement-synthesis)
-10. [Execution Protocol](#execution-protocol)
-11. [Quick Reference: Anti-Pattern Codes](#quick-reference-anti-pattern-codes)
-12. [Integration with Cypilot](#integration-with-cypilot)
-13. [References](#references)
+| Layer | Question |
+|---|---|
+| L1 | What kind of instruction document is this? |
+| L2 | Are the instructions explicit and unambiguous? |
+| L3 | Is the document scannable and cognitively manageable? |
+| L4 | What required information is missing? |
+| L5 | Which prompt anti-patterns are present? |
+| L6 | Is context loaded, compressed, and preserved correctly? |
+| L7 | Can compliance be verified? |
+| L8 | Are user-facing questions, options, and transitions easy to understand and act on? |
+| L9 | Does the document align with LLM strengths and limits? |
+| L10 | What should be fixed first? |
 
----
+## L1: Document Classification
 
-## Analysis Layers
+**Primary type**: identify whether the document is a `System Prompt`, `Skill/Tool`, `Workflow`, `Requirement`, `AGENTS.md`, `Template`, or `Checklist`.
 
-```
-Layer 1: Document Classification     → What type of instruction is this?
-Layer 2: Clarity & Specificity       → Is it unambiguous?
-Layer 3: Structure & Organization    → Is it scannable and navigable?
-Layer 4: Completeness Analysis       → What's missing?
-Layer 5: Anti-Pattern Detection      → What common mistakes are present?
-Layer 6: Context Engineering         → Is context managed efficiently?
-Layer 7: Testability Assessment      → Can we verify compliance?
-Layer 8: Agent Ergonomics            → Is it agent-friendly?
-Layer 9: Improvement Synthesis       → What should change?
-```
+**Instruction scope**: mark whether the rules are `Global`, `Conditional` (`WHEN`-gated), or `Task-Specific`.
 
----
+**Audience**: determine whether it targets a `Single Agent Type`, is `Agent-Agnostic`, or is `Hybrid`.
 
-# Layer 1: Document Classification
+**Dependencies**: list referenced docs, detect circular dependencies, confirm dependencies exist and are accessible, and verify version compatibility.
 
-**Goal**: Identify document type and applicable standards
+**Preconditions**: record what must already be true, what context must be loaded first, and what tools or capabilities are assumed.
 
-## 1.1 Document Type Identification
+## L2: Clarity & Specificity
 
-### 1.1.1 Primary Type
+**Ambiguity scan**: flag vague qualifiers (`appropriate`, `relevant`, `suitable`, `proper`, `good`), subjective terms (`better`, `improved`, `professional`, `clean`), undefined references (`the above`, `this`, `that`, `it`), implicit assumptions, and weasel words (`might`, `could`, `possibly`, `generally`, `usually`).
 
-- [ ] **System Prompt**: Core identity, capabilities, constraints
-- [ ] **Skill/Tool**: Specific capability with invocation pattern
-- [ ] **Workflow**: Multi-step process with phases
-- [ ] **Requirement**: Specification that other documents must follow
-- [ ] **AGENTS.md**: Navigation and context loading rules
-- [ ] **Template**: Structure for generating artifacts
-- [ ] **Checklist**: Validation criteria
+**Specificity**: every instruction should state **WHO** acts, **WHAT** happens, **WHEN** it triggers, **HOW** it is executed, and **WHY** it matters.
 
-### 1.1.2 Instruction Scope
+**Quantification**: prefer explicit counts, limits, and thresholds over words like `few`, `brief`, or `many`.
 
-- [ ] **Global**: Applies to all agent interactions
-- [ ] **Conditional**: Applies when specific conditions met (WHEN clauses)
-- [ ] **Task-Specific**: Applies only during specific task execution
+**Sentence quality**: use imperative mood, prefer active voice, and keep to one action per sentence when possible.
 
-### 1.1.3 Target Audience
+**Framing**: prefer positive requirements; if a negative is necessary, pair it with the required alternative; distinguish `MUST NOT` / `NEVER` from `SHOULD NOT` / `AVOID`.
 
-- [ ] **Single Agent Type**: Designed for specific agent (Claude, GPT, etc.)
-- [ ] **Agent-Agnostic**: Works across different LLM agents
-- [ ] **Hybrid**: Core is agnostic, with agent-specific sections
+**Priority**: critical rules are marked (`MUST`, `REQUIRED`, `CRITICAL`), optional rules are marked (`MAY`, `OPTIONAL`, `CONSIDER`), and importance hierarchy is obvious.
 
-## 1.2 Context Requirements
+**Compact clarity rules**: use short imperative sentences; front-load trigger + action + object (`WHEN X, do Y to Z`); use explicit nouns and verbs; replace vague wording with measurable limits or decision rules; keep stable terminology; remove filler and repeated restatements; prefer bullets, tables, and checklists over narrative; keep only examples that change behavior or clarify edge cases.
 
-### 1.2.1 Dependencies
+## L3: Structure & Organization
 
-- [ ] List all referenced documents
-- [ ] Identify circular dependencies
-- [ ] Check if dependencies exist and are accessible
-- [ ] Verify version compatibility
+**Hierarchy quality**: headings follow logical `H1 -> H2 -> H3` order, section titles are descriptive, related content is grouped together, and the document uses inverted-pyramid ordering where important content appears early.
 
-### 1.2.2 Preconditions
+**Chunking**: long sections are split into digestible units; lists replace enumeration paragraphs; tables handle structured comparison; code blocks are reserved for commands and examples.
 
-- [ ] What must be true before this document applies?
-- [ ] What context must be loaded first?
-- [ ] What tools/capabilities are assumed available?
+**Navigation aids**: long docs include a TOC, related sections are cross-linked, boundaries are visually clear, and a summary or overview appears near the start.
 
----
+**Cognitive load**: keep one concept per paragraph, avoid nested conditionals beyond two levels, express complex logic as decision trees or ordered steps, and define abbreviations on first use.
 
-# Layer 2: Clarity & Specificity Analysis
+**Visual hierarchy**: emphasize important terms with bolding, keep code and IDs in backticks, make warnings visually distinct, and clearly demarcate examples.
 
-**Goal**: Evaluate how unambiguous the instructions are
+**Redundancy check**: remove contradictions, mark intentional repetition as intentional, and replace duplication with cross-references.
 
-## 2.1 Language Quality
+## L4: Completeness Analysis
 
-### 2.1.1 Ambiguity Detection
+**Identity & purpose**: verify a purpose statement, scope boundary, and success criteria.
 
-Scan for ambiguous language patterns:
+**Operational elements**: verify entry conditions, exit conditions, response-completion gates, required terminal sections or handoff blocks, error handling, clarification strategy, option semantics, and edge-case guidance.
 
-- [ ] **Vague qualifiers**: "appropriate", "relevant", "suitable", "proper", "good"
-- [ ] **Subjective terms**: "better", "improved", "professional", "clean"
-- [ ] **Undefined references**: "the above", "this", "that", "it" without clear antecedent
-- [ ] **Implicit assumptions**: Instructions that assume context not explicitly stated
-- [ ] **Weasel words**: "might", "could", "possibly", "generally", "usually"
+**Integration elements**: dependencies are listed, outputs are defined, handoffs to other workflows are specified, and any required final prompt pair or terminal block ordering is explicit, and any required user decision point explains what happens after each option.
 
-### 2.1.2 Specificity Check
+**Gap analysis**: ask what happens if the agent does not understand, preconditions are not met, multiple interpretations exist, external resources are unavailable, or the user does not understand what a requested choice means.
 
-For each instruction, verify:
+**Scenario coverage**: ensure the happy path, error paths, recovery procedures, escalation triggers, user-decision branches, and completion branches are documented; check whether the response can terminate after a summary, validation block, or next-step menu even though required final sections are still missing.
 
-- [ ] **WHO** performs the action (agent, user, system)?
-- [ ] **WHAT** exactly should be done?
-- [ ] **WHEN** should it be done (trigger condition)?
-- [ ] **HOW** should it be done (method/approach)?
-- [ ] **WHY** is it necessary (helps agent prioritize)?
+## L5: Anti-Pattern Detection
 
-### 2.1.3 Quantification
+### Specification
 
-- [ ] Are quantities specified where applicable? ("3 examples" vs "a few examples")
-- [ ] Are limits defined? ("max 100 words" vs "brief")
-- [ ] Are thresholds explicit? ("if more than 5 errors" vs "if many errors")
+| Code | Detect when |
+|---|---|
+| `AP-VAGUE` | Instructions rely on common sense, ambiguity, or implicit knowledge. |
+| `AP-MISSING-FORMAT` | Output format is not specified. |
+| `AP-MISSING-ROLE` | Needed persona or expertise is undefined. |
+| `AP-MISSING-CONSTRAINTS` | Length, scope, style, or boundary constraints are missing. |
+| `AP-OVERLOAD` | Too many tasks are packed into one instruction. |
+| `AP-MICROMANAGE` | Low-level detail constrains execution without improving outcomes. |
+| `AP-LONG-WINDED` | The same rule is padded with prose, repetition, or bloated examples. |
+| `AP-CONFLICTING` | Requirements contradict one another. |
+| `AP-IMPOSSIBLE` | Not all requirements can be satisfied simultaneously. |
+| `AP-NO-ROUTER` | Multi-step or branching instructions lack a compact router/index that says what may load next and when. |
+| `AP-OVERSIZED-RESOURCE` | A loadable instruction resource, module, or deliberate slice exceeds `50` lines. |
+| `AP-MONOLITHIC-STEP` | Multiple steps, branches, or modes are bundled into one loadable unit instead of decomposed into routeable modules. |
 
-## 2.2 Instruction Clarity
+### Context & Memory
 
-### 2.2.1 Imperative Language
+| Code | Detect when |
+|---|---|
+| `AP-CONTEXT-BLOAT` | Excessive context dilutes priorities. |
+| `AP-SYSTEM-PROMPT-BLOAT` | A system prompt violates `6.1.3`: always-on text is `> 200` lines or embeds conditional blocks that should be modular. |
+| `AP-CONTEXT-STARVATION` | Critical context is missing. |
+| `AP-CONTEXT-DRIFT` | Required context may be lost through compaction or long sessions. |
+| `AP-BURIED-PRIORITY` | Critical rules are hidden instead of surfaced early and scannably. |
+| `AP-VAGUE-REFERENCE` | References such as `the above` or `this` have no clear antecedent. |
+| `AP-ASSUMES-MEMORY` | The document assumes the agent will remember earlier turns. |
+| `AP-NO-CHECKPOINT` | Long workflows lack state checkpoints. |
+| `AP-IMPLICIT-STATE` | State changes are not explicitly tracked. |
 
-- [ ] Instructions use imperative mood ("Do X" not "You should do X")
-- [ ] Active voice preferred over passive
-- [ ] One action per sentence where possible
+### Execution & Output
 
-### 2.2.2 Positive vs Negative Framing
+| Code | Detect when |
+|---|---|
+| `AP-NO-VERIFICATION` | No self-check or validation step exists. |
+| `AP-FALSE-COMPLETION` | The prompt allows the response to end after a summary, validation result, next-step menu, or checkpoint-looking block even though required final sections or handoff prompts are still missing. |
+| `AP-MISSING-TERMINAL-BLOCK` | Required final prompt blocks, handoff sections, or terminal block ordering are unspecified or only implied. |
+| `AP-SKIP-ALLOWED` | Critical steps are easy to skip. |
+| `AP-SILENT-FAIL` | Failures are not surfaced to the user. |
+| `AP-INFINITE-LOOP` | Retry loops can stall indefinitely. |
+| `AP-HALLUCINATION-PRONE` | The prompt encourages guessing. |
+| `AP-NO-UNCERTAINTY` | The agent is not allowed to say `I don't know`. |
+| `AP-NO-SOURCES` | Claims need not be cited or verified. |
 
-- [ ] Prefer "DO this" over "DON'T do that"
-- [ ] If negative, include positive alternative
-- [ ] MUST NOT / NEVER clearly distinguished from SHOULD NOT / AVOID
+### Interaction UX
 
-### 2.2.3 Priority Indicators
+| Code | Detect when |
+|---|---|
+| `AP-UNEXPLAINED-ASK` | The prompt asks the user for information or confirmation without stating why it is needed or what good input looks like. |
+| `AP-AMBIGUOUS-OPTIONS` | Options or reply labels are hard to distinguish, use unclear wording, or hide important differences. |
+| `AP-HIDDEN-CONSEQUENCE` | The user is asked to choose before the prompt explains what each option will do next. |
+| `AP-NO-SUGGESTED-OPTION` | A decision point lacks a suggested or recommended path even though the current context clearly favors one option. |
+| `AP-GENERIC-SUGGESTION` | Suggested follow-ups or recommended options are generic instead of being anchored to the current request, state, or prior result. |
+| `AP-OPTION-OVERLOAD` | Too many choices, too much prose, or mixed decision scopes increase cognitive load unnecessarily. |
 
-- [ ] Critical instructions marked (MUST, REQUIRED, CRITICAL)
-- [ ] Optional instructions marked (MAY, OPTIONAL, CONSIDER)
-- [ ] Hierarchy of importance clear
+### Maintainability
 
----
+| Code | Detect when |
+|---|---|
+| `AP-HARDCODED` | Magic strings or numbers appear instead of parameters. |
+| `AP-DRY-VIOLATION` | The same rule appears in multiple places. |
+| `AP-NO-VERSION` | Breaking changes are not versioned. |
+| `AP-TANGLED` | Editing one area breaks unrelated behavior. |
 
-# Layer 3: Structure & Organization
+## L6: Context Engineering
 
-**Goal**: Evaluate document navigability and cognitive load
+**Content audit**: identify compressible sections, redundant sections, content that should load conditionally, and approximate size. Optional sizing helpers: `wc -l path/to/document.md` for line count and a simple word-count proxy for rough token estimation.
 
-## 3.1 Information Architecture
+**Information priority**: confirm the most critical instructions appear in the first `20%` of the document, examples and details can be truncated without losing core behavior, and conditional content is clearly marked for selective loading.
 
-### 3.1.1 Hierarchy Quality
+**CRIT — system prompt budget**: if the reviewed document is a `System Prompt`, its always-on portion MUST NOT exceed `200` lines. Count the fully assembled always-on text, including headings, blank lines, and lists. Content moved into on-demand modules does not count. PASS if `<= 200`; FAIL if `> 200`.
 
-- [ ] Logical heading hierarchy (H1 → H2 → H3)
-- [ ] Section titles are descriptive and scannable
-- [ ] Related content grouped together
-- [ ] Important content early, details later (inverted pyramid)
+**If the system prompt exceeds budget**: keep only always-on invariants (identity, safety, tool rules, output contract); move task-specific or conditional material into modules; add explicit loading rules via `AGENTS.md`, workflow `WHEN` clauses, or ordered steps. Recommended organizations: module index + conditional loading, phase-based chain loading, or mode-based branching. Acceptance: prompt `<= 200`, optional detail externalized, triggers are explicit, and next modules are obvious.
 
-### 3.1.2 Chunking
+**CRIT — workflow/skill/methodology overflow control**: any document that tells the agent to load more files MUST define budget, gating, chunking, summarization, and a fail-safe. Minimum controls: max files / max total lines or a mandatory summarize-and-drop policy; rules for when a dependency should load; partial loading by TOC/section/range instead of whole-file default; conversion of loaded text into an operational summary; and a stop / checkpoint / ask-user fallback when budget would be exceeded.
 
-- [ ] Long sections broken into digestible subsections
-- [ ] Lists used for enumerations (not paragraphs)
-- [ ] Tables used for structured comparisons
-- [ ] Code blocks used for commands/examples
+**CRIT — loadable resource budget**: every loadable instruction resource MUST be `<= 50` lines.
 
-### 3.1.3 Navigation Aids
+A **loadable instruction resource** is any file, module, or deliberate contiguous slice that the agent is expected to load as one active execution unit at runtime. Concrete test: a unit qualifies as a loadable instruction resource only when the agent must ingest it whole at runtime — invoked as a single programmatic load or import (for example a `Read` of the whole file, an `ALWAYS open and follow {path}` directive, a workflow `WHEN`-clause spec load, or a router pointing at the file as the next-load target). Examples that ARE loadable instruction resources: a workflow phase file, a skill `SKILL.md` actively loaded by the protocol guard, a router-referenced module, a checklist file ingested whole during a phase, an agent prompt opened in full.
 
-- [ ] Table of contents for long documents
-- [ ] Internal links between related sections
-- [ ] Clear section boundaries (horizontal rules)
-- [ ] Summary/overview at start
+**Exemptions**: methodology documents, reference guides, multi-chapter specifications, ADRs, design documents, and other non-runtime documentation are exempt from the `<= 50` line cap UNLESS they contain runtime execution sequences or agent-loadable instruction blocks (e.g., `WHEN`-clause specs, `ALWAYS open and follow` directives, or router targets). When such a document carries runtime instructions inline, the runtime block itself is the loadable resource and MUST be either (a) `<= 50` lines, or (b) extracted into its own routeable module so the runtime slice satisfies the cap.
 
-## 3.2 Cognitive Load Management
+**Measurement rule**: count headings, blank lines, lists, and examples within the runtime-loadable unit (do not count surrounding non-runtime prose in an exempted document). PASS only if every runtime-loadable unit is `<= 50`; FAIL if any runtime unit exceeds `50`.
 
-### 3.2.1 Information Density
+**Migration rule**: during brownfield review or refactor, an oversized legacy prompt may be inspected only through bounded slices `<= 50` lines each to plan decomposition. That temporary inspection does not make the legacy prompt compliant; the legacy document remains non-compliant until decomposed, and the compliant target state is routeable resources `<= 50` lines each.
 
-- [ ] One concept per paragraph
-- [ ] Avoid nested conditionals beyond 2 levels
-- [ ] Complex logic presented as decision trees/flowcharts
-- [ ] Abbreviations defined on first use
+**CRIT — router / lazy-loading decomposition contract**: if behavior spans multiple steps, branches, modes, or recovery paths, the prompt MUST be decomposed into a compact router plus on-demand modules. The router decides what loads next; each module contains only one active branch, one active step, or one tightly related decision/recovery unit. The router MUST NOT inline full instructions for sibling branches or later steps that are not yet active.
 
-### 3.2.2 Visual Hierarchy
+| Module type | Purpose | MUST contain | MUST NOT contain |
+|---|---|---|---|
+| Router / index | Entry point and branch selection | purpose, branch names, explicit triggers, next-file mapping, stop/escalate rule | full downstream step-by-step content for multiple branches |
+| Step module | One execution step | goal, prerequisites, actions, outputs, next route or stop condition | instructions for unrelated steps, future phases, or sibling branches |
+| Decision module | One user/system choice point | options, consequences, suggested path, reply contract, next-file mapping | hidden consequences, mixed decision scopes, or unrelated execution detail |
+| Shared invariant module | Reusable always-on constraints | invariants reused by multiple branches, stable definitions, non-branching guardrails | branch-local sequencing or large optional guidance |
+| Recovery module | Error, retry, or resume path | failure trigger, recovery actions, return route | normal-path bulk instructions |
 
-- [ ] Important terms **bolded**
-- [ ] Code/IDs in `backticks`
-- [ ] Warnings/cautions visually distinct (⚠️, boxes)
-- [ ] Examples clearly demarcated
+**Preferred representation**: use compact tables for router/index data and short ordered lists for execution steps. Use the smallest format that preserves deterministic routing, obvious next loads, and unambiguous branch boundaries.
 
-### 3.2.3 Redundancy Check
+**Mandatory loading protocol**:
+1. Load the router or entry module first.
+2. Resolve the active branch, mode, or step from explicit triggers before loading any downstream module.
+3. Load exactly one downstream module at a time unless two modules are both mandatory for the same immediate action and still respect the `<= 50`-line rule.
+4. After each module, retain only a short operational summary plus required state; drop unrelated raw text.
+5. Load the next module only from an explicit `next`, `when`, `if`, or decision mapping.
+6. Recovery, review, and completion modules load only when their trigger fires; they MUST NOT stay always-on by default.
+7. Resumption MUST restart from the router or checkpoint plus the next required module, not from chat memory alone.
 
-- [ ] No contradictory instructions
-- [ ] Intentional repetition marked as such
-- [ ] Cross-references used instead of duplication
+**Decomposition acceptance**: PASS only if a cold-start agent can begin from the router, determine the next module without guessing, load one `<= 50`-line unit at a time, and complete the active path without reading sibling branches first.
 
----
+**Evidence requirement**: the review output lists loaded files with sizes and sections/ranges, plus the chosen budget and whether it was respected or which fail-safe path was taken.
 
-# Layer 4: Completeness Analysis
+**HIGH-priority compact-prompts review**: answer this question explicitly — *What can be removed, externalized, deduplicated, summarized, or conditionally loaded without changing required behavior?* Required optimization loop: classify content as always-on invariant / conditional guidance / example-reference / archival detail; keep only minimum viable always-on context; externalize conditional detail into triggered modules; compress prose into bullets, tables, and decision rules; deduplicate to one canonical statement per rule; keep the smallest example set that still prevents ambiguity; then verify every `MUST`, `MUST NOT`, trigger, threshold, format rule, and fail-safe still exists.
 
-**Goal**: Identify missing information
+**Compaction checks**: split always-on vs on-demand content explicitly; replace repeated narrative with one rule plus reference; convert branching prose into decision tables or ordered steps; prefer `WHEN` / `IF` / `ONLY IF` triggers over buried clauses; surface critical priorities early; keep output formats and acceptance criteria close to dependent instructions; remove decorative wording; prefer short labels with one-sentence explanations over dense paragraphs.
 
-## 4.1 Essential Elements
+**Lossless-first compression order**: remove noise in this order unless the document proves a different order is safer: filler/courtesy; repeated framing; hedging and weak qualifiers; decorative transitions; duplicated examples; archival detail; optional explanatory prose. `MUST NOT` remove constraints, thresholds, triggers, fail-safes, or required terminal blocks before higher-noise categories are exhausted.
 
-### 4.1.1 Identity & Purpose
+**Controlled shorthand**: compressed phrasing such as `X -> Y`, `IF X: Y`, short labels, or omitted connectives is acceptable only when a fresh agent can still interpret the rule without guessing. Use one stable compressed label per concept and define any non-obvious shorthand once near first use.
 
-- [ ] **Purpose statement**: Why does this document exist?
-- [ ] **Scope definition**: What does it cover and NOT cover?
-- [ ] **Success criteria**: How do we know instructions were followed correctly?
+**Dense packet formats**: for operational content, prefer compact units such as one line = one action, one decision rule, or one problem + fix. Favor field-like formats such as `Goal:`, `Risk:`, `Do:`, `Do not:`, and `Proof:` over narrative when they preserve full meaning.
 
-### 4.1.2 Operational Elements
+**Decompression test**: after compaction, verify that a reviewer can restate each compressed rule in full plain language without inventing missing constraints. Mark `FAIL` if compression depends on hidden context, unstable shorthand, or memory of earlier turns.
 
-- [ ] **Entry conditions**: When/how to activate these instructions
-- [ ] **Exit conditions**: When/how to deactivate or complete
-- [ ] **Error handling**: What to do when things go wrong
-- [ ] **Edge cases**: Unusual situations addressed
+**Noise-floor rule**: remove ritual acknowledgments, motivational padding, repeated reassurance, conversational filler, and meta-commentary unless they change behavior, reduce execution risk, or prevent ambiguity.
 
-### 4.1.3 Integration Elements
+**Response-shape budgets**: define expected compactness by output type, not only by overall document size. Prefer explicit target shapes such as short operational answer, one-issue-per-line review comment, goal/state/blocker/next status update, or minimal self-contained handoff prompt instead of generic instructions like `be concise`.
 
-- [ ] **Dependencies listed**: Other docs/tools required
-- [ ] **Outputs defined**: What should be produced
-- [ ] **Handoffs specified**: How to pass control to other workflows
+**Prompt-writing recommendations**: state role, task, constraints, then output contract unless a different dependency order is necessary; use one stable name per artifact, mode, workflow, or variable; keep thresholds numeric (`<= 200 lines`, `max 3 iterations`, `read 1 file at a time`); pair forbidden behavior with the required alternative; make scope explicit (`In scope`, `Out of scope`, `Do not infer`); prefer concrete condition-action phrasing; avoid nested parentheticals and stacked caveats when a sub-list is clearer.
 
-## 4.2 Missing Content Detection
+**Compactness examples**:
 
-### 4.2.1 Gap Analysis
+| Anti-pattern | Before | After |
+|---|---|---|
+| `AP-LONG-WINDED` | `When you are in a situation where context may be running low...` | `WHEN context runs low, summarize loaded instructions into a short operational checklist and drop the raw text.` |
+| `AP-BURIED-PRIORITY` | `Use good judgment... before writing anything make sure they have approved it.` | `MUST NOT write files before explicit user confirmation.` |
 
-For each instruction, ask:
+**Severity guidance**: missed safe compaction opportunities are `HIGH` when they affect always-on prompts or frequently loaded instruction files; compaction that removes required behavior, constraints, or recovery steps is a `FAIL`.
 
-- [ ] What if the agent doesn't understand?
-- [ ] What if the preconditions aren't met?
-- [ ] What if there are multiple valid interpretations?
-- [ ] What if external resources are unavailable?
+**Lifecycle**: specify what loads at start, what loads on demand, what can be summarized when context is low, what must never be dropped, how critical state survives compaction, what belongs in files vs working memory, and how context loss is detected and recovered.
 
-### 4.2.2 Scenario Coverage
+**Attention management**: repeat or reinforce critical instructions, visually emphasize important sections, keep guardrails in a dedicated section, avoid too many competing instructions, group related rules, and separate low-priority content.
 
-- [ ] Happy path documented
-- [ ] Error paths documented
-- [ ] Recovery procedures documented
-- [ ] Escalation procedures documented (when to ask user)
+## L7: Testability Assessment
 
----
+**Binary verification**: for each instruction, determine whether the agent did it, did it correctly, and did it completely.
 
-# Layer 5: Anti-Pattern Detection
+**Observable outputs**: require visible artifacts, visible intermediate steps, and explicit compliance evidence.
 
-**Goal**: Identify common prompt engineering mistakes
+**Built-in checks**: include validation criteria, a pre-completion self-check, checklist formatting for critical steps, and proof-of-work requirements when appropriate.
 
-## 5.1 Specification Anti-Patterns
+**Interactive UX checks**: when the document asks the user to choose or confirm, verify that tests can confirm all of the following from the emitted prompt alone: why the input is needed, what reply format is accepted, what each option does, and whether any suggested option is anchored to the current context.
 
-### 5.1.1 Underspecification
+**When a workflow requires terminal prompts or final handoff blocks, the pre-completion self-check should verify that those exact blocks were emitted before the response may end.**
 
-- [ ] **AP-VAGUE**: Instructions rely on "common sense" or implicit knowledge
-- [ ] **AP-MISSING-FORMAT**: Output format not specified
-- [ ] **AP-MISSING-ROLE**: No persona/expertise defined when needed
-- [ ] **AP-MISSING-CONSTRAINTS**: No boundaries on length, scope, style
+**External verification**: prefer rules that can be checked by automated tools, another agent, or a human reviewer.
 
-### 5.1.2 Overspecification
+**Happy-path tests**: provide at least one correct example, with full input-to-output trace and key edge cases.
 
-- [ ] **AP-OVERLOAD**: Too many tasks in single instruction
-- [ ] **AP-MICROMANAGE**: Unnecessary low-level details
-- [ ] **AP-CONFLICTING**: Contradictory requirements
-- [ ] **AP-IMPOSSIBLE**: Requirements that can't all be satisfied
+**Negative tests**: show what not to do, what incorrect outputs look like, and how to recover.
 
-## 5.2 Context Anti-Patterns
+## L8: User Interaction UX
 
-### 5.2.1 Context Mismanagement
+**User-facing prompts**: verify that every user-facing prompt explains why the input is needed, what the user is expected to provide, what each option leads to, which option is suggested in the current context, and exactly how the user should reply.
 
-- [ ] **AP-CONTEXT-BLOAT**: Excessive context that dilutes important info
-- [ ] **AP-SYSTEM-PROMPT-BLOAT**: Violates `6.1.3` — always-on system prompt is oversized (>200 lines) OR it embeds large conditional/task-specific blocks that should be externalized into on-demand modules
-- [ ] **AP-CONTEXT-STARVATION**: Critical context missing
-- [ ] **AP-CONTEXT-DRIFT**: Assumed context may not persist (compaction)
-- [ ] **AP-VAGUE-REFERENCE**: "The above" / "this" without clear antecedent
+**Goal-oriented questions**: verify that each question, confirmation gate, or next-step menu moves the user toward a concrete outcome and states why this question is being asked now.
 
-### 5.2.2 Memory Anti-Patterns
+**Capability and limit framing**: verify that when the user's choice depends on system capabilities, constraints, or uncertainty, the prompt explains what the system can do, what it cannot do, and why the recommendation is appropriate.
 
-- [ ] **AP-ASSUMES-MEMORY**: Relies on agent remembering earlier conversation
-- [ ] **AP-NO-CHECKPOINT**: Long workflows without state checkpoints
-- [ ] **AP-IMPLICIT-STATE**: State changes not explicitly tracked
+**Ask only for missing information**: verify that the prompt does not ask the user to restate context already available, and that complex requests are broken into manageable steps rather than requesting all possible details at once.
 
-## 5.3 Behavioral Anti-Patterns
+**Option clarity**: verify that options or reply labels are easy to distinguish, use clear wording, and do not hide important differences.
 
-### 5.3.1 Execution Anti-Patterns
+**Consequence explanation**: verify that the user is not asked to choose before the prompt explains what each option will do next.
 
-- [ ] **AP-NO-VERIFICATION**: No self-check or validation step
-- [ ] **AP-SKIP-ALLOWED**: Easy to skip critical steps
-- [ ] **AP-SILENT-FAIL**: Failures not surfaced to user
-- [ ] **AP-INFINITE-LOOP**: Possible to get stuck in retry loop
+**Suggested options**: verify that a decision point has a suggested or recommended path when the current context clearly favors one option.
 
-### 5.3.2 Output Anti-Patterns
+**Generic suggestions**: verify that suggested follow-ups or recommended options are anchored to the current request, state, or prior result, not generic.
 
-- [ ] **AP-HALLUCINATION-PRONE**: Instructions encourage guessing
-- [ ] **AP-NO-UNCERTAINTY**: No permission to say "I don't know"
-- [ ] **AP-NO-SOURCES**: No requirement to cite/verify claims
+**Option overload**: verify that too many choices, too much prose, or mixed decision scopes do not increase cognitive load unnecessarily.
 
-## 5.4 Maintainability Anti-Patterns
+**Reply contract**: verify that the prompt tells the user exactly how to answer (`1`, `2`, `yes`, `no`, `approve all`, or specific edits) so the reply format never has to be guessed.
 
-### 5.4.1 Evolution Anti-Patterns
+**Fallback quality**: verify that confusion or unsupported input leads to a targeted clarifying question, a small set of clear alternatives, or a nearest-supported path instead of a dead-end response.
 
-- [ ] **AP-HARDCODED**: Magic numbers/strings instead of parameters
-- [ ] **AP-DRY-VIOLATION**: Same instruction repeated in multiple places
-- [ ] **AP-NO-VERSION**: No versioning for breaking changes
-- [ ] **AP-TANGLED**: Changes to one part break unrelated parts
+**Transition clarity**: verify that shifts between stages (for example clarification -> action, or validation -> next steps) are explicitly communicated so the user understands what changed and why.
 
----
+## L9: Agent Ergonomics
 
-# Layer 6: Context Engineering
+**Capability match**: ensure instructions do not ask impossible things, break complex reasoning into steps, and request output formats the model is good at (`JSON`, `Markdown`, etc.).
 
-**Goal**: Evaluate efficient use of limited context window
+**Training alignment**: use familiar prompt patterns, an appropriate role/persona, and a style consistent with effective prompting.
 
-## 6.1 Token Efficiency
+**Graceful degradation**: define what happens on partial failure, whether the agent can recover without intervention, and when it must ask for help.
 
-### 6.1.1 Content Audit
+**Hallucination prevention**: require verification or citation, permit uncertainty, mark speculation, and use external tools for factual queries.
 
-**Quick sizing helpers** (optional):
+**Iterative compatibility**: support iterative improvement, define how feedback is incorporated, and keep partial success actionable.
 
-```bash
-# Line count (used by the time-boxing table)
-wc -l path/to/document.md
+**Conversation compatibility**: support multi-turn use, clarification requests, and mid-task scope changes.
 
-# Rough token proxy (words). Treat as an approximation.
-python3 -c 'import pathlib; p=pathlib.Path("path/to/document.md"); print(len(p.read_text(encoding="utf-8").split()))'
-```
+## L10: Improvement Synthesis
 
-- [ ] Identify verbose sections that can be compressed
-- [ ] Identify redundant content across sections
-- [ ] Identify content that could be loaded conditionally
-- [ ] Calculate approximate token count
-
-### 6.1.2 Information Priority
-
-- [ ] Most critical instructions in first 20% of document
-- [ ] Examples/details can be truncated without losing core behavior
-- [ ] Conditional content clearly marked for selective loading
-
-### 6.1.3 System Prompt Budget (CRIT)
-
-**CRIT rule (CRITICAL)**: If the document under review is a **System Prompt**, its **always-on** portion MUST NOT exceed **200 lines**.
-
-**Scope**:
-
-- This budget applies to the baseline/always-injected system prompt.
-- Content moved into **on-demand modules** (loaded by WHEN/IF/step rules) does **not** count toward the 200-line limit.
-- If the system prompt is assembled from multiple files, count the **fully assembled always-on text** (the exact text injected on every request).
-
-**How to verify**:
-
-- [ ] Identify the always-on system prompt text (single file or assembled “base”)
-- [ ] Count lines (including headings, blank lines, and lists)
-- [ ] Confirm line count is ≤ 200
-
-**Example commands** (pick what fits your setup):
-
-```bash
-# Single file
-wc -l path/to/system-prompt.md
-
-# If assembled/generated into a single output (count the assembled result)
-wc -l path/to/assembled-system-prompt.txt
-```
-
-**PASS/FAIL**:
-
-- PASS if always-on system prompt lines ≤ 200
-- FAIL if always-on system prompt lines > 200
-
-**If it exceeds 200 lines, fix by reorganizing prompts (do not just delete rules):**
-
-- [ ] Keep only always-on invariants in the system prompt (identity, safety constraints, tool access rules, output contract)
-- [ ] Move everything conditional/task-specific into separate files (“modules”)
-- [ ] Add explicit loading/navigation rules so the agent pulls modules **only when needed** (AGENTS.md / workflow WHEN clauses / step order)
-
-**Recommended organization patterns**:
-
-- [ ] **Module index + conditional loading**: One short index file listing modules and explicit WHEN clauses for each
-- [ ] **Stepwise chain loading**: Load modules by phase (e.g., discovery → context loading → execution → validation)
-- [ ] **Branching by mode**: Split by task family (e.g., code vs artifact, STRICT vs RELAXED) and load the matching branch
-
-**Acceptance criteria (what “good” looks like)**:
-
-- [ ] System prompt ≤ 200 lines
-- [ ] Optional detail is externalized into modules (not duplicated)
-- [ ] Each module has clear trigger(s): WHEN/IF conditions or explicit step order
-- [ ] The agent can navigate: it’s obvious which module to load next, and why
-
-### 6.1.4 Context Load Budget & Overflow Prevention (CRIT)
-
-**CRIT rule (CRITICAL)**: If the document under review is a **workflow/skill/methodology** that instructs an agent to load additional files (modules), it MUST include an explicit, testable strategy to prevent context overflow.
-
-**Minimum required controls** (FAIL if any are missing):
-
-- [ ] **Budget**: Defines a load budget (e.g., max files, max total lines/words) OR defines a mandatory summarize-and-drop procedure after each load.
-- [ ] **Gating**: Defines when a dependency SHOULD be loaded (triggers/decision rules), avoiding “load everything”.
-- [ ] **Chunking**: Defines how to load partial content (TOC/sections/line ranges) rather than whole files by default.
-- [ ] **Summarization**: Requires converting loaded text into a short operational summary (rules/criteria) that can replace the raw text in working context.
-- [ ] **Fail-safe**: Defines what to do when the budget would be exceeded (stop + ask user to choose scope, or write a checkpoint and continue iteratively).
-
-**How to verify** (evidence requirement):
-
-- [ ] The review output lists the files actually loaded, with their sizes (lines or word proxy) and the sections/ranges used.
-- [ ] The review output shows the chosen budget and confirms it was respected OR shows the fail-safe path taken.
-
-## 6.2 Context Lifecycle
-
-### 6.2.1 Loading Strategy
-
-- [ ] What must be loaded at start? (Always-on context)
-- [ ] What can be loaded on-demand? (WHEN clauses)
-- [ ] What can be summarized if context runs low?
-- [ ] What must never be dropped?
-
-### 6.2.2 Persistence Strategy
-
-- [ ] How to preserve critical state across compaction?
-- [ ] What should be written to files vs kept in memory?
-- [ ] How to detect and recover from context loss?
-
-## 6.3 Attention Management
-
-### 6.3.1 Attention Anchors
-
-- [ ] Critical instructions repeated/reinforced
-- [ ] Important sections visually emphasized
-- [ ] Guardrails in dedicated section (models trained to attend to this)
-
-### 6.3.2 Attention Dilution Prevention
-
-- [ ] Not too many instructions competing for attention
-- [ ] Related instructions grouped (not scattered)
-- [ ] Low-priority content clearly marked or separated
-
----
-
-# Layer 7: Testability Assessment
-
-**Goal**: Evaluate whether compliance can be verified
-
-## 7.1 Verifiable Instructions
-
-### 7.1.1 Binary Verification
-
-For each instruction, can we determine:
-
-- [ ] Did the agent do it? (Yes/No, not subjective)
-- [ ] Did the agent do it correctly? (Measurable criteria)
-- [ ] Did the agent do it completely? (Checkable completeness)
-
-### 7.1.2 Observable Outputs
-
-- [ ] Instructions produce observable artifacts
-- [ ] Intermediate steps visible (not just final output)
-- [ ] Compliance evidence included in output
-
-## 7.2 Self-Verification Mechanisms
-
-### 7.2.1 Built-in Checks
-
-- [ ] Document includes validation criteria
-- [ ] Agent instructed to self-verify before completing
-- [ ] Checklist format for critical steps
-- [ ] "Proof of work" requirements (show reasoning)
-
-### 7.2.2 External Verification
-
-- [ ] Can be validated by automated tools
-- [ ] Can be validated by another agent
-- [ ] Can be validated by human reviewer
-
-## 7.3 Test Case Specification
-
-### 7.3.1 Happy Path Tests
-
-- [ ] At least one example of correct behavior
-- [ ] Example shows complete input → output
-- [ ] Example demonstrates key edge cases
-
-### 7.3.2 Negative Tests
-
-- [ ] Examples of what NOT to do
-- [ ] Examples of incorrect outputs
-- [ ] Examples of how to recover from errors
-
----
-
-# Layer 8: Agent Ergonomics
-
-**Goal**: Evaluate how well instructions work with LLM capabilities
-
-## 8.1 Model Alignment
-
-### 8.1.1 Capability Match
-
-- [ ] Instructions match model capabilities (don't ask impossible things)
-- [ ] Complex reasoning broken into steps (chain-of-thought friendly)
-- [ ] Format requests match model training (JSON, Markdown, etc.)
-
-### 8.1.2 Training Alignment
-
-- [ ] Uses patterns model likely saw in training
-- [ ] Role/persona appropriate for task
-- [ ] Style consistent with effective prompt patterns
-
-## 8.2 Failure Mode Handling
-
-### 8.2.1 Graceful Degradation
-
-- [ ] What happens if agent partially fails?
-- [ ] Can agent recover without human intervention?
-- [ ] Are there explicit "ask for help" triggers?
-
-### 8.2.2 Hallucination Prevention
-
-- [ ] Instructions require verification/citation
-- [ ] Agent permitted to express uncertainty
-- [ ] Speculative content clearly marked
-- [ ] External tool use for factual queries
-
-## 8.3 Iterative Compatibility
-
-### 8.3.1 Refinement Support
-
-- [ ] Output can be iteratively improved
-- [ ] Feedback incorporation path defined
-- [ ] Partial success is actionable (not all-or-nothing)
-
-### 8.3.2 Conversation Compatibility
-
-- [ ] Works in multi-turn conversations
-- [ ] Handles clarification requests
-- [ ] Handles scope changes mid-task
-
----
-
-# Layer 9: Improvement Synthesis
-
-**Goal**: Consolidate findings into actionable improvements
-
-## 9.1 Issue Prioritization
-
-### 9.1.1 Severity Classification
+**Severity**:
 
 | Severity | Criteria | Action |
-|----------|----------|--------|
-| **CRITICAL** | Blocks agent from completing task | Fix immediately |
-| **HIGH** | Causes incorrect/inconsistent output | Fix before deployment |
-| **MEDIUM** | Reduces quality or efficiency | Fix in next iteration |
-| **LOW** | Minor improvement opportunity | Backlog |
+|---|---|---|
+| `CRITICAL` | Blocks task completion | Fix immediately |
+| `HIGH` | Causes incorrect or inconsistent output | Fix before deployment |
+| `MEDIUM` | Reduces quality or efficiency | Fix next iteration |
+| `LOW` | Minor improvement opportunity | Backlog |
 
-### 9.1.2 Effort Classification
+**Effort**:
 
 | Effort | Criteria |
-|--------|----------|
-| **TRIVIAL** | Single word/phrase change |
-| **SMALL** | Single section rewrite |
-| **MEDIUM** | Multiple section changes |
-| **LARGE** | Document restructure |
+|---|---|
+| `TRIVIAL` | Single word or phrase change |
+| `SMALL` | Single section rewrite |
+| `MEDIUM` | Multiple section changes |
+| `LARGE` | Document restructure |
 
-## 9.2 Improvement Recommendations
+**Quick wins**: list `CRITICAL` plus `TRIVIAL` / `SMALL` fixes, rank by impact-to-effort ratio, and note dependencies between fixes. For user-facing prompts, prioritize fixes that reduce user confusion at decision points before cosmetic wording changes.
 
-### 9.2.1 Quick Wins
+**Strategic improvements**: list structural changes, refactoring opportunities, and missing sections or companion docs.
 
-- [ ] List CRITICAL + TRIVIAL/SMALL fixes
-- [ ] Prioritize by impact/effort ratio
-- [ ] Identify dependencies between fixes
+**Per-fix guidance**: provide `What`, `Where`, `Why`, `How`, and `Verify`. For interaction UX fixes, include the intended user mental model, the suggested default path, and the exact outcome text that should become clearer.
 
-### 9.2.2 Strategic Improvements
+**Testing plan**: define tests for critical fixes, regression checks for preserved behavior, and validation that fixes do not conflict.
 
-- [ ] List structural/architectural changes needed
-- [ ] Identify refactoring opportunities
-- [ ] Suggest new sections or documents
+## Execution Protocol
 
-## 9.3 Implementation Guidance
+**Prerequisites**: full document text is accessible; related documents are available for cross-reference; document purpose and context are understood; example outputs are available when applicable.
 
-### 9.3.1 For Each Fix
+**Order**: execute layers `1 -> 10` in sequence. Review completion requires the required report format plus a fully evaluated verification checklist. After each layer, checkpoint findings before continuing.
 
-Provide:
+**Work budgeting**: prefer bounded review passes over elapsed time. Size the review with `wc -l path/to/document.md` and use this pass budget:
 
-- [ ] **What**: Specific change to make
-- [ ] **Where**: Exact location (section, line)
-- [ ] **Why**: Issue being addressed
-- [ ] **How**: Suggested replacement text
-- [ ] **Verify**: How to confirm fix worked
+| Document Size | L1-L3 | L4-L6 | L7-L9 | L10 |
+|---|---|---|---|---|
+| Small (`< 500`) | 1 pass | 1 pass | 1 pass | 1 synthesis pass |
+| Medium (`500-2000`) | 1-2 passes | 1-2 passes | 1-2 passes | 1 synthesis pass |
+| Large (`> 2000`) | 2 passes | 2 passes | 2 passes | 1-2 synthesis passes |
 
-### 9.3.2 Testing Plan
+If a layer exceeds its pass budget, note blockers and continue; incomplete analysis is better than no analysis.
 
-- [ ] Test cases for critical fixes
-- [ ] Regression checks for existing behavior
-- [ ] Validation that fixes don't conflict
+**Error handling**:
 
----
+- `Partial layer`: document completed checks, blockers, mark the layer `PARTIAL`, then proceed.
+- `Missing information`: if dependencies are inaccessible, analyze what is available; if examples are missing, flag Layer 7 and recommend examples; if context is unclear, ask the user or make assumptions explicit.
+- `Recovery`: default to a chat-only checkpoint; save `review-checkpoint-{document}-{layer}.md` only with explicit user request or approval; on resume, read the available checkpoint source, verify the document is unchanged, and continue.
 
-# Execution Protocol
+**Output format**: produce a report with these sections in order: `Summary`, `Context Budget & Evidence`, `Compact-Prompts Findings`, `Layer Summaries`, `Issues Found` (Critical / High / Medium / Low tables), `Recommended Fixes` (Immediate / Next Iteration / Backlog), and `Verification Checklist`.
 
-## Prerequisites
+**Required report fields**:
 
-Before starting review:
+- `Summary`: document type, overall quality (`GOOD | NEEDS_IMPROVEMENT | POOR`), critical issue count, total issue count. When paired with `prompt-bug-finding.md`, start `Summary` with that methodology's required status block, including `Review status` and `Deterministic gate: PASS | FAIL | SKIPPED`; if the gate is `SKIPPED`, state why and explicitly state `no validator-backed evidence for this review path` before the quality counts.
+- `Context Budget & Evidence`: budget, inputs loaded (`path — size — sections/ranges`), and overflow handling.
+- `Compact-Prompts Findings`: safe reductions found, content kept intentionally, deferred or blocked opportunities, and a behavior-preservation check confirming `MUST`, `MUST NOT`, triggers, thresholds, output rules, and fail-safes remain intact.
+- `Layer Summaries`: cover every layer explicitly; when the document contains user-facing questions, confirmations, or menus, include dedicated interaction-UX findings covering why the prompt asks, option clarity, option outcomes, suggested-path quality, reply format, and fallback behavior.
+- `Verification Checklist`: all critical issues addressed; no new issues introduced; examples/tests updated when needed; context overflow prevention evidenced; compact-prompts findings reported explicitly; and, when the reviewed document requires terminal response blocks, the checklist explicitly states whether false completion paths were ruled out.
 
-- [ ] Full document text accessible
-- [ ] Related documents available for cross-reference
-- [ ] Understanding of document's purpose and context
-- [ ] Access to example outputs (if available)
+When the deterministic gate is `SKIPPED`, do not describe semantic review, checklist review, or manual inspection as deterministic, validator-backed, or tool-validated unless actual validator or tool output exists.
 
-## Execution Order
-
-Layers MUST be executed in order 1-9. Each layer builds on previous findings.
-
-**Exit criteria**: Review is complete only when the output is produced using the required format AND the verification checklist is fully evaluated.
-
-**Checkpointing**: After each layer, summarize findings before proceeding.
-
-**Time Boxing**: Set time limits per layer based on document size:
-
-**How to measure document size** (use line count):
-
-```bash
-wc -l path/to/document.md
-```
-
-| Document Size | Layer 1-3 | Layer 4-5 | Layer 6-8 | Layer 9 |
-|---------------|-----------|-----------|-----------|---------|
-| Small (<500 lines) | 10min | 15min | 15min | 10min |
-| Medium (500-2000 lines) | 20min | 30min | 30min | 20min |
-| Large (>2000 lines) | 30min | 45min | 45min | 30min |
-
-**Rationale**: Time boxes prevent perfectionism paralysis and ensure progress. Layers 4-5 (completeness, anti-patterns) and 6-8 (context, testability, ergonomics) get more time as they require deeper analysis. Layer 9 synthesizes findings rather than discovering new ones, so needs less time. If a layer cannot be completed within its time box, note blocking issues and proceed — incomplete analysis is better than no analysis.
-
-## Error Handling
-
-### Partial Completion
-
-If a layer cannot be fully completed:
-
-1. **Document what was analyzed** — note which checklist items were completed
-2. **Note blocking issues** — why couldn't the layer be completed (missing context, ambiguous scope, etc.)
-3. **Mark as PARTIAL** — in output, indicate layer status as PARTIAL with reason
-4. **Proceed to next layer** — don't block the entire review
-
-### Missing Information
-
-If required information is unavailable:
-
-- **Dependencies not accessible**: Note as blocker, analyze what IS available
-- **Examples not provided**: Flag in Layer 7 (Testability), suggest creating examples
-- **Context unclear**: Ask user for clarification OR make assumptions explicit
-
-### Recovery Protocol
-
-If review must be interrupted (context compaction, session end):
-
-1. Save current state to file: `review-checkpoint-{document}-{layer}.md`
-2. Include: completed layers summary, current layer progress, issues found so far
-3. On resume: read checkpoint, verify document unchanged, continue from saved layer
-
-## Output Format
-
-After completing all layers, produce:
-
-```markdown
-# Prompt Engineering Review: {Document Name}
-
-## Summary
-- **Document Type**: {type}
-- **Overall Quality**: {GOOD|NEEDS_IMPROVEMENT|POOR}
-- **Critical Issues**: {count}
-- **Total Issues**: {count}
-
-## Context Budget & Evidence
-- **Budget**: {max files / max total lines/words OR summarize-and-drop policy}
-- **Inputs loaded**: {path — size — sections/ranges}
-- **Overflow handling**: {budget respected | fail-safe taken (what + why)}
-
-## Layer Summaries
-{One paragraph per layer}
-
-## Issues Found
-
-### Critical
-| ID | Layer | Description | Location | Fix |
-|----|-------|-------------|----------|-----|
-| C1 | L5 | AP-VAGUE: No output format | Section 3.2 | Add format spec |
-
-### High
-{table}
-
-### Medium
-{table}
-
-### Low
-{table}
-
-## Recommended Fixes
-
-### Immediate (Critical/High + Low Effort)
-1. {Fix description with before/after}
-
-### Next Iteration (Medium Priority)
-1. {Fix description}
-
-### Backlog (Low Priority / High Effort)
-1. {Fix description}
-
-## Verification Checklist
-- [ ] All critical issues addressed
-- [ ] No new issues introduced
-- [ ] Examples/tests updated if needed
-- [ ] Context overflow prevented (budget + gating + chunking + summarization + fail-safe) with evidence
-```
-
-**N/A rule**: Only mark an item N/A if the document explicitly makes it inapplicable. Otherwise mark as FAIL or PARTIAL and describe what’s missing.
-
----
-
-## Quick Reference: Anti-Pattern Codes
-
-| Code | Category | Description |
-|------|----------|-------------|
-| AP-VAGUE | Specification | Ambiguous language |
-| AP-MISSING-FORMAT | Specification | No output format |
-| AP-MISSING-ROLE | Specification | No persona defined |
-| AP-MISSING-CONSTRAINTS | Specification | No boundaries |
-| AP-OVERLOAD | Specification | Too many tasks |
-| AP-MICROMANAGE | Specification | Too much detail |
-| AP-CONFLICTING | Specification | Contradictory rules |
-| AP-IMPOSSIBLE | Specification | Unsatisfiable |
-| AP-CONTEXT-BLOAT | Context | Too much context |
-| AP-SYSTEM-PROMPT-BLOAT | Context | Violates `6.1.3` — always-on system prompt oversized (>200 lines) or contains conditional blocks that should be modular |
-| AP-CONTEXT-STARVATION | Context | Missing context |
-| AP-CONTEXT-DRIFT | Context | Context may be lost |
-| AP-VAGUE-REFERENCE | Context | Unclear antecedent |
-| AP-ASSUMES-MEMORY | Memory | Relies on memory |
-| AP-NO-CHECKPOINT | Memory | No state saves |
-| AP-IMPLICIT-STATE | Memory | Hidden state |
-| AP-NO-VERIFICATION | Execution | No self-check |
-| AP-SKIP-ALLOWED | Execution | Can skip steps |
-| AP-SILENT-FAIL | Execution | Hidden failures |
-| AP-INFINITE-LOOP | Execution | Can get stuck |
-| AP-HALLUCINATION-PRONE | Output | Encourages guessing |
-| AP-NO-UNCERTAINTY | Output | Can't say "don't know" |
-| AP-NO-SOURCES | Output | No citation needed |
-| AP-HARDCODED | Maintainability | Magic values |
-| AP-DRY-VIOLATION | Maintainability | Repeated content |
-| AP-NO-VERSION | Maintainability | No versioning |
-| AP-TANGLED | Maintainability | Coupled changes |
-
----
+**N/A rule**: mark a check `N/A` only when the document explicitly makes it inapplicable; otherwise mark `FAIL` or `PARTIAL` and explain what is missing.
 
 ## Integration with Cypilot
 
-This methodology integrates with Cypilot workflows:
-
-- **Validate workflow**: Use this methodology for semantic validation of instruction documents
-- **Generate workflow**: Apply these principles when creating new instruction documents
-- **Adapter workflow**: Ensure AGENTS.md follows these best practices
-
----
+- Use this methodology for semantic validation and generation of instruction documents.
+- Keep `AGENTS.md` and related adapters aligned with these rules.
+- Pair this methodology with `prompt-bug-finding.md` when the task is defect-oriented.
 
 ## References
 
-### Methodology Sources
+This document is the authoritative working method. External sources informed its design, but the prompt surface here stays intentionally compact.
 
-- [Anthropic Prompt Engineering Docs](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview)
-- [Anthropic Context Engineering for Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
-- [Prompt Engineering Guide](https://www.promptingguide.ai/)
-- [IBM 2026 Prompt Engineering Guide](https://www.ibm.com/think/prompt-engineering)
-- [Microsoft AI Agents Design Patterns](https://microsoft.github.io/ai-agents-for-beginners/03-agentic-design-patterns/)
-- [Taxonomy of Prompt Defects](https://arxiv.org/html/2509.14404v1)
-
-### Anti-Pattern Sources
-
-- [14 Prompt Engineering Mistakes](https://opendatascience.com/beyond-prompt-and-pray-14-prompt-engineering-mistakes-youre-probably-still-making/)
-- [10 Common LLM Prompt Mistakes](https://www.goinsight.ai/blog/llm-prompt-mistake/)
-- [Common Challenges and Solutions](https://latitude-blog.ghost.io/blog/common-llm-prompt-engineering-challenges-and-solutions/)
-
-### Agent-Specific Resources
-
-- [4 Tips for AI Agent System Prompts](https://theagentarchitect.substack.com/p/4-tips-writing-system-prompts-ai-agents-work)
-- [11 Prompting Techniques for Better AI Agents](https://www.augmentcode.com/blog/how-to-build-your-agent-11-prompting-techniques-for-better-ai-agents)
-- [System Prompts Design Patterns](https://tetrate.io/learn/ai/system-prompts-guide)
-
----
+**Companion methodology**: `prompt-bug-finding.md` for bug hunting, hidden failure modes, unsafe behavior, regressions, instruction conflicts, or root-cause analysis in prompts and agent instructions.
 
 ## Validation
 
 Review is complete when:
 
-- [ ] All 9 layers analyzed
-- [ ] All checklist items attempted (marked done or N/A)
-- [ ] Issues categorized by severity
+- [ ] All 10 layers analyzed
+- [ ] All checklist items attempted (`PASS`, `FAIL`, `PARTIAL`, or explicit `N/A`)
+- [ ] Issues categorized by severity and effort
 - [ ] Fixes prioritized by impact/effort
 - [ ] Implementation guidance provided
+- [ ] Safe compact-prompts opportunities identified and prioritized for prompt/instruction documents
+- [ ] Compact-prompts findings reported explicitly in the review output
+- [ ] For every user-facing interaction point, question purpose, option clarity, option outcomes, suggested-path quality, reply format, and fallback clarity were checked explicitly
+- [ ] Required completion gates, terminal blocks, and false-completion paths were checked explicitly when the document defines a final response contract
 - [ ] Verification plan included

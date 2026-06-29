@@ -111,7 +111,7 @@ class CodeFile:
         # @cpt-begin:cpt-cypilot-algo-traceability-validation-scan-code:p1:inst-read-code
         try:
             text = self.path.read_text(encoding="utf-8")
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             err = error("file", f"Failed to read `{self.path}`: {e}", code=EC.FILE_READ_ERROR, path=self.path, line=1)
             self._errors.append(err)
             return [err]

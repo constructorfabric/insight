@@ -528,7 +528,7 @@ def to_relative_posix(path: Path, root: Path) -> str:
     """
     try:
         rel = path.resolve().relative_to(root.resolve())
-    except Exception:
+    except ValueError:
         return path.as_posix()
     return rel.as_posix()
 

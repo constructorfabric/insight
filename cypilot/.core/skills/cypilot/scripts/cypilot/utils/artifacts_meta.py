@@ -14,11 +14,51 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
+from ._tomllib_compat import tomllib
 from ..constants import ARTIFACTS_REGISTRY_FILENAME
 
 # @cpt-begin:cpt-cypilot-algo-core-infra-registry-parsing:p1:inst-reg-dataclasses
 # Slug validation pattern: lowercase letters, numbers, hyphens (no leading/trailing hyphens)
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+_TOKEN_PROJECT_ROOT = "{project_root}"
+_TOKEN_SYSTEM = "$system"
+
+
+def _merge_authoritative_core_kits(registry_kits: object, core_kits: object) -> object:
+    merged = dict(registry_kits) if isinstance(registry_kits, dict) else {}
+    if not isinstance(core_kits, dict):
+        return merged
+    for kit_id, core_kit in core_kits.items():
+        if not isinstance(kit_id, str) or not isinstance(core_kit, dict):
+            continue
+        existing = merged.get(kit_id)
+        if isinstance(existing, dict):
+            merged_kit = dict(existing)
+            merged_kit.update(core_kit)
+            merged[kit_id] = merged_kit
+            continue
+        merged[kit_id] = dict(core_kit)
+    return merged
+
+
+def _parse_autodetect_artifacts(raw: object) -> "Dict[str, AutodetectArtifactPattern]":
+    artifacts: Dict[str, "AutodetectArtifactPattern"] = {}
+    if isinstance(raw, dict):
+        for kind, v in raw.items():
+            if isinstance(kind, str) and isinstance(v, dict):
+                artifacts[kind] = AutodetectArtifactPattern.from_dict(v)
+    return artifacts
+
+
+def _parse_autodetect_codebase(raw: object) -> "List[CodebaseEntry]":
+    codebase: List["CodebaseEntry"] = []
+    if isinstance(raw, list):
+        for c in raw:
+            if isinstance(c, dict):
+                codebase.append(CodebaseEntry.from_dict(c))
+    return codebase
+
 
 @dataclass
 class Kit:
@@ -73,7 +113,7 @@ class Kit:
         - {project_root}: expands to '.' (caller resolves relative to actual project root Path)
         """
         out = str(path_template or "")
-        out = out.replace("{project_root}", ".")
+        out = out.replace(_TOKEN_PROJECT_ROOT, ".")
         return out
 
     def get_template_path(self, kind: str) -> str:
@@ -222,19 +262,8 @@ class AutodetectRule:
 
     @classmethod
     def from_dict(cls, data: dict) -> "AutodetectRule":
-        raw_artifacts = (data or {}).get("artifacts", {})
-        artifacts: Dict[str, AutodetectArtifactPattern] = {}
-        if isinstance(raw_artifacts, dict):
-            for kind, v in raw_artifacts.items():
-                if isinstance(kind, str) and isinstance(v, dict):
-                    artifacts[kind] = AutodetectArtifactPattern.from_dict(v)
-
-        raw_codebase = (data or {}).get("codebase", [])
-        codebase: List[CodebaseEntry] = []
-        if isinstance(raw_codebase, list):
-            for c in raw_codebase:
-                if isinstance(c, dict):
-                    codebase.append(CodebaseEntry.from_dict(c))
+        artifacts = _parse_autodetect_artifacts((data or {}).get("artifacts", {}))
+        codebase = _parse_autodetect_codebase((data or {}).get("codebase", []))
 
         raw_children = (data or {}).get("children", [])
         children: List[AutodetectRule] = []
@@ -270,6 +299,7 @@ class SystemNode:
     name: str
     slug: str  # Machine-readable identifier (lowercase, no spaces)
     kit: str  # Reference to kit ID
+    id_slug: Optional[str] = None
     artifacts: List[Artifact] = field(default_factory=list)
     codebase: List[CodebaseEntry] = field(default_factory=list)
     children: List["SystemNode"] = field(default_factory=list)
@@ -285,8 +315,9 @@ class SystemNode:
         parts: List[str] = []
         node: Optional[SystemNode] = self
         while node is not None:
-            if node.slug:
-                parts.append(node.slug)
+            current_slug = node.id_slug or node.slug
+            if current_slug:
+                parts.append(current_slug)
             node = node.parent
         return "-".join(reversed(parts))
 
@@ -303,6 +334,7 @@ class SystemNode:
         node = cls(
             name=name,
             slug=slug,
+            id_slug=None,
             kit=kit,
             parent=parent,
         )
@@ -313,11 +345,8 @@ class SystemNode:
                 if isinstance(a, dict):
                     node.artifacts.append(Artifact.from_dict(a))
 
-        raw_codebase = data.get("codebase", [])
-        if isinstance(raw_codebase, list):
-            for c in raw_codebase:
-                if isinstance(c, dict):
-                    node.codebase.append(CodebaseEntry.from_dict(c))
+        for c in _parse_autodetect_codebase(data.get("codebase", [])):
+            node.codebase.append(c)
 
         raw_children = data.get("children", [])
         if isinstance(raw_children, list):
@@ -332,6 +361,126 @@ class SystemNode:
                     node.autodetect.append(AutodetectRule.from_dict(r))
 
         return node
+
+def _collect_def_ids_from_artifacts(
+    artifacts: List["Artifact"],
+    resolve_path_fn: "Callable[[str], Path]",
+    errors: Optional[List[str]] = None,
+) -> Tuple[List[str], bool]:
+    """Collect all definition CPT IDs from a list of artifacts.
+
+    Returns (all_def_ids, has_ids) where has_ids is True if any artifact had IDs.
+    When *errors* is provided, scan failures are appended instead of silently ignored.
+    """
+    all_def_ids: List[str] = []
+    has_ids = False
+    for art in artifacts:
+        art_abs = resolve_path_fn(art.path)
+        try:
+            from .document import scan_cpt_ids
+            for h in scan_cpt_ids(art_abs):
+                if h.get("type") != "definition" or not h.get("id"):
+                    continue
+                has_ids = True
+                all_def_ids.append(str(h["id"]))
+        except (OSError, ValueError) as exc:
+            if errors is not None:
+                errors.append(f"Failed to scan IDs in {art_abs}: {exc}")
+            continue
+    return all_def_ids, has_ids
+
+
+def _collect_unique_slugs(
+    all_def_ids: List[str],
+    prefix: str,
+    kind_tokens: "Set[str]",
+) -> Set[str]:
+    """Extract unique system slug candidates from *all_def_ids* using *prefix*."""
+    slugs: Set[str] = set()
+    for cid in all_def_ids:
+        candidates = extract_system_slug_candidates(cid, prefix, kind_tokens)
+        if len(candidates) == 1:
+            slugs.add(candidates[0])
+    return slugs
+
+
+def _check_with_child_slugs(
+    child_node: "SystemNode",
+    child_slugs: Set[str],
+    full_systems: Set[str],
+    prefix_info: str,
+    errors: List[str],
+) -> None:
+    """Handle slug consistency when child_slugs were found."""
+    if len(full_systems) > 1:
+        errors.append(
+            f"Inconsistent systems in IDs: system={child_node.name} "
+            f"folder_slug={child_node.slug}{prefix_info} — "
+            f"IDs use different system prefixes: {sorted(full_systems)}"
+        )
+    elif len(child_slugs) == 1:
+        child_node.id_slug = next(iter(child_slugs))
+    else:
+        errors.append(
+            f"Inconsistent systems in IDs: system={child_node.name} "
+            f"folder_slug={child_node.slug}{prefix_info} — "
+            f"IDs use different system slugs: {sorted(child_slugs)}"
+        )
+
+
+def _check_without_child_slugs(
+    child_node: "SystemNode",
+    full_systems: Set[str],
+    parent_prefix: str,
+    prefix_info: str,
+    errors: List[str],
+) -> None:
+    """Handle slug consistency when no child_slugs matched but IDs exist."""
+    if len(full_systems) > 1:
+        errors.append(
+            f"Inconsistent systems in IDs: system={child_node.name} "
+            f"folder_slug={child_node.slug}{prefix_info} — "
+            f"IDs use different system prefixes: {sorted(full_systems)}"
+        )
+    elif len(full_systems) == 1:
+        full_sys = next(iter(full_systems))
+        if parent_prefix:
+            errors.append(
+                f"IDs missing parent prefix: system={child_node.name} "
+                f"folder_slug={child_node.slug}{prefix_info} — "
+                f"all IDs use system `{full_sys}` which does not start with `{parent_prefix}-`"
+            )
+    else:
+        errors.append(
+            f"Cannot determine system from IDs: system={child_node.name} "
+            f"folder_slug={child_node.slug}{prefix_info} — "
+            f"no ID has an unambiguous kind-token marker"
+        )
+
+
+def _check_child_slug_consistency(
+    child_node: "SystemNode",
+    all_def_ids: List[str],
+    has_ids: bool,
+    kind_tokens: "Set[str]",
+    parent_prefix: str,
+    errors: List[str],
+) -> None:
+    """Check child system slug consistency based on IDs found in its artifacts.
+
+    Appends error strings to errors when inconsistencies are detected.
+    Does NOT mutate child_node.slug to preserve dedup key stability.
+    """
+    prefix_info = f" parent_prefix={parent_prefix}" if parent_prefix else ""
+
+    child_slugs = _collect_unique_slugs(all_def_ids, parent_prefix, kind_tokens)
+    full_systems = _collect_unique_slugs(all_def_ids, "", kind_tokens)
+
+    if child_slugs:
+        _check_with_child_slugs(child_node, child_slugs, full_systems, prefix_info, errors)
+    elif has_ids:
+        _check_without_child_slugs(child_node, full_systems, parent_prefix, prefix_info, errors)
+
 
 class ArtifactsMeta:
     """
@@ -482,7 +631,7 @@ class ArtifactsMeta:
             # {project_root} is the project root directory, not the registry's relative project_root string.
             # It intentionally expands to '.' so templates like '{project_root}/subsystems' resolve under
             # the provided `project_root` path.
-            out = out.replace("{project_root}", ".")
+            out = out.replace(_TOKEN_PROJECT_ROOT, ".")
             out = out.replace("{system_root}", system_root)
             out = out.replace("{parent_root}", parent_root)
             return out
@@ -497,7 +646,7 @@ class ArtifactsMeta:
         def _rel_to_project_root(p: Path) -> Optional[str]:
             try:
                 return p.relative_to(project_root).as_posix()
-            except Exception:
+            except ValueError:
                 return None
 
         def _glob_files(root_abs: Path, pat: str) -> List[Path]:
@@ -553,14 +702,14 @@ class ArtifactsMeta:
             Returns list of (child_node, child_system_root_str, child_system_root_abs).
             """
 
-            system_root_template = str(rule.system_root or "{project_root}")
-            if "$system" not in system_root_template:
+            system_root_template = str(rule.system_root or _TOKEN_PROJECT_ROOT)
+            if _TOKEN_SYSTEM not in system_root_template:
                 return []
 
             # Expand other placeholders, keep $system for globbing.
             templ = _substitute(system_root_template, system=parent.slug, system_root="", parent_root=parent_root_str)
             # Build directory glob: replace $system with '*'
-            g = templ.replace("$system", "*")
+            g = templ.replace(_TOKEN_SYSTEM, "*")
 
             # Resolve as project-root relative (preferred). If it looks adapter-root relative, _resolve_path handles it.
             root_glob = str((_resolve_path(g)).as_posix())
@@ -569,7 +718,7 @@ class ArtifactsMeta:
             for h in hits:
                 try:
                     h = h.resolve()
-                except Exception:
+                except OSError:
                     continue
                 if not h.exists() or not h.is_dir():
                     continue
@@ -601,7 +750,7 @@ class ArtifactsMeta:
             if system_root_override is not None:
                 system_root_str, system_root_abs = system_root_override
             else:
-                system_root_template = rule.system_root or "{project_root}"
+                system_root_template = rule.system_root or _TOKEN_PROJECT_ROOT
                 system_root_str = _substitute(system_root_template, system=node.slug, system_root="", parent_root=parent_root_str)
                 system_root_abs = _resolve_path(system_root_str)
                 system_root_rel = _rel_to_project_root(system_root_abs)
@@ -644,7 +793,7 @@ class ArtifactsMeta:
                 for mf in md_files:
                     try:
                         rel_to_root = mf.relative_to(artifacts_root_abs).as_posix()
-                    except Exception:
+                    except ValueError:
                         continue
                     matched = False
                     for pat in used_patterns:
@@ -693,7 +842,7 @@ class ArtifactsMeta:
 
             for rule, parent_root_str in effective:
                 # Special: system_root containing $system means "discover child systems".
-                if rule.system_root and "$system" in str(rule.system_root):
+                if rule.system_root and _TOKEN_SYSTEM in str(rule.system_root):
                     discovered = _discover_child_system_roots(node, rule, parent_root_str=parent_root_str)
                     for child_node, child_root_str, child_root_abs in discovered:
                         disc_artifacts, disc_codebase, system_root_str, child_rules = _apply_rule(
@@ -734,94 +883,13 @@ class ArtifactsMeta:
                             _kind_tokens = get_id_kind_tokens(str(_kit_id))
                             if _kind_tokens:
                                 _parent_prefix = node.get_hierarchy_prefix()
-                                _full_systems: Set[str] = set()
-                                _has_ids = False
-                                # Collect all definition IDs for this child system.
-                                _all_def_ids: List[str] = []
-                                for _art in child_node.artifacts:
-                                    _art_abs = _resolve_path(_art.path)
-                                    try:
-                                        from .document import scan_cpt_ids
-                                        for _h in scan_cpt_ids(_art_abs):
-                                            if _h.get("type") != "definition" or not _h.get("id"):
-                                                continue
-                                            _has_ids = True
-                                            _all_def_ids.append(str(_h["id"]))
-                                    except Exception:
-                                        continue
-                                # Pass 1: extract child slug using parent_prefix context.
-                                # This correctly handles system names that collide with
-                                # kind tokens (e.g. system="fr" with kind token "fr").
-                                _child_slugs: Set[str] = set()
-                                for _cid in _all_def_ids:
-                                    _candidates = extract_system_slug_candidates(
-                                        _cid, _parent_prefix, _kind_tokens,
-                                    )
-                                    if len(_candidates) == 1:
-                                        _child_slugs.add(_candidates[0])
-                                _prefix_info = f" parent_prefix={_parent_prefix}" if _parent_prefix else ""
-                                if _child_slugs:
-                                    # Pass 1 found candidates. Now verify ALL IDs
-                                    # agree on the same full system (catches mixed
-                                    # prefix/no-prefix IDs).
-                                    for _cid in _all_def_ids:
-                                        _candidates = extract_system_slug_candidates(
-                                            _cid, "", _kind_tokens,
-                                        )
-                                        if len(_candidates) == 1:
-                                            _full_systems.add(_candidates[0])
-                                    if len(_full_systems) > 1:
-                                        errors.append(
-                                            f"Inconsistent systems in IDs: system={child_node.name} "
-                                            f"folder_slug={child_node.slug}{_prefix_info} — "
-                                            f"IDs use different system prefixes: {sorted(_full_systems)}"
-                                        )
-                                    elif len(_child_slugs) == 1:
-                                        new_slug = next(iter(_child_slugs))
-                                        if new_slug != child_node.slug:
-                                            child_node.slug = new_slug
-                                    else:
-                                        errors.append(
-                                            f"Inconsistent systems in IDs: system={child_node.name} "
-                                            f"folder_slug={child_node.slug}{_prefix_info} — "
-                                            f"IDs use different system slugs: {sorted(_child_slugs)}"
-                                        )
-                                elif _has_ids:
-                                    # Pass 2 (diagnostics): no ID matched parent_prefix.
-                                    # Extract full system (without parent_prefix) to
-                                    # produce a clear error message.
-                                    for _cid in _all_def_ids:
-                                        _candidates = extract_system_slug_candidates(
-                                            _cid, "", _kind_tokens,
-                                        )
-                                        if len(_candidates) == 1:
-                                            _full_systems.add(_candidates[0])
-                                    if len(_full_systems) > 1:
-                                        errors.append(
-                                            f"Inconsistent systems in IDs: system={child_node.name} "
-                                            f"folder_slug={child_node.slug}{_prefix_info} — "
-                                            f"IDs use different system prefixes: {sorted(_full_systems)}"
-                                        )
-                                    elif len(_full_systems) == 1:
-                                        _full_sys = next(iter(_full_systems))
-                                        if _parent_prefix:
-                                            errors.append(
-                                                f"IDs missing parent prefix: system={child_node.name} "
-                                                f"folder_slug={child_node.slug}{_prefix_info} — "
-                                                f"all IDs use system `{_full_sys}` which does not start with `{_parent_prefix}-`"
-                                            )
-                                        else:
-                                            # No parent prefix and pass 1 failed — shouldn't
-                                            # happen, but treat as success.
-                                            new_slug = _full_sys
-                                            if new_slug != child_node.slug:
-                                                child_node.slug = new_slug
-                                    else:
-                                        errors.append(
-                                            f"Cannot determine system from IDs: system={child_node.name} "
-                                            f"folder_slug={child_node.slug}{_prefix_info} — "
-                                            f"no ID has an unambiguous kind-token marker"
-                                        )
+                                _all_def_ids, _has_ids = _collect_def_ids_from_artifacts(
+                                    child_node.artifacts, _resolve_path, errors,
+                                )
+                                _check_child_slug_consistency(
+                                    child_node, _all_def_ids, _has_ids,
+                                    _kind_tokens, _parent_prefix, errors,
+                                )
 
                         # Expand grandchildren immediately with correct parent_root.
                         inherited_for_grandchildren = [(cr, system_root_str) for cr in (child_rules or [])]
@@ -903,10 +971,6 @@ class ArtifactsMeta:
     # @cpt-begin:cpt-cypilot-algo-core-infra-registry-parsing:p1:inst-reg-query-methods
     # === Kit Methods ===
 
-    def get_kit(self, kit_id: str) -> Optional[Kit]:
-        """Get a kit by ID."""
-        return self.kits.get(kit_id)
-
     # === Artifact Methods ===
 
     def get_artifact_by_path(self, path: str) -> Optional[Tuple[Artifact, SystemNode]]:
@@ -944,7 +1008,7 @@ class ArtifactsMeta:
         def _iter_system(node: SystemNode) -> Iterator[str]:
             try:
                 prefix = node.get_hierarchy_prefix()
-            except Exception:
+            except (ValueError, AttributeError):
                 prefix = ""
             if prefix:
                 yield prefix
@@ -990,34 +1054,29 @@ def load_artifacts_meta(adapter_dir: Path) -> Tuple[Optional[ArtifactsMeta], Opt
     # @cpt-begin:cpt-cypilot-algo-core-infra-registry-parsing:p1:inst-reg-parse-merge
     try:
         if path.suffix == ".toml":
-            try:
-                import tomllib
-            except ModuleNotFoundError:
-                import tomli as tomllib
             with open(path, "rb") as f:
                 data = tomllib.load(f)
         else:
             data = json.loads(path.read_text(encoding="utf-8"))
+
+        if not isinstance(data, dict):
+            return None, f"Failed to load artifacts registry {path}: expected mapping at root, got {type(data).__name__}"
 
         # Merge fields from core.toml into registry data (new layout)
         core_path = config_dir / "core.toml"
         if not core_path.is_file():
             core_path = adapter_dir / "core.toml"
         if core_path.is_file():
-            try:
-                import tomllib as _tl
-            except ModuleNotFoundError:
-                import tomli as _tl
             with open(core_path, "rb") as f:
-                core = _tl.load(f)
+                core = tomllib.load(f)
             # version and project_root: core.toml is authoritative, artifacts.toml is fallback
             if isinstance(core.get("version"), str) and "version" not in data:
                 data["version"] = core["version"]
             if isinstance(core.get("project_root"), str) and "project_root" not in data:
                 data["project_root"] = core["project_root"]
-            # kits: merge from core.toml if not already in registry
-            if ("kits" not in data or not data["kits"]) and isinstance(core.get("kits"), dict):
-                data["kits"] = core["kits"]
+            # kits: merge from core.toml, preserving registry-only fields while letting core override overlaps
+            if isinstance(core.get("kits"), dict):
+                data["kits"] = _merge_authoritative_core_kits(data.get("kits"), core["kits"])
 
         # @cpt-end:cpt-cypilot-algo-core-infra-registry-parsing:p1:inst-reg-parse-merge
 
@@ -1027,7 +1086,7 @@ def load_artifacts_meta(adapter_dir: Path) -> Tuple[Optional[ArtifactsMeta], Opt
         # @cpt-begin:cpt-cypilot-algo-core-infra-registry-parsing:p1:inst-reg-return
         return meta, None
         # @cpt-end:cpt-cypilot-algo-core-infra-registry-parsing:p1:inst-reg-return
-    except Exception as e:
+    except (OSError, ValueError, KeyError) as e:
         return None, f"Failed to load artifacts registry {path}: {e}"
 
 # @cpt-begin:cpt-cypilot-algo-core-infra-registry-parsing:p1:inst-reg-utilities
@@ -1056,7 +1115,7 @@ def create_backup(path: Path) -> Optional[Path]:
         else:
             shutil.copy2(path, backup_path)
         return backup_path
-    except Exception:
+    except OSError:
         return None
 
 def extract_system_slug_candidates(cpt_id: str, parent_prefix: str, kind_tokens: Set[str]) -> List[str]:

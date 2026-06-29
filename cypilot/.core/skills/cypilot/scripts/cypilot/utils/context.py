@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 from .artifacts_meta import Artifact, ArtifactsMeta, CodebaseEntry, Kit, load_artifacts_meta
 from .constraints import KitConstraints, error, load_constraints_toml
 
+_CONSTRAINTS_FILE = "constraints.toml"
+
 @dataclass
 class LoadedKit:
     """A kit with all its templates loaded."""
@@ -33,6 +35,8 @@ class LoadedKit:
     templates: Dict[str, object]  # kind -> template-like (unused)
     constraints: Optional[KitConstraints] = None
     resource_bindings: Optional[Dict[str, str]] = None
+    kit_root: Optional[Path] = None
+    constraints_path: Optional[Path] = None
 
 @dataclass
 class CypilotContext:
@@ -116,11 +120,12 @@ class CypilotContext:
 # ---------------------------------------------------------------------------
 # Helpers extracted from load_from_dir for cognitive-complexity budget
 # ---------------------------------------------------------------------------
-
-
+ 
+ 
 _ARTIFACTS_TOML = "artifacts.toml"
-
-
+_CORE_TOML = "core.toml"
+ 
+ 
 def _resolve_registry_path(adapter_dir: Path) -> Path:
     """Resolve the artifacts registry path for error reporting."""
     cfg_dir = adapter_dir / "config"
@@ -129,46 +134,165 @@ def _resolve_registry_path(adapter_dir: Path) -> Path:
     return (adapter_dir / _ARTIFACTS_TOML).resolve()
 
 
+def _resolve_core_config_path(adapter_dir: Path) -> Path:
+    """Resolve the core.toml path for kit configuration error reporting."""
+    cfg_dir = adapter_dir / "config"
+    if (cfg_dir / _CORE_TOML).is_file():
+        return (cfg_dir / _CORE_TOML).resolve()
+    return (adapter_dir / _CORE_TOML).resolve()
+
+
+def _build_inaccessible_kit_path_error(adapter_dir: Path, kit_id: str, kit_path: str) -> Dict[str, object]:
+    """Build a context error for a registered kit path inaccessible on this OS."""
+    configured_path = str(kit_path or "").strip()
+    return error(
+        "resources",
+        f"Kit '{kit_id}' is registered at absolute path '{configured_path}' which is not accessible on this OS",
+        path=_resolve_core_config_path(adapter_dir),
+        line=1,
+        kit=kit_id,
+    )
+
+
+def _resolve_loaded_kit_root(adapter_dir: Path, project_root: Path, kit_path: str) -> Optional[Path]:
+    """Resolve a kit root using shared registered-path semantics.
+
+    Same-OS absolute paths must stay absolute. Relative paths are first
+    resolved from the adapter directory, with a project-root fallback to
+    preserve legacy registry behavior for project-relative kit paths.
+    """
+    from ..commands.kit import (
+        _is_registered_kit_path_absolute,
+        _normalize_path_string,
+        _resolve_registered_kit_dir,
+    )
+
+    normalized = _normalize_path_string(str(kit_path or ""))
+    if not normalized:
+        return adapter_dir.resolve()
+
+    kit_root = _resolve_registered_kit_dir(adapter_dir, normalized)
+    if kit_root is None:
+        return None
+    if _is_registered_kit_path_absolute(normalized) or kit_root.is_dir():
+        return kit_root
+
+    project_relative_root = (project_root / Path(normalized)).resolve()
+    if project_relative_root.is_dir():
+        return project_relative_root
+    return kit_root
+
+
+def _resolve_loaded_kit_constraints_path(
+    adapter_dir: Path,
+    project_root: Path,
+    loaded_kit: LoadedKit,
+) -> Optional[Path]:
+    """Resolve the authoritative constraints path for a loaded kit."""
+    resolved_constraints_path = getattr(loaded_kit, "constraints_path", None)
+    if isinstance(resolved_constraints_path, Path):
+        return resolved_constraints_path
+    if isinstance(resolved_constraints_path, str):
+        candidate = Path(resolved_constraints_path)
+        if candidate.is_absolute():
+            return candidate
+
+    kit_root = getattr(loaded_kit, "kit_root", None)
+    if not isinstance(kit_root, Path):
+        kit_root = _resolve_loaded_kit_root(
+            adapter_dir,
+            project_root,
+            str(getattr(getattr(loaded_kit, "kit", None), "path", "") or ""),
+        )
+    if kit_root is None:
+        return None
+    return (kit_root / _CONSTRAINTS_FILE).resolve()
+
+
+def load_resource_bindings(adapter_dir: Path, kit_id: str) -> Tuple[Optional[Dict[str, str]], Dict[str, Path], List[Dict[str, object]]]:
+    """Load manifest resource bindings for a kit, preserving context errors."""
+    rb: Optional[Dict[str, str]] = None
+    resolved_bindings: Dict[str, Path] = {}
+    errors: List[Dict[str, object]] = []
+    cfg_dir = adapter_dir / "config"
+    if not cfg_dir.is_dir():
+        cfg_dir = adapter_dir
+    try:
+        from .manifest import resolve_resource_bindings_with_errors as _resolve_rb
+
+        resolved_bindings, binding_errors = _resolve_rb(cfg_dir, kit_id, adapter_dir)
+        if resolved_bindings:
+            rb = {k: str(v) for k, v in resolved_bindings.items()}
+        for binding_error in binding_errors:
+            errors.append(error(
+                "resources",
+                binding_error,
+                path=(cfg_dir / "core.toml"),
+                line=1,
+                kit=kit_id,
+            ))
+    except ValueError as exc:
+        errors.append(error(
+            "resources",
+            str(exc),
+            path=(cfg_dir / "core.toml"),
+            line=1,
+            kit=kit_id,
+        ))
+    except (OSError, ImportError) as exc:
+        sys.stderr.write(f"context: failed to load resource bindings for kit {kit_id}: {exc}\n")
+    return rb, resolved_bindings, errors
+
+
+def resolve_constraints_from_bindings(
+    _resolved_bindings: Dict[str, Path],
+    kit_root: Optional[Path],
+) -> Tuple[Optional[KitConstraints], List[str], Optional[Path], Optional[Path]]:
+    """Resolve constraints from bindings first, then from the kit root."""
+    _constraints_root: Optional[Path] = kit_root if isinstance(kit_root, Path) else None
+    resolved_constraints_path: Optional[Path] = None
+    if _resolved_bindings and "constraints" in _resolved_bindings:
+        _constraints_path = _resolved_bindings["constraints"].resolve()
+        resolved_constraints_path = _constraints_path
+        _constraints_root = _constraints_path.parent
+        if not _constraints_path.is_file():
+            return None, [f"Bound constraints path does not exist or is not a file: {_constraints_path}"], resolved_constraints_path, _constraints_root
+
+    kit_constraints: Optional[KitConstraints] = None
+    constraints_errs: List[str] = []
+    if _constraints_root is not None and _constraints_root.is_dir():
+        kit_constraints, constraints_errs = load_constraints_toml(_constraints_root)
+    if resolved_constraints_path is None and _constraints_root is not None and _constraints_root.is_dir():
+        resolved_constraints_path = (_constraints_root / _CONSTRAINTS_FILE).resolve()
+    return kit_constraints, constraints_errs, resolved_constraints_path, _constraints_root
+
+
 def _load_single_kit(kit_id, kit, adapter_dir, project_root):
     """Load a single kit's templates, constraints, and resource bindings."""
     templates = {}
 
-    kit_path_str = str(kit.path or "").strip().strip("/")
-    kit_root = (adapter_dir / kit_path_str).resolve()
-    if not kit_root.is_dir():
-        kit_root = (project_root / kit_path_str).resolve()
+    kit_root = _resolve_loaded_kit_root(adapter_dir, project_root, str(kit.path or ""))
+    errors = []
+    if kit_root is None:
+        errors.append(
+            _build_inaccessible_kit_path_error(adapter_dir, str(kit_id), str(kit.path or ""))
+        )
     # @cpt-begin:cpt-cypilot-algo-core-infra-context-loading:p1:inst-ctx-load-resource-bindings
-    rb = None
-    _resolved_bindings = {}
-    try:
-        from .manifest import resolve_resource_bindings as _resolve_rb
-        cfg_dir = adapter_dir / "config"
-        if not cfg_dir.is_dir():
-            cfg_dir = adapter_dir
-        _resolved_bindings = _resolve_rb(cfg_dir, kit_id, adapter_dir)
-        if _resolved_bindings:
-            rb = {k: str(v) for k, v in _resolved_bindings.items()}
-    except (OSError, ImportError, ValueError) as exc:
-        sys.stderr.write(f"context: failed to load resource bindings for kit {kit_id}: {exc}\n")
+    rb, _resolved_bindings, resource_binding_errors = load_resource_bindings(adapter_dir, kit_id)
+    errors.extend(resource_binding_errors)
     # @cpt-end:cpt-cypilot-algo-core-infra-context-loading:p1:inst-ctx-load-resource-bindings
 
-    kit_constraints = None
-    constraints_errs = []
     # @cpt-begin:cpt-cypilot-algo-core-infra-context-loading:p1:inst-constraints-from-binding
-    _constraints_root = kit_root
-    if _resolved_bindings and "constraints" in _resolved_bindings:
-        _constraints_path = _resolved_bindings["constraints"]
-        if _constraints_path.is_file():
-            _constraints_root = _constraints_path.parent
+    kit_constraints, constraints_errs, resolved_constraints_path, _constraints_root = resolve_constraints_from_bindings(
+        _resolved_bindings,
+        kit_root,
+    )
     # @cpt-end:cpt-cypilot-algo-core-infra-context-loading:p1:inst-constraints-from-binding
-    if _constraints_root.is_dir():
-        kit_constraints, constraints_errs = load_constraints_toml(_constraints_root)
-    elif kit_root.is_dir():
-        kit_constraints, constraints_errs = load_constraints_toml(kit_root)
 
-    errors = []
     if constraints_errs:
-        constraints_path = (kit_root / "constraints.toml").resolve()
+        constraints_path = resolved_constraints_path
+        if constraints_path is None and _constraints_root is not None:
+            constraints_path = (_constraints_root / _CONSTRAINTS_FILE).resolve()
         errors.append(error(
             "constraints",
             "Invalid constraints.toml",
@@ -178,7 +302,14 @@ def _load_single_kit(kit_id, kit, adapter_dir, project_root):
             kit=kit_id,
         ))
 
-    loaded = LoadedKit(kit=kit, templates=templates, constraints=kit_constraints, resource_bindings=rb)
+    loaded = LoadedKit(
+        kit=kit,
+        templates=templates,
+        constraints=kit_constraints,
+        resource_bindings=rb,
+        kit_root=kit_root,
+        constraints_path=resolved_constraints_path,
+    )
     return loaded, errors
 
 
@@ -445,19 +576,19 @@ def resolve_adapter_context(sc: "SourceContext") -> Optional["CypilotContext"]:
         return None
     # @cpt-end:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-if-unreachable
     # @cpt-begin:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-cache
-    if sc._adapter_resolved:
+    if sc._adapter_resolved:  # pylint: disable=protected-access  # module-level helper is part of SourceContext implementation
         return sc.adapter_context
     # @cpt-end:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-cache
     # @cpt-begin:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-if-no-dir
     if sc.adapter_dir is None:
-        sc._adapter_resolved = True
+        sc._adapter_resolved = True  # pylint: disable=protected-access  # same impl scope as SourceContext
         return None
     # @cpt-end:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-if-no-dir
     # @cpt-begin:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-compute-path
     # @cpt-begin:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-if-missing
     if not sc.adapter_dir.is_dir():
         print(f"Warning: adapter directory not found for source '{sc.name}': {sc.adapter_dir}", file=sys.stderr)
-        sc._adapter_resolved = True
+        sc._adapter_resolved = True  # pylint: disable=protected-access  # same impl scope as SourceContext
         return None
     # @cpt-end:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-if-missing
     # @cpt-end:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-compute-path
@@ -467,17 +598,17 @@ def resolve_adapter_context(sc: "SourceContext") -> Optional["CypilotContext"]:
         loaded = CypilotContext.load_from_dir(sc.adapter_dir)
     except (OSError, ValueError) as e:
         print(f"Warning: failed to load adapter context for source '{sc.name}': {e}", file=sys.stderr)
-        sc._adapter_resolved = True
+        sc._adapter_resolved = True  # pylint: disable=protected-access  # same impl scope as SourceContext
         return None
     if loaded is None:
         print(f"Warning: adapter context could not be loaded for source '{sc.name}'", file=sys.stderr)
-        sc._adapter_resolved = True
+        sc._adapter_resolved = True  # pylint: disable=protected-access  # same impl scope as SourceContext
         return None
     # @cpt-end:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-if-load-fail
     # @cpt-end:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-load-context
     # @cpt-begin:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-return
     sc.adapter_context = loaded
-    sc._adapter_resolved = True
+    sc._adapter_resolved = True  # pylint: disable=protected-access  # same impl scope as SourceContext
     return loaded
     # @cpt-end:cpt-cypilot-algo-workspace-resolve-adapter-context:p1:inst-adapter-return
 
@@ -497,7 +628,7 @@ def get_expanded_meta(sc: "SourceContext") -> Optional[ArtifactsMeta]:
     """
     if sc.adapter_context is not None:
         return sc.adapter_context.meta
-    if not sc._adapter_resolved and sc.adapter_dir is not None:
+    if not sc._adapter_resolved and sc.adapter_dir is not None:  # pylint: disable=protected-access  # module-level helper is part of SourceContext implementation
         ctx = resolve_adapter_context(sc)
         if ctx is not None:
             return ctx.meta
@@ -564,7 +695,7 @@ def _scan_definition_ids(artifact_path: Path, ids: Set[str]) -> None:
         for h in scan_cpt_ids(artifact_path):
             if h.get("type") == "definition" and h.get("id"):
                 ids.add(str(h["id"]))
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         print(f"Warning: failed to scan IDs from {artifact_path}: {exc}", file=sys.stderr)
 
 
@@ -702,7 +833,7 @@ def get_context() -> Optional[Union[CypilotContext, WorkspaceContext]]:
     operations for git URL sources) is deferred until a command actually
     needs the context.
     """
-    global _global_context, _workspace_upgrade_attempted
+    global _global_context, _workspace_upgrade_attempted  # pylint: disable=global-statement  # module-level singleton pattern for CLI context
     if not _workspace_upgrade_attempted and isinstance(_global_context, CypilotContext):
         _workspace_upgrade_attempted = True
         ws_ctx = WorkspaceContext.load(_global_context)
@@ -713,7 +844,7 @@ def get_context() -> Optional[Union[CypilotContext, WorkspaceContext]]:
 
 def set_context(ctx: Optional[Union[CypilotContext, WorkspaceContext]]) -> None:
     """Set the global Cypilot context."""
-    global _global_context, _workspace_upgrade_attempted
+    global _global_context, _workspace_upgrade_attempted  # pylint: disable=global-statement  # module-level singleton pattern for CLI context
     _global_context = ctx
     # If caller already provides a WorkspaceContext, skip lazy upgrade
     _workspace_upgrade_attempted = isinstance(ctx, WorkspaceContext) or ctx is None
@@ -721,7 +852,7 @@ def set_context(ctx: Optional[Union[CypilotContext, WorkspaceContext]]) -> None:
 
 def ensure_context(start_path: Optional[Path] = None) -> Optional[Union[CypilotContext, WorkspaceContext]]:
     """Ensure context is loaded, loading if necessary."""
-    global _global_context, _workspace_upgrade_attempted
+    global _global_context, _workspace_upgrade_attempted  # pylint: disable=global-statement  # module-level singleton pattern for CLI context
     if _global_context is None:
         base_ctx = CypilotContext.load(start_path)
         if base_ctx is not None:

@@ -345,8 +345,8 @@ def cmd_workspace_init(argv: List[str]) -> int:
     def _positive_int(value: str) -> int:
         try:
             n = int(value)
-        except ValueError:
-            raise argparse.ArgumentTypeError(f"invalid integer value: {value!r}")
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"invalid integer value: {value!r}") from exc
         if n < 1:
             raise argparse.ArgumentTypeError(f"must be >= 1, got {n}")
         return n

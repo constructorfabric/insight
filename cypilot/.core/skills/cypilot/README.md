@@ -67,12 +67,14 @@ Deterministic agent tool for structured workflows, artifact validation, traceabi
 ### Via global CLI (recommended)
 
 ```bash
+# run init without --json
 cpt init
 cpt validate
 cpt validate --artifact architecture/PRD.md
 cpt spec-coverage
 cpt kit migrate
 cpt generate-agents --agent windsurf
+# run update without --json
 cpt update
 ```
 

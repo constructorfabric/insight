@@ -10,9 +10,9 @@ from . import error_codes as EC
 
 @dataclass(frozen=True)
 class ReferenceRule:
-    coverage: Optional[bool] = None  # True=required, False=prohibited, None=optional
-    task: Optional[bool] = None  # True=required, False=prohibited, None=allowed
-    priority: Optional[bool] = None  # True=required, False=prohibited, None=allowed
+    coverage: Optional[bool] = None
+    task: Optional[bool] = None
+    priority: Optional[bool] = None
     headings: Optional[List[str]] = None
 
 @dataclass(frozen=True)
@@ -21,8 +21,8 @@ class HeadingConstraint:
     pattern: Optional[str] = None
     description: Optional[str] = None
     required: bool = True
-    multiple: Optional[bool] = None  # True=required, False=prohibited, None=allowed
-    numbered: Optional[bool] = None  # True=required, False=prohibited, None=allowed
+    multiple: Optional[bool] = None
+    numbered: Optional[bool] = None
     id: Optional[str] = None
     prev: Optional[str] = None
     next: Optional[str] = None
@@ -36,8 +36,8 @@ class IdConstraint:
     description: Optional[str] = None
     template: Optional[str] = None
     examples: Optional[List[object]] = None
-    task: Optional[bool] = None  # True=required, False=prohibited, None=allowed
-    priority: Optional[bool] = None  # True=required, False=prohibited, None=allowed
+    task: Optional[bool] = None
+    priority: Optional[bool] = None
     to_code: Optional[bool] = None
     headings: Optional[List[str]] = None
     references: Optional[Dict[str, ReferenceRule]] = None
@@ -82,6 +82,109 @@ def error(kind: str, message: str, *, path: Path | str, line: int = 1, code: Opt
     return out
 # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-structure-datamodel
 
+# @cpt-begin:cpt-cypilot-algo-traceability-validation-headings-contract:p1:inst-match-headings-helpers
+def _is_regex_pattern_hc(pat: str) -> bool:
+    # Heuristic: treat as regex only if it contains typical regex metacharacters.
+    # Note: ( ) are excluded — they commonly appear in natural heading text
+    # like "Goals (Business Outcomes)" and should not trigger regex mode.
+    return any(ch in pat for ch in ".^$*+?{}[]\\|")
+
+
+def _compile_heading_patterns(
+    heading_constraints: Sequence[HeadingConstraint],
+) -> List[Tuple[HeadingConstraint, Optional[re.Pattern[str]]]]:
+    compiled: List[Tuple[HeadingConstraint, Optional[re.Pattern[str]]]] = []
+    for hc in heading_constraints:
+        pat = getattr(hc, "pattern", None)
+        if not pat:
+            compiled.append((hc, None))
+            continue
+        pat_s = str(pat)
+        if not _is_regex_pattern_hc(pat_s):
+            compiled.append((hc, None))
+            continue
+        try:
+            compiled.append((hc, re.compile(pat_s, flags=re.IGNORECASE)))
+        except re.error:
+            compiled.append((hc, re.compile(r"$^")))
+    return compiled
+
+
+def _find_first_lvl3_id(
+    compiled: List[Tuple[HeadingConstraint, Optional[re.Pattern[str]]]],
+    start: int,
+    end: int,
+) -> Optional[str]:
+    """Return the id of the first non-pattern level-3 heading in *compiled[start:end]*."""
+    for j in range(start, end):
+        hc3, _ = compiled[j]
+        if int(getattr(hc3, "level", 0) or 0) != 3:
+            continue
+        if getattr(hc3, "pattern", None):
+            continue
+        cid = str(getattr(hc3, "id", "") or "").strip()
+        if cid:
+            return cid
+    return None
+
+
+def _build_wildcard_lvl3_map(
+    compiled: List[Tuple[HeadingConstraint, Optional[re.Pattern[str]]]],
+    idx_by_level: Dict[int, List[int]],
+) -> Dict[str, str]:
+    wildcard: Dict[str, str] = {}
+    lvl2_idxs = idx_by_level.get(2, [])
+    for pos, i in enumerate(lvl2_idxs):
+        hc2, _ = compiled[i]
+        parent_id = str(getattr(hc2, "id", "") or "").strip()
+        if not parent_id:
+            continue
+        next_lvl2 = lvl2_idxs[pos + 1] if pos + 1 < len(lvl2_idxs) else len(compiled)
+        cid = _find_first_lvl3_id(compiled, i + 1, next_lvl2)
+        if cid:
+            wildcard[parent_id] = cid
+    return wildcard
+
+
+def _matches_level_title_hc(
+    level: int,
+    title_text: str,
+    idx: int,
+    compiled: List[Tuple[HeadingConstraint, Optional[re.Pattern[str]]]],
+) -> bool:
+    hc, rx = compiled[idx]
+    if int(getattr(hc, "level", 0) or 0) != int(level):
+        return False
+    pat = getattr(hc, "pattern", None)
+    if not pat:
+        return True
+    if rx is not None:
+        return bool(rx.search(title_text))
+    return str(pat).strip().casefold() == str(title_text).strip().casefold()
+
+
+def _pick_best_heading_match(
+    level: int,
+    title_text: str,
+    idx_by_level: Dict[int, List[int]],
+    compiled: List[Tuple[HeadingConstraint, Optional[re.Pattern[str]]]],
+    *,
+    include_wildcards: bool = True,
+) -> Optional[int]:
+    candidates: List[int] = []
+    for idx in idx_by_level.get(level, []):
+        hc, _ = compiled[idx]
+        if not include_wildcards and not getattr(hc, "pattern", None):
+            continue
+        if _matches_level_title_hc(level, title_text, idx, compiled):
+            candidates.append(idx)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda i: (0 if getattr(compiled[i][0], "pattern", None) else 1, i))
+    return candidates[0]
+# @cpt-end:cpt-cypilot-algo-traceability-validation-headings-contract:p1:inst-match-headings-helpers
+
+
 # @cpt-algo:cpt-cypilot-algo-traceability-validation-headings-contract:p1
 def heading_constraint_ids_by_line(path: Path, heading_constraints: Sequence[HeadingConstraint]) -> List[List[str]]:
     """Return active heading constraint ids for each line (1-indexed).
@@ -103,75 +206,13 @@ def heading_constraint_ids_by_line(path: Path, heading_constraints: Sequence[Hea
 
     matched_ids_by_line: Dict[int, str] = {}
 
-    def _is_regex_pattern(pat: str) -> bool:
-        # Heuristic: treat as regex only if it contains typical regex metacharacters.
-        # Note: ( ) are excluded — they commonly appear in natural heading text
-        # like "Goals (Business Outcomes)" and should not trigger regex mode.
-        return any(ch in pat for ch in ".^$*+?{}[]\\|")
-
-    compiled: List[Tuple[HeadingConstraint, Optional[re.Pattern[str]]]] = []
-    for hc in heading_constraints:
-        pat = getattr(hc, "pattern", None)
-        if not pat:
-            compiled.append((hc, None))
-            continue
-        pat_s = str(pat)
-        if not _is_regex_pattern(pat_s):
-            compiled.append((hc, None))
-            continue
-        try:
-            compiled.append((hc, re.compile(pat_s, flags=re.IGNORECASE)))
-        except re.error:
-            # Invalid regex should never match.
-            compiled.append((hc, re.compile(r"$^")))
+    compiled = _compile_heading_patterns(heading_constraints)
 
     idx_by_level: Dict[int, List[int]] = {}
     for idx, (hc, _) in enumerate(compiled):
         idx_by_level.setdefault(int(getattr(hc, "level", 0) or 0), []).append(idx)
 
-    wildcard_lvl3_by_parent_lvl2_id: Dict[str, str] = {}
-    lvl2_idxs = idx_by_level.get(2, [])
-    for pos, i in enumerate(lvl2_idxs):
-        hc2, _ = compiled[i]
-        parent_id = str(getattr(hc2, "id", "") or "").strip()
-        if not parent_id:
-            continue
-        next_lvl2 = lvl2_idxs[pos + 1] if pos + 1 < len(lvl2_idxs) else len(compiled)
-        for j in range(i + 1, next_lvl2):
-            hc3, _ = compiled[j]
-            if int(getattr(hc3, "level", 0) or 0) != 3:
-                continue
-            if getattr(hc3, "pattern", None):
-                continue
-            cid = str(getattr(hc3, "id", "") or "").strip()
-            if cid:
-                wildcard_lvl3_by_parent_lvl2_id[parent_id] = cid
-                break
-
-    def _matches_level_title(level: int, title_text: str, idx: int) -> bool:
-        hc, rx = compiled[idx]
-        if int(getattr(hc, "level", 0) or 0) != int(level):
-            return False
-        pat = getattr(hc, "pattern", None)
-        if not pat:
-            return True
-
-        if rx is not None:
-            return bool(rx.search(title_text))
-        return str(pat).strip().casefold() == str(title_text).strip().casefold()
-
-    def _pick_best(level: int, title_text: str, *, include_wildcards: bool = True) -> Optional[int]:
-        candidates: List[int] = []
-        for idx in idx_by_level.get(level, []):
-            hc, rx = compiled[idx]
-            if not include_wildcards and not getattr(hc, "pattern", None):
-                continue
-            if _matches_level_title(level, title_text, idx):
-                candidates.append(idx)
-        if not candidates:
-            return None
-        candidates.sort(key=lambda i: (0 if getattr(compiled[i][0], "pattern", None) else 1, i))
-        return candidates[0]
+    wildcard_lvl3_by_parent_lvl2_id = _build_wildcard_lvl3_map(compiled, idx_by_level)
 
     current_lvl2_id: Optional[str] = None
     for h in headings:
@@ -186,17 +227,19 @@ def heading_constraint_ids_by_line(path: Path, heading_constraints: Sequence[Hea
             # Do not allow global wildcard matching for level-3 headings.
             # Otherwise, the first wildcard constraint (e.g. feature-actor-flow)
             # will match all level-3 headings across the document.
-            idx = _pick_best(3, title, include_wildcards=False)
+            idx = _pick_best_heading_match(3, title, idx_by_level, compiled, include_wildcards=False)
             if idx is not None:
                 matched_id = str(getattr(compiled[idx][0], "id", "") or "").strip() or None
             elif current_lvl2_id:
                 matched_id = wildcard_lvl3_by_parent_lvl2_id.get(current_lvl2_id)
         else:
-            idx = _pick_best(lvl, title)
+            idx = _pick_best_heading_match(lvl, title, idx_by_level, compiled)
             if idx is not None:
                 matched_id = str(getattr(compiled[idx][0], "id", "") or "").strip() or None
-            if lvl == 2 and matched_id:
-                current_lvl2_id = matched_id
+            if lvl == 1:
+                current_lvl2_id = None
+            elif lvl == 2:
+                current_lvl2_id = matched_id if matched_id else None
 
         if matched_id:
             matched_ids_by_line[ln] = matched_id
@@ -233,6 +276,7 @@ class ParsedCypilotId:
     slug: str
 # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-structure-datamodel
 
+# @cpt-begin:cpt-cypilot-algo-traceability-validation-scan-ids:p1:inst-parse-cpt-fn
 def parse_cpt(
     cpt: str,
     expected_kind: str,
@@ -294,6 +338,7 @@ def parse_cpt(
 
     return ParsedCypilotId(system=system, kind=expected_kind, slug=slug)
     # @cpt-end:cpt-cypilot-algo-traceability-validation-scan-ids:p1:inst-parse-cpt
+# @cpt-end:cpt-cypilot-algo-traceability-validation-scan-ids:p1:inst-parse-cpt-fn
 
 # @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-structure-datamodel
 @dataclass(frozen=True)
@@ -303,7 +348,123 @@ class ArtifactRecord:
     constraints: Optional[ArtifactKindConstraints] = None
 # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-structure-datamodel
 
+# @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-ids-helpers
+def _constraint_hint(c: "IdConstraint") -> str:
+    """Build a parenthesised hint string from an IdConstraint's metadata."""
+    nm = str(getattr(c, "name", "") or "").strip()
+    tpl = str(getattr(c, "template", "") or "").strip()
+    desc = str(getattr(c, "description", "") or "").strip()
+    parts = ([nm] if nm else []) + ([f"template={tpl}"] if tpl else []) + ([desc] if desc else [])
+    return (" (" + "; ".join(parts) + ")") if parts else ""
+
+
+def _normalize_heading_identifier(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _normalize_heading_identifiers(values: object) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for raw in values or []:
+        normalized = _normalize_heading_identifier(raw)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
+
+
+def _validate_task_priority_constraints(
+    hid: str,
+    id_kind: str,
+    c: "IdConstraint",
+    h: Dict[str, object],
+    kind: str,
+    artifact_path: Path,
+    errors: List[Dict[str, object]],
+    id_kind_name: Optional[str],
+    id_kind_description: Optional[str],
+    id_kind_template: Optional[str],
+) -> None:
+    line = int(h.get("line", 1) or 1)
+    has_task = bool(h.get("has_task", False))
+    has_priority = bool(h.get("has_priority", False))
+    tk = getattr(c, "task", None)
+    pr = getattr(c, "priority", None)
+
+    hint = _constraint_hint(c)
+
+    base = {"path": artifact_path, "line": line, "artifact_kind": kind, "id_kind": id_kind, "id": hid,
+            "section": "defined-id", "id_kind_name": id_kind_name, "id_kind_description": id_kind_description,
+            "id_kind_template": id_kind_template}
+
+    if tk is True and not has_task:
+        errors.append(error("constraints",
+            f"`{hid}` (kind `{id_kind}`) in {kind} artifact is missing required task checkbox `- [ ]`{hint}",
+            code=EC.DEF_MISSING_TASK, **base))
+    if tk is False and has_task:
+        errors.append(error("constraints",
+            f"`{hid}` (kind `{id_kind}`) in {kind} artifact has task checkbox but kind `{id_kind}` prohibits task tracking{hint}",
+            code=EC.DEF_PROHIBITED_TASK, **base))
+    if pr is True and not has_priority:
+        errors.append(error("constraints",
+            f"`{hid}` (kind `{id_kind}`) in {kind} artifact is missing required priority marker{hint}",
+            code=EC.DEF_MISSING_PRIORITY, **base))
+    if pr is False and has_priority:
+        errors.append(error("constraints",
+            f"`{hid}` (kind `{id_kind}`) in {kind} artifact has priority marker but kind `{id_kind}` prohibits priority{hint}",
+            code=EC.DEF_PROHIBITED_PRIORITY, **base))
+
+
+def _validate_id_heading_constraint(
+    hid: str,
+    id_kind: str,
+    c: "IdConstraint",
+    line: int,
+    kind: str,
+    artifact_path: Path,
+    headings_at: List[List[str]],
+    heading_desc_by_id: Dict[str, str],
+    errors: List[Dict[str, object]],
+    id_kind_name: Optional[str],
+    id_kind_description: Optional[str],
+    id_kind_template: Optional[str],
+) -> None:
+    allowed_headings = _normalize_heading_identifiers(getattr(c, "headings", None) or [])
+    if not allowed_headings:
+        return
+    allowed_norm = set(allowed_headings)
+    active_raw = headings_at[line] if 0 <= line < len(headings_at) else []
+    active_norm = _normalize_heading_identifiers(active_raw)
+    if any(a in allowed_norm for a in active_norm):
+        return
+    allowed_info = [
+        {"id": h, "description": heading_desc_by_id.get(h)}
+        for h in allowed_headings
+    ]
+
+    errors.append(error(
+        "constraints",
+        f"`{hid}` (kind `{id_kind}`) in {kind} artifact is under {active_raw} but must be under one of {allowed_headings}{_constraint_hint(c)}",
+        code=EC.DEF_WRONG_HEADINGS,
+        path=artifact_path,
+        line=line,
+        artifact_kind=kind,
+        id_kind=id_kind,
+        id=hid,
+        section="defined-id",
+        headings=allowed_headings,
+        headings_info=allowed_info,
+        found_headings=active_raw,
+        id_kind_name=id_kind_name,
+        id_kind_description=id_kind_description,
+        id_kind_template=id_kind_template,
+    ))
+# @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-ids-helpers
+
+
 # @cpt-algo:cpt-cypilot-algo-traceability-validation-validate-structure:p1
+# @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-ids-entry
 def validate_artifact_file(
     *,
     artifact_path: Path,
@@ -322,6 +483,7 @@ def validate_artifact_file(
 
     if constraints is None:
         return {"errors": errors, "warnings": warnings}
+    # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-ids-entry
 
     # @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-headings
     # Phase 1: headings contract
@@ -344,6 +506,7 @@ def validate_artifact_file(
         # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-if-headings-fail
     # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-headings
 
+    # @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-toc
     # Phase 1b: TOC validation (only when toc=true in constraints)
     if getattr(constraints, "toc", True):
         from .toc import validate_toc as _validate_toc
@@ -360,6 +523,7 @@ def validate_artifact_file(
             )
             errors.extend(_toc_result.get("errors", []))
             warnings.extend(_toc_result.get("warnings", []))
+    # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-toc
 
     # @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-scan-ids
     # Phase 2: identifier/content validation
@@ -368,11 +532,13 @@ def validate_artifact_file(
     refs = [h for h in hits if str(h.get("type")) == "reference"]
     # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-scan-ids
 
+    # @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-build-defs-index
     defs_by_id: Dict[str, Dict[str, object]] = {}
     for d in defs:
         did = str(d.get("id") or "").strip()
         if did and did not in defs_by_id:
             defs_by_id[did] = d
+    # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-build-defs-index
 
     # @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-scan-cdsl
     cdsl_hits = scan_cdsl_instructions(artifact_path)
@@ -405,6 +571,7 @@ def validate_artifact_file(
         # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-emit-cdsl-error
     # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-foreach-cdsl-mismatch
 
+    # @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-cdsl-heading-ctx
     headings_scanned = _scan_headings(artifact_path)
 
     def _heading_ctx_for_line(ln: int) -> Tuple[int, Optional[int]]:
@@ -428,6 +595,7 @@ def validate_artifact_file(
             if jlvl <= lvl:
                 return int(headings_scanned[j].get("line", 1) or 1) - 1
         return 10**9
+    # @cpt-end:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-check-cdsl-heading-ctx
 
     # @cpt-begin:cpt-cypilot-algo-traceability-validation-validate-structure:p1:inst-foreach-parent-child
     defs_sorted = sorted(defs, key=lambda d: int(d.get("line", 0) or 0))
@@ -531,7 +699,7 @@ def validate_artifact_file(
 
     heading_desc_by_id: Dict[str, str] = {}
     for hc in (getattr(constraints, "headings", None) or []):
-        hid = str(getattr(hc, "id", "") or "").strip()
+        hid = _normalize_heading_identifier(getattr(hc, "id", "") or "")
         if not hid:
             continue
         desc = str(getattr(hc, "description", "") or "").strip()
@@ -675,104 +843,16 @@ def validate_artifact_file(
         id_kind_name = str(getattr(c, "name", "") or "").strip() or None
         id_kind_description = str(getattr(c, "description", "") or "").strip() or None
         id_kind_template = str(getattr(c, "template", "") or "").strip() or None
-        tk = getattr(c, "task", None)  # True=required, False=prohibited, None=allowed
-        pr = getattr(c, "priority", None)  # True=required, False=prohibited, None=allowed
 
-        has_task = bool(h.get("has_task", False))
-        has_priority = bool(h.get("has_priority", False))
-
-        if tk is True and not has_task:
-            errors.append(error(
-                "constraints",
-                f"`{hid}` (kind `{id_kind}`) in {kind} artifact is missing required task checkbox `- [ ]`{_id_kind_hint(c)}",
-                code=EC.DEF_MISSING_TASK,
-                path=artifact_path,
-                line=line,
-                artifact_kind=kind,
-                id_kind=id_kind,
-                id=hid,
-                section="defined-id",
-                id_kind_name=id_kind_name,
-                id_kind_description=id_kind_description,
-                id_kind_template=id_kind_template,
-            ))
-        if tk is False and has_task:
-            errors.append(error(
-                "constraints",
-                f"`{hid}` (kind `{id_kind}`) in {kind} artifact has task checkbox but kind `{id_kind}` prohibits task tracking{_id_kind_hint(c)}",
-                code=EC.DEF_PROHIBITED_TASK,
-                path=artifact_path,
-                line=line,
-                artifact_kind=kind,
-                id_kind=id_kind,
-                id=hid,
-                section="defined-id",
-                id_kind_name=id_kind_name,
-                id_kind_description=id_kind_description,
-                id_kind_template=id_kind_template,
-            ))
-
-        if pr is True and not has_priority:
-            errors.append(error(
-                "constraints",
-                f"`{hid}` (kind `{id_kind}`) in {kind} artifact is missing required priority marker{_id_kind_hint(c)}",
-                code=EC.DEF_MISSING_PRIORITY,
-                path=artifact_path,
-                line=line,
-                artifact_kind=kind,
-                id_kind=id_kind,
-                id=hid,
-                section="defined-id",
-                id_kind_name=id_kind_name,
-                id_kind_description=id_kind_description,
-                id_kind_template=id_kind_template,
-            ))
-        if pr is False and has_priority:
-            errors.append(error(
-                "constraints",
-                f"`{hid}` (kind `{id_kind}`) in {kind} artifact has priority marker but kind `{id_kind}` prohibits priority{_id_kind_hint(c)}",
-                code=EC.DEF_PROHIBITED_PRIORITY,
-                path=artifact_path,
-                line=line,
-                artifact_kind=kind,
-                id_kind=id_kind,
-                id=hid,
-                section="defined-id",
-                id_kind_name=id_kind_name,
-                id_kind_description=id_kind_description,
-                id_kind_template=id_kind_template,
-            ))
-
-        allowed_headings = [
-            str(x).strip() for x in (getattr(c, "headings", None) or [])
-            if isinstance(x, str) and str(x).strip()
-        ]
-        if allowed_headings:
-            allowed_norm = {str(x).strip().lower() for x in allowed_headings if str(x).strip()}
-            active_raw = headings_at[line] if 0 <= line < len(headings_at) else []
-            active_norm = [str(x).strip().lower() for x in active_raw if str(x).strip()]
-            if not any(a in allowed_norm for a in active_norm):
-                allowed_info = [
-                    {"id": hid, "description": heading_desc_by_id.get(hid)}
-                    for hid in sorted(allowed_norm)
-                ]
-                errors.append(error(
-                    "constraints",
-                    f"`{hid}` (kind `{id_kind}`) in {kind} artifact is under {active_raw} but must be under one of {sorted(allowed_norm)}{_id_kind_hint(c)}",
-                    code=EC.DEF_WRONG_HEADINGS,
-                    path=artifact_path,
-                    line=line,
-                    artifact_kind=kind,
-                    id_kind=id_kind,
-                    id=hid,
-                    section="defined-id",
-                    headings=sorted(allowed_norm),
-                    headings_info=allowed_info,
-                    found_headings=active_raw,
-                    id_kind_name=id_kind_name,
-                    id_kind_description=id_kind_description,
-                    id_kind_template=id_kind_template,
-                ))
+        _validate_task_priority_constraints(
+            hid, id_kind, c, h, kind, artifact_path, errors,
+            id_kind_name, id_kind_description, id_kind_template,
+        )
+        _validate_id_heading_constraint(
+            hid, id_kind, c, line, kind, artifact_path,
+            headings_at, heading_desc_by_id, errors,
+            id_kind_name, id_kind_description, id_kind_template,
+        )
 
     for c in constraints.defined_id:
         k = str(getattr(c, "kind", "") or "").strip().lower()
@@ -817,12 +897,9 @@ def cross_validate_artifacts(
 ) -> Dict[str, List[Dict[str, object]]]:
     from .document import headings_by_line, scan_cpt_ids
 
+    _ = known_kinds
     errors: List[Dict[str, object]] = []
     warnings: List[Dict[str, object]] = []
-
-    kinds_set: Optional[set] = None
-    if known_kinds is not None:
-        kinds_set = {str(k).lower() for k in known_kinds}
 
     constraints_by_artifact_kind: Dict[str, ArtifactKindConstraints] = {}
     missing_constraints_kinds: set[str] = set()
@@ -839,7 +916,7 @@ def cross_validate_artifacts(
 
         hdesc: Dict[str, str] = {}
         for hc in (getattr(c, "headings", None) or []):
-            hid = str(getattr(hc, "id", "") or "").strip()
+            hid = _normalize_heading_identifier(getattr(hc, "id", "") or "")
             if not hid:
                 continue
             d = str(getattr(hc, "description", "") or "").strip()
@@ -967,7 +1044,7 @@ def cross_validate_artifacts(
         km = heading_desc_by_kind.get(str(kind).strip().upper(), {})
         out: List[Dict[str, object]] = []
         for hid in heading_ids:
-            hs = str(hid or "").strip()
+            hs = _normalize_heading_identifier(hid)
             if not hs:
                 continue
             out.append({"id": hs, "description": km.get(hs)})
@@ -1003,7 +1080,9 @@ def cross_validate_artifacts(
             checked = bool(h.get("checked", False))
             system = match_system_from_id(hid)
             id_kind = extract_kind_from_id(hid, system)
-            active_headings = headings_at[line] if 0 <= line < len(headings_at) else []
+            active_headings = _normalize_heading_identifiers(
+                headings_at[line] if 0 <= line < len(headings_at) else []
+            )
 
             row = {
                 "id": hid,
@@ -1183,7 +1262,7 @@ def cross_validate_artifacts(
             is_required = bool(getattr(ic, "required", True))
             defs_of_kind = [d for d in defs_in_file if str(d.get("id_kind") or "").lower() == k]
             if is_required and k and not defs_of_kind:
-                id_headings = [h for h in (getattr(ic, "headings", None) or []) if isinstance(h, str) and h.strip()]
+                id_headings = _normalize_heading_identifiers(getattr(ic, "headings", None) or [])
                 id_headings_info = headings_info_for_kind(ak, id_headings) if id_headings else None
                 errors.append(error(
                     "constraints",
@@ -1201,7 +1280,7 @@ def cross_validate_artifacts(
                 ))
                 continue
 
-            allowed_headings = set([h.strip() for h in (getattr(ic, "headings", None) or []) if isinstance(h, str) and h.strip()])
+            allowed_headings = set(_normalize_heading_identifiers(getattr(ic, "headings", None) or []))
             if allowed_headings and defs_of_kind:
                 allowed_sorted = sorted(allowed_headings)
                 allowed_info = headings_info_for_kind(ak, allowed_sorted)
@@ -1257,7 +1336,7 @@ def cross_validate_artifacts(
                         def_checked = bool(drow.get("checked", False))
                         task_rule = getattr(rule, "task", None)  # True=required, False=prohibited, None=allowed
                         prio_rule = getattr(rule, "priority", None)  # True=required, False=prohibited, None=allowed
-                        allowed_headings = set([h.strip() for h in (getattr(rule, "headings", None) or []) if isinstance(h, str) and h.strip()])
+                        allowed_headings = set(_normalize_heading_identifiers(getattr(rule, "headings", None) or []))
                         allowed_headings_sorted = sorted(allowed_headings)
                         allowed_headings_info = headings_info_for_kind(tk, allowed_headings_sorted)
 
@@ -1452,7 +1531,7 @@ def _parse_reference_rule(obj: object) -> Tuple[Optional[ReferenceRule], Optiona
     if headings_raw is not None:
         if not isinstance(headings_raw, list) or any(not isinstance(h, str) for h in headings_raw):
             return None, "Reference rule field 'headings' must be list[str]"
-        headings = [h for h in (x.strip() for x in headings_raw) if h]
+        headings = _normalize_heading_identifiers(headings_raw)
 
     return ReferenceRule(
         coverage=coverage,
@@ -1462,6 +1541,15 @@ def _parse_reference_rule(obj: object) -> Tuple[Optional[ReferenceRule], Optiona
     ), None
     # @cpt-end:cpt-cypilot-algo-traceability-validation-load-constraints:p1:inst-parse-ref-rule
 
+def _parse_required_bool_field(obj: dict, field: str) -> Tuple[bool, Optional[str]]:
+    v = obj.get(field)
+    if v is None:
+        return True, None
+    if isinstance(v, bool):
+        return v, None
+    return True, f"Constraint field '{field}' must be boolean"
+
+
 def _parse_heading_constraint(obj: object, *, pointer: Optional[str] = None) -> Tuple[Optional[HeadingConstraint], Optional[str]]:
     # @cpt-begin:cpt-cypilot-algo-traceability-validation-load-constraints:p1:inst-parse-heading
     if not isinstance(obj, dict):
@@ -1470,17 +1558,17 @@ def _parse_heading_constraint(obj: object, *, pointer: Optional[str] = None) -> 
     hid = obj.get("id")
     if hid is not None and not isinstance(hid, str):
         return None, "Heading constraint field 'id' must be string"
-    hid_s = hid.strip() if isinstance(hid, str) and hid.strip() else None
+    hid_s = _normalize_heading_identifier(hid) or None
 
     prev = obj.get("prev")
     if prev is not None and not isinstance(prev, str):
         return None, "Heading constraint field 'prev' must be string"
-    prev_s = prev.strip() if isinstance(prev, str) and prev.strip() else None
+    prev_s = _normalize_heading_identifier(prev) or None
 
     nxt = obj.get("next")
     if nxt is not None and not isinstance(nxt, str):
         return None, "Heading constraint field 'next' must be string"
-    next_s = nxt.strip() if isinstance(nxt, str) and nxt.strip() else None
+    next_s = _normalize_heading_identifier(nxt) or None
 
     level = obj.get("level")
     if not isinstance(level, int) or not (1 <= level <= 6):
@@ -1495,12 +1583,8 @@ def _parse_heading_constraint(obj: object, *, pointer: Optional[str] = None) -> 
         return None, "Heading constraint field 'description' must be string"
     desc_s = description.strip() if isinstance(description, str) and description.strip() else None
 
-    required = obj.get("required")
-    if required is None:
-        required_bool = True
-    elif isinstance(required, bool):
-        required_bool = required
-    else:
+    required_bool, req_err = _parse_required_bool_field(obj, "required")
+    if req_err:
         return None, "Heading constraint field 'required' must be boolean"
 
     multiple, mult_err = _parse_optional_bool(obj.get("multiple"), "multiple")
@@ -1563,12 +1647,8 @@ def _parse_id_constraint(obj: object) -> Tuple[Optional[IdConstraint], Optional[
     if not isinstance(kind, str) or not kind.strip():
         return None, "Constraint entry missing required 'kind'"
 
-    required = obj.get("required")
-    if required is None:
-        required_bool = True
-    elif isinstance(required, bool):
-        required_bool = required
-    else:
+    required_bool, req_err = _parse_required_bool_field(obj, "required")
+    if req_err:
         return None, "Constraint field 'required' must be boolean"
 
     name = obj.get("name")
@@ -1605,7 +1685,7 @@ def _parse_id_constraint(obj: object) -> Tuple[Optional[IdConstraint], Optional[
     if headings_raw is not None:
         if not isinstance(headings_raw, list) or any(not isinstance(h, str) for h in headings_raw):
             return None, "Constraint field 'headings' must be list[str]"
-        headings = [h for h in (x.strip() for x in headings_raw) if h]
+        headings = _normalize_heading_identifiers(headings_raw)
 
     # New schema: embedded references map.
     references, ref_err = _parse_references(obj.get("references"))
@@ -1629,6 +1709,131 @@ def _parse_id_constraint(obj: object) -> Tuple[Optional[IdConstraint], Optional[
         None,
     )
     # @cpt-end:cpt-cypilot-algo-traceability-validation-load-constraints:p1:inst-parse-id-constraint
+
+# @cpt-begin:cpt-cypilot-algo-traceability-validation-load-constraints:p1:inst-constraints-normalize
+def _assign_heading_ids(
+    parsed_headings: List[HeadingConstraint],
+) -> List[HeadingConstraint]:
+    """First pass: ensure every heading has a unique id."""
+    seen_ids: set[str] = set()
+    out: List[HeadingConstraint] = []
+    for hidx, hc in enumerate(parsed_headings):
+        eff_id = str(getattr(hc, "id", "") or "").strip()
+        if not eff_id:
+            base = ""
+            if getattr(hc, "pattern", None):
+                base = _slugify_heading_constraint_id(str(hc.pattern))
+            if not base:
+                base = f"level-{int(hc.level)}-{hidx}"
+            eff_id = f"h{int(hc.level)}-{base}"
+        eff_id = eff_id.strip()
+        candidate = eff_id
+        n = 2
+        while candidate.lower() in seen_ids:
+            candidate = f"{eff_id}-{n}"
+            n += 1
+        eff_id = candidate
+        seen_ids.add(eff_id.lower())
+        out.append(replace(hc, id=eff_id))
+    return out
+
+
+def _link_heading_prev_next(
+    out_headings: List[HeadingConstraint],
+    kind: str,
+    errors: List[str],
+) -> List[HeadingConstraint]:
+    """Second pass: fill in prev/next links and validate references."""
+    by_id: Dict[str, HeadingConstraint] = {str(hc.id): hc for hc in out_headings if getattr(hc, "id", None)}
+    normalized: List[HeadingConstraint] = []
+    for hidx, hc in enumerate(out_headings):
+        prev_id = getattr(hc, "prev", None)
+        next_id = getattr(hc, "next", None)
+        if not prev_id and hidx > 0:
+            prev_id = str(out_headings[hidx - 1].id)
+        if not next_id and hidx + 1 < len(out_headings):
+            next_id = str(out_headings[hidx + 1].id)
+        if prev_id and prev_id not in by_id:
+            errors.append(f"constraints for {kind} headings[{hidx}]: prev references unknown heading id '{prev_id}'")
+        if next_id and next_id not in by_id:
+            errors.append(f"constraints for {kind} headings[{hidx}]: next references unknown heading id '{next_id}'")
+        normalized.append(replace(hc, prev=prev_id, next=next_id))
+    return normalized
+
+
+def _normalize_heading_ids(
+    parsed_headings: List[HeadingConstraint],
+    kind: str,
+    errors: List[str],
+) -> List[HeadingConstraint]:
+    out_headings = _assign_heading_ids(parsed_headings)
+    return _link_heading_prev_next(out_headings, kind, errors)
+
+
+def _normalize_id_entry(
+    kkind: str, entry: dict, kind: str,
+) -> Tuple[Optional[dict], Optional[str]]:
+    """Validate and normalise a single identifiers entry.
+
+    Returns ``(normalised_dict, None)`` on success or ``(None, error_msg)`` on failure.
+    """
+    inferred_kind = kkind.strip()
+    if "kind" in entry:
+        vv = entry.get("kind")
+        if not isinstance(vv, str) or not vv.strip():
+            return None, f"constraints for {kind} identifiers[{kkind}]: Constraint entry missing required 'kind'"
+        if vv.strip().lower() != inferred_kind.lower():
+            return None, f"constraints for {kind} identifiers[{kkind}]: Constraint entry kind does not match identifiers key"
+        return dict(entry), None
+    normalized = dict(entry)
+    normalized["kind"] = inferred_kind
+    return normalized, None
+
+
+def _parse_identifier_entry(
+    kkind: object,
+    entry: object,
+    kind: str,
+) -> Tuple[Optional[IdConstraint], Optional[str]]:
+    if not isinstance(kkind, str) or not kkind.strip():
+        return None, f"constraints for {kind} field 'identifiers' has non-string kind key"
+    if not isinstance(entry, dict):
+        return None, f"constraints for {kind} identifiers[{kkind}]: Constraint entry must be an object"
+    normalized, norm_err = _normalize_id_entry(kkind, entry, kind)
+    if norm_err:
+        return None, norm_err
+    constraint, parse_err = _parse_id_constraint(normalized)
+    if parse_err:
+        return None, f"constraints for {kind} identifiers[{kkind}]: {parse_err}"
+    return constraint, None
+
+
+def _parse_identifiers_block(
+    identifiers_raw: object,
+    kind: str,
+    errors: List[str],
+) -> Tuple[Optional[List[IdConstraint]], bool]:
+    if not isinstance(identifiers_raw, dict):
+        errors.append(f"constraints for {kind} field 'identifiers' must be an object")
+        return None, False
+    defined_id: List[IdConstraint] = []
+    seen_defined: set[str] = set()
+    for kkind, entry in identifiers_raw.items():
+        c, e = _parse_identifier_entry(kkind, entry, kind)
+        if e:
+            errors.append(e)
+            continue
+        if c is None:
+            continue
+        kk = c.kind.strip().lower()
+        if kk in seen_defined:
+            errors.append(f"constraints for {kind} identifiers has duplicate kind '{c.kind.strip()}'")
+            continue
+        seen_defined.add(kk)
+        defined_id.append(c)
+    return defined_id, True
+# @cpt-end:cpt-cypilot-algo-traceability-validation-load-constraints:p1:inst-constraints-normalize
+
 
 # @cpt-algo:cpt-cypilot-algo-traceability-validation-load-constraints:p1
 def parse_kit_constraints(data: object) -> Tuple[Optional[KitConstraints], List[str]]:
@@ -1668,9 +1873,6 @@ def parse_kit_constraints(data: object) -> Tuple[Optional[KitConstraints], List[
             errors.append(f"constraints for {kind} field 'description' must be string")
             continue
 
-        defined_id: List[IdConstraint] = []
-        seen_defined: set[str] = set()
-
         headings: Optional[List[HeadingConstraint]] = None
         headings_raw = raw.get("headings")
         if headings_raw is not None:
@@ -1686,89 +1888,14 @@ def parse_kit_constraints(data: object) -> Tuple[Optional[KitConstraints], List[
                     continue
                 if hc is not None:
                     parsed_headings.append(hc)
+            headings = _normalize_heading_ids(parsed_headings, kind, errors)
 
-            # Normalize + auto-generate stable ids, and validate prev/next references.
-            seen_ids: set[str] = set()
-            out_headings: List[HeadingConstraint] = []
-            for hidx, hc in enumerate(parsed_headings):
-                eff_id = str(getattr(hc, "id", "") or "").strip()
-                if not eff_id:
-                    base = ""
-                    if getattr(hc, "pattern", None):
-                        base = _slugify_heading_constraint_id(str(hc.pattern))
-                    if not base:
-                        base = f"level-{int(hc.level)}-{hidx}"
-                    eff_id = f"h{int(hc.level)}-{base}"
-                eff_id = eff_id.strip()
-
-                candidate = eff_id
-                n = 2
-                while candidate.lower() in seen_ids:
-                    candidate = f"{eff_id}-{n}"
-                    n += 1
-                eff_id = candidate
-                seen_ids.add(eff_id.lower())
-                out_headings.append(replace(hc, id=eff_id))
-
-            by_id: Dict[str, HeadingConstraint] = {str(hc.id): hc for hc in out_headings if getattr(hc, "id", None)}
-
-            normalized_headings: List[HeadingConstraint] = []
-            for hidx, hc in enumerate(out_headings):
-                prev_id = getattr(hc, "prev", None)
-                next_id = getattr(hc, "next", None)
-
-                if not prev_id and hidx > 0:
-                    prev_id = str(out_headings[hidx - 1].id)
-                if not next_id and hidx + 1 < len(out_headings):
-                    next_id = str(out_headings[hidx + 1].id)
-
-                if prev_id and prev_id not in by_id:
-                    errors.append(f"constraints for {kind} headings[{hidx}]: prev references unknown heading id '{prev_id}'")
-                if next_id and next_id not in by_id:
-                    errors.append(f"constraints for {kind} headings[{hidx}]: next references unknown heading id '{next_id}'")
-
-                normalized_headings.append(replace(hc, prev=prev_id, next=next_id))
-
-            headings = normalized_headings
-
-        identifiers_raw = raw.get("identifiers")
-        if not isinstance(identifiers_raw, dict):
-            errors.append(f"constraints for {kind} field 'identifiers' must be an object")
+        defined_id, ok = _parse_identifiers_block(raw.get("identifiers"), kind, errors)
+        if not ok:
             continue
-        for kkind, entry in identifiers_raw.items():
-            if not isinstance(kkind, str) or not kkind.strip():
-                errors.append(f"constraints for {kind} field 'identifiers' has non-string kind key")
-                continue
-            if not isinstance(entry, dict):
-                errors.append(f"constraints for {kind} identifiers[{kkind}]: Constraint entry must be an object")
-                continue
-
-            # Infer kind from map key when omitted.
-            inferred_kind = kkind.strip()
-            if "kind" in entry:
-                vv = entry.get("kind")
-                if not isinstance(vv, str) or not vv.strip():
-                    errors.append(f"constraints for {kind} identifiers[{kkind}]: Constraint entry missing required 'kind'")
-                    continue
-                if vv.strip().lower() != inferred_kind.lower():
-                    errors.append(f"constraints for {kind} identifiers[{kkind}]: Constraint entry kind does not match identifiers key")
-                    continue
-                normalized = dict(entry)
-            else:
-                normalized = dict(entry)
-                normalized["kind"] = inferred_kind
-
-            c, e = _parse_id_constraint(normalized)
-            if e:
-                errors.append(f"constraints for {kind} identifiers[{kkind}]: {e}")
-                continue
-            if c is not None:
-                kk = c.kind.strip().lower()
-                if kk in seen_defined:
-                    errors.append(f"constraints for {kind} identifiers has duplicate kind '{c.kind.strip()}'")
-                    continue
-                seen_defined.add(kk)
-                defined_id.append(c)
+        if defined_id is None:
+            errors.append(f"constraints for {kind}: identifiers block returned no data")
+            continue
 
         # TOC flag (default true when absent)
         toc_raw = raw.get("toc")
@@ -1800,7 +1927,7 @@ def load_constraints_toml(kit_root: Path) -> Tuple[Optional[KitConstraints], Lis
     try:
         from . import toml_utils
         data = toml_utils.load(path)
-    except Exception as e:
+    except (OSError, ValueError, KeyError) as e:
         return None, [f"Failed to parse constraints.toml: {e}"]
 
     # TOML wraps kinds under "artifacts" key
@@ -1879,11 +2006,12 @@ def _scan_headings(path: Path) -> List[Dict[str, object]]:
     return out
     # @cpt-end:cpt-cypilot-algo-traceability-validation-headings-contract:p1:inst-scan-headings
 
+# @cpt-begin:cpt-cypilot-algo-traceability-validation-headings-contract:p1:inst-validate-headings-entry
 def validate_headings_contract(
     *,
     path: Path,
     constraints: ArtifactKindConstraints,
-    registered_systems: Optional[Iterable[str]],
+    registered_systems: Optional[Iterable[str]],  # pylint: disable=unused-argument  # public API; reserved for system-scoped heading validation
     artifact_kind: str,
     constraints_path: Optional[Path] = None,
     kit_id: Optional[str] = None,
@@ -1895,9 +2023,8 @@ def validate_headings_contract(
     - Enforces multiple/prohibited/required counts for each constraint.
     - Enforces numbered required/prohibited for matched headings.
     """
+    # @cpt-end:cpt-cypilot-algo-traceability-validation-headings-contract:p1:inst-validate-headings-entry
     # @cpt-begin:cpt-cypilot-algo-traceability-validation-headings-contract:p1:inst-validate-init
-    from .document import scan_cpt_ids
-
     errors: List[Dict[str, object]] = []
     warnings: List[Dict[str, object]] = []
 

@@ -7,7 +7,6 @@ List ID Kinds Command — list all ID kind tokens found in artifacts.
 
 # @cpt-begin:cpt-cypilot-algo-traceability-validation-list-id-kinds:p1:inst-kinds-imports
 import argparse
-import json
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 

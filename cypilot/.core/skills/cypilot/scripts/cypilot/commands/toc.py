@@ -8,7 +8,6 @@ Thin CLI wrapper around the unified ``cypilot.utils.toc`` module.
 
 # @cpt-begin:cpt-cypilot-flow-developer-experience-toc:p1:inst-toc-gen-imports
 import argparse
-import json
 from pathlib import Path
 from typing import List
 

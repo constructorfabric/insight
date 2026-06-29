@@ -42,6 +42,7 @@ drivers:
   - [get-content](#get-content)
   - [list-id-kinds](#list-id-kinds)
   - [info](#info)
+  - [agents](#agents)
   - [generate-agents](#generate-agents)
   - [generate-resources](#generate-resources)
   - [doctor](#doctor)
@@ -471,17 +472,48 @@ cpt info
 
 ---
 
-### generate-agents
+### agents
 
-Generate agent entry points.
+Show generated agent integration files without writing anything.
 
 ```
-cpt generate-agents [--agent AGENT]
+cpt agents [--agent AGENT | --openai] [--root PATH] [--cypilot-root PATH] [--config PATH]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--agent AGENT` | Limit output to a specific agent: `windsurf`, `cursor`, `claude`, `copilot`, `openai` |
+| `--openai` | Shortcut for `--agent openai` |
+| `--root PATH` | Project root directory to search from (default: current directory) |
+| `--cypilot-root PATH` | Explicit Cypilot core root (optional override) |
+| `--config PATH` | Path to agents config JSON (optional; built-in defaults used when omitted) |
+
+**Behavior**:
+1. Resolve project root and cypilot directory.
+2. Load agent config (or built-in defaults).
+3. Inspect generated workflow proxies, skill shims, and subagent files for the selected agents.
+4. Return a read-only per-agent listing; no files are written.
+
+**Exit**: 0.
+
+---
+
+### generate-agents
+
+Generate or update agent integration files.
+
+```
+cpt generate-agents [--agent AGENT | --openai] [--root PATH] [--cypilot-root PATH] [--config PATH] [--dry-run]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--agent AGENT` | Generate for a specific agent only: `windsurf`, `cursor`, `claude`, `copilot`, `openai` |
+| `--openai` | Shortcut for `--agent openai` |
+| `--root PATH` | Project root directory to search from (default: current directory) |
+| `--cypilot-root PATH` | Explicit Cypilot core root (optional override) |
+| `--config PATH` | Path to agents config JSON (optional; built-in defaults used when omitted) |
+| `--dry-run` | Compute planned changes without writing files |
 
 **Without `--agent`**: regenerate for all agents.
 
@@ -490,16 +522,33 @@ cpt generate-agents [--agent AGENT]
 2. Compose the main SKILL.md from core commands + collected extensions.
 3. Generate workflow entry points in each agent's native format.
 4. Generate skill shims referencing the composed SKILL.md.
-5. Full overwrite on each invocation (no merge with existing files).
+5. Generate tool-specific subagent files where supported.
+6. Full overwrite on each invocation (no merge with existing files).
 
-**Output targets**:
-| Agent | Entry Points Directory |
-|-------|----------------------|
-| Windsurf | `.windsurf/workflows/` |
-| Cursor | `.cursor/rules/` |
-| Claude | `.claude/commands/` |
-| Copilot | `.github/prompts/` |
-| OpenAI | `.openai/` |
+**Generated surfaces**:
+| Agent | Generated files/directories |
+|-------|----------------------------|
+| Windsurf | `.windsurf/workflows/`, `.agents/skills/` (shared) |
+| Cursor | `.cursor/commands/`, `.cursor/agents/`, `.agents/skills/` (shared) |
+| Claude | `.claude/skills/`, `.claude/agents/` |
+| Copilot | `.github/prompts/`, `.github/copilot-instructions.md`, `.github/agents/`, `.agents/skills/` (shared) |
+| OpenAI | `.agents/skills/` (shared), `.codex/.cypilot-installed` (marker), `.codex/agents/` |
+
+**Detection model** (used by `info` and `update --auto-regenerate`):
+Each agent is detected via Cypilot-specific generated files, not generic tool directories.
+- **Claude**: `.claude/skills/cypilot/SKILL.md`
+- **Windsurf**: `.windsurf/workflows/cypilot.md` (primary) or legacy `.windsurf/skills/cypilot/SKILL.md` with `{cypilot_path}/` follow-link
+- **Cursor**: `.cursor/commands/cypilot.md` (primary) or legacy `.cursor/rules/cypilot.mdc` with `{cypilot_path}/` follow-link
+- **Copilot**: `.github/.cypilot-installed` (primary), `.github/prompts/cypilot.prompt.md`, or `.github/copilot-instructions.md` starting with `# Cypilot` (legacy). User-authored `copilot-instructions.md` files are never overwritten.
+- **OpenAI**: `.codex/.cypilot-installed` (primary), `.codex/agents/` with Cypilot content (legacy mixed-install), or `.agents/skills/cypilot/SKILL.md` only when no other agent's primary or legacy Cypilot marker is present (legacy pure)
+
+**Skill file model**:
+- **Kit workflow skills**: Generated as shared `.agents/skills/{id}/SKILL.md` for all non-Claude agents
+- **Manifest skills**: Generated to `.agents/skills/{id}/SKILL.md` with agent targeting enforced via filtering logic — when a manifest skill is scoped to specific agents (e.g. `agents=['cursor']`), it is not generated for other agents
+
+All non-Claude agents read from the shared `.agents/skills/` directory, but agent-specific manifest skills are filtered at generation time. This prevents Cursor-only skills from being offered to Copilot or OpenAI.
+
+Legacy per-tool manifest skill files are migrated away only when they match generated content or are pure generated stubs; customized legacy files are preserved.
 
 **Exit**: 0.
 
@@ -551,7 +600,7 @@ cpt doctor
 
 ### self-check
 
-Validate example artifacts against their templates.
+Validate all example artifacts against their templates.
 
 ```
 cpt self-check [--kit KIT] [--verbose]

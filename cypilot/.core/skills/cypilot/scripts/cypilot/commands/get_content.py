@@ -1,8 +1,7 @@
 # @cpt-begin:cpt-cypilot-flow-traceability-validation-query:p1:inst-query-imports
 import argparse
-import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List
 
 from ..utils.codebase import CodeFile
 from ..utils.document import get_content_scoped

@@ -11,6 +11,7 @@ and explicit sync operations using subprocess (stdlib-only constraint).
 """
 
 # @cpt-begin:cpt-cypilot-algo-workspace-resolve-git-url:p1:inst-git-datamodel
+import os
 import re
 import subprocess
 import sys
@@ -28,7 +29,8 @@ _SSH_SHORT_RE = re.compile(r"^[\w.-]+@([^:]+):(.+?)(?:\.git)?$")
 # SSH URL: ssh://git@gitlab.com/org/repo.git
 _SSH_URL_RE = re.compile(r"^ssh://[\w.-]+@([^/]+)/(.+?)(?:\.git)?$")
 
-_GIT_TIMEOUT = 120  # seconds
+_GIT_TIMEOUT_DEFAULT = 300  # seconds (5 minutes)
+_GIT_TIMEOUT = int(os.environ.get("GIT_TIMEOUT", _GIT_TIMEOUT_DEFAULT))
 
 
 def _redact_url(url: str) -> str:
@@ -138,6 +140,7 @@ def _run_git(args: list, cwd: Optional[Path] = None) -> Tuple[int, str, str]:
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT,
+            check=False,
         )
         return (result.returncode, result.stdout, result.stderr)
     except FileNotFoundError:
