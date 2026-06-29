@@ -8,9 +8,20 @@ const AI_PERSONAL_HEX: &str = "00000000000000000001000000000050";
 const AI_PERSONAL_TREND_HEX: &str = "00000000000000000001000000000051";
 const AI_PERSONAL_COUNTERS_HEX: &str = "00000000000000000001000000000052";
 
-const AI_PERSONAL_QR: &str = "SELECT person_id, tool, sum(accepted_lines_added) AS accepted_lines_added, sum(accepted_lines_removed) AS accepted_lines_removed, if(countIf(cost_cents IS NOT NULL) > 0, sumIf(cost_cents, cost_cents IS NOT NULL), CAST(NULL AS Nullable(Float64))) AS cost_cents, uniqExact(metric_date) AS active_days FROM insight.ai_dev_tool_daily GROUP BY person_id, tool";
-const AI_PERSONAL_TREND_QR: &str = "SELECT person_id, metric_date, tool, sum(accepted_lines_added) AS accepted_lines_added FROM insight.ai_dev_tool_trend GROUP BY person_id, metric_date, tool";
+const AI_TOOL_NAME_SQL: &str = "multiIf(tool = 'claude_code', 'Claude Code', tool = 'cursor', 'Cursor', tool = 'codex', 'Codex', tool = 'copilot', 'GitHub Copilot', tool = 'windsurf', 'Windsurf', tool)";
 const AI_PERSON_COUNTER_VALUES_QR: &str = r#"SELECT metric_values.person_id AS person_id, p.org_unit_id AS org_unit_id, metric_values.metric_key AS metric_key, metric_values.value AS value FROM (SELECT person_id, kv.1 AS metric_key, kv.2 AS value FROM (SELECT person_id, if(countIf(ai_accepted_lines IS NOT NULL) > 0, sumIf(ai_accepted_lines, ai_accepted_lines IS NOT NULL), CAST(NULL AS Nullable(Float64))) AS ai_accepted_lines, if(countIf(ai_active_days IS NOT NULL) > 0, sumIf(ai_active_days, ai_active_days IS NOT NULL), CAST(NULL AS Nullable(Float64))) AS ai_active_days, if(countIf(ai_cost_cents IS NOT NULL) > 0, sumIf(ai_cost_cents, ai_cost_cents IS NOT NULL), CAST(NULL AS Nullable(Float64))) AS ai_cost_cents, if(countIf(ai_accepted_edit_actions IS NOT NULL) > 0, sumIf(ai_accepted_edit_actions, ai_accepted_edit_actions IS NOT NULL), CAST(NULL AS Nullable(Float64))) AS ai_accepted_edit_actions, if(sumIf(ai_tool_acceptance_offered, ai_tool_acceptance_offered IS NOT NULL) > 0, 100 * sumIf(ai_tool_acceptance_accepted, ai_tool_acceptance_accepted IS NOT NULL) / sumIf(ai_tool_acceptance_offered, ai_tool_acceptance_offered IS NOT NULL), CAST(NULL AS Nullable(Float64))) AS ai_tool_acceptance_rate, if(countIf(ai_assistant_messages IS NOT NULL) > 0, sumIf(ai_assistant_messages, ai_assistant_messages IS NOT NULL), CAST(NULL AS Nullable(Float64))) AS ai_assistant_messages, if(countIf(ai_assistant_actions IS NOT NULL) > 0, sumIf(ai_assistant_actions, ai_assistant_actions IS NOT NULL), CAST(NULL AS Nullable(Float64))) AS ai_assistant_actions FROM insight.ai_person_counter_daily GROUP BY person_id) d ARRAY JOIN [('ai_person_counter_daily.ai_accepted_lines', ai_accepted_lines), ('ai_person_counter_daily.ai_active_days', ai_active_days), ('ai_person_counter_daily.ai_cost_cents', ai_cost_cents), ('ai_person_counter_daily.ai_accepted_edit_actions', ai_accepted_edit_actions), ('ai_person_counter_daily.ai_tool_acceptance_rate', ai_tool_acceptance_rate), ('ai_person_counter_daily.ai_assistant_messages', ai_assistant_messages), ('ai_person_counter_daily.ai_assistant_actions', ai_assistant_actions)] AS kv WHERE kv.2 IS NOT NULL) metric_values LEFT JOIN insight.people AS p ON metric_values.person_id = p.person_id"#;
+
+fn ai_personal_qr() -> String {
+    format!(
+        "SELECT person_id, tool, {AI_TOOL_NAME_SQL} AS tool_name, sum(accepted_lines_added) AS accepted_lines_added, sum(accepted_lines_removed) AS accepted_lines_removed, if(countIf(cost_cents IS NOT NULL) > 0, sumIf(cost_cents, cost_cents IS NOT NULL), CAST(NULL AS Nullable(Float64))) AS cost_cents, uniqExact(metric_date) AS active_days FROM insight.ai_dev_tool_daily GROUP BY person_id, tool"
+    )
+}
+
+fn ai_personal_trend_qr() -> String {
+    format!(
+        "SELECT person_id, metric_date, tool, {AI_TOOL_NAME_SQL} AS tool_name, sum(accepted_lines_added) AS accepted_lines_added FROM insight.ai_dev_tool_trend GROUP BY person_id, metric_date, tool"
+    )
+}
 
 fn ai_personal_counters_qr() -> String {
     format!(
@@ -23,18 +34,20 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
         let ai_personal_counters_qr = ai_personal_counters_qr();
+        let ai_personal_qr = ai_personal_qr();
+        let ai_personal_trend_qr = ai_personal_trend_qr();
         for (hex, name, description, query) in [
             (
                 AI_PERSONAL_HEX,
                 "AI Tool Summary",
                 "Per-person AI tool summary rows.",
-                AI_PERSONAL_QR.to_owned(),
+                ai_personal_qr,
             ),
             (
                 AI_PERSONAL_TREND_HEX,
                 "AI Tool Trend",
                 "Per-person daily AI accepted-lines rows by tool.",
-                AI_PERSONAL_TREND_QR.to_owned(),
+                ai_personal_trend_qr,
             ),
             (
                 AI_PERSONAL_COUNTERS_HEX,
