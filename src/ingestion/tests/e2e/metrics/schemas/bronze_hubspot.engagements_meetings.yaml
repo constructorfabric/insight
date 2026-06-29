@@ -1,0 +1,35 @@
+# Reusable JSON schema for bronze_hubspot.engagements_meetings (the columns the
+# `meetings` arm of hubspot__crm_activities reads). Meetings are attributed to
+# the CREATOR (properties_hs_created_by_user_id). timestamp falls back
+# meeting_start_time → hs_timestamp → createdAt → epoch.
+schemas:
+  bronze_hubspot.engagements_meetings:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: [string, "null"] }
+      id: { type: [string, "null"] }
+      archived: { type: [boolean, "null"] }
+      createdAt: { type: [string, "null"] }
+      updatedAt: { type: [string, "null"] }
+      archivedAt: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      associations_contacts: { type: [string, "null"] }
+      associations_deals: { type: [string, "null"] }
+      associations_companies: { type: [string, "null"] }
+      properties_hubspot_owner_id: { type: [string, "null"] }
+      properties_hs_created_by_user_id: { type: [string, "null"] }
+      properties_hs_timestamp: { type: [string, "null"] }
+      properties_hs_meeting_start_time: { type: [string, "null"] }
+      properties_hs_meeting_end_time: { type: [string, "null"] }
+      properties_hs_meeting_outcome: { type: [string, "null"] }
+      properties_hs_meeting_title: { type: [string, "null"] }
+      properties_hs_meeting_location: { type: [string, "null"] }

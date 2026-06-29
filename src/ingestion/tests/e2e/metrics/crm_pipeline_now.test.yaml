@@ -1,0 +1,148 @@
+spec_version: 1
+description: >
+  Metric: crm_pipeline_now — open-deal snapshot (…0028), sales-rep dashboard.
+
+  ⚠️ TARGET-BEHAVIOR SPEC — CURRENTLY EXPECTED TO FAIL (RED). ⚠️
+  This test asserts the INTENDED "as of end_date" semantics. The shipped backend
+  does NOT implement them yet (the gold view `insight.crm_pipeline_now` is
+  date-less — openness is the static `is_closed` flag — and analytics-api errors
+  the per-query when a metric_date bound is supplied because the view has no such
+  column). So these cases fail today ON PURPOSE; they go green only once the
+  metric is made end-date-aware. Making it so is a backend change across:
+    • gold view  src/ingestion/scripts/migrations/20260512000000_crm-gold-views.sql
+    • query_ref  src/backend/services/analytics-api/src/migration/m20260507_000001_seed_crm_metrics.rs
+    • (likely) the date-filter injection in analytics-api api/handlers.rs
+
+  Intended semantics (bronze → silver → gold):
+    • bronze: HubSpot deals (owner_id, is_closed, close_date, amount_home)
+    • silver: deals deduped to one row per record; owner email → person_id
+    • gold:   Pipeline Now is a point-in-time snapshot AS OF the period END:
+              a deal is "open as of end_date" ⇔ is_closed = 0 OR close_date > end_date.
+              pipeline_count = #such deals; pipeline_value = round(Σ amount_home).
+              The period START must NOT affect the result.
+
+  Consequences asserted below:
+    • a still-open deal counts as pipeline;
+    • a deal closed ON/BEFORE end_date is excluded (it belongs to the closed
+      metric — see crm_kpis deals_closed);
+    • a deal closed AFTER end_date counts as pipeline (it was still open then);
+    • moving the END across a deal's close_date changes the snapshot;
+    • moving only the START does not change anything.
+
+  Single rep (alice). 2 always-open deals (20k + 50k), 1 closed-before-end (10k,
+  excluded), 1 closed-AFTER the Jan end (88888, must be IN the Jan snapshot).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+      department: Sales
+
+  bronze_hubspot.owners:
+    - $ref: templates/hubspot.yaml#/templates/alice_owner
+
+  bronze_hubspot.deals:
+    # D1 open — 20000 (open as of any end_date)
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-d1
+      unique_key: hubspot-deal-d1
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-05T09:00:00"
+      properties_amount_in_home_currency: "20000"
+      properties_hs_is_closed: "false"
+      properties_hs_is_closed_won: "false"
+    # D1 duplicate (re-sync) — same unique_key + updatedAt → must dedup
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-d1
+      unique_key: hubspot-deal-d1
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-05T09:00:00"
+      properties_amount_in_home_currency: "20000"
+      properties_hs_is_closed: "false"
+      properties_hs_is_closed_won: "false"
+    # D2 open — 50000
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-d2
+      unique_key: hubspot-deal-d2
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-06T09:00:00"
+      properties_amount_in_home_currency: "50000"
+      properties_hs_is_closed: "false"
+      properties_hs_is_closed_won: "false"
+    # D3 closed-won, close 2026-01-10 — closed BEFORE the Jan end → excluded
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-d3
+      unique_key: hubspot-deal-d3
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-07T09:00:00"
+      properties_closedate: "2026-01-10T00:00:00Z"
+      properties_amount_in_home_currency: "99999"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "true"
+    # D4 closed, close 2026-12-31 — closed AFTER the Jan end → was still open as
+    # of 2026-01-31, so it MUST be in the January pipeline snapshot (88888).
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-d4
+      unique_key: hubspot-deal-d4
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-08T09:00:00"
+      properties_closedate: "2026-12-31T00:00:00Z"
+      properties_amount_in_home_currency: "88888"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "false"
+
+cases:
+  # ── 1. Snapshot as of 2026-01-31: open = D1 + D2 + D4 (D4 closes later) ─────
+  # Expected (target): count 3, value 158888. D3 (closed 01-10) excluded.
+  - name: "crm_pipeline_now — as of end 2026-01-31 (open incl. closed-after-end: count 3, value 158888)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: crm
+            metric_id: 00000000-0000-0000-0001-000000000028
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: crm
+        assert: "result.status == 'ok'"
+      - in: crm
+        find: { person_id: alice@example.com }
+        assert: "int(it.pipeline_count) == 3 && double(it.pipeline_value) == 158888.0"
+
+  # ── 2. Same END, later START → identical result (START must not matter) ─────
+  - name: "crm_pipeline_now — period START does not affect the snapshot (still 3 / 158888)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: crm
+            metric_id: 00000000-0000-0000-0001-000000000028
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-20' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: crm
+        assert: "result.status == 'ok'"
+      - in: crm
+        find: { person_id: alice@example.com }
+        assert: "int(it.pipeline_count) == 3 && double(it.pipeline_value) == 158888.0"
+
+  # ── 3. Move END past D4's close (2027-01-31) → D4 now closed → drops out ────
+  # Expected (target): count 2, value 70000 (only D1 + D2 still open).
+  - name: "crm_pipeline_now — moving END past a close_date drops that deal (count 2, value 70000)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: crm
+            metric_id: 00000000-0000-0000-0001-000000000028
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2027-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: crm
+        assert: "result.status == 'ok'"
+      - in: crm
+        find: { person_id: alice@example.com }
+        assert: "int(it.pipeline_count) == 2 && double(it.pipeline_value) == 70000.0"

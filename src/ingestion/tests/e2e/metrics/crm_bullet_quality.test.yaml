@@ -1,0 +1,151 @@
+spec_version: 1
+description: >
+  Metric: crm_bullet_velocity_quality — V&Q bullets (…0022), sales-rep dashboard.
+  Emits four keys: deals_opened, win_rate, avg_deal_size, cycle_days.
+  How it's computed (bronze → silver → gold):
+    • bronze: HubSpot deals (owner_id, createdAt, closedate, amount_home, is_closed/is_won)
+    • silver: deals deduped; owner email → person_id; department → org_unit_id
+    • gold:   insight.crm_bullet_rows emits one long-format row per deal event
+              (deals_opened / deals_closed / deals_won / cycle_days / deal_size).
+              query_ref re-aggregates per person → win_rate = won·100/closed,
+              avg_deal_size = avg(amount_home of won), cycle_days = avg(close−created,
+              floored at 0). value = the requested rep; median/min/max = the rep's
+              department team (quantileExact / min / max over org_unit_id).
+
+  Team = department "Sales" {alice, bob, carol} (odd team → unambiguous median):
+    deals_opened  alice 5 · bob 2 · carol 3 → median 3, range [2, 5]
+    win_rate      alice 66.67 (2/3) · bob 50 (1/2) · carol 100 (1/1) → median 66.67, range [50, 100]
+    avg_deal_size alice 20000 (10k,30k) · bob 8000 · carol 40000 → median 20000, range [8000, 40000]
+    cycle_days    alice 9.5 (5,14) · bob 4 · carol 20 → median 9.5, range [4, 20]
+  Cases: alice's value + the department median/range for each of the four keys.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+      department: Sales
+    - $ref: templates/people.yaml#/templates/bob
+      department: Sales
+    - $ref: templates/people.yaml#/templates/carol
+      department: Sales
+
+  bronze_hubspot.owners:
+    - $ref: templates/hubspot.yaml#/templates/alice_owner
+    - $ref: templates/hubspot.yaml#/templates/bob_owner
+    - $ref: templates/hubspot.yaml#/templates/carol_owner
+
+  bronze_hubspot.deals:
+    # ── alice: 5 opened, 3 closed, 2 won (10k @5d, 30k @14d), 1 lost, 2 open ──
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-aq1
+      unique_key: hubspot-deal-aq1
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-05T09:00:00"
+      properties_closedate: "2026-01-10T00:00:00Z"
+      properties_amount_in_home_currency: "10000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "true"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-aq2
+      unique_key: hubspot-deal-aq2
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-06T09:00:00"
+      properties_closedate: "2026-01-20T00:00:00Z"
+      properties_amount_in_home_currency: "30000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "true"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-aq3
+      unique_key: hubspot-deal-aq3
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-07T09:00:00"
+      properties_closedate: "2026-01-15T00:00:00Z"
+      properties_amount_in_home_currency: "5000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "false"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-aq4
+      unique_key: hubspot-deal-aq4
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-08T09:00:00"
+      properties_hs_is_closed: "false"
+      properties_hs_is_closed_won: "false"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-aq5
+      unique_key: hubspot-deal-aq5
+      properties_hubspot_owner_id: own-alice
+      createdAt: "2026-01-09T09:00:00"
+      properties_hs_is_closed: "false"
+      properties_hs_is_closed_won: "false"
+    # ── bob: 2 opened, 2 closed, 1 won (8k @4d), 1 lost ──
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-bq1
+      unique_key: hubspot-deal-bq1
+      properties_hubspot_owner_id: own-bob
+      createdAt: "2026-01-05T09:00:00"
+      properties_closedate: "2026-01-09T00:00:00Z"
+      properties_amount_in_home_currency: "8000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "true"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-bq2
+      unique_key: hubspot-deal-bq2
+      properties_hubspot_owner_id: own-bob
+      createdAt: "2026-01-06T09:00:00"
+      properties_closedate: "2026-01-12T00:00:00Z"
+      properties_amount_in_home_currency: "4000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "false"
+    # ── carol: 3 opened, 1 closed, 1 won (40k @20d), 2 open ──
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-cq1
+      unique_key: hubspot-deal-cq1
+      properties_hubspot_owner_id: own-carol
+      createdAt: "2026-01-02T09:00:00"
+      properties_closedate: "2026-01-22T00:00:00Z"
+      properties_amount_in_home_currency: "40000"
+      properties_hs_is_closed: "true"
+      properties_hs_is_closed_won: "true"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-cq2
+      unique_key: hubspot-deal-cq2
+      properties_hubspot_owner_id: own-carol
+      createdAt: "2026-01-03T09:00:00"
+      properties_hs_is_closed: "false"
+      properties_hs_is_closed_won: "false"
+    - $ref: templates/hubspot.yaml#/templates/hubspot_deal
+      id: deal-cq3
+      unique_key: hubspot-deal-cq3
+      properties_hubspot_owner_id: own-carol
+      createdAt: "2026-01-04T09:00:00"
+      properties_hs_is_closed: "false"
+      properties_hs_is_closed_won: "false"
+
+cases:
+  - name: "crm_bullet_quality — alice value + Sales team median/range (4 keys)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: crm
+            metric_id: 00000000-0000-0000-0001-000000000022
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: crm
+        assert: "result.status == 'ok'"
+      - in: crm
+        find: { metric_key: deals_opened }
+        equal: { value: 5, median: 3, range_min: 2, range_max: 5 }
+      - in: crm
+        find: { metric_key: avg_deal_size }
+        equal: { value: 20000, median: 20000, range_min: 8000, range_max: 40000 }
+      - in: crm
+        find: { metric_key: cycle_days }
+        equal: { value: 9.5, median: 9.5, range_min: 4, range_max: 20 }
+      - in: crm
+        find: { metric_key: win_rate }
+        assert: >
+          double(it.value) > 66.6 && double(it.value) < 66.7 &&
+          double(it.median) > 66.6 && double(it.median) < 66.7 &&
+          double(it.range_min) == 50.0 && double(it.range_max) == 100.0

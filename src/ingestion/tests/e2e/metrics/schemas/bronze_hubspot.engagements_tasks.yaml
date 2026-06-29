@@ -1,0 +1,34 @@
+# Reusable JSON schema for bronze_hubspot.engagements_tasks (the columns the
+# `tasks` arm of hubspot__crm_activities reads). Tasks are attributed to the
+# CREATOR (properties_hs_created_by_user_id). Tasks are not surfaced as a bullet
+# row but feed the comms_per_won ratio (calls+emails+meetings+tasks)/deals_won.
+schemas:
+  bronze_hubspot.engagements_tasks:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: [string, "null"] }
+      id: { type: [string, "null"] }
+      archived: { type: [boolean, "null"] }
+      createdAt: { type: [string, "null"] }
+      updatedAt: { type: [string, "null"] }
+      archivedAt: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      associations_contacts: { type: [string, "null"] }
+      associations_deals: { type: [string, "null"] }
+      associations_companies: { type: [string, "null"] }
+      properties_hubspot_owner_id: { type: [string, "null"] }
+      properties_hs_created_by_user_id: { type: [string, "null"] }
+      properties_hs_timestamp: { type: [string, "null"] }
+      properties_hs_task_status: { type: [string, "null"] }
+      properties_hs_task_subject: { type: [string, "null"] }
+      properties_hs_task_priority: { type: [string, "null"] }
+      properties_hs_task_type: { type: [string, "null"] }

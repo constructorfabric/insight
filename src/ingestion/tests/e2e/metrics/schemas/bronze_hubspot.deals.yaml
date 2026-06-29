@@ -1,0 +1,43 @@
+# Reusable JSON schema for bronze_hubspot.deals (the columns hubspot__crm_deals
+# reads). HubSpot lands every `properties_*` as Nullable(String); dbt coerces
+# (toFloat64OrNull, parseDateTime64BestEffortOrNull, 'true'/'false' compares).
+# createdAt/updatedAt/archivedAt/collected_at are DateTime64 — seed ISO strings.
+schemas:
+  bronze_hubspot.deals:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: [string, "null"] }
+      id: { type: [string, "null"] }
+      archived: { type: [boolean, "null"] }
+      createdAt: { type: [string, "null"] }
+      updatedAt: { type: [string, "null"] }
+      archivedAt: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      associations_companies: { type: [string, "null"] }
+      properties_dealname: { type: [string, "null"] }
+      properties_dealstage: { type: [string, "null"] }
+      properties_dealtype: { type: [string, "null"] }
+      properties_pipeline: { type: [string, "null"] }
+      properties_closedate: { type: [string, "null"] }
+      properties_amount: { type: [string, "null"] }
+      properties_amount_in_home_currency: { type: [string, "null"] }
+      properties_hs_acv: { type: [string, "null"] }
+      properties_hs_tcv: { type: [string, "null"] }
+      properties_hs_arr: { type: [string, "null"] }
+      properties_hs_is_closed: { type: [string, "null"] }
+      properties_hs_is_closed_won: { type: [string, "null"] }
+      properties_hubspot_owner_id: { type: [string, "null"] }
+      properties_hs_created_by_user_id: { type: [string, "null"] }
+      properties_hs_analytics_source: { type: [string, "null"] }
+      properties_hs_deal_stage_probability: { type: [string, "null"] }
+      properties_hs_manual_forecast_category: { type: [string, "null"] }
+      properties_closed_lost_reason: { type: [string, "null"] }

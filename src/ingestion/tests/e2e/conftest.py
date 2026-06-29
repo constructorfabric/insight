@@ -137,6 +137,18 @@ _SESSION_START_TRUNCATE = [
     ("staging", "jira_issue_field_snapshot"),
     ("staging", "jira_changelog_items"),
     ("staging", "jira__task_field_metadata"),
+    # CRM (sales-rep): the crm_* gold views + bullet query_refs read
+    # class_crm_{deals,activities,users} even when a fixture seeds only a subset
+    # (e.g. the quality bullet seeds deals but not activities), and the HubSpot
+    # staging models are incremental/append. Reset once at session start so warm
+    # re-runs are deterministic (CI is fresh anyway); per-test TRUNCATE handles
+    # cross-test isolation within a session.
+    ("silver", "class_crm_deals"),
+    ("silver", "class_crm_activities"),
+    ("silver", "class_crm_users"),
+    ("staging", "hubspot__crm_deals"),
+    ("staging", "hubspot__crm_activities"),
+    ("staging", "hubspot__crm_users"),
 ]
 
 
