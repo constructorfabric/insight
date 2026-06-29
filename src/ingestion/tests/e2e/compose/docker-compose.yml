@@ -4,7 +4,7 @@
 # Versions are pinned to production parity (per cpt-bronze-to-api-e2e-constraint-version-parity);
 # update both pins together when the prod Helm chart bumps either image.
 #
-# Credentials are passed via .env (generated per-session by e2e_lib.config) and
+# Credentials are passed via .env (generated per-session by lib.config) and
 # MUST NOT be committed.
 
 services:

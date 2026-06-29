@@ -237,7 +237,7 @@ so and skip this section.
 - [ ] The gold `insight.<section>_bullet_rows` view has a branch `FROM silver.class_<X> WHERE data_source = 'insight_<snake>'` emitting the connector's `metric_key`(s). (`data_source` literal == what the silver model SELECTs.)
 - [ ] EVERY bullet `query_ref` that should show the key was re-set in a NEW append-only SeaORM migration — the key appears in both the `sumIf(... metric_key='<k>') AS <k>_v` list AND the `ARRAY JOIN [('<k>', <k>_v), …]` unpivot. A section typically has several copies (IC `…0012`-style, Team, member-values `…0041`, dept-dist `…0045`); each must be updated for the surface it backs. Base the new SQL on the LATEST migration that set that id (grep the metric hex id), and register the migration in `migration/mod.rs`.
 - [ ] A `metric_catalog` row + product-default `metric_threshold` for `<section>_bullet_rows.<metric_key>` exists (new append-only migration, `source_tags: ["<slug>"]`, registered in `mod.rs`).
-- [ ] An e2e fixture (`/metric-e2e-test`) seeds bronze and asserts the metric_key's value end-to-end; any sibling test asserting the section's `size(items)` was bumped for the new key.
+- [ ] An e2e fixture (`/metric-test`) seeds bronze and asserts the metric_key's value end-to-end; any sibling test asserting the section's `size(items)` was bumped for the new key.
 
 ### Credentials Template
 - [ ] `credentials.yaml.example` lists all required fields

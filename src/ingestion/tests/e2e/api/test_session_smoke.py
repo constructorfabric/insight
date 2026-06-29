@@ -2,7 +2,7 @@
 
 Verifies each session-scoped fixture in isolation, then end-to-end. Run with:
 
-    pytest src/ingestion/tests/e2e/meta/ -m smoke
+    pytest src/ingestion/tests/e2e/api/ -m smoke
 
 These tests are pre-MVP — they do NOT use any real fixture folder; they just
 poke each layer to confirm the rig comes up cleanly.
@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import pytest
 
-from e2e_lib import clickhouse as ch
-from e2e_lib import mariadb
-from e2e_lib.analytics_api import AnalyticsApiProcess
-from e2e_lib.config import SessionConfig
+from lib import clickhouse as ch
+from lib import mariadb
+from lib.analytics_api import AnalyticsApiProcess
+from lib.config import SessionConfig
 
 
 pytestmark = pytest.mark.smoke

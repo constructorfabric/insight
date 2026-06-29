@@ -491,7 +491,7 @@ metric ids for a genuinely new section):
   `source_tags: ["<slug>"]`) + a product-default `metric_threshold`. Model it on
   `m20260620_000002_seed_wiki_catalog.rs`. Register in `mod.rs`.
 
-Then prove the whole chain with a `/metric-e2e-test` fixture (see that skill) —
+Then prove the whole chain with a `/metric-test` fixture (see that skill) —
 seed bronze, query the bullet metric, assert your `metric_key`'s value. Adding a
 key to a shared section raises its `size(items)`, so bump any sibling test that
 asserts the old count.

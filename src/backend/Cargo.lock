@@ -76,6 +76,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "cf-gears-toolkit",
  "cf-gears-toolkit-canonical-errors",
  "chrono",
  "clap",

@@ -17,8 +17,8 @@ from pathlib import Path
 
 import yaml
 
-from e2e_lib import mariadb
-from e2e_lib.config import SessionConfig, TEST_TENANT_ID
+from lib import mariadb
+from lib.config import SessionConfig, TEST_TENANT_ID
 
 LOG = logging.getLogger("e2e.metric_seed")
 

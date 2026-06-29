@@ -26,7 +26,7 @@ from pathlib import Path
 
 import yaml
 
-from e2e_lib import ref_resolver, schema_validator
+from lib import ref_resolver, schema_validator
 
 LOG = logging.getLogger("e2e.fixture")
 
@@ -54,7 +54,7 @@ class TestYaml:
 
 
 def discover_tests(specs_root: Path) -> list[Path]:
-    """Every `**/*.test.yaml` under specs/. Shared schemas/templates are excluded
+    """Every `**/*.test.yaml` under metrics/. Shared schemas/templates are excluded
     by the suffix; nothing else is collected as a test."""
     if not specs_root.is_dir():
         return []
@@ -113,9 +113,9 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
 
 
 def _find_schemas_dir(test_path: Path) -> Path:
-    """Walk up to the `specs/` dir and use its `schemas/` subdir."""
+    """Walk up to the `metrics/` dir and use its `schemas/` subdir."""
     for parent in test_path.parents:
-        if parent.name == "specs":
+        if parent.name == "metrics":
             return parent / "schemas"
         if (parent / "schemas").is_dir():
             return parent / "schemas"

@@ -98,7 +98,11 @@ fn parse_list(s: Option<&str>) -> Vec<String> {
     match s {
         None => Vec::new(),
         Some(s) if s.is_empty() => Vec::new(),
-        Some(s) => s.split(LIST_SEP).map(|p| p.trim().to_owned()).filter(|p| !p.is_empty()).collect(),
+        Some(s) => s
+            .split(LIST_SEP)
+            .map(|p| p.trim().to_owned())
+            .filter(|p| !p.is_empty())
+            .collect(),
     }
 }
 
@@ -129,7 +133,7 @@ fn multi_to_add_or_remove(row: &BronzeChangelogItem<'_>) -> Option<Delta> {
 #[cfg(test)]
 mod tests {
     use super::super::types::FieldCardinality;
-    use super::{BronzeChangelogItem, Delta, to_delta};
+    use super::{to_delta, BronzeChangelogItem, Delta};
 
     fn item<'a>(
         field_id: &'a str,
@@ -222,7 +226,13 @@ mod tests {
         // First value added — fromString is NULL/empty, toString is one element (no comma yet).
         // Since NEITHER side contains ", ", it falls through to Add — which is semantically the
         // same as Snapshot([], [X]). Either is acceptable; current behavior: Add.
-        let row = item("customfield_10100", None, None, Some("8066"), Some("HCI - 26"));
+        let row = item(
+            "customfield_10100",
+            None,
+            None,
+            Some("8066"),
+            Some("HCI - 26"),
+        );
         let delta = to_delta(&row, FieldCardinality::Multi).unwrap();
         assert!(matches!(delta, Delta::Add { .. }));
     }
@@ -262,7 +272,13 @@ mod tests {
 
     #[test]
     fn snapshot_clear_detected() {
-        let row = item("customfield_10100", Some("8066, 8363"), Some("HCI - 26, HCI - 27"), None, None);
+        let row = item(
+            "customfield_10100",
+            Some("8066, 8363"),
+            Some("HCI - 26, HCI - 27"),
+            None,
+            None,
+        );
         let delta = to_delta(&row, FieldCardinality::Multi).unwrap();
         let Delta::Snapshot {
             from_displays,

@@ -20,20 +20,20 @@ import logging
 
 import pytest
 
-from e2e_lib.analytics_api import AnalyticsApiProcess
-from e2e_lib.ch_seeder import CHSeeder
-from e2e_lib.dbt_runner import DbtRunner
-from e2e_lib.enrich import EnrichRunner
-from e2e_lib.expect_engine import evaluate_case
-from e2e_lib.fixture_loader import TestYaml
-from e2e_lib.migration_applier import refresh_intermediates, reapply_migrations
-from e2e_lib.worker import WorkerContext
+from lib.analytics_api import AnalyticsApiProcess
+from lib.ch_seeder import CHSeeder
+from lib.dbt_runner import DbtRunner
+from lib.enrich import EnrichRunner
+from lib.expect_engine import evaluate_case
+from lib.fixture_loader import TestYaml
+from lib.migration_applier import refresh_intermediates, reapply_migrations
+from lib.worker import WorkerContext
 
 pytestmark = pytest.mark.fixture
 LOG = logging.getLogger("e2e.runner")
 
 
-def test_e2e_metric_smoke(
+def test_metric_smoke(
     test_yaml: TestYaml,
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,

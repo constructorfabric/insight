@@ -12,7 +12,7 @@ from typing import Any
 
 import pymysql
 
-from e2e_lib.config import SessionConfig
+from lib.config import SessionConfig
 
 LOG = logging.getLogger("e2e.mariadb")
 

@@ -65,3 +65,8 @@ charts/*/Chart.lock
 # dbt logs
 logs/
 cypilot/.plans/.archive/
+
+# Coverage gate (scripts/ci/coverage.py) — produced reports + per-run scratch envs
+/coverage/
+coverage-raw/
+.venv-cov/

@@ -201,7 +201,7 @@ The system **MUST** discover every subfolder of `src/ingestion/tests/e2e/fixture
 
 **Touches**:
 
-- Files: `src/ingestion/tests/e2e/e2e_lib/fixture_loader.py`, `src/ingestion/tests/e2e/conftest.py`
+- Files: `src/ingestion/tests/e2e/lib/fixture_loader.py`, `src/ingestion/tests/e2e/conftest.py`
 - Components: `cpt-bronze-to-api-e2e-component-fixture-loader`
 
 ### Typed Bronze INSERT
@@ -217,7 +217,7 @@ The system **MUST** INSERT each CSV row into the bronze table with column types 
 **Touches**:
 
 - API: ClickHouse HTTP 8123 / native 9000
-- Files: `src/ingestion/tests/e2e/e2e_lib/ch_seeder.py`
+- Files: `src/ingestion/tests/e2e/lib/ch_seeder.py`
 - Components: `cpt-bronze-to-api-e2e-component-ch-seeder`
 
 ### Scoped Dbt Build
@@ -234,7 +234,7 @@ The system **MUST** invoke `dbt build` with the selector from `spec.yaml` (e.g. 
 
 **Touches**:
 
-- Files: `src/ingestion/tests/e2e/e2e_lib/dbt_runner.py`
+- Files: `src/ingestion/tests/e2e/lib/dbt_runner.py`
 - Components: `cpt-bronze-to-api-e2e-component-dbt-runner`
 
 ### API Roundtrip
@@ -252,7 +252,7 @@ The system **MUST** POST the request derived from `spec.yaml` to the analytics-a
 **Touches**:
 
 - API: `POST /v1/metrics/{id}/query`
-- Files: `src/ingestion/tests/e2e/e2e_lib/api_client.py`
+- Files: `src/ingestion/tests/e2e/lib/api_client.py`
 - Components: `cpt-bronze-to-api-e2e-component-api-client`
 
 ### Cell-Precise CSV Diff
@@ -267,7 +267,7 @@ On failure the system **MUST** render the first 20 mismatched cells as `(key, co
 
 **Touches**:
 
-- Files: `src/ingestion/tests/e2e/e2e_lib/csv_asserter.py`
+- Files: `src/ingestion/tests/e2e/lib/csv_asserter.py`
 - Components: `cpt-bronze-to-api-e2e-component-csv-asserter`
 
 ### Reference Test against insight.people
