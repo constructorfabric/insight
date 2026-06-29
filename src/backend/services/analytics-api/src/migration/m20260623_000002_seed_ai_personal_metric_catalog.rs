@@ -130,7 +130,7 @@ const INSERT_LINK_SQL: &str = "\
         (id, metrics_id, metric_catalog_id) \
     SELECT UNHEX(REPLACE(UUID(),'-','')), UNHEX(?), c.id \
     FROM metric_catalog c \
-    WHERE c.metric_key = ?";
+    WHERE c.metric_key = ? AND c.tenant_id IS NULL";
 
 fn nullable_str_value(v: Option<&str>) -> Value {
     match v {
