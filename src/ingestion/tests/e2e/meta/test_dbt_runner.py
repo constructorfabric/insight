@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from e2e_lib.dbt_runner import DbtError, DbtRunner
-from e2e_lib.worker import WorkerContext
+from lib.dbt_runner import DbtError, DbtRunner
+from lib.worker import WorkerContext
 
 
 pytestmark = pytest.mark.smoke

@@ -60,7 +60,7 @@ services:
         condition: service_healthy
     environment:
       # Service names on the insight-e2e network — overrides the localhost
-      # defaults in e2e_lib/config.py. The session-rig honors these in
+      # defaults in lib/config.py. The session-rig honors these in
       # E2E_RUN_MODE=docker.
       E2E_RUN_MODE: docker
       E2E_CH_HOST: clickhouse

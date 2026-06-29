@@ -7,7 +7,7 @@
 #
 # Each row is inserted under config.TEST_TENANT_ID — the tenant the harness
 # sends as X-Insight-Tenant-Id on every request (the analytics-api tenant
-# middleware rejects nil/absent tenants, see e2e_lib/metric_seed.py).
+# middleware rejects nil/absent tenants, see lib/metric_seed.py).
 
 overrides: []
   # Example (uncomment & adapt for a fixture needing a metric not in the prod catalog):

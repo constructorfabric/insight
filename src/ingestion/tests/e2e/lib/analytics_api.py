@@ -28,7 +28,7 @@ from typing import Any
 
 import httpx
 
-from e2e_lib.config import SessionConfig, TENANT_HEADER, TEST_TENANT_ID
+from lib.config import SessionConfig, TENANT_HEADER, TEST_TENANT_ID
 
 LOG = logging.getLogger("e2e.api")
 
@@ -82,7 +82,7 @@ def locate_binary(cfg: SessionConfig) -> Path:
     ships the prod image — no build-recipe duplication) and baked onto PATH at
     `/usr/local/bin/analytics-api` via docker-compose.runner.yml `additional_contexts`
     + a Dockerfile.runner `COPY --from=analytics-api …`. Same pattern as the connector
-    enrich binaries (see e2e_lib/enrich.py).
+    enrich binaries (see lib/enrich.py).
 
     Falls back to a PATH lookup and a host-mode cargo target (for running pytest
     directly on the host with a manual `cargo build`), then fails clearly.

@@ -7,8 +7,8 @@ Subcommands:
                sample rows (ClickHouse). Phase 2 — placeholder for now.
     all        Run every step.
 
-See compose/seed/README.md for the ruff/mypy/venv setup and the
-per-domain generators under compose/seed/generators/ for the data
+See deploy/seed/README.md for the ruff/mypy/venv setup and the
+per-domain generators under deploy/seed/generators/ for the data
 shape each one emits.
 """
 

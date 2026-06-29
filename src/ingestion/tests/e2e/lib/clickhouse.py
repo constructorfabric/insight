@@ -7,7 +7,7 @@ from typing import Any
 
 import clickhouse_connect
 
-from e2e_lib.config import SessionConfig
+from lib.config import SessionConfig
 
 LOG = logging.getLogger("e2e.ch")
 

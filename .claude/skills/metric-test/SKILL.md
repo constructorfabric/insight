@@ -1,12 +1,12 @@
 ---
-name: metric-e2e-test
-description: "Author and validate declarative YAML e2e tests for analytics metrics (src/ingestion/tests/e2e/specs/*.test.yaml). Use when asked to write/scaffold/validate an e2e test for a metric, seed bronze data for a test, add a fixture for a dashboard metric, or check a *.test.yaml. Covers schemas/, templates/, $ref+sibling composition, bronze records with duplicates, the batch endpoint POST /v1/metrics/queries, and expect rules (in / mongo-style find / equal subset / CEL assert)."
+name: metric-test
+description: "Author and validate declarative YAML tests for analytics metrics (src/ingestion/tests/e2e/metrics/*.test.yaml). Use when asked to write/scaffold/validate a test for a metric, seed bronze data for a test, add a fixture for a dashboard metric, or check a *.test.yaml. Covers schemas/, templates/, $ref+sibling composition, bronze records with duplicates, the batch endpoint POST /v1/metrics/queries, and expect rules (in / mongo-style find / equal subset / CEL assert)."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
-# Author a metric e2e test (declarative YAML)
+# Author a metric test (declarative YAML)
 
 This skill writes and validates `*.test.yaml` fixtures that drive the full
 `bronze → dbt silver → gold view → analytics-api` path and assert the result.
@@ -22,15 +22,15 @@ no need to load them every time:
 
 ## Commands
 
-- `/metric-e2e-test create <name> --metric <uuid> --tables <t1,t2>` — scaffold a new `<name>.test.yaml` (+ any missing `schemas/` and `templates/`).
-- `/metric-e2e-test validate <path>` — resolve refs, schema-validate records, lint `cases`/`expect` without running ClickHouse.
+- `/metric-test create <name> --metric <uuid> --tables <t1,t2>` — scaffold a new `<name>.test.yaml` (+ any missing `schemas/` and `templates/`).
+- `/metric-test validate <path>` — resolve refs, schema-validate records, lint `cases`/`expect` without running ClickHouse.
 
-(Plain prose like "write an e2e test for the emails-sent metric" triggers the same flow.)
+(Plain prose like "write a test for the emails-sent metric" triggers the same flow.)
 
 ## File layout
 
 ```
-src/ingestion/tests/e2e/specs/
+src/ingestion/tests/e2e/metrics/
   schemas/<db>.<table>.yaml      # one JSON schema per bronze table (all real columns)
   templates/<group>.yaml         # reusable records (people, m365_email, …)
   <name>.test.yaml               # ONE metric per file (discovered by the *.test.yaml suffix)
@@ -157,7 +157,7 @@ disagree with the analytics team (org_unit) — irrelevant to these assertions.)
 
 ### `assert` (CEL) bindings
 
-Assembled in `e2e_lib/expect_engine.py::evaluate_case` (the `bindings` dict),
+Assembled in `lib/expect_engine.py::evaluate_case` (the `bindings` dict),
 converted to CEL in `_eval_cel`:
 
 | Binding | Value | Present when |
@@ -178,7 +178,7 @@ For exact / `null`, use `equal` (Python `==`), not `assert`. CEL macros availabl
 
 `metric_date` bounds are **inclusive on both ends**: `metric_date ge '<lo>' and metric_date le '<hi>'`
 includes rows ON `<lo>` and ON `<hi>`. When a metric is date-windowed, prove the bounds
-with a dedicated spec (see `specs/collab_emails_read.test.yaml`):
+with a dedicated spec (see `metrics/collab_emails_read.test.yaml`):
 
 - **Boundary-value (BVA):** seed rows one-day-BEFORE the lower bound (must be excluded),
   AT the lower bound (included), AT the upper bound (included), and one-day-AFTER the upper
@@ -274,18 +274,18 @@ with a dedicated spec (see `specs/collab_emails_read.test.yaml`):
 
 ```bash
 cd src/ingestion/tests/e2e
-ls specs/*.test.yaml                       # list existing tests
-./e2e.sh test                              # run all tests (specs/ + meta/)
+ls metrics/*.test.yaml                       # list existing tests
+./e2e.sh test                              # run all tests (metrics/ + meta/)
 ./e2e.sh test -k <name>                    # run one test by name
 ./e2e.sh test -k <name> -v                 # verbose (per-step log)
 ./e2e.sh down                              # tear down the e2e compose stack + volumes (full reset)
 ```
 
-`<name>` is the file stem (e.g. `collab_emails_sent` for `specs/collab_emails_sent.test.yaml`).
+`<name>` is the file stem (e.g. `collab_emails_sent` for `metrics/collab_emails_sent.test.yaml`).
 
 Warm re-runs are fine. Isolation is **per-test**: each test first `TRUNCATE`s only the
 tables the PRIOR test recorded in a per-test ledger (`CHSeeder.TouchedLedger`;
-`specs/test_fixtures.py`, `e2e_lib/ch_seeder.py`), then seeds its own. The rig auto-records
+`metrics/test_fixtures.py`, `lib/ch_seeder.py`), then seeds its own. The rig auto-records
 the built **staging** and **silver** models too (not just bronze) — staging especially,
 because silver reads staging via the `union_by_tag` macro, so an un-truncated prior staging
 row would contaminate the silver rebuild. On TOP of that, a one-time session-start truncate
@@ -294,7 +294,7 @@ row would contaminate the silver rebuild. On TOP of that, a one-time session-sta
 makes WARM re-runs deterministic (CI starts fresh). `./e2e.sh down` is the e2e compose
 teardown (not a deploy), for when you want a fully clean ClickHouse.
 
-To create a new test, use `/metric-e2e-test create` or hand-author `specs/<name>.test.yaml`
+To create a new test, use `/metric-test create` or hand-author `metrics/<name>.test.yaml`
 as above. There is no `./e2e.sh new` — the old CSV-rig scaffolder was removed when the
 declarative `*.test.yaml` rig replaced the CSV rig.
 
@@ -321,7 +321,7 @@ connector that isn't there yet:
   reliably advance, so cargo relinked a stale object and the binary silently
   lacked new SeaORM migrations (symptoms: `query_ref`/catalog changes have no
   effect, a `find` matches 0 rows, `size(items)` off by your new key). FIXED in
-  `e2e_lib/analytics_api.py::build` — it now `touch`es the analytics-api crate
+  `lib/analytics_api.py::build` — it now `touch`es the analytics-api crate
   sources before `cargo build`, forcing a recompile every run (~1-2 min, only
   that crate). So a plain `./e2e.sh test` picks up new migrations now; you should
   NOT need `down -v` for this. If you still suspect a stale binary, confirm by

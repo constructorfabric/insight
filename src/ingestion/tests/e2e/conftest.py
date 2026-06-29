@@ -29,17 +29,17 @@ import pytest
 
 from pathlib import Path
 
-from e2e_lib import clickhouse as ch
-from e2e_lib import compose, mariadb
-from e2e_lib.analytics_api import AnalyticsApiProcess, find_free_port, locate_binary
-from e2e_lib.ch_seeder import CHSeeder
-from e2e_lib.config import SessionConfig
-from e2e_lib.dbt_runner import DbtRunner
-from e2e_lib.enrich import EnrichRunner
-from e2e_lib.fixture_loader import TestYaml, discover_tests, load as load_test
-from e2e_lib.metric_seed import seed_test_metrics
-from e2e_lib.migration_applier import apply_all as apply_ch_migrations
-from e2e_lib.worker import WorkerContext
+from lib import clickhouse as ch
+from lib import compose, mariadb
+from lib.analytics_api import AnalyticsApiProcess, find_free_port, locate_binary
+from lib.ch_seeder import CHSeeder
+from lib.config import SessionConfig
+from lib.dbt_runner import DbtRunner
+from lib.enrich import EnrichRunner
+from lib.fixture_loader import TestYaml, discover_tests, load as load_test
+from lib.metric_seed import seed_test_metrics
+from lib.migration_applier import apply_all as apply_ch_migrations
+from lib.worker import WorkerContext
 
 LOG = logging.getLogger("e2e.rig")
 
@@ -171,11 +171,11 @@ def analytics_api(ch_migrations_applied: SessionConfig):
     If the binary is missing, this is a hard FAIL — identical locally and in CI.
     A skip here would make the whole transformation suite silently green while
     testing nothing. The binary is built FROM ITS OWN Dockerfile and baked into the
-    runner image (see e2e_lib.analytics_api.locate_binary); if it isn't there the
+    runner image (see lib.analytics_api.locate_binary); if it isn't there the
     bronze→API tests cannot run, so the only honest result is red.
     """
     cfg = ch_migrations_applied
-    from e2e_lib.analytics_api import ApiSpawnError  # local import to keep top clean
+    from lib.analytics_api import ApiSpawnError  # local import to keep top clean
     try:
         binary = locate_binary(cfg)
     except ApiSpawnError as e:
@@ -205,18 +205,18 @@ def enrich_runner(ch_migrations_applied: SessionConfig) -> EnrichRunner:
 # ----------------------------------------------------------------------
 
 
-_SPECS_ROOT = Path(__file__).parent / "specs"
+_METRICS_ROOT = Path(__file__).parent / "metrics"
 
 
 def pytest_collection_modifyitems(config, items):
-    """Convenience: order smoke tests under meta/ first."""
-    items.sort(key=lambda i: 0 if "meta/" in str(i.path) else 1)
+    """Convenience: order rig smoke tests (meta/ + api/) first."""
+    items.sort(key=lambda i: 0 if ("meta/" in str(i.path) or "api/" in str(i.path)) else 1)
 
 
 def pytest_generate_tests(metafunc):
-    """Generate one `test_e2e_metric_smoke` invocation per discovered `*.test.yaml`."""
-    if "test_yaml" in metafunc.fixturenames and metafunc.function.__name__ == "test_e2e_metric_smoke":
-        paths = discover_tests(_SPECS_ROOT)
+    """Generate one `test_metric_smoke` invocation per discovered `*.test.yaml`."""
+    if "test_yaml" in metafunc.fixturenames and metafunc.function.__name__ == "test_metric_smoke":
+        paths = discover_tests(_METRICS_ROOT)
         metafunc.parametrize(
             "test_path",
             paths,

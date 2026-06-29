@@ -3,7 +3,7 @@
 Test framework that exercises the full data path:
 
 ```
-specs/<name>.test.yaml (bronze records)  →  bronze tables  →  dbt staging/silver  →
+metrics/<name>.test.yaml (bronze records)  →  bronze tables  →  dbt staging/silver  →
 ClickHouse migration gold-views  →  analytics-api HTTP (POST /v1/metrics/queries)  →  expect rules
 ```
 
@@ -50,13 +50,13 @@ pytest -k collab_emails_sent -v   # session-rig brings compose up automatically
 
 ```
 e2e/
-├── pyproject.toml              # deps; defines e2e_lib package
+├── pyproject.toml              # deps; defines lib package
 ├── pytest.ini                  # pytest config
 ├── conftest.py                 # session-scoped pytest fixtures (the orchestrator)
 ├── compose/
 │   ├── docker-compose.yml      # ClickHouse + MariaDB, loopback-only
 │   └── .env.example            # example creds (real values generated per-session)
-├── e2e_lib/                    # framework Python package
+├── lib/                    # framework Python package
 │   ├── compose.py              # docker compose up/down + healthcheck wait
 │   ├── clickhouse.py           # CH HTTP client wrapper
 │   ├── mariadb.py              # MariaDB connection helper
@@ -66,7 +66,7 @@ e2e/
 │   └── config.py               # session config (ports, random creds)
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
-├── specs/                      # <name>.test.yaml + schemas/ + templates/
+├── metrics/                      # <name>.test.yaml + schemas/ + templates/
 └── meta/                       # framework's own smoke tests
     └── test_session_smoke.py
 ```
@@ -84,14 +84,14 @@ These ports avoid conflict with a local gitops dev cluster (which forwards 8123 
 
 ## Notes for fixture authors
 
-- Auth in `analytics-api` requires no Bearer token, but its tenant middleware rejects requests without a non-nil tenant. The harness sends `X-Insight-Tenant-Id` with `e2e_lib.config.TEST_TENANT_ID` on every request and re-homes seeded metric definitions onto that tenant (`metric_seed.py`). The ClickHouse query path does not filter by tenant yet, so seeded bronze rows may use any tenant value.
+- Auth in `analytics-api` requires no Bearer token, but its tenant middleware rejects requests without a non-nil tenant. The harness sends `X-Insight-Tenant-Id` with `lib.config.TEST_TENANT_ID` on every request and re-homes seeded metric definitions onto that tenant (`metric_seed.py`). The ClickHouse query path does not filter by tenant yet, so seeded bronze rows may use any tenant value.
 - Metric definitions are auto-seeded by the analytics-api binary's SeaORM migrations. Look up the metric UUID with `GET /v1/metrics` once the session is up, or add overrides in `seed/metrics.yaml`.
 
 ## `cases` / `expect` (declarative YAML rig)
 
-Tests are `specs/**/*.test.yaml`; each `case` POSTs a batch to `/v1/metrics/queries` and checks an `expect` list of rules. A rule selects with `in` (batch result by `id`) + an exact-equality `find` (`{field: value}`), then asserts via `equal` (subset of fields, exact / `null`) or `assert` (a CEL boolean). Anything richer than equality (inequalities, counts, predicates) goes in a CEL `assert` — the rig deliberately has no second selector language. See the [yaml-rig FEATURE](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md) and the `/metric-e2e-test` skill.
+Tests are `metrics/**/*.test.yaml`; each `case` POSTs a batch to `/v1/metrics/queries` and checks an `expect` list of rules. A rule selects with `in` (batch result by `id`) + an exact-equality `find` (`{field: value}`), then asserts via `equal` (subset of fields, exact / `null`) or `assert` (a CEL boolean). Anything richer than equality (inequalities, counts, predicates) goes in a CEL `assert` — the rig deliberately has no second selector language. See the [yaml-rig FEATURE](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md) and the `/metric` skill.
 
-Variables available in an `assert` (CEL) expression — assembled in `e2e_lib/expect_engine.py::evaluate_case` (the `bindings` dict), converted to CEL in `_eval_cel`:
+Variables available in an `assert` (CEL) expression — assembled in `lib/expect_engine.py::evaluate_case` (the `bindings` dict), converted to CEL in `_eval_cel`:
 
 | Binding | Value | Present when |
 |---------|-------|--------------|
@@ -105,7 +105,7 @@ CEL is strictly typed and will not compare an `int` to a `double`. Bindings are 
 
 ### What is CEL
 
-`assert` expressions are written in **CEL — the [Common Expression Language](https://github.com/google/cel-spec)** (the same expression language used by Kubernetes admission policies and Envoy). It is a small, side-effect-free language for boolean/value expressions over structured data: no statements, no loops, no I/O — an expression is evaluated against the bindings above and must return a boolean. The rig evaluates it with the [`cel-python`](https://pypi.org/project/cel-python/) library (`celpy`) in `e2e_lib/expect_engine.py::_eval_cel`.
+`assert` expressions are written in **CEL — the [Common Expression Language](https://github.com/google/cel-spec)** (the same expression language used by Kubernetes admission policies and Envoy). It is a small, side-effect-free language for boolean/value expressions over structured data: no statements, no loops, no I/O — an expression is evaluated against the bindings above and must return a boolean. The rig evaluates it with the [`cel-python`](https://pypi.org/project/cel-python/) library (`celpy`) in `lib/expect_engine.py::_eval_cel`.
 
 Operators: `== != < <= > >=`, `&& || !`, `+ - * / %`, `in`, ternary `cond ? a : b`. Field/index access: `it.value`, `result.status`, `items[0]`. Useful built-ins & macros: `size(x)`, `has(x.field)`, `x.exists(e, <pred>)`, `x.all(e, <pred>)`, `x.filter(e, <pred>)`, `x.map(e, <expr>)`, string `.startsWith()/.endsWith()/.contains()/.matches(re)`.
 

@@ -1,7 +1,7 @@
 name: E2E — Bronze to API
 
 # End-to-end transformation tests covering bronze → dbt → ClickHouse
-# migration views → analytics-api HTTP response → CSV assert.
+# migration views → analytics-api HTTP response → expect rules.
 #
 # Everything (Python, Rust, dbt, pytest) runs inside the runner image
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
@@ -28,7 +28,7 @@ on:
 
 env:
   # NB: forbids developers from running `pytest --update-snapshots` in CI.
-  # The guard lives in src/ingestion/tests/e2e/fixtures/test_fixtures.py.
+  # The guard lives in src/ingestion/tests/e2e/metrics/test_fixtures.py.
   CI: "true"
 
 jobs:
@@ -55,14 +55,10 @@ jobs:
       - name: Build runner image
         run: ./e2e.sh build
 
-      # ─── Pre-pull data plane images in parallel with whatever else ──────
-      - name: Pre-pull ClickHouse + MariaDB
-        run: |
-          docker pull clickhouse/clickhouse-server:24.8.4.13 &
-          docker pull mariadb:11.4.4 &
-          wait
-
       # ─── Run the suite inside the runner ────────────────────────────────
+      # `./e2e.sh test` (docker compose run runner) starts the clickhouse +
+      # mariadb `depends_on` services — compose pulls their images on demand
+      # and waits for `service_healthy` — so no explicit image pre-pull is needed.
       # Serial on purpose: the session rig is not xdist-safe yet (see
       # conftest.py — per-worker analytics-api spawns race SeaORM migrations
       # in the shared MariaDB, non-primary workers don't wait for ClickHouse

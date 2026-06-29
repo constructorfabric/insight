@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 # Resolve the repo root from this file's location:
-# src/ingestion/tests/e2e/e2e_lib/config.py -> ../../../../../
+# src/ingestion/tests/e2e/lib/config.py -> ../../../../../
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 
 

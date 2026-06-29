@@ -1,7 +1,7 @@
 # Dev/CI runner for the Bronze-to-API E2E test framework.
 #
 # Bakes in:
-#   - Python 3.12 + e2e_lib deps (pytest, clickhouse-connect, pandas, dbt-clickhouse, …)
+#   - Python 3.12 + lib deps (pytest, clickhouse-connect, pandas, dbt-clickhouse, …)
 #   - the analytics-api binary and each connector's enrich binary, each COMPILED
 #     FROM ITS OWN Dockerfile and pulled in via `COPY --from=<ctx>` (the contexts
 #     are wired in docker-compose.runner.yml `runner.build.additional_contexts`).
@@ -32,10 +32,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # /workspace via bind mount.
 WORKDIR /workspace/src/ingestion/tests/e2e
 COPY src/ingestion/tests/e2e/pyproject.toml ./pyproject.toml
-RUN mkdir -p e2e_lib && touch e2e_lib/__init__.py \
+RUN mkdir -p lib && touch lib/__init__.py \
     && pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e . \
-    && rm -rf e2e_lib
+    && rm -rf lib
 
 # ── Pre-built binaries (baked from each component's OWN Dockerfile) ───────
 # Named build contexts come from docker-compose.runner.yml build-only services;

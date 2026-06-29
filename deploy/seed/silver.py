@@ -88,7 +88,7 @@ def apply_placeholders(client: clickhouse_connect.driver.client.Client) -> int:
             "Did the seed-sample container mount /app/sql? "
             "(host runs: set PLACEHOLDERS_SQL to an existing "
             "placeholders.sql path, e.g. ./sql/placeholders.sql when "
-            "running from compose/seed.)"
+            "running from deploy/seed.)"
         )
     n = _apply_sql_file(client, PLACEHOLDERS_SQL)
     LOG.info("placeholders: %d statements applied", n)
@@ -103,7 +103,7 @@ def apply_migrations(client: clickhouse_connect.driver.client.Client) -> int:
             "Did the seed-sample container mount /migrations? "
             "(host runs: set MIGRATIONS_DIR to an existing migrations "
             "directory, e.g. ../../src/ingestion/scripts/migrations "
-            "when running from compose/seed.)"
+            "when running from deploy/seed.)"
         )
     migrations = sorted(MIGRATIONS_DIR.glob("*.sql"))
     if not migrations:
