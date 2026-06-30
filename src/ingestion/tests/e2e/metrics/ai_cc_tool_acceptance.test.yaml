@@ -1,0 +1,58 @@
+spec_version: 1
+description: >
+  Metric: cc_tool_acceptance — IC Bullet AI (…0013), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Claude Enterprise per-user/day usage (code tool suggestions accepted & rejected)
+    • silver: deduped to one row per user/day with accepted + offered (accepted + rejected)
+    • gold:   a reconstructed ratio — 100 × Σ accepted ÷ Σ offered, rounded to 0.1
+              (computed at serve time, not stored)
+
+  Team (value = the requested person):
+    alice accepted 50 of 80 offered (50 accepted + 30 rejected) → 100×50/80 = 62.5.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_claude_enterprise.claude_enterprise_users:
+    - $ref: templates/claude_enterprise_users.yaml#/templates/alice
+      unique_key: ent-alice-20260105
+      date: "2026-01-05"
+      code_tool_accepted_count: 50
+      code_tool_rejected_count: 30
+    - $ref: templates/claude_enterprise_users.yaml#/templates/alice   # re-sync dup → ratio unchanged
+      unique_key: ent-alice-20260105
+      date: "2026-01-05"
+      code_tool_accepted_count: 50
+      code_tool_rejected_count: 30
+    - $ref: templates/claude_enterprise_users.yaml#/templates/bob
+      unique_key: ent-bob-20260105
+      date: "2026-01-05"
+      code_tool_accepted_count: 20
+      code_tool_rejected_count: 60
+    - $ref: templates/claude_enterprise_users.yaml#/templates/carol
+      unique_key: ent-carol-20260105
+      date: "2026-01-05"
+      code_tool_accepted_count: 10
+      code_tool_rejected_count: 15
+
+cases:
+  - name: cc_tool_acceptance — IC bullet (reconstructed ratio, alice 50/80 = 62.5)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        find: { metric_key: cc_tool_acceptance }
+        equal: { value: 62.5 }
