@@ -17,7 +17,7 @@ name: E2E — Bronze to API
 # Code:  src/ingestion/tests/e2e/
 
 on:
-  # PR-only — same reasoning as ci.yml: branch protection gates
+  # PR-only — branch protection gates
   # merge on PR success, and re-running the full bronze→API stack
   # (clickhouse + mariadb + dbt + pytest) on the merge commit just burns
   # ~30 minutes for an outcome we already proved. workflow_dispatch
