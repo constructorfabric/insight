@@ -1,6 +1,6 @@
 # Zulip-Proxy Connector — Reproducibility Log
 
-Purpose: track every deviation from the documented workflow (`/connector create`, `/cypilot`,
+Purpose: track every deviation from the documented workflow (`/connector create`, Constructor Studio,
 existing connector conventions) and every gap in the skills/specs encountered while building this
 connector. Future contributors should be able to reproduce the package end-to-end and the
 maintainers should be able to close the gaps in the skills/specs.
@@ -209,9 +209,9 @@ Conventions:
 
 | Step | Tool | Expected outcome | Status (this run) |
 |------|------|------------------|-------------------|
-| `cpt --json validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/PRD.md` | cypilot | PASS — structure, IDs, cross-refs | ✅ PASS |
-| `cpt --json validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/DESIGN.md` | cypilot | PASS | ✅ PASS (after TOC regen + `component`/`seq` IDs added) |
-| `cpt --json validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/FEATURE.md` | cypilot | PASS | ✅ PASS (after restructure to mandatory section list: States/DoD/AC) |
+| `cfs validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/PRD.md` | Constructor Studio | PASS — structure, IDs, cross-refs | ✅ PASS |
+| `cfs validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/DESIGN.md` | Constructor Studio | PASS | ✅ PASS (after TOC regen + `component`/`seq` IDs added) |
+| `cfs validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/FEATURE.md` | Constructor Studio | PASS | ✅ PASS (after restructure to mandatory section list: States/DoD/AC) |
 | `./tools/declarative-connector/source.sh validate-strict collaboration/zulip-proxy` | connector | PASS — Builder strict | ✅ PASS (after inlining `BearerAuthenticator` per-stream — strict validator doesn't follow `$ref` for `type`) |
 | `./tools/declarative-connector/source.sh validate collaboration/zulip-proxy` | connector | PASS — CDK runtime | ✅ PASS |
 | `./tools/declarative-connector/source.sh check collaboration/zulip-proxy <tenant>` | connector | PASS — Bearer token accepted | ✅ PASS — `CONNECTION_STATUS: SUCCEEDED` after fixing DEV-05 (throttle type) |
@@ -220,7 +220,7 @@ Conventions:
 | `./tools/declarative-connector/source.sh read messages` (first read, narrow window 2026-05-15…) | connector | records > 0, errors = 0, STATE emitted | ✅ PASS — 1417 records, 0 errors, 2 STATE messages; persisted `created_at=2026-05-20T00:00:00.000000+0000` |
 | `./tools/declarative-connector/source.sh read messages` (resume read from STATE) | connector | strict subset of first read | ✅ PASS — 532 records (< 1417), cursor range 2026-05-19…2026-05-20 (vs first 2026-05-14…2026-05-20), cursor advanced |
 | `/check-dbt-conventions` (zulip-proxy scope) | dbt | PASS — silver model is RMT(_version) + order_by [unique_key]; bronze_promoted correct; matches zoom convention on intermediate models (Check 2/7 noise — see GAP-06) | ✅ PASS |
-| `cpt --json validate --skip-code` (whole project) | cypilot | 242 pre-existing errors elsewhere, 0 for zulip-proxy artifacts | ✅ PASS (zulip-proxy scope) |
+| `cfs validate --skip-code` (whole project) | Constructor Studio | 242 pre-existing errors elsewhere, 0 for zulip-proxy artifacts | ✅ PASS (zulip-proxy scope) |
 
 ## 5. Open follow-ups
 
