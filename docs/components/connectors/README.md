@@ -139,4 +139,4 @@ Per-source deep-dive specifications for Constructor Insight connectors. Each fil
 
 - **Main reference** — [`../CONNECTORS_REFERENCE.md`](../CONNECTORS_REFERENCE.md) is the canonical index of all Bronze table schemas and the Bronze → Silver → Gold pipeline overview.
 - **Per-source specs** (this directory) — expand on individual sources with additional detail: complete field lists, API notes, identity mapping, Silver channel mappings, and open questions.
-- **Generate a new spec** — `/cypilot-generate Connector spec for {Source Name}`
+- **Generate a new spec** — `/cf-generate Connector spec for {Source Name}`
