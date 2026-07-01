@@ -1,0 +1,46 @@
+# JSON schema for bronze_cursor.cursor_daily_usage (all real columns).
+# Resolved by table name. Mirrors the connector's InlineSchemaLoader
+# (src/ingestion/connectors/ai/cursor/connector.yaml — stream cursor_daily_usage,
+# POST /teams/daily-usage-data) plus the 4 _airbyte_* CDK columns.
+# NOTE: `date` is an epoch-millis NUMBER (the connector's %ms cursor field); the
+# dbt model derives `day` via fromUnixTimestamp64Milli(date). `unique_key` =
+# {tenant}-{source}-{userId}-{date}.
+schemas:
+  bronze_cursor.cursor_daily_usage:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: string }
+      userId: { type: [string, "null"] }
+      email: { type: [string, "null"] }
+      day: { type: [string, "null"] }
+      date: { type: [number, "null"] }
+      isActive: { type: [boolean, "null"] }
+      chatRequests: { type: [number, "null"] }
+      cmdkUsages: { type: [number, "null"] }
+      composerRequests: { type: [number, "null"] }
+      agentRequests: { type: [number, "null"] }
+      bugbotUsages: { type: [number, "null"] }
+      totalTabsShown: { type: [number, "null"] }
+      totalTabsAccepted: { type: [number, "null"] }
+      totalAccepts: { type: [number, "null"] }
+      totalApplies: { type: [number, "null"] }
+      totalRejects: { type: [number, "null"] }
+      totalLinesAdded: { type: [number, "null"] }
+      totalLinesDeleted: { type: [number, "null"] }
+      acceptedLinesAdded: { type: [number, "null"] }
+      acceptedLinesDeleted: { type: [number, "null"] }
+      mostUsedModel: { type: [string, "null"] }
+      tabMostUsedExtension: { type: [string, "null"] }
+      applyMostUsedExtension: { type: [string, "null"] }
+      clientVersion: { type: [string, "null"] }
+      subscriptionIncludedReqs: { type: [number, "null"] }
+      usageBasedReqs: { type: [number, "null"] }
+      apiKeyReqs: { type: [number, "null"] }

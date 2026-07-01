@@ -1,0 +1,66 @@
+spec_version: 1
+description: >
+  Metric: meeting_free — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report + Zoom participant sessions per person
+    • silver: both sources deduped to per-person/day meeting durations (audio/video/screen)
+    • gold:   a day is "meeting-free" if a meeting row exists but total duration = 0;
+              metric = count of such days over the window (no row at all does not count)
+
+  Team (median/range = the person's department):
+    alice zero-duration day = 1 · bob 1h = 0 · carol 30m = 0 → median 0, range [0, 1].
+  Cases: alice (1 meeting-free day vs the team).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_m365.teams_activity:
+    - $ref: templates/m365_teams.yaml#/templates/alice_teams   # row exists, zero duration → meeting-free day
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-mfree-20260105
+      meetingsAttendedCount: 0
+      audioDuration: PT0S
+      videoDuration: PT0S
+      screenShareDuration: PT0S
+    - $ref: templates/m365_teams.yaml#/templates/alice_teams   # row exists, zero duration → meeting-free day  # verbatim duplicate -> must dedup, not double
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-mfree-20260105
+      meetingsAttendedCount: 0
+      audioDuration: PT0S
+      videoDuration: PT0S
+      screenShareDuration: PT0S
+    - $ref: templates/m365_teams.yaml#/templates/bob_teams     # has duration → not free
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-bob-mfree-20260105
+      audioDuration: PT1H
+      videoDuration: PT0S
+      screenShareDuration: PT0S
+    - $ref: templates/m365_teams.yaml#/templates/carol_teams   # has duration → not free
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-carol-mfree-20260105
+      audioDuration: PT30M
+      videoDuration: PT0S
+      screenShareDuration: PT0S
+
+cases:
+  # team meeting_free = [alice 1, bob 0, carol 0]
+  #   value (alice) = 1 ; median[0,0,1] = 0 ; range = [0,1]
+  - name: meeting_free — IC bullet (alice value vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: meeting_free }
+        equal: { value: 1, median: 0, range_min: 0, range_max: 1 }

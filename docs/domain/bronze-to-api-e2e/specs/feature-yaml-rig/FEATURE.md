@@ -45,7 +45,7 @@ Replace the folder-based CSV rig (`feature-csv-rig`: `bronze/*.csv` + `spec.yaml
 The readability goals are:
 
 - **Small surface, full data on demand.** A bronze row is written as a `$ref` to a reusable record template plus only the fields the test actually exercises. After resolution the row is padded to every column of the table schema, so the seeded record is complete without the author spelling out 29 columns.
-- **Reusable building blocks in separate files.** Per-table JSON schemas live in `specs/schemas/<db>.<table>.yaml` (e.g. `bronze_m365.email_activity.yaml`); record templates live in `specs/templates/*.yaml`. A test references them with the standard `$ref: "<file>#/<json-pointer>"` form.
+- **Reusable building blocks in separate files.** Per-table JSON schemas live in `metrics/schemas/<db>.<table>.yaml` (e.g. `bronze_m365.email_activity.yaml`); record templates live in `metrics/templates/*.yaml`. A test references them with the standard `$ref: "<file>#/<json-pointer>"` form.
 - **Assert what matters, not the whole body.** `expect` is a list of rules; each selects a row with an exact-equality `find` and either compares a subset of fields (`equal`) or evaluates a CEL boolean (`assert`). Anything richer than equality lives in the CEL `assert`, so there is no second selector language.
 
 This feature supersedes `feature-csv-rig` end to end: the `spec.yaml`/CSV loader, the `csv-asserter`, and the per-folder fixture layout are removed. The bronze→silver→gold→API path itself is unchanged — only the authoring format and the assertion engine change.
@@ -113,7 +113,7 @@ The CSV rig proved the path but was verbose (one CSV per table, full column rows
 
 **Steps**:
 
-1. [ ] - `p1` - Author creates `src/ingestion/tests/e2e/specs/<name>.test.yaml` - `inst-yaml-author-file`
+1. [ ] - `p1` - Author creates `src/ingestion/tests/e2e/metrics/<name>.test.yaml` - `inst-yaml-author-file`
 2. [ ] - `p1` - Author writes `bronze:` keyed by table name; each row is a `$ref` to a template plus the overridden fields under test (duplicates allowed) - `inst-yaml-author-bronze`
 3. [ ] - `p1` - Author writes `cases:` with `request.body.queries[]` (batch) and an `expect` list of rules - `inst-yaml-author-cases`
 4. [ ] - `p1` - Author runs `pytest -k <name>` - `inst-yaml-author-run`
@@ -189,7 +189,7 @@ The CSV rig proved the path but was verbose (one CSV per table, full column rows
 6. [ ] - `p1` - **RETURN** Pass | Fail(field/expr, expected, actual) - `inst-eval-return`
 
 **CEL `assert` bindings** — the variables a `assert` expression may reference.
-Assembled in `e2e_lib/expect_engine.py::evaluate_case` (the `bindings` dict) and
+Assembled in `lib/expect_engine.py::evaluate_case` (the `bindings` dict) and
 converted to CEL in `_eval_cel`:
 
 | Binding | Value | Present when |
@@ -234,11 +234,11 @@ are integers (compare with integer literals). Exact / `null` checks belong in
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-dod-yaml-discovery`
 
-The system **MUST** discover tests as `src/ingestion/tests/e2e/specs/**/*.test.yaml`. Files under `specs/schemas/` and `specs/templates/` (and any `*.yaml` without the `.test.yaml` suffix) **MUST NOT** be collected as tests. A malformed `.test.yaml` **MUST** fail the collection of only that test.
+The system **MUST** discover tests as `src/ingestion/tests/e2e/metrics/**/*.test.yaml`. Files under `metrics/schemas/` and `metrics/templates/` (and any `*.yaml` without the `.test.yaml` suffix) **MUST NOT** be collected as tests. A malformed `.test.yaml` **MUST** fail the collection of only that test.
 
 **Implements**: `cpt-bronze-to-api-e2e-flow-yaml-author-and-run`
 
-**Touches**: `src/ingestion/tests/e2e/conftest.py`, `src/ingestion/tests/e2e/e2e_lib/fixture_loader.py`; Components: `cpt-bronze-to-api-e2e-component-fixture-loader`
+**Touches**: `src/ingestion/tests/e2e/conftest.py`, `src/ingestion/tests/e2e/lib/fixture_loader.py`; Components: `cpt-bronze-to-api-e2e-component-fixture-loader`
 
 ### Reference Resolution
 
@@ -261,17 +261,17 @@ The resolver (`cpt-bronze-to-api-e2e-algo-yaml-resolve-refs`) **MUST** satisfy, 
 
 **Implements**: `cpt-bronze-to-api-e2e-algo-yaml-resolve-refs`
 
-**Touches**: `src/ingestion/tests/e2e/e2e_lib/ref_resolver.py`, `src/ingestion/tests/e2e/meta/test_ref_resolver.py`; Components: `cpt-bronze-to-api-e2e-component-ref-resolver`
+**Touches**: `src/ingestion/tests/e2e/lib/ref_resolver.py`, `src/ingestion/tests/e2e/meta/test_ref_resolver.py`; Components: `cpt-bronze-to-api-e2e-component-ref-resolver`
 
 ### Schema Resolution, Padding and Validation
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-dod-yaml-schema-resolution`
 
-For each `bronze.<table>`, the system **MUST** resolve the schema by table name from `specs/schemas/<db>.<table>.yaml`, pad every resolved record with the schema's missing properties as `null`, and validate the record against the JSON schema. `additionalProperties:false` **MUST** reject an unknown field name. The `_airbyte_*` columns **MUST** be carried from the record (not auto-stamped), since transforms depend on them.
+For each `bronze.<table>`, the system **MUST** resolve the schema by table name from `metrics/schemas/<db>.<table>.yaml`, pad every resolved record with the schema's missing properties as `null`, and validate the record against the JSON schema. `additionalProperties:false` **MUST** reject an unknown field name. The `_airbyte_*` columns **MUST** be carried from the record (not auto-stamped), since transforms depend on them.
 
 **Implements**: `cpt-bronze-to-api-e2e-algo-yaml-resolve-refs`
 
-**Touches**: `src/ingestion/tests/e2e/e2e_lib/schema_validator.py`; Components: `cpt-bronze-to-api-e2e-component-schema-validator`
+**Touches**: `src/ingestion/tests/e2e/lib/schema_validator.py`; Components: `cpt-bronze-to-api-e2e-component-schema-validator`
 
 ### Typed Bronze Seed from Records
 
@@ -281,7 +281,7 @@ The system **MUST** INSERT each resolved record into its bronze table with colum
 
 **Implements**: `cpt-bronze-to-api-e2e-algo-yaml-execute-test`
 
-**Touches**: `src/ingestion/tests/e2e/e2e_lib/ch_seeder.py`; Components: `cpt-bronze-to-api-e2e-component-ch-seeder`
+**Touches**: `src/ingestion/tests/e2e/lib/ch_seeder.py`; Components: `cpt-bronze-to-api-e2e-component-ch-seeder`
 
 ### Batch API Roundtrip
 
@@ -293,7 +293,7 @@ The system **MUST** POST `case.request.body` (`{ queries: [...] }`) to `POST /v1
 
 **Constraints**: `cpt-bronze-to-api-e2e-constraint-loopback-only`
 
-**Touches**: `src/ingestion/tests/e2e/e2e_lib/api_client.py`; API: `POST /v1/metrics/queries`; Components: `cpt-bronze-to-api-e2e-component-api-client`
+**Touches**: `src/ingestion/tests/e2e/lib/api_client.py`; API: `POST /v1/metrics/queries`; Components: `cpt-bronze-to-api-e2e-component-api-client`
 
 ### Expect Engine
 
@@ -303,17 +303,17 @@ The system **MUST** evaluate `expect` rules per `cpt-bronze-to-api-e2e-algo-yaml
 
 **Implements**: `cpt-bronze-to-api-e2e-algo-yaml-eval-expect`
 
-**Touches**: `src/ingestion/tests/e2e/e2e_lib/expect_engine.py`, `src/ingestion/tests/e2e/meta/test_expect_engine.py`; Components: `cpt-bronze-to-api-e2e-component-expect-engine`
+**Touches**: `src/ingestion/tests/e2e/lib/expect_engine.py`, `src/ingestion/tests/e2e/meta/test_expect_engine.py`; Components: `cpt-bronze-to-api-e2e-component-expect-engine`
 
 ### Reference Test (collab_emails_sent)
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-dod-yaml-reference-test`
 
-The system **MUST** ship one working test `specs/collab_emails_sent.test.yaml` plus shared `specs/schemas/{bronze_bamboohr.employees,bronze_m365.email_activity}.yaml` and `specs/templates/{people,m365_email}.yaml`. It **MUST** exercise the IC Bullet Collaboration metric (`…0012`) over `bronze_m365.email_activity` + `bronze_bamboohr.employees`, assert the team median of `m365_emails_sent` (`[40,20,10] → median 20`, value 40 for the requested person, range `[10,40]`), and prove the Airbyte re-sync duplicate of `alice` does not inflate her sum.
+The system **MUST** ship one working test `metrics/collab_emails_sent.test.yaml` plus shared `metrics/schemas/{bronze_bamboohr.employees,bronze_m365.email_activity}.yaml` and `metrics/templates/{people,m365_email}.yaml`. It **MUST** exercise the IC Bullet Collaboration metric (`…0012`) over `bronze_m365.email_activity` + `bronze_bamboohr.employees`, assert the team median of `m365_emails_sent` (`[40,20,10] → median 20`, value 40 for the requested person, range `[10,40]`), and prove the Airbyte re-sync duplicate of `alice` does not inflate her sum.
 
 **Implements**: `cpt-bronze-to-api-e2e-flow-yaml-author-and-run`
 
-**Touches**: `src/ingestion/tests/e2e/specs/collab_emails_sent.test.yaml`, `specs/schemas/*`, `specs/templates/*`; integrates all components
+**Touches**: `src/ingestion/tests/e2e/metrics/collab_emails_sent.test.yaml`, `metrics/schemas/*`, `metrics/templates/*`; integrates all components
 
 ## 6. Acceptance Criteria
 

@@ -27,6 +27,13 @@ credentials:
 
 global:
   storageClass: local-path
+  # Single-tenant fallback for the analytics-api metric-catalog resolver
+  # (compose-app-secrets.sh reads .global.tenantDefaultId → emits
+  # ANALYTICS__metric_catalog__tenant_default_id). Without it, the
+  # unauthenticated kubelet /health probe can't resolve a tenant and gets
+  # HTTP 400 → liveness kill → CrashLoopBackOff → deploy rollback. Set to
+  # the seeded demo tenant so /health resolves AND dashboards populate.
+  tenantDefaultId: "00000000-df51-5b42-9538-d2b56b7ee953"
 
 # ─── L2 cross-namespace wiring ─────────────────────────────────────────────
 # Each subchart's `deploy: false` flips the umbrella from

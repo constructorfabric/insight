@@ -1,7 +1,7 @@
 name: E2E — Bronze to API
 
 # End-to-end transformation tests covering bronze → dbt → ClickHouse
-# migration views → analytics-api HTTP response → CSV assert.
+# migration views → analytics-api HTTP response → expect rules.
 #
 # Everything (Python, Rust, dbt, pytest) runs inside the runner image
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
@@ -11,7 +11,7 @@ name: E2E — Bronze to API
 # Code:  src/ingestion/tests/e2e/
 
 on:
-  # PR-only — same reasoning as backend-checks: branch protection gates
+  # PR-only — same reasoning as ci.yml: branch protection gates
   # merge on PR success, and re-running the full bronze→API stack
   # (clickhouse + mariadb + dbt + pytest) on the merge commit just burns
   # ~30 minutes for an outcome we already proved. workflow_dispatch
@@ -28,7 +28,7 @@ on:
 
 env:
   # NB: forbids developers from running `pytest --update-snapshots` in CI.
-  # The guard lives in src/ingestion/tests/e2e/fixtures/test_fixtures.py.
+  # The guard lives in src/ingestion/tests/e2e/metrics/test_fixtures.py.
   CI: "true"
 
 jobs:
@@ -44,35 +44,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ─── Cache cargo target/ across runs ────────────────────────────────
-      - name: Cache cargo target
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            src/backend/target
-          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('src/backend/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-e2e-
-
-      # ─── Build / pull the runner image (BuildKit caches between PRs) ────
+      # ─── Build the runner image ─────────────────────────────────────────
+      # The runner bakes in analytics-api + each connector's enrich binary, each
+      # compiled FROM ITS OWN Dockerfile via build-only services wired as
+      # `additional_contexts` (see compose/docker-compose.runner.yml). Nothing is
+      # compiled inside the runner at test time, so there is no host cargo cache to
+      # restore. NOTE: those component builds are not yet wired into a cross-run
+      # BuildKit cache, so a full compile happens each run (follow-up: add buildx
+      # `type=gha` cache to the build-only services if it bites).
       - name: Build runner image
         run: ./e2e.sh build
 
-      # ─── Pre-pull data plane images in parallel with whatever else ──────
-      - name: Pre-pull ClickHouse + MariaDB
-        run: |
-          docker pull clickhouse/clickhouse-server:24.8.4.13 &
-          docker pull mariadb:11.4.4 &
-          wait
-
       # ─── Run the suite inside the runner ────────────────────────────────
+      # `./e2e.sh test` (docker compose run runner) starts the clickhouse +
+      # mariadb `depends_on` services — compose pulls their images on demand
+      # and waits for `service_healthy` — so no explicit image pre-pull is needed.
       # Serial on purpose: the session rig is not xdist-safe yet (see
       # conftest.py — per-worker analytics-api spawns race SeaORM migrations
       # in the shared MariaDB, non-primary workers don't wait for ClickHouse
       # migrations, and the shared dbt target/ dir is deleted by whichever
-      # worker finishes first). Wall-time cost is negligible: the image and
-      # cargo builds dominate the job.
+      # worker finishes first). Wall-time cost is negligible: the runner image
+      # build (which compiles analytics-api + enrich) dominates the job.
       - name: Run E2E suite
         run: ./e2e.sh test --tb=short -q
 

@@ -14,6 +14,29 @@ services:
   mariadb:
     ports: !reset []
 
+  # Build-only helper: compiles the Jira enrich binary FROM ITS OWN Dockerfile
+  # (the same one that ships the prod image — no build-recipe duplication). It is
+  # never started; the runner consumes its image as a named build context (see
+  # `runner.build.additional_contexts` below) and bakes the binary in.
+  #
+  # Adding another connector's enrich = one more service here + one
+  # `additional_contexts` entry + one `COPY --from` line in Dockerfile.runner.
+  jira-enrich:
+    build:
+      context: ${INSIGHT_REPO_ROOT:-../../../..}/src/ingestion/connectors/task-tracking/jira/enrich
+      dockerfile: Dockerfile
+    image: insight-e2e-enrich-jira:local
+
+  # Build-only helper: compiles analytics-api FROM ITS OWN Dockerfile (same as the
+  # prod image, build context src/backend). Consumed by the runner via
+  # additional_contexts (COPY --from) and baked in — the runner no longer compiles
+  # anything, so its image carries no Rust toolchain.
+  analytics-api:
+    build:
+      context: ${INSIGHT_REPO_ROOT:-../../../..}/src/backend
+      dockerfile: services/analytics-api/Dockerfile
+    image: insight-e2e-analytics-api:local
+
   runner:
     build:
       # Resolved by ../e2e.sh; CI workflow also exports this. We use an
@@ -21,6 +44,12 @@ services:
       # project directory, not the file location.
       context: ${INSIGHT_REPO_ROOT:-../../../..}
       dockerfile: src/ingestion/tests/e2e/compose/Dockerfile.runner
+      # Bake each connector's enrich binary into the runner image via a named
+      # build context backed by the connector's own build-only service above.
+      # `COPY --from=<name>` in Dockerfile.runner pulls the compiled binary.
+      additional_contexts:
+        jira-enrich: "service:jira-enrich"
+        analytics-api: "service:analytics-api"
     image: insight-e2e-runner:latest
     container_name: insight-e2e-runner
     working_dir: /workspace/src/ingestion/tests/e2e
@@ -31,7 +60,7 @@ services:
         condition: service_healthy
     environment:
       # Service names on the insight-e2e network — overrides the localhost
-      # defaults in e2e_lib/config.py. The session-rig honors these in
+      # defaults in lib/config.py. The session-rig honors these in
       # E2E_RUN_MODE=docker.
       E2E_RUN_MODE: docker
       E2E_CH_HOST: clickhouse
@@ -51,13 +80,5 @@ services:
       # the compose/ directory here — using ${INSIGHT_REPO_ROOT} sidesteps
       # the level-counting question entirely.
       - ${INSIGHT_REPO_ROOT}:/workspace
-      # Persistent caches across container restarts — first run cold-builds
-      # cargo (3-5 min), subsequent runs are incremental (<30s).
-      - cargo-cache:/usr/local/cargo/registry
-      - cargo-target:/workspace/src/backend/target
     networks:
       - insight-e2e
-
-volumes:
-  cargo-cache:
-  cargo-target:

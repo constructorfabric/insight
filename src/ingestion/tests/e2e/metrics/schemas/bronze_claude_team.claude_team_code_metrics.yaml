@@ -1,0 +1,33 @@
+# JSON schema for bronze_claude_team.claude_team_code_metrics (all real columns).
+# Mirrors the connector InlineSchemaLoader (connectors/ai/claude-team/connector.yaml
+# — stream claude_team_code_metrics, GET /api/claude_code/metrics_aggs/users) plus
+# the 4 _airbyte_* CDK columns. NOTE: metric_date is a date STRING ("2026-01-05");
+# total_cost / avg_cost_per_day are decimal-as-string (Silver casts to cents).
+schemas:
+  bronze_claude_team.claude_team_code_metrics:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: string }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      metric_date: { type: [string, "null"] }
+      email: { type: [string, "null"] }
+      api_key_name: { type: [string, "null"] }
+      status: { type: [string, "null"] }
+      avg_cost_per_day: { type: [string, "null"] }
+      avg_lines_accepted_per_day: { type: [number, "null"] }
+      total_cost: { type: [string, "null"] }
+      total_lines_accepted: { type: [number, "null"] }
+      total_sessions: { type: [number, "null"] }
+      last_active: { type: [string, "null"] }
+      prs_with_cc: { type: [number, "null"] }
+      total_prs: { type: [number, "null"] }
+      prs_with_cc_percentage: { type: [number, "null"] }

@@ -1,0 +1,59 @@
+spec_version: 1
+description: >
+  Metric: ai_loc_share2 — IC Bullet AI (…0013), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Cursor daily per-developer usage report (AI-accepted lines + total lines written)
+    • silver: deduped to one row per developer/day carrying both line counts
+    • gold:   a reconstructed ratio — 100 × Σ AI-accepted lines ÷ Σ total lines
+              written, rounded to 0.1 (computed at serve time, not stored)
+
+  Team (value = the requested person):
+    alice accepted 40 of 80 total lines → 100×40/80 = 50.0.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_cursor.cursor_daily_usage:
+    # date 1767571200000 ms = 2026-01-05.
+    - $ref: templates/cursor_usage.yaml#/templates/alice
+      unique_key: cursor-alice-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 40
+      totalLinesAdded: 80
+    - $ref: templates/cursor_usage.yaml#/templates/alice   # re-sync dup → ratio unchanged
+      unique_key: cursor-alice-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 40
+      totalLinesAdded: 80
+    - $ref: templates/cursor_usage.yaml#/templates/bob
+      unique_key: cursor-bob-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 20
+      totalLinesAdded: 80
+    - $ref: templates/cursor_usage.yaml#/templates/carol
+      unique_key: cursor-carol-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 10
+      totalLinesAdded: 40
+
+cases:
+  - name: ai_loc_share2 — IC bullet (reconstructed share, alice 40/80 = 50.0)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        find: { metric_key: ai_loc_share2 }
+        equal: { value: 50.0 }

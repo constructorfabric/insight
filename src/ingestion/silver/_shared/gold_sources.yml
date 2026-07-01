@@ -11,3 +11,5 @@ sources:
     tables:
       - name: ic_kpis
         description: Per-person, per-date individual-contributor KPI view.
+      - name: ic_chart_loc
+        description: Per-person, per-week LOC breakdown view (code/spec/config lines).

@@ -1,0 +1,42 @@
+spec_version: 1
+description: >
+  Metric: wiki_edits (Confluence) — IC Bullet Wiki (…0041), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Confluence page snapshots carrying a per-page version number
+    • silver: deduped to one current row per page, keyed to its author
+    • gold:   metric = Σ (version_count − 1) over the person's pages — edits beyond
+              the initial create
+
+  Team (median/range = the person's department):
+    alice v5→4 edits · bob v3→2 · carol v2→1 → median 2, range [1, 4].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_confluence.wiki_pages:
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/alice", page_id: cp-alice-1, unique_key: cf-alice-1, version_number: 5, created_at: "2026-01-05T00:00:00Z" }
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/alice", page_id: cp-alice-1, unique_key: cf-alice-1, version_number: 5, created_at: "2026-01-05T00:00:00Z" }  # re-sync dup → must NOT double
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/bob", page_id: cp-bob-1, unique_key: cf-bob-1, version_number: 3, created_at: "2026-01-05T00:00:00Z" }
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/carol", page_id: cp-carol-1, unique_key: cf-carol-1, version_number: 2, created_at: "2026-01-05T00:00:00Z" }
+
+cases:
+  - name: wiki_edits (Confluence) — IC bullet (alice 4 vs team median, dedup holds)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: wiki
+            metric_id: 00000000-0000-0000-0001-000000000041
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: wiki
+        assert: "result.status == 'ok'"
+      - in: wiki
+        find: { metric_key: wiki_edits }
+        equal: { value: 4, median: 2, range_min: 1, range_max: 4 }

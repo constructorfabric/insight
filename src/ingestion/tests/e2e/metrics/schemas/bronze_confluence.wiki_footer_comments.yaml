@@ -1,0 +1,21 @@
+# Auto-generated JSON schema mirroring the connector bronze columns the dbt
+# model reads for bronze_confluence.wiki_footer_comments (+ the 4 _airbyte_* CDK columns).
+schemas:
+  bronze_confluence.wiki_footer_comments:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      unique_key: { type: string }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      page_id: { type: [string, "null"] }
+      comment_id: { type: [string, "null"] }
+      parent_comment_id: { type: [string, "null"] }
+      author_id: { type: [string, "null"] }
+      created_at: { type: [string, "null"] }
+      resolution_status: { type: [string, "null"] }

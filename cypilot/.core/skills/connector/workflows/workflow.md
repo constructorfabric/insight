@@ -125,11 +125,9 @@ And create the template in `workflows/schedules/`:
 ## Phase 3: Apply
 
 ```bash
-# Apply workflow templates
-kubectl apply -f workflows/templates/ --kubeconfig ~/.kube/kind-ingestion
-
-# Regenerate CronWorkflows
-./update-workflows.sh <tenant>
+# Shared WorkflowTemplates are installed by the umbrella chart on helm install.
+# Reconcile renders + applies each connector's CronWorkflow from descriptor.yaml:
+./reconcile-connectors.sh --connector <name>
 ```
 
 ## Phase 4: Test

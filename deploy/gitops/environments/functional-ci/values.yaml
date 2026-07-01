@@ -1,0 +1,50 @@
+credentials:
+  deploymentMode: gitops
+  autoGenerate: false
+
+global:
+  storageClass: local-path
+  tenantDefaultId: "00000000-df51-5b42-9538-d2b56b7ee953"
+
+clickhouse:
+  host: clickhouse.insight-infra.svc.cluster.local
+  port: 8123
+  database: insight
+  username: insight
+
+mariadb:
+  host: mariadb.insight-infra.svc.cluster.local
+  port: 3306
+  database: insight
+  username: insight
+
+redis:
+  host: redis-master.insight-infra.svc.cluster.local
+  port: 6379
+
+redpanda:
+  brokers: "redpanda-disabled:9093"
+
+ingestion:
+  templates:
+    enabled: false
+  dataQuality:
+    enabled: false
+
+apiGateway:
+  replicaCount: 1
+  authDisabled: true
+  ingress:
+    enabled: false
+
+analyticsApi:
+  replicaCount: 1
+
+identity:
+  deploy: true
+
+frontend:
+  replicaCount: 1
+  ingress:
+    enabled: false
+  devUserEmail: "dev@company.nonpresent"

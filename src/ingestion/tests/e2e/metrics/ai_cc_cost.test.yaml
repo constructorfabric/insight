@@ -1,0 +1,54 @@
+spec_version: 1
+description: >
+  Metric: cc_cost — IC Bullet AI (…0013), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Claude Code daily per-user metrics (cost as a decimal string, e.g. "2.00")
+    • silver: deduped to one row per user/day, cost converted to whole cents
+    • gold:   metric = sum of Claude Code cost (in cents) over the window
+
+  Team (median/range = the person's department):
+    alice "2.00"→200¢ · bob 100¢ · carol 50¢ → median 100, range [50, 200].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_claude_team.claude_team_code_metrics:
+    # total_cost "2.00" → 200¢, "1.00" → 100¢, "0.50" → 50¢.
+    - $ref: templates/claude_team_usage.yaml#/templates/alice
+      unique_key: claude-alice-20260105
+      metric_date: "2026-01-05"
+      total_cost: "2.00"
+    - $ref: templates/claude_team_usage.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: claude-alice-20260105
+      metric_date: "2026-01-05"
+      total_cost: "2.00"
+    - $ref: templates/claude_team_usage.yaml#/templates/bob
+      unique_key: claude-bob-20260105
+      metric_date: "2026-01-05"
+      total_cost: "1.00"
+    - $ref: templates/claude_team_usage.yaml#/templates/carol
+      unique_key: claude-carol-20260105
+      metric_date: "2026-01-05"
+      total_cost: "0.50"
+
+cases:
+  - name: cc_cost — IC bullet (alice 200¢ vs team median, dedup holds)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        find: { metric_key: cc_cost }
+        equal: { value: 200, median: 100, range_min: 50, range_max: 200 }

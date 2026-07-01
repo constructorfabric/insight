@@ -1,0 +1,65 @@
+spec_version: 1
+description: >
+  Metric: wiki_comments (Outline) — IC Bullet Wiki (…0041), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Outline page comments (one row per comment, linked to its page)
+    • silver: deduped, then counted per page per day (total_comments)
+    • gold:   comments are attributed to the PAGE AUTHOR (engagement received on
+              their pages); metric = Σ comments on the person's pages in the window
+
+  Team (median/range = the person's department):
+    alice's page 3 comments · bob's 2 · carol's 1 (one comment re-synced → not
+    doubled) → median 2, range [1, 3].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_outline.wiki_pages:
+    - $ref: templates/outline_wiki_pages.yaml#/templates/alice
+      page_id: pg-alice-1
+      unique_key: ol-alice-1
+      version_number: 1
+      created_at: "2026-01-05T00:00:00Z"
+    - $ref: templates/outline_wiki_pages.yaml#/templates/bob
+      page_id: pg-bob-1
+      unique_key: ol-bob-1
+      version_number: 1
+      created_at: "2026-01-05T00:00:00Z"
+    - $ref: templates/outline_wiki_pages.yaml#/templates/carol
+      page_id: pg-carol-1
+      unique_key: ol-carol-1
+      version_number: 1
+      created_at: "2026-01-05T00:00:00Z"
+  bronze_outline.wiki_comments:
+    # 3 comments on alice's page
+    - { $ref: "templates/outline_wiki_comments.yaml#/templates/c", page_id: pg-alice-1, comment_id: ca1, unique_key: oc-a1, created_at: "2026-01-05T01:00:00Z" }
+    - { $ref: "templates/outline_wiki_comments.yaml#/templates/c", page_id: pg-alice-1, comment_id: ca2, unique_key: oc-a2, created_at: "2026-01-05T02:00:00Z" }
+    - { $ref: "templates/outline_wiki_comments.yaml#/templates/c", page_id: pg-alice-1, comment_id: ca3, unique_key: oc-a3, created_at: "2026-01-05T03:00:00Z" }
+    - { $ref: "templates/outline_wiki_comments.yaml#/templates/c", page_id: pg-alice-1, comment_id: ca3, unique_key: oc-a3, created_at: "2026-01-05T03:00:00Z" }  # re-sync dup → not doubled
+    # 2 on bob's page
+    - { $ref: "templates/outline_wiki_comments.yaml#/templates/c", page_id: pg-bob-1, comment_id: cb1, unique_key: oc-b1, created_at: "2026-01-05T01:00:00Z" }
+    - { $ref: "templates/outline_wiki_comments.yaml#/templates/c", page_id: pg-bob-1, comment_id: cb2, unique_key: oc-b2, created_at: "2026-01-05T02:00:00Z" }
+    # 1 on carol's page
+    - { $ref: "templates/outline_wiki_comments.yaml#/templates/c", page_id: pg-carol-1, comment_id: cc1, unique_key: oc-c1, created_at: "2026-01-05T01:00:00Z" }
+
+cases:
+  - name: wiki_comments (Outline) — IC bullet (alice 3 vs team median, dedup holds)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: wiki
+            metric_id: 00000000-0000-0000-0001-000000000041
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: wiki
+        assert: "result.status == 'ok'"
+      - in: wiki
+        find: { metric_key: wiki_comments }
+        equal: { value: 3, median: 2, range_min: 1, range_max: 3 }

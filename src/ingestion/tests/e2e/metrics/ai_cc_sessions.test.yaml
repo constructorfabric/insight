@@ -1,0 +1,53 @@
+spec_version: 1
+description: >
+  Metric: cc_sessions — IC Bullet AI (…0013), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Claude Code daily per-user metrics (session count)
+    • silver: deduped to one row per user/day carrying the session count
+    • gold:   metric = sum of Claude Code sessions over the window
+
+  Team (median/range = the person's department):
+    alice 12 · bob 6 · carol 3 → median 6, range [3, 12].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_claude_team.claude_team_code_metrics:
+    - $ref: templates/claude_team_usage.yaml#/templates/alice
+      unique_key: claude-alice-20260105
+      metric_date: "2026-01-05"
+      total_sessions: 12
+    - $ref: templates/claude_team_usage.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: claude-alice-20260105
+      metric_date: "2026-01-05"
+      total_sessions: 12
+    - $ref: templates/claude_team_usage.yaml#/templates/bob
+      unique_key: claude-bob-20260105
+      metric_date: "2026-01-05"
+      total_sessions: 6
+    - $ref: templates/claude_team_usage.yaml#/templates/carol
+      unique_key: claude-carol-20260105
+      metric_date: "2026-01-05"
+      total_sessions: 3
+
+cases:
+  - name: cc_sessions — IC bullet (alice value vs team median, dedup holds)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        find: { metric_key: cc_sessions }
+        equal: { value: 12, median: 6, range_min: 3, range_max: 12 }

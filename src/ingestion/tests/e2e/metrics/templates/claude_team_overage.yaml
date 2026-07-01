@@ -1,0 +1,45 @@
+# Reusable Claude Team overage-spend records (bronze_claude_team.claude_team_overage_spend).
+# Base carries every schema column (unused = null) incl. the 4 _airbyte_* CDK
+# columns. The metric date is the snapshot's collection day, derived from
+# _airbyte_extracted_at (set in base to 2026-01-05) — there is no bronze date
+# field. overage_cents = greatest(0, used_credits − monthly_credit_limit), both
+# already in cents. Variants override identity (account_email, account_uuid);
+# the fields under test (unique_key, monthly_credit_limit, used_credits) are set
+# in each test's `bronze`.
+templates:
+  overage_seat:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "claude-team-test"
+    unique_key: null
+    collected_at: "2026-01-05T00:00:00Z"
+    data_source: "insight_claude_team"
+    account_uuid: null
+    account_email: null
+    account_name: "Test Seat"
+    seat_tier: null
+    is_enabled: true
+    monthly_credit_limit: null
+    used_credits: null
+    currency: "USD"
+    out_of_credits: null
+    used_credits_basis: null
+    limit_type: null
+
+  alice:
+    $ref: "#/templates/overage_seat"
+    account_email: alice@example.com
+    account_uuid: seat-alice
+
+  bob:
+    $ref: "#/templates/overage_seat"
+    account_email: bob@example.com
+    account_uuid: seat-bob
+
+  carol:
+    $ref: "#/templates/overage_seat"
+    account_email: carol@example.com
+    account_uuid: seat-carol

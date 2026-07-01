@@ -1,0 +1,21 @@
+# Reusable JSON schema for the table (all real fields). Resolved by table name.
+# Mirrors the bronze_jira.jira_issue_history placeholder DDL (columns read by
+# jira__changelog_items.sql; `items` is a JSON array string of field changes).
+schemas:
+  bronze_jira.jira_issue_history:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      unique_key: { type: string }
+      source_id: { type: string }
+      tenant_id: { type: string }
+      id_readable: { type: string }
+      changelog_id: { type: string }
+      created_at: { type: string }
+      author_account_id: { type: [string, "null"] }
+      items: { type: string }
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }

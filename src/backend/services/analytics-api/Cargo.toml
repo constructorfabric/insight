@@ -21,6 +21,12 @@ clickhouse = { workspace = true }
 axum = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
+# ToolKit REST registration: routes are declared via `OperationBuilder`
+# (not raw `axum::Router::route`) so every endpoint records an OpenAPI
+# OperationSpec + auth/license metadata in one place. We do NOT use the
+# `bootstrap` host runtime here — the existing `main.rs` keeps serving the
+# resulting `axum::Router` directly (handler-registration migration only).
+toolkit = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
 reqwest = { workspace = true }
 redis = { workspace = true }

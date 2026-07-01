@@ -2,7 +2,7 @@
 
 Two deployment paths — Docker Compose for day-to-day dev, Kubernetes
 when you need Airbyte / Argo Workflows. Both share a single first-run
-wizard at [`compose/insight-init.sh`](compose/insight-init.sh).
+wizard at [`deploy/compose/insight-init.sh`](deploy/compose/insight-init.sh).
 
 Open a PR after reading [AGENTS.md](AGENTS.md) and the relevant spec
 files under `docs/components/<area>/specs/`.
@@ -141,7 +141,7 @@ deploy-app`. Subsequent runs skip the wizard and reconcile the stack.
 
 K8s and compose can coexist — disjoint host ports by default. Demo-data
 seeding on k8s is manual (wizard output prints the port-forward +
-`compose/seed/` recipe).
+`deploy/seed/` recipe).
 
 ### Kubernetes — non-interactive (CI)
 
@@ -274,7 +274,7 @@ Skip the local Rust/dotnet build for one or more services:
 API_GATEWAY_IMAGE=ghcr.io/constructorfabric/insight-api-gateway:latest
 ```
 
-The script writes `compose/override.generated.yml` (gitignored) that
+The script writes `deploy/compose/override.generated.yml` (gitignored) that
 drops the `build:` + bind-mount for the chosen services.
 
 ### Settings reference (`.env.compose`)
@@ -352,7 +352,7 @@ docker compose exec clickhouse clickhouse-client --user insight --password insig
 
 # Stop / wipe (escalating)
 ./dev-compose.sh down                  # stop containers; keep volumes + .env.compose
-./dev-compose.sh down --volumes        # also wipe named volumes + compose/build/
+./dev-compose.sh down --volumes        # also wipe named volumes + deploy/compose/build/
 ./dev-compose.sh prune                 # interactive nuke — see below
 
 # One-off cargo work
@@ -378,7 +378,7 @@ Edit `src/backend/services/api-gateway/config/no-auth.yaml` directly
 
 ## Seeding
 
-The seed package lives in [`compose/seed/`](compose/seed/) — its
+The seed package lives in [`deploy/seed/`](deploy/seed/) — its
 README documents the ruff / mypy / venv setup. Both deploy paths use
 the same package; only how it's invoked differs.
 
@@ -394,7 +394,7 @@ tables, every `src/ingestion/scripts/migrations/*.sql` applied
 (produces the `insight.*` gold views), ~24k rows across 16 silver
 tables profile-typed per team (`class_git_*` for devs, `class_crm_*`
 for sales, …). The full per-team activity table is in
-[`compose/seed/profiles.py`](compose/seed/profiles.py). analytics-api's
+[`deploy/seed/profiles.py`](deploy/seed/profiles.py). analytics-api's
 schema validator flips from "80 metrics error" to "80 ok".
 
 ### Compose
@@ -426,7 +426,7 @@ KUBECONFIG=/path/to/config.yaml kubectl -n insight-infra \
   port-forward svc/clickhouse 8123:8123 &
 
 # 2. Run the seed package against them. First time only: bootstrap a venv.
-cd compose/seed
+cd deploy/seed
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # Identity + silver. Drop `all` and pass `identity` / `silver` for partial.

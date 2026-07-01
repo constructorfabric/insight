@@ -9,9 +9,11 @@ mod handlers;
 #[cfg(test)]
 mod tenant_resolution_tests;
 
+use axum::http::StatusCode;
 use axum::{Router, middleware};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
+use toolkit::api::{OpenApiRegistryImpl, OperationBuilder};
 
 use crate::auth;
 use crate::config::AppConfig;
@@ -52,85 +54,250 @@ pub struct AppState {
 }
 
 /// Build the Axum router with all routes.
+///
+/// Routes are declared through the toolkit's [`OperationBuilder`] rather than
+/// raw `axum::Router::route`, so each endpoint records an `OpenAPI`
+/// `OperationSpec` plus auth/license metadata in a single place (the gears-rust
+/// idiom — see `gears/file-parser` and the gateway's `auth_info`/`proxy`
+/// modules).
+///
+/// This is a handler-registration migration only: we keep serving the
+/// resulting `axum::Router` from `main.rs` (no `toolkit::bootstrap` host
+/// runtime), and the tenant-resolution behaviour is unchanged. The `OpenAPI`
+/// registry accumulates specs in-process; wiring up a `/openapi.json` route
+/// and the bootstrap host are deliberately left to follow-up work.
+///
+/// `OperationBuilder::register` merges method routers per path, so the
+/// shared-path endpoints (`/v1/metrics`, `/v1/admin/metric-thresholds*`) are
+/// registered as independent operations — the same pattern the gateway's
+/// proxy module uses to attach all five HTTP methods to one wildcard path.
+// One `OperationBuilder` chain per endpoint makes this a long-but-flat route
+// table; splitting it across helpers would only obscure the 1:1 route↔handler map.
+#[allow(clippy::too_many_lines)]
 pub fn router(state: AppState) -> Router {
     let state = Arc::new(state);
 
-    let router = Router::new()
-        // Metric CRUD
-        .route("/v1/metrics", axum::routing::get(handlers::list_metrics))
-        .route("/v1/metrics", axum::routing::post(handlers::create_metric))
-        .route("/v1/metrics/{id}", axum::routing::get(handlers::get_metric))
-        .route(
-            "/v1/metrics/{id}",
-            axum::routing::put(handlers::update_metric),
-        )
-        .route(
-            "/v1/metrics/{id}",
-            axum::routing::delete(handlers::delete_metric),
-        )
-        // Query
-        .route(
-            "/v1/metrics/{id}/query",
-            axum::routing::post(handlers::query_metric),
-        )
-        .route(
-            "/v1/metrics/queries",
-            axum::routing::post(handlers::query_metrics_batch),
-        )
-        // Thresholds
-        .route(
-            "/v1/metrics/{id}/thresholds",
-            axum::routing::get(handlers::list_thresholds),
-        )
-        .route(
-            "/v1/metrics/{id}/thresholds",
-            axum::routing::post(handlers::create_threshold),
-        )
-        .route(
-            "/v1/metrics/{id}/thresholds/{tid}",
-            axum::routing::put(handlers::update_threshold),
-        )
-        .route(
-            "/v1/metrics/{id}/thresholds/{tid}",
-            axum::routing::delete(handlers::delete_threshold),
-        )
-        // Person lookup (delegates to Identity service)
-        .route(
-            "/v1/persons/{email}",
-            axum::routing::get(handlers::get_person),
-        )
-        // Column catalog
-        .route("/v1/columns", axum::routing::get(handlers::list_columns))
-        .route(
-            "/v1/columns/{table}",
-            axum::routing::get(handlers::list_columns_for_table),
-        )
-        // Metric catalog read (Refs #524) — DESIGN §3.3 "Catalog Read".
-        // POST chosen so request-context fields (role_slug, team_id) never
-        // appear in HTTP access logs / proxy captures, and so HTTP / CDN
-        // intermediaries cannot cache the response (server-side cache is the
-        // single canonical cache layer per `cpt-metric-cat-principle-server-cache`).
-        .route(
-            "/v1/catalog/get_metrics",
-            axum::routing::post(catalog::get_metrics),
-        )
-        // Admin threshold CRUD (Refs #525) — DESIGN §3.2 admin-crud.
-        // Bearer-token-only auth at the gateway (Q1 ack); the catalog
-        // surface enforces canonical envelopes + CSRF closure via the
-        // `CanonicalJson` extractor (Content-Type: application/json
-        // required, deny_unknown_fields on every body shape).
-        .route(
-            "/v1/admin/metric-thresholds",
-            axum::routing::get(admin::list).post(admin::create),
-        )
-        .route(
-            "/v1/admin/metric-thresholds/{id}",
-            axum::routing::get(admin::get_one)
-                .put(admin::update)
-                .delete(admin::delete),
-        )
-        // Health
-        .route("/health", axum::routing::get(handlers::health));
+    // In-process OpenAPI registry. Required by `OperationBuilder::register`;
+    // not yet exposed over HTTP (follow-up: serve `build_openapi(..)` at
+    // `/openapi.json`).
+    let openapi = OpenApiRegistryImpl::new();
+
+    let mut router: Router<Arc<AppState>> = Router::new();
+
+    // Metric CRUD
+    router = OperationBuilder::get("/v1/metrics")
+        .operation_id("analytics_api.metrics.list")
+        .summary("List metrics")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "List of metrics")
+        .standard_errors(&openapi)
+        .handler(handlers::list_metrics)
+        .register(router, &openapi);
+
+    router = OperationBuilder::post("/v1/metrics")
+        .operation_id("analytics_api.metrics.create")
+        .summary("Create a metric")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::CREATED, "Created metric")
+        .standard_errors(&openapi)
+        .handler(handlers::create_metric)
+        .register(router, &openapi);
+
+    router = OperationBuilder::get("/v1/metrics/{id}")
+        .operation_id("analytics_api.metrics.get")
+        .summary("Get a metric by id")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "Metric")
+        .standard_errors(&openapi)
+        .handler(handlers::get_metric)
+        .register(router, &openapi);
+
+    router = OperationBuilder::put("/v1/metrics/{id}")
+        .operation_id("analytics_api.metrics.update")
+        .summary("Update a metric")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "Updated metric")
+        .standard_errors(&openapi)
+        .handler(handlers::update_metric)
+        .register(router, &openapi);
+
+    router = OperationBuilder::delete("/v1/metrics/{id}")
+        .operation_id("analytics_api.metrics.delete")
+        .summary("Delete a metric")
+        .authenticated()
+        .no_license_required()
+        .no_content_response(StatusCode::NO_CONTENT, "Metric deleted")
+        .standard_errors(&openapi)
+        .handler(handlers::delete_metric)
+        .register(router, &openapi);
+
+    // Query
+    router = OperationBuilder::post("/v1/metrics/{id}/query")
+        .operation_id("analytics_api.metrics.query")
+        .summary("Query a single metric")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "Query result")
+        .standard_errors(&openapi)
+        .handler(handlers::query_metric)
+        .register(router, &openapi);
+
+    router = OperationBuilder::post("/v1/metrics/queries")
+        .operation_id("analytics_api.metrics.query_batch")
+        .summary("Query metrics in batch")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "Batch query result")
+        .standard_errors(&openapi)
+        .handler(handlers::query_metrics_batch)
+        .register(router, &openapi);
+
+    // Thresholds (legacy)
+    router = OperationBuilder::get("/v1/metrics/{id}/thresholds")
+        .operation_id("analytics_api.thresholds.list")
+        .summary("List thresholds for a metric")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "List of thresholds")
+        .standard_errors(&openapi)
+        .handler(handlers::list_thresholds)
+        .register(router, &openapi);
+
+    router = OperationBuilder::post("/v1/metrics/{id}/thresholds")
+        .operation_id("analytics_api.thresholds.create")
+        .summary("Create a threshold for a metric")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::CREATED, "Created threshold")
+        .standard_errors(&openapi)
+        .handler(handlers::create_threshold)
+        .register(router, &openapi);
+
+    router = OperationBuilder::put("/v1/metrics/{id}/thresholds/{tid}")
+        .operation_id("analytics_api.thresholds.update")
+        .summary("Update a threshold")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "Updated threshold")
+        .standard_errors(&openapi)
+        .handler(handlers::update_threshold)
+        .register(router, &openapi);
+
+    router = OperationBuilder::delete("/v1/metrics/{id}/thresholds/{tid}")
+        .operation_id("analytics_api.thresholds.delete")
+        .summary("Delete a threshold")
+        .authenticated()
+        .no_license_required()
+        .no_content_response(StatusCode::NO_CONTENT, "Threshold deleted")
+        .standard_errors(&openapi)
+        .handler(handlers::delete_threshold)
+        .register(router, &openapi);
+
+    // Person lookup (delegates to Identity service)
+    router = OperationBuilder::get("/v1/persons/{email}")
+        .operation_id("analytics_api.persons.get")
+        .summary("Resolve a person by email")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "Person")
+        .standard_errors(&openapi)
+        .handler(handlers::get_person)
+        .register(router, &openapi);
+
+    // Column catalog
+    router = OperationBuilder::get("/v1/columns")
+        .operation_id("analytics_api.columns.list")
+        .summary("List queryable columns")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "List of columns")
+        .standard_errors(&openapi)
+        .handler(handlers::list_columns)
+        .register(router, &openapi);
+
+    router = OperationBuilder::get("/v1/columns/{table}")
+        .operation_id("analytics_api.columns.list_for_table")
+        .summary("List queryable columns for a table")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "List of columns")
+        .standard_errors(&openapi)
+        .handler(handlers::list_columns_for_table)
+        .register(router, &openapi);
+
+    // Metric catalog read (Refs #524) — DESIGN §3.3 "Catalog Read".
+    // POST chosen so request-context fields (role_slug, team_id) never
+    // appear in HTTP access logs / proxy captures, and so HTTP / CDN
+    // intermediaries cannot cache the response (server-side cache is the
+    // single canonical cache layer per `cpt-metric-cat-principle-server-cache`).
+    router = OperationBuilder::post("/v1/catalog/get_metrics")
+        .operation_id("analytics_api.catalog.get_metrics")
+        .summary("Read the metric catalog for the request context")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "Resolved metric catalog")
+        .standard_errors(&openapi)
+        .handler(catalog::get_metrics)
+        .register(router, &openapi);
+
+    // Admin threshold CRUD (Refs #525) — DESIGN §3.2 admin-crud.
+    // Bearer-token-only auth at the gateway (Q1 ack); the catalog
+    // surface enforces canonical envelopes + CSRF closure via the
+    // `CanonicalJson` extractor (Content-Type: application/json
+    // required, deny_unknown_fields on every body shape).
+    router = OperationBuilder::get("/v1/admin/metric-thresholds")
+        .operation_id("analytics_api.admin.thresholds.list")
+        .summary("List admin metric thresholds")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "List of metric thresholds")
+        .standard_errors(&openapi)
+        .handler(admin::list)
+        .register(router, &openapi);
+
+    router = OperationBuilder::post("/v1/admin/metric-thresholds")
+        .operation_id("analytics_api.admin.thresholds.create")
+        .summary("Create an admin metric threshold")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::CREATED, "Created metric threshold")
+        .standard_errors(&openapi)
+        .handler(admin::create)
+        .register(router, &openapi);
+
+    router = OperationBuilder::get("/v1/admin/metric-thresholds/{id}")
+        .operation_id("analytics_api.admin.thresholds.get")
+        .summary("Get an admin metric threshold by id")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "Metric threshold")
+        .standard_errors(&openapi)
+        .handler(admin::get_one)
+        .register(router, &openapi);
+
+    router = OperationBuilder::put("/v1/admin/metric-thresholds/{id}")
+        .operation_id("analytics_api.admin.thresholds.update")
+        .summary("Update an admin metric threshold")
+        .authenticated()
+        .no_license_required()
+        .json_response(StatusCode::OK, "Updated metric threshold")
+        .standard_errors(&openapi)
+        .handler(admin::update)
+        .register(router, &openapi);
+
+    router = OperationBuilder::delete("/v1/admin/metric-thresholds/{id}")
+        .operation_id("analytics_api.admin.thresholds.delete")
+        .summary("Delete an admin metric threshold")
+        .authenticated()
+        .no_license_required()
+        .no_content_response(StatusCode::NO_CONTENT, "Metric threshold deleted")
+        .standard_errors(&openapi)
+        .handler(admin::delete)
+        .register(router, &openapi);
 
     // The tenant-resolution middleware uses just the auth-trait — not full
     // `AppState` — as its layer state, so the integration tests in
@@ -139,10 +306,29 @@ pub fn router(state: AppState) -> Router {
     // here and again handed to the route state via `AppState`.
     let tenant_auth = state.tenant_auth.clone();
 
-    router
-        .layer(middleware::from_fn_with_state(
-            tenant_auth,
-            auth::tenant_middleware,
-        ))
-        .with_state(state)
+    let api = router.layer(middleware::from_fn_with_state(
+        tenant_auth,
+        auth::tenant_middleware,
+    ));
+
+    // Health probe — registered on a SEPARATE router merged *after* the
+    // tenant middleware, so it stays off the authenticated/tenant-scoped path.
+    // Kubernetes liveness/readiness probes hit `/health` directly on the pod
+    // (no gateway hop, no `X-Insight-Tenant-Id` header), so it must answer
+    // without tenant resolution — otherwise a multi-tenant install (no
+    // `tenant_default_id` configured) would 400 every probe and never go Ready.
+    //
+    // This mirrors the gears-rust api-gateway host, which serves `/health` +
+    // `/healthz` on its own top-level router and force-marks them public rather
+    // than routing them through the per-request auth layer
+    // (gears/system/api-gateway `apply_prefix_nesting` + `build_route_policy_from_specs`).
+    let health = OperationBuilder::get("/health")
+        .operation_id("analytics_api.health")
+        .summary("Liveness/readiness probe")
+        .public()
+        .json_response(StatusCode::OK, "Service healthy")
+        .handler(handlers::health)
+        .register(Router::new(), &openapi);
+
+    api.merge(health).with_state(state)
 }

@@ -1,0 +1,53 @@
+spec_version: 1
+description: >
+  Metric: wiki_comments (Confluence) — IC Bullet Wiki (…0041), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Confluence comments (footer/inline, top-level/replies) on pages
+    • silver: deduped, then counted per page per day (total_comments)
+    • gold:   comments are attributed to the PAGE AUTHOR (engagement received on
+              their pages); metric = Σ comments on the person's pages in the window
+
+  Team (median/range = the person's department):
+    alice's page 3 comments · bob's 2 · carol's 1 (one comment re-synced → not
+    doubled) → median 2, range [1, 3]. (Footer comments drive the count here.)
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_confluence.wiki_pages:
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/alice", page_id: cp-alice-1, unique_key: cf-alice-1, version_number: 1, created_at: "2026-01-05T00:00:00Z" }
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/bob", page_id: cp-bob-1, unique_key: cf-bob-1, version_number: 1, created_at: "2026-01-05T00:00:00Z" }
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/carol", page_id: cp-carol-1, unique_key: cf-carol-1, version_number: 1, created_at: "2026-01-05T00:00:00Z" }
+  bronze_confluence.wiki_footer_comments:
+    # 3 comments on alice's page
+    - { $ref: "templates/confluence_wiki_footer_comments.yaml#/templates/c", page_id: cp-alice-1, comment_id: fa1, unique_key: fc-a1, created_at: "2026-01-05T01:00:00Z" }
+    - { $ref: "templates/confluence_wiki_footer_comments.yaml#/templates/c", page_id: cp-alice-1, comment_id: fa2, unique_key: fc-a2, created_at: "2026-01-05T02:00:00Z" }
+    - { $ref: "templates/confluence_wiki_footer_comments.yaml#/templates/c", page_id: cp-alice-1, comment_id: fa3, unique_key: fc-a3, created_at: "2026-01-05T03:00:00Z" }
+    - { $ref: "templates/confluence_wiki_footer_comments.yaml#/templates/c", page_id: cp-alice-1, comment_id: fa3, unique_key: fc-a3, created_at: "2026-01-05T03:00:00Z" }  # re-sync dup → not doubled
+    # 2 on bob's page
+    - { $ref: "templates/confluence_wiki_footer_comments.yaml#/templates/c", page_id: cp-bob-1, comment_id: fb1, unique_key: fc-b1, created_at: "2026-01-05T01:00:00Z" }
+    - { $ref: "templates/confluence_wiki_footer_comments.yaml#/templates/c", page_id: cp-bob-1, comment_id: fb2, unique_key: fc-b2, created_at: "2026-01-05T02:00:00Z" }
+    # 1 on carol's page
+    - { $ref: "templates/confluence_wiki_footer_comments.yaml#/templates/c", page_id: cp-carol-1, comment_id: fc1, unique_key: fc-c1, created_at: "2026-01-05T01:00:00Z" }
+
+cases:
+  - name: wiki_comments (Confluence) — IC bullet (alice 3 vs team median, dedup holds)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: wiki
+            metric_id: 00000000-0000-0000-0001-000000000041
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: wiki
+        assert: "result.status == 'ok'"
+      - in: wiki
+        find: { metric_key: wiki_comments }
+        equal: { value: 3, median: 2, range_min: 1, range_max: 3 }

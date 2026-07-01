@@ -6,6 +6,13 @@ decision-makers: platform-engineering
 
 # ADR-0004: Cluster Config (`tenant_id`) via Kubernetes ConfigMap
 
+> ℹ️ **Obsoleted mechanics.** This ADR's consequences reference the host
+> `run-init.sh` / `secret-validator` provisioning path, which has been
+> retired: connector reconcile now runs in-cluster via the reconcile
+> CronWorkflow (`reconcile-connectors/`), and Secret validation is an
+> internal pre-step of reconcile (`valsec_check_secret`). The record is kept
+> for historical context; the host-script steps it describes no longer exist.
+
 
 <!-- toc -->
 

@@ -21,6 +21,15 @@ WITH proj AS (
         COALESCE(namespace_full_path, '') AS project_key,
         COALESCE(path, '') AS repo_slug
     FROM {{ source('bronze_gitlab', 'projects') }} FINAL
+),
+usr AS (
+    SELECT
+        tenant_id,
+        source_id,
+        username,
+        lower(COALESCE(NULLIF(email, ''), NULLIF(public_email, ''))) AS email
+    FROM {{ source('bronze_gitlab', 'users') }} FINAL
+    WHERE COALESCE(username, '') != ''
 )
 SELECT
     mr.tenant_id AS tenant_id,
@@ -40,7 +49,7 @@ SELECT
         upper(COALESCE(mr.state, ''))
     ) AS state,
     COALESCE(mr.author_username, '') AS author_name,
-    '' AS author_email,
+    COALESCE(u.email, '') AS author_email,
     COALESCE(mr.source_branch, '') AS source_branch,
     COALESCE(mr.target_branch, '') AS destination_branch,
     parseDateTimeBestEffortOrNull(mr.created_at) AS created_on,
@@ -61,6 +70,10 @@ LEFT JOIN proj AS p
     ON p.project_id = mr.project_id
     AND p.tenant_id = mr.tenant_id
     AND p.source_id = mr.source_id
+LEFT JOIN usr AS u
+    ON u.username = mr.author_username
+    AND u.tenant_id = mr.tenant_id
+    AND u.source_id = mr.source_id
 {% if is_incremental() %}
 WHERE mr._airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}

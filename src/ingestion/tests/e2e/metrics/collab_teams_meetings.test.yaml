@@ -1,0 +1,55 @@
+spec_version: 1
+description: >
+  Metric: teams_meetings — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report per person (meetings attended)
+    • silver: deduped to meetings-attended per person/day
+    • gold:   metric = sum of meetings attended over the window, Teams-only — the
+              M365 slice of meetings_count (Zoom is filtered out by definition)
+
+  Team (median/range = the person's department):
+    alice 4 · bob 2 · carol 1 → median 2, range [1, 4].
+  Cases: alice (4 vs the team).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_m365.teams_activity:
+    - $ref: templates/m365_teams.yaml#/templates/alice_teams
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-tm-20260105
+      meetingsAttendedCount: 4
+    - $ref: templates/m365_teams.yaml#/templates/alice_teams  # verbatim duplicate -> must dedup, not double
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-tm-20260105
+      meetingsAttendedCount: 4
+    - $ref: templates/m365_teams.yaml#/templates/bob_teams
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-bob-tm-20260105
+      meetingsAttendedCount: 2
+    - $ref: templates/m365_teams.yaml#/templates/carol_teams
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-carol-tm-20260105
+      meetingsAttendedCount: 1
+
+cases:
+  # alice teams_meetings = 4 ; team {4,2,1} → median 2, range [1,4]
+  - name: teams_meetings — IC bullet (alice value vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: teams_meetings }
+        equal: { value: 4, median: 2, range_min: 1, range_max: 4 }

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from e2e_lib import ref_resolver
-from e2e_lib.ref_resolver import RefError, resolve
+from lib import ref_resolver
+from lib.ref_resolver import RefError, resolve
 
 
 pytestmark = pytest.mark.smoke

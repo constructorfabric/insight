@@ -904,7 +904,7 @@ See [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md) for the fu
 
 1. Connector secrets applied (`./secrets/apply.sh`).
 2. Kubernetes deploy (`cd deploy/gitops && make deploy ENV=<env>`) — installs Airbyte + Argo Workflows (L2 system) and the Insight umbrella chart (L3 app). The umbrella's `identity-db-init-job` Helm pre-install Job provisions the `identity` MariaDB database and grants. The identity-resolution pod then starts and applies its sea-orm migrations (including the `persons` table) at startup via `run_migrations(&db)` in `main.rs`.
-3. `./src/ingestion/run-init.sh` — runs ClickHouse migrations, registers connectors, creates Airbyte connections, syncs Argo flows.
+3. `./src/ingestion/reconcile-connectors.sh` — registers connectors, creates Airbyte connections + per-connector CronWorkflows. (ClickHouse migrations run via the `clickhouse-migrate` Helm Hook Job on helm install/upgrade in step 2, not from a host script.)
 4. Airbyte sync produces Bronze data (`./sync-all.sh` + wait).
 5. dbt models run to populate `identity.identity_inputs` (`dbt run --select +identity_inputs`).
 6. Seed run (`./src/backend/services/identity/seed/seed-persons.sh`) — invokes the Python seed.

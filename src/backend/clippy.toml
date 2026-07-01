@@ -1,7 +1,7 @@
 # clippy.toml — workspace-level Clippy configuration for the backend Rust
 # crates. Discovered automatically by `cargo clippy` when run from
 # `src/backend/` (matches `defaults.run.working-directory: src/backend`
-# in `.github/workflows/backend-checks.yml`).
+# in `.github/workflows/ci.yml`).
 #
 # We extend `clippy::pedantic`'s `doc_markdown` lint allow-list because
 # rust-1.92.0 expanded the lint to flag many domain acronyms (OAuth2,
