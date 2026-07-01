@@ -68,7 +68,10 @@ async fn inject_host_context(
 }
 
 fn req_get(uri: &str) -> Result<Request<Body>, axum::http::Error> {
-    Request::builder().uri(uri).method("GET").body(Body::empty())
+    Request::builder()
+        .uri(uri)
+        .method("GET")
+        .body(Body::empty())
 }
 
 fn req_get_with_tenant(uri: &str, tenant: Uuid) -> Result<Request<Body>, axum::http::Error> {

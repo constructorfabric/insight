@@ -13,7 +13,6 @@ use uuid::Uuid;
 
 use super::AppState;
 use super::error::{MetricError, PersonError, ThresholdError};
-use toolkit_security::SecurityContext;
 use crate::domain::metric::{
     CreateMetricRequest, Metric, MetricSummary, TableColumn, UpdateMetricRequest,
 };
@@ -23,6 +22,7 @@ use crate::domain::query::{
 use crate::domain::threshold;
 use crate::domain::threshold::{CreateThresholdRequest, Threshold, UpdateThresholdRequest};
 use crate::infra::db::entities;
+use toolkit_security::SecurityContext;
 
 // ── Health ──────────────────────────────────────────────────
 

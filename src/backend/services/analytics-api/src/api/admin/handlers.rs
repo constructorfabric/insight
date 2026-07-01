@@ -17,8 +17,8 @@ use uuid::Uuid;
 use crate::api::AppState;
 use crate::api::canonical_json::CanonicalJson;
 use crate::api::error::ThresholdAdminError;
-use toolkit_security::SecurityContext;
 use crate::domain::admin_threshold::dto::{CreateRequest, ListFilters, UpdateRequest};
+use toolkit_security::SecurityContext;
 
 /// `GET /v1/admin/metric-thresholds`.
 pub async fn list(

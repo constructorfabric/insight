@@ -34,13 +34,13 @@ use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Sta
 use sea_orm_migration::MigratorTrait;
 use uuid::Uuid;
 
-use toolkit_security::SecurityContext;
 use crate::domain::admin_threshold::dto::{CreateRequest, Scope, UpdateRequest};
 use crate::domain::admin_threshold::service::AdminThresholdService;
 use crate::domain::auth::{ConfigTenantAuthorization, TenantAuthorization};
 use crate::domain::schema_validator::SchemaValidator;
 use crate::infra::cache::catalog_cache::{CatalogCache, NoopCatalogCache};
 use crate::migration::Migrator;
+use toolkit_security::SecurityContext;
 
 const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
 

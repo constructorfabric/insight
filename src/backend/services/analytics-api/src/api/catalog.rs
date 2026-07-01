@@ -23,8 +23,8 @@ use toolkit_canonical_errors::CanonicalError;
 
 use super::AppState;
 use super::canonical_json::CanonicalJson;
-use toolkit_security::SecurityContext;
 use crate::domain::catalog::response::GetMetricsRequest;
+use toolkit_security::SecurityContext;
 
 /// `POST /v1/catalog/get_metrics` handler.
 ///

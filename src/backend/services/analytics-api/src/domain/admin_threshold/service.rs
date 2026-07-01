@@ -40,7 +40,6 @@ use crate::api::admin::error_map::{
     map_db_err, not_tenant_admin_response, sanity_bound_response, scope_shape_response,
     threshold_locked_response, threshold_not_found_response, unknown_or_disabled_metric_response,
 };
-use toolkit_security::SecurityContext;
 use crate::domain::admin_threshold::audit_emitter::{
     AuditEmitter, BypassAttempt, EventKind, LockTransition, attempted_values_for,
 };
@@ -52,6 +51,7 @@ use crate::domain::admin_threshold::repository;
 use crate::domain::auth::TenantAuthorization;
 use crate::domain::schema_validator::SchemaValidator;
 use crate::infra::cache::catalog_cache::{CatalogCache, InvalidateMode};
+use toolkit_security::SecurityContext;
 
 /// Maximum `lock_reason` length — matches the DB CHECK
 /// `chk_metric_threshold_lock_reason_length` and the DESIGN §3.7 line
@@ -102,7 +102,10 @@ impl AdminThresholdService {
         ctx: &SecurityContext,
         filters: &ListFilters,
     ) -> Result<ListResponse, Response> {
-        if !self.tenant_auth.is_tenant_admin(ctx.subject_tenant_id(), ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
         let rows = repository::list_thresholds(&self.db, ctx.subject_tenant_id(), filters)
@@ -163,7 +166,10 @@ impl AdminThresholdService {
         ctx: &SecurityContext,
         id: Uuid,
     ) -> Result<ThresholdView, Response> {
-        if !self.tenant_auth.is_tenant_admin(ctx.subject_tenant_id(), ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
         let row = repository::find_threshold(&self.db, id)
@@ -209,7 +215,10 @@ impl AdminThresholdService {
         req: &CreateRequest,
     ) -> Result<ThresholdView, Response> {
         // Step 1: authz (pure — trait call, no DB).
-        if !self.tenant_auth.is_tenant_admin(ctx.subject_tenant_id(), ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
 
@@ -405,7 +414,10 @@ impl AdminThresholdService {
         req: &UpdateRequest,
     ) -> Result<ThresholdView, Response> {
         // Step 1: authz (pure).
-        if !self.tenant_auth.is_tenant_admin(ctx.subject_tenant_id(), ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
 
@@ -651,7 +663,10 @@ impl AdminThresholdService {
     ///
     /// Returns a fully-formed `Response` envelope on rejection.
     pub async fn delete(&self, ctx: &SecurityContext, id: Uuid) -> Result<(), Response> {
-        if !self.tenant_auth.is_tenant_admin(ctx.subject_tenant_id(), ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
         let existing = repository::find_threshold(&self.db, id)
