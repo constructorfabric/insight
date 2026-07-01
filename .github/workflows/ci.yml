@@ -15,6 +15,7 @@ on:
     paths:
       - "src/backend/**"
       - "src/ingestion/connectors/**"
+      - "src/ingestion/reconcile-connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
   workflow_dispatch:
@@ -271,6 +272,53 @@ jobs:
           path: coverage/*.xml
           # A connector with no tests legitimately produces no report (exit 5).
           if-no-files-found: ignore
+
+  # Standalone unit tests + 80% coverage for the reconcile-connectors Python
+  # toolbox (folded in from a separate workflow). Pure unit tests -- no docker/
+  # ClickHouse/MariaDB -- so they run outside the bronze-to-API e2e rig.
+  # reconcile-connectors is deliberately NOT a coverage-gate component, so this
+  # job SELF-ENFORCES 80% via --cov-fail-under and uploads under a
+  # non-`cobertura-*` artifact name, keeping it out of the coverage-gate below
+  # (which downloads `cobertura-*` and judges only registered components).
+  # It has no `needs`, so it runs on every ci.yml trigger (a ~15s check).
+  reconcile-python:
+    name: reconcile python unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: python -m pip install --upgrade pip pytest pytest-cov pyyaml
+      - name: Run unit tests + collect coverage (gate 80%)
+        working-directory: src/ingestion/reconcile-connectors/python
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/coverage"
+          python -m pytest \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-report="xml:$GITHUB_WORKSPACE/coverage/reconcile-connectors-coverage.xml" \
+            --cov-fail-under=80
+      - name: Coverage summary
+        if: always()
+        working-directory: src/ingestion/reconcile-connectors/python
+        run: |
+          {
+            echo '### reconcile-connectors — Python coverage (80% gate)'
+            echo '```'
+            python -m coverage report || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reconcile-connectors-coverage
+          path: coverage/reconcile-connectors-coverage.xml
+          if-no-files-found: error
 
   # Single authority: per-component overall + the global new-code gate. Runs even
   # when some producers were skipped (unchanged languages) via `!cancelled()`,
