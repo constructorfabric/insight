@@ -19,21 +19,23 @@ resources:
     cpu: 500m
     memory: 512Mi
 
-# Pre-provisioned Secret with the full analytics-api configuration:
-#   ANALYTICS__database_url, ANALYTICS__clickhouse_*, ANALYTICS__redis_url,
-#   ANALYTICS__identity_url, ANALYTICS__bind_addr,
-#   ANALYTICS__metric_catalog__tenant_default_id (optional).
+# Pre-provisioned Secret carrying the gears-rust host's leaf-config overrides
+# (injected via envFrom; they override the mounted config ConfigMap):
+#   APP__gears__analytics-api__config__database_url
+#   APP__gears__analytics-api__config__clickhouse_url|_database|_user|_password
+#   APP__gears__analytics-api__config__redis_url
+#   APP__gears__analytics-api__config__identity_url
+#   APP__gears__analytics-api__config__metric_catalog__tenant_default_id (optional)
 #
-# `ANALYTICS__metric_catalog__tenant_default_id` (UUID, optional): single-
-# tenant fallback for the Metric Catalog per DESIGN §2.2
-# `cpt-metric-cat-constraint-tenant-default`. When set, requests without an
-# `X-Insight-Tenant-Id` header resolve to this tenant; when unset (multi-
-# tenant install), tenant-less requests are rejected with a canonical
-# `invalid_argument` envelope carrying `field_violations[{field:
-# "tenant_id", reason: "TENANT_UNRESOLVED"}]`. Mirrors
-# `IDENTITY__identity__tenant_default_id` in the identity service. The
-# session-bound tenant ALWAYS wins over the configured default (security
-# invariant; see `domain::auth::TenantAuthorization`).
+# `..._metric_catalog__tenant_default_id` (UUID, optional): single-tenant
+# fallback for the Metric Catalog per DESIGN §2.2
+# `cpt-metric-cat-constraint-tenant-default`. Under the auth-disabled host the
+# platform api-gateway is the sole authenticator and this host injects a
+# single-tenant SecurityContext (toolkit-security's DEFAULT_TENANT_ID); the
+# analytics-api gear overrides the tenant from the `X-Insight-Tenant-Id`
+# header when present. The session-bound tenant ALWAYS wins over the
+# configured default (security invariant; see
+# `domain::auth::TenantAuthorization`).
 #
 # The umbrella populates `insight-analytics-api-config` automatically; for
 # standalone installs the operator pre-creates an equivalent Secret and

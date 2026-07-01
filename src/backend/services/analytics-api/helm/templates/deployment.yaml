@@ -13,10 +13,12 @@ spec:
     metadata:
       labels:
         {{- include "insight-analytics-api.selectorLabels" . | nindent 8 }}
-      {{- with .Values.podAnnotations }}
       annotations:
+        # Roll pods when the gears config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       {{- with .Values.global }}
       {{- with .imagePullSecrets }}
@@ -37,13 +39,23 @@ spec:
         - name: analytics-api
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # gears-rust host: structural config from the mounted ConfigMap;
+          # leaf values (DB/tenant) from the Secret via envFrom below.
+          command: ["/app/analytics-api"]
+          args: ["-c", "/app/config/analytics.yaml", "run"]
+          volumeMounts:
+            - name: analytics-config
+              mountPath: /app/config/analytics.yaml
+              subPath: analytics.yaml
+              readOnly: true
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
           envFrom:
             # Operator MUST pre-create this Secret (umbrella does it
-            # automatically as `insight-analytics-api-config`).
+            # automatically as `insight-analytics-api-config`). Provides the
+            # APP__gears__analytics-api__config__* leaf overrides.
             - secretRef:
                 name: {{ required "existingSecret is required (umbrella provides `insight-analytics-api-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
           securityContext:
@@ -62,9 +74,19 @@ spec:
         - name: migrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["/app/analytics-api", "migrate"]
+          command: ["/app/analytics-api"]
+          args: ["-c", "/app/config/analytics.yaml", "migrate"]
+          volumeMounts:
+            - name: analytics-config
+              mountPath: /app/config/analytics.yaml
+              subPath: analytics.yaml
+              readOnly: true
           envFrom:
             - secretRef:
                 name: {{ .Values.existingSecret | quote }}
           securityContext:
             allowPrivilegeEscalation: false
+      volumes:
+        - name: analytics-config
+          configMap:
+            name: {{ include "insight-analytics-api.fullname" . }}-config
