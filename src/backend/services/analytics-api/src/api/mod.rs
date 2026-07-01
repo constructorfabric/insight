@@ -75,11 +75,14 @@ pub struct AppState {
 // table; splitting it across helpers would only obscure the 1:1 route↔handler map.
 #[allow(clippy::too_many_lines)]
 pub fn register_routes(
-    router: Router,
+    host_router: Router,
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let mut router: Router = router;
+    // Build our endpoints on a fresh sub-router so the tenant-override
+    // middleware + `AppState` extension scope to analytics-api's routes only —
+    // not the host's `/health`, `/healthz`, `/openapi.json`, `/docs`.
+    let mut router: Router = Router::new();
 
     // Metric CRUD
     router = OperationBuilder::get("/v1/metrics")
@@ -300,22 +303,13 @@ pub fn register_routes(
     // the host-injected `SecurityContext` and rebuilds it when an
     // `X-Insight-Tenant-Id` override header is present. It carries no
     // `AppState` / auth-trait state.
-    let api = router.layer(from_fn(auth::tenant_middleware));
+    // Scope the tenant-override middleware + shared state to our routes, then
+    // merge into the host router. `/health` + `/healthz` are provided by the
+    // api-gateway host gear (its `rest_prepare`), so we must NOT register them
+    // here — doing so panics with "Overlapping method route".
+    let api = router
+        .layer(from_fn(auth::tenant_middleware))
+        .layer(Extension(state));
 
-    // Health probe — registered on a SEPARATE router merged *after* the
-    // tenant middleware, so it stays off the tenant-override path.
-    // Kubernetes liveness/readiness probes hit `/health` directly on the pod
-    // (no gateway hop, no `X-Insight-Tenant-Id` header), so it must answer
-    // without tenant resolution.
-    let health = OperationBuilder::get("/health")
-        .operation_id("analytics_api.health")
-        .summary("Liveness/readiness probe")
-        .public()
-        .json_response(StatusCode::OK, "Service healthy")
-        .handler(handlers::health)
-        .register(Router::new(), openapi);
-
-    // Attach the shared state via an Extension layer (route state stays `()`),
-    // then merge the public health router.
-    api.merge(health).layer(Extension(state))
+    host_router.merge(api)
 }

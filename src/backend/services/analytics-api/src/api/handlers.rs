@@ -24,11 +24,8 @@ use crate::domain::threshold::{CreateThresholdRequest, Threshold, UpdateThreshol
 use crate::infra::db::entities;
 use toolkit_security::SecurityContext;
 
-// ── Health ──────────────────────────────────────────────────
-
-pub async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({ "status": "healthy" }))
-}
+// Note: `/health` + `/healthz` are provided by the api-gateway host gear
+// (see `register_routes`), so this service defines no health handler.
 
 // ── Person lookup ──────────────────────────────────────────
 
