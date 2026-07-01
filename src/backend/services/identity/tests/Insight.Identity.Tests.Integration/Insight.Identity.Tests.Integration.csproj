@@ -3,6 +3,17 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
+  <!-- Absolute path to the committed OpenAPI contract, resolved at BUILD time
+       from this project's own location and injected as assembly metadata. The
+       drift test reads it instead of walking the filesystem for a docs/ marker.
+       It's an opaque metadata string (not a compiler-rewritten source path), so
+       it survives deterministic/CI builds. -->
+  <PropertyGroup>
+    <CommittedOpenApiSpec>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../../../../../docs/components/backend/identity/openapi.json'))</CommittedOpenApiSpec>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="CommittedOpenApiSpec" Value="$(CommittedOpenApiSpec)" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <!-- Coverlet data collector. Backs the "XPlat Code Coverage" collector that

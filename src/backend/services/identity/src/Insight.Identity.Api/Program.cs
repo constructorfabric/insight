@@ -188,6 +188,32 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(o =>
 
 builder.Services.AddRouting();
 
+// OpenAPI document (parity with analytics-api). The committed contract at
+// docs/components/backend/identity/openapi.json is regenerated from the live
+// `GET /openapi.json` this serves, and gated against drift by the
+// OpenApiContractTests integration test. Title/Version are pinned to the API
+// contract — deliberately NOT the assembly version — so the drift gate fires
+// only on real route/schema changes, not on every release bump.
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer((document, _, _) =>
+    {
+        document.Info.Title = "Identity API";
+        document.Info.Version = "1.0.0";
+        document.Info.Description =
+            "Resolves people, org-chart parent/subordinates, roles, and row-level "
+            + "visibility for Insight. Backed by MariaDB (identity tables) with a "
+            + "ClickHouse-sourced bulk re-seed. Fronted by the API Gateway.";
+        // Drop the request-derived `servers` entry (e.g. the internal bind
+        // http://0.0.0.0:8082). Consumers reach this service through the API
+        // Gateway, not its pod address, and a host-specific URL would make the
+        // committed contract environment-dependent — drifting the gate between
+        // local generation and CI. Parity with analytics-api's empty `servers`.
+        document.Servers.Clear();
+        return Task.CompletedTask;
+    });
+});
+
 var bindAddr = builder.Configuration[$"{AppOptions.SectionName}:bind_addr"]
     ?? builder.Configuration["bind_addr"]
     ?? "0.0.0.0:8082";
@@ -289,6 +315,11 @@ app.MapRoleEndpoints();
 app.MapPersonRoleEndpoints();
 app.MapSubchartEndpoints();
 app.MapPersonsSeedEndpoints();
+
+// Serve the OpenAPI document at /openapi.json (parity with analytics-api).
+// Public — no caller/tenant header required — so docs tooling and the drift
+// gate can fetch the contract; identity endpoints are anonymous today anyway.
+app.MapOpenApi("/openapi.json");
 
 await app.RunAsync().ConfigureAwait(false);
 
