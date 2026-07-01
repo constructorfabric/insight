@@ -1118,11 +1118,12 @@ jobs:
           echo "Umbrella version $CURRENT → $NEXT (appVersion → $NEW_APP)"
           yq -i ".version = \"$NEXT\""        charts/insight/Chart.yaml
           yq -i ".appVersion = \"$NEW_APP\""  charts/insight/Chart.yaml
-          # Mirror the new chart version into the sample gitops starter
-          # at docs/deploy/.insight-version so external operators tracking
-          # `main` pick up new chart releases on the next `git pull`.
+          # Pin new version in docs and sample gitops  
           if [ -f docs/deploy/.insight-version ]; then
             echo "$NEXT" > docs/deploy/.insight-version
+          fi
+          if [ -f deploy/gitops/.insight-version ]; then
+            echo "$NEXT" > deploy/gitops/.insight-version
           fi
           echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
 
@@ -1191,7 +1192,8 @@ jobs:
                   src/backend/services/api-gateway/helm/Chart.yaml \
                   src/backend/services/analytics-api/helm/Chart.yaml \
                   src/backend/services/identity/helm/Chart.yaml \
-                  src/frontend/helm/Chart.yaml
+                  src/frontend/helm/Chart.yaml \
+                  deploy/gitops/.insight-version
           # Sample gitops starter under docs/deploy — pin moves with the
           # umbrella. Stage only if present (the file is introduced by
           # the gitops-sample PR and only lives on `main` after it merges).

@@ -1,0 +1,256 @@
+name: Functional K3s Smoke
+
+# Fork-safe deployment smoke for the Insight gitops path:
+# 1. create a GitHub-hosted ephemeral K3s cluster
+# 2. use the committed functional-ci gitops environment
+# 3. run deploy/gitops Makefile targets for bootstrap, sealing, L2, and L3
+# 4. dump Kubernetes/Helm diagnostics on failure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  K3D_VERSION: v5.9.0
+  K3S_IMAGE: rancher/k3s:v1.36.1-k3s1
+  CLUSTER_NAME: insight-functional
+  KUBE_CONTEXT: k3d-insight-functional
+  GITOPS_ENV: functional-ci
+  INSIGHT_NAMESPACE: insight
+  INFRA_NAMESPACE: insight-infra
+  YQ_VERSION: v4.44.3
+  KUBESEAL_VERSION: v0.27.2
+  CLICKHOUSE_PASSWORD: insightpass123
+  MARIADB_PASSWORD: insightpass123
+  MARIADB_ROOT_PASSWORD: insightroot123
+  REDIS_PASSWORD: insightpass123
+
+jobs:
+  cluster-smoke:
+    name: K3s GitOps Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+
+      - name: Install gitops CLI tools
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+            -o /tmp/yq
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+
+          curl -fsSL "https://github.com/bitnami-labs/sealed-secrets/releases/download/${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION#v}-linux-amd64.tar.gz" \
+            -o /tmp/kubeseal.tar.gz
+          tar -xzf /tmp/kubeseal.tar.gz -C /tmp kubeseal
+          sudo install -m 0755 /tmp/kubeseal /usr/local/bin/kubeseal
+
+          yq --version
+          kubeseal --version
+
+      - name: Install k3d
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://raw.githubusercontent.com/k3d-io/k3d/${K3D_VERSION}/install.sh" \
+            | TAG="${K3D_VERSION}" bash
+          k3d version
+
+      - name: Create K3s cluster
+        run: |
+          set -euo pipefail
+          k3d cluster create "${CLUSTER_NAME}" \
+            --image "${K3S_IMAGE}" \
+            --k3s-arg "--disable=traefik@server:0" \
+            --agents 1 \
+            --wait \
+            --timeout 120s
+          kubectl config use-context "${KUBE_CONTEXT}"
+
+      - name: Verify cluster health
+        run: |
+          set -euo pipefail
+          kubectl cluster-info
+          kubectl get nodes -o wide
+          kubectl -n kube-system get pods -o wide
+
+          kubectl wait nodes --all --for=condition=Ready --timeout=120s
+
+          deadline=$((SECONDS + 120))
+          while (( SECONDS < deadline )); do
+            unhealthy="$(
+              kubectl get pods -A \
+                --field-selector=status.phase!=Succeeded \
+                -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.status.phase}{"\t"}{range .status.containerStatuses[*]}{.ready}{":"}{.state.waiting.reason}{":"}{.state.terminated.reason}{" "}{end}{"\n"}{end}' \
+                | awk '
+                    $2 != "Running" { print; next }
+                    {
+                      for (i = 3; i <= NF; i++) {
+                        split($i, s, ":")
+                        if (s[1] != "true" || s[2] != "" || s[3] != "") {
+                          print
+                          next
+                        }
+                      }
+                    }
+                  '
+            )"
+
+            if [[ -z "$unhealthy" ]]; then
+              echo "Cluster is healthy."
+              exit 0
+            fi
+
+            echo "Waiting for healthy cluster:"
+            echo "$unhealthy"
+            sleep 5
+          done
+
+          echo "Cluster did not become healthy before timeout." >&2
+          kubectl get pods -A -o wide >&2
+          kubectl get events -A --sort-by=.lastTimestamp >&2
+          exit 1
+
+      - name: Bootstrap gitops prerequisites
+        run: |
+          set -euo pipefail
+          make -C deploy/gitops bootstrap ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}"
+          make -C deploy/gitops fetch-cert ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}"
+
+      - name: Seal gitops secrets
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          secret_dir="${RUNNER_TEMP}/insight-functional-secrets"
+          mkdir -p "${secret_dir}"
+
+          kubectl -n "${INFRA_NAMESPACE}" create secret generic clickhouse-creds \
+            --from-literal=admin-password="${CLICKHOUSE_PASSWORD}" \
+            --dry-run=client -o yaml > "${secret_dir}/clickhouse-creds.yaml"
+          kubectl -n "${INFRA_NAMESPACE}" create secret generic mariadb-creds \
+            --from-literal=mariadb-root-password="${MARIADB_ROOT_PASSWORD}" \
+            --from-literal=mariadb-password="${MARIADB_PASSWORD}" \
+            --dry-run=client -o yaml > "${secret_dir}/mariadb-creds.yaml"
+          kubectl -n "${INFRA_NAMESPACE}" create secret generic redis-creds \
+            --from-literal=redis-password="${REDIS_PASSWORD}" \
+            --dry-run=client -o yaml > "${secret_dir}/redis-creds.yaml"
+          kubectl -n "${INSIGHT_NAMESPACE}" create secret generic insight-db-creds \
+            --from-literal=clickhouse-password="${CLICKHOUSE_PASSWORD}" \
+            --from-literal=mariadb-password="${MARIADB_PASSWORD}" \
+            --from-literal=mariadb-root-password="${MARIADB_ROOT_PASSWORD}" \
+            --from-literal=redis-password="${REDIS_PASSWORD}" \
+            --dry-run=client -o yaml > "${secret_dir}/insight-db-creds.yaml"
+
+          make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INFRA_NAMESPACE}" NAME=clickhouse-creds VALUE_FILE="${secret_dir}/clickhouse-creds.yaml"
+          make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INFRA_NAMESPACE}" NAME=mariadb-creds VALUE_FILE="${secret_dir}/mariadb-creds.yaml"
+          make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INFRA_NAMESPACE}" NAME=redis-creds VALUE_FILE="${secret_dir}/redis-creds.yaml"
+          make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INSIGHT_NAMESPACE}" NAME=insight-db-creds VALUE_FILE="${secret_dir}/insight-db-creds.yaml"
+
+          rm -rf "${secret_dir}"
+
+      - name: Install L2 infra via gitops Makefile
+        run: |
+          set -euo pipefail
+          make -C deploy/gitops system ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}"
+          make -C deploy/gitops system-status ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}"
+
+      - name: Deploy Insight via gitops Makefile
+        run: |
+          set -euo pipefail
+          helm dependency update charts/insight
+          INSIGHT_VERSION="$(yq -r '.version' charts/insight/Chart.yaml)"
+          make -C deploy/gitops deploy-app \
+            ENV="${GITOPS_ENV}" \
+            KUBE_CTX="${KUBE_CONTEXT}" \
+            CHART=../../charts/insight \
+            INSIGHT_VERSION="${INSIGHT_VERSION}" \
+            TIMEOUT=5m
+
+      - name: Verify Insight workloads
+        run: |
+          set -euo pipefail
+          make -C deploy/gitops status ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}" NAMESPACE="${INSIGHT_NAMESPACE}"
+
+          kubectl -n "${INSIGHT_NAMESPACE}" get pods -o wide
+          kubectl -n "${INSIGHT_NAMESPACE}" get svc
+
+          while IFS= read -r deployment; do
+            kubectl -n "${INSIGHT_NAMESPACE}" rollout status "${deployment}" --timeout=5m
+          done < <(kubectl -n "${INSIGHT_NAMESPACE}" get deployments -o name)
+
+          while IFS= read -r statefulset; do
+            kubectl -n "${INSIGHT_NAMESPACE}" rollout status "${statefulset}" --timeout=5m
+          done < <(kubectl -n "${INSIGHT_NAMESPACE}" get statefulsets -o name)
+
+          while IFS= read -r job; do
+            kubectl -n "${INSIGHT_NAMESPACE}" wait "${job}" \
+              --for=condition=Complete \
+              --timeout=5m
+          done < <(kubectl -n "${INSIGHT_NAMESPACE}" get jobs -o name)
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo "::group::all pods"
+          kubectl get pods -A -o wide || true
+          echo "::endgroup::"
+
+          echo "::group::gitops status"
+          make -C deploy/gitops system-status ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}" || true
+          make -C deploy/gitops status ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}" NAMESPACE="${INSIGHT_NAMESPACE}" || true
+          echo "::endgroup::"
+
+          echo "::group::infra resources"
+          kubectl -n "${INFRA_NAMESPACE}" get all,pvc,secret,configmap,job,pod -o wide || true
+          echo "::endgroup::"
+
+          echo "::group::insight resources"
+          kubectl -n "${INSIGHT_NAMESPACE}" get all,pvc,secret,configmap,job,pod -o wide || true
+          echo "::endgroup::"
+
+          echo "::group::pod descriptions"
+          kubectl -n "${INFRA_NAMESPACE}" describe pods || true
+          kubectl -n "${INSIGHT_NAMESPACE}" describe pods || true
+          echo "::endgroup::"
+
+          echo "::group::pod logs"
+          for namespace in "${INFRA_NAMESPACE}" "${INSIGHT_NAMESPACE}"; do
+            while IFS= read -r pod; do
+              echo "----- ${namespace}/${pod} -----"
+              kubectl -n "${namespace}" logs "${pod}" --all-containers --prefix --tail=200 || true
+            done < <(kubectl -n "${namespace}" get pods -o name 2>/dev/null || true)
+          done
+          echo "::endgroup::"
+
+          echo "::group::cluster events"
+          kubectl get events -A --sort-by=.lastTimestamp || true
+          echo "::endgroup::"
+
+          echo "::group::helm status"
+          helm -n "${INFRA_NAMESPACE}" list || true
+          helm -n "${INFRA_NAMESPACE}" status mariadb || true
+          helm -n "${INFRA_NAMESPACE}" status redis || true
+          helm -n "${INFRA_NAMESPACE}" status clickhouse || true
+          helm -n "${INSIGHT_NAMESPACE}" status insight || true
+          echo "::endgroup::"
+
+          echo "::group::gitops deploy logs"
+          find deploy/gitops/.deploy -maxdepth 1 -type f -print -exec tail -200 {} \; || true
+          echo "::endgroup::"
+
+      - name: Delete K3s cluster
+        if: always()
+        run: |
+          set -euo pipefail
+          k3d cluster delete "${CLUSTER_NAME}" || true

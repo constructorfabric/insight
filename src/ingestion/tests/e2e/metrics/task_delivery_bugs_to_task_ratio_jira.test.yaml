@@ -1,0 +1,115 @@
+spec_version: 1
+description: >
+  Task Delivery · bugs_to_task_ratio · JIRA, end-to-end from BRONZE only.
+
+  Alice closes FOUR issues in Jan 2026 — three of issuetype "Task" and one "Bug".
+  Everything that drives the assertion is spelled out inline below; the templates
+  only supply invariant scaffolding (source_id, reporter, _airbyte_* columns, the
+  account_id → email mapping, the field catalog).
+
+  The issuetype lives in custom_fields_json (the snapshot reads
+  JSONExtract(custom_fields_json,'issuetype','name'), NOT the top-level issue_type
+  column). Each issue gets a status changelog row (In Progress → Closed) so
+  final_close_at lands on the close event — inside the Jan window. The pipeline:
+
+    bronze_jira.jira_issue/_history ─dbt→ staging ─(jira-enrich)→
+        silver.class_task_field_history → task_issue_current_state (MV)
+        → insight.jira_closed_tasks → task_delivery_bullet_rows → …0011.
+
+  jira_closed_tasks computes per (assignee, close-day):
+    tasks_closed = count()                      = 4   (every closed issue)
+    bugs_fixed   = countIf(issue_type = 'Bug')  = 1   (only R-4)
+  and the …0011 query_ref reduces bugs_to_task_ratio as
+    if(Σtasks_completed > 0, round(100 * Σbugs_fixed / Σtasks_completed, 1))
+  = round(100 * 1 / 4, 1) = 25.0.
+
+  Only `value` is asserted: cohort median/range come from the person's org_unit,
+  which depends on HR (insight.people.org_unit_id) that this fixture does not seed.
+
+bronze:
+  bronze_jira.jira_issue:
+    # Three Tasks + one Bug, all Closed and assigned to Alice. issuetype is the
+    # only field that varies (Task vs Bug); that is the driver of the ratio.
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: R-1
+      jira_id: R-1
+      unique_key: jira-test-R-1
+      id_readable: TSR-1
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: R-2
+      jira_id: R-2
+      unique_key: jira-test-R-2
+      id_readable: TSR-2
+      created: "2026-01-06T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: R-3
+      jira_id: R-3
+      unique_key: jira-test-R-3
+      id_readable: TSR-3
+      created: "2026-01-07T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: R-4
+      jira_id: R-4
+      unique_key: jira-test-R-4
+      id_readable: TSR-4
+      created: "2026-01-08T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10004","name":"Bug"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+  bronze_jira.jira_issue_history:
+    # One status transition into Closed per issue; created_at is the close event
+    # (all within Jan 2026).
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSR-1
+      changelog_id: "20001"
+      unique_key: jira-test-TSR-1-20001
+      created_at: "2026-01-10T14:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSR-2
+      changelog_id: "20002"
+      unique_key: jira-test-TSR-2-20002
+      created_at: "2026-01-15T14:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSR-3
+      changelog_id: "20003"
+      unique_key: jira-test-TSR-3-20003
+      created_at: "2026-01-18T14:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSR-4
+      changelog_id: "20004"
+      unique_key: jira-test-TSR-4-20004
+      created_at: "2026-01-20T14:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # IC Bullet Task Delivery (…0011): value = the requested person's own value.
+  # Alice closed 4 issues (1 Bug) in Jan → bugs_to_task_ratio = 25.0.
+  - name: bugs_to_task_ratio — IC bullet, jira (alice 1 bug / 4 tasks)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: bugs_to_task_ratio }
+        equal: { value: 25 }

@@ -136,13 +136,13 @@ The test file is what the test asserts on. There is no "regenerate from current 
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-principle-record-composition`
 
-A bronze row (or a template) is a field map that may carry a `$ref: "<file>#/<json-pointer>"` to inherit from another record; sibling keys override the base (closest wins). Reusable people/source records live in `specs/templates/*.yaml`. A test spells out only the fields it exercises; everything else is inherited. This keeps a test small while the seeded row stays complete.
+A bronze row (or a template) is a field map that may carry a `$ref: "<file>#/<json-pointer>"` to inherit from another record; sibling keys override the base (closest wins). Reusable people/source records live in `metrics/templates/*.yaml`. A test spells out only the fields it exercises; everything else is inherited. This keeps a test small while the seeded row stays complete.
 
 #### The table schema is the source of truth for a row's shape
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-principle-schema-is-truth`
 
-Per-table JSON schemas live in `specs/schemas/<db>.<table>.yaml` (the file stem is the full bronze table name, e.g. `bronze_m365.email_activity.yaml`) and are resolved by that name (the `bronze` key IS the table). After `$ref` resolution a row is padded with every missing schema column as `null` and validated; `additionalProperties:false` catches a misspelled column. Base templates carry the full column set (including the non-nullable `_airbyte_*` CDK columns, which transforms such as `insight.people`'s `argMax(..., _airbyte_extracted_at)` depend on).
+Per-table JSON schemas live in `metrics/schemas/<db>.<table>.yaml` (the file stem is the full bronze table name, e.g. `bronze_m365.email_activity.yaml`) and are resolved by that name (the `bronze` key IS the table). After `$ref` resolution a row is padded with every missing schema column as `null` and validated; `additionalProperties:false` catches a misspelled column. Base templates carry the full column set (including the non-nullable `_airbyte_*` CDK columns, which transforms such as `insight.people`'s `argMax(..., _airbyte_extracted_at)` depend on).
 
 ### 2.2 Constraints
 
@@ -322,7 +322,7 @@ A resolved bronze row must be a complete, well-typed table row. Centralizing sch
 
 ##### Responsibility scope
 
-Loads `specs/schemas/<db>.<table>.yaml`; pads a resolved record with missing schema properties as `null`; validates against the JSON schema (`additionalProperties:false`). Implements the post-step of `cpt-bronze-to-api-e2e-algo-yaml-resolve-refs`.
+Loads `metrics/schemas/<db>.<table>.yaml`; pads a resolved record with missing schema properties as `null`; validates against the JSON schema (`additionalProperties:false`). Implements the post-step of `cpt-bronze-to-api-e2e-algo-yaml-resolve-refs`.
 
 ##### Responsibility boundaries
 
@@ -345,7 +345,7 @@ Replaces `csv-asserter`. Dashboard metrics return many rows over a batch of quer
 
 Implements `cpt-bronze-to-api-e2e-algo-yaml-eval-expect`: selects a batch result by `id`; filters `result.items` to exactly one row by exact field equality; compares a subset of fields (`equal`, explicit `null`) or evaluates a CEL boolean (`assert`). Renders a precise failing-rule report.
 
-The CEL `assert` bindings are assembled in `e2e_lib/expect_engine.py::evaluate_case` (the `bindings` dict) and converted to CEL in `_eval_cel`:
+The CEL `assert` bindings are assembled in `lib/expect_engine.py::evaluate_case` (the `bindings` dict) and converted to CEL in `_eval_cel`:
 
 | Binding | Value | Present when |
 |---|---|---|

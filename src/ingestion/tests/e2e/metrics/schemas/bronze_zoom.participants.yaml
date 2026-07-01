@@ -1,0 +1,27 @@
+# Reusable JSON schema for bronze_zoom.participants (the columns the zoom collab
+# meeting models read). Zoom has NO bronze unique_key column — silver derives
+# MD5(tenant, source, lower(email), date-of-join_time); the staging model also
+# dedups participants via `LIMIT 1 BY (meeting_uuid, participant_uuid, join_time)`.
+schemas:
+  bronze_zoom.participants:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: string }
+      source_id: { type: string }
+      email: { type: string }
+      user_name: { type: [string, "null"] }
+      meeting_uuid: { type: string }
+      participant_uuid: { type: string }
+      join_time: { type: string }
+      leave_time: { type: string }
+      camera: { type: [string, "null"] }
+      share_desktop: { type: [boolean, "null"] }
+      share_application: { type: [boolean, "null"] }
+      share_whiteboard: { type: [boolean, "null"] }
+      video_connection_type: { type: [string, "null"] }

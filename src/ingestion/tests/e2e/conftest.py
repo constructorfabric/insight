@@ -29,16 +29,17 @@ import pytest
 
 from pathlib import Path
 
-from e2e_lib import clickhouse as ch
-from e2e_lib import compose, mariadb
-from e2e_lib.analytics_api import AnalyticsApiProcess, build, find_free_port
-from e2e_lib.ch_seeder import CHSeeder
-from e2e_lib.config import SessionConfig
-from e2e_lib.dbt_runner import DbtRunner
-from e2e_lib.fixture_loader import TestYaml, discover_tests, load as load_test
-from e2e_lib.metric_seed import seed_test_metrics
-from e2e_lib.migration_applier import apply_all as apply_ch_migrations
-from e2e_lib.worker import WorkerContext
+from lib import clickhouse as ch
+from lib import compose, mariadb
+from lib.analytics_api import AnalyticsApiProcess, find_free_port, locate_binary
+from lib.ch_seeder import CHSeeder
+from lib.config import SessionConfig
+from lib.dbt_runner import DbtRunner
+from lib.enrich import EnrichRunner
+from lib.fixture_loader import TestYaml, discover_tests, load as load_test
+from lib.metric_seed import seed_test_metrics
+from lib.migration_applier import apply_all as apply_ch_migrations
+from lib.worker import WorkerContext
 
 LOG = logging.getLogger("e2e.rig")
 
@@ -101,13 +102,16 @@ def compose_stack(session_cfg: SessionConfig):
 
 
 # Silver/staging tables that a fixture may READ via a gold view but NOT seed
-# (each collab fixture seeds at most one of the four class_collab_* tables, yet
-# insight.collab_bullet_rows reads all four). The per-test ledger only truncates
-# what a fixture seeds, so on a WARM ClickHouse (re-running `./e2e.sh test`
-# without `down`) the first collab fixture would inherit a prior session's rows
-# in the tables it does not seed — and stale rows in the dbt-rebuilt
-# class_collab_email_activity would skew its neighbours. Truncating these once
-# at session start makes warm re-runs deterministic; CI starts fresh anyway.
+# (each collab fixture seeds at most one class_collab_* table, yet
+# insight.collab_bullet_rows reads all four — and each class_collab_* unions
+# several per-source staging feeders). The per-test ledger only truncates what a
+# fixture seeds, so on a WARM ClickHouse (re-running `./e2e.sh test` without
+# `down`) the first collab fixture would inherit a prior session's rows in the
+# tables it does not seed — stale rows in a dbt-rebuilt class_collab_* would skew
+# its neighbours. The zoom staging models are also `incremental`/`append`, so a
+# warm rebuild would ALSO accumulate duplicate unique_keys (failing their dbt
+# `unique` test). Truncating these once at session start makes warm re-runs
+# deterministic; CI starts fresh anyway.
 _SESSION_START_TRUNCATE = [
     ("silver", "class_collab_email_activity"),
     ("silver", "class_collab_chat_activity"),
@@ -118,6 +122,55 @@ _SESSION_START_TRUNCATE = [
     ("staging", "m365__collab_meeting_activity"),
     ("staging", "m365__collab_document_activity_onedrive"),
     ("staging", "m365__collab_document_activity_sharepoint"),
+    # Zoom feeds class_collab_meeting_activity (cross-source meeting_hours).
+    ("staging", "zoom__collab_meeting_activity"),
+    ("staging", "zoom__meeting_sessions"),
+    # Task-tracking: the bullet/MV chain reads class_task_* even when a fixture
+    # seeds only one connector, and the enrich path writes staging.jira__task_*.
+    # Reset them once at session start so warm re-runs are deterministic (CI is
+    # fresh anyway); per-test TRUNCATE handles cross-test isolation.
+    ("silver", "class_task_field_history"),
+    ("silver", "class_task_users"),
+    ("silver", "class_task_field_metadata"),
+    ("silver", "class_task_worklogs"),
+    ("staging", "jira__task_field_history"),
+    ("staging", "jira_issue_field_snapshot"),
+    ("staging", "jira_changelog_items"),
+    ("staging", "jira__task_field_metadata"),
+    # claude_team specs build staging.claude_team__ai_dev_usage — an incremental
+    # `append` model with a dbt `unique` test on unique_key. Session-start reset
+    # keeps warm re-runs (reused CH volume, no `./e2e.sh down`) from accumulating
+    # duplicate keys.
+    ("staging", "claude_team__ai_dev_usage"),
+    # claude_team__ai_overage (cc_overage) is also incremental `append` with a
+    # dbt `unique` test — reset it too for warm-rerun determinism.
+    ("staging", "claude_team__ai_overage"),
+    # claude_enterprise specs build staging.claude_enterprise__ai_dev_usage — an
+    # incremental `append` model with a dbt `unique` test on unique_key.
+    # Session-start reset keeps warm re-runs (reused CH volume, no `./e2e.sh
+    # down`) from accumulating duplicate keys.
+    ("staging", "claude_enterprise__ai_dev_usage"),
+    # Wiki: class_wiki_pages / class_wiki_engagement are incremental
+    # (delete+insert, `_version > max`) and union BOTH outline + confluence. A
+    # warm re-run with the same seed _version produces no new rows, leaving the
+    # prior test's data in place → cross-test contamination. Reset at session
+    # start (max(_version) over the emptied table = 0, so the first test's real
+    # millis _version reloads fully). CI starts fresh anyway.
+    ("silver", "class_wiki_pages"),
+    ("silver", "class_wiki_engagement"),
+    ("silver", "class_wiki_activity"),
+    # ai_smoke (cursor) builds staging.cursor__ai_dev_usage — an incremental
+    # `append` model guarded by a dbt `unique` test on unique_key. Without a
+    # session-start reset, a warm re-run (reused CH volume, no `./e2e.sh down`)
+    # appends the same rows again → duplicate unique_keys → the unique test fails.
+    ("staging", "cursor__ai_dev_usage"),
+    # chatgpt_team specs build staging.chatgpt_team__ai_dev_usage (codex) and
+    # staging.chatgpt_team__ai_assistant_usage (chat) — both incremental `append`
+    # models with a dbt `unique` test on unique_key. Session-start reset keeps
+    # warm re-runs (reused CH volume, no `./e2e.sh down`) from accumulating
+    # duplicate keys.
+    ("staging", "chatgpt_team__ai_dev_usage"),
+    ("staging", "chatgpt_team__ai_assistant_usage"),
 ]
 
 
@@ -145,21 +198,22 @@ def dbt_runner(ch_migrations_applied: SessionConfig):
 
 @pytest.fixture(scope="session")
 def analytics_api(ch_migrations_applied: SessionConfig):
-    """Build + spawn the analytics-api binary. Its SeaORM migrations run on startup;
-    we then upsert any test-specific metrics from seed/metrics.yaml.
+    """Spawn the analytics-api binary baked into the runner image. Its SeaORM
+    migrations run on startup; we then upsert test-specific metrics from
+    seed/metrics.yaml.
 
-    If `cargo build` fails, this is a hard FAIL — identical locally and in CI.
+    If the binary is missing, this is a hard FAIL — identical locally and in CI.
     A skip here would make the whole transformation suite silently green while
-    testing nothing (e.g. when the runner's toolchain drifts behind the version
-    src/backend/Cargo.toml requires). If the binary can't build, the bronze→API
-    tests cannot run, so the only honest result is red.
+    testing nothing. The binary is built FROM ITS OWN Dockerfile and baked into the
+    runner image (see lib.analytics_api.locate_binary); if it isn't there the
+    bronze→API tests cannot run, so the only honest result is red.
     """
     cfg = ch_migrations_applied
-    from e2e_lib.analytics_api import ApiSpawnError  # local import to keep top clean
+    from lib.analytics_api import ApiSpawnError  # local import to keep top clean
     try:
-        binary = build(cfg)
+        binary = locate_binary(cfg)
     except ApiSpawnError as e:
-        pytest.fail(f"analytics-api binary not buildable: {e}", pytrace=False)
+        pytest.fail(f"analytics-api binary not available: {e}", pytrace=False)
     port = find_free_port()
     proc = AnalyticsApiProcess(cfg, binary, port)
     proc.start()
@@ -174,23 +228,29 @@ def ch_seeder(ch_migrations_applied: SessionConfig) -> CHSeeder:
     return CHSeeder(ch_migrations_applied)
 
 
+@pytest.fixture(scope="session")
+def enrich_runner(ch_migrations_applied: SessionConfig) -> EnrichRunner:
+    """Session-scoped: discovers connector enrich steps once; builds each crate lazily."""
+    return EnrichRunner(ch_migrations_applied)
+
+
 # ----------------------------------------------------------------------
 # yaml-rig: per-test parametrization and execution
 # ----------------------------------------------------------------------
 
 
-_SPECS_ROOT = Path(__file__).parent / "specs"
+_METRICS_ROOT = Path(__file__).parent / "metrics"
 
 
 def pytest_collection_modifyitems(config, items):
-    """Convenience: order smoke tests under meta/ first."""
-    items.sort(key=lambda i: 0 if "meta/" in str(i.path) else 1)
+    """Convenience: order rig smoke tests (meta/ + api/) first."""
+    items.sort(key=lambda i: 0 if ("meta/" in str(i.path) or "api/" in str(i.path)) else 1)
 
 
 def pytest_generate_tests(metafunc):
-    """Generate one `test_e2e_metric_smoke` invocation per discovered `*.test.yaml`."""
-    if "test_yaml" in metafunc.fixturenames and metafunc.function.__name__ == "test_e2e_metric_smoke":
-        paths = discover_tests(_SPECS_ROOT)
+    """Generate one `test_metric_smoke` invocation per discovered `*.test.yaml`."""
+    if "test_yaml" in metafunc.fixturenames and metafunc.function.__name__ == "test_metric_smoke":
+        paths = discover_tests(_METRICS_ROOT)
         metafunc.parametrize(
             "test_path",
             paths,

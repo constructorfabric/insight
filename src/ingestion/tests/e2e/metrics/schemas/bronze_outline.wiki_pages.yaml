@@ -1,0 +1,28 @@
+# Auto-generated JSON schema mirroring the connector bronze columns the dbt
+# model reads for bronze_outline.wiki_pages (+ the 4 _airbyte_* CDK columns).
+schemas:
+  bronze_outline.wiki_pages:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      unique_key: { type: string }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      page_id: { type: [string, "null"] }
+      space_id: { type: [string, "null"] }
+      title: { type: [string, "null"] }
+      status: { type: [string, "null"] }
+      author_id: { type: [string, "null"] }
+      author_email: { type: [string, "null"] }
+      last_editor_id: { type: [string, "null"] }
+      last_editor_email: { type: [string, "null"] }
+      parent_page_id: { type: [string, "null"] }
+      version_number: { type: [number, "null"] }
+      created_at: { type: [string, "null"] }
+      updated_at: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }

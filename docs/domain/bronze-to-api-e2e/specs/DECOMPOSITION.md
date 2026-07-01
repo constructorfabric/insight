@@ -55,7 +55,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 - **Depends On**: None
 
 - **Scope**:
-  - Directory layout: `src/ingestion/tests/e2e/{compose,fixtures,e2e_lib,meta}`
+  - Directory layout: `src/ingestion/tests/e2e/{compose,fixtures,lib,meta}`
   - `compose/docker-compose.yml` with ClickHouse 24.x + MariaDB 11.x pinned to production parity, ports on `127.0.0.1` only, randomized credentials per run
   - `conftest.py` with `pytest_sessionstart` hook orchestrating compose-up + healthcheck wait
   - `migration-applier` logic (small enough to live inline, not as a separate feature): `clickhouse-client --multiquery` over `src/ingestion/scripts/migrations/*.sql` in lexical order
@@ -137,7 +137,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
 - **Domain Model Entities**: `Fixture`, `SpecYaml`
 
-- **API**: (internal Python module — `e2e_lib.fixture_loader.load(path) -> Fixture`)
+- **API**: (internal Python module — `lib.fixture_loader.load(path) -> Fixture`)
 
 - **Data**: (read-only filesystem)
 

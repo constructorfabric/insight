@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from e2e_lib.expect_engine import ExpectError, evaluate_case
+from lib.expect_engine import ExpectError, evaluate_case
 
 
 pytestmark = pytest.mark.smoke

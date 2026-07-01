@@ -39,7 +39,8 @@ loc AS (
         person_key,
         week,
         SUM(if(file_category = 'code', lines_added, 0)) AS code_loc,
-        SUM(if(file_category = 'spec', lines_added, 0)) AS spec_lines
+        SUM(if(file_category = 'spec', lines_added, 0)) AS spec_lines,
+        SUM(if(file_category = 'config', lines_added, 0)) AS config_loc
     FROM {{ ref('fct_git_file_change') }} FINAL
     WHERE is_merge_commit = 0
       AND person_key != ''
@@ -51,7 +52,7 @@ prs AS (
         pr.tenant_id,
         pr.person_key,
         coalesce(mc.week, toStartOfWeek(pr.closed_on, 1)) AS week,
-        count() AS prs_merged
+        uniqExact(pr.unique_key) AS prs_merged
     FROM {{ ref('fct_git_pr') }} AS pr FINAL
     LEFT JOIN {{ ref('fct_git_commit') }} AS mc FINAL
         ON  mc.tenant_id   = pr.tenant_id
@@ -85,7 +86,8 @@ SELECT
     coalesce(commits.commits, 0)                                 AS commits,
     coalesce(prs.prs_merged, 0)                                  AS prs_merged,
     coalesce(loc.code_loc, 0)                                    AS code_loc,
-    coalesce(loc.spec_lines, 0)                                  AS spec_lines
+    coalesce(loc.spec_lines, 0)                                  AS spec_lines,
+    coalesce(loc.config_loc, 0)                                  AS config_loc
 FROM all_keys ak
 LEFT JOIN commits USING (tenant_id, person_key, week)
 LEFT JOIN loc     USING (tenant_id, person_key, week)

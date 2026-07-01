@@ -1,0 +1,124 @@
+spec_version: 1
+description: >
+  Task Delivery · due_date_compliance · JIRA, end-to-end from BRONZE only.
+
+  Alice closes FOUR issues in Jan 2026; THREE carry a due date, ONE does not.
+  Everything that drives the assertion is inline below (due_date, close date,
+  status); the templates only supply invariant scaffolding (source_id, reporter,
+  _airbyte_* columns, the account_id → email mapping, the field catalog).
+
+  The due date is set on the top-level bronze `due_date` column (a date set at
+  creation — the natural Jira shape).
+
+  REGRESSION GUARD: jira__issue_field_snapshot emits the due date with the
+  Jira-native field_id `duedate` (it previously emitted `due_date`, which
+  task_issue_current_state's `field_id = 'duedate'` filter silently dropped, so a
+  due date set only at creation never reached due_date_compliance). This test
+  seeds the due date on the snapshot ONLY (no `duedate` changelog item), so it
+  fails if that field_id regresses.
+
+  jira_closed_tasks computes per (assignee, close-day):
+    has_due_date_count = countIf(due_date_str != '')                     = 3
+    on_time_count      = countIf(due present AND close_date <= due_date)  = 2
+  and the …0011 query_ref reduces due_date_compliance as
+    if(Σwith_due > 0, round(100 * Σon_time / Σwith_due, 1)) = round(100*2/3,1) = 66.7.
+
+  on-time matrix (close_date <= due_date):
+    DD-1  due 2026-01-12  closed 2026-01-10  → on time
+    DD-2  due 2026-01-14  closed 2026-01-15  → LATE
+    DD-3  due 2026-01-20  closed 2026-01-18  → on time
+    DD-4  (no due date)   closed 2026-01-20  → excluded from denominator
+
+  Only `value` is asserted (cohort median/range depend on unseeded HR org_unit).
+
+bronze:
+  bronze_jira.jira_issue:
+    # due_date is the driver: DD-1..3 carry one, DD-4 leaves it unset (the base
+    # default ""). All four are Closed + assigned to Alice.
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DD-1
+      jira_id: DD-1
+      unique_key: jira-test-DD-1
+      id_readable: TSD-1
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-01-12"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DD-2
+      jira_id: DD-2
+      unique_key: jira-test-DD-2
+      id_readable: TSD-2
+      created: "2026-01-06T09:00:00"
+      due_date: "2026-01-14"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DD-3
+      jira_id: DD-3
+      unique_key: jira-test-DD-3
+      id_readable: TSD-3
+      created: "2026-01-07T09:00:00"
+      due_date: "2026-01-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DD-4
+      jira_id: DD-4
+      unique_key: jira-test-DD-4
+      id_readable: TSD-4
+      created: "2026-01-08T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+  bronze_jira.jira_issue_history:
+    # One status transition into Closed per issue; created_at is the close date
+    # used by the on-time comparison above.
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSD-1
+      changelog_id: "30001"
+      unique_key: jira-test-TSD-1-30001
+      created_at: "2026-01-10T14:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSD-2
+      changelog_id: "30002"
+      unique_key: jira-test-TSD-2-30002
+      created_at: "2026-01-15T14:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSD-3
+      changelog_id: "30003"
+      unique_key: jira-test-TSD-3-30003
+      created_at: "2026-01-18T14:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSD-4
+      changelog_id: "30004"
+      unique_key: jira-test-TSD-4-30004
+      created_at: "2026-01-20T14:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: templates/jira_task.yaml#/templates/field_duedate
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # IC Bullet Task Delivery (…0011): value = the requested person's own value.
+  # Alice: 3 issues with a due date, 2 closed on time → due_date_compliance = 66.7.
+  - name: due_date_compliance — IC bullet, jira (alice 2 on-time / 3 with due)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: due_date_compliance }
+        assert: "double(it.value) > 66.6 && double(it.value) < 66.8"

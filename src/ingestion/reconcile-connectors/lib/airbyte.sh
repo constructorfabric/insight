@@ -19,7 +19,7 @@
 #   - All functions use lowercase names with the `ab_` prefix.
 #   - Sensitive values (token, secret config) MUST NOT be echoed.
 #
-# Required env (set by callers via lib/env.sh-equivalent or run-init):
+# Required env (set by callers — main.sh / lib/env.sh):
 #   AIRBYTE_URL          — base URL, e.g. http://airbyte-server:8001
 #   INSIGHT_NAMESPACE    — K8s namespace where airbyte-auth-secrets lives
 # Optional env (with documented defaults):

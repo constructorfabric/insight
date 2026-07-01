@@ -85,7 +85,7 @@ services:
       - "${MARIADB_PORT:-3306}:3306"
     volumes:
       - mariadb-data:/var/lib/mysql
-      - ./compose/mariadb-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - ./deploy/compose/mariadb-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
@@ -115,9 +115,9 @@ services:
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - clickhouse-logs:/var/log/clickhouse-server
-      - ./compose/clickhouse-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - ./deploy/compose/clickhouse-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
       # Profile override — see the file for the join_use_nulls rationale.
-      - ./compose/clickhouse-user-defaults.xml:/etc/clickhouse-server/users.d/seed-defaults.xml:ro
+      - ./deploy/compose/clickhouse-user-defaults.xml:/etc/clickhouse-server/users.d/seed-defaults.xml:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:8123/ping"]
       interval: 5s
@@ -197,14 +197,14 @@ services:
       # selects which one; see CONTRIBUTING.md for the OIDC swap.
     volumes:
       # Bind-mount the host-built Linux binary over the baked one. The
-      # ./compose/build/api-gateway path is populated by `./dev-compose.sh up`
+      # ./deploy/compose/build/api-gateway path is populated by `./dev-compose.sh up`
       # (or `./dev-compose.sh build api-gateway`), which runs the
       # `build-rust` builder service under the `build` profile and writes
       # the freshly-compiled binary to /out/api-gateway/. A plain
       # `docker compose build` does NOT create this artefact — it only
       # builds the runtime image; the bind-mount source has to exist on
       # the host or compose errors out.
-      - ./compose/build/api-gateway/insight-api-gateway:/app/insight-api-gateway:ro
+      - ./deploy/compose/build/api-gateway/insight-api-gateway:/app/insight-api-gateway:ro
       # Mount the service's config dir so YAML edits don't require a
       # full image rebuild.
       - ./src/backend/services/api-gateway/config:/app/config:ro
@@ -243,7 +243,7 @@ services:
       ANALYTICS__redis_url:          "redis://redis:6379"
       ANALYTICS__metric_catalog__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
     volumes:
-      - ./compose/build/analytics-api/analytics-api:/app/analytics-api:ro
+      - ./deploy/compose/build/analytics-api/analytics-api:/app/analytics-api:ro
     command:
       - "/app/analytics-api"
       - "--"
@@ -270,7 +270,7 @@ services:
       IDENTITY__identity__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
     volumes:
       # The .NET publish dir is replaced wholesale, not just one binary.
-      - ./compose/build/identity:/app:ro
+      - ./deploy/compose/build/identity:/app:ro
     command:
       - "/app/Insight.Identity.Api.dll"   # <watched path — the published DLL>
       - "--"
@@ -367,7 +367,7 @@ services:
       # published image has no /api proxy because k8s ingress routes
       # /api → api-gateway directly; compose has no front-proxy so the
       # hop has to land locally.
-      - ./compose/front-ghcr-patch-template.sh:/compose/front-ghcr-patch-template.sh:ro
+      - ./deploy/compose/front-ghcr-patch-template.sh:/compose/front-ghcr-patch-template.sh:ro
     entrypoint: ["/bin/sh", "/compose/front-ghcr-patch-template.sh"]
     # Restate the image's baked CMD — compose's `entrypoint:` override
     # implicitly clears it, which would leave the patch script chaining
@@ -393,7 +393,7 @@ services:
     volumes:
       - ./src/backend:/workspace
       - rust-target:/target
-      - ./compose/build:/out
+      - ./deploy/compose/build:/out
     # The script overrides this command to pick a specific bin. Default
     # builds both Rust services.
     command:
@@ -415,7 +415,7 @@ services:
     working_dir: /src
     volumes:
       - ./src/backend/services/identity:/src
-      - ./compose/build/identity:/out
+      - ./deploy/compose/build/identity:/out
     command:
       - "bash"
       - "-c"
@@ -447,7 +447,7 @@ services:
     container_name: insight-seed-sample
     networks: [insight]
     build:
-      context: compose/seed
+      context: deploy/seed
       dockerfile: Dockerfile
     depends_on:
       # required: false → seeding an external DB doesn't need the local
@@ -472,6 +472,6 @@ services:
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-insight-local}"
     volumes:
       # Bind-mount the source so seed.py edits don't need a rebuild.
-      - ./compose/seed:/app:ro
+      - ./deploy/seed:/app:ro
       # Phase 2 will read these to apply gold view migrations.
       - ./src/ingestion/scripts/migrations:/migrations:ro

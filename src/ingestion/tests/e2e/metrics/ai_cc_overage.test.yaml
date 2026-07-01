@@ -1,0 +1,55 @@
+spec_version: 1
+description: >
+  Metric: cc_overage — IC Bullet AI (…0013), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Claude Team per-seat spend snapshot (used credits + monthly limit, in cents)
+    • silver: latest snapshot per seat/month; overage = max(0, used − limit) cents
+    • gold:   metric = sum of per-seat overage (cents) over the window
+
+  Team (median/range = the person's department):
+    alice used 300/limit 100 → 200¢ · bob 200/100 → 100¢ · carol 150/100 → 50¢
+    (alice row re-synced once → must not double) → median 100, range [50, 200].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_claude_team.claude_team_overage_spend:
+    # metric date = collection day (_airbyte_extracted_at = 2026-01-05 in template).
+    - $ref: templates/claude_team_overage.yaml#/templates/alice
+      unique_key: overage-alice-202601
+      monthly_credit_limit: 100
+      used_credits: 300
+    - $ref: templates/claude_team_overage.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: overage-alice-202601
+      monthly_credit_limit: 100
+      used_credits: 300
+    - $ref: templates/claude_team_overage.yaml#/templates/bob
+      unique_key: overage-bob-202601
+      monthly_credit_limit: 100
+      used_credits: 200
+    - $ref: templates/claude_team_overage.yaml#/templates/carol
+      unique_key: overage-carol-202601
+      monthly_credit_limit: 100
+      used_credits: 150
+
+cases:
+  - name: cc_overage — IC bullet (alice 200¢ vs team median, dedup holds)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        find: { metric_key: cc_overage }
+        equal: { value: 200, median: 100, range_min: 50, range_max: 200 }

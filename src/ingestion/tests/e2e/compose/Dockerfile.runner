@@ -1,12 +1,13 @@
 # Dev/CI runner for the Bronze-to-API E2E test framework.
 #
 # Bakes in:
-#   - Python 3.12 + e2e_lib deps (pytest, clickhouse-connect, pandas, dbt-clickhouse, …)
-#   - Rust 1.95 (cargo+rustc — matches `rust-version` in src/backend/Cargo.toml)
-#   - protobuf-compiler (used by some src/backend crates)
+#   - Python 3.12 + lib deps (pytest, clickhouse-connect, pandas, dbt-clickhouse, …)
+#   - the analytics-api binary and each connector's enrich binary, each COMPILED
+#     FROM ITS OWN Dockerfile and pulled in via `COPY --from=<ctx>` (the contexts
+#     are wired in docker-compose.runner.yml `runner.build.additional_contexts`).
 #
-# The repo is bind-mounted at /workspace; the cargo target dir + cargo registry
-# live in named volumes so incremental builds work across container restarts.
+# The rig compiles nothing itself — there is NO Rust toolchain here. The repo is
+# bind-mounted at /workspace at runtime.
 #
 # This image is the SAME one used locally and in CI — see ../e2e.sh and
 # .github/workflows/e2e-bronze-to-api.yml.
@@ -15,30 +16,15 @@ FROM python:3.12-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH \
-    RUST_VERSION=1.95.0
+    PYTHONUNBUFFERED=1
 
 # ── System tooling ──────────────────────────────────────────────────────
-# build-essential + pkg-config: cargo needs a linker and pkg-config for native
-# crate features; protobuf-compiler is required by some src/backend crates.
-# curl is for the rustup installer; ca-certificates so https works.
+# ca-certificates for HTTPS (pip, clickhouse-connect); git for any dbt tooling
+# that shells out. No compilers/toolchains: all binaries are baked in pre-built.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
         ca-certificates \
-        curl \
         git \
-        libssl-dev \
-        pkg-config \
-        protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
-
-# ── Rust toolchain (rustup; minimal profile keeps the image lean) ───────
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --no-modify-path --profile minimal --default-toolchain ${RUST_VERSION} \
-    && chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
 # ── Python deps (cached layer: only invalidates when pyproject changes) ─
 # Build context is the repo root, so we copy from src/ingestion/tests/e2e/
@@ -46,10 +32,18 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # /workspace via bind mount.
 WORKDIR /workspace/src/ingestion/tests/e2e
 COPY src/ingestion/tests/e2e/pyproject.toml ./pyproject.toml
-RUN mkdir -p e2e_lib && touch e2e_lib/__init__.py \
+RUN mkdir -p lib && touch lib/__init__.py \
     && pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e . \
-    && rm -rf e2e_lib
+    && rm -rf lib
+
+# ── Pre-built binaries (baked from each component's OWN Dockerfile) ───────
+# Named build contexts come from docker-compose.runner.yml build-only services;
+# the rig RUNS these (analytics-api as a spawned service; enrich between the
+# staging and silver dbt builds) but never compiles them. One COPY per binary
+# (matches the `additional_contexts` entries).
+COPY --from=analytics-api /app/analytics-api /usr/local/bin/analytics-api
+COPY --from=jira-enrich /usr/local/bin/jira-enrich /usr/local/bin/jira-enrich
 
 # ── Defaults ────────────────────────────────────────────────────────────
 ENV E2E_RUN_MODE=docker

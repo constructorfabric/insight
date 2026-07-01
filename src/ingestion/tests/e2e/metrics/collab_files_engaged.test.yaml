@@ -1,0 +1,94 @@
+spec_version: 1
+description: >
+  Metric: m365_files_engaged — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily OneDrive and SharePoint file-activity reports per person
+    • silver: each product deduped to per-person/day file counts (viewed/edited, shared)
+    • gold:   metric = sum of files viewed or edited over the window, across both products
+
+  Team (median/range = the person's department):
+    alice 30 OneDrive + 20 SharePoint = 50 · bob 15 OneDrive · carol 5 SharePoint
+    → median 15, range [5, 50].
+  Cases: alice cross-product (50) · bob OneDrive-only (15) · carol SharePoint-only (5).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_m365.onedrive_activity:
+    - $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-od-eng-20260105
+      viewedOrEditedFileCount: 30
+    - $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive  # verbatim duplicate -> must dedup, not double
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-od-eng-20260105
+      viewedOrEditedFileCount: 30
+    - $ref: templates/m365_onedrive.yaml#/templates/bob_onedrive
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-bob-od-eng-20260105
+      viewedOrEditedFileCount: 15
+
+  bronze_m365.sharepoint_activity:
+    - $ref: templates/m365_sharepoint.yaml#/templates/alice_sharepoint
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-alice-sp-eng-20260105
+      viewedOrEditedFileCount: 20
+    - $ref: templates/m365_sharepoint.yaml#/templates/carol_sharepoint
+      reportRefreshDate: "2026-01-05"
+      unique_key: m365-carol-sp-eng-20260105
+      viewedOrEditedFileCount: 5
+
+cases:
+  # team m365_files_engaged = [alice 30+20=50, bob 15, carol 5]
+  #   value (alice) = 50 ; median[5,15,50] = 15 ; range = [5,50]
+  - name: m365_files_engaged — alice OneDrive+SharePoint (cross-product sum vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: m365_files_engaged }
+        equal: { value: 50, median: 15, range_min: 5, range_max: 50 }
+
+  # bob is engaged via OneDrive only — proves the OneDrive product path directly
+  - name: m365_files_engaged — bob OneDrive-only (value 15 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_engaged }
+        equal: { value: 15, median: 15, range_min: 5, range_max: 50 }
+
+  # carol is engaged via SharePoint only — proves the SharePoint product path directly
+  - name: m365_files_engaged — carol SharePoint-only (value 5 vs team median/range)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        find: { metric_key: m365_files_engaged }
+        equal: { value: 5, median: 15, range_min: 5, range_max: 50 }

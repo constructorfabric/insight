@@ -41,10 +41,8 @@ The stack lifecycle is managed by the gitops deploy from `deploy/gitops` (see
 
 | Command | What it does |
 |---------|-------------|
-| `./run-sync.sh <connector> <tenant>` | Run sync + dbt pipeline now |
-| `./update-connectors.sh` | Re-upload all connector manifests to Airbyte |
-| `./update-connections.sh [tenant]` | Re-apply source + destination + connection configs |
-| `./update-workflows.sh [tenant]` | Regenerate and apply CronWorkflows |
+| `./run-sync.sh <connector> <tenant>` | Run sync + dbt pipeline now (manual one-shot) |
+| `./reconcile-connectors.sh [--connector <name>]` | Reconcile connector manifests, sources, connections, and CronWorkflows to descriptor + Secret state. Replaces the legacy `update-connectors.sh` / `update-connections.sh` / `update-workflows.sh`. Also runs in-cluster on a schedule. |
 
 ### Example
 
@@ -53,14 +51,9 @@ The stack lifecycle is managed by the gitops deploy from `deploy/gitops` (see
 cd deploy/gitops && make deploy ENV=local
 cd src/ingestion
 
-# Update M365 connector manifest after editing connector.yaml
-./update-connectors.sh
-
-# Update connections after changing tenant config or descriptor.yaml
-./update-connections.sh example-tenant
-
-# Update schedules after changing descriptor.yaml
-./update-workflows.sh
+# Reconcile manifests, sources, connections, and CronWorkflows after
+# editing connector.yaml / descriptor.yaml (idempotent; --connector to scope)
+./reconcile-connectors.sh
 
 # Run M365 sync for example-tenant right now
 ./run-sync.sh m365 example_tenant

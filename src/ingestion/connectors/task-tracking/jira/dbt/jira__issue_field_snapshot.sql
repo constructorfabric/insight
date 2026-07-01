@@ -7,11 +7,22 @@
     order_by=['unique_key'],
     settings={
         'allow_nullable_key': 1,
+    },
+    query_settings={
         'max_bytes_before_external_group_by': 2000000000,
         'max_bytes_before_external_sort': 2000000000,
     },
     tags=['staging', 'jira']
 ) }}
+
+{#-
+  `allow_nullable_key` is a MergeTree TABLE setting (CREATE TABLE … SETTINGS).
+  The `max_bytes_before_external_*` spill knobs are QUERY-execution settings, not
+  storage settings — ClickHouse rejects them in a table SETTINGS clause (code 115
+  UNKNOWN_SETTING on stricter builds, e.g. 24.8). They belong in `query_settings`,
+  which dbt-clickhouse applies to the INSERT … SELECT — the statement whose
+  GROUP BY / ORDER BY actually needs the disk spill.
+-#}
 
 -- One row per (issue, field_id) with current value_ids / value_displays.
 -- Consumed by `jira-enrich` to populate `IssueSnapshot.current_fields` so
@@ -154,9 +165,14 @@ FROM (
 
     UNION ALL
 
-    -- due_date
+    -- duedate. Emit the Jira-native field_id `duedate` (NOT `due_date`): the
+    -- changelog stream uses Jira's `fieldId="duedate"`, jira__task_field_metadata
+    -- carries `duedate` from bronze jira_fields, and the downstream consumer
+    -- `insight.task_issue_current_state` filters `field_id = 'duedate'`. Emitting
+    -- the underscored `due_date` here made snapshot-only due dates (set at creation,
+    -- never changed in the changelog) silently invisible to due_date_compliance.
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
-           'due_date',
+           'duedate',
            if(i.due_date IS NULL OR i.due_date = '', [], [toString(i.due_date)]),
            if(i.due_date IS NULL OR i.due_date = '', [], [toString(i.due_date)])
     FROM issue i

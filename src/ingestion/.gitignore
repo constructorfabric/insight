@@ -7,8 +7,10 @@ connectors/**/schemas/
 connectors/**/configured_catalog.json
 connectors/**/state.json
 
-# Generated CronWorkflows (created by sync-flows.sh from .tpl templates)
-# Templates are tracked; tenant dirs are generated at deploy time
+# Legacy: per-tenant CronWorkflow dirs were generated locally by the
+# now-removed sync-flows.sh. Reconcile applies CronWorkflows in-cluster, so
+# nothing writes these anymore; pattern kept so any stale local dirs stay
+# ignored. (workflows/onetime/*.tpl are tracked and unaffected.)
 workflows/*/
 !workflows/templates/
 !workflows/schedules/

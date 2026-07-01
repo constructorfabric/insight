@@ -1,0 +1,344 @@
+name: Lint, Test & Coverage Gate
+
+on:
+  # PR-only gate (+ manual dispatch). Coverage is reported self-contained via the
+  # GitHub Actions job summary — no external service, and no PR comment (fork PRs
+  # only get a read-only token, so a comment post 403s). Works on any plan.
+  #
+  # Topology: per-language producer jobs build + test under coverage and upload a
+  # Cobertura artifact each; the `coverage-gate` job downloads them all and runs
+  # the single language-agnostic checker (scripts/ci/coverage.py gate). coverage.py
+  # runs no tests — it only checks reports. Make `coverage-gate` the required
+  # status check in branch protection.
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/**"
+      - "src/ingestion/connectors/**"
+      - "scripts/ci/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Run ALL components (ignore the diff) — full coverage baseline"
+        type: boolean
+        default: false
+
+# A new push obsoletes any run still in flight for the same ref — cancel it so a
+# rebase/force-push doesn't leave a slow instrumented build burning minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # NB: `-D warnings` is intentionally NOT set globally. It belongs on the clippy
+  # lint step only — applying it to the instrumented coverage build turns benign
+  # warnings (e.g. feature-gated dead code in jira-enrich's default build) into
+  # hard errors. Warnings are gated by clippy; coverage just measures coverage.
+
+# Producers only read + upload artifacts; the gate only reads. No write scopes.
+permissions:
+  contents: read
+
+jobs:
+  # Detect which components a PR touches — via scripts/ci/coverage.py, the single
+  # component↔path map — and emit a per-language matrix of rich entries (each
+  # carries the fields its producer job needs to collect coverage). Downstream
+  # jobs run ONLY for changed components, so unchanged ones don't burn CI.
+  changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.detect.outputs.rust }}
+      dotnet: ${{ steps.detect.outputs.dotnet }}
+      python: ${{ steps.detect.outputs.python }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Fetch base branch
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - id: detect
+        env:
+          FULL: ${{ github.event.inputs.full }}
+        run: |
+          if [ "$FULL" = "true" ]; then
+            changed=$(python3 scripts/ci/changed.py --all)
+          else
+            changed=$(python3 scripts/ci/changed.py)
+          fi
+          echo "changed: $changed"
+          echo "rust=$(echo "$changed" | jq -c .rust)" >> "$GITHUB_OUTPUT"
+          echo "dotnet=$(echo "$changed" | jq -c .dotnet)" >> "$GITHUB_OUTPUT"
+          echo "python=$(echo "$changed" | jq -c .python)" >> "$GITHUB_OUTPUT"
+
+  # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
+  # (when entry.cover). Replaces the old standalone workspace rust-lint — fmt and
+  # clippy now run per crate, gated by the lint flag from changed.py (a shared
+  # backend change fans lint out to every crate; coverage stays per-changed-crate).
+  rust:
+    name: Rust — ${{ matrix.entry.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.rust != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.changes.outputs.rust) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+          # rustfmt + clippy for the lint steps; llvm-tools-preview for cargo-llvm-cov.
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Both possible workspaces declared; only the relevant one is used per
+          # crate. Per-component cache key so jobs don't thrash a shared target.
+          workspaces: |
+            src/backend -> target
+            src/ingestion/connectors/task-tracking/jira/enrich -> target
+          key: ${{ matrix.entry.name }}
+
+      - name: Format check (${{ matrix.entry.name }})
+        if: ${{ matrix.entry.lint }}
+        working-directory: ${{ matrix.entry.root }}
+        run: cargo fmt -p ${{ matrix.entry.package }} -- --check
+
+      - name: Clippy (${{ matrix.entry.name }})
+        if: ${{ matrix.entry.lint && matrix.entry.clippy }}
+        working-directory: ${{ matrix.entry.root }}
+        # -D warnings stays on clippy only — never the coverage build (it would
+        # turn jira-enrich's feature-gated dead code into a hard error).
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: |
+          feats=""
+          if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
+          cargo clippy -p ${{ matrix.entry.package }} --all-targets $feats
+
+      - uses: taiki-e/install-action@v2
+        if: ${{ matrix.entry.cover }}
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
+        if: ${{ matrix.entry.cover }}
+        working-directory: ${{ matrix.entry.root }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/coverage"
+          feats=""
+          if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
+          cargo llvm-cov --no-report --package "${{ matrix.entry.package }}" $feats
+          cargo llvm-cov report --cobertura \
+            --output-path "$GITHUB_WORKSPACE/coverage/rust-${{ matrix.entry.name }}.cobertura.xml"
+
+      - name: Upload Cobertura
+        if: ${{ matrix.entry.cover }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: cobertura-rust-${{ matrix.entry.name }}
+          path: coverage/*.xml
+          # cargo-llvm-cov always emits a report when the build succeeds, so a
+          # missing file means something went wrong — fail rather than ignore.
+          if-no-files-found: error
+
+  # One producer job per changed .NET component (Identity today). Collects inline
+  # with `dotnet test --collect "XPlat Code Coverage"` + dotnet-coverage merge.
+  dotnet:
+    name: .NET coverage — ${{ matrix.entry.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.dotnet != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.changes.outputs.dotnet) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: NuGet cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles(format('{0}/**/*.csproj', matrix.entry.root)) }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Install dotnet-coverage
+        run: |
+          dotnet tool install --global dotnet-coverage
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      # Restores, builds, runs unit + integration (Testcontainers MariaDB) tests
+      # under coverage, and merges the per-project Cobertura files into one.
+      - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
+        working-directory: ${{ matrix.entry.root }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/coverage"
+          dotnet restore "${{ matrix.entry.solution }}"
+          dotnet build "${{ matrix.entry.solution }}" --no-restore -c Release
+          for proj in tests/*/*.csproj; do
+            dotnet test "$proj" --no-build -c Release \
+              --collect:"XPlat Code Coverage" --results-directory coverage-raw
+          done
+          dotnet-coverage merge -f cobertura \
+            -o "$GITHUB_WORKSPACE/coverage/dotnet-${{ matrix.entry.name }}.cobertura.xml" \
+            coverage-raw/*/coverage.cobertura.xml
+
+      - name: Upload Cobertura
+        uses: actions/upload-artifact@v7
+        with:
+          name: cobertura-dotnet-${{ matrix.entry.name }}
+          path: coverage/*.xml
+          if-no-files-found: error
+
+  # One producer job per changed Python connector. Collects inline with
+  # pytest-cov in an isolated uv venv; exit-5 (no tests collected) is tolerated.
+  python:
+    name: Python coverage — ${{ matrix.entry.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.python != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.changes.outputs.python) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          # Per-connector cache key so parallel setup-uv jobs don't race to
+          # reserve one shared key ("Unable to reserve cache …").
+          cache-suffix: ${{ matrix.entry.name }}
+
+      - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
+        working-directory: ${{ matrix.entry.root }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/coverage"
+          uv venv --allow-existing .venv-cov
+          PY=".venv-cov/bin/python"
+          export VIRTUAL_ENV="$PWD/.venv-cov"
+          if ! uv pip install --python "$PY" -e ".[dev]" pytest-cov; then
+            echo "::notice::[dev] extra unavailable — installing base deps + pytest"
+            uv pip install --python "$PY" -e . pytest pytest-cov
+          fi
+          # pytest exit 5 = "no tests collected" — legitimate for a connector
+          # without tests; treat as success. Capture rc via `|| rc=$?` so the
+          # runner's default `set -e` shell can't abort before we inspect it.
+          rc=0
+          "$PY" -m pytest \
+            --cov="${{ matrix.entry.cov_package }}" \
+            --cov-report "xml:$GITHUB_WORKSPACE/coverage/python-${{ matrix.entry.name }}.cobertura.xml" || rc=$?
+          if [ "$rc" -eq 5 ]; then
+            echo "::notice::no tests collected for ${{ matrix.entry.name }} — component stays at 0"
+            exit 0
+          fi
+          exit "$rc"
+
+      - name: Upload Cobertura
+        uses: actions/upload-artifact@v7
+        with:
+          name: cobertura-python-${{ matrix.entry.name }}
+          path: coverage/*.xml
+          # A connector with no tests legitimately produces no report (exit 5).
+          if-no-files-found: ignore
+
+  # Single authority: per-component overall + the global new-code gate. Runs even
+  # when some producers were skipped (unchanged languages) via `!cancelled()`,
+  # and judges only the components that actually produced a report.
+  coverage-gate:
+    name: Coverage gate
+    needs: [changes, rust, dotnet, python]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      # If detection failed, or any CHANGED component's producer job failed
+      # (compile error, test failure, crash), the report set is incomplete — fail
+      # rather than silently passing on a partial set. Skipped producers (an
+      # unchanged language) report 'skipped', not 'failure', so they're fine.
+      - name: Guard against incomplete reports
+        if: >-
+          needs.changes.result != 'success' ||
+          needs.rust.result == 'failure' ||
+          needs.dotnet.result == 'failure' ||
+          needs.python.result == 'failure'
+        run: |
+          echo "changes=${{ needs.changes.result }} rust=${{ needs.rust.result }} dotnet=${{ needs.dotnet.result }} python=${{ needs.python.result }}"
+          echo "::error::Change detection or a producer job failed — refusing to gate on an incomplete report set."
+          exit 1
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # diff-cover needs history + source present for path resolution
+
+      - name: Fetch base branch (for the new-code gate)
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install diff-cover
+        # Pinned: the gate parses diff-cover's --json-report `src_stats` schema,
+        # which is internal API. (TODO: --json-report is deprecated in diff-cover
+        # >= 10 in favor of `--format json:<path>`; migrate before unpinning.)
+        run: pip install "diff-cover==10.3.0" "defusedxml==0.7.1"
+
+      - name: Download all Cobertura reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: cobertura-*
+          merge-multiple: true
+          path: coverage
+
+      # Writes a markdown report to the job summary and exits non-zero if either
+      # gate fails (so this is the required check). --require makes a *changed*
+      # component that produced no report a failure (not a silent skip); the
+      # names come from the `changes` matrices, passed via env to avoid script
+      # injection from interpolating untrusted-ish JSON into the shell.
+      - name: Run coverage gate
+        env:
+          RUST_CHANGED: ${{ needs.changes.outputs.rust }}
+          DOTNET_CHANGED: ${{ needs.changes.outputs.dotnet }}
+          PYTHON_CHANGED: ${{ needs.changes.outputs.python }}
+          FULL: ${{ github.event.inputs.full }}
+        run: |
+          # Only crates that actually produce coverage are "required" — rust
+          # entries may be lint-only (cover=false), so filter them out.
+          required=$(jq -rn \
+            --argjson r "$RUST_CHANGED" --argjson d "$DOTNET_CHANGED" --argjson p "$PYTHON_CHANGED" \
+            '[($r[] | select(.cover)), $d[], $p[]] | map(.name) | join(",")')
+          echo "required components: ${required:-<none>}"
+          # A full/baseline run measures overall coverage; skip the new-code gate
+          # (there is no meaningful "patch" for a manual all-components run).
+          extra=""; [ "$FULL" = "true" ] && extra="--no-patch"
+          python3 scripts/ci/coverage.py gate $extra --require "$required" --summary "$GITHUB_STEP_SUMMARY"

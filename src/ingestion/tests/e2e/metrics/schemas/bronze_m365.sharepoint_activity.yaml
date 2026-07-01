@@ -1,0 +1,25 @@
+# Reusable JSON schema for the table (all real fields). Resolved by table name.
+# Mirrors the bronze_m365.sharepoint_activity placeholder DDL in
+# src/ingestion/scripts/create-bronze-placeholders.sh (= onedrive + visitedPageCount).
+schemas:
+  bronze_m365.sharepoint_activity:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: [string, "null"] }
+      userPrincipalName: { type: [string, "null"] }
+      reportRefreshDate: { type: [string, "null"] }
+      reportPeriod: { type: [string, "null"] }
+      lastActivityDate: { type: [string, "null"] }
+      viewedOrEditedFileCount: { type: [number, "null"] }
+      syncedFileCount: { type: [number, "null"] }
+      sharedInternallyFileCount: { type: [number, "null"] }
+      sharedExternallyFileCount: { type: [number, "null"] }
+      visitedPageCount: { type: [number, "null"] }

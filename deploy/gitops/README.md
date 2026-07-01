@@ -59,7 +59,7 @@ deploy/gitops/
     └── airbyte-setup.sh         # post-install Airbyte setup-wizard automation
 ```
 
-The wizard at `../../compose/insight-init.sh` is shared with the
+The wizard at `../compose/insight-init.sh` is shared with the
 docker-compose stack. For `ENV=local`, `make deploy ENV=local`
 auto-invokes it whenever `environments/local/inventory.yaml` is
 missing, then chains `bootstrap → fetch-cert → seal → system →

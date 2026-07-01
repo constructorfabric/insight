@@ -11,6 +11,11 @@
 # Stage 1: Builder
 FROM rust:1.95-bookworm AS builder
 
+# Install protobuf-compiler (required by grpc-hub → prost-build)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /build
 
 # --- Dependency caching layer ---

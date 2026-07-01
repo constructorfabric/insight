@@ -4,8 +4,8 @@
 //! One binary run fills `_version = collected_at_ms` so ReplacingMergeTree resolves
 //! duplicates from overlapping runs deterministically (last-write-wins by run time).
 
-use super::IoError;
 use super::ch_client::ChConfig;
+use super::IoError;
 use crate::core::types::{
     DataSource, DeltaAction, EventKind, FieldCardinality, FieldHistoryRecord, ValueIdType,
 };
@@ -31,20 +31,20 @@ pub struct FieldHistoryInsert {
     pub event_id: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     pub event_at: DateTime<Utc>,
-    pub event_kind: i8,         // Enum8('changelog'=1, 'synthetic_initial'=2)
+    pub event_kind: i8, // Enum8('changelog'=1, 'synthetic_initial'=2)
     #[serde(rename = "_seq")]
     pub seq: u32,
     pub author_id: Option<String>,
     pub author_display: Option<String>,
     pub field_id: String,
     pub field_name: String,
-    pub field_cardinality: i8,  // Enum8('single'=1, 'multi'=2)
-    pub delta_action: i8,       // Enum8('set'=1, 'add'=2, 'remove'=3)
+    pub field_cardinality: i8, // Enum8('single'=1, 'multi'=2)
+    pub delta_action: i8,      // Enum8('set'=1, 'add'=2, 'remove'=3)
     pub delta_value_id: Option<String>,
     pub delta_value_display: Option<String>,
     pub value_ids: Vec<String>,
     pub value_displays: Vec<String>,
-    pub value_id_type: i8,      // Enum8('opaque_id'=1, 'account_id'=2, 'string_literal'=3, 'path'=4, 'none'=5)
+    pub value_id_type: i8, // Enum8('opaque_id'=1, 'account_id'=2, 'string_literal'=3, 'path'=4, 'none'=5)
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     pub collected_at: DateTime<Utc>,
     pub _version: u64,
@@ -125,10 +125,7 @@ fn value_id_type_enum(t: ValueIdType) -> i8 {
     }
 }
 
-pub async fn insert_batch(
-    cfg: &ChConfig,
-    rows: Vec<FieldHistoryRecord>,
-) -> Result<usize, IoError> {
+pub async fn insert_batch(cfg: &ChConfig, rows: Vec<FieldHistoryRecord>) -> Result<usize, IoError> {
     if rows.is_empty() {
         return Ok(0);
     }
