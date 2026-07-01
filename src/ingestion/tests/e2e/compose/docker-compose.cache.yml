@@ -1,0 +1,36 @@
+# CI-only build-cache overlay.
+#
+# Wires each build-only service (and the runner) to the GitHub Actions BuildKit
+# cache backend so the expensive layers persist across workflow runs: the Rust
+# dependency-compile layers for analytics-api + jira-enrich, and the runner's
+# pip-install layer. On a warm cache with an unchanged Cargo.lock/pyproject.toml,
+# those layers restore instead of rebuilding.
+#
+# NOT loaded locally — `type=gha` requires the ACTIONS_* tokens that only exist
+# inside a GitHub Actions runner, plus the docker-container buildx driver from
+# docker/setup-buildx-action. e2e.sh loads this only when E2E_COMPOSE_OVERLAYS
+# names it (the E2E workflow sets that on the build step).
+#
+# Distinct `scope` per image keeps the caches from clobbering one another.
+
+services:
+  jira-enrich:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-jira-enrich
+      cache_to:
+        - type=gha,mode=max,scope=e2e-jira-enrich
+
+  analytics-api:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-analytics-api
+      cache_to:
+        - type=gha,mode=max,scope=e2e-analytics-api
+
+  runner:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-runner
+      cache_to:
+        - type=gha,mode=max,scope=e2e-runner

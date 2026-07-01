@@ -21,6 +21,16 @@ INSIGHT_REPO_ROOT="$(cd ../../../.. && pwd)"
 export INSIGHT_REPO_ROOT
 
 COMPOSE_FILES=(-f compose/docker-compose.yml -f compose/docker-compose.runner.yml)
+
+# Optional extra compose overlays, space-separated, resolved relative to this
+# script's dir. CI injects compose/docker-compose.cache.yml here to enable the
+# gha build cache; locally it stays empty so builds don't require ACTIONS_*.
+if [ -n "${E2E_COMPOSE_OVERLAYS:-}" ]; then
+    for overlay in ${E2E_COMPOSE_OVERLAYS}; do
+        COMPOSE_FILES+=(-f "$overlay")
+    done
+fi
+
 ENV_FILE=compose/.env
 
 # Generate a .env if one is not present — every session needs a password.

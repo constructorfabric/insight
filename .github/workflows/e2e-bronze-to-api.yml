@@ -44,16 +44,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # docker-container buildx driver — required for the gha cache export that
+      # compose/docker-compose.cache.yml wires onto the build-only services.
+      - uses: docker/setup-buildx-action@v3
+
       # ─── Build the runner image ─────────────────────────────────────────
       # The runner bakes in analytics-api + each connector's enrich binary, each
       # compiled FROM ITS OWN Dockerfile via build-only services wired as
       # `additional_contexts` (see compose/docker-compose.runner.yml). Nothing is
-      # compiled inside the runner at test time, so there is no host cargo cache to
-      # restore. NOTE: those component builds are not yet wired into a cross-run
-      # BuildKit cache, so a full compile happens each run (follow-up: add buildx
-      # `type=gha` cache to the build-only services if it bites).
+      # compiled inside the runner at test time.
+      #
+      # E2E_COMPOSE_OVERLAYS layers compose/docker-compose.cache.yml on top, which
+      # points each Rust build (and the runner's pip layer) at the GitHub Actions
+      # BuildKit cache. On a warm cache with an unchanged Cargo.lock/pyproject.toml
+      # the dependency-compile layers restore instead of recompiling.
       - name: Build runner image
         run: ./e2e.sh build
+        env:
+          E2E_COMPOSE_OVERLAYS: compose/docker-compose.cache.yml
 
       # ─── Run the suite inside the runner ────────────────────────────────
       # `./e2e.sh test` (docker compose run runner) starts the clickhouse +
