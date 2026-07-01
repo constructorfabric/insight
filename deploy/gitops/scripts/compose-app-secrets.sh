@@ -118,7 +118,7 @@ metadata:
   annotations:
     # Tell helm to leave this Secret alone on upgrade/uninstall — the
     # chart no longer emits it (credentials.autoGenerate=false in gitops
-    # mode), and this script owns its lifecycle. Without `keep`, helm
+    # mode), and this script owns its lifecycle. Without keep, helm
     # sees the Secret in the prior release's manifest, finds it absent
     # from the new release's manifest, and deletes it mid-upgrade —
     # causing analytics-api init container to fail with "Secret not
@@ -127,8 +127,10 @@ metadata:
 type: Opaque
 stringData:
   # gears-rust host config: leaf values override the mounted config YAML.
-  # Prefix is `APP__gears__analytics_api__config__*` (toolkit Env::prefixed),
-  # replacing the old `ANALYTICS__*`.
+  # Prefix is APP__gears__analytics_api__config__ (toolkit Env::prefixed),
+  # replacing the old ANALYTICS__ prefix. Note: no backticks in these
+  # heredoc comments -- the heredoc is unquoted (for \${..} expansion), so
+  # backticks would be run as commands.
   APP__gears__analytics_api__config__database_url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${MDB_DB}"
   APP__gears__analytics_api__config__clickhouse_url: "http://${CH_HOST}:${CH_PORT}"
   APP__gears__analytics_api__config__clickhouse_database: "${CH_DB}"
