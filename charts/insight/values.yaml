@@ -105,7 +105,7 @@ global:
   #      tenant claim).
   #   2. `IDENTITY__identity__tenant_default_id` env var on the identity
   #      service (its ConfigTenantContext fallback).
-  #   3. `APP__gears__analytics-api__config__metric_catalog__tenant_default_id`
+  #   3. `APP__gears__analytics_api__config__metric_catalog__tenant_default_id`
   #      env var on the analytics-api (Metric Catalog single-tenant fallback).
   # Set this to the UUID your `persons` / `account_person_map` /
   # `org_chart` data was seeded under (i.e. the
@@ -365,7 +365,7 @@ analyticsApi:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
   # The umbrella generates `insight-analytics-api-config` with every
-  # APP__gears__analytics-api__config__* env var filled in from the
+  # APP__gears__analytics_api__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart
   # consumes it via envFrom (overriding its mounted config ConfigMap).
   existingSecret: "insight-analytics-api-config"

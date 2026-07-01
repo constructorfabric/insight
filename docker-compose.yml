@@ -237,15 +237,15 @@ services:
       # (gears list, api-gateway REST host w/ auth_disabled) lives in the
       # bind-mounted config/insight.yaml; these APP__* env vars override the
       # deployment-specific leaf values. Prefix CHANGED from `ANALYTICS__*`
-      # to `APP__gears__analytics-api__config__*` (toolkit `Env::prefixed`).
-      APP__gears__analytics-api__config__database_url:       "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
-      APP__gears__analytics-api__config__clickhouse_url:     "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
-      APP__gears__analytics-api__config__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
-      APP__gears__analytics-api__config__clickhouse_user:    "${CLICKHOUSE_USER:-insight}"
-      APP__gears__analytics-api__config__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
-      APP__gears__analytics-api__config__identity_url:       "http://identity:8082"
-      APP__gears__analytics-api__config__redis_url:          "redis://redis:6379"
-      APP__gears__analytics-api__config__metric_catalog__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
+      # to `APP__gears__analytics_api__config__*` (toolkit `Env::prefixed`).
+      APP__gears__analytics_api__config__database_url:       "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
+      APP__gears__analytics_api__config__clickhouse_url:     "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
+      APP__gears__analytics_api__config__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
+      APP__gears__analytics_api__config__clickhouse_user:    "${CLICKHOUSE_USER:-insight}"
+      APP__gears__analytics_api__config__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
+      APP__gears__analytics_api__config__identity_url:       "http://identity:8082"
+      APP__gears__analytics_api__config__redis_url:          "redis://redis:6379"
+      APP__gears__analytics_api__config__metric_catalog__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
     volumes:
       - ./deploy/compose/build/analytics-api/analytics-api:/app/analytics-api:ro
       # Mount the gears config so YAML edits don't require an image rebuild

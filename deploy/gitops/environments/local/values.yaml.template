@@ -29,7 +29,7 @@ global:
   storageClass: local-path
   # Single-tenant fallback for the analytics-api metric-catalog resolver
   # (compose-app-secrets.sh reads .global.tenantDefaultId → emits
-  # APP__gears__analytics-api__config__metric_catalog__tenant_default_id).
+  # APP__gears__analytics_api__config__metric_catalog__tenant_default_id).
   # Set to the seeded demo tenant so the catalog resolves AND dashboards
   # populate. (Note: under the gears-rust auth-disabled host the gateway
   # injects toolkit-security's DEFAULT_TENANT_ID — the same UUID below — and

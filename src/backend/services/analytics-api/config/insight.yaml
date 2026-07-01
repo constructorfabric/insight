@@ -10,14 +10,14 @@
 # `X-Insight-Tenant-Id` header (see crate::auth). NO oidc plugin is registered.
 #
 # Env overrides (prefix CHANGED from the old `ANALYTICS__*`):
-#   APP__gears__analytics-api__config__database_url
-#   APP__gears__analytics-api__config__clickhouse_url
-#   APP__gears__analytics-api__config__clickhouse_database
-#   APP__gears__analytics-api__config__clickhouse_user
-#   APP__gears__analytics-api__config__clickhouse_password
-#   APP__gears__analytics-api__config__identity_url
-#   APP__gears__analytics-api__config__redis_url
-#   APP__gears__analytics-api__config__metric_catalog__tenant_default_id
+#   APP__gears__analytics_api__config__database_url
+#   APP__gears__analytics_api__config__clickhouse_url
+#   APP__gears__analytics_api__config__clickhouse_database
+#   APP__gears__analytics_api__config__clickhouse_user
+#   APP__gears__analytics_api__config__clickhouse_password
+#   APP__gears__analytics_api__config__identity_url
+#   APP__gears__analytics_api__config__redis_url
+#   APP__gears__analytics_api__config__metric_catalog__tenant_default_id
 
 server:
   home_dir: "~/.insight"

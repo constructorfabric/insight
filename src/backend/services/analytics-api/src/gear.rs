@@ -29,6 +29,10 @@ use crate::{api, infra};
 /// Analytics API gear. Capabilities: `rest` only (the startup schema-validator
 /// scan is a one-shot `tokio::spawn` in `init`, faithful to the old
 /// `run_server`; no `stateful`/`RunnableCapability`).
+// Config key is the kebab gear name `analytics-api`. Its env overrides use the
+// identifier-safe alias `APP__gears__analytics_api__config__*` (hyphenated names
+// are dropped by the compose `sh`/dash entrypoint and skipped by k8s `envFrom`);
+// `main::fold_gear_env_alias` folds that `analytics_api` alias into this key.
 #[toolkit::gear(
     name = "analytics-api",
     capabilities = [rest]

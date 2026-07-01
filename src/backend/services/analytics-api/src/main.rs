@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
     // Logging/OTel are initialized by the bootstrap runtime, not here.
     let mut config = AppConfig::load_or_default(cli.config.as_ref())?;
     config.apply_cli_overrides(cli.verbose);
+    fold_gear_env_alias(&mut config);
 
     if cli.print_config {
         println!("Effective configuration:\n{}", config.to_yaml()?);
@@ -101,5 +102,51 @@ async fn main() -> Result<()> {
         Commands::Run => run_server(config).await,
         Commands::Migrate => gear::run_migrate(&config).await,
         Commands::Check => Ok(()),
+    }
+}
+
+/// Fold the identifier-safe `analytics_api` gears alias into the kebab-case
+/// gear key `analytics-api`.
+///
+/// The gear name is macro-locked to kebab-case (`analytics-api`), so its config
+/// lives under `gears.analytics-api`. But config overrides arrive as env vars,
+/// and hyphenated names (`APP__gears__analytics-api__config__*`) are silently
+/// dropped by the compose `sh`/dash entrypoint (dash discards env names that
+/// aren't valid identifiers) and skipped by Kubernetes `envFrom`. Operators
+/// therefore set the identifier-safe `APP__gears__analytics_api__config__*`,
+/// which figment lands under a separate `gears.analytics_api` key. The toolkit
+/// does no kebab/snake normalization, so we bridge it here: deep-merge the
+/// `analytics_api` alias into `analytics-api` (alias values win on leaves), so
+/// the overrides reach the gear regardless of how they were delivered.
+fn fold_gear_env_alias(config: &mut AppConfig) {
+    const ALIAS: &str = "analytics_api";
+    const CANONICAL: &str = "analytics-api";
+
+    let Some(alias) = config.gears.remove(ALIAS) else {
+        return;
+    };
+    match config.gears.get_mut(CANONICAL) {
+        Some(existing) => deep_merge(existing, alias),
+        None => {
+            config.gears.insert(CANONICAL.to_owned(), alias);
+        }
+    }
+}
+
+/// Recursively merge `overlay` into `base`; objects merge key-by-key, and any
+/// non-object (leaf) in `overlay` replaces the value in `base`.
+fn deep_merge(base: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (base, overlay) {
+        (serde_json::Value::Object(base_map), serde_json::Value::Object(overlay_map)) => {
+            for (key, value) in overlay_map {
+                match base_map.get_mut(&key) {
+                    Some(base_value) => deep_merge(base_value, value),
+                    None => {
+                        base_map.insert(key, value);
+                    }
+                }
+            }
+        }
+        (base_slot, overlay_value) => *base_slot = overlay_value,
     }
 }

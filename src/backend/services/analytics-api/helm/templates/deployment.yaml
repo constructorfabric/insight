@@ -55,7 +55,7 @@ spec:
           envFrom:
             # Operator MUST pre-create this Secret (umbrella does it
             # automatically as `insight-analytics-api-config`). Provides the
-            # APP__gears__analytics-api__config__* leaf overrides.
+            # APP__gears__analytics_api__config__* leaf overrides.
             - secretRef:
                 name: {{ required "existingSecret is required (umbrella provides `insight-analytics-api-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
           securityContext:

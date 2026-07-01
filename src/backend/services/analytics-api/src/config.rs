@@ -4,7 +4,7 @@
 //! deserializes the YAML under `gears.analytics-api.config`. The figment
 //! loader was removed in the gears-rust migration — the toolkit host owns
 //! config layering (defaults -> YAML -> env -> CLI). Env overrides are now
-//! `APP__gears__analytics-api__config__<field>` (the prefix changed from the
+//! `APP__gears__analytics_api__config__<field>` (the prefix changed from the
 //! old `ANALYTICS__*`).
 
 use serde::Deserialize;
@@ -82,7 +82,7 @@ pub struct MetricCatalogConfig {
     /// catalog-resolution hint. The session-bound tenant ALWAYS wins over
     /// this default (security invariant — see `domain::auth::TenantAuthorization`).
     ///
-    /// Env: `APP__gears__analytics-api__config__metric_catalog__tenant_default_id`.
+    /// Env: `APP__gears__analytics_api__config__metric_catalog__tenant_default_id`.
     pub tenant_default_id: Option<Uuid>,
 }
 

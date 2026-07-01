@@ -21,11 +21,11 @@ resources:
 
 # Pre-provisioned Secret carrying the gears-rust host's leaf-config overrides
 # (injected via envFrom; they override the mounted config ConfigMap):
-#   APP__gears__analytics-api__config__database_url
-#   APP__gears__analytics-api__config__clickhouse_url|_database|_user|_password
-#   APP__gears__analytics-api__config__redis_url
-#   APP__gears__analytics-api__config__identity_url
-#   APP__gears__analytics-api__config__metric_catalog__tenant_default_id (optional)
+#   APP__gears__analytics_api__config__database_url
+#   APP__gears__analytics_api__config__clickhouse_url|_database|_user|_password
+#   APP__gears__analytics_api__config__redis_url
+#   APP__gears__analytics_api__config__identity_url
+#   APP__gears__analytics_api__config__metric_catalog__tenant_default_id (optional)
 #
 # `..._metric_catalog__tenant_default_id` (UUID, optional): single-tenant
 # fallback for the Metric Catalog per DESIGN §2.2
