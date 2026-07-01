@@ -43,7 +43,7 @@
 
 use uuid::Uuid;
 
-use crate::auth::SecurityContext;
+use toolkit_security::SecurityContext;
 
 /// Stable principal identifier used in `threshold_lock_audit.actor_subject`.
 /// Distinct type from `Uuid::sub` / arbitrary header value so a future swap
@@ -61,6 +61,12 @@ pub trait TenantAuthorization: Send + Sync {
     /// `session_tenant`: the tenant attached to the session by upstream auth
     /// (today: the `X-Insight-Tenant-Id` header stub; eventually the JWT
     /// `insight_tenant_id` claim). `None` when the session carries no tenant.
+    ///
+    /// No longer called from the request path under the auth-disabled host
+    /// (the gateway injects the tenant and `crate::auth::tenant_middleware`
+    /// overrides it directly), but retained on the trait + covered by unit
+    /// tests for the single-tenant-fallback security invariant.
+    #[allow(dead_code)]
     fn resolve_tenant(&self, session_tenant: Option<Uuid>) -> Option<Uuid>;
 
     /// True iff the caller in `ctx` is authorized as a tenant-admin for
@@ -69,7 +75,7 @@ pub trait TenantAuthorization: Send + Sync {
     /// canonical `permission_denied` envelope with `reason = "not_tenant_admin"`.
     ///
     /// `tenant_id` is the target tenant for the operation — usually
-    /// `ctx.insight_tenant_id`, but callers MAY pass the row's
+    /// `ctx.subject_tenant_id()`, but callers MAY pass the row's
     /// `tenant_id` to catch cross-tenant writes here too. v1 stub does not
     /// distinguish the two; both routes converge on the same DB-row
     /// tenant check at the repository layer.
@@ -86,6 +92,10 @@ pub trait TenantAuthorization: Send + Sync {
 /// present, otherwise falls back to the operator-configured default. The
 /// admin gate is a stub (see module doc-comment).
 pub struct ConfigTenantAuthorization {
+    // Read only by `resolve_tenant`, which is no longer on the request path
+    // under the auth-disabled host (see the trait method's note). Retained for
+    // the single-tenant fallback + its unit tests.
+    #[allow(dead_code)]
     default: Option<Uuid>,
 }
 
@@ -126,7 +136,7 @@ impl TenantAuthorization for ConfigTenantAuthorization {
         // by `tenant_middleware` today). When JWT validation lands, the
         // middleware will populate this with the verified `sub` claim and
         // this method passes it through unchanged.
-        ctx.subject_id.to_string()
+        ctx.subject_id().to_string()
     }
 }
 
@@ -178,10 +188,18 @@ mod tests {
     }
 
     fn ctx(tenant: Uuid, subject: Uuid) -> SecurityContext {
-        SecurityContext {
-            subject_id: subject,
-            insight_tenant_id: tenant,
-        }
+        // Builder requires subject_id + subject_tenant_id; both are set, so
+        // `build()` cannot fail. `unreachable!` on the Err arm keeps this
+        // helper's return type `SecurityContext` without tripping the
+        // workspace `expect_used` / `unwrap_used` deny lints.
+        let Ok(ctx) = SecurityContext::builder()
+            .subject_id(subject)
+            .subject_tenant_id(tenant)
+            .build()
+        else {
+            unreachable!("subject_id + subject_tenant_id are set")
+        };
+        ctx
     }
 
     #[test]

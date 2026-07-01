@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{Extension, FromRequestParts, Path, Query, State};
+use axum::extract::{Extension, FromRequestParts, Path, Query};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
@@ -17,12 +17,12 @@ use uuid::Uuid;
 use crate::api::AppState;
 use crate::api::canonical_json::CanonicalJson;
 use crate::api::error::ThresholdAdminError;
-use crate::auth::SecurityContext;
+use toolkit_security::SecurityContext;
 use crate::domain::admin_threshold::dto::{CreateRequest, ListFilters, UpdateRequest};
 
 /// `GET /v1/admin/metric-thresholds`.
 pub async fn list(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     CanonicalQuery(filters): CanonicalQuery<ListFilters>,
 ) -> Response {
@@ -34,7 +34,7 @@ pub async fn list(
 
 /// `GET /v1/admin/metric-thresholds/{id}`.
 pub async fn get_one(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
 ) -> Response {
@@ -46,7 +46,7 @@ pub async fn get_one(
 
 /// `POST /v1/admin/metric-thresholds`.
 pub async fn create(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     CanonicalJson(req): CanonicalJson<CreateRequest>,
 ) -> Response {
@@ -58,7 +58,7 @@ pub async fn create(
 
 /// `PUT /v1/admin/metric-thresholds/{id}`.
 pub async fn update(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
     CanonicalJson(req): CanonicalJson<UpdateRequest>,
@@ -72,7 +72,7 @@ pub async fn update(
 /// `DELETE /v1/admin/metric-thresholds/{id}`. Returns 204 on success per
 /// DNA `REST/STATUS_CODES.md` line 10 (delete with no body).
 pub async fn delete(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
 ) -> Response {

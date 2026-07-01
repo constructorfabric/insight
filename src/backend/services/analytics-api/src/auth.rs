@@ -1,51 +1,25 @@
-//! Tenant-resolution middleware.
+//! Tenant-override middleware.
 //!
-//! Sits in front of every route, extracts the session-bound tenant (today: the
-//! `X-Insight-Tenant-Id` header, a stub for the JWT `insight_tenant_id` claim
-//! that the gateway-driven flow will eventually inject), and asks the catalog
-//! `auth-trait` (`crate::domain::auth::TenantAuthorization`) to resolve it
-//! against the operator-configured `metric_catalog.tenant_default_id` fallback
-//! per `cpt-metric-cat-constraint-tenant-default` (DESIGN §2.2).
+//! Under the auth-disabled `api-gateway` host the platform injects a
+//! single-tenant `toolkit_security::SecurityContext` (`DEFAULT_TENANT_ID`) into
+//! every request's extensions. This thin, stateless middleware reads that
+//! context and, when an `X-Insight-Tenant-Id` header is present and parses to
+//! a non-nil Uuid, rebuilds the context with that tenant so per-request tenant
+//! overrides (used by internal hops / dev tooling) take effect. Handlers and
+//! domain services consume `toolkit_security::SecurityContext` exclusively.
 //!
-//! When the trait returns `None` — neither session nor configured default —
-//! the middleware short-circuits with a canonical `invalid_argument` envelope
-//! (`field_violations[{field: "tenant_id", reason: "TENANT_UNRESOLVED"}]`) so
-//! every catalog endpoint sees the same rejection shape without re-checking
-//! per-handler.
-//!
-//! Mirrors `src/backend/services/identity/.../HeaderTenantContext.cs` +
-//! `ConfigTenantContext.cs` on the identity side so operators get the same
-//! single-tenant ergonomic across Insight services.
+//! Mirrors identity's `HeaderTenantContext` so api-gateway / dbt-runner / etc.
+//! send the same header to both services.
 
-use std::sync::Arc;
-
-use axum::extract::{Request, State};
+use axum::extract::Request;
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
-use toolkit_canonical_errors::CanonicalError;
+use axum::response::Response;
+use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use crate::api::error::TenantError;
-use crate::domain::auth::TenantAuthorization;
-
-/// Header that carries the session-bound tenant on internal hops until the
-/// JWT-claim path lands. Matches `HeaderTenantContext.HeaderName` on the
-/// identity service so api-gateway / dbt-runner / etc. send the same header
-/// to both services.
+/// Header that carries the session-bound tenant on internal hops. Matches
+/// `HeaderTenantContext.HeaderName` on the identity service.
 pub const TENANT_HEADER: &str = "X-Insight-Tenant-Id";
-
-/// Security context resolved for the current request.
-#[derive(Debug, Clone)]
-pub struct SecurityContext {
-    /// Authenticated user ID (derived from OIDC `sub` claim).
-    #[allow(dead_code)] // will be consumed by authz scope resolution
-    pub subject_id: Uuid,
-    /// Tenant the request operates on. Populated by `tenant_middleware`
-    /// from either the session-bound tenant or the configured single-tenant
-    /// fallback; never `Uuid::nil()` on the request path (the middleware
-    /// rejects a request with no resolvable tenant).
-    pub insight_tenant_id: Uuid,
-}
 
 /// Access scope resolved from the authorization layer.
 ///
@@ -60,28 +34,25 @@ pub struct AccessScope {
     // TODO: add effective_from/effective_to per org unit for time-scoped visibility
 }
 
-/// Middleware that resolves the tenant context and rejects unresolved
-/// requests with a canonical `invalid_argument` envelope.
+/// Stateless middleware that takes the host-injected `SecurityContext` and,
+/// when `X-Insight-Tenant-Id` carries a non-nil Uuid, overrides the tenant by
+/// rebuilding the context. Always re-inserts a `SecurityContext` plus the
+/// `AccessScope` into the request extensions.
 ///
-/// State is just the `TenantAuthorization` handle — independent from
-/// `AppState`, so tests can mount this middleware against the test-only
-/// `/_tenant_echo` route without standing up a `DatabaseConnection` or
-/// `ClickHouse` client.
-pub async fn tenant_middleware(
-    State(tenant_auth): State<Arc<dyn TenantAuthorization>>,
-    mut req: Request,
-    next: Next,
-) -> Response {
-    let session_tenant = read_session_tenant(&req);
+/// The host (api-gateway, `auth_disabled = true`) always provides a tenant
+/// (`DEFAULT_TENANT_ID`), so there is no unresolved-tenant rejection path here.
+pub async fn tenant_middleware(mut req: Request, next: Next) -> Response {
+    // Host-injected context (fallback to anonymous if, for some reason, the
+    // host didn't inject one — e.g. a direct pod hit on a non-public route).
+    let base = req
+        .extensions()
+        .get::<SecurityContext>()
+        .cloned()
+        .unwrap_or_else(SecurityContext::anonymous);
 
-    let Some(tenant_id) = tenant_auth.resolve_tenant(session_tenant) else {
-        return tenant_unresolved_response();
-    };
-
-    let ctx = SecurityContext {
-        // TODO: populate from JWT `sub` claim when JWT validation lands.
-        subject_id: Uuid::nil(),
-        insight_tenant_id: tenant_id,
+    let ctx = match read_session_tenant(&req) {
+        Some(tenant_id) => rebuild_with_tenant(&base, tenant_id),
+        None => base,
     };
 
     let scope = resolve_access_scope(&ctx);
@@ -92,14 +63,28 @@ pub async fn tenant_middleware(
     next.run(req).await
 }
 
+/// Rebuild a `SecurityContext` carrying over subject id/type/scopes but with
+/// the overridden `subject_tenant_id`. Falls back to the base context if the
+/// builder rejects the inputs (it requires `subject_id` + `subject_tenant_id`,
+/// both of which we supply).
+fn rebuild_with_tenant(base: &SecurityContext, tenant_id: Uuid) -> SecurityContext {
+    let mut builder = SecurityContext::builder()
+        .subject_id(base.subject_id())
+        .subject_tenant_id(tenant_id)
+        .token_scopes(base.token_scopes().to_vec());
+    if let Some(subject_type) = base.subject_type() {
+        builder = builder.subject_type(subject_type);
+    }
+    builder.build().unwrap_or_else(|_| base.clone())
+}
+
 /// Parses the session-bound tenant from `X-Insight-Tenant-Id`. Rejects:
 /// - multi-valued headers (a hostile or misbehaving upstream sending two
 ///   `X-Insight-Tenant-Id` lines would otherwise silently bind to the first),
 /// - `Uuid::nil()` (parseable but non-identity value must not pin tenant context),
 /// - any unparseable value.
 ///
-/// Mirrors identity's `HeaderTenantContext.Resolve` in
-/// `src/backend/services/identity/.../HeaderTenantContext.cs`.
+/// Mirrors identity's `HeaderTenantContext.Resolve`.
 fn read_session_tenant(req: &Request) -> Option<Uuid> {
     let mut iter = req.headers().get_all(TENANT_HEADER).iter();
     let first = iter.next()?;
@@ -109,19 +94,6 @@ fn read_session_tenant(req: &Request) -> Option<Uuid> {
     }
     let raw = first.to_str().ok()?;
     Uuid::parse_str(raw.trim()).ok().filter(|id| !id.is_nil())
-}
-
-fn tenant_unresolved_response() -> Response {
-    let err: CanonicalError = TenantError::invalid_argument()
-        .with_field_violation(
-            "tenant_id",
-            "Tenant context could not be resolved. Send the \
-             X-Insight-Tenant-Id header or configure \
-             metric_catalog.tenant_default_id.",
-            "TENANT_UNRESOLVED",
-        )
-        .create();
-    err.into_response()
 }
 
 /// Resolve access scope for the given security context.

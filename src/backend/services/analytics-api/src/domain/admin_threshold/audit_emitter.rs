@@ -38,7 +38,7 @@ use sea_orm::{ActiveValue, ConnectionTrait, DatabaseConnection, EntityTrait, Tra
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::auth::SecurityContext;
+use toolkit_security::SecurityContext;
 use crate::domain::admin_threshold::dto::Scope;
 use crate::domain::admin_threshold::lock_enforcer::BlockingLock;
 use crate::domain::auth::TenantAuthorization;

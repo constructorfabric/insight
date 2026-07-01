@@ -34,7 +34,7 @@ use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Sta
 use sea_orm_migration::MigratorTrait;
 use uuid::Uuid;
 
-use crate::auth::SecurityContext;
+use toolkit_security::SecurityContext;
 use crate::domain::admin_threshold::dto::{CreateRequest, Scope, UpdateRequest};
 use crate::domain::admin_threshold::service::AdminThresholdService;
 use crate::domain::auth::{ConfigTenantAuthorization, TenantAuthorization};
@@ -114,10 +114,14 @@ fn service_against(db: DatabaseConnection) -> AdminThresholdService {
 }
 
 fn ctx_for(tenant: Uuid) -> SecurityContext {
-    SecurityContext {
-        subject_id: Uuid::nil(),
-        insight_tenant_id: tenant,
-    }
+    let Ok(ctx) = SecurityContext::builder()
+        .subject_id(Uuid::nil())
+        .subject_tenant_id(tenant)
+        .build()
+    else {
+        unreachable!("subject_id + subject_tenant_id are set")
+    };
+    ctx
 }
 
 /// Insert a fresh `metric_catalog` row + the matching `product-default`

@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use sea_orm::{ActiveModelTrait, ColumnTrait, Condition, EntityTrait, NotSet, QueryFilter, Set};
@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::AppState;
 use super::error::{MetricError, PersonError, ThresholdError};
-use crate::auth::SecurityContext;
+use toolkit_security::SecurityContext;
 use crate::domain::metric::{
     CreateMetricRequest, Metric, MetricSummary, TableColumn, UpdateMetricRequest,
 };
@@ -33,7 +33,7 @@ pub async fn health() -> impl IntoResponse {
 // ── Person lookup ──────────────────────────────────────────
 
 pub async fn get_person(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Path(email): Path<String>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     if !state.identity.is_configured() {
@@ -61,13 +61,13 @@ pub async fn get_person(
 // ── Metrics CRUD ────────────────────────────────────────────
 
 pub async fn list_metrics(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let rows = entities::metrics::Entity::find()
         .filter(
             entities::metrics::Column::InsightTenantId
-                .is_in([ctx.insight_tenant_id, GLOBAL_TENANT]),
+                .is_in([ctx.subject_tenant_id(), GLOBAL_TENANT]),
         )
         .filter(entities::metrics::Column::IsEnabled.eq(true))
         .all(&state.db)
@@ -82,16 +82,16 @@ pub async fn list_metrics(
 }
 
 pub async fn get_metric(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    let row = find_enabled_metric(&state, ctx.insight_tenant_id, id).await?;
+    let row = find_enabled_metric(&state, ctx.subject_tenant_id(), id).await?;
     Ok(Json(model_to_metric(row)))
 }
 
 pub async fn create_metric(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Json(req): Json<CreateMetricRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
@@ -106,7 +106,7 @@ pub async fn create_metric(
 
     let model = entities::metrics::ActiveModel {
         id: Set(id),
-        insight_tenant_id: Set(ctx.insight_tenant_id),
+        insight_tenant_id: Set(ctx.subject_tenant_id()),
         name: Set(req.name),
         description: Set(req.description),
         query_ref: Set(req.query_ref),
@@ -136,12 +136,12 @@ pub async fn create_metric(
 }
 
 pub async fn update_metric(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateMetricRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    let existing = find_enabled_metric(&state, ctx.insight_tenant_id, id).await?;
+    let existing = find_enabled_metric(&state, ctx.subject_tenant_id(), id).await?;
     let mut model: entities::metrics::ActiveModel = existing.into();
 
     if let Some(name) = req.name {
@@ -175,11 +175,11 @@ pub async fn update_metric(
 }
 
 pub async fn delete_metric(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    let existing = find_enabled_metric(&state, ctx.insight_tenant_id, id).await?;
+    let existing = find_enabled_metric(&state, ctx.subject_tenant_id(), id).await?;
 
     let mut model: entities::metrics::ActiveModel = existing.into();
     model.is_enabled = Set(false);
@@ -195,7 +195,7 @@ pub async fn delete_metric(
 // ── Query ───────────────────────────────────────────────────
 
 pub async fn query_metric(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
     Json(req): Json<QueryRequest>,
@@ -205,7 +205,7 @@ pub async fn query_metric(
 }
 
 pub async fn query_metrics_batch(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Json(req): Json<BatchQueryRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
@@ -242,7 +242,7 @@ async fn execute_metric_query(
     req: QueryRequest,
 ) -> Result<QueryResponse, CanonicalError> {
     // 1. Load metric definition (must be enabled)
-    let metric = find_enabled_metric(state, ctx.insight_tenant_id, id).await?;
+    let metric = find_enabled_metric(state, ctx.subject_tenant_id(), id).await?;
 
     // 2. Validate $top. Ceiling raised from 200 to accommodate per-person
     //    "member values" metrics scoped by `person_id IN (roster)`, which emit
@@ -978,16 +978,16 @@ async fn find_enabled_metric(
 // ── Thresholds CRUD ─────────────────────────────────────────
 
 pub async fn list_thresholds(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(metric_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     // Verify metric exists, is enabled, and belongs to tenant
-    find_enabled_metric(&state, ctx.insight_tenant_id, metric_id).await?;
+    find_enabled_metric(&state, ctx.subject_tenant_id(), metric_id).await?;
 
     let rows = entities::thresholds::Entity::find()
         .filter(entities::thresholds::Column::MetricId.eq(metric_id))
-        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.subject_tenant_id()))
         .all(&state.db)
         .await
         .map_err(|e| {
@@ -1000,12 +1000,12 @@ pub async fn list_thresholds(
 }
 
 pub async fn create_threshold(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(metric_id): Path<Uuid>,
     Json(req): Json<CreateThresholdRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    find_enabled_metric(&state, ctx.insight_tenant_id, metric_id).await?;
+    find_enabled_metric(&state, ctx.subject_tenant_id(), metric_id).await?;
 
     let bad_operator = !threshold::VALID_OPERATORS.contains(&req.operator.as_str());
     let bad_level = !threshold::VALID_LEVELS.contains(&req.level.as_str());
@@ -1031,7 +1031,7 @@ pub async fn create_threshold(
 
     let model = entities::thresholds::ActiveModel {
         id: Set(id),
-        insight_tenant_id: Set(ctx.insight_tenant_id),
+        insight_tenant_id: Set(ctx.subject_tenant_id()),
         metric_id: Set(metric_id),
         field_name: Set(req.field_name),
         operator: Set(req.operator),
@@ -1062,14 +1062,14 @@ pub async fn create_threshold(
 }
 
 pub async fn update_threshold(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path((metric_id, tid)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdateThresholdRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let existing = entities::thresholds::Entity::find_by_id(tid)
         .filter(entities::thresholds::Column::MetricId.eq(metric_id))
-        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.subject_tenant_id()))
         .one(&state.db)
         .await
         .map_err(|e| {
@@ -1131,13 +1131,13 @@ pub async fn update_threshold(
 }
 
 pub async fn delete_threshold(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path((metric_id, tid)): Path<(Uuid, Uuid)>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let existing = entities::thresholds::Entity::find_by_id(tid)
         .filter(entities::thresholds::Column::MetricId.eq(metric_id))
-        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.subject_tenant_id()))
         .one(&state.db)
         .await
         .map_err(|e| {
@@ -1164,14 +1164,14 @@ pub async fn delete_threshold(
 // ── Columns ─────────────────────────────────────────────────
 
 pub async fn list_columns(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let columns = entities::table_columns::Entity::find()
         .filter(
             Condition::any()
                 .add(entities::table_columns::Column::InsightTenantId.is_null())
-                .add(entities::table_columns::Column::InsightTenantId.eq(ctx.insight_tenant_id)),
+                .add(entities::table_columns::Column::InsightTenantId.eq(ctx.subject_tenant_id())),
         )
         .all(&state.db)
         .await
@@ -1185,7 +1185,7 @@ pub async fn list_columns(
 }
 
 pub async fn list_columns_for_table(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(table): Path<String>,
 ) -> Result<impl IntoResponse, CanonicalError> {
@@ -1194,7 +1194,7 @@ pub async fn list_columns_for_table(
         .filter(
             Condition::any()
                 .add(entities::table_columns::Column::InsightTenantId.is_null())
-                .add(entities::table_columns::Column::InsightTenantId.eq(ctx.insight_tenant_id)),
+                .add(entities::table_columns::Column::InsightTenantId.eq(ctx.subject_tenant_id())),
         )
         .all(&state.db)
         .await

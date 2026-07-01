@@ -17,13 +17,13 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Extension, State};
+use axum::extract::Extension;
 use axum::response::{IntoResponse, Response};
 use toolkit_canonical_errors::CanonicalError;
 
 use super::AppState;
 use super::canonical_json::CanonicalJson;
-use crate::auth::SecurityContext;
+use toolkit_security::SecurityContext;
 use crate::domain::catalog::response::GetMetricsRequest;
 
 /// `POST /v1/catalog/get_metrics` handler.
@@ -37,14 +37,14 @@ use crate::domain::catalog::response::GetMetricsRequest;
 /// - `500 internal` — resolver / DB failure (Redis blips are absorbed by the
 ///   reader's degrade-gracefully behavior).
 pub async fn get_metrics(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     CanonicalJson(req): CanonicalJson<GetMetricsRequest>,
 ) -> Response {
     let response = match state
         .catalog_reader
         .read(
-            ctx.insight_tenant_id,
+            ctx.subject_tenant_id(),
             req.role_slug.as_deref(),
             req.team_id.as_deref(),
         )

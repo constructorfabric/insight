@@ -1,14 +1,23 @@
-//! Application configuration.
+//! Gear configuration.
+//!
+//! Loaded via `GearCtx::config::<GearConfig>()` (toolkit serde path), which
+//! deserializes the YAML under `gears.analytics-api.config`. The figment
+//! loader was removed in the gears-rust migration — the toolkit host owns
+//! config layering (defaults -> YAML -> env -> CLI). Env overrides are now
+//! `APP__gears__analytics-api__config__<field>` (the prefix changed from the
+//! old `ANALYTICS__*`).
 
-use figment::Figment;
-use figment::providers::{Env, Format, Yaml};
 use serde::Deserialize;
 use uuid::Uuid;
 
+/// Configuration consumed by the analytics-api gear. Deserialized from
+/// `gears.analytics-api.config`.
 #[derive(Debug, Clone, Deserialize)]
-pub struct AppConfig {
-    /// HTTP bind address (e.g., `0.0.0.0:8081`).
-    #[serde(default = "default_bind_addr")]
+#[serde(default)]
+pub struct GearConfig {
+    /// HTTP bind address. Retained for compatibility/diagnostics — the
+    /// `api-gateway` system gear owns the actual listener bind, so this is
+    /// no longer consumed by the gear at runtime.
     pub bind_addr: String,
 
     /// `MariaDB` connection URL.
@@ -19,21 +28,17 @@ pub struct AppConfig {
     pub clickhouse_url: String,
 
     /// `ClickHouse` database name (e.g., `insight`).
-    #[serde(default = "default_clickhouse_database")]
     pub clickhouse_database: String,
 
     /// `ClickHouse` username. Optional — omit for no-auth deployments.
-    #[serde(default)]
     pub clickhouse_user: Option<String>,
 
     /// `ClickHouse` password.
-    #[serde(default)]
     pub clickhouse_password: Option<String>,
 
     /// Identity service base URL (e.g., `http://insight-identity:8082`).
     /// Optional — when empty, `person_ids` from `$filter` are used directly against
     /// `ClickHouse` without alias resolution (MVP mode).
-    #[serde(default)]
     pub identity_url: String,
 
     /// Redis URL for caching (e.g., `redis://localhost:6379`). Backs
@@ -42,12 +47,26 @@ pub struct AppConfig {
     /// deploys MUST configure this; the cross-replica-invalidation NFR
     /// (`cpt-metric-cat-nfr-cross-replica-invalidation`) cannot be satisfied
     /// by purely in-process state.
-    #[serde(default)]
     pub redis_url: String,
 
     /// Metric Catalog configuration (DESIGN §3.5).
-    #[serde(default)]
     pub metric_catalog: MetricCatalogConfig,
+}
+
+impl Default for GearConfig {
+    fn default() -> Self {
+        Self {
+            bind_addr: default_bind_addr(),
+            database_url: String::new(),
+            clickhouse_url: String::new(),
+            clickhouse_database: default_clickhouse_database(),
+            clickhouse_user: None,
+            clickhouse_password: None,
+            identity_url: String::new(),
+            redis_url: String::new(),
+            metric_catalog: MetricCatalogConfig::default(),
+        }
+    }
 }
 
 /// Configuration consumed by `cpt-metric-cat-component-auth-trait` and the rest
@@ -55,19 +74,15 @@ pub struct AppConfig {
 /// fallback per `cpt-metric-cat-constraint-tenant-default`; future catalog
 /// knobs (cache TTL, etc.) land here too.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct MetricCatalogConfig {
     /// Single-tenant fallback. When set, requests without a session-bound
-    /// tenant resolve to this UUID; when unset (multi-tenant install), such
-    /// requests are rejected with a canonical `invalid_argument` envelope
-    /// carrying `field_violations[{field: "tenant_id", reason:
-    /// "TENANT_UNRESOLVED"}]`. Mirrors `IDENTITY__identity__tenant_default_id`
-    /// in the identity service so operators see the same single-tenant
-    /// ergonomic across Insight services. The session-bound tenant ALWAYS
-    /// wins over this default (security invariant — see
-    /// `domain::auth::TenantAuthorization`).
+    /// tenant resolve to this UUID. Under the auth-disabled host the gateway
+    /// always injects a tenant (`DEFAULT_TENANT_ID`), so this is primarily a
+    /// catalog-resolution hint. The session-bound tenant ALWAYS wins over
+    /// this default (security invariant — see `domain::auth::TenantAuthorization`).
     ///
-    /// Env: `ANALYTICS__metric_catalog__tenant_default_id`.
-    #[serde(default)]
+    /// Env: `APP__gears__analytics-api__config__metric_catalog__tenant_default_id`.
     pub tenant_default_id: Option<Uuid>,
 }
 
@@ -77,24 +92,4 @@ fn default_bind_addr() -> String {
 
 fn default_clickhouse_database() -> String {
     "insight".to_owned()
-}
-
-impl AppConfig {
-    /// Load config: YAML file then environment variables (`ANALYTICS__*`).
-    ///
-    /// # Errors
-    ///
-    /// Returns error if config cannot be loaded or parsed.
-    pub fn load(config_path: Option<&str>) -> anyhow::Result<Self> {
-        let mut figment = Figment::new();
-
-        if let Some(path) = config_path {
-            figment = figment.merge(Yaml::file(path));
-        }
-
-        figment = figment.merge(Env::prefixed("ANALYTICS__").split("__"));
-
-        let config: Self = figment.extract()?;
-        Ok(config)
-    }
 }
