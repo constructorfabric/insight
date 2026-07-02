@@ -1,0 +1,57 @@
+name: Silver Contract Parity
+
+# Offline cross-connector silver-contract consistency gate.
+#
+# Verifies that every connector feeding a `silver:<class>` tag declares exactly
+# the columns the silver class contract declares — same names, ORDER and types
+# (catches "column added/reordered/retyped in one connector, forgotten in
+# another" before merge). Reads the dbt manifest produced by `dbt parse` — NO
+# warehouse needed, runs in seconds.
+#
+# This is the offline declaration-consistency gate (layer 2). The dbt contracts
+# themselves (layer 1: SQL output == declared schema) are enforced wherever the
+# models are built with `dbt build` (e2e / Argo).
+#
+# No `paths:` filter on purpose: meant to be a required status check on main —
+# a path-filtered required check never reports on PRs outside the filter, which
+# leaves them stuck on "Expected".
+#
+# Script: src/ingestion/scripts/check_silver_contract_parity.py
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  parity:
+    name: Silver contract parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned so an unrelated dbt-core/adapter release can't break this gate.
+      - name: Install dbt-clickhouse
+        run: pip install "dbt-core==1.10.15" "dbt-clickhouse==1.9.6"
+
+      # Self-test the gate's own logic (no warehouse, no manifest needed).
+      - name: Unit-test the parity gate
+        run: python3 src/ingestion/scripts/tests/test_check_silver_contract_parity.py
+
+      - name: dbt parse (offline, no warehouse)
+        working-directory: src/ingestion/dbt
+        env:
+          # profiles.yml renders env_var('CLICKHOUSE_PASSWORD'); `dbt parse`
+          # never opens a connection, so any non-empty value lets it render.
+          CLICKHOUSE_PASSWORD: parse-only
+        run: dbt parse --profiles-dir .
+
+      - name: Check silver contract parity
+        run: |
+          python3 src/ingestion/scripts/check_silver_contract_parity.py \
+            --manifest src/ingestion/dbt/target/manifest.json
