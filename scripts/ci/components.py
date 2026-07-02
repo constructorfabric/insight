@@ -40,6 +40,12 @@ COMPONENTS = [
      # `#[ignore]`d live_tests (INTEGRATION_TESTS_MARIADB_URL). ClickHouse
      # tests skip (no INTEGRATION_TESTS_CLICKHOUSE_URL — see cf/insight#1564).
      "live_db": True,
+     # llvm-cov reports every instrumented file, including path-dependency
+     # crates (insight-clickhouse) compiled into this binary. Those crates are
+     # their OWN components with their own coverage jobs — counting them here
+     # would let this service's report drag their number down to whatever this
+     # service happens to exercise. Scope the report to this service's code.
+     "cover_ignore_regex": "src/backend/libs/",
      "paths": ["src/backend/services/analytics-api"]},
     {"name": "api-gateway", "lang": "rust", "root": "src/backend",
      "package": "insight-api-gateway",

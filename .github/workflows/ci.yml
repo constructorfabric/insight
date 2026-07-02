@@ -179,7 +179,14 @@ jobs:
           else
             cargo llvm-cov --no-report --package "${{ matrix.entry.package }}" $feats
           fi
-          cargo llvm-cov report --cobertura \
+          # Scope the report to this component's own code — drop any linked
+          # dependency-crate files so they don't pollute another component's
+          # coverage number (each crate self-reports in its own job).
+          ignore=""
+          if [ -n "${{ matrix.entry.cover_ignore_regex }}" ]; then
+            ignore="--ignore-filename-regex ${{ matrix.entry.cover_ignore_regex }}"
+          fi
+          cargo llvm-cov report --cobertura $ignore \
             --output-path "$GITHUB_WORKSPACE/coverage/rust-${{ matrix.entry.name }}.cobertura.xml"
 
       - name: Upload Cobertura
