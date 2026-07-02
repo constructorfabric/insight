@@ -20,13 +20,17 @@ definitions:
   tenant_id_injection:
     type: AddFields
     fields:
-      - path: [tenant_id]
+      - type: AddedFieldDefinition
+        path: [tenant_id]
         value: "{{ config['insight_tenant_id'] }}"
-      - path: [insight_source_id]
+      - type: AddedFieldDefinition
+        path: [insight_source_id]
         value: "{{ config.get('insight_source_id', '') }}"
-      - path: [collected_at]
+      - type: AddedFieldDefinition
+        path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-      - path: [data_source]
+      - type: AddedFieldDefinition
+        path: [data_source]
         value: insight_claude_admin
 
   cursor_paginator:
@@ -225,17 +229,23 @@ streams:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
-          - path: [date]
+          - type: AddedFieldDefinition
+            path: [date]
             value: "{{ stream_interval['start_time'][:10] }}"
-          - path: [cache_read_tokens]
+          - type: AddedFieldDefinition
+            path: [cache_read_tokens]
             value: "{{ record.get('cache_read_input_tokens', 0) }}"
-          - path: [cache_creation_5m_tokens]
+          - type: AddedFieldDefinition
+            path: [cache_creation_5m_tokens]
             value: "{{ record.get('cache_creation', {}).get('ephemeral_5m_input_tokens', 0) }}"
-          - path: [cache_creation_1h_tokens]
+          - type: AddedFieldDefinition
+            path: [cache_creation_1h_tokens]
             value: "{{ record.get('cache_creation', {}).get('ephemeral_1h_input_tokens', 0) }}"
-          - path: [web_search_requests]
+          - type: AddedFieldDefinition
+            path: [web_search_requests]
             value: "{{ record.get('server_tool_use', {}).get('web_search_requests', 0) }}"
-          - path: [unique]
+          - type: AddedFieldDefinition
+            path: [unique]
             value: "{{ stream_interval['start_time'][:10] }}|{{ record.get('model') or '' }}|{{ record.get('api_key_id') or '' }}|{{ record.get('workspace_id') or '' }}|{{ record.get('service_tier') or '' }}|{{ record.get('context_window') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
@@ -349,9 +359,11 @@ streams:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
-          - path: [date]
+          - type: AddedFieldDefinition
+            path: [date]
             value: "{{ stream_interval['start_time'][:10] }}"
-          - path: [unique]
+          - type: AddedFieldDefinition
+            path: [unique]
             value: "{{ stream_interval['start_time'][:10] }}|{{ record.get('workspace_id') or '' }}|{{ record.get('description') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
@@ -469,29 +481,41 @@ streams:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
-          - path: [date]
+          - type: AddedFieldDefinition
+            path: [date]
             value: "{{ record.get('date', '')[:10] }}"
-          - path: [actor_type]
+          - type: AddedFieldDefinition
+            path: [actor_type]
             value: "{{ record.get('actor', {}).get('type') or '' }}"
-          - path: [actor_identifier]
+          - type: AddedFieldDefinition
+            path: [actor_identifier]
             value: "{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}"
-          - path: [session_count]
+          - type: AddedFieldDefinition
+            path: [session_count]
             value: "{{ record.get('core_metrics', {}).get('num_sessions', 0) }}"
-          - path: [lines_added]
+          - type: AddedFieldDefinition
+            path: [lines_added]
             value: "{{ record.get('core_metrics', {}).get('lines_of_code', {}).get('added', 0) }}"
-          - path: [lines_removed]
+          - type: AddedFieldDefinition
+            path: [lines_removed]
             value: "{{ record.get('core_metrics', {}).get('lines_of_code', {}).get('removed', 0) }}"
-          - path: [tool_use_accepted]
+          - type: AddedFieldDefinition
+            path: [tool_use_accepted]
             value: "{{ (record.get('tool_actions', {}).get('edit_tool', {}).get('accepted', 0) or 0) + (record.get('tool_actions', {}).get('write_tool', {}).get('accepted', 0) or 0) + (record.get('tool_actions', {}).get('multi_edit_tool', {}).get('accepted', 0) or 0) + (record.get('tool_actions', {}).get('notebook_edit_tool', {}).get('accepted', 0) or 0) }}"
-          - path: [tool_use_rejected]
+          - type: AddedFieldDefinition
+            path: [tool_use_rejected]
             value: "{{ (record.get('tool_actions', {}).get('edit_tool', {}).get('rejected', 0) or 0) + (record.get('tool_actions', {}).get('write_tool', {}).get('rejected', 0) or 0) + (record.get('tool_actions', {}).get('multi_edit_tool', {}).get('rejected', 0) or 0) + (record.get('tool_actions', {}).get('notebook_edit_tool', {}).get('rejected', 0) or 0) }}"
-          - path: [core_metrics_json]
+          - type: AddedFieldDefinition
+            path: [core_metrics_json]
             value: "{{ record.get('core_metrics', {}) | tojson }}"
-          - path: [tool_actions_json]
+          - type: AddedFieldDefinition
+            path: [tool_actions_json]
             value: "{{ record.get('tool_actions', {}) | tojson }}"
-          - path: [model_breakdown_json]
+          - type: AddedFieldDefinition
+            path: [model_breakdown_json]
             value: "{{ record.get('model_breakdown', []) | tojson }}"
-          - path: [unique]
+          - type: AddedFieldDefinition
+            path: [unique]
             value: "{{ record.get('date', '')[:10] }}|{{ record.get('actor', {}).get('type') or '' }}|{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}|{{ record.get('terminal_type') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
@@ -583,11 +607,14 @@ streams:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
-          - path: [created_by_id]
+          - type: AddedFieldDefinition
+            path: [created_by_id]
             value: "{{ record.get('created_by', {}).get('id', '') }}"
-          - path: [created_by_name]
+          - type: AddedFieldDefinition
+            path: [created_by_name]
             value: "{{ record.get('created_by', {}).get('name', '') }}"
-          - path: [created_by_type]
+          - type: AddedFieldDefinition
+            path: [created_by_type]
             value: "{{ record.get('created_by', {}).get('type', '') }}"
 
   # ── Stream 6: claude_admin_workspaces (full refresh, offset pagination)
@@ -653,7 +680,8 @@ streams:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
-          - path: [data_residency]
+          - type: AddedFieldDefinition
+            path: [data_residency]
             value: "{{ record.get('data_residency', {}) | tojson if record.get('data_residency') else '' }}"
 
   # ── Stream 7: claude_admin_workspace_members (full refresh, substream of workspaces) ──
@@ -750,9 +778,11 @@ streams:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
-          - path: [workspace_id]
+          - type: AddedFieldDefinition
+            path: [workspace_id]
             value: "{{ stream_partition['workspace_id'] }}"
-          - path: [unique]
+          - type: AddedFieldDefinition
+            path: [unique]
             value: "{{ record.get('user_id', '') }}:{{ stream_partition['workspace_id'] }}"
 
   # ── Stream 8: claude_admin_invites (full refresh, offset pagination)

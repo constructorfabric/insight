@@ -18,11 +18,13 @@ set -euo pipefail
 #
 # validate vs validate-strict:
 #   - `validate` passes if the CDK loader accepts the manifest at runtime. It is
-#     lenient and resolves `$ref` before validation, so it will happily accept
-#     manifests that the Airbyte Builder UI rejects.
-#   - `validate-strict` runs the manifest through the Airbyte Builder JSON-schema
-#     validator (no `$ref` resolution). Use this before attempting to open the
-#     manifest in the Builder UI. Emits per-path error messages.
+#     lenient: it resolves `$ref` AND normalizes (auto-fills missing `type:`
+#     fields etc.) before validation, so it will happily accept manifests that
+#     the Airbyte Builder UI rejects.
+#   - `validate-strict` resolves `$ref`s with the CDK resolver, then validates
+#     against declarative_component_schema.yaml WITHOUT the normalization pass —
+#     matching the Builder UI. Use this before attempting to open the manifest
+#     in the Builder UI. Emits per-path error messages.
 #
 # Example:
 #   $0 validate        collaboration/m365
@@ -39,8 +41,15 @@ if [[ -f "${GLOBAL_ENV_FILE}" ]]; then
   set -a; source "${GLOBAL_ENV_FILE}"; set +a
 fi
 
-IMAGE="${AIRBYTE_CONNECTOR_IMAGE:-airbyte/source-declarative-manifest:local}"  # RULE-DEFAULTS-OK: see file header
-BASE_IMAGE="${AIRBYTE_BASE_IMAGE:-airbyte/source-declarative-manifest:latest}"  # RULE-DEFAULTS-OK: see file header
+# BASE_IMAGE is pinned to the airbyte-cdk version bundled with the deployed
+# Airbyte platform (AIRBYTE_VERSION in deploy/scripts/install-airbyte.sh ->
+# airbyte-platform/airbyte-connector-builder-server/requirements.in). This
+# keeps validate-strict aligned with the Builder-UI schema of the platform we
+# deploy to; `:latest` drifts and rejects manifests the deployed Builder
+# accepts. Bump this pin together with AIRBYTE_VERSION.
+BASE_IMAGE="${AIRBYTE_BASE_IMAGE:-airbyte/source-declarative-manifest:6.60.9}"  # RULE-DEFAULTS-OK: see file header
+# Wrapper tag derives from the base tag so bumping the pin auto-rebuilds.
+IMAGE="${AIRBYTE_CONNECTOR_IMAGE:-airbyte/source-declarative-manifest:local-${BASE_IMAGE##*:}}"  # RULE-DEFAULTS-OK: see file header
 COMMAND_NAME="${AIRBYTE_COMMAND:-source-declarative-manifest}"  # RULE-DEFAULTS-OK: see file header
 SECRETS_TMPFS_OPTS="${AIRBYTE_SECRETS_TMPFS_OPTS:-/secrets:rw,mode=1777}"  # RULE-DEFAULTS-OK: see file header
 
@@ -55,11 +64,12 @@ Usage:
 
 Commands:
   validate        Runtime validation — passes if the CDK loader accepts the
-                  manifest. Resolves \$ref before checking. Lenient.
-  validate-strict Strict Builder-UI validation — runs the manifest through the
-                  declarative_component_schema.yaml validator WITHOUT \$ref
-                  resolution. Use this before opening the manifest in the
-                  Airbyte Builder UI. Reports per-path errors.
+                  manifest. Resolves \$ref and normalizes before checking.
+                  Lenient.
+  validate-strict Strict Builder-UI validation — resolves \$refs, then runs the
+                  declarative_component_schema.yaml validator WITHOUT the
+                  CDK normalization pass. Use this before opening the manifest
+                  in the Airbyte Builder UI. Reports per-path errors.
   check           Manifest + credentials against source API (smoke test)
   discover        List available streams and their schemas
   read            Extract data (outputs Airbyte Protocol JSON to stdout)
@@ -216,7 +226,7 @@ case "${command}" in
     ;;
 
   validate-strict)
-    # Run the exact jsonschema check the Builder UI performs (no $ref resolution).
+    # Run the jsonschema check the Builder UI performs ($ref resolution, no normalization).
     # Logic lives in validate_strict.py (per the no-inline-Python rule in
     # cypilot/config/rules/code-conventions.md §"No inline scripts"); this case
     # just mounts the script + the connector dir and invokes it inside the

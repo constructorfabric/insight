@@ -4,6 +4,7 @@
 # Sync: full refresh (most streams), incremental (pull_requests on updatedDate)
 
 version: "6.44.0"
+type: DeclarativeSource
 
 definitions:
   # --- Shared components ---
@@ -83,13 +84,17 @@ definitions:
   standard_transformations:
     - type: AddFields
       fields:
-        - path: [tenant_id]
+        - type: AddedFieldDefinition
+          path: [tenant_id]
           value: "{{ config['tenant_id'] }}"
-        - path: [source_instance_id]
+        - type: AddedFieldDefinition
+          path: [source_instance_id]
           value: "bitbucket-{{ config['instance_name'] }}"
-        - path: [_source]
+        - type: AddedFieldDefinition
+          path: [_source]
           value: "bitbucket_server"
-        - path: [_extracted_at]
+        - type: AddedFieldDefinition
+          path: [_extracted_at]
           value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
 
   # ===================================================================
@@ -113,15 +118,20 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -191,17 +201,23 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -290,19 +306,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -384,19 +407,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -503,19 +533,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -638,21 +675,29 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [pr_id]
+          - type: AddedFieldDefinition
+            path: [pr_id]
             value: "{{ stream_partition.pr_id }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -718,15 +763,20 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -812,19 +862,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -914,21 +971,29 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [pr_id]
+          - type: AddedFieldDefinition
+            path: [pr_id]
             value: "{{ stream_partition.pr_id }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1018,21 +1083,29 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [pr_id]
+          - type: AddedFieldDefinition
+            path: [pr_id]
             value: "{{ stream_partition.pr_id }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1124,21 +1197,29 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [commit_id]
+          - type: AddedFieldDefinition
+            path: [commit_id]
             value: "{{ stream_partition.commit_id }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1227,17 +1308,23 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [commit_id]
+          - type: AddedFieldDefinition
+            path: [commit_id]
             value: "{{ stream_partition.commit_id }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1324,21 +1411,29 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [pr_id]
+          - type: AddedFieldDefinition
+            path: [pr_id]
             value: "{{ stream_partition.pr_id }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1399,15 +1494,20 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1463,17 +1563,23 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [group_name]
+          - type: AddedFieldDefinition
+            path: [group_name]
             value: "{{ stream_partition.group_name }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1541,19 +1647,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [user_id]
+          - type: AddedFieldDefinition
+            path: [user_id]
             value: "{{ record.get('user', {}).get('id', '') }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1616,19 +1729,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [group_name]
+          - type: AddedFieldDefinition
+            path: [group_name]
             value: "{{ record.get('group', {}).get('name', '') }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1699,21 +1819,29 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [user_id]
+          - type: AddedFieldDefinition
+            path: [user_id]
             value: "{{ record.get('user', {}).get('id', '') }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1786,21 +1914,29 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [group_name]
+          - type: AddedFieldDefinition
+            path: [group_name]
             value: "{{ record.get('group', {}).get('name', '') }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1856,17 +1992,23 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [user_id]
+          - type: AddedFieldDefinition
+            path: [user_id]
             value: "{{ record.get('user', {}).get('id', '') }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1918,17 +2060,23 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [group_name]
+          - type: AddedFieldDefinition
+            path: [group_name]
             value: "{{ record.get('group', {}).get('name', '') }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -1997,19 +2145,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -2094,19 +2249,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -2190,19 +2352,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -2287,19 +2456,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -2379,19 +2555,26 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [project_key]
+          - type: AddedFieldDefinition
+            path: [project_key]
             value: "{{ stream_partition.project_key }}"
-          - path: [repo_slug]
+          - type: AddedFieldDefinition
+            path: [repo_slug]
             value: "{{ stream_partition.repo_slug }}"
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader
@@ -2450,15 +2633,20 @@ definitions:
     transformations:
       - type: AddFields
         fields:
-          - path: [insight_tenant_id]
+          - type: AddedFieldDefinition
+            path: [insight_tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
+          - type: AddedFieldDefinition
+            path: [insight_source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [source_instance_id]
+          - type: AddedFieldDefinition
+            path: [source_instance_id]
             value: "bitbucket-{{ config['instance_name'] }}"
-          - path: [_source]
+          - type: AddedFieldDefinition
+            path: [_source]
             value: "bitbucket_server"
-          - path: [_extracted_at]
+          - type: AddedFieldDefinition
+            path: [_extracted_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
     schema_loader:
       type: InlineSchemaLoader

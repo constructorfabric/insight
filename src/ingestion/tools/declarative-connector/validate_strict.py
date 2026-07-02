@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """Builder-UI strict validator for declarative Airbyte manifests.
 
-Runs the exact jsonschema check the Airbyte Builder UI performs — no `$ref`
-resolution — and emits per-path errors with the deepest-matching `oneOf` branch
-context so the user can pinpoint bad fields. Exits non-zero on any error.
+Runs the jsonschema check the Airbyte Builder UI performs and emits per-path
+errors with the deepest-matching `oneOf` branch context so the user can
+pinpoint bad fields. Exits non-zero on any error.
+
+`$ref` handling mirrors the Builder UI: the manifest is preprocessed with the
+CDK's own `ManifestReferenceResolver` (the exact resolver the Builder and the
+runtime use, including `$ref`-with-sibling-keys merge semantics) and the
+resolved manifest is then validated against `declarative_component_schema.yaml`
+as-is. Unlike the runtime `validate` command, NO `ManifestNormalizer` /
+type-inference pass runs first — so missing `type:` fields, templated
+integer-only slots, and similar Builder blockers still surface.
 
 Designed to run inside the `airbyte/source-declarative-manifest` Docker image,
 which ships the `airbyte_cdk` package, `pyyaml`, and `jsonschema`. The schema
@@ -22,6 +30,9 @@ from pathlib import Path
 import airbyte_cdk
 import jsonschema
 import yaml
+from airbyte_cdk.sources.declarative.parsers.manifest_reference_resolver import (
+    ManifestReferenceResolver,
+)
 
 
 def _resolve_schema_path() -> Path:
@@ -77,6 +88,11 @@ def main(argv: list[str]) -> int:
         schema = yaml.safe_load(f)
     with manifest_path.open() as f:
         manifest = yaml.safe_load(f)
+    try:
+        manifest = ManifestReferenceResolver().preprocess_manifest(manifest)
+    except Exception as exc:  # noqa: BLE001 — any unresolvable $ref is a hard failure
+        print(f"STRICT VALIDATION FAILED — unresolvable $ref: {exc}", file=sys.stderr)
+        return 1
 
     validator = jsonschema.Draft7Validator(schema)
     errors = list(validator.iter_errors(manifest))
