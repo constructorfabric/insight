@@ -199,7 +199,10 @@ if ! ch_table_exists silver class_ai_dev_usage; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     insight_tenant_id    String,
+    source_id            String,
+    unique_key           String,
     email                String,
+    api_key_id           Nullable(String),
     day                  Date,
     tool                 String,
     is_active            UInt8,
@@ -208,17 +211,49 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     tool_use_offered     Nullable(Float64),
     tool_use_accepted    Nullable(Float64),
     lines_added          Nullable(Float64),
+    lines_removed        Nullable(Float64),
     total_lines_added    Nullable(Float64),
+    total_lines_removed  Nullable(Float64),
     accepted_lines_added Nullable(Float64),
     spec_lines           Nullable(Float64),
     session_count        Nullable(Float64),
     total_chat_messages  Nullable(Float64),
     cost_cents           Nullable(UInt32),
+    commits_count        Nullable(UInt32),
+    pull_requests_count  Nullable(UInt32),
     prs_with_cc_count    Nullable(UInt32),
     prs_total_count      Nullable(UInt32),
+    tool_action_breakdown_json Nullable(String),
+    source               String,
+    data_source          String,
+    collected_at         Nullable(DateTime64(3)),
     _version             UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
+else
+  class_ai_dev_usage_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='class_ai_dev_usage' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$class_ai_dev_usage_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.class_ai_dev_usage"
+    run_ch <<'SQL'
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS source_id String;
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS unique_key String;
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS api_key_id Nullable(String);
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS lines_removed Nullable(Float64);
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS total_lines_removed Nullable(Float64);
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS commits_count Nullable(UInt32);
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS pull_requests_count Nullable(UInt32);
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS tool_action_breakdown_json Nullable(String);
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS source String;
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS data_source String;
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS collected_at Nullable(DateTime64(3));
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.class_ai_dev_usage is not a placeholder"
+  fi
 fi
 
 # silver.class_ai_overage — per-seat AI spend-vs-limit (Claude Team). Referenced
@@ -966,6 +1001,19 @@ CREATE TABLE IF NOT EXISTS bronze_zoom.participants (
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
 ) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY email;
+SQL
+else
+  echo "  Reconciling placeholder schema: bronze_zoom.participants"
+  run_ch <<'SQL'
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS tenant_id String;
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS source_id String;
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS user_name Nullable(String);
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS participant_uuid String;
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS camera Nullable(String);
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS share_desktop Nullable(Bool);
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS share_application Nullable(Bool);
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS share_whiteboard Nullable(Bool);
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS video_connection_type Nullable(String);
 SQL
 fi
 

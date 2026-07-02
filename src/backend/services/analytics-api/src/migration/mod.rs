@@ -40,6 +40,8 @@ mod m20260618_000001_ai_claude_team_overage_metric;
 mod m20260618_000002_seed_claude_team_overage_catalog;
 mod m20260620_000001_seed_wiki_metrics;
 mod m20260620_000002_seed_wiki_catalog;
+mod m20260623_000001_ai_personal_queries;
+mod m20260623_000002_seed_ai_personal_metric_catalog;
 mod m20260624_000001_collab_zulip_chat;
 mod m20260624_000002_seed_zulip_collab_catalog;
 mod m20260624_000003_ic_chart_loc_git_breakdown;
@@ -95,6 +97,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260618_000002_seed_claude_team_overage_catalog::Migration),
             Box::new(m20260620_000001_seed_wiki_metrics::Migration),
             Box::new(m20260620_000002_seed_wiki_catalog::Migration),
+            Box::new(m20260623_000001_ai_personal_queries::Migration),
+            Box::new(m20260623_000002_seed_ai_personal_metric_catalog::Migration),
             Box::new(m20260624_000001_collab_zulip_chat::Migration),
             Box::new(m20260624_000002_seed_zulip_collab_catalog::Migration),
             Box::new(m20260624_000003_ic_chart_loc_git_breakdown::Migration),
