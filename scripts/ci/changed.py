@@ -38,6 +38,7 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True) -> dict
         entry["lint"] = lint
         entry["cover"] = cover
         entry["clippy"] = comp.get("clippy", True)  # False ⇒ fmt-only (see #1512)
+        entry["live_db"] = comp.get("live_db", False)  # DB-backed live_tests (see #1564)
     elif comp["lang"] == "dotnet":
         entry["solution"] = comp.get("solution", "")
     elif comp["lang"] == "python":

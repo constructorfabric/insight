@@ -28,11 +28,9 @@
 //!   against a real Redis. The resolver doesn't span replicas; the cache does.
 
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement, Value};
-use sea_orm_migration::MigratorTrait;
 use uuid::Uuid;
 
 use crate::domain::catalog::resolver::ThresholdResolver;
-use crate::migration::Migrator;
 
 const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
 
@@ -50,43 +48,6 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
             None
         }
     }
-}
-
-/// Wipe the catalog tables + the matching `seaql_migrations` rows so
-/// `Migrator::up` reruns the schema + seed migrations cleanly. Tolerates
-/// the first-run case where `seaql_migrations` itself doesn't exist yet —
-/// the table is created the first time `Migrator::up` runs.
-async fn reset_catalog(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
-    // Drop children before parents — `metric_query_catalog` has FKs into
-    // both `metric_catalog` and `metrics`, so dropping `metric_catalog`
-    // first triggers MariaDB error 1451. Order also matters for
-    // `threshold_lock_audit` / `metric_threshold` (audit references
-    // threshold rows by id but with `ON DELETE CASCADE`, so the order
-    // doesn't strictly matter there — kept for symmetry).
-    for table in [
-        "metric_query_catalog",
-        "threshold_lock_audit",
-        "metric_threshold",
-        "metric_catalog",
-    ] {
-        db.execute_unprepared(&format!("DROP TABLE IF EXISTS {table}"))
-            .await?;
-    }
-    // First-run-friendly: ignore "table doesn't exist" so a brand-new test
-    // database doesn't fail the test before Migrator::up gets to create
-    // seaql_migrations. Includes `m20260529_%` so the junction-table
-    // migration re-runs on every reset (otherwise the table is dropped
-    // above but the seaql_migrations row remains and Migrator::up skips
-    // the create).
-    let _ = db
-        .execute_unprepared(
-            "DELETE FROM seaql_migrations \
-             WHERE version LIKE 'm20260522_%' \
-                OR version LIKE 'm20260527_%' \
-                OR version LIKE 'm20260529_%'",
-        )
-        .await;
-    Ok(())
 }
 
 /// Insert a tenant-scope threshold row for an existing seeded metric.
@@ -184,8 +145,6 @@ async fn product_default_wins_when_no_tenant_overlay() -> anyhow::Result<()> {
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
-    Migrator::up(&db, None).await?;
 
     let resolver = ThresholdResolver::new(db.clone());
     let tenant_id = Uuid::now_v7();
@@ -214,8 +173,6 @@ async fn tenant_overlay_wins_when_no_lock() -> anyhow::Result<()> {
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
-    Migrator::up(&db, None).await?;
 
     let tenant_id = Uuid::now_v7();
     let metric_key = "ic_kpis.tasks_closed"; // present in the seed
@@ -252,8 +209,6 @@ async fn tenant_lock_shadows_team_override() -> anyhow::Result<()> {
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
-    Migrator::up(&db, None).await?;
 
     let tenant_id = Uuid::now_v7();
     let metric_key = "ic_kpis.tasks_closed";
@@ -319,8 +274,6 @@ async fn response_includes_metric_key_for_fe_bridge() -> anyhow::Result<()> {
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
-    Migrator::up(&db, None).await?;
 
     let resolver = ThresholdResolver::new(db.clone());
     let response = resolver.resolve(Uuid::now_v7(), "", "").await?;
@@ -349,8 +302,6 @@ async fn response_includes_link_map_from_metric_query_catalog() -> anyhow::Resul
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
-    Migrator::up(&db, None).await?;
 
     let resolver = ThresholdResolver::new(db.clone());
     let response = resolver.resolve(Uuid::now_v7(), "", "").await?;
@@ -411,8 +362,6 @@ async fn response_link_map_omits_metrics_dropped_by_walk_all() -> anyhow::Result
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
-    Migrator::up(&db, None).await?;
 
     // Pick a seeded metric whose storage prefix is known to be in the
     // junction map (`ic_kpis.tasks_closed` is wired to METRIC_REGISTRY.IC_KPIS
