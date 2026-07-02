@@ -1,0 +1,69 @@
+spec_version: 1
+description: >
+  Task Delivery · stale_in_progress · JIRA, end-to-end from BRONZE only.
+
+  Metric: stale_in_progress — IC Bullet Task Delivery (…0011). Point-in-time count
+  of the assignee's still-open issues whose last status change was more than 14
+  days ago (work that has gone quiet).
+
+  How it's computed (bronze → silver → gold):
+    • bronze: one Jira issue that is still open (current status In Progress) and
+      whose only status activity is its creation, long in the past.
+    • silver: the snapshot is reconstructed into a per-field event log; the issue's
+      current status and its most recent status-change time are derived.
+    • gold:   the view counts open (not Closed/Resolved/Verified) issues whose
+      last status event is > 14 days before now(); it is a SNAPSHOT, emitted with
+      metric_date = today(); the …0011 query_ref sums the count per person.
+
+  Because this metric is stamped with today(), the request window must span the
+  real run date — hence the deliberately wide 2020→2100 range (every other metric
+  here uses a fixed month). The issue's only status event is at creation
+  (2026-01-01), which is always far more than 14 days before now(), so it is
+  reliably stale regardless of when the test runs.
+
+  One issue (ALICE), all drivers inline; templates only carry invariant scaffolding.
+    created 2026-01-01 09:00  status "In Progress"  (never closed, no later events)
+  → 1 open issue idle since 2026-01-01 → stale_in_progress = 1.
+
+  Only `value` is asserted (cohort median/range depend on unseeded HR org_unit).
+
+bronze:
+  bronze_jira.jira_issue:
+    # Current status In Progress (open) and no changelog at all, so the only
+    # status event is the synthetic one at creation — its age (>14d) makes it stale.
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: ST-1
+      jira_id: ST-1
+      unique_key: jira-test-ST-1
+      id_readable: TSS-1
+      created: "2026-01-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # IC Bullet Task Delivery (…0011): value = the requested person's own value.
+  # Alice has 1 open issue idle since 2026-01-01 → stale_in_progress = 1.
+  # Wide window so the snapshot row (metric_date = today()) is always in range.
+  - name: stale_in_progress — IC bullet, jira (alice 1 idle open issue)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2020-01-01' and metric_date le '2100-12-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: stale_in_progress }
+        equal: { value: 1 }

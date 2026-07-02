@@ -1,0 +1,75 @@
+spec_version: 1
+description: >
+  Task Delivery · mean_time_to_resolution · JIRA, end-to-end from BRONZE only.
+
+  Metric: mean_time_to_resolution — IC Bullet Task Delivery (…0011). Days from
+  issue creation to its final close (lead time).
+
+  How it's computed (bronze → silver → gold):
+    • bronze: one Jira issue (with a creation timestamp) + its status changelog.
+    • silver: the changelog is reconstructed into a per-field event log; the
+      creation time and the final close event are derived per issue.
+    • gold:   per closed issue, lead_seconds = created → final_close
+      (`task_dev_seconds_per_issue.lead_seconds`) → days; the …0011 query_ref
+      takes the period MEDIAN of those per-issue days for the person.
+
+  One issue (ALICE), all drivers inline; templates only carry invariant scaffolding.
+  Status timeline (initial status reconstructs to "Open"):
+    created 2026-01-05 09:00  status "Open"        (synthetic_initial)
+    2026-01-07 09:00          → "In Progress"      (changelog)
+    2026-01-12 09:00          → "Closed"           (changelog, = final close)
+  lead_seconds = 2026-01-05 09:00 → 2026-01-12 09:00 = 7 d = 604800 s → 7.0 days.
+  Median over Alice's one closed issue = 7.0.
+
+  Only `value` is asserted (cohort median/range depend on unseeded HR org_unit).
+
+bronze:
+  bronze_jira.jira_issue:
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: MR-1
+      jira_id: MR-1
+      unique_key: jira-test-MR-1
+      id_readable: TSM-1
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+  bronze_jira.jira_issue_history:
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSM-1
+      changelog_id: "41001"
+      unique_key: jira-test-TSM-1-41001
+      created_at: "2026-01-07T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"In Progress","to":"3"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSM-1
+      changelog_id: "41002"
+      unique_key: jira-test-TSM-1-41002
+      created_at: "2026-01-12T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # IC Bullet Task Delivery (…0011): value = the requested person's own value.
+  # Alice's single closed issue took 7 days create→close → mean_time_to_resolution = 7.
+  - name: mean_time_to_resolution — IC bullet, jira (alice 7d create→close)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: mean_time_to_resolution }
+        equal: { value: 7 }

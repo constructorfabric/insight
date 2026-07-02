@@ -1,0 +1,83 @@
+spec_version: 1
+description: >
+  Task Delivery · worklog_logging_accuracy · JIRA, end-to-end from BRONZE only.
+
+  Metric: worklog_logging_accuracy — IC Bullet Task Delivery (…0011). How much of
+  the time an assignee's issues spent actively in progress was actually logged as
+  worklog time (logging discipline), clamped to ≤100%.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: a Jira issue with a status changelog (the in-progress window) PLUS a
+      worklog entry (the logged seconds).
+    • silver: the changelog → status intervals give the in-progress seconds per
+      day (denominator); the worklog rows give the logged seconds per day
+      (numerator), each normalised to per-person-per-day.
+    • gold:   the …0011 query_ref reduces it as a ratio-of-sums over the period:
+      least(100, 100 · Σworklog_seconds / Σin_progress_seconds).
+
+  This is the only Task Delivery metric whose numerator comes from the worklog
+  stream (bronze_jira.jira_worklogs → silver class_task_worklogs), so the test
+  seeds that table too.
+
+  One issue (ALICE), all drivers inline; templates only carry invariant scaffolding.
+    created 2026-01-05 00:00  status "In Progress" (reconstructed)
+    2026-01-06 00:00          status → "Closed"
+  → In Progress interval = exactly 1 day = 86400 s, all on 2026-01-05.
+  Worklog: 43200 s (12 h) logged on 2026-01-05.
+  worklog_logging_accuracy = 100 · 43200 / 86400 = 50.0.
+
+  Only `value` is asserted (cohort median/range depend on unseeded HR org_unit).
+
+bronze:
+  bronze_jira.jira_issue:
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: WL-1
+      jira_id: WL-1
+      unique_key: jira-test-WL-1
+      id_readable: TSW-1
+      created: "2026-01-05T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+  bronze_jira.jira_issue_history:
+    # Single close at exactly +1 day, so the In Progress interval is 86400 s on 01-05.
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSW-1
+      changelog_id: "46001"
+      unique_key: jira-test-TSW-1-46001
+      created_at: "2026-01-06T00:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_jira.jira_worklogs:
+    # 12 h logged on 2026-01-05 by Alice → numerator 43200 s.
+    - $ref: templates/jira_task.yaml#/templates/jira_worklog
+      worklog_id: WL-1-1
+      id_readable: TSW-1
+      unique_key: jira-test-worklog-WL-1-1
+      started: "2026-01-05T10:00:00.000+0000"
+      time_spent_seconds: 43200
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # IC Bullet Task Delivery (…0011): value = the requested person's own value.
+  # Alice logged 43200 s of 86400 s in-progress → worklog_logging_accuracy = 50.
+  - name: worklog_logging_accuracy — IC bullet, jira (alice 12h logged / 24h in-progress)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: worklog_logging_accuracy }
+        equal: { value: 50 }

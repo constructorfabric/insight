@@ -1,0 +1,123 @@
+spec_version: 1
+description: >
+  Task Delivery · bugs_to_task_ratio · JIRA — RATIO-OF-SUMS correctness guard.
+
+  Metric: bugs_to_task_ratio — IC Bullet Task Delivery (…0011). This spec exists
+  specifically to pin the period aggregation as 100·Σbugs/Σtasks (issue #433 §3.3),
+  NOT the average of per-day ratios. The two are equal only when every day has the
+  same task count, so this fixture uses TWO days with DIFFERENT task counts:
+
+    2026-01-10  4 tasks closed, 1 of them a Bug   → daily ratio 25%
+    2026-01-20  1 task  closed, it is a Bug       → daily ratio 100%
+
+  • avg-of-daily-ratios = (25 + 100) / 2 = 62.5   (the WRONG, biased definition)
+  • ratio-of-sums       = 100 · Σbugs/Σtasks = 100 · 2/5 = 40.0   (correct)
+
+  Asserting 40.0 fails if the reducer ever regresses to averaging daily ratios.
+  How it's computed (bronze → silver → gold): bronze issues with issuetype +
+  close-status changelog → per-field event log → per (assignee, close-day) counts
+  of tasks_closed and bugs_fixed → the …0011 query_ref sums both across the period
+  and divides.
+
+  All drivers inline; templates only carry invariant scaffolding. issuetype lives
+  in custom_fields_json; each issue gets one In Progress → Closed changelog landing
+  on its close day. Only `value` is asserted (cohort median/range need HR org_unit).
+
+bronze:
+  bronze_jira.jira_issue:
+    # Day A (close 2026-01-10): 4 tasks, RS-4 is the only Bug.
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: RS-1
+      jira_id: RS-1
+      unique_key: jira-test-RS-1
+      id_readable: TSR-1
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: RS-2
+      jira_id: RS-2
+      unique_key: jira-test-RS-2
+      id_readable: TSR-2
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: RS-3
+      jira_id: RS-3
+      unique_key: jira-test-RS-3
+      id_readable: TSR-3
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: RS-4
+      jira_id: RS-4
+      unique_key: jira-test-RS-4
+      id_readable: TSR-4
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10004","name":"Bug"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    # Day B (close 2026-01-20): a single Bug.
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: RS-5
+      jira_id: RS-5
+      unique_key: jira-test-RS-5
+      id_readable: TSR-5
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10004","name":"Bug"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+  bronze_jira.jira_issue_history:
+    # RS-1..4 close on 2026-01-10; RS-5 closes on 2026-01-20.
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSR-1
+      changelog_id: "47001"
+      unique_key: jira-test-TSR-1-47001
+      created_at: "2026-01-10T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSR-2
+      changelog_id: "47002"
+      unique_key: jira-test-TSR-2-47002
+      created_at: "2026-01-10T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSR-3
+      changelog_id: "47003"
+      unique_key: jira-test-TSR-3-47003
+      created_at: "2026-01-10T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSR-4
+      changelog_id: "47004"
+      unique_key: jira-test-TSR-4-47004
+      created_at: "2026-01-10T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSR-5
+      changelog_id: "47005"
+      unique_key: jira-test-TSR-5-47005
+      created_at: "2026-01-20T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # ratio-of-sums = 100*2/5 = 40 (avg-of-daily would be 62.5).
+  - name: bugs_to_task_ratio — ratio-of-sums across unequal days (alice = 40)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: bugs_to_task_ratio }
+        equal: { value: 40 }

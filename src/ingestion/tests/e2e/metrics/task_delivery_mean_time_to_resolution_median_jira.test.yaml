@@ -1,0 +1,96 @@
+spec_version: 1
+description: >
+  Task Delivery · mean_time_to_resolution · JIRA — MEDIAN (not mean) guard.
+
+  Metric: mean_time_to_resolution — IC Bullet Task Delivery (…0011). Despite the
+  name, the period reducer is the MEDIAN of per-issue lead times
+  (quantileExactIf(0.5)), so one long-tail issue can't drag the gauge. The
+  companion spec uses a single issue (median == mean trivially); THIS spec uses
+  three issues with lead times chosen so median ≠ mean, pinning the quantile:
+
+    lead times = [10 d, 2 d, 1 d]  →  median = 2.0,  mean = 4.33
+
+  An odd count (3) is used deliberately: ClickHouse quantileExact(0.5) returns the
+  upper-middle element on an even set, so an even fixture would be ambiguous.
+
+  How it's computed (bronze → silver → gold): each issue's created→final-close lead
+  time in days → the …0011 query_ref takes the per-person median over the period.
+
+  All drivers inline; templates only carry invariant scaffolding. Three issues for
+  ALICE, each In Progress → Closed; lead time is created→close:
+    MM-1  created 2026-01-01 09:00 → closed 2026-01-11 09:00  → 10 d
+    MM-2  created 2026-01-05 09:00 → closed 2026-01-07 09:00  →  2 d
+    MM-3  created 2026-01-05 09:00 → closed 2026-01-06 09:00  →  1 d
+  median([10, 2, 1]) = 2.0.
+
+  Only `value` is asserted (cohort median/range depend on unseeded HR org_unit).
+
+bronze:
+  bronze_jira.jira_issue:
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: MM-1
+      jira_id: MM-1
+      unique_key: jira-test-MM-1
+      id_readable: TSN-1
+      created: "2026-01-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: MM-2
+      jira_id: MM-2
+      unique_key: jira-test-MM-2
+      id_readable: TSN-2
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: MM-3
+      jira_id: MM-3
+      unique_key: jira-test-MM-3
+      id_readable: TSN-3
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+  bronze_jira.jira_issue_history:
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSN-1
+      changelog_id: "49001"
+      unique_key: jira-test-TSN-1-49001
+      created_at: "2026-01-11T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSN-2
+      changelog_id: "49002"
+      unique_key: jira-test-TSN-2-49002
+      created_at: "2026-01-07T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSN-3
+      changelog_id: "49003"
+      unique_key: jira-test-TSN-3-49003
+      created_at: "2026-01-06T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # median([10,2,1]) = 2 (mean would be 4.33).
+  - name: mean_time_to_resolution — median over 3 issues (alice = 2, mean 4.33)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: mean_time_to_resolution }
+        equal: { value: 2 }

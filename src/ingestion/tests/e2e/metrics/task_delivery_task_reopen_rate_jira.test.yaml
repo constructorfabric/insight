@@ -1,0 +1,129 @@
+spec_version: 1
+description: >
+  Task Delivery · task_reopen_rate · JIRA, end-to-end from BRONZE only.
+
+  Metric: task_reopen_rate — IC Bullet Task Delivery (…0011). Of the issues an
+  assignee closed in the period, what share bounced back out of a closed status
+  (reopened). Suppressed (NULL) until there are at least 5 close events, so the
+  rate isn't dominated by a single rebound.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: several Jira issues with status changelogs; some are closed once,
+      some are closed, reopened, and closed again.
+    • silver: changelogs → per-field event log → status intervals; every
+      transition INTO a closed status is a +1 close event, every transition OUT
+      of a closed status is a +1 reopen event (so a close→reopen→close cycle
+      counts 2 closes and 1 reopen — not 1/1).
+    • gold:   the …0011 query_ref gates on Σcloses ≥ 5, then reduces the rate as
+      100 · Σreopens / Σcloses (ratio-of-sums over the period).
+
+  All drivers inline; templates only carry invariant scaffolding. Three issues for
+  ALICE, all created 2026-01-05, issuetype Task. Each reopened issue is closed
+  AGAIN so its final close is the later one and the post-reopen interval is
+  well-formed (a reopened issue left open would have its reopen interval clamped
+  away by final_close_at and the reopen would never register):
+    RO-1 — In Progress → Closed                              → 1 close
+    RO-2 — In Progress → Closed → In Progress → Closed       → 2 closes, 1 reopen
+    RO-3 — In Progress → Closed → In Progress → Closed       → 2 closes, 1 reopen
+  Σcloses = 5 (gate passes), Σreopens = 2 → task_reopen_rate = 100·2/5 = 40.0.
+
+  Only `value` is asserted (cohort median/range depend on unseeded HR org_unit).
+
+bronze:
+  bronze_jira.jira_issue:
+    # All three end Closed (current state), assigned to Alice.
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: RO-1
+      jira_id: RO-1
+      unique_key: jira-test-RO-1
+      id_readable: TSO-1
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: RO-2
+      jira_id: RO-2
+      unique_key: jira-test-RO-2
+      id_readable: TSO-2
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: RO-3
+      jira_id: RO-3
+      unique_key: jira-test-RO-3
+      id_readable: TSO-3
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+  bronze_jira.jira_issue_history:
+    # RO-1: single close.
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSO-1
+      changelog_id: "45001"
+      unique_key: jira-test-TSO-1-45001
+      created_at: "2026-01-08T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    # RO-2: close 01-08, reopen 01-12, close again 01-16.
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSO-2
+      changelog_id: "45002"
+      unique_key: jira-test-TSO-2-45002
+      created_at: "2026-01-08T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSO-2
+      changelog_id: "45003"
+      unique_key: jira-test-TSO-2-45003
+      created_at: "2026-01-12T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSO-2
+      changelog_id: "45004"
+      unique_key: jira-test-TSO-2-45004
+      created_at: "2026-01-16T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    # RO-3: close 01-09, reopen 01-13, close again 01-17.
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSO-3
+      changelog_id: "45005"
+      unique_key: jira-test-TSO-3-45005
+      created_at: "2026-01-09T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSO-3
+      changelog_id: "45006"
+      unique_key: jira-test-TSO-3-45006
+      created_at: "2026-01-13T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TSO-3
+      changelog_id: "45007"
+      unique_key: jira-test-TSO-3-45007
+      created_at: "2026-01-17T09:00:00.000+0000"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+cases:
+  # IC Bullet Task Delivery (…0011): value = the requested person's own value.
+  # Alice: 5 closes (gate ≥5 met), 2 reopens → task_reopen_rate = 100*2/5 = 40.
+  - name: task_reopen_rate — IC bullet, jira (alice 2 reopens / 5 closes = 40)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: task_reopen_rate }
+        equal: { value: 40 }
