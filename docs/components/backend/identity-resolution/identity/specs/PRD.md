@@ -1203,7 +1203,7 @@ non-breaking.
 - [ ] DbUp creates `persons` and `account_person_map` against an
       empty `identity` MariaDB on first pod start; re-running the
       pod is a no-op against `SchemaVersions`.
-- [ ] `cypilot validate --skip-code --artifact docs/components/backend/identity-resolution/identity`
+- [ ] `cfs validate --skip-code --artifact docs/components/backend/identity-resolution/identity`
       reports zero errors.
 
 ## 10. Dependencies
