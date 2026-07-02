@@ -205,6 +205,17 @@ async fn product_default_wins_when_no_tenant_overlay() -> anyhow::Result<()> {
             "no locks present → bounded_by_lock must be false"
         );
     }
+    // #1527: the Messaging modality's counters must be seeded at product-default.
+    // Later collab modalities (#1528–#1532) extend this expected set.
+    for key in [
+        "collab_person_counter_daily.messages_sent",
+        "collab_person_counter_daily.channel_posts",
+    ] {
+        assert!(
+            response.metrics.iter().any(|m| m.metric_key == key),
+            "seed must expose {key} at product-default"
+        );
+    }
     Ok(())
 }
 
