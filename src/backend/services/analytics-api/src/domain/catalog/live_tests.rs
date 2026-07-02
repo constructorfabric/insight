@@ -344,127 +344,120 @@ async fn response_includes_link_map_from_metric_query_catalog() -> anyhow::Resul
     Ok(())
 }
 
+/// Insert a GLOBAL (`tenant_id IS NULL`) catalog row with a unique key and
+/// return its id. Catalog is global-only in v1 (the resolver reads
+/// `WHERE c.tenant_id IS NULL`), so per-test isolation is by unique key, not
+/// tenant — the row is inert for other tenants until one gets a threshold.
+async fn insert_global_catalog_metric(
+    db: &DatabaseConnection,
+    metric_key: &str,
+) -> Result<Uuid, sea_orm::DbErr> {
+    let id = Uuid::now_v7();
+    db.execute(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "INSERT INTO metric_catalog \
+            (id, tenant_id, metric_key, label, higher_is_better, source_tags, is_enabled) \
+         VALUES (?, NULL, ?, 'walk-drop regression metric', TRUE, '[]', TRUE)",
+        [
+            Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))),
+            Value::from(metric_key),
+        ],
+    ))
+    .await?;
+    Ok(id)
+}
+
+/// Any existing `metrics` row id — the junction's `metrics_id` is a FK, but the
+/// resolver only uses it as an opaque `query_id` grouping key.
+async fn any_metrics_row_id(db: &DatabaseConnection) -> Result<Uuid, sea_orm::DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "SELECT id FROM metrics LIMIT 1",
+            [],
+        ))
+        .await?
+        .ok_or_else(|| sea_orm::DbErr::Custom("seed has no metrics rows".into()))?;
+    let bytes: Vec<u8> = row.try_get("", "id")?;
+    Uuid::from_slice(&bytes).map_err(|e| sea_orm::DbErr::Custom(format!("id decode: {e}")))
+}
+
+/// Link a catalog row into `metric_query_catalog` under an existing query.
+async fn insert_query_catalog_link(
+    db: &DatabaseConnection,
+    metrics_id: Uuid,
+    catalog_id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
+    db.execute(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "INSERT INTO metric_query_catalog (id, metrics_id, metric_catalog_id) VALUES (?, ?, ?)",
+        [
+            Value::Bytes(Some(Box::new(Uuid::now_v7().as_bytes().to_vec()))),
+            Value::Bytes(Some(Box::new(metrics_id.as_bytes().to_vec()))),
+            Value::Bytes(Some(Box::new(catalog_id.as_bytes().to_vec()))),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 async fn response_link_map_omits_metrics_dropped_by_walk_all() -> anyhow::Result<()> {
-    // Regression: in a healthy v1 seed every metric has a `product-default`
-    // threshold so `walk_one` never returns None and the surfacing /
-    // link-map consistency check is trivially satisfied. This test
-    // engineers the pathological case explicitly: delete the
-    // `product-default` threshold for one catalog row, then assert the
-    // resolver drops the metric AND its junction links are absent from
-    // `response.links`.
+    // Regression (ADR-003 `surfaced_ids` filter): a metric that is enabled in
+    // the catalog but has NO threshold candidate for the caller MUST be dropped
+    // by `walk_all` AND omitted from `response.links`. A naive global
+    // `is_enabled = TRUE` link query would leave a phantom reference.
     //
-    // Without the `surfaced_ids` filter in `fetch_links` (the bug that
-    // shipped in the first cut of ADR-003 and was fixed in the same
-    // branch), the dropped metric's catalog_id would still appear in
-    // some link entry — a phantom reference.
+    // We prove this with a fully ISOLATED, purely-ADDITIVE fixture — no shared
+    // seed row is read or mutated, so the test is parallel-safe and never
+    // resets the DB. A GLOBAL catalog row (v1 requires `tenant_id IS NULL`)
+    // with a UNIQUE key is linked into the junction and given a threshold for
+    // ONE tenant only. Resolving as THAT tenant surfaces it (+ its link);
+    // resolving as ANY OTHER tenant has no candidate, so the metric drops and
+    // the surfaced-ids filter keeps its link out — the exact invariant, driven
+    // entirely by tenant scoping rather than by deleting anything.
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
 
-    // Pick a seeded metric whose storage prefix is known to be in the
-    // junction map (`ic_kpis.tasks_closed` is wired to METRIC_REGISTRY.IC_KPIS
-    // by the link migration).
-    let target_metric_key = "ic_kpis.tasks_closed";
-    let target_id = metric_id_for_key(&db, target_metric_key).await?;
+    let metric_key = format!("ztest_{}.walkdrop", Uuid::now_v7().simple());
+    let catalog_id = insert_global_catalog_metric(&db, &metric_key).await?;
+    let query_id = any_metrics_row_id(&db).await?;
+    insert_query_catalog_link(&db, query_id, catalog_id).await?;
 
-    // Sanity: before mutation, the resolver surfaces this metric AND its
-    // link entry references its id.
+    // Only `tenant_with` gets a threshold; `tenant_without` is a distinct,
+    // never-seen tenant, so the two resolves cannot intersect.
+    let tenant_with = Uuid::now_v7();
+    let tenant_without = Uuid::now_v7();
+    insert_tenant_threshold(&db, tenant_with, &metric_key, 25.0, 12.0, false, None).await?;
+
     let resolver = ThresholdResolver::new(db.clone());
-    let before = resolver.resolve(Uuid::now_v7(), "", "").await?;
+
+    // Tenant WITH a threshold: the metric surfaces AND appears in the link map.
+    let present = resolver.resolve(tenant_with, "", "").await?;
     assert!(
-        before.metrics.iter().any(|m| m.id == target_id),
-        "pre-condition: target metric must be present in the healthy response"
+        present.metrics.iter().any(|m| m.id == catalog_id),
+        "metric with a tenant-scope threshold MUST surface"
     );
     assert!(
-        before
+        present
             .links
             .iter()
-            .any(|l| l.catalog_metric_ids.contains(&target_id)),
-        "pre-condition: target metric must appear in at least one link entry"
+            .any(|l| l.catalog_metric_ids.contains(&catalog_id)),
+        "a surfaced metric MUST appear in at least one link entry"
     );
 
-    // `product-default` is a GLOBAL (tenant-agnostic) seed row shared by every
-    // tenant's resolve — this test may run in parallel with others that read
-    // the catalog, and it must not reset the DB. So we capture the row, delete
-    // it, resolve, then RESTORE it *before* asserting: a failed assertion can
-    // never leave the seed corrupted, and the delete window stays consistent
-    // (the `fetch_links` surfaced-ids filter keeps metrics + links in lockstep,
-    // so a concurrent reader only ever sees the row present-in-both or
-    // absent-from-both — never a phantom).
-    // Capture the row(s) as CHAR strings via CAST — sqlx-mysql cannot decode
-    // the DECIMAL(20,6) `good`/`warn` columns straight to f64, so we round-trip
-    // them as text (MySQL coerces string -> DECIMAL/TINYINT on the re-INSERT).
-    let saved = db
-        .query_all(Statement::from_sql_and_values(
-            db.get_database_backend(),
-            "SELECT LOWER(HEX(id)) AS id_hex, role_slug, team_id, \
-                    CAST(good AS CHAR) AS good_s, CAST(warn AS CHAR) AS warn_s, \
-                    CAST(is_locked AS CHAR) AS is_locked_s, lock_reason \
-             FROM metric_threshold \
-             WHERE scope = 'product-default' AND metric_key = ?",
-            [Value::from(target_metric_key)],
-        ))
-        .await?;
+    // Tenant WITHOUT any threshold: no candidate -> `walk_all` drops the metric,
+    // and the surfaced-ids filter drops its junction link (no phantom).
+    let absent = resolver.resolve(tenant_without, "", "").await?;
     assert!(
-        !saved.is_empty(),
-        "pre-condition: target metric must have a product-default threshold to delete"
+        !absent.metrics.iter().any(|m| m.id == catalog_id),
+        "walk_all MUST drop a metric with no threshold candidate"
     );
-
-    // Delete the `product-default` threshold for the target metric_key so
-    // `walk_one` will see no threshold candidate and skip the row. The
-    // catalog row itself stays `is_enabled = TRUE` — that's what makes
-    // this a regression test for the global-JOIN bug: a global
-    // `is_enabled = TRUE` link query would still surface the row.
-    db.execute(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        "DELETE FROM metric_threshold \
-         WHERE scope = 'product-default' AND metric_key = ?",
-        [Value::from(target_metric_key)],
-    ))
-    .await?;
-
-    let after = resolver.resolve(Uuid::now_v7(), "", "").await?;
-
-    // Restore the deleted seed row(s) before any assertion can unwind.
-    for row in &saved {
-        let id_hex: String = row.try_get("", "id_hex")?;
-        let role_slug: String = row.try_get("", "role_slug")?;
-        let team_id: String = row.try_get("", "team_id")?;
-        let good_s: String = row.try_get("", "good_s")?;
-        let warn_s: String = row.try_get("", "warn_s")?;
-        let is_locked_s: String = row.try_get("", "is_locked_s")?;
-        let lock_reason: Option<String> = row.try_get("", "lock_reason")?;
-        db.execute(Statement::from_sql_and_values(
-            db.get_database_backend(),
-            "INSERT INTO metric_threshold \
-                (id, tenant_id, metric_key, scope, role_slug, team_id, good, warn, is_locked, lock_reason) \
-             VALUES (UNHEX(?), NULL, ?, 'product-default', ?, ?, ?, ?, ?, ?)",
-            [
-                Value::from(id_hex),
-                Value::from(target_metric_key),
-                Value::from(role_slug),
-                Value::from(team_id),
-                Value::from(good_s),
-                Value::from(warn_s),
-                Value::from(is_locked_s),
-                match lock_reason {
-                    Some(r) => Value::from(r),
-                    None => Value::String(None),
-                },
-            ],
-        ))
-        .await?;
-    }
-
-    assert!(
-        !after.metrics.iter().any(|m| m.id == target_id),
-        "walk_all MUST drop the metric whose product-default row was deleted"
-    );
-    for link in &after.links {
+    for link in &absent.links {
         assert!(
-            !link.catalog_metric_ids.contains(&target_id),
+            !link.catalog_metric_ids.contains(&catalog_id),
             "link map MUST NOT reference a catalog_id that walk_all dropped; \
              query_id={} ids={:?}",
             link.query_id,
