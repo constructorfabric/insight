@@ -103,3 +103,82 @@ impl Client {
         &self.config
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use uuid::Uuid;
+
+    // All tests here are connection-free: `Client::new` and `query` only
+    // configure the underlying handle / build a lazy query — nothing opens a
+    // socket. The execution paths (`fetch_all`) require a live ClickHouse and
+    // are exercised elsewhere.
+
+    #[test]
+    fn new_applies_auth_credentials() {
+        // Covers the `user` + `password` branches in `Client::new`.
+        let client = Client::new(
+            Config::new("http://localhost:8123", "insight").with_auth("admin", "s3cr3t"),
+        );
+        assert_eq!(client.config().url, "http://localhost:8123");
+        assert_eq!(client.config().database, "insight");
+        assert_eq!(client.config().user.as_deref(), Some("admin"));
+        assert_eq!(client.config().password.as_deref(), Some("s3cr3t"));
+    }
+
+    #[test]
+    fn new_without_auth_leaves_credentials_unset() {
+        let client = Client::new(Config::new("http://ch:8123", "insight"));
+        assert!(client.config().user.is_none());
+        assert!(client.config().password.is_none());
+    }
+
+    #[test]
+    fn query_with_timeout_builds_a_handle() {
+        // Default config carries a 30s timeout, so the `max_execution_time`
+        // option branch runs.
+        let client = Client::new(Config::new("http://localhost:8123", "insight"));
+        let _q = client.query("SELECT 1");
+    }
+
+    #[test]
+    fn query_without_timeout_skips_the_option() {
+        // `without_query_timeout` -> the `None` branch in `query`.
+        let client =
+            Client::new(Config::new("http://localhost:8123", "insight").without_query_timeout());
+        let _q = client.query("SELECT 1");
+    }
+
+    #[test]
+    fn query_honours_a_custom_timeout() {
+        let client = Client::new(
+            Config::new("http://localhost:8123", "insight")
+                .with_query_timeout(Duration::from_secs(5)),
+        );
+        let _q = client.query("SELECT 1");
+    }
+
+    #[test]
+    fn inner_exposes_the_raw_handle() {
+        let client = Client::new(Config::new("http://localhost:8123", "insight"));
+        let _raw = client.inner();
+    }
+
+    #[test]
+    fn tenant_query_scopes_to_the_table() -> Result<(), Error> {
+        let client = Client::new(Config::new("http://localhost:8123", "insight"));
+        let sql = client
+            .tenant_query("gold.pr_cycle_time", Uuid::nil())?
+            .to_sql();
+        assert!(sql.contains("insight_tenant_id"));
+        Ok(())
+    }
+
+    #[test]
+    fn tenant_query_rejects_an_unsafe_table_name() {
+        let client = Client::new(Config::new("http://localhost:8123", "insight"));
+        let err = client.tenant_query("gold.pr; DROP TABLE x", Uuid::nil());
+        assert!(matches!(err, Err(Error::InvalidQuery(_))));
+    }
+}

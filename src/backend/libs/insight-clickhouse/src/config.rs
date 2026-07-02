@@ -107,4 +107,18 @@ mod tests {
 
         assert!(cfg.query_timeout.is_none());
     }
+
+    #[test]
+    fn debug_redacts_the_password_but_keeps_other_fields() {
+        let cfg = Config::new("http://ch:8123", "insight").with_auth("admin", "s3cr3t");
+        let rendered = format!("{cfg:?}");
+
+        assert!(rendered.contains("<redacted>"), "password must be redacted");
+        assert!(
+            !rendered.contains("s3cr3t"),
+            "raw password must never appear: {rendered}"
+        );
+        assert!(rendered.contains("admin"), "user is not secret");
+        assert!(rendered.contains("http://ch:8123"));
+    }
 }

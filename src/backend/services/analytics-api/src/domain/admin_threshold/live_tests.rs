@@ -31,16 +31,14 @@
 use std::sync::Arc;
 
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement, Value};
-use sea_orm_migration::MigratorTrait;
 use uuid::Uuid;
 
-use crate::auth::SecurityContext;
 use crate::domain::admin_threshold::dto::{CreateRequest, Scope, UpdateRequest};
 use crate::domain::admin_threshold::service::AdminThresholdService;
 use crate::domain::auth::{ConfigTenantAuthorization, TenantAuthorization};
 use crate::domain::schema_validator::SchemaValidator;
 use crate::infra::cache::catalog_cache::{CatalogCache, NoopCatalogCache};
-use crate::migration::Migrator;
+use toolkit_security::SecurityContext;
 
 const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
 
@@ -69,29 +67,6 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
     }
 }
 
-async fn reset_catalog(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
-    // `metric_query_catalog` (ADR-001, m20260529) FKs into `metric_catalog`
-    // with `ON DELETE CASCADE` — drop it first to avoid MariaDB error 1451.
-    for table in [
-        "metric_query_catalog",
-        "threshold_lock_audit",
-        "metric_threshold",
-        "metric_catalog",
-    ] {
-        db.execute_unprepared(&format!("DROP TABLE IF EXISTS {table}"))
-            .await?;
-    }
-    let _ = db
-        .execute_unprepared(
-            "DELETE FROM seaql_migrations \
-             WHERE version LIKE 'm20260522_%' \
-                OR version LIKE 'm20260527_%' \
-                OR version LIKE 'm20260529_%'",
-        )
-        .await;
-    Ok(())
-}
-
 /// Stand up the service against a real DB with a no-op cache + a
 /// disconnected validator stub. The validator path is best-effort and
 /// returns `ValidatorError` on any DB call against the disconnected
@@ -114,10 +89,14 @@ fn service_against(db: DatabaseConnection) -> AdminThresholdService {
 }
 
 fn ctx_for(tenant: Uuid) -> SecurityContext {
-    SecurityContext {
-        subject_id: Uuid::nil(),
-        insight_tenant_id: tenant,
-    }
+    let Ok(ctx) = SecurityContext::builder()
+        .subject_id(Uuid::nil())
+        .subject_tenant_id(tenant)
+        .build()
+    else {
+        unreachable!("subject_id + subject_tenant_id are set")
+    };
+    ctx
 }
 
 /// Insert a fresh `metric_catalog` row + the matching `product-default`
@@ -129,7 +108,9 @@ async fn seed_metric(
     higher_is_better: bool,
 ) -> Result<(Uuid, String), sea_orm::DbErr> {
     let metric_id = Uuid::now_v7();
-    let metric_key = format!("test_table.col_{}", &metric_id.to_string()[..8]);
+    // Full UUID (not a timestamp-prefix slice) so parallel tests seeding in the
+    // same millisecond don't collide on `uq_metric_catalog_metric_key`.
+    let metric_key = format!("test_table.col_{}", metric_id.simple());
     let backend = db.get_database_backend();
     db.execute(Statement::from_sql_and_values(
         backend,
@@ -173,12 +154,6 @@ async fn happy_create_update_delete_round_trip() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
-    reset_catalog(&db)
-        .await
-        .unwrap_or_else(|e| panic!("reset: {e}"));
-    Migrator::up(&db, None)
-        .await
-        .unwrap_or_else(|e| panic!("migrate: {e}"));
     let (metric_id, _metric_key) = seed_metric(&db, true, true)
         .await
         .unwrap_or_else(|e| panic!("seed: {e}"));
@@ -243,12 +218,6 @@ async fn lock_bypass_writes_audit_row_and_returns_403() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
-    reset_catalog(&db)
-        .await
-        .unwrap_or_else(|e| panic!("reset: {e}"));
-    Migrator::up(&db, None)
-        .await
-        .unwrap_or_else(|e| panic!("migrate: {e}"));
     let (metric_id, metric_key) = seed_metric(&db, true, true)
         .await
         .unwrap_or_else(|e| panic!("seed: {e}"));
@@ -327,12 +296,6 @@ async fn immutable_field_put_rejected() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
-    reset_catalog(&db)
-        .await
-        .unwrap_or_else(|e| panic!("reset: {e}"));
-    Migrator::up(&db, None)
-        .await
-        .unwrap_or_else(|e| panic!("migrate: {e}"));
     let (metric_id, _) = seed_metric(&db, true, true)
         .await
         .unwrap_or_else(|e| panic!("seed: {e}"));
@@ -389,12 +352,6 @@ async fn cross_tenant_put_rejected() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
-    reset_catalog(&db)
-        .await
-        .unwrap_or_else(|e| panic!("reset: {e}"));
-    Migrator::up(&db, None)
-        .await
-        .unwrap_or_else(|e| panic!("migrate: {e}"));
     let (metric_id, _) = seed_metric(&db, true, true)
         .await
         .unwrap_or_else(|e| panic!("seed: {e}"));
@@ -451,12 +408,6 @@ async fn lock_set_without_reason_rejected() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
-    reset_catalog(&db)
-        .await
-        .unwrap_or_else(|e| panic!("reset: {e}"));
-    Migrator::up(&db, None)
-        .await
-        .unwrap_or_else(|e| panic!("migrate: {e}"));
     let (metric_id, _) = seed_metric(&db, true, true)
         .await
         .unwrap_or_else(|e| panic!("seed: {e}"));
@@ -507,12 +458,6 @@ async fn db_check_violations_map_to_canonical_4xx() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
-    reset_catalog(&db)
-        .await
-        .unwrap_or_else(|e| panic!("reset: {e}"));
-    Migrator::up(&db, None)
-        .await
-        .unwrap_or_else(|e| panic!("migrate: {e}"));
 
     let row_id = Uuid::now_v7();
     let result = db
@@ -589,12 +534,6 @@ async fn successful_write_invalidates_cache() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
-    reset_catalog(&db)
-        .await
-        .unwrap_or_else(|e| panic!("reset: {e}"));
-    Migrator::up(&db, None)
-        .await
-        .unwrap_or_else(|e| panic!("migrate: {e}"));
     let (metric_id, _) = seed_metric(&db, true, true)
         .await
         .unwrap_or_else(|e| panic!("seed: {e}"));

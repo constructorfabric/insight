@@ -56,6 +56,8 @@ pub struct ThresholdAdminError;
 /// `invalid_argument` envelope with `field_violations[{field: "tenant_id",
 /// reason: "TENANT_UNRESOLVED"}]` when neither a session tenant nor a
 /// configured default is present.
+// Tenant namespace retained for re-enabling auth; no unresolved path under auth_disabled.
+#[allow(dead_code)]
 #[resource_error("gts.cf.insight.analytics_api.tenant.v1~")]
 pub struct TenantError;
 

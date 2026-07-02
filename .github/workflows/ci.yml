@@ -134,16 +134,59 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      # DB-backed components (analytics-api) run their #[ignore]d live_tests
+      # against a real MariaDB. Gated on live_db so only those entries pay the
+      # ~15s startup. ClickHouse is intentionally not provisioned — CH-gated
+      # tests skip themselves (see cf/insight#1564).
+      - name: Start MariaDB (${{ matrix.entry.name }})
+        if: ${{ matrix.entry.cover && matrix.entry.live_db }}
+        run: |
+          set -euo pipefail
+          docker run -d --name insight-maria \
+            -e MARIADB_DATABASE=analytics \
+            -e MARIADB_USER=insight -e MARIADB_PASSWORD=insight \
+            -e MARIADB_ROOT_PASSWORD=root \
+            -p 3306:3306 mariadb:11.4
+          for i in $(seq 1 60); do
+            if docker exec insight-maria healthcheck.sh --connect --innodb_initialized 2>/dev/null; then
+              echo "MariaDB ready"; break
+            fi
+            if [ "$i" = "60" ]; then echo "MariaDB never became healthy"; docker logs insight-maria; exit 1; fi
+            sleep 2
+          done
+
       - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
         if: ${{ matrix.entry.cover }}
         working-directory: ${{ matrix.entry.root }}
+        # For live_db components: apply migrations once up front against the
+        # MariaDB service (a failed migration fails the job), then run the
+        # #[ignore]d live_tests in parallel — they are tenant/metric-key
+        # isolated and never reset the DB, so parallel runs don't collide.
+        env:
+          INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && 'mysql://insight:insight@127.0.0.1:3306/analytics' || '' }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/coverage"
           feats=""
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
-          cargo llvm-cov --no-report --package "${{ matrix.entry.package }}" $feats
-          cargo llvm-cov report --cobertura \
+          if [ "${{ matrix.entry.live_db }}" = "true" ]; then
+            # The gear reads its DB URL from APP__gears__<alias>__config__database_url
+            # (underscore alias bridged to the kebab gear key by fold_gear_env_alias).
+            APP__gears__analytics_api__config__database_url="$INTEGRATION_TESTS_MARIADB_URL" \
+              cargo llvm-cov run --no-report --package "${{ matrix.entry.package }}" $feats -- \
+                -c "services/${{ matrix.entry.name }}/config/insight.yaml" migrate
+            cargo llvm-cov --no-report --package "${{ matrix.entry.package }}" $feats -- --include-ignored
+          else
+            cargo llvm-cov --no-report --package "${{ matrix.entry.package }}" $feats
+          fi
+          # Scope the report to this component's own code — drop any linked
+          # dependency-crate files so they don't pollute another component's
+          # coverage number (each crate self-reports in its own job).
+          ignore=""
+          if [ -n "${{ matrix.entry.cover_ignore_regex }}" ]; then
+            ignore="--ignore-filename-regex ${{ matrix.entry.cover_ignore_regex }}"
+          fi
+          cargo llvm-cov report --cobertura $ignore \
             --output-path "$GITHUB_WORKSPACE/coverage/rust-${{ matrix.entry.name }}.cobertura.xml"
 
       - name: Upload Cobertura

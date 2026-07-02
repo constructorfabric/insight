@@ -104,6 +104,13 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     pull_requests_count  Nullable(Float64),
     prs_with_cc_count    Nullable(Float64),
     prs_total_count      Nullable(Float64),
+    -- source / source_id: dimensions the ai_personal_gold views select +
+    -- GROUP BY (migration 20260623_ai_personal_gold_views, from #1514).
+    -- Same placeholder-mirror gap as the block above — the upstream
+    -- placeholder script wasn't updated when that migration landed. The
+    -- real silver model has them.
+    source               String DEFAULT '',
+    source_id            String DEFAULT '',
     _version             UInt64
 -- `tool` MUST be in the sort key — without it, ReplacingMergeTree
 -- collapses cursor and claude_code rows for the same (email, day)

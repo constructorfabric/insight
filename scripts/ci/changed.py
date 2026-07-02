@@ -38,6 +38,10 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True) -> dict
         entry["lint"] = lint
         entry["cover"] = cover
         entry["clippy"] = comp.get("clippy", True)  # False ⇒ fmt-only (see #1512)
+        entry["live_db"] = comp.get("live_db", False)  # DB-backed live_tests (see #1564)
+        # Exclude dependency-crate files from this component's coverage report so
+        # a service never counts a library it merely links (each lib self-reports).
+        entry["cover_ignore_regex"] = comp.get("cover_ignore_regex", "")
     elif comp["lang"] == "dotnet":
         entry["solution"] = comp.get("solution", "")
     elif comp["lang"] == "python":
