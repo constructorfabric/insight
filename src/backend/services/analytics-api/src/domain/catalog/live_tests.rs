@@ -385,6 +385,33 @@ async fn response_link_map_omits_metrics_dropped_by_walk_all() -> anyhow::Result
         "pre-condition: target metric must appear in at least one link entry"
     );
 
+    // `product-default` is a GLOBAL (tenant-agnostic) seed row shared by every
+    // tenant's resolve — this test may run in parallel with others that read
+    // the catalog, and it must not reset the DB. So we capture the row, delete
+    // it, resolve, then RESTORE it *before* asserting: a failed assertion can
+    // never leave the seed corrupted, and the delete window stays consistent
+    // (the `fetch_links` surfaced-ids filter keeps metrics + links in lockstep,
+    // so a concurrent reader only ever sees the row present-in-both or
+    // absent-from-both — never a phantom).
+    // Capture the row(s) as CHAR strings via CAST — sqlx-mysql cannot decode
+    // the DECIMAL(20,6) `good`/`warn` columns straight to f64, so we round-trip
+    // them as text (MySQL coerces string -> DECIMAL/TINYINT on the re-INSERT).
+    let saved = db
+        .query_all(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "SELECT LOWER(HEX(id)) AS id_hex, role_slug, team_id, \
+                    CAST(good AS CHAR) AS good_s, CAST(warn AS CHAR) AS warn_s, \
+                    CAST(is_locked AS CHAR) AS is_locked_s, lock_reason \
+             FROM metric_threshold \
+             WHERE scope = 'product-default' AND metric_key = ?",
+            [Value::from(target_metric_key)],
+        ))
+        .await?;
+    assert!(
+        !saved.is_empty(),
+        "pre-condition: target metric must have a product-default threshold to delete"
+    );
+
     // Delete the `product-default` threshold for the target metric_key so
     // `walk_one` will see no threshold candidate and skip the row. The
     // catalog row itself stays `is_enabled = TRUE` — that's what makes
@@ -399,6 +426,37 @@ async fn response_link_map_omits_metrics_dropped_by_walk_all() -> anyhow::Result
     .await?;
 
     let after = resolver.resolve(Uuid::now_v7(), "", "").await?;
+
+    // Restore the deleted seed row(s) before any assertion can unwind.
+    for row in &saved {
+        let id_hex: String = row.try_get("", "id_hex")?;
+        let role_slug: String = row.try_get("", "role_slug")?;
+        let team_id: String = row.try_get("", "team_id")?;
+        let good_s: String = row.try_get("", "good_s")?;
+        let warn_s: String = row.try_get("", "warn_s")?;
+        let is_locked_s: String = row.try_get("", "is_locked_s")?;
+        let lock_reason: Option<String> = row.try_get("", "lock_reason")?;
+        db.execute(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "INSERT INTO metric_threshold \
+                (id, tenant_id, metric_key, scope, role_slug, team_id, good, warn, is_locked, lock_reason) \
+             VALUES (UNHEX(?), NULL, ?, 'product-default', ?, ?, ?, ?, ?, ?)",
+            [
+                Value::from(id_hex),
+                Value::from(target_metric_key),
+                Value::from(role_slug),
+                Value::from(team_id),
+                Value::from(good_s),
+                Value::from(warn_s),
+                Value::from(is_locked_s),
+                match lock_reason {
+                    Some(r) => Value::from(r),
+                    None => Value::String(None),
+                },
+            ],
+        ))
+        .await?;
+    }
 
     assert!(
         !after.metrics.iter().any(|m| m.id == target_id),

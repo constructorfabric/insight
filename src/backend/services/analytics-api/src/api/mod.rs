@@ -9,6 +9,9 @@ mod handlers;
 #[cfg(test)]
 mod tenant_resolution_tests;
 
+#[cfg(test)]
+mod http_live_tests;
+
 use axum::http::StatusCode;
 use axum::middleware::from_fn;
 use axum::{Extension, Router};
