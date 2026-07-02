@@ -199,10 +199,12 @@ jobs:
           # missing file means something went wrong — fail rather than ignore.
           if-no-files-found: error
 
-  # One producer job per changed .NET component (Identity today). Collects inline
-  # with `dotnet test --collect "XPlat Code Coverage"` + dotnet-coverage merge.
+  # One producer job per changed .NET component (Identity today). Runs unit +
+  # integration tests; coverage is collected only for entries with cover=true —
+  # identity is cover=false (see components.py): its tests still gate the
+  # pipeline, but no Cobertura is produced and the coverage gates skip it.
   dotnet:
-    name: .NET coverage — ${{ matrix.entry.name }}
+    name: .NET — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.dotnet != '[]' }}
     runs-on: ubuntu-latest
@@ -228,6 +230,7 @@ jobs:
             nuget-${{ runner.os }}-
 
       - name: Install dotnet-coverage
+        if: ${{ matrix.entry.cover }}
         run: |
           dotnet tool install --global dotnet-coverage
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
@@ -235,6 +238,7 @@ jobs:
       # Restores, builds, runs unit + integration (Testcontainers MariaDB) tests
       # under coverage, and merges the per-project Cobertura files into one.
       - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
+        if: ${{ matrix.entry.cover }}
         working-directory: ${{ matrix.entry.root }}
         run: |
           set -euo pipefail
@@ -249,7 +253,22 @@ jobs:
             -o "$GITHUB_WORKSPACE/coverage/dotnet-${{ matrix.entry.name }}.cobertura.xml" \
             coverage-raw/*/coverage.cobertura.xml
 
+      # cover=false entries: same restore/build/test cycle, no collection —
+      # a test failure still fails this job and therefore the coverage-gate's
+      # "Guard against incomplete reports" step.
+      - name: Test (${{ matrix.entry.name }}, no coverage)
+        if: ${{ !matrix.entry.cover }}
+        working-directory: ${{ matrix.entry.root }}
+        run: |
+          set -euo pipefail
+          dotnet restore "${{ matrix.entry.solution }}"
+          dotnet build "${{ matrix.entry.solution }}" --no-restore -c Release
+          for proj in tests/*/*.csproj; do
+            dotnet test "$proj" --no-build -c Release
+          done
+
       - name: Upload Cobertura
+        if: ${{ matrix.entry.cover }}
         uses: actions/upload-artifact@v7
         with:
           name: cobertura-dotnet-${{ matrix.entry.name }}
@@ -375,11 +394,12 @@ jobs:
           PYTHON_CHANGED: ${{ needs.changes.outputs.python }}
           FULL: ${{ github.event.inputs.full }}
         run: |
-          # Only crates that actually produce coverage are "required" — rust
-          # entries may be lint-only (cover=false), so filter them out.
+          # Only components that actually produce coverage are "required" —
+          # rust entries may be lint-only and dotnet entries test-only
+          # (cover=false, e.g. identity), so filter both out.
           required=$(jq -rn \
             --argjson r "$RUST_CHANGED" --argjson d "$DOTNET_CHANGED" --argjson p "$PYTHON_CHANGED" \
-            '[($r[] | select(.cover)), $d[], $p[]] | map(.name) | join(",")')
+            '[($r[] | select(.cover)), ($d[] | select(.cover)), $p[]] | map(.name) | join(",")')
           echo "required components: ${required:-<none>}"
           # A full/baseline run measures overall coverage; skip the new-code gate
           # (there is no meaningful "patch" for a manual all-components run).

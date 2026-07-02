@@ -62,8 +62,13 @@ COMPONENTS = [
      "paths": ["src/ingestion/connectors/task-tracking/jira/enrich"]},
 
     # .NET
+    # cover=False: identity is excluded from coverage collection and gating
+    # entirely (2026-07 decision) — its tests still run in the dotnet CI job
+    # and still fail the pipeline on regressions; only the Cobertura
+    # collection, upload, and the per-component/new-code gates are dropped.
     {"name": "identity", "lang": "dotnet", "root": "src/backend/services/identity",
      "solution": "Insight.Identity.sln",
+     "cover": False,
      "paths": ["src/backend/services/identity"]},
 
     # Python CDK connectors
