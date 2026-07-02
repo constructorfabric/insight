@@ -1,42 +1,41 @@
 """Session orchestrator — the central pytest conftest.
 
-SEED-ONCE model. The whole stack is populated ONCE per session from every
-fixture's bronze (namespaced per fixture so it all coexists), then the tests are
-pure assertions against that shared, already-built world:
+SEED-ONCE model, EXTERNALLY-MANAGED infra. The database stack is brought up AND
+migrated BEFORE pytest runs — `docker compose` starts ClickHouse + MariaDB and
+the `e2e-migrate` service applies every ClickHouse migration (see ../e2e.sh and
+/docker-compose.e2e.yml). pytest connects to that already-migrated stack; it does
+NOT boot compose or apply base migrations. It then:
 
-  session build (once, `build_world` fixture):
-    1. docker compose up (ClickHouse + MariaDB)
-    2. bootstrap: ensure DBs + bronze/silver placeholders (`ch_bootstrap`)
-    3. seed EVERY fixture's namespaced bronze in one shot
-    4. dbt build staging (union) -> connector enrich -> dbt build silver (union)
-    5. apply gold-view migrations ONCE (prod order: views bind to real silver)
-    6. refresh refreshable MVs ONCE
-    7. spawn analytics-api + seed metric definitions
+  session build (once, `build_world` fixture — see lib/seed_once.py):
+    1. reset the multi-reader incremental tables (warm-rerun determinism)
+    2. seed EVERY fixture's namespaced bronze in one shot
+    3. dbt build staging (union) -> connector enrich -> dbt build silver (union)
+    4. reapply gold-view migrations ONCE  (rebind views to the real silver)
+    5. refresh refreshable MVs ONCE
+    6. (analytics_api fixture) spawn analytics-api + seed metric definitions
 
   per test (`test_metric_smoke`):
     namespace the case's request -> POST /v1/metrics/queries -> evaluate expects.
-    No seeding, no dbt, no migration reapply — the data is already there.
+    No seeding, no dbt, no migration — the data is already there.
 
-This replaces the old per-fixture truncate→seed→build→reapply-migrations→refresh
-loop (which re-created ~40 gold views for every fixture). Isolation comes from
-`lib.namespace`; the guard `meta/test_seed_isolation.py` proves no two fixtures
-collide.
-
-The suite is serial (not xdist-safe: the build_world step and the shared
-analytics-api process are single-owner). Compose is idempotent, so a rerun
-against a warm stack re-seeds deterministically (see `_SESSION_START_TRUNCATE`).
+Isolation between fixtures comes from `lib.namespace`; the guard
+`meta/test_seed_isolation.py` proves no two fixtures collide. The suite is serial
+(not xdist-safe: build_world and the shared analytics-api process are
+single-owner).
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import pytest
+import time
 
 from pathlib import Path
 
+import pytest
+
 from lib import clickhouse as ch
-from lib import compose, mariadb, seed_once
+from lib import mariadb, seed_once
 from lib.analytics_api import AnalyticsApiProcess, find_free_port, locate_binary
 from lib.ch_seeder import CHSeeder
 from lib.config import SessionConfig, TEST_TENANT_ID
@@ -44,7 +43,6 @@ from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
 from lib.fixture_loader import TestYaml, discover_tests, load as load_test
 from lib.metric_seed import seed_test_metrics
-from lib.migration_applier import apply_all as apply_ch_migrations
 from lib.worker import WorkerContext
 
 LOG = logging.getLogger("e2e.rig")
@@ -53,17 +51,15 @@ LOG = logging.getLogger("e2e.rig")
 # ----------------------------------------------------------------------
 # Worker-aware session lifecycle
 # ----------------------------------------------------------------------
-
-# When running under xdist, all workers share the same compose stack and the
-# same analytics-api process. We elect the first worker as the "owner" of the
-# shared resources; the others wait until the owner reports ready.
 #
-# For the scaffolding MVP we keep it simple: do NOT support xdist yet (the
-# scaffold smoke test is serial). Parallel safety lands with the dbt-runner
-# feature where per-worker schema suffix becomes meaningful.
+# The suite is serial (not xdist-safe yet: the build_world step and the shared
+# analytics-api process are single-owner). We still elect a primary worker so a
+# future xdist run doesn't double-seed the shared stack.
 
 _IS_XDIST = bool(os.environ.get("PYTEST_XDIST_WORKER"))
 _IS_PRIMARY = not _IS_XDIST or os.environ.get("PYTEST_XDIST_WORKER") == "gw0"
+
+_METRICS_ROOT = Path(__file__).parent / "metrics"
 
 
 # ----------------------------------------------------------------------
@@ -84,131 +80,60 @@ def worker_ctx() -> WorkerContext:
     return WorkerContext.from_env()
 
 
+def _wait_ch_ready(cfg: SessionConfig, *, timeout_s: float = 30.0) -> None:
+    """Fail fast if ClickHouse isn't reachable. The stack should already be up
+    and migrated (docker compose + the e2e-migrate service) before pytest runs;
+    this is a connectivity gate, not a bring-up."""
+    deadline = time.monotonic() + timeout_s
+    last_err: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            ch.query(cfg, "SELECT 1")
+            return
+        except Exception as e:  # noqa: BLE001 — any connection error is retryable
+            last_err = e
+            time.sleep(0.5)
+    raise RuntimeError(
+        f"ClickHouse not reachable at {cfg.ch_http_url} within {timeout_s}s. "
+        f"The stack must be up and migrated first (`./e2e.sh up`). Last error: {last_err}"
+    )
+
+
 @pytest.fixture(scope="session")
-def compose_stack(session_cfg: SessionConfig):
-    """docker compose up at session start, down at session end.
+def stack_ready(session_cfg: SessionConfig) -> SessionConfig:
+    """Gate: the externally-managed ClickHouse + MariaDB are reachable + migrated.
 
-    In `host` mode (default): pytest brings compose up and tears it down.
-    In `docker` mode: compose was started by the parent (./e2e.sh) — we just
-    verify CH+MariaDB respond and skip the teardown.
-
-    Yields the SessionConfig for downstream fixtures' convenience.
+    Compose (`./e2e.sh`) brings the stack up and the `e2e-migrate` service applies
+    every ClickHouse migration (core DBs, bronze placeholders, gold views) BEFORE
+    pytest starts. This fixture does NOT boot or migrate anything — it only fails
+    fast when the stack is missing, so a misconfigured run errors clearly instead
+    of deep inside the first seed.
     """
-    in_docker = session_cfg.run_mode == "docker"
-    if _IS_PRIMARY and not in_docker:
-        compose.up(session_cfg)
     if _IS_PRIMARY:
+        _wait_ch_ready(session_cfg)
         mariadb.wait_ready(session_cfg)
-    yield session_cfg
-    if _IS_PRIMARY and not in_docker:
-        if os.environ.get("E2E_KEEP_CONTAINERS") != "1":
-            compose.down(session_cfg, remove_volumes=True)
-        else:
-            LOG.info("E2E_KEEP_CONTAINERS=1 — leaving containers up")
-
-
-# Silver/staging tables that a fixture may READ via a gold view but NOT seed
-# (each collab fixture seeds at most one class_collab_* table, yet
-# insight.collab_bullet_rows reads all four — and each class_collab_* unions
-# several per-source staging feeders). The per-test ledger only truncates what a
-# fixture seeds, so on a WARM ClickHouse (re-running `./e2e.sh test` without
-# `down`) the first collab fixture would inherit a prior session's rows in the
-# tables it does not seed — stale rows in a dbt-rebuilt class_collab_* would skew
-# its neighbours. The zoom staging models are also `incremental`/`append`, so a
-# warm rebuild would ALSO accumulate duplicate unique_keys (failing their dbt
-# `unique` test). Truncating these once at session start makes warm re-runs
-# deterministic; CI starts fresh anyway.
-_SESSION_START_TRUNCATE = [
-    ("silver", "class_collab_email_activity"),
-    ("silver", "class_collab_chat_activity"),
-    ("silver", "class_collab_meeting_activity"),
-    ("silver", "class_collab_document_activity"),
-    ("staging", "m365__collab_email_activity"),
-    ("staging", "m365__collab_chat_activity"),
-    ("staging", "m365__collab_meeting_activity"),
-    ("staging", "m365__collab_document_activity_onedrive"),
-    ("staging", "m365__collab_document_activity_sharepoint"),
-    # Zoom feeds class_collab_meeting_activity (cross-source meeting_hours).
-    ("staging", "zoom__collab_meeting_activity"),
-    ("staging", "zoom__meeting_sessions"),
-    # Task-tracking: the bullet/MV chain reads class_task_* even when a fixture
-    # seeds only one connector, and the enrich path writes staging.jira__task_*.
-    # Reset them once at session start so warm re-runs are deterministic (CI is
-    # fresh anyway); per-test TRUNCATE handles cross-test isolation.
-    ("silver", "class_task_field_history"),
-    ("silver", "class_task_users"),
-    ("silver", "class_task_field_metadata"),
-    ("silver", "class_task_worklogs"),
-    ("staging", "jira__task_field_history"),
-    ("staging", "jira_issue_field_snapshot"),
-    ("staging", "jira_changelog_items"),
-    ("staging", "jira__task_field_metadata"),
-    # claude_team specs build staging.claude_team__ai_dev_usage — an incremental
-    # `append` model with a dbt `unique` test on unique_key. Session-start reset
-    # keeps warm re-runs (reused CH volume, no `./e2e.sh down`) from accumulating
-    # duplicate keys.
-    ("staging", "claude_team__ai_dev_usage"),
-    # claude_team__ai_overage (cc_overage) is also incremental `append` with a
-    # dbt `unique` test — reset it too for warm-rerun determinism.
-    ("staging", "claude_team__ai_overage"),
-    # claude_enterprise specs build staging.claude_enterprise__ai_dev_usage — an
-    # incremental `append` model with a dbt `unique` test on unique_key.
-    # Session-start reset keeps warm re-runs (reused CH volume, no `./e2e.sh
-    # down`) from accumulating duplicate keys.
-    ("staging", "claude_enterprise__ai_dev_usage"),
-    # Wiki: class_wiki_pages / class_wiki_engagement are incremental
-    # (delete+insert, `_version > max`) and union BOTH outline + confluence. A
-    # warm re-run with the same seed _version produces no new rows, leaving the
-    # prior test's data in place → cross-test contamination. Reset at session
-    # start (max(_version) over the emptied table = 0, so the first test's real
-    # millis _version reloads fully). CI starts fresh anyway.
-    ("silver", "class_wiki_pages"),
-    ("silver", "class_wiki_engagement"),
-    ("silver", "class_wiki_activity"),
-    # ai_smoke (cursor) builds staging.cursor__ai_dev_usage — an incremental
-    # `append` model guarded by a dbt `unique` test on unique_key. Without a
-    # session-start reset, a warm re-run (reused CH volume, no `./e2e.sh down`)
-    # appends the same rows again → duplicate unique_keys → the unique test fails.
-    ("staging", "cursor__ai_dev_usage"),
-    # chatgpt_team specs build staging.chatgpt_team__ai_dev_usage (codex) and
-    # staging.chatgpt_team__ai_assistant_usage (chat) — both incremental `append`
-    # models with a dbt `unique` test on unique_key. Session-start reset keeps
-    # warm re-runs (reused CH volume, no `./e2e.sh down`) from accumulating
-    # duplicate keys.
-    ("staging", "chatgpt_team__ai_dev_usage"),
-    ("staging", "chatgpt_team__ai_assistant_usage"),
-]
+    return session_cfg
 
 
 @pytest.fixture(scope="session")
-def ch_bootstrap(compose_stack: SessionConfig) -> SessionConfig:
-    """Bootstrap ClickHouse once: placeholders + ALL migrations, then reset the
-    multi-reader silver/staging tables for warm-rerun determinism.
-
-    Migrations run BEFORE dbt because `init-identity` creates the `identity` /
-    `person` databases and base tables that the dbt identity models WRITE into.
-    Gold views created here bind to the silver placeholders; `build_world` runs a
-    SINGLE `reapply_migrations` after dbt materialises real silver to realign them
-    (schemas are byte-identical, verified — this only rebinds the view to the new
-    table object). That one realign replaces the old per-fixture reapply (≈40
-    views × every fixture → once per session).
-    """
-    cfg = compose_stack
-    if _IS_PRIMARY:
-        apply_ch_migrations(cfg)  # ensure DBs + placeholders + all *.sql migrations
-        for schema, table in _SESSION_START_TRUNCATE:
-            ch.execute(cfg, f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
-    return cfg
-
-
-@pytest.fixture(scope="session")
-def dbt_runner(ch_bootstrap: SessionConfig):
+def dbt_runner(stack_ready: SessionConfig):
     """Parse dbt manifest once per session; expose a runner for the world build."""
-    cfg = ch_bootstrap
-    runner = DbtRunner(cfg)
+    runner = DbtRunner(stack_ready)
     runner.setup()
     yield runner
     runner.cleanup()
+
+
+@pytest.fixture(scope="session")
+def ch_seeder(stack_ready: SessionConfig) -> CHSeeder:
+    """Session-scoped seeder used by the one-shot world build."""
+    return CHSeeder(stack_ready)
+
+
+@pytest.fixture(scope="session")
+def enrich_runner(stack_ready: SessionConfig) -> EnrichRunner:
+    """Session-scoped: discovers connector enrich steps once; builds each crate lazily."""
+    return EnrichRunner(stack_ready)
 
 
 @pytest.fixture(scope="session")
@@ -220,15 +145,19 @@ def all_fixtures() -> list[TestYaml]:
 
 @pytest.fixture(scope="session")
 def build_world(
-    ch_bootstrap: SessionConfig,
+    stack_ready: SessionConfig,
     dbt_runner: DbtRunner,
     enrich_runner: EnrichRunner,
     ch_seeder: CHSeeder,
     all_fixtures: list[TestYaml],
     worker_ctx: WorkerContext,
 ) -> SessionConfig:
-    """Seed every fixture's namespaced bronze and build the whole stack ONCE."""
-    cfg = ch_bootstrap
+    """Seed every fixture's namespaced bronze and build the whole stack ONCE.
+
+    Assumes ClickHouse is already migrated (compose + e2e-migrate). seed_once
+    resets the multi-reader tables, seeds, runs dbt + enrich, reapplies the
+    gold-view migrations once (rebind to real silver), and refreshes the MVs.
+    """
     if _IS_PRIMARY:
         seed_once.build_world(
             seeder=ch_seeder,
@@ -237,7 +166,7 @@ def build_world(
             fixtures=all_fixtures,
             worker_ctx=worker_ctx,
         )
-    return cfg
+    return stack_ready
 
 
 def _collect_metrics(proc: AnalyticsApiProcess) -> None:
@@ -307,24 +236,9 @@ def analytics_api(build_world: SessionConfig):
         proc.stop()
 
 
-@pytest.fixture(scope="session")
-def ch_seeder(ch_bootstrap: SessionConfig) -> CHSeeder:
-    """Session-scoped seeder used by the one-shot world build."""
-    return CHSeeder(ch_bootstrap)
-
-
-@pytest.fixture(scope="session")
-def enrich_runner(ch_bootstrap: SessionConfig) -> EnrichRunner:
-    """Session-scoped: discovers connector enrich steps once; builds each crate lazily."""
-    return EnrichRunner(ch_bootstrap)
-
-
 # ----------------------------------------------------------------------
 # yaml-rig: per-test parametrization and execution
 # ----------------------------------------------------------------------
-
-
-_METRICS_ROOT = Path(__file__).parent / "metrics"
 
 
 def pytest_collection_modifyitems(config, items):

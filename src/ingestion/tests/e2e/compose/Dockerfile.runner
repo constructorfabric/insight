@@ -4,12 +4,14 @@
 #   - Python 3.12 + lib deps (pytest, clickhouse-connect, pandas, dbt-clickhouse, …)
 #   - the analytics-api binary and each connector's enrich binary, each COMPILED
 #     FROM ITS OWN Dockerfile and pulled in via `COPY --from=<ctx>` (the contexts
-#     are wired in docker-compose.runner.yml `runner.build.additional_contexts`).
+#     are wired in docker-compose.e2e.yml `e2e-runner.build.additional_contexts`,
+#     backed by the build-only services e2e-analytics-api-build / e2e-jira-enrich-build).
 #
 # The rig compiles nothing itself — there is NO Rust toolchain here. The repo is
 # bind-mounted at /workspace at runtime.
 #
-# This image is the SAME one used locally and in CI — see ../e2e.sh and
+# This image is the SAME one used locally and in CI (and also backs e2e-migrate)
+# — see ../e2e.sh, /docker-compose.e2e.yml, and
 # .github/workflows/e2e-bronze-to-api.yml.
 
 FROM python:3.12-slim-bookworm
@@ -20,9 +22,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # ── System tooling ──────────────────────────────────────────────────────
 # ca-certificates for HTTPS (pip, clickhouse-connect); git for any dbt tooling
-# that shells out. No compilers/toolchains: all binaries are baked in pre-built.
+# that shells out; curl + bash for the migration step (this same image backs the
+# `e2e-migrate` service, which runs src/ingestion/scripts/apply-ch-migrations.sh
+# — a bash + curl HTTP client). No compilers/toolchains: binaries are baked in.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        curl \
         git \
     && rm -rf /var/lib/apt/lists/*
 

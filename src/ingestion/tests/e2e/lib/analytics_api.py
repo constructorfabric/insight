@@ -80,8 +80,9 @@ def locate_binary(cfg: SessionConfig) -> Path:
     The rig no longer compiles analytics-api. The binary is built FROM ITS OWN
     Dockerfile (`src/backend/services/analytics-api/Dockerfile`, the same one that
     ships the prod image — no build-recipe duplication) and baked onto PATH at
-    `/usr/local/bin/analytics-api` via docker-compose.runner.yml `additional_contexts`
-    + a Dockerfile.runner `COPY --from=analytics-api …`. Same pattern as the connector
+    `/usr/local/bin/analytics-api` via docker-compose.e2e.yml `e2e-runner.build.
+    additional_contexts` (backed by the `e2e-analytics-api-build` service) + a
+    Dockerfile.runner `COPY --from=analytics-api …`. Same pattern as the connector
     enrich binaries (see lib/enrich.py).
 
     Falls back to a PATH lookup and a host-mode cargo target (for running pytest
@@ -99,8 +100,8 @@ def locate_binary(cfg: SessionConfig) -> Path:
             return c
     raise ApiSpawnError(
         "analytics-api binary not found — it should be baked into the runner image at "
-        "/usr/local/bin/analytics-api (docker-compose.runner.yml `analytics-api` service "
-        "+ Dockerfile.runner COPY --from). Rebuild with `./e2e.sh build`."
+        "/usr/local/bin/analytics-api (docker-compose.e2e.yml `e2e-analytics-api-build` "
+        "service + Dockerfile.runner COPY --from). Rebuild with `./e2e.sh build`."
     )
 
 
