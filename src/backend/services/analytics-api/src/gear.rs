@@ -85,7 +85,7 @@ impl Gear for AnalyticsApiGear {
             match RedisCatalogCache::connect(&cfg.redis_url).await {
                 Ok(c) => {
                     tracing::info!(
-                        redis_url = %cfg.redis_url,
+                        redis_url = %redact_url(&cfg.redis_url),
                         "catalog_cache: Redis backend connected"
                     );
                     Arc::new(c)
@@ -93,7 +93,7 @@ impl Gear for AnalyticsApiGear {
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
-                        redis_url = %cfg.redis_url,
+                        redis_url = %redact_url(&cfg.redis_url),
                         "catalog_cache: Redis connection failed at boot; \
                          degrading to no-op stub. Cross-replica invalidation \
                          NFR will not hold until Redis is restored."
@@ -243,4 +243,40 @@ fn extract_gear_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<Ge
         })?;
     let cfg: GearConfig = serde_json::from_value(raw.clone())?;
     Ok(cfg)
+}
+
+/// Validate the analytics gear config without touching the database — used by
+/// the `check` subcommand. Proves `gears.analytics-api.config` is present,
+/// deserializes, and carries the connection strings the gear needs at boot.
+///
+/// # Errors
+///
+/// Returns an error if the section is missing/undeserializable or a required
+/// URL is empty.
+pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
+    let cfg = extract_gear_config(app)?;
+    if cfg.database_url.trim().is_empty() {
+        anyhow::bail!(
+            "gears.analytics-api.config.database_url is empty (set \
+             APP__gears__analytics_api__config__database_url)"
+        );
+    }
+    if cfg.clickhouse_url.trim().is_empty() {
+        anyhow::bail!(
+            "gears.analytics-api.config.clickhouse_url is empty (set \
+             APP__gears__analytics_api__config__clickhouse_url)"
+        );
+    }
+    Ok(())
+}
+
+/// Redact userinfo (`user:pass@`) from a connection URL before logging, so
+/// credentials embedded in e.g. `redis://:pass@host` never reach the logs.
+fn redact_url(url: &str) -> String {
+    match (url.find("://"), url.find('@')) {
+        (Some(scheme_end), Some(at)) if at > scheme_end + 3 => {
+            format!("{}{}", &url[..scheme_end + 3], &url[at + 1..])
+        }
+        _ => url.to_owned(),
+    }
 }

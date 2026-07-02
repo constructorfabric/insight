@@ -75,8 +75,12 @@ gears:
     config:
       # HTTP bind is owned by api-gateway above; retained for diagnostics only.
       bind_addr: "0.0.0.0:8081"
-      database_url: "mysql://insight:insight@localhost:3306/analytics"
-      clickhouse_url: "http://localhost:8123"
+      # Connection strings are injected per-deployment via env overrides
+      # (APP__gears__analytics_api__config__*) from the umbrella Secret /
+      # compose. Left empty here so no credential is committed and the
+      # runnable `-c` path can't silently point at a shared default.
+      database_url: ""
+      clickhouse_url: ""
       clickhouse_database: "insight"
       # clickhouse_user / clickhouse_password: omit for no-auth ClickHouse.
       identity_url: ""

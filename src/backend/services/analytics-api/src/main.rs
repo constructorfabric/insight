@@ -101,7 +101,9 @@ async fn main() -> Result<()> {
     match cli.command.unwrap_or(Commands::Run) {
         Commands::Run => run_server(config).await,
         Commands::Migrate => gear::run_migrate(&config).await,
-        Commands::Check => Ok(()),
+        // Validate the gear config (section present, deserializes, required
+        // URLs set) without connecting to any backend.
+        Commands::Check => gear::check_config(&config),
     }
 }
 
