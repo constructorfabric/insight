@@ -17,25 +17,55 @@ name: E2E — Bronze to API
 # Code:  src/ingestion/tests/e2e/
 
 on:
-  # PR-only — branch protection gates
-  # merge on PR success, and re-running the full bronze→API stack
-  # (clickhouse + mariadb + dbt + pytest) on the merge commit just burns
-  # ~30 minutes for an outcome we already proved. workflow_dispatch
-  # remains for manual reruns against main.
+  # PR-only (+ manual dispatch). Path-filtered so the ~30-min bronze→API stack
+  # (clickhouse + mariadb + dbt + pytest) only runs when a path the suite
+  # actually consumes changes — docs-only and other non-product PRs skip it
+  # entirely (no runner spins up).
   #
-  # Deliberately NO `paths:` filter: this check is meant to be a required
-  # status check on main, and a path-filtered required check never reports
-  # on PRs outside the filter — they hang on "Expected" forever. Running on
-  # every PR keeps the gate uniform; the serial suite costs ~4 min with a
-  # warm cargo cache.
+  # Paths whose *contents* the suite reads at build- or test-time
+  # (see src/ingestion/tests/e2e/lib/config.py + compose/):
+  #   src/backend/**   — analytics-api: compiled into the runner image
+  #                      (compose/docker-compose.runner.yml) + its dbt manifest
+  #                      dir (analytics_api_manifest_dir).
+  #   src/ingestion/** — dbt project (src/ingestion/dbt), CH/Maria migrations
+  #                      (src/ingestion/scripts/migrations), connectors' enrich
+  #                      binaries, silver defs, AND the e2e harness + fixtures
+  #                      (tests/e2e) itself.
+  #   src/frontend/**  — kept as a broad safety net by request; note the suite
+  #                      stops at the analytics-api HTTP layer and does NOT
+  #                      exercise frontend code, so a frontend-only PR gets no
+  #                      real signal from it.
+  # Deliberately NOT a trigger: deploy/** (the rig ships its own compose/seed
+  # under tests/e2e and never reads deploy/). Widen this list if the suite
+  # starts consuming new paths.
+  #
+  # NB: because of this filter the check does NOT run on every PR, so it is
+  # intentionally NOT a required status check — a path-filtered required check
+  # hangs on "Expected — Waiting for status" forever on PRs outside the filter.
+  # It's an advisory signal that runs (and must pass) on product-touching PRs.
+  # workflow_dispatch remains for manual reruns against main.
   pull_request:
     branches: [main]
+    paths:
+      - "src/backend/**"
+      - "src/ingestion/**"
+      - "src/frontend/**"
+      - ".github/workflows/e2e-bronze-to-api.yml"
   workflow_dispatch:
+
+# A new push obsoletes any run still in flight for the same ref — cancel it so a
+# rebase/force-push doesn't leave a slow suite burning minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # NB: forbids developers from running `pytest --update-snapshots` in CI.
   # The guard lives in src/ingestion/tests/e2e/metrics/test_fixtures.py.
   CI: "true"
+
+permissions:
+  contents: read
 
 jobs:
   e2e:
