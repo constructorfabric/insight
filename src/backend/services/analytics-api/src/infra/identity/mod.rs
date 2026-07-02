@@ -81,3 +81,32 @@ impl IdentityClient {
         !self.base_url.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_trims_trailing_slash() {
+        // `base_url` is private, but an in-module test sees it via `super::*`.
+        // Trailing slashes must be stripped so `get_person` builds
+        // `{base}/v1/persons/…` without a doubled `//`.
+        let c = IdentityClient::new("http://insight-identity:8082/");
+        assert_eq!(c.base_url, "http://insight-identity:8082");
+    }
+
+    #[test]
+    fn new_trims_repeated_trailing_slashes() {
+        let c = IdentityClient::new("http://insight-identity:8082///");
+        assert_eq!(c.base_url, "http://insight-identity:8082");
+    }
+
+    #[test]
+    fn is_configured_reflects_non_empty_url() {
+        assert!(IdentityClient::new("http://x").is_configured());
+        // An empty URL (identity not wired) collapses to "" → not configured.
+        assert!(!IdentityClient::new("").is_configured());
+        // A URL that is only slashes trims to "" and is likewise unconfigured.
+        assert!(!IdentityClient::new("///").is_configured());
+    }
+}
