@@ -98,3 +98,38 @@ impl AppConfig {
         Ok(config)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    // NOTE: tests that merely asserted the default helpers return their literals
+    // (and that a minimal config extracts to those same literals) were removed —
+    // they tested that constants are constants / that Figment works, not our
+    // config. What's worth guarding is the two real behaviors below: that an
+    // explicit value wins over the default (layering precedence), and that a
+    // field with no default is mandatory (fail-fast on misconfig).
+
+    #[test]
+    fn explicit_values_override_defaults() -> R {
+        let cfg: AppConfig = Figment::new()
+            .merge(Yaml::string(
+                "database_url: d\nclickhouse_url: c\nbind_addr: 127.0.0.1:9000\nclickhouse_database: other\n",
+            ))
+            .extract()?;
+        assert_eq!(cfg.bind_addr, "127.0.0.1:9000");
+        assert_eq!(cfg.clickhouse_database, "other");
+        Ok(())
+    }
+
+    #[test]
+    fn missing_required_field_errors() {
+        // clickhouse_url has no default → extraction must fail without it.
+        let res = Figment::new()
+            .merge(Yaml::string("database_url: only\n"))
+            .extract::<AppConfig>();
+        assert!(res.is_err(), "missing clickhouse_url must fail");
+    }
+}

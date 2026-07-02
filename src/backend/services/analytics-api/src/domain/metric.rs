@@ -80,3 +80,27 @@ pub struct TableColumn {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field_description: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    // The only non-trivial behavior in this module is our custom
+    // `deserialize_optional_nullable`: description is Option<Option<_>> so PATCH
+    // can distinguish absent (leave unchanged) / explicit null (clear) / value
+    // (set). That branching is our code — serde's defaults can't express it — so
+    // it earns a test. The plain serialize/deserialize round-trips this module
+    // had before tested serde, not us, and were removed.
+    #[test]
+    fn update_description_is_triple_state() -> R {
+        let absent: UpdateMetricRequest = serde_json::from_str("{}")?;
+        assert_eq!(absent.description, None); // absent → leave unchanged
+        let null: UpdateMetricRequest = serde_json::from_str(r#"{"description":null}"#)?;
+        assert_eq!(null.description, Some(None)); // explicit null → clear
+        let val: UpdateMetricRequest = serde_json::from_str(r#"{"description":"hi"}"#)?;
+        assert_eq!(val.description, Some(Some("hi".to_owned()))); // value → set
+        Ok(())
+    }
+}
