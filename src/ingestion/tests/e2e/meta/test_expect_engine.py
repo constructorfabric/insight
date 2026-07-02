@@ -40,7 +40,9 @@ def test_full_pass():
         {"in": "collab", "find": {"metric_key": "m365_emails_sent"},
          "equal": {"value": 40, "median": 20, "range_min": 10, "range_max": 40}},
         {"in": "collab", "assert": "size(items) == 2"},
-        {"in": "collab", "find": {"metric_key": "slack_dm_ratio"}, "equal": {"value": None}},
+        # Assert every stat this row carries — the no-unasserted-stat gate requires it.
+        {"in": "collab", "find": {"metric_key": "slack_dm_ratio"},
+         "equal": {"value": None, "median": None, "range_min": None, "range_max": None}},
     ])
     evaluate_case(case, _batch(), 200)  # no raise
 
@@ -72,21 +74,33 @@ def test_assert_false_fails():
 
 def test_cel_inequality_and_null():
     # Numeric inequalities cast with double() (CEL won't compare int to double);
-    # null compares directly.
+    # null compares directly. Each row asserts every stat it carries (value /
+    # median / range_min / range_max) so the no-unasserted-stat gate is satisfied.
     case = _case([
         {"in": "collab", "find": {"metric_key": "m365_emails_sent"},
-         "assert": "double(it.value) > 39.5 && double(it.value) < 40.5"},
-        {"in": "collab", "find": {"metric_key": "slack_dm_ratio"}, "assert": "it.value == null"},
+         "assert": "double(it.value) > 39.5 && double(it.value) < 40.5 && "
+                   "double(it.median) == 20.0 && double(it.range_min) == 10.0 && "
+                   "double(it.range_max) == 40.0"},
+        {"in": "collab", "find": {"metric_key": "slack_dm_ratio"},
+         "assert": "it.value == null && it.median == null && "
+                   "it.range_min == null && it.range_max == null"},
     ])
     evaluate_case(case, _batch(), 200)
 
 
 def test_find_is_exact_equality_on_any_field():
     # `find` matches exact field equality — including non-key fields, no operators.
-    case = _case([{"in": "collab", "find": {"value": 40}, "equal": {"metric_key": "m365_emails_sent"}}])
+    # The matched row carries the four stats, so assert all of them too.
+    case = _case([{"in": "collab", "find": {"value": 40},
+                   "equal": {"metric_key": "m365_emails_sent", "value": 40,
+                             "median": 20, "range_min": 10, "range_max": 40}}])
     evaluate_case(case, _batch(), 200)
 
 
 def test_in_optional_with_single_result():
-    case = _case([{"find": {"metric_key": "m365_emails_sent"}, "equal": {"value": 40}}])
+    # The batch has a single result, so `in` may be omitted. m365_emails_sent
+    # carries the four stats — assert all of them for the no-unasserted-stat gate.
+    case = _case([{"find": {"metric_key": "m365_emails_sent"},
+                   "equal": {"value": 40, "median": 20,
+                             "range_min": 10, "range_max": 40}}])
     evaluate_case(case, _batch(), 200)  # `in` omitted → sole result

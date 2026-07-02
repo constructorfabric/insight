@@ -2,58 +2,48 @@ spec_version: 1
 description: >
   Metric: meetings_count — IC Bullet Collaboration (…0012), #1413.
   How it's computed (bronze → silver → gold):
-    • bronze: daily Teams meeting report + Zoom participant sessions per person
-    • silver: both sources deduped to per-person/day meetings-attended counts
-    • gold:   metric = sum of meetings attended over the window, across Teams + Zoom (additive)
+    • bronze: daily Teams meeting report per person (meetings attended)
+    • silver: deduped to meetings-attended per person/day
+    • gold:   value = the requested member's per-person SUM of meetings attended
+              over the window, across Teams + Zoom (additive — though seeded
+              Teams-only here, see the Zoom note below). median/p25/p75/range =
+              the distribution of those per-person SUMs across the member's
+              DEPARTMENT (org_unit_id).
 
-  Team (median/range = the person's department):
-    alice Teams 4 + Zoom 1 = 5 · bob Teams 2 · carol Zoom 1 → median 2, range [1, 5].
-  Cases: alice Teams+Zoom (5) · bob Teams-only (2) · carol Zoom-only (1).
+  Department: 5 Engineering members (alice, bob, carol, dave, erin) with meetings
+  attended {1,2,3,4,5}, each seeded as one Teams meeting-row dated 2026-12-25.
+  The IC case requests erin (5), so value = 5; the department of 5 yields
+  median 3, p25 2, p75 4, range [1,5].
+
+  Zoom note: the Zoom side is intentionally NOT used to vary per-person counts.
+  bronze_zoom.participants is ReplacingMergeTree ORDER BY email, so EVERY
+  participant row for one email collapses to a single bronze row on RMT merge —
+  a person can contribute at most ONE distinct Zoom meeting per day regardless of
+  how many participant rows are seeded. This fixture is therefore Teams-only —
+  each member's value is exactly meetingsAttendedCount. (Teams+Zoom cross-source
+  additivity is not asserted in the single-scope suite; it would be its own
+  fixture if reintroduced.)
+  Cases: custom scope (single window over the department) · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
 
-  # Teams side (insight_m365): alice 4, bob 2. (carol has no Teams row → Zoom-only.)
   bronze_m365.teams_activity:
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-mcount-20260105
-      meetingsAttendedCount: 4
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams  # verbatim duplicate -> must dedup, not double
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-mcount-20260105
-      meetingsAttendedCount: 4
-    - $ref: templates/m365_teams.yaml#/templates/bob_teams
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-bob-mcount-20260105
-      meetingsAttendedCount: 2
-
-  # Zoom side (insight_zoom): alice 1 meeting, carol 1 meeting. meetings_attended =
-  # uniqExact(meeting_uuid) per person/day, so one distinct meeting_uuid → 1.
-  bronze_zoom.participants:
-    - $ref: templates/zoom.yaml#/templates/alice_zoom
-      meeting_uuid: zmtg-alice-mc-1
-      participant_uuid: zp-alice-mc-1
-      join_time: "2026-01-05T10:00:00"
-      leave_time: "2026-01-05T11:00:00"
-    - $ref: templates/zoom.yaml#/templates/alice_zoom   # verbatim duplicate -> must dedup, not double
-      meeting_uuid: zmtg-alice-mc-1
-      participant_uuid: zp-alice-mc-1
-      join_time: "2026-01-05T10:00:00"
-      leave_time: "2026-01-05T11:00:00"
-    - $ref: templates/zoom.yaml#/templates/carol_zoom
-      meeting_uuid: zmtg-carol-mc-1
-      participant_uuid: zp-carol-mc-1
-      join_time: "2026-01-05T14:00:00"
-      leave_time: "2026-01-05T14:30:00"
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: mc-alice-20261225, meetingsAttendedCount: 1 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: mc-alice-20261225, meetingsAttendedCount: 1 }   # duplicate → dedup, not 2
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: bob@example.com,   reportRefreshDate: "2026-12-25", unique_key: mc-bob-20261225,   meetingsAttendedCount: 2 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: mc-carol-20261225, meetingsAttendedCount: 3 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: mc-dave-20261225,  meetingsAttendedCount: 4 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com,  reportRefreshDate: "2026-12-25", unique_key: mc-erin-20261225,  meetingsAttendedCount: 5 }
 
 cases:
-  # ── COMBINED (alice: Teams 4 + Zoom 1 = 5) ───────────────────────────────────
-  # proves meetings_count sums across both sources for the same person/day.
-  - name: "meetings_count — alice COMBINED Teams+Zoom (cross-source sum = 5)"
+  # dept {1,2,3,4,5}; erin value 5. p25=2 median=3 p75=4 range=[1,5]
+  - name: "meetings_count — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -61,17 +51,17 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
     expect:
       - assert: "status == 200"
       - in: collaboration
         assert: "result.status == 'ok'"
       - in: collaboration
         find: { metric_key: meetings_count }
-        equal: { value: 5, median: 2, range_min: 1, range_max: 5 }
+        equal: { value: 5, median: 3, range_min: 1, range_max: 5, p25: 2, p75: 4 }
 
-  # ── Teams-only (bob: 2) ──────────────────────────────────────────────────────
-  - name: "meetings_count — bob Teams-only (2)"
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "meetings_count — EMPTY window (no data → no items)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -79,25 +69,10 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
     expect:
       - assert: "status == 200"
       - in: collaboration
-        find: { metric_key: meetings_count }
-        equal: { value: 2, median: 2, range_min: 1, range_max: 5 }
-
-  # ── Zoom-only (carol: 1) ─────────────────────────────────────────────────────
-  - name: "meetings_count — carol Zoom-only (1)"
-    request:
-      url: /v1/metrics/queries
-      method: POST
-      body:
-        queries:
-          - id: collaboration
-            metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
-    expect:
-      - assert: "status == 200"
+        assert: "result.status == 'ok'"
       - in: collaboration
-        find: { metric_key: meetings_count }
-        equal: { value: 1, median: 2, range_min: 1, range_max: 5 }
+        assert: "size(items) == 0"

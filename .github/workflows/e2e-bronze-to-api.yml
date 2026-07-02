@@ -7,11 +7,17 @@ name: E2E — Bronze to API
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
 # image is used for local development via src/ingestion/tests/e2e/e2e.sh.
 #
+# Topology: ONE heavy job (`e2e`) boots the stack, runs the suite, and — while
+# analytics-api is already up — snapshots the metric catalog into `.artifacts/`,
+# which it uploads. The metric-coverage-gate job then analyses it as a pure-Python
+# check (no Docker, no app boot). See
+# src/ingestion/tests/e2e/lib/{metric_coverage,collect_metrics}.py.
+#
 # Specs: docs/domain/bronze-to-api-e2e/specs/
 # Code:  src/ingestion/tests/e2e/
 
 on:
-  # PR-only — same reasoning as ci.yml: branch protection gates
+  # PR-only — branch protection gates
   # merge on PR success, and re-running the full bronze→API stack
   # (clickhouse + mariadb + dbt + pytest) on the merge commit just burns
   # ~30 minutes for an outcome we already proved. workflow_dispatch
@@ -73,8 +79,31 @@ jobs:
       # migrations, and the shared dbt target/ dir is deleted by whichever
       # worker finishes first). Wall-time cost is negligible: the runner image
       # build (which compiles analytics-api + enrich) dominates the job.
+      #
+      # The suite ALSO snapshots the metric catalog to .artifacts/catalog_metrics.json
+      # (lib/collect_metrics.py, while analytics-api is up) — the
+      # metric-coverage-gate job below analyses it, no second app boot.
       - name: Run E2E suite
         run: ./e2e.sh test --tb=short -q
+
+      # ─── Hand the collected catalog to the gate job ─────────────────────
+      # Uploaded even if the suite failed (the collection script still runs), so the
+      # gate reports alongside a red suite. `path` is workspace-relative (actions
+      # ignore defaults.run.working-directory).
+      - name: Upload coverage inputs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-inputs
+          path: src/ingestion/tests/e2e/.artifacts/
+          # `.artifacts/` is a dotdir; upload-artifact@v4 skips hidden paths by
+          # default (include-hidden-files: false) — without this it uploads
+          # nothing and the gate job fails with "artifact not found".
+          include-hidden-files: true
+          # The gate is useless without the catalog; fail loudly here rather than
+          # as a confusing downstream "artifact not found".
+          if-no-files-found: error
+          retention-days: 7
 
       # ─── Diagnostics on failure ─────────────────────────────────────────
       - name: Dump compose logs on failure
@@ -90,3 +119,33 @@ jobs:
       - name: Tear down
         if: always()
         run: ./e2e.sh down || true
+
+  # ─── Gate job — pure-Python analysis of the collected catalog ─────────────
+  # Runs after `e2e` (needs), downloads `coverage-inputs`, reads the catalog file.
+  # No Docker, no analytics-api boot. `!cancelled()` so it still reports when the
+  # suite itself failed (the artifact is usually present).
+
+  metric-coverage-gate:
+    name: Metric coverage gate
+    needs: e2e
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs
+          path: coverage-inputs
+      - name: Analyse metric coverage
+        run: |
+          pip install --quiet pyyaml
+          python3 src/ingestion/tests/e2e/lib/metric_coverage.py \
+            --universe-file coverage-inputs/catalog_metrics.json | tee metric_coverage.md
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat metric_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::metric coverage gate failed — a metric_key is value-tested by no test and not in SKIP_TABLES/SKIP_LIST (or a skip is stale). See the report."; fi
+          exit "$rc"

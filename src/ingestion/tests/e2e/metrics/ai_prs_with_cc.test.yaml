@@ -36,4 +36,4 @@ cases:
         assert: "result.status == 'ok'"
       - in: ai
         find: { metric_key: prs_with_cc }
-        equal: { value: null }
+        equal: { value: null, median: null, range_min: null, range_max: null }

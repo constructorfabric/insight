@@ -3,38 +3,61 @@ description: >
   Metric: cc_tool_accept — IC Bullet AI (…0013), #1440.
   How it's computed (bronze → silver → gold):
     • bronze: Claude Enterprise per-user/day usage (code tool suggestions accepted)
-    • silver: deduped to one row per user/day carrying the accepted-suggestions count
-    • gold:   metric = sum of accepted Claude Code tool-use suggestions over the window
+    • silver: class_ai_dev_usage (tool='claude_code'); one row per user/day
+              (LIMIT 1 BY tenant, source, user_id, date); tool_use_accepted ←
+              code_tool_accepted_count
+    • gold:   ai_bullet_rows branch 3 emits ('cc_tool_accept', tool_use_accepted) per
+              day; the served IC query SUMs the requested person's per-day accepted
+              suggestions over the window (value), and reports the DEPARTMENT
+              distribution of those per-person SUMs as median/range_min/range_max.
 
-  Team (median/range = the person's department):
-    alice 50 · bob 20 · carol 10 (alice row re-synced once → must not double)
-    → median 20, range [10, 50].
+  NOTE on the served stat set: the IC Bullet AI query_ref (id …0013) is last
+  re-seeded by migration m20260618_000001 (cc_overage), which carries only
+  value/median/range_min/range_max — NOT p25/p75/n. So these AI fixtures assert the
+  four stats the API actually returns; the no-unasserted-stat gate is self-scoping
+  and never requires p25/p75 on a row that does not carry them.
+
+  user_id MUST be distinct per person — the silver model dedups
+  `LIMIT 1 BY tenant, source, user_id, date`, so a shared user_id would collapse
+  all five seats into one row (cohort of 1 → wrong department median).
+
+  Department: 5 Engineering members (alice, bob, carol, dave, erin), base rates
+  r ∈ {5,10,15,20,25}. Each member is seeded two accepted-rows inside the custom
+  window (Nov 01 .. Dec 12) — one Nov 15 (2*r) + one Dec 10 (1*r) — so each
+  per-person window SUM = 3*r. The IC case requests erin (r=25) → value 75; the
+  department of 5 yields the median/range below. Cases: custom scope · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
   bronze_claude_enterprise.claude_enterprise_users:
-    - $ref: templates/claude_enterprise_users.yaml#/templates/alice
-      unique_key: ent-alice-20260105
-      date: "2026-01-05"
-      code_tool_accepted_count: 50
-    - $ref: templates/claude_enterprise_users.yaml#/templates/alice   # re-sync dup → must NOT double
-      unique_key: ent-alice-20260105
-      date: "2026-01-05"
-      code_tool_accepted_count: 50
-    - $ref: templates/claude_enterprise_users.yaml#/templates/bob
-      unique_key: ent-bob-20260105
-      date: "2026-01-05"
-      code_tool_accepted_count: 20
-    - $ref: templates/claude_enterprise_users.yaml#/templates/carol
-      unique_key: ent-carol-20260105
-      date: "2026-01-05"
-      code_tool_accepted_count: 10
+    # Per member: Nov 15 = 2*r, Dec 10 = 1*r → window SUM = 3*r.
+    # ── alice, r=5 (user-alice) ─────────────────────────────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/alice, date: "2026-11-15", unique_key: ent-alice-20261115, code_tool_accepted_count: 10 }  # 2r
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/alice, date: "2026-12-10", unique_key: ent-alice-20261210, code_tool_accepted_count: 5 }   # 1r
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/alice, date: "2026-12-10", unique_key: ent-alice-20261210, code_tool_accepted_count: 5 }   # re-sync dup (same user_id+date) → dedup to 5, not 10
+    # ── bob, r=10 (user-bob) ────────────────────────────────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/bob,   date: "2026-11-15", unique_key: ent-bob-20261115,   code_tool_accepted_count: 20 }  # 2r
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/bob,   date: "2026-12-10", unique_key: ent-bob-20261210,   code_tool_accepted_count: 10 }  # 1r
+    # ── carol, r=15 (user-carol) ────────────────────────────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/carol, date: "2026-11-15", unique_key: ent-carol-20261115, code_tool_accepted_count: 30 }  # 2r
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/carol, date: "2026-12-10", unique_key: ent-carol-20261210, code_tool_accepted_count: 15 }  # 1r
+    # ── dave, r=20 (user-dave) ──────────────────────────────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: dave@example.com, user_id: user-dave, date: "2026-11-15", unique_key: ent-dave-20261115, code_tool_accepted_count: 40 }  # 2r
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: dave@example.com, user_id: user-dave, date: "2026-12-10", unique_key: ent-dave-20261210, code_tool_accepted_count: 20 }  # 1r
+    # ── erin, r=25 (user-erin; the requested IC member) ─────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: erin@example.com, user_id: user-erin, date: "2026-11-15", unique_key: ent-erin-20261115, code_tool_accepted_count: 50 }  # 2r
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: erin@example.com, user_id: user-erin, date: "2026-12-10", unique_key: ent-erin-20261210, code_tool_accepted_count: 25 }  # 1r
 
 cases:
-  - name: cc_tool_accept — IC bullet (alice value vs team median, dedup holds)
+  # ── CUSTOM scope (Nov 01 .. Dec 12) — Nov 15 + Dec 10 rows ───────────────────
+  # per-person sums 3r → dept {15,30,45,60,75}; erin value 75.
+  - name: "cc_tool_accept — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -43,7 +66,7 @@ cases:
           - id: ai
             metric_id: 00000000-0000-0000-0001-000000000013
             $top: 50
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-11-01' and metric_date le '2026-12-12'"
             $orderby: metric_key
     expect:
       - assert: "status == 200"
@@ -51,4 +74,23 @@ cases:
         assert: "result.status == 'ok'"
       - in: ai
         find: { metric_key: cc_tool_accept }
-        equal: { value: 50, median: 20, range_min: 10, range_max: 50 }
+        equal: { value: 75, median: 45, range_min: 15, range_max: 75 }
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "cc_tool_accept — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        assert: "size(items) == 0"

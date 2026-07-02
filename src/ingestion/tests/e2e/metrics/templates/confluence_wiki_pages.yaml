@@ -31,3 +31,11 @@ templates:
   carol:
     $ref: "#/templates/confluence_page"
     author_id: carol@example.com
+
+  dave:
+    $ref: "#/templates/confluence_page"
+    author_id: dave@example.com
+
+  erin:
+    $ref: "#/templates/confluence_page"
+    author_id: erin@example.com

@@ -4,51 +4,59 @@ description: >
   How it's computed (bronze → silver → gold):
     • bronze: daily Teams meeting report + Zoom participant sessions per person
     • silver: both sources deduped to per-person/day meeting durations (audio/video/screen)
-    • gold:   a day is "meeting-free" if a meeting row exists but total duration = 0;
-              metric = count of such days over the window (no row at all does not count)
+    • gold:   a DAY is "meeting-free" if a meeting row EXISTS that day but its total
+              duration = 0 (no row at all does NOT count); the metric is the COUNT of
+              such days over the window. value = the requested member's meeting-free
+              day count; median/p25/p75/range = the distribution of those per-person
+              counts across the member's DEPARTMENT (same org_unit_id).
 
-  Team (median/range = the person's department):
-    alice zero-duration day = 1 · bob 1h = 0 · carol 30m = 0 → median 0, range [0, 1].
-  Cases: alice (1 meeting-free day vs the team).
+  Count-of-days design (this metric counts DAYS, not magnitudes): each member m ∈
+  {alice:1, bob:2, carol:3, dave:4, erin:5} is seeded m zero-duration Teams rows —
+  meetingsAttendedCount:0 and PT0S audio/video/screen — on m distinct days inside
+  the queried window, so the per-person meeting-free count = m → department
+  {1,2,3,4,5}. The IC case requests erin (m=5), so value = 5; the department of 5
+  yields the median/p25/p75/range below (a reviewer can verify by counting each
+  member's seeded dates).
+
+  dave/erin Teams rows are composed inline from the base m365_teams template with a
+  userPrincipalName override (named per-person Teams records cover alice/bob/carol).
+  Cases: custom scope (department of 5) · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
 
   bronze_m365.teams_activity:
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams   # row exists, zero duration → meeting-free day
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-mfree-20260105
-      meetingsAttendedCount: 0
-      audioDuration: PT0S
-      videoDuration: PT0S
-      screenShareDuration: PT0S
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams   # row exists, zero duration → meeting-free day  # verbatim duplicate -> must dedup, not double
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-mfree-20260105
-      meetingsAttendedCount: 0
-      audioDuration: PT0S
-      videoDuration: PT0S
-      screenShareDuration: PT0S
-    - $ref: templates/m365_teams.yaml#/templates/bob_teams     # has duration → not free
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-bob-mfree-20260105
-      audioDuration: PT1H
-      videoDuration: PT0S
-      screenShareDuration: PT0S
-    - $ref: templates/m365_teams.yaml#/templates/carol_teams   # has duration → not free
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-carol-mfree-20260105
-      audioDuration: PT30M
-      videoDuration: PT0S
-      screenShareDuration: PT0S
+    # ── alice: 1 meeting-free day(s) in window
+    - { $ref: templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-23", unique_key: mf-alice-20261223, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    # ── bob: 2 meeting-free day(s) in window
+    - { $ref: templates/m365_teams.yaml#/templates/bob_teams, reportRefreshDate: "2026-12-23", unique_key: mf-bob-20261223, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/bob_teams, reportRefreshDate: "2026-12-24", unique_key: mf-bob-20261224, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    # ── carol: 3 meeting-free day(s) in window
+    - { $ref: templates/m365_teams.yaml#/templates/carol_teams, reportRefreshDate: "2026-12-23", unique_key: mf-carol-20261223, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/carol_teams, reportRefreshDate: "2026-12-24", unique_key: mf-carol-20261224, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/carol_teams, reportRefreshDate: "2026-12-25", unique_key: mf-carol-20261225, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    # ── dave: 4 meeting-free day(s) in window
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com, reportRefreshDate: "2026-12-23", unique_key: mf-dave-20261223, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com, reportRefreshDate: "2026-12-24", unique_key: mf-dave-20261224, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com, reportRefreshDate: "2026-12-25", unique_key: mf-dave-20261225, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com, reportRefreshDate: "2026-12-26", unique_key: mf-dave-20261226, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    # ── erin: 5 meeting-free day(s) in window
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com, reportRefreshDate: "2026-12-23", unique_key: mf-erin-20261223, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com, reportRefreshDate: "2026-12-24", unique_key: mf-erin-20261224, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com, reportRefreshDate: "2026-12-25", unique_key: mf-erin-20261225, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com, reportRefreshDate: "2026-12-26", unique_key: mf-erin-20261226, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com, reportRefreshDate: "2026-12-27", unique_key: mf-erin-20261227, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
 
 cases:
-  # team meeting_free = [alice 1, bob 0, carol 0]
-  #   value (alice) = 1 ; median[0,0,1] = 0 ; range = [0,1]
-  - name: meeting_free — IC bullet (alice value vs team median/range)
+  # ── CUSTOM scope (Dec 23 .. Dec 29) — department of 5 ────────────────────────
+  # meeting-free day counts → dept {1,2,3,4,5}; erin value 5.
+  # p25=2 median=3 p75=4 range=[1,5]
+  - name: "meeting_free — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -56,11 +64,28 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-23' and metric_date le '2026-12-29'"
     expect:
       - assert: "status == 200"
       - in: collaboration
         assert: "result.status == 'ok'"
       - in: collaboration
         find: { metric_key: meeting_free }
-        equal: { value: 1, median: 0, range_min: 0, range_max: 1 }
+        equal: { value: 5, median: 3, range_min: 1, range_max: 5, p25: 2, p75: 4 }
+
+  # ── EMPTY window (no qualifying days in range) ───────────────────────────────
+  - name: "meeting_free — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"

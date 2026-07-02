@@ -56,4 +56,4 @@ cases:
         assert: "result.status == 'ok'"
       - in: ai
         find: { metric_key: ai_loc_share2 }
-        equal: { value: 50.0 }
+        equal: { value: 50.0, median: 25.0, range_min: 25.0, range_max: 50.0 }

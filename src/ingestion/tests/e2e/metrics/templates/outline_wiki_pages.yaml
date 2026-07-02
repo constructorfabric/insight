@@ -36,3 +36,13 @@ templates:
     $ref: "#/templates/outline_page"
     author_email: carol@example.com
     author_id: outline-carol
+
+  dave:
+    $ref: "#/templates/outline_page"
+    author_email: dave@example.com
+    author_id: outline-dave
+
+  erin:
+    $ref: "#/templates/outline_page"
+    author_email: erin@example.com
+    author_id: outline-erin

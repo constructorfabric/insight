@@ -3,42 +3,64 @@ description: >
   Metric: cc_tool_acceptance — IC Bullet AI (…0013), #1440.
   How it's computed (bronze → silver → gold):
     • bronze: Claude Enterprise per-user/day usage (code tool suggestions accepted & rejected)
-    • silver: deduped to one row per user/day with accepted + offered (accepted + rejected)
-    • gold:   a reconstructed ratio — 100 × Σ accepted ÷ Σ offered, rounded to 0.1
-              (computed at serve time, not stored)
+    • silver: class_ai_dev_usage (tool='claude_code'); one row per user/day; tool_use_accepted
+              ← code_tool_accepted_count, tool_use_offered ← accepted + rejected
+    • gold:   ai_bullet_rows branch 3 emits BOTH ('cc_tool_accept', accepted) and
+              ('cc_offered', offered) per day. The served IC query reconstructs the
+              ratio at serve time, per person, over the window:
+                  value = round(100 × Σ cc_tool_accept ÷ Σ cc_offered, 1)
+              (the only correct period aggregation when daily denominators differ).
+              median/range_min/range_max are the DEPARTMENT distribution of those
+              per-person windowed ratios.
 
-  Team (value = the requested person):
-    alice accepted 50 of 80 offered (50 accepted + 30 rejected) → 100×50/80 = 62.5.
+  This fixture gives the metric the FULL treatment (value + median + range), not just
+  `value`. The served IC query_ref (id …0013) is last re-seeded by migration
+  m20260618_000001 (cc_overage) and carries value/median/range_min/range_max — NOT
+  p25/p75/n. The no-unasserted-stat gate is self-scoping, so asserting those four
+  satisfies it; p25/p75 are not returned and must not be asserted.
+
+  user_id MUST be distinct per person (silver `LIMIT 1 BY tenant, source, user_id,
+  date`) — a shared user_id would collapse the seats into one row.
+
+  Department: 5 Engineering members with base acceptance b ∈ {5,10,15,20,25}.
+  Each member has offered = 100 on every ring (uniform denominators), seeded inside
+  the custom window (Nov 01 .. Dec 12): Nov 15 accepted = b+20, Dec 10 accepted = b+10.
+  Windowed ratio = 100 × ((b+20)+(b+10)) / 200 = b+15, so the department ratios are
+  {20,25,30,35,40}. The IC case requests erin (b=25) → value 40; the department of 5
+  yields the median/range below. Cases: custom scope · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
   bronze_claude_enterprise.claude_enterprise_users:
-    - $ref: templates/claude_enterprise_users.yaml#/templates/alice
-      unique_key: ent-alice-20260105
-      date: "2026-01-05"
-      code_tool_accepted_count: 50
-      code_tool_rejected_count: 30
-    - $ref: templates/claude_enterprise_users.yaml#/templates/alice   # re-sync dup → ratio unchanged
-      unique_key: ent-alice-20260105
-      date: "2026-01-05"
-      code_tool_accepted_count: 50
-      code_tool_rejected_count: 30
-    - $ref: templates/claude_enterprise_users.yaml#/templates/bob
-      unique_key: ent-bob-20260105
-      date: "2026-01-05"
-      code_tool_accepted_count: 20
-      code_tool_rejected_count: 60
-    - $ref: templates/claude_enterprise_users.yaml#/templates/carol
-      unique_key: ent-carol-20260105
-      date: "2026-01-05"
-      code_tool_accepted_count: 10
-      code_tool_rejected_count: 15
+    # offered = accepted + rejected = 100 on every ring (uniform denominator).
+    # Nov 15 accepted = b+20, Dec 10 accepted = b+10 → windowed ratio = b+15.
+    # ── alice, b=5 ──────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/alice, date: "2026-11-15", unique_key: ent-alice-20261115, code_tool_accepted_count: 25, code_tool_rejected_count: 75 }  # b+20
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/alice, date: "2026-12-10", unique_key: ent-alice-20261210, code_tool_accepted_count: 15, code_tool_rejected_count: 85 }  # b+10
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/alice, date: "2026-12-10", unique_key: ent-alice-20261210, code_tool_accepted_count: 15, code_tool_rejected_count: 85 }  # re-sync dup → ratio unchanged
+    # ── bob, b=10 ───────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/bob,   date: "2026-11-15", unique_key: ent-bob-20261115,   code_tool_accepted_count: 30, code_tool_rejected_count: 70 }  # b+20
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/bob,   date: "2026-12-10", unique_key: ent-bob-20261210,   code_tool_accepted_count: 20, code_tool_rejected_count: 80 }  # b+10
+    # ── carol, b=15 ─────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/carol, date: "2026-11-15", unique_key: ent-carol-20261115, code_tool_accepted_count: 35, code_tool_rejected_count: 65 }  # b+20
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/carol, date: "2026-12-10", unique_key: ent-carol-20261210, code_tool_accepted_count: 25, code_tool_rejected_count: 75 }  # b+10
+    # ── dave, b=20 (user-dave) ──────────────────────────────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: dave@example.com, user_id: user-dave, date: "2026-11-15", unique_key: ent-dave-20261115, code_tool_accepted_count: 40, code_tool_rejected_count: 60 }  # b+20
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: dave@example.com, user_id: user-dave, date: "2026-12-10", unique_key: ent-dave-20261210, code_tool_accepted_count: 30, code_tool_rejected_count: 70 }  # b+10
+    # ── erin, b=25 (user-erin; the requested IC member) ─────────────────────────
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: erin@example.com, user_id: user-erin, date: "2026-11-15", unique_key: ent-erin-20261115, code_tool_accepted_count: 45, code_tool_rejected_count: 55 }  # b+20
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: erin@example.com, user_id: user-erin, date: "2026-12-10", unique_key: ent-erin-20261210, code_tool_accepted_count: 35, code_tool_rejected_count: 65 }  # b+10
 
 cases:
-  - name: cc_tool_acceptance — IC bullet (reconstructed ratio, alice 50/80 = 62.5)
+  # ── CUSTOM scope (Nov 01 .. Dec 12) — Nov 15 + Dec 10 rows ───────────────────
+  # per-person ratio = b+15 → dept {20,25,30,35,40}; erin value 40.
+  - name: "cc_tool_acceptance — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -47,7 +69,7 @@ cases:
           - id: ai
             metric_id: 00000000-0000-0000-0001-000000000013
             $top: 50
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-11-01' and metric_date le '2026-12-12'"
             $orderby: metric_key
     expect:
       - assert: "status == 200"
@@ -55,4 +77,23 @@ cases:
         assert: "result.status == 'ok'"
       - in: ai
         find: { metric_key: cc_tool_acceptance }
-        equal: { value: 62.5 }
+        equal: { value: 40, median: 30, range_min: 20, range_max: 40 }
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "cc_tool_acceptance — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        assert: "size(items) == 0"

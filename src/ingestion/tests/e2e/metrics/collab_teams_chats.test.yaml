@@ -4,45 +4,36 @@ description: >
   How it's computed (bronze → silver → gold):
     • bronze: daily Teams activity report per person (private-DM + team-channel counts)
     • silver: deduped to per-person/day; total = private DMs + team-channel messages
-    • gold:   metric = sum of Teams chat messages over the window
+    • gold:   value = the requested member's per-person SUM of Teams chat messages
+              over the window. median/p25/p75/range = the distribution of those
+              per-person SUMs across the member's DEPARTMENT (org_unit_id).
 
-  Team (median/range = the person's department):
-    alice 15 private + 25 team = 40 · bob 20 private · carol 10 team
-    → median 20, range [10, 40].
-  Cases: alice both fields (40) · bob private-only (20) · carol team-only (10).
+  Department: 5 Engineering members (alice, bob, carol, dave, erin) with chat totals
+  {10,20,30,40,50}, each seeded as one Teams activity-row dated 2026-12-25 carrying
+  the count in privateChatMessageCount (team = 0); total = private + team. The IC
+  case requests erin (50), so value = 50; the department of 5 yields median 30,
+  p25 20, p75 40, range [10,50].
+  Cases: custom scope (single window over the department) · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
 
   bronze_m365.teams_activity:
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-chat-20260105
-      privateChatMessageCount: 15
-      teamChatMessageCount: 25
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams  # verbatim duplicate -> must dedup, not double
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-chat-20260105
-      privateChatMessageCount: 15
-      teamChatMessageCount: 25
-    - $ref: templates/m365_teams.yaml#/templates/bob_teams    # private-DM field only (team = 0)
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-bob-chat-20260105
-      privateChatMessageCount: 20
-      teamChatMessageCount: 0
-    - $ref: templates/m365_teams.yaml#/templates/carol_teams  # team-channel field only (private = 0)
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-carol-chat-20260105
-      privateChatMessageCount: 0
-      teamChatMessageCount: 10
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tc-alice-20261225, privateChatMessageCount: 10, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tc-alice-20261225, privateChatMessageCount: 10, teamChatMessageCount: 0 }   # duplicate → dedup, not 20
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: bob@example.com,   reportRefreshDate: "2026-12-25", unique_key: tc-bob-20261225,   privateChatMessageCount: 20, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: tc-carol-20261225, privateChatMessageCount: 30, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: tc-dave-20261225,  privateChatMessageCount: 40, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com,  reportRefreshDate: "2026-12-25", unique_key: tc-erin-20261225,  privateChatMessageCount: 50, teamChatMessageCount: 0 }
 
 cases:
-  # team m365_teams_chats = [alice 15+25=40, bob 20+0=20, carol 0+10=10]
-  #   value (alice) = 40 ; median[10,20,40] = 20 ; range = [10,40]
-  - name: m365_teams_chats — alice private+team (both fields vs team median/range)
+  # dept {10,20,30,40,50}; erin value 50. p25=20 median=30 p75=40 range=[10,50]
+  - name: "m365_teams_chats — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -50,17 +41,17 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
     expect:
       - assert: "status == 200"
       - in: collaboration
         assert: "result.status == 'ok'"
       - in: collaboration
         find: { metric_key: m365_teams_chats }
-        equal: { value: 40, median: 20, range_min: 10, range_max: 40 }
+        equal: { value: 50, median: 30, range_min: 10, range_max: 50, p25: 20, p75: 40 }
 
-  # bob's chat is all private DMs (teamChatMessageCount = 0) — proves the private field alone
-  - name: m365_teams_chats — bob private-only (value 20 vs team median/range)
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "m365_teams_chats — EMPTY window (no data → no items)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -68,25 +59,10 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
     expect:
       - assert: "status == 200"
       - in: collaboration
-        find: { metric_key: m365_teams_chats }
-        equal: { value: 20, median: 20, range_min: 10, range_max: 40 }
-
-  # carol's chat is all team-channel posts (privateChatMessageCount = 0) — proves the team field alone
-  - name: m365_teams_chats — carol team-only (value 10 vs team median/range)
-    request:
-      url: /v1/metrics/queries
-      method: POST
-      body:
-        queries:
-          - id: collaboration
-            metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
-    expect:
-      - assert: "status == 200"
+        assert: "result.status == 'ok'"
       - in: collaboration
-        find: { metric_key: m365_teams_chats }
-        equal: { value: 10, median: 20, range_min: 10, range_max: 40 }
+        assert: "size(items) == 0"

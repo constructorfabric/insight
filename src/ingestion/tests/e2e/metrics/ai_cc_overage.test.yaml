@@ -3,39 +3,62 @@ description: >
   Metric: cc_overage — IC Bullet AI (…0013), #1440.
   How it's computed (bronze → silver → gold):
     • bronze: Claude Team per-seat spend snapshot (used credits + monthly limit, in cents)
-    • silver: latest snapshot per seat/month; overage = max(0, used − limit) cents
-    • gold:   metric = sum of per-seat overage (cents) over the window
+    • silver: class_ai_overage — LATEST snapshot per (seat, calendar MONTH);
+              overage_cents = max(0, used_credits − monthly_credit_limit). The snapshot
+              has no date field — period_month / collected_at derive from
+              _airbyte_extracted_at, and the silver model dedups
+              `LIMIT 1 BY tenant, source, account_uuid, toStartOfMonth(_airbyte_extracted_at)`.
+    • gold:   ai_bullet_rows branch 6 emits ('cc_overage', overage_cents) dated at
+              toDate(collected_at). The served IC query SUMs the requested person's
+              per-month overage over the window (value), and reports the DEPARTMENT
+              distribution of those per-person SUMs as median/range_min/range_max.
 
-  Team (median/range = the person's department):
-    alice used 300/limit 100 → 200¢ · bob 200/100 → 100¢ · carol 150/100 → 50¢
-    (alice row re-synced once → must not double) → median 100, range [50, 200].
+  Stat set: value/median/range_min/range_max only (NO p25/p75/n) — the IC Bullet AI
+  query_ref is last re-seeded by m20260618_000001, which carries those four. The
+  no-unasserted-stat gate is self-scoping, so asserting these four suffices.
+
+  Overage is a MONTHLY-grain metric (one snapshot per seat per calendar month), so
+  each ring is a DISTINCT month. Each member is seeded two monthly snapshots inside
+  the custom window (Nov 01 .. Dec 12): Nov (Nov 15) + Dec (Dec 05) — each overriding
+  _airbyte_extracted_at AND collected_at so the snapshot lands in its month, with
+  used_credits = limit + r so each month contributes overage = r cents (limit=100).
+  Per-person window SUM = 2*r (two months). The IC case requests erin (r=100) → value
+  200; the department of 5 yields the median/range below. account_uuid (seat) MUST be
+  distinct per person so the per-(seat, month) dedup keeps each member's snapshot
+  separate. Cases: custom scope · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
   bronze_claude_team.claude_team_overage_spend:
-    # metric date = collection day (_airbyte_extracted_at = 2026-01-05 in template).
-    - $ref: templates/claude_team_overage.yaml#/templates/alice
-      unique_key: overage-alice-202601
-      monthly_credit_limit: 100
-      used_credits: 300
-    - $ref: templates/claude_team_overage.yaml#/templates/alice   # re-sync dup → must NOT double
-      unique_key: overage-alice-202601
-      monthly_credit_limit: 100
-      used_credits: 300
-    - $ref: templates/claude_team_overage.yaml#/templates/bob
-      unique_key: overage-bob-202601
-      monthly_credit_limit: 100
-      used_credits: 200
-    - $ref: templates/claude_team_overage.yaml#/templates/carol
-      unique_key: overage-carol-202601
-      monthly_credit_limit: 100
-      used_credits: 150
+    # monthly_credit_limit = 100¢ on every row; used_credits = 100 + r → overage = r.
+    # Nov (Nov 15) + Dec (Dec 05) snapshots → window SUM = 2*r.
+    # ── alice, r=20¢ (seat-alice) ───────────────────────────────────────────────
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, unique_key: overage-alice-202611, _airbyte_extracted_at: "2026-11-15T00:00:00Z", collected_at: "2026-11-15T00:00:00Z", monthly_credit_limit: 100, used_credits: 120 }  # Nov
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, unique_key: overage-alice-202612, _airbyte_extracted_at: "2026-12-05T00:00:00Z", collected_at: "2026-12-05T00:00:00Z", monthly_credit_limit: 100, used_credits: 120 }  # Dec
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, unique_key: overage-alice-202612, _airbyte_extracted_at: "2026-12-05T00:00:00Z", collected_at: "2026-12-05T00:00:00Z", monthly_credit_limit: 100, used_credits: 120 }  # re-sync dup (same seat+month) → kept once
+    # ── bob, r=40¢ (seat-bob) ───────────────────────────────────────────────────
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   unique_key: overage-bob-202611,   _airbyte_extracted_at: "2026-11-15T00:00:00Z", collected_at: "2026-11-15T00:00:00Z", monthly_credit_limit: 100, used_credits: 140 }  # Nov
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   unique_key: overage-bob-202612,   _airbyte_extracted_at: "2026-12-05T00:00:00Z", collected_at: "2026-12-05T00:00:00Z", monthly_credit_limit: 100, used_credits: 140 }  # Dec
+    # ── carol, r=60¢ (seat-carol) ───────────────────────────────────────────────
+    - { $ref: templates/claude_team_overage.yaml#/templates/carol, unique_key: overage-carol-202611, _airbyte_extracted_at: "2026-11-15T00:00:00Z", collected_at: "2026-11-15T00:00:00Z", monthly_credit_limit: 100, used_credits: 160 }  # Nov
+    - { $ref: templates/claude_team_overage.yaml#/templates/carol, unique_key: overage-carol-202612, _airbyte_extracted_at: "2026-12-05T00:00:00Z", collected_at: "2026-12-05T00:00:00Z", monthly_credit_limit: 100, used_credits: 160 }  # Dec
+    # ── dave, r=80¢ (seat-dave) ─────────────────────────────────────────────────
+    - { $ref: templates/claude_team_overage.yaml#/templates/overage_seat, account_email: dave@example.com, account_uuid: seat-dave, unique_key: overage-dave-202611, _airbyte_extracted_at: "2026-11-15T00:00:00Z", collected_at: "2026-11-15T00:00:00Z", monthly_credit_limit: 100, used_credits: 180 }  # Nov
+    - { $ref: templates/claude_team_overage.yaml#/templates/overage_seat, account_email: dave@example.com, account_uuid: seat-dave, unique_key: overage-dave-202612, _airbyte_extracted_at: "2026-12-05T00:00:00Z", collected_at: "2026-12-05T00:00:00Z", monthly_credit_limit: 100, used_credits: 180 }  # Dec
+    # ── erin, r=100¢ (seat-erin; the requested IC member) ───────────────────────
+    - { $ref: templates/claude_team_overage.yaml#/templates/overage_seat, account_email: erin@example.com, account_uuid: seat-erin, unique_key: overage-erin-202611, _airbyte_extracted_at: "2026-11-15T00:00:00Z", collected_at: "2026-11-15T00:00:00Z", monthly_credit_limit: 100, used_credits: 200 }  # Nov
+    - { $ref: templates/claude_team_overage.yaml#/templates/overage_seat, account_email: erin@example.com, account_uuid: seat-erin, unique_key: overage-erin-202612, _airbyte_extracted_at: "2026-12-05T00:00:00Z", collected_at: "2026-12-05T00:00:00Z", monthly_credit_limit: 100, used_credits: 200 }  # Dec
 
 cases:
-  - name: cc_overage — IC bullet (alice 200¢ vs team median, dedup holds)
+  # ── CUSTOM scope (Nov 01 .. Dec 12) — Nov + Dec snapshots ────────────────────
+  # per-person sums 2r → dept {40,80,120,160,200}; erin value 200.
+  - name: "cc_overage — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -44,7 +67,7 @@ cases:
           - id: ai
             metric_id: 00000000-0000-0000-0001-000000000013
             $top: 50
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-11-01' and metric_date le '2026-12-12'"
             $orderby: metric_key
     expect:
       - assert: "status == 200"
@@ -52,4 +75,23 @@ cases:
         assert: "result.status == 'ok'"
       - in: ai
         find: { metric_key: cc_overage }
-        equal: { value: 200, median: 100, range_min: 50, range_max: 200 }
+        equal: { value: 200, median: 120, range_min: 40, range_max: 200 }
+
+  # ── EMPTY window (Jun — between the Nov/Dec snapshots and any other → no items)
+  - name: "cc_overage — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        assert: "size(items) == 0"

@@ -33,7 +33,7 @@ from lib import clickhouse as ch
 from lib import compose, mariadb
 from lib.analytics_api import AnalyticsApiProcess, find_free_port, locate_binary
 from lib.ch_seeder import CHSeeder
-from lib.config import SessionConfig
+from lib.config import SessionConfig, TEST_TENANT_ID
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
 from lib.fixture_loader import TestYaml, discover_tests, load as load_test
@@ -196,6 +196,40 @@ def dbt_runner(ch_migrations_applied: SessionConfig):
     runner.cleanup()
 
 
+def _collect_metrics(proc: AnalyticsApiProcess) -> None:
+    """Run `lib/collect_metrics.py` (a script — NOT a test) against the
+    live API, primary worker only. Snapshots the metric catalog into `.artifacts/`
+    so the metric-coverage gate analyses a file with no second app boot.
+    Best-effort: a failure just means the gate finds no artifact and fails loudly —
+    never abort the session for it. Must run while the API is up (called from
+    analytics_api teardown, before proc.stop())."""
+    if not _IS_PRIMARY:
+        return
+    import subprocess
+    import sys
+
+    script = Path(__file__).parent / "lib" / "collect_metrics.py"
+    out_dir = Path(__file__).parent / ".artifacts"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--url",
+            proc.base_url,
+            "--out-dir",
+            str(out_dir),
+            "--tenant",
+            str(TEST_TENANT_ID),
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        LOG.warning(
+            "coverage-artifact collection failed (rc=%d); gate jobs may lack inputs",
+            result.returncode,
+        )
+
+
 @pytest.fixture(scope="session")
 def analytics_api(ch_migrations_applied: SessionConfig):
     """Spawn the analytics-api binary baked into the runner image. Its SeaORM
@@ -219,7 +253,13 @@ def analytics_api(ch_migrations_applied: SessionConfig):
     proc.start()
     seed_test_metrics(cfg)
     yield proc
-    proc.stop()
+    # Snapshot the metric catalog while the API is still up (a script, run via
+    # subprocess — see _collect_metrics). Always
+    # stop the process afterward, even if collection raised.
+    try:
+        _collect_metrics(proc)
+    finally:
+        proc.stop()
 
 
 @pytest.fixture(scope="session")

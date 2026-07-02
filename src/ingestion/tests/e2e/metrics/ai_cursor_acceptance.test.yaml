@@ -56,4 +56,4 @@ cases:
         assert: "result.status == 'ok'"
       - in: ai
         find: { metric_key: cursor_acceptance }
-        equal: { value: 62.5 }
+        equal: { value: 62.5, median: 40.0, range_min: 25.0, range_max: 62.5 }

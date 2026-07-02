@@ -2,39 +2,58 @@ spec_version: 1
 description: >
   Metric: cc_cost — IC Bullet AI (…0013), #1440.
   How it's computed (bronze → silver → gold):
-    • bronze: Claude Code daily per-user metrics (cost as a decimal string, e.g. "2.00")
-    • silver: deduped to one row per user/day, cost converted to whole cents
-    • gold:   metric = sum of Claude Code cost (in cents) over the window
+    • bronze: Claude Team daily per-user metrics (cost as a decimal string, e.g. "2.00")
+    • silver: class_ai_dev_usage, deduped to one row per user/day (tool='claude_code');
+              cost_cents ← round(toFloat64(total_cost) * 100)
+    • gold:   ai_bullet_rows branch 3 emits ('cc_cost', cost_cents) per day; the served
+              IC query SUMs the requested person's per-day cost (cents) over the window
+              (value), and reports the DEPARTMENT distribution of those per-person SUMs
+              as median/range_min/range_max.
 
-  Team (median/range = the person's department):
-    alice "2.00"→200¢ · bob 100¢ · carol 50¢ → median 100, range [50, 200].
+  NOTE on the served stat set: the IC Bullet AI query_ref (id …0013) is last
+  re-seeded by migration m20260618_000001 (cc_overage), which carries only
+  value/median/range_min/range_max — NOT p25/p75/n. So these AI fixtures assert the
+  four stats the API actually returns; the no-unasserted-stat gate is self-scoping
+  and never requires p25/p75 on a row that does not carry them.
+
+  Department: 5 Engineering members (alice, bob, carol, dave, erin), base rates
+  r ∈ {20,40,60,80,100} cents. Each member is seeded two cost-rows inside the custom
+  window (Nov 01 .. Dec 12) — one Nov 15 (2*r) + one Dec 10 (1*r) — so each per-person
+  window SUM = 3*r cents; total_cost is the decimal dollar string (cents/100). The IC
+  case requests erin (r=100) → value 300; the department of 5 yields the median/range
+  below. Cases: custom scope · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
   bronze_claude_team.claude_team_code_metrics:
-    # total_cost "2.00" → 200¢, "1.00" → 100¢, "0.50" → 50¢.
-    - $ref: templates/claude_team_usage.yaml#/templates/alice
-      unique_key: claude-alice-20260105
-      metric_date: "2026-01-05"
-      total_cost: "2.00"
-    - $ref: templates/claude_team_usage.yaml#/templates/alice   # re-sync dup → must NOT double
-      unique_key: claude-alice-20260105
-      metric_date: "2026-01-05"
-      total_cost: "2.00"
-    - $ref: templates/claude_team_usage.yaml#/templates/bob
-      unique_key: claude-bob-20260105
-      metric_date: "2026-01-05"
-      total_cost: "1.00"
-    - $ref: templates/claude_team_usage.yaml#/templates/carol
-      unique_key: claude-carol-20260105
-      metric_date: "2026-01-05"
-      total_cost: "0.50"
+    # Per member: Nov 15 = 2*r¢, Dec 10 = 1*r¢ → window SUM = 3*r¢.
+    # ── alice, r=20¢ ────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-15", unique_key: cc-alice-20261115, total_cost: "0.40" }  # 2r = 40¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-12-10", unique_key: cc-alice-20261210, total_cost: "0.20" }  # 1r = 20¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-12-10", unique_key: cc-alice-20261210, total_cost: "0.20" }  # duplicate → dedup to 20¢, not 40¢
+    # ── bob, r=40¢ ──────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/bob,   metric_date: "2026-11-15", unique_key: cc-bob-20261115,   total_cost: "0.80" }  # 2r = 80¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/bob,   metric_date: "2026-12-10", unique_key: cc-bob-20261210,   total_cost: "0.40" }  # 1r = 40¢
+    # ── carol, r=60¢ ────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/carol, metric_date: "2026-11-15", unique_key: cc-carol-20261115, total_cost: "1.20" }  # 2r = 120¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/carol, metric_date: "2026-12-10", unique_key: cc-carol-20261210, total_cost: "0.60" }  # 1r = 60¢
+    # ── dave, r=80¢ ─────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-11-15", unique_key: cc-dave-20261115,  total_cost: "1.60" }  # 2r = 160¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-12-10", unique_key: cc-dave-20261210,  total_cost: "0.80" }  # 1r = 80¢
+    # ── erin, r=100¢ (the requested IC member) ──────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-11-15", unique_key: cc-erin-20261115,  total_cost: "2.00" }  # 2r = 200¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-12-10", unique_key: cc-erin-20261210,  total_cost: "1.00" }  # 1r = 100¢
 
 cases:
-  - name: cc_cost — IC bullet (alice 200¢ vs team median, dedup holds)
+  # ── CUSTOM scope (Nov 01 .. Dec 12) — Nov 15 + Dec 10 rows ───────────────────
+  # per-person sums 3r → dept {60,120,180,240,300}; erin value 300.
+  - name: "cc_cost — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -43,7 +62,7 @@ cases:
           - id: ai
             metric_id: 00000000-0000-0000-0001-000000000013
             $top: 50
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-11-01' and metric_date le '2026-12-12'"
             $orderby: metric_key
     expect:
       - assert: "status == 200"
@@ -51,4 +70,23 @@ cases:
         assert: "result.status == 'ok'"
       - in: ai
         find: { metric_key: cc_cost }
-        equal: { value: 200, median: 100, range_min: 50, range_max: 200 }
+        equal: { value: 300, median: 180, range_min: 60, range_max: 300 }
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "cc_cost — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        assert: "size(items) == 0"

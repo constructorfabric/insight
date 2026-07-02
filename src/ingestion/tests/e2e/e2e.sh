@@ -76,8 +76,19 @@ case "$cmd" in
     logs)
         docker compose "${COMPOSE_FILES[@]}" logs --tail=200 "$@"
         ;;
+    gates)
+        # Run the metric-coverage gate against the catalog a prior `./e2e.sh test`
+        # collected into .artifacts/ — pure file analysis inside the runner image
+        # (no DB via --no-deps, no second compose). Run `./e2e.sh test` first.
+        if [ ! -f .artifacts/catalog_metrics.json ]; then
+            echo "no .artifacts/catalog_metrics.json — run './e2e.sh test' first (it collects the catalog)" >&2
+            exit 2
+        fi
+        docker compose "${COMPOSE_FILES[@]}" run --rm --no-deps -T runner \
+            python3 lib/metric_coverage.py --universe-file .artifacts/catalog_metrics.json
+        ;;
     *)
-        echo "usage: $0 {build|test|run|shell|up|down|logs} [args...]" >&2
+        echo "usage: $0 {build|test|run|shell|up|down|logs|gates} [args...]" >&2
         exit 2
         ;;
 esac
