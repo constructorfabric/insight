@@ -58,31 +58,42 @@ pub struct AppState {
 
 /// Register all analytics-api routes onto the host's stateless router.
 ///
-/// Routes are declared through the toolkit's [`OperationBuilder`], so each
-/// endpoint records an `OpenAPI` `OperationSpec` plus auth/license metadata in
-/// the host-provided `openapi` registry (the gears-rust idiom — see
-/// `gears/file-parser`).
+/// Builds the analytics endpoints on a fresh sub-router (via
+/// [`build_operations`]) so the tenant-override middleware + `AppState`
+/// extension scope to analytics-api's routes only — not the host's `/health`,
+/// `/healthz`, `/openapi.json`, `/docs` — then merges it into the host router.
 ///
-/// The router is the host's stateless `Router` (route state `()`), so handlers
-/// take `Extension<Arc<AppState>>` rather than `State<_>`. The shared
-/// `Arc<AppState>` is attached via `router.layer(Extension(state))`, and the
-/// per-request tenant override runs via `router.layer(from_fn(tenant_middleware))`.
-///
-/// `OperationBuilder::register` merges method routers per path, so the
-/// shared-path endpoints (`/v1/metrics`, `/v1/admin/metric-thresholds*`) are
-/// registered as independent operations.
-// One `OperationBuilder` chain per endpoint makes this a long-but-flat route
-// table; splitting it across helpers would only obscure the 1:1 route↔handler map.
-#[allow(clippy::too_many_lines)]
+/// The shared `Arc<AppState>` is attached via `router.layer(Extension(state))`
+/// and the per-request tenant override via `router.layer(from_fn(tenant_middleware))`.
 pub fn register_routes(
     host_router: Router,
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    // Build our endpoints on a fresh sub-router so the tenant-override
-    // middleware + `AppState` extension scope to analytics-api's routes only —
-    // not the host's `/health`, `/healthz`, `/openapi.json`, `/docs`.
-    let mut router: Router = Router::new();
+    let api = build_operations(Router::new(), openapi)
+        .layer(from_fn(auth::tenant_middleware))
+        .layer(Extension(state));
+
+    host_router.merge(api)
+}
+
+/// Declare every analytics operation on a **stateless** router.
+///
+/// Routes are declared through the toolkit's [`OperationBuilder`], so each
+/// endpoint records an `OpenAPI` `OperationSpec` plus auth/license metadata in
+/// the host-provided `openapi` registry (the gears-rust idiom). Handlers take
+/// `Extension<Arc<AppState>>` (state supplied by the caller's layer), so this
+/// registers routes without touching any backend — which also makes the full
+/// route table unit-testable without constructing an `AppState`/DB.
+///
+/// `OperationBuilder::register` merges method routers per path, so the
+/// shared-path endpoints (`/v1/metrics`, `/v1/admin/metric-thresholds*`) are
+/// registered as independent operations.
+// One `OperationBuilder` chain per endpoint makes this a long-but-flat route
+// table; splitting it further would only obscure the 1:1 route↔handler map.
+#[allow(clippy::too_many_lines)]
+fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let mut router: Router = router;
 
     // Metric CRUD
     router = OperationBuilder::get("/v1/metrics")
@@ -299,17 +310,25 @@ pub fn register_routes(
         .handler(admin::delete)
         .register(router, openapi);
 
-    // The tenant-override middleware is now stateless (`from_fn`): it reads
-    // the host-injected `SecurityContext` and rebuilds it when an
-    // `X-Insight-Tenant-Id` override header is present. It carries no
-    // `AppState` / auth-trait state.
-    // Scope the tenant-override middleware + shared state to our routes, then
-    // merge into the host router. `/health` + `/healthz` are provided by the
-    // api-gateway host gear (its `rest_prepare`), so we must NOT register them
-    // here — doing so panics with "Overlapping method route".
-    let api = router
-        .layer(from_fn(auth::tenant_middleware))
-        .layer(Extension(state));
+    // `/health` + `/healthz` are provided by the api-gateway host gear (its
+    // `rest_prepare`), so we must NOT register them here — doing so panics with
+    // "Overlapping method route". State + the (stateless `from_fn`) tenant
+    // middleware are layered by `register_routes`, not here.
+    router
+}
 
-    host_router.merge(api)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use toolkit::api::OpenApiRegistryImpl;
+
+    /// Exercises the full route table + `OpenAPI` registration with no `AppState`
+    /// or DB: handlers are only *registered* (via `Extension` extractors), never
+    /// invoked. Guards against overlapping-route panics / bad `OperationBuilder`
+    /// state, and records every `OperationSpec` in the registry.
+    #[test]
+    fn build_operations_registers_the_full_table_without_state() {
+        let openapi = OpenApiRegistryImpl::new();
+        let _router: Router = build_operations(Router::new(), &openapi);
+    }
 }

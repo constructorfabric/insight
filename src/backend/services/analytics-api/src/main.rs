@@ -152,3 +152,65 @@ fn deep_merge(base: &mut serde_json::Value, overlay: serde_json::Value) {
         (base_slot, overlay_value) => *base_slot = overlay_value,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn cfg_with(gears: serde_json::Value) -> AppConfig {
+        let mut c = AppConfig::default();
+        if let serde_json::Value::Object(map) = gears {
+            for (k, v) in map {
+                c.gears.insert(k, v);
+            }
+        }
+        c
+    }
+
+    #[test]
+    fn deep_merge_merges_objects_and_overwrites_leaves() {
+        let mut base = json!({"a": {"x": 1, "y": 2}, "b": 3});
+        deep_merge(&mut base, json!({"a": {"y": 20, "z": 30}, "c": 4}));
+        assert_eq!(
+            base,
+            json!({"a": {"x": 1, "y": 20, "z": 30}, "b": 3, "c": 4})
+        );
+    }
+
+    #[test]
+    fn deep_merge_leaf_replaces_object() {
+        let mut base = json!({"a": {"x": 1}});
+        deep_merge(&mut base, json!({"a": "scalar"}));
+        assert_eq!(base, json!({"a": "scalar"}));
+    }
+
+    #[test]
+    fn fold_merges_alias_into_canonical_alias_wins() {
+        let mut c = cfg_with(json!({
+            "analytics-api": {"config": {"database_url": "yaml", "clickhouse_url": "ch"}},
+            "analytics_api": {"config": {"database_url": "env", "redis_url": "r"}},
+        }));
+        fold_gear_env_alias(&mut c);
+        assert!(!c.gears.contains_key("analytics_api"));
+        let config = &c.gears["analytics-api"]["config"];
+        assert_eq!(config["database_url"], "env"); // alias overrides
+        assert_eq!(config["clickhouse_url"], "ch"); // preserved from yaml
+        assert_eq!(config["redis_url"], "r"); // added from alias
+    }
+
+    #[test]
+    fn fold_inserts_alias_when_canonical_absent() {
+        let mut c = cfg_with(json!({"analytics_api": {"config": {"database_url": "env"}}}));
+        fold_gear_env_alias(&mut c);
+        assert!(!c.gears.contains_key("analytics_api"));
+        assert_eq!(c.gears["analytics-api"]["config"]["database_url"], "env");
+    }
+
+    #[test]
+    fn fold_is_noop_without_alias() {
+        let mut c = cfg_with(json!({"analytics-api": {"config": {"database_url": "yaml"}}}));
+        fold_gear_env_alias(&mut c);
+        assert_eq!(c.gears["analytics-api"]["config"]["database_url"], "yaml");
+    }
+}

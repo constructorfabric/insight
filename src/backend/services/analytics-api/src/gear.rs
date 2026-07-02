@@ -280,3 +280,64 @@ fn redact_url(url: &str) -> String {
         _ => url.to_owned(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use toolkit::bootstrap::AppConfig;
+
+    fn cfg(config: serde_json::Value) -> AppConfig {
+        let mut c = AppConfig::default();
+        let mut section = serde_json::Map::new();
+        section.insert("config".to_owned(), config);
+        c.gears.insert(
+            "analytics-api".to_owned(),
+            serde_json::Value::Object(section),
+        );
+        c
+    }
+
+    #[test]
+    fn redact_url_strips_userinfo() {
+        assert_eq!(redact_url("redis://:secret@host:6379"), "redis://host:6379");
+        assert_eq!(redact_url("redis://user:pw@h:1/0"), "redis://h:1/0");
+    }
+
+    #[test]
+    fn redact_url_passthrough_without_userinfo() {
+        assert_eq!(redact_url("redis://host:6379"), "redis://host:6379");
+        assert_eq!(redact_url("not-a-url"), "not-a-url");
+    }
+
+    #[test]
+    fn extract_gear_config_missing_section_errors() {
+        assert!(extract_gear_config(&AppConfig::default()).is_err());
+    }
+
+    #[test]
+    fn check_config_ok_with_required_urls() {
+        let c = cfg(json!({
+            "database_url": "mysql://h:3306/db",
+            "clickhouse_url": "http://h:8123",
+        }));
+        assert!(check_config(&c).is_ok());
+    }
+
+    #[test]
+    fn check_config_errs_on_missing_section() {
+        assert!(check_config(&AppConfig::default()).is_err());
+    }
+
+    #[test]
+    fn check_config_errs_on_empty_database_url() {
+        let c = cfg(json!({ "database_url": "", "clickhouse_url": "http://h" }));
+        assert!(check_config(&c).is_err());
+    }
+
+    #[test]
+    fn check_config_errs_on_empty_clickhouse_url() {
+        let c = cfg(json!({ "database_url": "mysql://h/db", "clickhouse_url": "" }));
+        assert!(check_config(&c).is_err());
+    }
+}
