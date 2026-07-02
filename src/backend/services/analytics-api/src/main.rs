@@ -47,26 +47,47 @@ enum Commands {
     Run,
     /// Run database migrations and exit.
     Migrate,
+    /// Print the OpenAPI document to stdout and exit. Built offline from the
+    /// route table — needs no database or HTTP listener. Used to regenerate the
+    /// committed `docs/components/backend/analytics-api/openapi.json` and to
+    /// drift-check it in CI.
+    Openapi,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .json()
-        .init();
-
     let cli = Cli::parse();
+    let command = cli.command.unwrap_or(Commands::Run);
 
-    let cfg = config::AppConfig::load(cli.config.as_deref())?;
-
-    match cli.command.unwrap_or(Commands::Run) {
-        Commands::Run => run_server(cfg).await,
-        Commands::Migrate => run_migrate(cfg).await,
+    // Initialize tracing. For `openapi`, logs go to stderr so stdout stays pure
+    // JSON — the toolkit emits an operation-count info line while building the
+    // document, which would otherwise corrupt `analytics-api openapi > spec.json`.
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    if matches!(command, Commands::Openapi) {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .json()
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .json()
+            .init();
     }
+
+    match command {
+        Commands::Run => run_server(config::AppConfig::load(cli.config.as_deref())?).await,
+        Commands::Migrate => run_migrate(config::AppConfig::load(cli.config.as_deref())?).await,
+        Commands::Openapi => print_openapi(),
+    }
+}
+
+/// Print the OpenAPI document as pretty JSON. Offline — see [`api::openapi_document`].
+fn print_openapi() -> anyhow::Result<()> {
+    let doc = api::openapi_document()?;
+    println!("{}", serde_json::to_string_pretty(&doc)?);
+    Ok(())
 }
 
 async fn run_server(cfg: config::AppConfig) -> anyhow::Result<()> {
@@ -257,4 +278,15 @@ async fn run_migrate(cfg: config::AppConfig) -> anyhow::Result<()> {
 
     tracing::info!("migrations complete");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// The `openapi` subcommand's happy path: build the document offline and
+    /// write it to stdout (captured by the harness). Guards against a
+    /// regression that makes `analytics-api openapi` fail or emit non-JSON.
+    #[test]
+    fn print_openapi_writes_the_document() -> anyhow::Result<()> {
+        super::print_openapi()
+    }
 }

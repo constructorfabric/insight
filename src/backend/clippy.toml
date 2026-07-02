@@ -45,6 +45,8 @@ doc-valid-idents = [
     "JWT", "JWTs", "JWS", "JWE",
     # ─── Wire protocols & RPC ────────────────────────────────────────
     "gRPC", "HTTPS", "TLS", "mTLS", "WebSocket", "WebSockets",
+    # ─── API description / spec formats ──────────────────────────────
+    "OpenAPI",
     # ─── Data systems ────────────────────────────────────────────────
     "ClickHouse", "MariaDB", "PostgreSQL", "Redis", "Redpanda",
     "Kafka", "Postgres",

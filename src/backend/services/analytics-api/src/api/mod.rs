@@ -7,21 +7,28 @@ pub(crate) mod error;
 mod handlers;
 
 #[cfg(test)]
+mod openapi_tests;
+#[cfg(test)]
 mod tenant_resolution_tests;
 
 use axum::http::StatusCode;
-use axum::{Router, middleware};
+use axum::{Json, Router, middleware, routing::get};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
-use toolkit::api::{OpenApiRegistryImpl, OperationBuilder};
+use toolkit::api::{OpenApiInfo, OpenApiRegistryImpl, OperationBuilder};
 
 use crate::auth;
 use crate::config::AppConfig;
 use crate::domain::admin_threshold::AdminThresholdService;
+use crate::domain::admin_threshold::dto as admin_dto;
 use crate::domain::auth::TenantAuthorization;
 use crate::domain::catalog::CatalogReader;
+use crate::domain::catalog::response as catalog_response;
+use crate::domain::metric;
+use crate::domain::query;
 use crate::domain::schema_validator::SchemaValidator;
-use crate::infra::identity::IdentityClient;
+use crate::domain::threshold;
+use crate::infra::identity::{IdentityClient, Person};
 
 /// Shared application state.
 #[derive(Clone)]
@@ -53,6 +60,27 @@ pub struct AppState {
     pub admin_threshold: AdminThresholdService,
 }
 
+/// `OpenAPI` document metadata served at `/openapi.json` and baked into the
+/// committed `docs/components/backend/analytics-api/openapi.json`.
+///
+/// `version` is the **API contract** version (stable) — deliberately NOT
+/// `CARGO_PKG_VERSION` — so the drift-check gate (`scripts/ci/openapi_spec.py
+/// check`) fires only on real route/schema changes, not on every release bump.
+fn openapi_info() -> OpenApiInfo {
+    OpenApiInfo {
+        title: "Analytics API".to_owned(),
+        version: "1.0.0".to_owned(),
+        description: Some(
+            "Read-only query service over predefined ClickHouse metrics. Admins \
+             define metrics (named SQL queries) in MariaDB; the frontend queries \
+             them by UUID with OData-style filtering. The API Gateway mounts this \
+             service at /api/analytics."
+                .to_owned(),
+        ),
+        servers: Vec::new(),
+    }
+}
+
 /// Build the Axum router with all routes.
 ///
 /// Routes are declared through the toolkit's [`OperationBuilder`] rather than
@@ -73,13 +101,17 @@ pub struct AppState {
 /// proxy module uses to attach all five HTTP methods to one wildcard path.
 // One `OperationBuilder` chain per endpoint makes this a long-but-flat route
 // table; splitting it across helpers would only obscure the 1:1 route↔handler map.
+// Registration needs the `AppState` *type* (handlers are typed to it) but never
+// a *value*, so `openapi_document` can build the spec offline (no DB, no
+// listener) from the exact same route table the live server uses.
 #[allow(clippy::too_many_lines)]
-pub fn router(state: AppState) -> Router {
-    let state = Arc::new(state);
-
+fn register_operations() -> (
+    Router<Arc<AppState>>,
+    Router<Arc<AppState>>,
+    OpenApiRegistryImpl,
+) {
     // In-process OpenAPI registry. Required by `OperationBuilder::register`;
-    // not yet exposed over HTTP (follow-up: serve `build_openapi(..)` at
-    // `/openapi.json`).
+    // each route below records its spec here.
     let openapi = OpenApiRegistryImpl::new();
 
     let mut router: Router<Arc<AppState>> = Router::new();
@@ -90,7 +122,11 @@ pub fn router(state: AppState) -> Router {
         .summary("List metrics")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of metrics")
+        .json_response_with_schema::<metric::MetricListResponse>(
+            &openapi,
+            StatusCode::OK,
+            "List of metrics",
+        )
         .standard_errors(&openapi)
         .handler(handlers::list_metrics)
         .register(router, &openapi);
@@ -100,7 +136,12 @@ pub fn router(state: AppState) -> Router {
         .summary("Create a metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::CREATED, "Created metric")
+        .json_request::<metric::CreateMetricRequest>(&openapi, "Metric to create")
+        .json_response_with_schema::<metric::Metric>(
+            &openapi,
+            StatusCode::CREATED,
+            "Created metric",
+        )
         .standard_errors(&openapi)
         .handler(handlers::create_metric)
         .register(router, &openapi);
@@ -110,7 +151,7 @@ pub fn router(state: AppState) -> Router {
         .summary("Get a metric by id")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Metric")
+        .json_response_with_schema::<metric::Metric>(&openapi, StatusCode::OK, "Metric")
         .standard_errors(&openapi)
         .handler(handlers::get_metric)
         .register(router, &openapi);
@@ -120,7 +161,8 @@ pub fn router(state: AppState) -> Router {
         .summary("Update a metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Updated metric")
+        .json_request::<metric::UpdateMetricRequest>(&openapi, "Metric fields to update")
+        .json_response_with_schema::<metric::Metric>(&openapi, StatusCode::OK, "Updated metric")
         .standard_errors(&openapi)
         .handler(handlers::update_metric)
         .register(router, &openapi);
@@ -141,7 +183,8 @@ pub fn router(state: AppState) -> Router {
         .summary("Query a single metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Query result")
+        .json_request::<query::QueryRequest>(&openapi, "OData-style query parameters")
+        .json_response_with_schema::<query::QueryResponse>(&openapi, StatusCode::OK, "Query result")
         .standard_errors(&openapi)
         .handler(handlers::query_metric)
         .register(router, &openapi);
@@ -151,7 +194,12 @@ pub fn router(state: AppState) -> Router {
         .summary("Query metrics in batch")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Batch query result")
+        .json_request::<query::BatchQueryRequest>(&openapi, "Batch of per-metric queries")
+        .json_response_with_schema::<query::BatchQueryResponse>(
+            &openapi,
+            StatusCode::OK,
+            "Batch query result",
+        )
         .standard_errors(&openapi)
         .handler(handlers::query_metrics_batch)
         .register(router, &openapi);
@@ -162,7 +210,11 @@ pub fn router(state: AppState) -> Router {
         .summary("List thresholds for a metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of thresholds")
+        .json_response_with_schema::<threshold::ThresholdListResponse>(
+            &openapi,
+            StatusCode::OK,
+            "List of thresholds",
+        )
         .standard_errors(&openapi)
         .handler(handlers::list_thresholds)
         .register(router, &openapi);
@@ -172,7 +224,12 @@ pub fn router(state: AppState) -> Router {
         .summary("Create a threshold for a metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::CREATED, "Created threshold")
+        .json_request::<threshold::CreateThresholdRequest>(&openapi, "Threshold to create")
+        .json_response_with_schema::<threshold::Threshold>(
+            &openapi,
+            StatusCode::CREATED,
+            "Created threshold",
+        )
         .standard_errors(&openapi)
         .handler(handlers::create_threshold)
         .register(router, &openapi);
@@ -182,7 +239,12 @@ pub fn router(state: AppState) -> Router {
         .summary("Update a threshold")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Updated threshold")
+        .json_request::<threshold::UpdateThresholdRequest>(&openapi, "Threshold fields to update")
+        .json_response_with_schema::<threshold::Threshold>(
+            &openapi,
+            StatusCode::OK,
+            "Updated threshold",
+        )
         .standard_errors(&openapi)
         .handler(handlers::update_threshold)
         .register(router, &openapi);
@@ -203,7 +265,7 @@ pub fn router(state: AppState) -> Router {
         .summary("Resolve a person by email")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Person")
+        .json_response_with_schema::<Person>(&openapi, StatusCode::OK, "Person")
         .standard_errors(&openapi)
         .handler(handlers::get_person)
         .register(router, &openapi);
@@ -214,7 +276,11 @@ pub fn router(state: AppState) -> Router {
         .summary("List queryable columns")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of columns")
+        .json_response_with_schema::<metric::ColumnListResponse>(
+            &openapi,
+            StatusCode::OK,
+            "List of columns",
+        )
         .standard_errors(&openapi)
         .handler(handlers::list_columns)
         .register(router, &openapi);
@@ -224,7 +290,11 @@ pub fn router(state: AppState) -> Router {
         .summary("List queryable columns for a table")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of columns")
+        .json_response_with_schema::<metric::ColumnListResponse>(
+            &openapi,
+            StatusCode::OK,
+            "List of columns",
+        )
         .standard_errors(&openapi)
         .handler(handlers::list_columns_for_table)
         .register(router, &openapi);
@@ -239,7 +309,15 @@ pub fn router(state: AppState) -> Router {
         .summary("Read the metric catalog for the request context")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Resolved metric catalog")
+        .json_request::<catalog_response::GetMetricsRequest>(
+            &openapi,
+            "Request context (role_slug / team_id)",
+        )
+        .json_response_with_schema::<catalog_response::CatalogResponse>(
+            &openapi,
+            StatusCode::OK,
+            "Resolved metric catalog",
+        )
         .standard_errors(&openapi)
         .handler(catalog::get_metrics)
         .register(router, &openapi);
@@ -254,7 +332,11 @@ pub fn router(state: AppState) -> Router {
         .summary("List admin metric thresholds")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of metric thresholds")
+        .json_response_with_schema::<admin_dto::ListResponse>(
+            &openapi,
+            StatusCode::OK,
+            "List of metric thresholds",
+        )
         .standard_errors(&openapi)
         .handler(admin::list)
         .register(router, &openapi);
@@ -264,7 +346,12 @@ pub fn router(state: AppState) -> Router {
         .summary("Create an admin metric threshold")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::CREATED, "Created metric threshold")
+        .json_request::<admin_dto::CreateRequest>(&openapi, "Metric threshold to create")
+        .json_response_with_schema::<admin_dto::ThresholdView>(
+            &openapi,
+            StatusCode::CREATED,
+            "Created metric threshold",
+        )
         .standard_errors(&openapi)
         .handler(admin::create)
         .register(router, &openapi);
@@ -274,7 +361,11 @@ pub fn router(state: AppState) -> Router {
         .summary("Get an admin metric threshold by id")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Metric threshold")
+        .json_response_with_schema::<admin_dto::ThresholdView>(
+            &openapi,
+            StatusCode::OK,
+            "Metric threshold",
+        )
         .standard_errors(&openapi)
         .handler(admin::get_one)
         .register(router, &openapi);
@@ -284,7 +375,12 @@ pub fn router(state: AppState) -> Router {
         .summary("Update an admin metric threshold")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Updated metric threshold")
+        .json_request::<admin_dto::UpdateRequest>(&openapi, "Metric threshold fields to update")
+        .json_response_with_schema::<admin_dto::ThresholdView>(
+            &openapi,
+            StatusCode::OK,
+            "Updated metric threshold",
+        )
         .standard_errors(&openapi)
         .handler(admin::update)
         .register(router, &openapi);
@@ -298,18 +394,6 @@ pub fn router(state: AppState) -> Router {
         .standard_errors(&openapi)
         .handler(admin::delete)
         .register(router, &openapi);
-
-    // The tenant-resolution middleware uses just the auth-trait — not full
-    // `AppState` — as its layer state, so the integration tests in
-    // `tenant_resolution_tests` can mount it without standing up a
-    // `DatabaseConnection`. The `Arc<dyn TenantAuthorization>` is cloned
-    // here and again handed to the route state via `AppState`.
-    let tenant_auth = state.tenant_auth.clone();
-
-    let api = router.layer(middleware::from_fn_with_state(
-        tenant_auth,
-        auth::tenant_middleware,
-    ));
 
     // Health probe — registered on a SEPARATE router merged *after* the
     // tenant middleware, so it stays off the authenticated/tenant-scoped path.
@@ -330,5 +414,57 @@ pub fn router(state: AppState) -> Router {
         .handler(handlers::health)
         .register(Router::new(), &openapi);
 
-    api.merge(health).with_state(state)
+    (router, health, openapi)
+}
+
+/// Build the Axum router for the live server, wired to `state`.
+pub fn router(state: AppState) -> Router {
+    let state = Arc::new(state);
+    let (router, health, openapi) = register_operations();
+
+    // Tenant-resolution middleware uses just the auth-trait — not full
+    // `AppState` — as its layer state (so `tenant_resolution_tests` can mount it
+    // without a `DatabaseConnection`).
+    let tenant_auth = state.tenant_auth.clone();
+    let api = router.layer(middleware::from_fn_with_state(
+        tenant_auth,
+        auth::tenant_middleware,
+    ));
+
+    // Serve the in-process OpenAPI document at `/openapi.json`, built ONCE from
+    // every registered operation (tenant-scoped routes + /health) and cloned per
+    // request. Public + merged after the tenant middleware (same rationale as
+    // /health): docs tooling fetches it without an `X-Insight-Tenant-Id` header.
+    // `build_openapi` only fails on a malformed `OperationSpec` (a code bug the
+    // drift gate catches); the workspace denies expect()/unwrap() and `router()`
+    // stays infallible, so on that error we log and omit the route. The committed
+    // `docs/components/backend/analytics-api/openapi.json` is regenerated offline
+    // from the same registry by the `analytics-api openapi` subcommand (see
+    // `openapi_document`).
+    let openapi_doc = match openapi.build_openapi(&openapi_info()) {
+        Ok(spec) => Router::new().route(
+            "/openapi.json",
+            get(move || {
+                let spec = spec.clone();
+                async move { Json(spec) }
+            }),
+        ),
+        Err(e) => {
+            tracing::error!("analytics-api: OpenAPI document failed to build: {e}");
+            Router::new()
+        }
+    };
+
+    api.merge(health).merge(openapi_doc).with_state(state)
+}
+
+/// Build the analytics-api OpenAPI document **offline** — no `AppState`, no DB,
+/// no HTTP listener. Backs the `analytics-api openapi` subcommand (and thus the
+/// committed-spec regeneration + drift gate), reusing the exact route
+/// registration the live server uses, so the two can never diverge.
+pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
+    let (_router, _health, openapi) = register_operations();
+    openapi
+        .build_openapi(&openapi_info())
+        .map_err(|e| anyhow::anyhow!("failed to build analytics-api OpenAPI document: {e}"))
 }

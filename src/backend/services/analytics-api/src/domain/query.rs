@@ -7,7 +7,7 @@ use uuid::Uuid;
 /// Query request body for `POST /v1/metrics/{id}/query`.
 ///
 /// Uses `OData`-style parameters: `$filter`, `$orderby`, `$select`, `$top`, `$skip`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct QueryRequest {
     /// `OData` filter expression.
     /// e.g. `"metric_date ge '2026-03-01' and metric_date lt '2026-04-01'"`.
@@ -39,20 +39,23 @@ fn default_top() -> u64 {
 }
 
 /// Query response with cursor-based pagination.
-#[derive(Debug, Serialize)]
+///
+/// `items` rows carry a per-metric dynamic schema (the `SELECT` columns vary by
+/// metric), so each row is an untyped JSON object.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct QueryResponse {
     pub items: Vec<serde_json::Value>,
     pub page_info: PageInfo,
 }
 
 /// Pagination info.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PageInfo {
     pub has_next: bool,
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct BatchQueryItem {
     pub id: Option<String>,
     pub metric_id: Uuid,
@@ -60,12 +63,12 @@ pub struct BatchQueryItem {
     pub query: QueryRequest,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct BatchQueryRequest {
     pub queries: Vec<BatchQueryItem>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum BatchQueryResult {
     Ok {
@@ -81,7 +84,17 @@ pub enum BatchQueryResult {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BatchQueryResponse {
     pub results: Vec<BatchQueryResult>,
 }
+
+// Marker traits — `QueryRequest` / `BatchQueryRequest` are request bodies;
+// the response shapes are response-side. `QueryResponse` / `PageInfo` /
+// `BatchQueryResult` / `BatchQueryItem` are nested inside the top-level
+// request/response types and only need `ToSchema` (above), but marking the
+// two top-level shapes keeps the wiring explicit.
+impl toolkit::api::api_dto::RequestApiDto for QueryRequest {}
+impl toolkit::api::api_dto::RequestApiDto for BatchQueryRequest {}
+impl toolkit::api::api_dto::ResponseApiDto for QueryResponse {}
+impl toolkit::api::api_dto::ResponseApiDto for BatchQueryResponse {}

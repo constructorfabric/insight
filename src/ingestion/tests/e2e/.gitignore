@@ -9,8 +9,10 @@ __pycache__/
 *.egg-info/
 target/
 
-# API-endpoint coverage ledger (written by pytest_sessionfinish; consumed by
-# the endpoint-coverage CI gate — see lib/api_coverage.py)
+# Metric-coverage gate snapshot: catalog_metrics.json, written by
+# lib/collect_metrics.py while the suite runs and consumed by the
+# metric-coverage-gate job. The OpenAPI spec-drift gate generates offline and
+# commits nothing here. Also used for ad-hoc local dumps.
 .artifacts/
 
 # pytest cache

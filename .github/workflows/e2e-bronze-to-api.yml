@@ -7,11 +7,17 @@ name: E2E — Bronze to API
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
 # image is used for local development via src/ingestion/tests/e2e/e2e.sh.
 #
-# Topology: ONE heavy job (`e2e`) boots the stack, runs the suite, and — while
-# analytics-api is already up — snapshots the metric catalog into `.artifacts/`,
-# which it uploads. The metric-coverage-gate job then analyses it as a pure-Python
-# check (no Docker, no app boot). See
-# src/ingestion/tests/e2e/lib/{metric_coverage,collect_metrics}.py.
+# Three jobs:
+#   • `e2e` — boots ClickHouse + MariaDB + analytics-api, runs the bronze→API
+#     transformation suite, and — while analytics-api is already up — snapshots
+#     the metric catalog into `.artifacts/`, which it uploads as `coverage-inputs`.
+#   • `metric-coverage-gate` — pure-Python analysis of that catalog (no Docker,
+#     no app boot). See src/ingestion/tests/e2e/lib/{metric_coverage,collect_metrics}.py.
+#   • `openapi-spec-drift-gate` — builds analytics-api and dumps its OpenAPI
+#     document OFFLINE (`analytics-api openapi` — no DB, no HTTP listener; see
+#     api::openapi_document), then drift-checks it against the committed
+#     docs/components/backend/analytics-api/openapi.json. No live server boot,
+#     no shared artifact. See scripts/ci/openapi_spec.py.
 #
 # Specs: docs/domain/bronze-to-api-e2e/specs/
 # Code:  src/ingestion/tests/e2e/
@@ -120,11 +126,10 @@ jobs:
         if: always()
         run: ./e2e.sh down || true
 
-  # ─── Gate job — pure-Python analysis of the collected catalog ─────────────
+  # ─── Metric-coverage gate — pure-Python analysis of the collected catalog ──
   # Runs after `e2e` (needs), downloads `coverage-inputs`, reads the catalog file.
   # No Docker, no analytics-api boot. `!cancelled()` so it still reports when the
   # suite itself failed (the artifact is usually present).
-
   metric-coverage-gate:
     name: Metric coverage gate
     needs: e2e
@@ -148,4 +153,33 @@ jobs:
           rc=${PIPESTATUS[0]}
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat metric_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then echo "::error::metric coverage gate failed — a metric_key is value-tested by no test and not in SKIP_TABLES/SKIP_LIST (or a skip is stale). See the report."; fi
+          exit "$rc"
+
+  # ─── OpenAPI spec-drift gate — fully offline ─────────────────────────────
+  # Builds analytics-api and dumps its OpenAPI document with `analytics-api
+  # openapi` (no database, no HTTP listener — see api::openapi_document), then
+  # diffs it against the committed doc. Independent of the `e2e` job: no live
+  # server boot, no shared artifact, no ClickHouse/MariaDB.
+  openapi-spec-drift-gate:
+    name: OpenAPI spec drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/backend -> target
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate the OpenAPI doc offline and drift-check it
+        run: |
+          (cd src/backend && cargo run --quiet -p analytics-api --bin analytics-api -- openapi) > openapi.live.json
+          python3 scripts/ci/openapi_spec.py check --live-file openapi.live.json | tee openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::OpenAPI spec drift — docs/components/backend/analytics-api/openapi.json is stale. Regenerate: (cd src/backend && cargo run -p analytics-api -- openapi) > docs/components/backend/analytics-api/openapi.json"; fi
           exit "$rc"

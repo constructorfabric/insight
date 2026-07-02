@@ -73,15 +73,19 @@ e2e/
     └── test_session_smoke.py
 ```
 
-## Metric coverage gate
+## Coverage & spec gates
 
-A job (`metric-coverage-gate`) in the **E2E — Bronze to API** workflow, *not* a pytest test. The `e2e` job runs the suite and, while analytics-api is up, snapshots the metric catalog (`POST /v1/catalog/get_metrics`) to `.artifacts/catalog_metrics.json` (uploaded as `coverage-inputs`); the gate job then checks every product `metric_key` the catalog exposes is value-asserted by a test or covered by a `SKIP_TABLES`/`SKIP_LIST` entry — pure Python, no Docker, no second app boot.
+Two gates run as separate jobs in the **E2E — Bronze to API** workflow (`.github/workflows/e2e-bronze-to-api.yml`) — neither is a pytest test. Locally, `./e2e.sh gates` runs **both** against the runner image (no DB): the OpenAPI spec-drift check (needs only `./e2e.sh build`) and the metric-coverage check (needs a prior `./e2e.sh test` to collect the catalog).
+
+### Metric coverage gate
+
+A job (`metric-coverage-gate`). The `e2e` job runs the suite and, while analytics-api is up, snapshots the metric catalog (`POST /v1/catalog/get_metrics`) to `.artifacts/catalog_metrics.json` (uploaded as `coverage-inputs`); the gate job then checks every product `metric_key` the catalog exposes is value-asserted by a test or covered by a `SKIP_TABLES`/`SKIP_LIST` entry — pure Python, no Docker, no second app boot.
 
 Locally, after a run:
 
 ```bash
 ./e2e.sh test     # runs the suite + snapshots .artifacts/catalog_metrics.json
-./e2e.sh gates    # runs the metric-coverage gate against it (in the runner image; no DB)
+./e2e.sh gates    # runs both gates (metric-coverage reads the snapshot above)
 ```
 
 The verdict per **metric_key** (each individual number) is **binary**:
@@ -98,6 +102,22 @@ ANALYTICS_API_URL=http://localhost:18081 python3 lib/metric_coverage.py
 ```
 
 Coverage is **per metric_key**, so every number on a bullet is validated independently — one tested key of a metric does not cover the rest. Today: **44/96** value-tested; the rest are skip-listed with a reason (`reachable — …` entries are the backlog where fixtures already exist).
+
+### OpenAPI spec-drift gate
+
+A job (`openapi-spec-drift-gate`), **fully offline**: it builds analytics-api and dumps its OpenAPI document with the `analytics-api openapi` subcommand (no database, no HTTP listener — see `api::openapi_document`), then drift-checks it against the committed doc — no live server boot, no ClickHouse/MariaDB, no shared artifact. The committed `docs/components/backend/analytics-api/openapi.json` must match what `analytics-api openapi` emits; it is the contract docs tooling reads, so it must not rot — regenerate it (below) and commit.
+
+`scripts/ci/openapi_spec.py` does both: `check` is the **gate** — it normalises the committed doc and a freshly-generated dump and diffs, exiting non-zero on drift — and `update` rewrites the committed doc from a dump.
+
+Locally (needs only the runner image — no suite run, no DB):
+
+```bash
+./e2e.sh build    # build the runner image (bakes the analytics-api binary)
+./e2e.sh gates    # runs both gates offline; the openapi part diff-checks vs the committed doc
+
+# Regenerate the committed doc after an intentional route/schema change (CI has cargo):
+(cd src/backend && cargo run -p analytics-api -- openapi) > docs/components/backend/analytics-api/openapi.json
+```
 
 ## Ports (loopback only)
 

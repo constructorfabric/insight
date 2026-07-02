@@ -8,9 +8,6 @@ Owns the lifecycle of every session-scoped resource:
     3. MariaDB is seeded later by the analytics-api binary's own auto-migrations
     4. spawn analytics-api on a free loopback port
 
-  pytest_sessionfinish:
-    teardown in reverse order
-
 All resources are exposed as session-scoped fixtures so individual tests can
 consume them without touching subprocess code directly.
 
@@ -285,6 +282,8 @@ _METRICS_ROOT = Path(__file__).parent / "metrics"
 def pytest_collection_modifyitems(config, items):
     """Convenience: order rig smoke tests (meta/ + api/) first."""
     items.sort(key=lambda i: 0 if ("meta/" in str(i.path) or "api/" in str(i.path)) else 1)
+
+
 
 
 def pytest_generate_tests(metafunc):

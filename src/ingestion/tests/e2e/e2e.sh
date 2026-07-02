@@ -77,9 +77,21 @@ case "$cmd" in
         docker compose "${COMPOSE_FILES[@]}" logs --tail=200 "$@"
         ;;
     gates)
-        # Run the metric-coverage gate against the catalog a prior `./e2e.sh test`
-        # collected into .artifacts/ — pure file analysis inside the runner image
-        # (no DB via --no-deps, no second compose). Run `./e2e.sh test` first.
+        # Two offline gates, both against the runner image (`./e2e.sh build`)
+        # with no DB (`--no-deps`). The same two checks run as separate CI jobs
+        # (see e2e-bronze-to-api.yml).
+
+        # 1) OpenAPI spec-drift — dump the doc straight from the analytics-api
+        #    binary (`analytics-api openapi`; no DB/HTTP, see api::openapi_document)
+        #    and diff it against the committed doc. No prior `./e2e.sh test` needed.
+        spec=/workspace/docs/components/backend/analytics-api/openapi.json
+        echo "── openapi spec drift (gate) ──"
+        docker compose "${COMPOSE_FILES[@]}" run --rm --no-deps -T runner sh -c \
+            "analytics-api openapi > /tmp/openapi.live.json && python3 /workspace/scripts/ci/openapi_spec.py check --live-file /tmp/openapi.live.json --file $spec"
+
+        # 2) Metric-coverage — pure file analysis of the catalog a prior
+        #    `./e2e.sh test` collected into .artifacts/. Run the suite first.
+        echo "── metric coverage (gate) ──"
         if [ ! -f .artifacts/catalog_metrics.json ]; then
             echo "no .artifacts/catalog_metrics.json — run './e2e.sh test' first (it collects the catalog)" >&2
             exit 2
