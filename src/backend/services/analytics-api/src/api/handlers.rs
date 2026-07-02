@@ -1290,6 +1290,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn extract_in_list_unescapes_doubled_quotes() {
+        // OData escapes an apostrophe inside a string literal by doubling it;
+        // the parser must collapse `''` back to a single `'` in the value.
+        let f = "person_id in ('o''brien@x.com')";
+        assert_eq!(
+            extract_odata_in_values(f, "person_id"),
+            Some(vec!["o'brien@x.com".into()])
+        );
+    }
+
+    #[test]
+    fn extract_in_list_unknown_field_is_none() {
+        // A field that never appears in the filter yields no `in (` anchor,
+        // so the extractor short-circuits to None rather than mis-parsing.
+        let f = "person_id in ('a@x.com')";
+        assert_eq!(extract_odata_in_values(f, "org_unit_id"), None);
+    }
+
     // ── parse_query_ref ─────────────────────────────────────
 
     #[test]
