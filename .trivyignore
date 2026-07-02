@@ -1,0 +1,11 @@
+# Documented trivy-config waivers — tracked in constructorfabric/insight#1340.
+# The gate stays blocking for every other misconfiguration class; remove each
+# line as the underlying issue is fixed.
+# container runs as root — build/test/tooling images
+AVD-DS-0002
+# apt-get without --no-install-recommends — toolbox build image
+AVD-DS-0029
+# frontend Deployment missing securityContext — prod hardening backlog
+AVD-KSV-0118
+# frontend Deployment root FS not read-only — prod hardening backlog
+AVD-KSV-0014
