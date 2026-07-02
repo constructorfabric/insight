@@ -87,3 +87,66 @@ async fn main() -> Result<()> {
         Commands::Check => Ok(()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    // clap parsing is pure — exercise the CLI surface (subcommands, flags,
+    // verbosity count) without booting the server.
+
+    #[test]
+    fn no_subcommand_parses_to_none() -> R {
+        let cli = Cli::try_parse_from(["insight-api-gateway"])?;
+        assert!(
+            cli.command.is_none(),
+            "absent subcommand → main() defaults to Run"
+        );
+        assert_eq!(cli.verbose, 0);
+        assert!(!cli.print_config);
+        assert!(cli.config.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn subcommands_parse_to_their_variants() -> R {
+        assert!(matches!(
+            Cli::try_parse_from(["x", "run"])?.command,
+            Some(Commands::Run)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["x", "check"])?.command,
+            Some(Commands::Check)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["x", "migrate"])?.command,
+            Some(Commands::Migrate)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn verbosity_counts_repeated_flags() -> R {
+        assert_eq!(Cli::try_parse_from(["x", "-v"])?.verbose, 1);
+        assert_eq!(Cli::try_parse_from(["x", "-vv"])?.verbose, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn config_path_and_print_config_flags_parse() -> R {
+        let cli = Cli::try_parse_from(["x", "--config", "/etc/gw.yaml", "--print-config"])?;
+        assert_eq!(
+            cli.config.as_deref(),
+            Some(std::path::Path::new("/etc/gw.yaml"))
+        );
+        assert!(cli.print_config);
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_flag_is_rejected() {
+        assert!(Cli::try_parse_from(["x", "--nope"]).is_err());
+    }
+}
