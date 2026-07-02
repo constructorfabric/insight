@@ -1,0 +1,19 @@
+# Coverage config for the reconcile-connectors Python toolbox.
+#
+# The workflow runs `pytest --cov=. --cov-fail-under=80` (see
+# .github/workflows/reconcile-connectors-unit.yml). `--cov=.` measures files by
+# path -- the test loads parse_descriptor.py via importlib rather than importing
+# it by name, so a module-name scope (`--cov=parse_descriptor`) collects nothing.
+# The report is then scoped to the tested file(s) below, so the 80% gate is
+# computed on real, tested code. As more scripts here gain tests, add their
+# names to `include`.
+[report]
+show_missing = true
+include =
+    */parse_descriptor.py
+    parse_descriptor.py
+# The `if __name__ == "__main__": sys.exit(main())` dispatch is a trivial CLI
+# shim exercised only as a real process; excluding it keeps the gate focused on
+# behaviour the unit tests can meaningfully assert.
+exclude_also =
+    if __name__ == .__main__.:
