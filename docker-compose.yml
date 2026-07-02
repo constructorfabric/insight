@@ -73,7 +73,11 @@ services:
     # MARIADB_HOST / MARIADB_INTERNAL_PORT at the real host and leave this
     # profile inactive.
     profiles: ["local-mariadb"]
-    image: mariadb:11.4
+    # Version SSOT: mirrors the server version the gitops MariaDB chart deploys
+    # (deploy/gitops/Makefile MARIADB_VERSION=25.1.1 → Bitnami appVersion 12.2.2).
+    # The E2E stack reuses THIS definition (docker-compose.e2e.yml) so dev + e2e +
+    # prod stay on one number. Bump here when the chart pin moves.
+    image: mariadb:12.2.2
     container_name: insight-mariadb
     networks: [insight]
     environment:
@@ -99,7 +103,11 @@ services:
     # ClickHouse, point CLICKHOUSE_HOST / CLICKHOUSE_INTERNAL_HTTP_PORT at
     # the real host and leave this profile inactive.
     profiles: ["local-clickhouse"]
-    image: clickhouse/clickhouse-server:24.8
+    # Version SSOT: mirrors the server version the gitops ClickHouse chart deploys
+    # (deploy/gitops/Makefile CLICKHOUSE_VERSION=9.4.4 → Bitnami appVersion 25.7.5).
+    # The E2E stack reuses THIS definition (docker-compose.e2e.yml). Bump here when
+    # the chart pin moves.
+    image: clickhouse/clickhouse-server:25.7.5
     container_name: insight-clickhouse
     networks: [insight]
     environment:

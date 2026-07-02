@@ -1,0 +1,124 @@
+# E2E overlay — Bronze-to-API test stack.
+#
+# Reuses the root stack's `clickhouse` + `mariadb` service DEFINITIONS (single
+# version SSOT — see docker-compose.yml) but runs them as an ISOLATED instance
+# under the `insight-e2e` compose project, then layers on the migration and
+# test-runner steps. No duplicate database definitions.
+#
+# Driven by src/ingestion/tests/e2e/e2e.sh. Three phases:
+#   1. up   clickhouse + mariadb           → healthy
+#   2. run  e2e-migrate                     → the REAL src/ingestion/scripts/
+#                                             apply-ch-migrations.sh (same entrypoint
+#                                             the Helm post-install Hook runs): core
+#                                             DBs, bronze placeholders, gold views
+#   3. run  e2e-runner pytest               → seed-once bronze + dbt + enrich +
+#                                             gold rebind + MV refresh, then assert
+#
+# Isolation from a developer's running `insight` dev stack:
+#   * project name  insight-e2e             → project-scoped volumes + containers
+#   * `insight` network name reset          → own bridge, no cross-project DNS
+#   * container_name reset                   → no global container-name collision
+#   * ports remapped to the e2e loopback range (30500s), 127.0.0.1 only
+
+name: insight-e2e
+
+networks:
+  # Reuse the base `insight` network DEFINITION but drop its fixed global name so
+  # this project gets its own bridge (insight-e2e_insight). Without this the e2e
+  # containers would join a running dev stack's `insight` network.
+  insight:
+    name: !reset null
+
+services:
+  clickhouse:
+    container_name: !reset null
+    # e2e loopback range (avoids the dev stack's 8123 and the kind NodePorts).
+    ports: !override
+      - "127.0.0.1:${E2E_CH_HTTP_PORT:-30523}:8123"
+      - "127.0.0.1:${E2E_CH_NATIVE_PORT:-30529}:9000"
+
+  mariadb:
+    container_name: !reset null
+    environment:
+      # analytics-api reads/writes the `analytics` schema; the base default is
+      # `identity` (for the identity service, which the e2e stack does not run).
+      MARIADB_DATABASE: ${E2E_MARIADB_DATABASE:-analytics}
+    ports: !override
+      - "127.0.0.1:${E2E_MARIADB_PORT:-30506}:3306"
+
+  # ── Build-only: compile analytics-api + jira-enrich FROM THEIR OWN Dockerfiles
+  #    (the same ones that ship the prod images — no build-recipe duplication).
+  #    Never started; the runner consumes their images as named build contexts
+  #    (COPY --from). Renamed vs the dev `analytics-api` service to avoid a clash.
+  e2e-analytics-api-build:
+    profiles: ["e2e"]
+    build:
+      context: src/backend
+      dockerfile: services/analytics-api/Dockerfile
+    image: insight-e2e-analytics-api:local
+
+  e2e-jira-enrich-build:
+    profiles: ["e2e"]
+    build:
+      context: src/ingestion/connectors/task-tracking/jira/enrich
+      dockerfile: Dockerfile
+    image: insight-e2e-enrich-jira:local
+
+  # ── Phase 2: migrations. Runs the REAL prod entrypoint against the e2e
+  #    ClickHouse over HTTP. Idempotent (CREATE OR REPLACE / IF NOT EXISTS), so
+  #    re-running on a warm stack is safe. Reuses the runner image (bash + curl).
+  e2e-migrate:
+    profiles: ["e2e"]
+    image: insight-e2e-runner:latest
+    container_name: insight-e2e-migrate
+    working_dir: /workspace
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_URL: "http://clickhouse:8123"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-insight}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-insight-local}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-insight}
+    volumes:
+      - ${INSIGHT_REPO_ROOT:-.}:/workspace
+    networks: [insight]
+    entrypoint: ["bash", "/workspace/src/ingestion/scripts/apply-ch-migrations.sh"]
+
+  # ── Phase 2+3: seed-once + assert. python + dbt + baked analytics-api/jira-enrich
+  #    binaries (COPY --from the build-only services above). Spawns analytics-api
+  #    in-process AFTER the world is built, so its schema validator sees populated
+  #    silver (start-after-seed). depends_on the DBs; e2e.sh runs e2e-migrate first.
+  e2e-runner:
+    profiles: ["e2e"]
+    build:
+      context: ${INSIGHT_REPO_ROOT:-.}
+      dockerfile: src/ingestion/tests/e2e/compose/Dockerfile.runner
+      additional_contexts:
+        analytics-api: "service:e2e-analytics-api-build"
+        jira-enrich: "service:e2e-jira-enrich-build"
+    image: insight-e2e-runner:latest
+    container_name: insight-e2e-runner
+    working_dir: /workspace/src/ingestion/tests/e2e
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      mariadb:
+        condition: service_healthy
+    environment:
+      # Service names on the e2e network — overrides the localhost defaults in
+      # lib/config.py. The rig honors these under E2E_RUN_MODE=docker.
+      E2E_RUN_MODE: docker
+      E2E_CH_HOST: clickhouse
+      E2E_CH_HTTP_PORT: "8123"
+      E2E_MARIADB_HOST: mariadb
+      E2E_MARIADB_PORT: "3306"
+      E2E_CH_USER: ${CLICKHOUSE_USER:-insight}
+      E2E_CH_PASSWORD: ${CLICKHOUSE_PASSWORD:-insight-local}
+      E2E_MARIADB_USER: ${MARIADB_USER:-insight}
+      E2E_MARIADB_PASSWORD: ${MARIADB_PASSWORD:-insight-local}
+      E2E_MARIADB_DATABASE: ${E2E_MARIADB_DATABASE:-analytics}
+      RUST_BACKTRACE: "1"
+    volumes:
+      - ${INSIGHT_REPO_ROOT:-.}:/workspace
+    networks: [insight]

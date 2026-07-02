@@ -80,8 +80,9 @@ def locate_binary(cfg: SessionConfig) -> Path:
     The rig no longer compiles analytics-api. The binary is built FROM ITS OWN
     Dockerfile (`src/backend/services/analytics-api/Dockerfile`, the same one that
     ships the prod image — no build-recipe duplication) and baked onto PATH at
-    `/usr/local/bin/analytics-api` via docker-compose.runner.yml `additional_contexts`
-    + a Dockerfile.runner `COPY --from=analytics-api …`. Same pattern as the connector
+    `/usr/local/bin/analytics-api` via docker-compose.e2e.yml `e2e-runner.build.
+    additional_contexts` (backed by the `e2e-analytics-api-build` service) + a
+    Dockerfile.runner `COPY --from=analytics-api …`. Same pattern as the connector
     enrich binaries (see lib/enrich.py).
 
     Falls back to a PATH lookup and a host-mode cargo target (for running pytest
@@ -99,8 +100,8 @@ def locate_binary(cfg: SessionConfig) -> Path:
             return c
     raise ApiSpawnError(
         "analytics-api binary not found — it should be baked into the runner image at "
-        "/usr/local/bin/analytics-api (docker-compose.runner.yml `analytics-api` service "
-        "+ Dockerfile.runner COPY --from). Rebuild with `./e2e.sh build`."
+        "/usr/local/bin/analytics-api (docker-compose.e2e.yml `e2e-analytics-api-build` "
+        "service + Dockerfile.runner COPY --from). Rebuild with `./e2e.sh build`."
     )
 
 
@@ -122,6 +123,7 @@ class AnalyticsApiProcess:
         # container, so localhost is the same loopback either way.
         self.base_url = f"http://127.0.0.1:{port}"
         self._proc: subprocess.Popen[str] | None = None
+        self._log_path: Path | None = None
 
     def start(self) -> None:
         env = os.environ.copy()
@@ -152,15 +154,38 @@ class AnalyticsApiProcess:
                 "RUST_LOG": env.get("RUST_LOG", "info"),
             },
         )
-        LOG.info("spawning analytics-api on 127.0.0.1:%d", self.port)
+        # Redirect the binary's stdout/stderr to a FILE, not a PIPE. analytics-api
+        # emits a log line per metric_key during startup schema validation
+        # (dozens of lines); with an unread PIPE that output fills the ~64KB OS
+        # buffer and the process BLOCKS on write before it can serve /health, so
+        # the health poll below sees "connection refused" until it times out. A
+        # file sink never blocks the writer, and we tail it for diagnostics on
+        # failure (see `_read_logs`).
+        import tempfile
+
+        log_fh = tempfile.NamedTemporaryFile(
+            mode="w", prefix="analytics-api-", suffix=".log", delete=False
+        )
+        self._log_path = Path(log_fh.name)
+        LOG.info("spawning analytics-api on 127.0.0.1:%d (logs: %s)", self.port, self._log_path)
         self._proc = subprocess.Popen(
             [str(self.binary)],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=log_fh,
             stderr=subprocess.STDOUT,
             text=True,
         )
+        log_fh.close()  # the child holds its own fd; we read the path on demand
         self._wait_healthy(timeout_s=30.0)
+
+    def _read_logs(self, *, tail: int = 4000) -> str:
+        """Tail of the spawned binary's captured stdout+stderr, for diagnostics."""
+        if self._log_path is None or not self._log_path.exists():
+            return "(no analytics-api log captured)"
+        try:
+            return self._log_path.read_text(encoding="utf-8", errors="replace")[-tail:]
+        except OSError as e:
+            return f"(failed to read analytics-api log: {e})"
 
     def stop(self) -> None:
         if self._proc is None:
@@ -218,10 +243,9 @@ class AnalyticsApiProcess:
         last_err: Exception | None = None
         while time.monotonic() < deadline:
             if not self.is_running():
-                stdout = self._proc.stdout.read() if self._proc and self._proc.stdout else ""
                 raise ApiSpawnError(
                     f"analytics-api exited during startup (code={self._proc.returncode if self._proc else '?'}):\n"
-                    f"{stdout[-2000:]}"
+                    f"{self._read_logs()}"
                 )
             try:
                 with httpx.Client(
@@ -237,7 +261,8 @@ class AnalyticsApiProcess:
                 last_err = e
             time.sleep(0.5)
         raise ApiSpawnError(
-            f"analytics-api did not become healthy in {timeout_s}s; last error: {last_err}"
+            f"analytics-api did not become healthy in {timeout_s}s; last error: {last_err}\n"
+            f"recent analytics-api logs:\n{self._read_logs()}"
         )
 
 

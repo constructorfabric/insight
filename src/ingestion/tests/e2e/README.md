@@ -10,6 +10,35 @@ ClickHouse migration gold-views  →  analytics-api HTTP (POST /v1/metrics/queri
 Airbyte / Kestra / Argo are NOT exercised — bronze is seeded by direct INSERT of the
 `$ref`-resolved records declared in each `*.test.yaml`.
 
+### Execution model — migrate once, seed once, assert many
+
+`docker compose` brings the database stack up and applies **all** migrations *before*
+pytest runs; the fixture set is then materialised **once per session**, and each test
+is a pure assertion against that shared world:
+
+```
+compose (once):  up clickhouse + mariadb  →  e2e-migrate runs the REAL
+                 src/ingestion/scripts/apply-ch-migrations.sh
+                 (core DBs, bronze placeholders, gold views)
+build   (once):  seed EVERY fixture's bronze  →  dbt build staging → enrich → dbt build silver
+                 →  reapply gold-view migrations (rebind to real silver)  →  refresh MVs
+per test:        namespace the case's request  →  POST /v1/metrics/queries  →  evaluate expects
+```
+
+The stack reuses the ROOT `docker-compose.yml` clickhouse + mariadb (single version
+SSOT — the versions the gitops charts deploy), run as an **isolated `insight-e2e`
+compose project** with its own volumes, so a running `./dev-compose.sh up` dev stack
+is left untouched. The overlay that adds the migrate + runner steps is
+`/docker-compose.e2e.yml`.
+
+To let all fixtures coexist in one ClickHouse, each fixture's identity is rewritten to a
+private namespace (`lib/namespace.py`): the email domain, plus `unique_key` / `id` /
+`source_id` / `department`. That keeps every ReplacingMergeTree ORDER-BY key unique (no
+cross-fixture collapse) and every query scoped to its own data. `meta/test_seed_isolation.py`
+proves the invariant offline by parsing each table's real ORDER BY key from the placeholder
+DDL. Because the build is session-scoped, `-k <name>` still materialises the **whole** world
+(the filter only selects which assertions run), so a single-test run is not faster to seed.
+
 See specs: [PRD](../../../../docs/domain/bronze-to-api-e2e/specs/PRD.md), [DESIGN](../../../../docs/domain/bronze-to-api-e2e/specs/DESIGN.md), [DECOMPOSITION](../../../../docs/domain/bronze-to-api-e2e/specs/DECOMPOSITION.md), [FEATURE yaml-rig](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md).
 
 ## Prerequisites
@@ -35,42 +64,52 @@ First session bootstraps `cargo build --release -p analytics-api` (~3-5 min). Su
 
 ## Run (advanced — host-local)
 
-If you prefer to develop on the host (faster iteration on the test code itself), install Python deps and rust on the host. The session-rig falls back to `E2E_RUN_MODE=host` which brings compose up via published ports on 127.0.0.1:30523/30506 (avoiding the in-cluster port-forwards).
+If you prefer to develop on the host (faster iteration on the test code itself), install Python deps and rust on the host. Bring the stack up + migrated once with `./e2e.sh up` (publishes CH/MariaDB on 127.0.0.1:30523/30506), then run pytest directly — it connects in `E2E_RUN_MODE=host` (the default) and does NOT manage compose or migrations.
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 rustup update stable        # must satisfy rust-version in src/backend/Cargo.toml
+cargo build --release -p analytics-api   # host-mode: the rig spawns target/release/analytics-api
 
-pytest -k collab_emails_sent -v   # session-rig brings compose up automatically
+./e2e.sh up                       # start DBs + apply migrations (once)
+pytest -k collab_emails_sent -v   # connects to the already-up, migrated stack
 ```
 
 ## Layout
+
+The compose topology lives at the **repo root** (shared with the dev stack):
+`docker-compose.yml` (clickhouse + mariadb — version SSOT), `docker-compose.e2e.yml`
+(the e2e overlay: isolation + `e2e-migrate` + `e2e-runner`), and
+`docker-compose.e2e.cache.yml` (CI-only BuildKit cache). The `e2e/` tree itself:
 
 ```
 e2e/
 ├── pyproject.toml              # deps; defines lib package
 ├── pytest.ini                  # pytest config
+├── e2e.sh                      # entrypoint: drives the root compose as project insight-e2e
 ├── conftest.py                 # session-scoped pytest fixtures (the orchestrator)
 ├── compose/
-│   ├── docker-compose.yml      # ClickHouse + MariaDB, loopback-only
-│   └── .env.example            # example creds (real values generated per-session)
+│   └── Dockerfile.runner       # runner image (python+dbt; bakes analytics-api + enrich bins)
 ├── lib/                        # framework Python package
-│   ├── compose.py              # docker compose up/down + healthcheck wait
 │   ├── clickhouse.py           # CH HTTP client wrapper
 │   ├── mariadb.py              # MariaDB connection helper
-│   ├── migration_applier.py    # applies src/ingestion/scripts/migrations/*.sql
-│   ├── analytics_api.py        # builds + spawns the analytics-api binary
+│   ├── migration_applier.py    # post-dbt gold-view reapply + refreshable-MV refresh
+│   ├── namespace.py            # per-fixture identity namespacing (seed-once isolation)
+│   ├── seed_once.py            # one-shot world builder (reset → seed all → dbt → rebind → refresh)
+│   ├── analytics_api.py        # locates + spawns the baked analytics-api binary
 │   ├── worker.py               # WorkerContext (resolves pytest-xdist worker id)
 │   ├── metric_coverage.py      # metric-coverage gate: SKIP_TABLES + SKIP_LIST (--universe-file)
 │   ├── collect_metrics.py      # script: snapshot the metric catalog → .artifacts/
 │   └── config.py               # session config (ports, random creds)
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
-├── metrics/                      # <name>.test.yaml + schemas/ + templates/
-└── meta/                       # framework's own smoke tests
-    └── test_session_smoke.py
+├── metrics/                    # <name>.test.yaml + schemas/ + templates/
+├── api/                        # rig smoke tests (session fixtures + analytics-api health)
+│   └── test_session_smoke.py
+└── meta/                       # DB-free guard
+    └── test_seed_isolation.py
 ```
 
 ## Metric coverage gate

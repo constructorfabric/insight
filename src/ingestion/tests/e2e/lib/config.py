@@ -46,16 +46,15 @@ class SessionConfig:
     `run_mode = "host"` (default): pytest runs on the host, compose+CH+MariaDB
     run as Docker containers with ports published on 127.0.0.1.
 
-    `run_mode = "docker"`: pytest runs as a `runner` service on the same
+    `run_mode = "docker"`: pytest runs as the `e2e-runner` service on the same
     compose network — CH/MariaDB are reached via the service names
     `clickhouse:8123` and `mariadb:3306`, no host port forwarding required.
     Triggered automatically when env var `E2E_RUN_MODE=docker` is set (the
-    runner image sets it). See compose/docker-compose.runner.yml.
+    e2e-runner service sets it). See /docker-compose.e2e.yml.
     """
 
     # Filesystem
     repo_root: Path
-    compose_dir: Path
     migrations_dir: Path
     dbt_project_dir: Path
     analytics_api_manifest_dir: Path
@@ -88,7 +87,6 @@ class SessionConfig:
             # file via env. Credentials come from the same .env compose reads.
             return cls(
                 repo_root=repo_root,
-                compose_dir=repo_root / "src/ingestion/tests/e2e/compose",
                 migrations_dir=repo_root / "src/ingestion/scripts/migrations",
                 dbt_project_dir=repo_root / "src/ingestion/dbt",
                 analytics_api_manifest_dir=repo_root / "src/backend/services/analytics-api",
@@ -107,7 +105,6 @@ class SessionConfig:
             )
         return cls(
             repo_root=repo_root,
-            compose_dir=repo_root / "src/ingestion/tests/e2e/compose",
             migrations_dir=repo_root / "src/ingestion/scripts/migrations",
             dbt_project_dir=repo_root / "src/ingestion/dbt",
             analytics_api_manifest_dir=repo_root / "src/backend/services/analytics-api",
@@ -127,18 +124,3 @@ class SessionConfig:
             f"mysql://{self.mariadb_user}:{self.mariadb_password}"
             f"@{self.mariadb_host}:{self.mariadb_port}/{self.mariadb_database}"
         )
-
-    def compose_env(self) -> dict[str, str]:
-        """Env passed to `docker compose` to substitute into docker-compose.yml."""
-        return {
-            "CLICKHOUSE_DB": self.ch_database,
-            "CLICKHOUSE_USER": self.ch_user,
-            "CLICKHOUSE_PASSWORD": self.ch_password,
-            "MARIADB_DATABASE": self.mariadb_database,
-            "MARIADB_USER": self.mariadb_user,
-            "MARIADB_PASSWORD": self.mariadb_password,
-            "MARIADB_ROOT_PASSWORD": self.mariadb_root_password,
-            "CH_HTTP_PORT": str(self.ch_http_port),
-            "CH_NATIVE_PORT": str(self.ch_native_port),
-            "MARIADB_PORT": str(self.mariadb_port),
-        }
