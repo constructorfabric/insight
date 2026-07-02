@@ -50,6 +50,63 @@
               }
             }
           }
+        },
+        "freshness": {
+          "type": "object",
+          "properties": {
+            "enabled":   { "type": "boolean" },
+            "schedule":  { "type": "string", "default": "0 13 * * *" },
+            "dbtSelect": { "type": "string", "default": "source:*" },
+            "cluster":   { "type": "string" },
+            "tenant":    { "type": "string" },
+            "notification": {
+              "type": "object",
+              "properties": {
+                "driver": { "enum": ["", "webhook", "zulip", "slack", "teams", "email"] },
+                "webhook": {
+                  "type": "object",
+                  "properties": { "urlSecret": { "$ref": "#/definitions/urlSecret" } }
+                },
+                "zulip": {
+                  "type": "object",
+                  "properties": {
+                    "urlSecret": { "$ref": "#/definitions/urlSecret" },
+                    "stream":    { "type": "string" },
+                    "topic":     { "type": "string" }
+                  }
+                },
+                "slack": {
+                  "type": "object",
+                  "properties": {
+                    "urlSecret": { "$ref": "#/definitions/urlSecret" },
+                    "channel":   { "type": "string" }
+                  }
+                },
+                "teams": {
+                  "type": "object",
+                  "properties": { "urlSecret": { "$ref": "#/definitions/urlSecret" } }
+                },
+                "email": {
+                  "type": "object",
+                  "properties": {
+                    "smtp": {
+                      "type": "object",
+                      "properties": {
+                        "host":           { "type": "string" },
+                        "port":           { "type": "integer", "minimum": 1, "maximum": 65535 },
+                        "username":       { "type": "string" },
+                        "passwordSecret": { "$ref": "#/definitions/urlSecret" },
+                        "starttls":       { "type": "boolean" }
+                      }
+                    },
+                    "from":          { "type": "string" },
+                    "to":            { "type": "string" },
+                    "subjectPrefix": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -140,6 +197,13 @@
   },
 
   "definitions": {
+    "urlSecret": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "key":  { "type": "string", "minLength": 1 }
+      }
+    },
     "infraDep": {
       "type": "object",
       "properties": {

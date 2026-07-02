@@ -1,0 +1,632 @@
+{{- if and .Values.ingestion.templates.enabled .Values.ingestion.freshness.enabled }}
+{{- /*
+Bronze freshness check: runs `dbt source freshness` against ClickHouse, reads
+the resulting `target/sources.json`, and emits a notification when any source
+is `warn` or `error`. Single workflow covers every connector — new bronze
+sources are picked up automatically as soon as they appear in any
+`schema.yml` (defaults inherited from `dbt_project.yml`).
+
+How to reason about it operationally:
+  - `pass`  : MAX(_airbyte_extracted_at) within the warn window. Sync OK.
+  - `warn`  : older than warn_after but younger than error_after. One missed
+              run; alert lower priority.
+  - `error` : older than error_after. Multiple missed runs / source dead.
+              Page on these.
+
+Two failure modes this catches:
+  1. Argo CronWorkflow didn't run / couldn't talk to Airbyte → no new rows.
+  2. Sync ran but source API returned 0 rows (token expired, API outage).
+
+It does NOT distinguish (1) from (2) — for that we need an independent
+"last successful Airbyte job" signal (future work, see MONITORING.md).
+*/}}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: dbt-source-freshness
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  serviceAccountName: argo-workflow
+  entrypoint: run
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          # Selector applied to `dbt source freshness`. Default covers every
+          # bronze_* source declared anywhere in the project. Override to
+          # narrow scope (e.g., per-tenant smoke check).
+          - name: dbt_select
+            value: "source:*"
+          - name: toolbox_image
+          - name: clickhouse_host
+          - name: clickhouse_port
+          - name: clickhouse_user
+          # Identification labels for routing when one bot fans out to
+          # multiple deployments. `cluster` = installation tier;
+          # `tenant` = customer/workspace. Both empty by default.
+          - name: cluster
+            value: ""
+          - name: tenant
+            value: ""
+          # Notification delivery. `driver` selects the parser branch
+          # ("" / webhook / zulip / slack / email / future). Credential
+          # material (webhook URL, SMTP password) is **not** a workflow
+          # parameter — it is read from a k8s Secret via `secretKeyRef`
+          # on the env block below so the token never lands in rendered
+          # manifests or the Argo UI. Plain per-driver settings
+          # (channel, stream, smtp host/port, from/to) come through as
+          # ordinary parameters because they aren't credentials.
+          - name: notification_driver
+            value: ""
+          # zulip driver
+          - name: notification_zulip_stream
+            value: ""
+          - name: notification_zulip_topic
+            value: ""
+          # slack driver
+          - name: notification_slack_channel
+            value: ""
+          # email driver
+          - name: notification_email_smtp_host
+            value: ""
+          - name: notification_email_smtp_port
+            value: "587"
+          - name: notification_email_smtp_username
+            value: ""
+          - name: notification_email_smtp_starttls
+            value: "true"
+          - name: notification_email_from
+            value: ""
+          - name: notification_email_to
+            value: ""
+          - name: notification_email_subject_prefix
+            value: "[ingestion-freshness]"
+          # NOTE: SLA thresholds (warn_after / error_after) are NOT passed
+          # from here. They live as literals on each bronze source's
+          # `freshness:` block in the connector `schema.yml` files (see
+          # constructorfabric/insight#1346 / EPIC #1321). This workflow only
+          # *runs* the check and acts on the verdict in `target/sources.json`;
+          # it does not own the threshold values. Recommended per-tier
+          # thresholds (default / event / report) are documented in
+          # `src/ingestion/MONITORING.md` for whoever sets the declarations.
+      # 20 min: dbt source freshness issues one CH query per source. With
+      # the current connector set this finishes in ~2 min; the headroom
+      # is for connector growth and CH cold-start cases.
+      activeDeadlineSeconds: 1200
+      script:
+        image: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+        imagePullPolicy: Always
+        command: [bash]
+        env:
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+          - name: DBT_SELECT
+            value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+          - name: CLICKHOUSE_HOST
+            value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+          - name: CLICKHOUSE_PORT
+            value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+          - name: CLICKHOUSE_USER
+            value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+          - name: CLUSTER
+            value: {{ `"{{inputs.parameters.cluster}}"` }}
+          - name: TENANT
+            value: {{ `"{{inputs.parameters.tenant}}"` }}
+          - name: NOTIFICATION_DRIVER
+            value: {{ `"{{inputs.parameters.notification_driver}}"` }}
+          - name: NOTIFICATION_ZULIP_STREAM
+            value: {{ `"{{inputs.parameters.notification_zulip_stream}}"` }}
+          - name: NOTIFICATION_ZULIP_TOPIC
+            value: {{ `"{{inputs.parameters.notification_zulip_topic}}"` }}
+          - name: NOTIFICATION_SLACK_CHANNEL
+            value: {{ `"{{inputs.parameters.notification_slack_channel}}"` }}
+          - name: NOTIFICATION_EMAIL_SMTP_HOST
+            value: {{ `"{{inputs.parameters.notification_email_smtp_host}}"` }}
+          - name: NOTIFICATION_EMAIL_SMTP_PORT
+            value: {{ `"{{inputs.parameters.notification_email_smtp_port}}"` }}
+          - name: NOTIFICATION_EMAIL_SMTP_USERNAME
+            value: {{ `"{{inputs.parameters.notification_email_smtp_username}}"` }}
+          - name: NOTIFICATION_EMAIL_SMTP_STARTTLS
+            value: {{ `"{{inputs.parameters.notification_email_smtp_starttls}}"` }}
+          - name: NOTIFICATION_EMAIL_FROM
+            value: {{ `"{{inputs.parameters.notification_email_from}}"` }}
+          - name: NOTIFICATION_EMAIL_TO
+            value: {{ `"{{inputs.parameters.notification_email_to}}"` }}
+          - name: NOTIFICATION_EMAIL_SUBJECT_PREFIX
+            value: {{ `"{{inputs.parameters.notification_email_subject_prefix}}"` }}
+          # Credential material — sourced from the k8s Secret of the
+          # active driver. Rendered conditionally so an unconfigured
+          # cluster (driver="") does not try to resolve a non-existent
+          # Secret. The parser treats a missing env var as "log only".
+          # `NOTIFICATION_URL` for URL-based drivers (webhook/zulip/slack);
+          # `NOTIFICATION_EMAIL_SMTP_PASSWORD` for the email driver.
+          {{- $n := .Values.ingestion.freshness.notification }}
+          {{- if eq $n.driver "webhook" }}
+          - name: NOTIFICATION_URL
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "ingestion.freshness.notification.webhook.urlSecret.name is required when driver=webhook" $n.webhook.urlSecret.name | quote }}
+                key:  {{ ($n.webhook.urlSecret.key | default "url") | quote }}
+          {{- else if eq $n.driver "zulip" }}
+          - name: NOTIFICATION_URL
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "ingestion.freshness.notification.zulip.urlSecret.name is required when driver=zulip" $n.zulip.urlSecret.name | quote }}
+                key:  {{ ($n.zulip.urlSecret.key | default "url") | quote }}
+          {{- else if eq $n.driver "slack" }}
+          - name: NOTIFICATION_URL
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "ingestion.freshness.notification.slack.urlSecret.name is required when driver=slack" $n.slack.urlSecret.name | quote }}
+                key:  {{ ($n.slack.urlSecret.key | default "url") | quote }}
+          {{- else if eq $n.driver "teams" }}
+          - name: NOTIFICATION_URL
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "ingestion.freshness.notification.teams.urlSecret.name is required when driver=teams" $n.teams.urlSecret.name | quote }}
+                key:  {{ ($n.teams.urlSecret.key | default "url") | quote }}
+          {{- else if eq $n.driver "email" }}
+          {{- if $n.email.smtp.passwordSecret.name }}
+          - name: NOTIFICATION_EMAIL_SMTP_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ $n.email.smtp.passwordSecret.name | quote }}
+                key:  {{ ($n.email.smtp.passwordSecret.key | default "password") | quote }}
+          {{- end }}
+          {{- end }}
+        source: |
+          # SECURITY: every parameter reaches us via env vars only — no
+          # interpolation into shell or YAML source. Same convention as
+          # dbt-run.yaml.
+          set -euo pipefail
+          cd /ingestion/dbt
+          python3 - <<'PY'
+          import os, yaml
+          profile = {
+              "ingestion": {
+                  "target": "k8s",
+                  "outputs": {
+                      "k8s": {
+                          "type": "clickhouse",
+                          "host": os.environ["CLICKHOUSE_HOST"],
+                          "port": int(os.environ["CLICKHOUSE_PORT"]),
+                          # Sentinel: source freshness reads each source's
+                          # declared schema (`bronze_*`), never the profile
+                          # default. Pick a name that won't collide if dbt
+                          # ever falls back here.
+                          "schema": "_freshness_check",
+                          "user": os.environ["CLICKHOUSE_USER"],
+                          "password": os.environ["CLICKHOUSE_PASSWORD"],
+                          "secure": False,
+                          "send_receive_timeout": 600,
+                          "query_limit": 0,
+                          "connect_timeout": 30,
+                      }
+                  }
+              }
+          }
+          with open("profiles.yml", "w") as f:
+              yaml.safe_dump(profile, f)
+          PY
+
+          # Drop any stale freshness report first. If dbt crashes mid-run we
+          # want exit code 2 below, not a misclassification using a leftover
+          # `target/sources.json` from a prior invocation that still happens
+          # to live in the toolbox image's working directory.
+          rm -f target/sources.json
+
+          # Narrow the freshness selector to bronze_* databases that actually
+          # exist in this deployment. The freshness check answers "is the
+          # data we ARE collecting stale?" — it deliberately does not detect
+          # "is a connector that should be deployed actually deployed?".
+          # That is a separate deployment-health concern (Helm probes / sync
+          # workflow status) tracked under a separate issue. Without this
+          # narrowing, a tenant that doesn't run, say, the OpenAI connector
+          # would see one ERROR per OpenAI source on every freshness run.
+          if [ "$DBT_SELECT" = "source:*" ]; then
+            EXISTING_DBS=$(python3 - <<'PY'
+          import os, sys, urllib.parse, urllib.request
+          url = "http://" + os.environ["CLICKHOUSE_HOST"] + ":" + os.environ["CLICKHOUSE_PORT"] + "/"
+          # ClickHouse LIKE has no ESCAPE clause; `startsWith` avoids the
+          # underscore-as-wildcard pitfall. We don't currently have any
+          # database whose name begins with `bronze` but isn't a bronze
+          # source, so the prefix is precise enough.
+          sql = "SELECT name FROM system.databases WHERE startsWith(name, 'bronze_') FORMAT TabSeparated"
+          qs = urllib.parse.urlencode({
+              "user": os.environ["CLICKHOUSE_USER"],
+              "password": os.environ["CLICKHOUSE_PASSWORD"],
+              "query": sql,
+          })
+          try:
+              with urllib.request.urlopen(url + "?" + qs, timeout=30) as resp:
+                  print(resp.read().decode("utf-8"))
+          except Exception as e:
+              print(f"freshness: failed to enumerate bronze databases ({e}) — falling back to full source:* selector", file=sys.stderr)
+              sys.exit(0)
+          PY
+          )
+            if [ -n "$EXISTING_DBS" ]; then
+              EFFECTIVE_SELECT=""
+              for db in $EXISTING_DBS; do
+                EFFECTIVE_SELECT="$EFFECTIVE_SELECT source:$db"
+              done
+              EFFECTIVE_SELECT="${EFFECTIVE_SELECT# }"
+              echo "freshness: narrowed selector to deployed bronze databases — $EFFECTIVE_SELECT"
+            else
+              EFFECTIVE_SELECT="$DBT_SELECT"
+            fi
+          else
+            # User-supplied selector is already specific; honor it verbatim.
+            EFFECTIVE_SELECT="$DBT_SELECT"
+          fi
+
+          # `dbt source freshness` exits non-zero when any source breaches
+          # SLA. We swallow the exit code here and re-derive the workflow
+          # outcome from `target/sources.json` below — dbt does not
+          # distinguish warn from error in its exit code, but we want to.
+          # SLA thresholds come from each source's `freshness:` block in the
+          # connector schema.yml (constructorfabric/insight#1346) — this
+          # workflow does not pass or override them.
+          set +e
+          dbt source freshness --profiles-dir . --select "$EFFECTIVE_SELECT"
+          set -e
+
+          # Parse target/sources.json. Exit semantics (set by the script):
+          #   0 — no breaches, OR only `warn` (visible in log; one missed run)
+          #   1 — at least one `error` or `runtime error` (page-worthy)
+          #   2 — `target/sources.json` missing (dbt crashed before checking)
+          # Argo's `failedJobsHistoryLimit` retains the breaching runs.
+          # `set +e` so we keep going to the trap detector even when the
+          # freshness parser exits non-zero (which is the page-worthy case).
+          set +e
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+
+          path = "target/sources.json"
+          if not os.path.exists(path):
+              print(f"freshness: no {path} produced — dbt likely crashed before checking sources", file=sys.stderr)
+              sys.exit(2)
+
+          with open(path) as f:
+              report = json.load(f)
+
+          # `runtime error` = dbt couldn't check the source at all (CH down,
+          # schema drift, query failure). Treated as page-worthy alongside
+          # `error`, since "we don't know" is worse than "we know it's stale".
+          PAGE_STATUSES = ("error", "runtime error")
+          BREACH_STATUSES = ("warn",) + PAGE_STATUSES
+
+          breaches = []
+          for r in report.get("results", []):
+              status = r.get("status")
+              if status in BREACH_STATUSES:
+                  unique_id = r.get("unique_id", "?")
+                  max_loaded_at = r.get("max_loaded_at")
+                  age_seconds = r.get("max_loaded_at_time_ago_in_s")
+                  # Empty-table sentinel: dbt-clickhouse computes
+                  # `MAX(<col>)` over zero rows as NULL, which serialises
+                  # as the Unix epoch (`1970-01-01T00:00:00+00:00`) plus
+                  # an enormous `age_in_s`. Raw output reads as ~500k
+                  # hours of lag, which looks like a parser bug rather
+                  # than the real signal ("the source has never received
+                  # a single row"). Flag it explicitly.
+                  empty = (
+                      isinstance(max_loaded_at, str)
+                      and max_loaded_at.startswith("1970-01-01")
+                  )
+                  breaches.append({
+                      "source": unique_id,
+                      "status": status,
+                      "max_loaded_at": "(table is empty)" if empty else max_loaded_at,
+                      "age_hours": None if empty else (
+                          round(age_seconds / 3600, 1) if age_seconds is not None else None
+                      ),
+                      "empty": empty,
+                  })
+
+          if not breaches:
+              print("freshness: all sources within SLA")
+              sys.exit(0)
+
+          print(f"freshness: {len(breaches)} source(s) breaching SLA:")
+          for b in breaches:
+              if b.get("empty"):
+                  detail = "(table is empty — no rows ever ingested)"
+              else:
+                  age = f"{b['age_hours']}h" if b['age_hours'] is not None else "n/a"
+                  detail = f"max_loaded_at={b['max_loaded_at']}, age={age}"
+              print(f"  [{b['status']:>5}] {b['source']} {detail}")
+
+          # Notification fan-out. The driver selects the body format and
+          # any driver-specific transport. URL comes from a k8s Secret
+          # (resolved by the workflow YAML, not by us) and lands in
+          # `NOTIFICATION_URL` only when a driver is configured.
+          #
+          # Adding a new driver is one match arm here + one Helm subblock
+          # in `values.yaml` + one secretKeyRef branch in the workflow
+          # YAML. Nothing else changes.
+          import urllib.parse
+          driver  = os.environ.get("NOTIFICATION_DRIVER", "").strip()
+          url     = os.environ.get("NOTIFICATION_URL", "").strip()
+          cluster = os.environ.get("CLUSTER", "").strip()
+          tenant  = os.environ.get("TENANT", "").strip()
+          # Summary prefix: every label that's set, in a single bracket,
+          # so receivers handling multi-tenant / multi-cluster bots can
+          # route on either dimension without parsing the breach list.
+          # Empty labels drop out entirely — single-deployment installs
+          # see plain "N bronze source(s) breaching ...".
+          _labels = []
+          if cluster: _labels.append(f"cluster={cluster}")
+          if tenant:  _labels.append(f"tenant={tenant}")
+          _prefix = f"[{', '.join(_labels)}] " if _labels else ""
+          summary = f"{_prefix}{len(breaches)} bronze source(s) breaching freshness SLA"
+          has_page_status = any(b["status"] in PAGE_STATUSES for b in breaches)
+
+          def _detail(b):
+              if b.get("empty"):
+                  return "table is empty (no rows ingested)"
+              age = f"{b['age_hours']}h" if b['age_hours'] is not None else "n/a"
+              return f"max_loaded_at={b['max_loaded_at']}, age={age}"
+
+          def _line_md(b):
+              return f"- `[{b['status']}]` `{b['source']}` — {_detail(b)}"
+
+          def _line_plain(b):
+              return f"  [{b['status']}] {b['source']} — {_detail(b)}"
+
+          def _post(req_url, body, headers):
+              # Some receivers sit behind Cloudflare / WAF and reject the
+              # default `Python-urllib/3.x` UA as a bot signature. Set an
+              # explicit, identifying UA so the request is allowed.
+              headers = {**headers, "User-Agent": "insight-freshness-monitor/1.0"}
+              req = urllib.request.Request(req_url, data=body, headers=headers, method="POST")
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      print(f"freshness: notification posted via {driver} ({resp.status})")
+              except urllib.error.HTTPError as e:
+                  # Surface the upstream's response body — `urllib` only
+                  # exposes the status line by default and 4xx responses
+                  # from Zulip / Slack / Teams typically carry a JSON
+                  # error message that explains the rejection (wrong
+                  # API key, stream not subscribed, channel-locked, etc.).
+                  reason = ""
+                  try:
+                      reason = e.read().decode("utf-8", errors="replace")[:400]
+                  except Exception:
+                      pass
+                  raise RuntimeError(f"HTTP {e.code}: {reason}") from None
+
+          def _send_webhook():
+              payload = {
+                  "topic": "ingestion-freshness",
+                  "cluster": cluster,
+                  "tenant": tenant,
+                  "summary": summary,
+                  "breaches": breaches,
+              }
+              _post(url, json.dumps(payload).encode("utf-8"),
+                    {"Content-Type": "application/json"})
+
+          def _send_zulip():
+              # Zulip exposes two incoming-webhook integrations:
+              #   /api/v1/external/json  — dumps the body as a JSON code
+              #     block (a debugging/logging integration, no markdown).
+              #   /api/v1/external/slack — Slack-compatible, takes
+              #     `{"text": "<slack-mrkdwn>"}` and renders properly.
+              # The chart's URL is whatever the operator configured. If
+              # they pointed at `.../external/json` we silently rewrite
+              # the path to `.../external/slack` and use Slack mrkdwn so
+              # the message arrives formatted instead of dumped as JSON.
+              stream = os.environ.get("NOTIFICATION_ZULIP_STREAM", "").strip()
+              topic  = os.environ.get("NOTIFICATION_ZULIP_TOPIC", "").strip()
+              target = url.replace("/api/v1/external/json", "/api/v1/external/slack", 1)
+              extras = []
+              if stream: extras.append("stream=" + urllib.parse.quote(stream))
+              if topic:  extras.append("topic="  + urllib.parse.quote(topic))
+              if extras:
+                  target += ("&" if "?" in target else "?") + "&".join(extras)
+              # Slack mrkdwn: single `*` for bold (vs `**` in Zulip
+              # native), backtick spans and bullet lists work the same.
+              def _line_slack(b):
+                  return f"• `[{b['status']}]` `{b['source']}` — {_detail(b)}"
+              md = [f"*{summary}*", "", *(_line_slack(b) for b in breaches)]
+              # Zulip's Slack-compatible incoming webhook expects
+              # legacy-Slack form fields: `user_name`, `text`,
+              # `channel_name`. URL query carries stream/topic; the
+              # form fields carry the message itself.
+              body = urllib.parse.urlencode({
+                  "user_name":    "ingestion-freshness",
+                  "channel_name": "freshness",
+                  "text":         "\n".join(md),
+              })
+              _post(target, body.encode("utf-8"),
+                    {"Content-Type": "application/x-www-form-urlencoded"})
+
+          def _send_slack():
+              channel = os.environ.get("NOTIFICATION_SLACK_CHANNEL", "").strip()
+              text = "\n".join([f"*{summary}*", *(_line_md(b) for b in breaches)])
+              payload = {"text": text}
+              if channel:
+                  payload["channel"] = channel
+              _post(url, json.dumps(payload).encode("utf-8"),
+                    {"Content-Type": "application/json"})
+
+          def _send_teams():
+              theme = "FF0000" if has_page_status else "FFA500"
+              payload = {
+                  "@type":      "MessageCard",
+                  "@context":   "https://schema.org/extensions",
+                  "summary":    summary,
+                  "themeColor": theme,
+                  "title":      summary,
+                  "text":       "\n\n".join(_line_md(b) for b in breaches),
+              }
+              _post(url, json.dumps(payload).encode("utf-8"),
+                    {"Content-Type": "application/json"})
+
+          def _send_email():
+              import smtplib
+              from email.message import EmailMessage
+              host     = os.environ.get("NOTIFICATION_EMAIL_SMTP_HOST", "").strip()
+              port     = int(os.environ.get("NOTIFICATION_EMAIL_SMTP_PORT", "587") or "587")
+              username = os.environ.get("NOTIFICATION_EMAIL_SMTP_USERNAME", "").strip()
+              password = os.environ.get("NOTIFICATION_EMAIL_SMTP_PASSWORD", "")
+              starttls = os.environ.get("NOTIFICATION_EMAIL_SMTP_STARTTLS", "true").lower() != "false"
+              sender   = os.environ.get("NOTIFICATION_EMAIL_FROM", "").strip()
+              to_csv   = os.environ.get("NOTIFICATION_EMAIL_TO", "").strip()
+              prefix   = os.environ.get("NOTIFICATION_EMAIL_SUBJECT_PREFIX", "").strip()
+              if not (host and sender and to_csv):
+                  raise RuntimeError(
+                      "email driver requires notification.email.smtp.host, "
+                      "notification.email.from and notification.email.to"
+                  )
+              recipients = [r.strip() for r in to_csv.split(",") if r.strip()]
+              msg = EmailMessage()
+              msg["Subject"] = (f"{prefix} {summary}" if prefix else summary).strip()
+              msg["From"] = sender
+              msg["To"]   = ", ".join(recipients)
+              msg.set_content("\n".join([summary, "", *(_line_plain(b) for b in breaches)]))
+              smtp_cls = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+              with smtp_cls(host, port, timeout=15) as s:
+                  if starttls and port != 465:
+                      s.starttls()
+                  if username:
+                      s.login(username, password)
+                  s.send_message(msg)
+              print(f"freshness: notification posted via email ({len(recipients)} recipient(s))")
+
+          dispatchers = {
+              "webhook": _send_webhook,
+              "zulip":   _send_zulip,
+              "slack":   _send_slack,
+              "teams":   _send_teams,
+              "email":   _send_email,
+          }
+
+          if not driver:
+              print("freshness: notification driver is empty — log only")
+          elif driver not in dispatchers:
+              print(f"freshness: unknown driver '{driver}' — log only", file=sys.stderr)
+          elif driver != "email" and not url:
+              print(f"freshness: driver={driver} but NOTIFICATION_URL is empty — log only", file=sys.stderr)
+          else:
+              try:
+                  dispatchers[driver]()
+              except Exception as e:
+                  # Notification failure does not change the run's primary
+                  # exit code — we'd rather have a noisy log + breached SLA
+                  # in workflow status than swallow the upstream failure.
+                  print(f"freshness: {driver} notification failed: {e}", file=sys.stderr)
+
+          # Page only on `error` / `runtime error`. Warn-only runs stay
+          # exit 0 so they don't drown on-call in noise; they're still
+          # printed above and POSTed in the payload for triage.
+          sys.exit(1 if any(b["status"] in PAGE_STATUSES for b in breaches) else 0)
+          PY
+          freshness_exit=$?
+          set -e
+
+          # Trap detector — runs after the freshness check itself. Catches
+          # bronze sources whose `_airbyte_extracted_at` anchor is masking
+          # a re-emit / incremental-topup pattern (the freshness check
+          # returns PASS even though the upstream has stopped publishing).
+          # Its findings are *warnings*: logged for visibility, but the
+          # workflow's page/no-page decision is owned by the freshness
+          # check itself — we do not override it.
+          set +e
+          python3 /ingestion/scripts/freshness-trap-detect.py /ingestion/connectors
+          trap_exit=$?
+          set -e
+          if [ "$trap_exit" -eq 1 ]; then
+            echo "freshness-trap-detect: found suspect(s) — review the connector schema.yml for those tables (see src/ingestion/MONITORING.md)"
+          elif [ "$trap_exit" -ne 0 ]; then
+            echo "freshness-trap-detect: script error (exit $trap_exit) — not affecting workflow status" >&2
+          fi
+
+          exit "$freshness_exit"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: dbt-source-freshness-check
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: ingestion-monitoring
+    {{- include "insight.labels" . | nindent 4 }}
+    {{- with .Values.ingestion.reconcile.argoInstanceId }}
+    # When the cluster's Argo workflow-controller runs with `instanceID:`
+    # set, it only schedules CronWorkflows carrying a matching
+    # controller-instanceid label. Without this the cron silently never
+    # ticks (lastScheduled stays `never`). Reuses the reconcile-loop key.
+    workflows.argoproj.io/controller-instanceid: {{ . | quote }}
+    {{- end }}
+spec:
+  schedules:
+    - {{ .Values.ingestion.freshness.schedule | quote }}
+  timezone: UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  workflowSpec:
+    serviceAccountName: argo-workflow
+    podGC:
+      strategy: OnPodCompletion
+    {{- with .Values.global.imagePullSecrets }}
+    imagePullSecrets:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    entrypoint: run
+    templates:
+      - name: run
+        steps:
+          - - name: check
+              templateRef:
+                name: dbt-source-freshness
+                template: run
+              arguments:
+                parameters:
+                  - name: dbt_select
+                    value: {{ .Values.ingestion.freshness.dbtSelect | quote }}
+                  - name: toolbox_image
+                    value: {{ required "ingestion.toolboxImage is required for the freshness CronWorkflow — pin a tag in values overrides" .Values.ingestion.toolboxImage | quote }}
+                  - name: clickhouse_host
+                    value: {{ include "insight.clickhouse.host" . | quote }}
+                  - name: clickhouse_port
+                    value: {{ include "insight.clickhouse.port" . | quote }}
+                  - name: clickhouse_user
+                    value: {{ .Values.clickhouse.username | quote }}
+                  - name: cluster
+                    value: {{ .Values.ingestion.freshness.cluster | quote }}
+                  - name: tenant
+                    value: {{ .Values.ingestion.freshness.tenant | default "" | quote }}
+                  {{- $n := .Values.ingestion.freshness.notification }}
+                  - name: notification_driver
+                    value: {{ $n.driver | default "" | quote }}
+                  - name: notification_zulip_stream
+                    value: {{ $n.zulip.stream | default "" | quote }}
+                  - name: notification_zulip_topic
+                    value: {{ $n.zulip.topic | default "" | quote }}
+                  - name: notification_slack_channel
+                    value: {{ $n.slack.channel | default "" | quote }}
+                  - name: notification_email_smtp_host
+                    value: {{ $n.email.smtp.host | default "" | quote }}
+                  - name: notification_email_smtp_port
+                    value: {{ ($n.email.smtp.port | default 587) | quote }}
+                  - name: notification_email_smtp_username
+                    value: {{ $n.email.smtp.username | default "" | quote }}
+                  - name: notification_email_smtp_starttls
+                    value: {{ ($n.email.smtp.starttls | default true) | quote }}
+                  - name: notification_email_from
+                    value: {{ $n.email.from | default "" | quote }}
+                  - name: notification_email_to
+                    value: {{ $n.email.to | default "" | quote }}
+                  - name: notification_email_subject_prefix
+                    value: {{ $n.email.subjectPrefix | default "[ingestion-freshness]" | quote }}
+{{- end }}
