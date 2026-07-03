@@ -1,0 +1,85 @@
+spec_version: 1
+description: >
+  Metric: collab_person_counter_daily.channel_posts — Collaboration Messaging
+  modality (…0053), #1527.
+  How it's computed (bronze → silver → gold):
+    • bronze: per-person/day channel activity from Teams (post + reply counts)
+      and Slack (once its e2e fixtures land — see note).
+    • silver: each vendor deduped to per-person/day channel counts.
+    • gold:   channel posts FOLD posts + replies for vendor comparability — Slack
+              cannot separate them (replies already folded in), so Teams adds its
+              posts + replies. honest-NULL UNION across vendors; Zulip has no
+              channel split → contributes NULL, never 0. value = the member's
+              per-person SUM over the window; median/p25/p75/range = the
+              distribution across the member's DEPARTMENT (org_unit_id).
+
+  Department: 5 Engineering members with channel_posts totals {2,4,6,8,10}, each
+  dated 2026-12-25 with Teams post + reply counts that sum to the total (proving
+  the posts+replies fold):
+    • alice 2  (post 2, reply 0)
+    • bob   4  (post 2, reply 2)
+    • carol 6  (post 4, reply 2)  ← posts + replies
+    • dave  8  (post 8, reply 0)
+    • erin  10 (post 6, reply 4)
+  IC case requests carol (6) → value 6 (proves post+reply fold); the department
+  of 5 yields median 6, p25 4, p75 8, range [2,10].
+  Cases: posts+replies fold (carol) · empty window → NULL, not 0.
+
+  NOTE: Slack is the other declared source and has no e2e fixtures yet (needs
+  schemas/bronze_slack.users_details.yaml + a template from the real bronze).
+  Teams here proves the fold + honest-NULL; Slack cross-vendor coverage is a
+  follow-up.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  # M365 Teams — channel_posts = postMessages + replyMessages (per-person totals
+  # {2,4,6,8,10}). privateChat/teamChat left null (this file asserts channel_posts only).
+  bronze_m365.teams_activity:
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: cp-alice-20261225, postMessages: 2, replyMessages: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: cp-alice-20261225, postMessages: 2, replyMessages: 0 }   # duplicate → dedup, not 4
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: bob@example.com,   reportRefreshDate: "2026-12-25", unique_key: cp-bob-20261225,   postMessages: 2, replyMessages: 2 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: cp-carol-20261225, postMessages: 4, replyMessages: 2 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: cp-dave-20261225,  postMessages: 8, replyMessages: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com,  reportRefreshDate: "2026-12-25", unique_key: cp-erin-20261225,  postMessages: 6, replyMessages: 4 }
+
+cases:
+  # dept {2,4,6,8,10}; carol value 6 (post 4 + reply 2). median 6, p25 4, p75 8, range [2,10]
+  - name: "channel_posts — posts + replies fold (carol = post 4 + reply 2)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000053
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: collab_person_counter_daily.channel_posts }
+        equal: { value: 6, median: 6, range_min: 2, range_max: 10, p25: 4, p75: 8 }
+
+  # ── EMPTY window: no channel rows in range → honest-NULL (no item, not a 0) ──
+  - name: "channel_posts — EMPTY window (no source → NULL, not 0)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000053
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"

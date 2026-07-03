@@ -1,0 +1,114 @@
+spec_version: 1
+description: >
+  Metric: collab_person_counter_daily.messages_sent — Collaboration Messaging
+  modality (…0053), #1527.
+  How it's computed (bronze → silver → gold):
+    • bronze: per-person/day chat activity from several vendors (Teams private +
+      team-channel counts; Zulip per-sender message counts; Slack too, once its
+      e2e fixtures land — see note below).
+    • silver: each vendor deduped to per-person/day total chat messages.
+    • gold:   honest-NULL UNION across vendors → per-person/day sum; a person
+              with NO chat source on a day is NULL, never 0. value = the member's
+              per-person SUM over the window across ALL vendors; median/p25/p75/
+              range = the distribution of those per-person SUMs across the
+              member's DEPARTMENT (org_unit_id).
+
+  Department: 5 Engineering members with messages_sent totals {10,20,30,40,50},
+  each dated 2026-12-25 and sourced to prove the cross-vendor union:
+    • alice 10 — Teams only (private 10)
+    • bob   20 — Zulip only (count 20)
+    • carol 30 — Teams 15 + Zulip 15  ← cross-vendor SUM
+    • dave  40 — Teams only (private 40)
+    • erin  50 — Zulip only (count 50)
+  IC case requests carol (30) → value 30 (proves the union sum); the department
+  of 5 yields median 30, p25 20, p75 40, range [10,50].
+  Cases: cross-vendor sum (carol) · single-vendor still non-NULL (bob, Zulip-only)
+  · empty window → NULL, not 0.
+
+  NOTE: Slack is a declared source for this metric but has no e2e fixtures yet
+  (needs schemas/bronze_slack.users_details.yaml + a template generated from the
+  real bronze). The multi-vendor honest-NULL contract ("drop a source → others
+  still non-NULL; drop all → NULL, not 0") is proven here with Teams + Zulip;
+  adding Slack as a third source is a follow-up.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  # M365 Teams — alice (10), carol (15, cross-vendor half), dave (40).
+  bronze_m365.teams_activity:
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: ms-alice-20261225, privateChatMessageCount: 10, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: ms-alice-20261225, privateChatMessageCount: 10, teamChatMessageCount: 0 }   # duplicate → dedup, not 20
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: ms-carol-20261225, privateChatMessageCount: 15, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: ms-dave-20261225,  privateChatMessageCount: 40, teamChatMessageCount: 0 }
+
+  # Zulip directory — only the Zulip senders (bob, carol, erin) need a user row.
+  bronze_zulip_proxy.users:
+    - $ref: templates/zulip.yaml#/templates/bob_user
+    - $ref: templates/zulip.yaml#/templates/carol_user
+    - { $ref: templates/zulip.yaml#/templates/zulip_user, id: 5, email: erin@example.com, full_name: Erin Epsilon, unique_key: zulip-user-5 }
+
+  # Zulip messages — bob (20), carol (15, cross-vendor half), erin (50).
+  bronze_zulip_proxy.messages:
+    - { $ref: templates/zulip.yaml#/templates/zulip_message, sender_id: 2, created_at: "2026-12-25T10:00:00", uniq: ms-z-bob-20261225,   unique_key: msg-bob-20261225,   count: 20 }
+    - { $ref: templates/zulip.yaml#/templates/zulip_message, sender_id: 2, created_at: "2026-12-25T10:00:00", uniq: ms-z-bob-20261225,   unique_key: msg-bob-20261225,   count: 20 }   # duplicate uniq → dedup, not 40
+    - { $ref: templates/zulip.yaml#/templates/zulip_message, sender_id: 3, created_at: "2026-12-25T10:00:00", uniq: ms-z-carol-20261225, unique_key: msg-carol-20261225, count: 15 }
+    - { $ref: templates/zulip.yaml#/templates/zulip_message, sender_id: 5, created_at: "2026-12-25T10:00:00", uniq: ms-z-erin-20261225,  unique_key: msg-erin-20261225,  count: 50 }
+
+cases:
+  # dept {10,20,30,40,50}; carol value 30 (Teams 15 + Zulip 15). median 30, p25 20, p75 40, range [10,50]
+  - name: "messages_sent — cross-vendor SUM (carol = Teams 15 + Zulip 15)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000053
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: collab_person_counter_daily.messages_sent }
+        equal: { value: 30, median: 30, range_min: 10, range_max: 50, p25: 20, p75: 40 }
+
+  # bob has ONLY Zulip — the metric is still non-NULL from the remaining source
+  - name: "messages_sent — single-vendor still non-NULL (bob, Zulip-only = 20)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000053
+            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: collab_person_counter_daily.messages_sent }
+        equal: { value: 20 }
+
+  # ── EMPTY window: no chat rows in range → honest-NULL (no item, not a 0) ──
+  - name: "messages_sent — EMPTY window (no source → NULL, not 0)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000053
+            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"
