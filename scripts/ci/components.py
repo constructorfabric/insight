@@ -47,8 +47,17 @@ COMPONENTS = [
      # service happens to exercise. Scope the report to this service's code.
      "cover_ignore_regex": "src/backend/libs/",
      "paths": ["src/backend/services/analytics"]},
+    # cover=False: the gateway has no unit tests yet (its behavior is covered
+    # by the e2e suite), so a coverage report would gate it at 0% the moment
+    # any file under its paths changes. Tests + lint still run; re-enable
+    # coverage when unit tests land. Mirrors the identity decision below.
     {"name": "api-gateway", "lang": "rust", "root": "src/backend",
      "package": "insight-api-gateway",
+     "cover": False,
+     # When coverage is re-enabled: scope out linked dependency crates
+     # (oidc-authn-plugin, libs) — they self-report in their own jobs, and
+     # zero-hit dependency files would gate THOSE components at 0%.
+     "cover_ignore_regex": "src/backend/(libs|plugins)/",
      "paths": ["src/backend/services/api-gateway"]},
     # jira-enrich is a standalone workspace; its `io` feature needs a live
     # ClickHouse, so cover with default features only (core tests are io-free).
