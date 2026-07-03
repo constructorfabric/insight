@@ -50,6 +50,12 @@ source "$SCRIPT_DIR/lib/ch-exec.sh"
 echo "=== Placeholders (for missing connectors / unbuilt silver) ==="
 
 run_ch <<'SQL'
+-- `insight` is normally created before this script runs (k8s: the
+-- clickhouse-init-svcdbs Job; compose: /docker-entrypoint-initdb.d on
+-- first CH start). Asserting it here keeps the compose seed idempotent
+-- after an operator wipe (DROP DATABASE insight SYNC for a re-bootstrap)
+-- — the initdb script does not re-run on an existing volume.
+CREATE DATABASE IF NOT EXISTS insight;
 CREATE DATABASE IF NOT EXISTS silver;
 CREATE DATABASE IF NOT EXISTS bronze_jira;
 CREATE DATABASE IF NOT EXISTS bronze_m365;
@@ -131,7 +137,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_email_activity (
     received_count    Float64,
     read_count        Float64,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -152,7 +158,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_meeting_activity (
     video_duration_seconds         Float64,
     screen_share_duration_seconds  Float64,
     _version                       UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -170,7 +176,10 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_chat_activity (
     channel_messages_posted_count Float64,
     channel_posts                 Float64,
     _version                      UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+-- `data_source` in the sort key: the compose seed writes one row per
+-- source (insight_m365 + insight_slack) for the same (email, date);
+-- without it ReplacingMergeTree collapses them.
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -188,7 +197,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_document_activity (
     shared_externally_count  Float64,
     viewed_or_edited_count   Float64,
     _version                 UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -199,7 +208,7 @@ if ! ch_table_exists silver class_ai_dev_usage; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     insight_tenant_id    String,
-    source_id            String,
+    source_id            String DEFAULT '',
     unique_key           String,
     email                String,
     api_key_id           Nullable(String),
@@ -218,17 +227,23 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     spec_lines           Nullable(Float64),
     session_count        Nullable(Float64),
     total_chat_messages  Nullable(Float64),
-    cost_cents           Nullable(UInt32),
-    commits_count        Nullable(UInt32),
-    pull_requests_count  Nullable(UInt32),
-    prs_with_cc_count    Nullable(UInt32),
-    prs_total_count      Nullable(UInt32),
+    -- Nullable(Float64), not Nullable(UInt32): the compose seed
+    -- (deploy/seed) inserts float() values into these five.
+    cost_cents           Nullable(Float64),
+    commits_count        Nullable(Float64),
+    pull_requests_count  Nullable(Float64),
+    prs_with_cc_count    Nullable(Float64),
+    prs_total_count      Nullable(Float64),
     tool_action_breakdown_json Nullable(String),
-    source               String,
+    source               String DEFAULT '',
     data_source          String,
     collected_at         Nullable(DateTime64(3)),
     _version             UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+-- `tool` MUST be in the sort key — the compose seed writes cursor and
+-- claude_code rows for the same (email, day); without it,
+-- ReplacingMergeTree collapses them, suppressing whichever was
+-- inserted first.
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day, tool) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 else
   class_ai_dev_usage_placeholder_count="$(
@@ -244,8 +259,8 @@ ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS unique_key String
 ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS api_key_id Nullable(String);
 ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS lines_removed Nullable(Float64);
 ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS total_lines_removed Nullable(Float64);
-ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS commits_count Nullable(UInt32);
-ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS pull_requests_count Nullable(UInt32);
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS commits_count Nullable(Float64);
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS pull_requests_count Nullable(Float64);
 ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS tool_action_breakdown_json Nullable(String);
 ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS source String;
 ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS data_source String;
@@ -282,9 +297,11 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_overage (
     overage_metrics_json String,
     source               String,
     data_source          String,
-    collected_at         DateTime,
+    collected_at         Nullable(DateTime64(3)),
     _version             UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, period_month) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+-- ORDER BY unique_key mirrors the real dbt model (unique_key is
+-- tenant-source-seat-YYYY-MM, one row per seat per month).
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -297,22 +314,30 @@ if ! ch_table_exists silver class_support_activity; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_support_activity (
     tenant_id           String,
+    -- insight_tenant_id is what the compose seed writes; tenant_id is
+    -- the column the real dbt model produces. Both live here until the
+    -- seed generators are aligned with the dbt naming (ADR-0007 debt).
+    insight_tenant_id   String,
     insight_source_id   String,
     unique_key          String,
     data_source         String,
     person_key          String,
     email               String,
     date                Date,
-    updates             Nullable(UInt32),
-    public_comments     Nullable(UInt32),
-    private_comments    Nullable(UInt32),
-    solved              Nullable(UInt32),
+    -- Nullable(Float64), not Nullable(UInt32): the compose seed inserts
+    -- float() values (real dbt model: UInt32 countIf aggregates).
+    updates             Nullable(Float64),
+    public_comments     Nullable(Float64),
+    private_comments    Nullable(Float64),
+    solved              Nullable(Float64),
     kb_articles_created Nullable(UInt32),
-    csat_good           UInt32,
-    csat_total          UInt32,
+    csat_good           Nullable(Float64),
+    csat_total          Nullable(Float64),
     collected_at        DateTime,
     _version            UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+-- `data_source` in the sort key: multi-source rows for the same
+-- (person_key, date) must not collapse under ReplacingMergeTree.
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -462,10 +487,17 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits (
     insight_tenant_id String,
     commit_hash       String,
     project_key       String,
+    repo_slug         String  DEFAULT '',
     tenant_id         String,
     author_email      String,
     date              Date,
     is_merge_commit   UInt8,
+    file_path         String  DEFAULT '',
+    -- Non-Nullable so `toFloat64(sum(c.lines_added + c.lines_removed))`
+    -- in the git_bullet_rows view stays Float64 (the view's structure
+    -- declares metric_value as Float64, not Nullable(Float64)).
+    lines_added       Float64 DEFAULT 0,
+    lines_removed     Float64 DEFAULT 0,
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
@@ -483,6 +515,13 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     state             String,
     created_on        DateTime,
     merged_on         Nullable(DateTime),
+    closed_on         Nullable(DateTime),
+    -- Non-Nullable on purpose. The git_bullet_rows view's UNION branch
+    -- for `pr_size` declares the column as Float64 (non-null); a
+    -- Nullable placeholder makes the UNION type Nullable, which then
+    -- collides with the view structure under join_use_nulls=1.
+    lines_added       Float64 DEFAULT 0,
+    lines_removed     Float64 DEFAULT 0,
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (pr_id) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
@@ -496,6 +535,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes (
     insight_tenant_id String,
     commit_hash       String,
     project_key       String,
+    repo_slug         String DEFAULT '',
     tenant_id         String,
     file_path         String,
     lines_added       Int64,
@@ -713,9 +753,29 @@ CREATE TABLE IF NOT EXISTS silver.mtr_git_person_weekly (
     prs_merged        UInt64,
     code_loc          Int64,
     spec_lines        Int64,
+    -- config_loc: referenced by ic_chart_loc (migration 20260624
+    -- ic-chart-loc-git-breakdown); the view CREATE succeeds without it
+    -- but SELECTing the view throws UNKNOWN_IDENTIFIER.
+    config_loc        Int64,
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, week) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
+else
+  # Reconcile a pre-existing placeholder (only — never a dbt-built table,
+  # which already has the column) to the ic_chart_loc column contract.
+  mtr_git_person_weekly_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='mtr_git_person_weekly' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$mtr_git_person_weekly_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.mtr_git_person_weekly"
+    run_ch <<'SQL'
+ALTER TABLE silver.mtr_git_person_weekly ADD COLUMN IF NOT EXISTS config_loc Int64;
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.mtr_git_person_weekly is not a placeholder"
+  fi
 fi
 
 # bronze_jira — needed by gold-views jira_person_daily, jira_closed_tasks

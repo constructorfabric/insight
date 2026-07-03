@@ -5,9 +5,11 @@ Three responsibilities, run in order on every `silver` subcommand. All
 three are idempotent — re-running converges on the same end state.
 
 1. Create the bronze + silver placeholder tables that the gold-view
-   migrations reference. Driven by `sql/placeholders.sql`, an extract
-   of `insight/src/ingestion/scripts/create-bronze-placeholders.sh`
-   (which is k8s-coupled and unusable from compose).
+   migrations reference, by running the same
+   `insight/src/ingestion/scripts/create-bronze-placeholders.sh` the
+   k8s clickhouse-migrate Hook Job runs. One source of truth — the
+   script only needs bash + curl + CLICKHOUSE_URL/USER/PASSWORD (it
+   talks plain HTTP via lib/ch-exec.sh, no k8s coupling).
 
 2. Apply the gold-view migrations from
    `insight/src/ingestion/scripts/migrations/*.sql` in lexicographic
@@ -23,6 +25,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import clickhouse_connect
@@ -34,11 +37,21 @@ LOG = logging.getLogger("seed.silver")
 
 DEFAULT_DAYS = 60
 
-# SQL inputs. Defaults are the compose seed-sample bind-mount targets
-# (see docker-compose.yml `seed-sample.volumes`); host runs override
-# via env to point at the actual filesystem paths.
-PLACEHOLDERS_SQL = Path(os.environ.get("PLACEHOLDERS_SQL") or "/app/sql/placeholders.sql")
-MIGRATIONS_DIR   = Path(os.environ.get("MIGRATIONS_DIR")   or "/migrations")
+def _ingestion_scripts_dir() -> Path:
+    """Locate src/ingestion/scripts — no env knobs needed.
+
+    In the seed-sample container the dir is bind-mounted at
+    /ingestion-scripts (docker-compose.yml `seed-sample.volumes`).
+    Host runs resolve it relative to this file: deploy/seed lives in
+    the same repo as src/ingestion, two levels below the root.
+
+    Both schema inputs live under it: create-bronze-placeholders.sh
+    (+ its lib/) and migrations/*.sql.
+    """
+    mounted = Path("/ingestion-scripts")
+    if mounted.is_dir():
+        return mounted
+    return Path(__file__).resolve().parents[2] / "src/ingestion/scripts"
 
 
 def _ch_client() -> clickhouse_connect.driver.client.Client:
@@ -80,34 +93,48 @@ def _apply_sql_file(client: clickhouse_connect.driver.client.Client, path: Path)
     return len(statements)
 
 
-def apply_placeholders(client: clickhouse_connect.driver.client.Client) -> int:
-    """CREATE DATABASE + bronze/silver placeholder tables."""
-    if not PLACEHOLDERS_SQL.is_file():
+def apply_placeholders() -> None:
+    """CREATE DATABASE + bronze/silver placeholder tables.
+
+    Delegates to the ingestion repo's create-bronze-placeholders.sh —
+    the exact script the k8s clickhouse-migrate Hook Job runs — so the
+    placeholder DDL has a single source of truth and cannot drift.
+    """
+    script = _ingestion_scripts_dir() / "create-bronze-placeholders.sh"
+    if not script.is_file():
         raise FileNotFoundError(
-            f"placeholders SQL not found at {PLACEHOLDERS_SQL}. "
-            "Did the seed-sample container mount /app/sql? "
-            "(host runs: set PLACEHOLDERS_SQL to an existing "
-            "placeholders.sql path, e.g. ./sql/placeholders.sql when "
-            "running from deploy/seed.)"
+            f"placeholders script not found at {script}. "
+            "In compose, the seed-sample container must mount "
+            "/ingestion-scripts; on a host run, deploy/seed must sit "
+            "inside the insight repo next to src/ingestion."
         )
-    n = _apply_sql_file(client, PLACEHOLDERS_SQL)
-    LOG.info("placeholders: %d statements applied", n)
-    return n
+    host = os.environ.get("CLICKHOUSE_HOST", "clickhouse")
+    port = os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")
+    env = {
+        **os.environ,
+        "CLICKHOUSE_URL": f"http://{host}:{port}",
+        "CLICKHOUSE_USER": os.environ.get("CLICKHOUSE_USER", "insight"),
+        "CLICKHOUSE_PASSWORD": os.environ.get(
+            "CLICKHOUSE_PASSWORD", "insight-local"
+        ),
+    }
+    subprocess.run(["bash", str(script)], env=env, check=True)
+    LOG.info("placeholders: %s applied", script.name)
 
 
 def apply_migrations(client: clickhouse_connect.driver.client.Client) -> int:
     """Apply gold-view migrations in lexicographic order."""
-    if not MIGRATIONS_DIR.is_dir():
+    migrations_dir = _ingestion_scripts_dir() / "migrations"
+    if not migrations_dir.is_dir():
         raise FileNotFoundError(
-            f"migrations dir not found at {MIGRATIONS_DIR}. "
-            "Did the seed-sample container mount /migrations? "
-            "(host runs: set MIGRATIONS_DIR to an existing migrations "
-            "directory, e.g. ../../src/ingestion/scripts/migrations "
-            "when running from deploy/seed.)"
+            f"migrations dir not found at {migrations_dir}. "
+            "In compose, the seed-sample container must mount "
+            "/ingestion-scripts; on a host run, deploy/seed must sit "
+            "inside the insight repo next to src/ingestion."
         )
-    migrations = sorted(MIGRATIONS_DIR.glob("*.sql"))
+    migrations = sorted(migrations_dir.glob("*.sql"))
     if not migrations:
-        raise FileNotFoundError(f"no *.sql migrations under {MIGRATIONS_DIR}")
+        raise FileNotFoundError(f"no *.sql migrations under {migrations_dir}")
     total = 0
     for m in migrations:
         n = _apply_sql_file(client, m)
@@ -153,10 +180,10 @@ def run() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    apply_placeholders()
     client = _ch_client()
     try:
         LOG.info("ClickHouse version: %s", client.server_version)
-        apply_placeholders(client)
         apply_migrations(client)
         generate_rows(client)
         LOG.info("DONE: silver schema + gold views + sample rows in place.")

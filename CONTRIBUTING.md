@@ -430,16 +430,14 @@ cd deploy/seed
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # Identity + silver. Drop `all` and pass `identity` / `silver` for partial.
-# Default paths in seed.py target the compose seed-sample container's
-# bind-mounts (/app/sql, /migrations); host runs override with the
-# actual repo paths.
+# Schema inputs (placeholders script + gold-view migrations) are
+# auto-located: the container bind-mount when present, otherwise
+# repo-relative to deploy/seed. No path env vars needed.
 MARIADB_HOST=127.0.0.1     MARIADB_PORT=3306 \
 MARIADB_USER=insight       MARIADB_PASSWORD=insight-local \
 CLICKHOUSE_HOST=127.0.0.1  CLICKHOUSE_HTTP_PORT=8123 \
 CLICKHOUSE_USER=insight    CLICKHOUSE_PASSWORD=insight-local \
 VITE_DEV_USER_EMAIL=dev@company.nonpresent \
-PLACEHOLDERS_SQL=./sql/placeholders.sql \
-MIGRATIONS_DIR=../../src/ingestion/scripts/migrations \
   .venv/bin/python seed.py all
 
 # 3. Kick analytics so its schema validator re-runs against the

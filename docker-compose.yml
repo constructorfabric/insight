@@ -483,5 +483,7 @@ services:
     volumes:
       # Bind-mount the source so seed.py edits don't need a rebuild.
       - ./deploy/seed:/app:ro
-      # Phase 2 will read these to apply gold view migrations.
-      - ./src/ingestion/scripts/migrations:/migrations:ro
+      # Schema inputs: create-bronze-placeholders.sh + lib/ch-exec.sh
+      # (the same placeholder DDL the k8s clickhouse-migrate Hook Job
+      # applies) and the gold-view migrations/*.sql.
+      - ./src/ingestion/scripts:/ingestion-scripts:ro
