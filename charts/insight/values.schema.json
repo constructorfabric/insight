@@ -115,7 +115,7 @@
       ]
     },
 
-    "analyticsApi":       { "$ref": "#/definitions/appService" },
+    "analytics":          { "$ref": "#/definitions/appService" },
     "identity":           { "$ref": "#/definitions/appService" },
     "frontend":           { "$ref": "#/definitions/appService" },
 

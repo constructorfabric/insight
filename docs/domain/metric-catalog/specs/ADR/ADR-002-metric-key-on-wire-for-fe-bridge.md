@@ -100,7 +100,7 @@ Per the additive-field stability contract, the field can be added without a majo
 
 ## More Information
 
-- Wire-shape struct: `src/backend/services/analytics-api/src/domain/catalog/response.rs`
+- Wire-shape struct: `src/backend/services/analytics/src/domain/catalog/response.rs`
 - DESIGN amendment: `docs/domain/metric-catalog/specs/DESIGN.md` §3.3 Catalog Consumer Contract — the "MUST NOT be reverse-engineered" sentence is narrowed.
 - FE issue: constructorfabric/insight-front#66 — the consumer that needs this bridge.
 - Companion ADR-003 surfaces the `metric_query_catalog` link map for the same transitional release.

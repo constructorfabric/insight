@@ -615,7 +615,7 @@ name = "ADR-0003: Use insight_tenant_id Instead of tenant_id"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "src/backend/services/analytics-api/specs/DESIGN.md"
+path = "docs/components/backend/analytics/DESIGN.md"
 name = "Analytics API Design"
 traceability = "DOCS-ONLY"
 

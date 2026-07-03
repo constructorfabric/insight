@@ -70,5 +70,5 @@ chart picks up the new password from the updated Secret:
 kubectl -n insight-infra rollout restart statefulset/redis-master
 ```
 
-analytics-api reconnects on its next request — no app-side restart
+analytics reconnects on its next request — no app-side restart
 needed if it uses connection pooling with retry.

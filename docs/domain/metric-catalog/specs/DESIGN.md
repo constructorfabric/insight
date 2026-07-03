@@ -165,7 +165,7 @@ The catalog's admin write path depends on `is_tenant_admin(tenant_id)` and an `a
 
 - [ ] `p2` - **ID**: `cpt-metric-cat-constraint-tenant-default`
 
-For single-tenant installations (local dev, on-prem deployments with one tenant, the local gitops cluster) the operator MAY configure a `tenantDefaultId` (UUID) in the analytics-api Helm `values.yaml`; when a request does not carry a tenant context (no session-bound `tenant_id`, no upstream tenant header), `cpt-metric-cat-component-auth-trait` falls back to this configured default for both the read and admin paths. Multi-tenant installations leave `tenantDefaultId` unset — in that mode a tenant-less request is rejected with a canonical `invalid_argument` envelope (`field_violations` entry with `field = "tenant_id"`, `reason = "TENANT_UNRESOLVED"`) per §3.3. Mirrors the identity-resolution pattern (`IDENTITY__identity__tenant_default_id` → `ConfigTenantContext` in `src/backend/services/identity`), so operators see the same single-tenant ergonomic across Insight services.
+For single-tenant installations (local dev, on-prem deployments with one tenant, the local gitops cluster) the operator MAY configure a `tenantDefaultId` (UUID) in the analytics Helm `values.yaml`; when a request does not carry a tenant context (no session-bound `tenant_id`, no upstream tenant header), `cpt-metric-cat-component-auth-trait` falls back to this configured default for both the read and admin paths. Multi-tenant installations leave `tenantDefaultId` unset — in that mode a tenant-less request is rejected with a canonical `invalid_argument` envelope (`field_violations` entry with `field = "tenant_id"`, `reason = "TENANT_UNRESOLVED"`) per §3.3. Mirrors the identity-resolution pattern (`IDENTITY__identity__tenant_default_id` → `ConfigTenantContext` in `src/backend/services/identity`), so operators see the same single-tenant ergonomic across Insight services.
 
 **ADRs**: _no ADRs in v1._
 
@@ -190,7 +190,7 @@ Every `metric_catalog.metric_key` (in `table_name.column_name` form) MUST resolv
 ### 3.1 Domain Model
 
 **Technology**: Rust types (SeaORM-backed entities + pure-domain value objects).
-**Location**: `src/backend/services/analytics-api/src/domain/` (entities) and `src/backend/services/analytics-api/src/services/metric_catalog/` (resolver-side value objects).
+**Location**: `src/backend/services/analytics/src/domain/` (entities) and `src/backend/services/analytics/src/services/metric_catalog/` (resolver-side value objects).
 
 The catalog has four first-class types. Three are persisted (`Metric`, `Threshold`, `AuditEvent`); one is a read-side value object (`ResolvedThreshold`) constructed in memory and never written back. All v1 invariants are enforced at both DB layer (CHECK constraints in migrations) and application layer (CRUD validators) per `cpt-metric-cat-principle-dual-validate`.
 
@@ -314,7 +314,7 @@ The catalog has four first-class types. Three are persisted (`Metric`, `Threshol
 
 ### 3.2 Component Model
 
-All components live within `analytics-api`. The diagram below shows logical structure; deployment is a single service per replica (see §3.8). Read and write paths share the `auth-trait` (writes) and `cache-layer` (reads only; writes invalidate it). `seed-migration` runs at service startup, not on the request path.
+All components live within `analytics`. The diagram below shows logical structure; deployment is a single service per replica (see §3.8). Read and write paths share the `auth-trait` (writes) and `cache-layer` (reads only; writes invalidate it). `seed-migration` runs at service startup, not on the request path.
 
 ```mermaid
 flowchart LR
@@ -535,7 +535,7 @@ Sole writer of `threshold_lock_audit` rows and the corresponding structured log 
 - Does NOT make policy decisions — it accepts events and emits them; the lock-bypass decision lives in `cpt-metric-cat-component-lock-enforcer`.
 - Does NOT read or update older audit rows — `threshold_lock_audit` is append-only.
 - Does NOT manage retention — lifecycle is external to the service.
-- Does NOT validate event content beyond shape; callers are trusted within the analytics-api process.
+- Does NOT validate event content beyond shape; callers are trusted within the analytics process.
 
 ##### Related components (by ID)
 
@@ -579,7 +579,7 @@ Owns the contract that every `metric_key` (in `table_name.column_name` form) res
 
 ##### Responsibility scope
 
-- At service startup (after `cpt-metric-cat-component-seed-migration` finishes), spawn a **background task** that walks every `metric_catalog` row, parses `metric_key` as `table.column`, and queries ClickHouse `system.columns` for existence. The task runs **post-readiness** — the analytics-api readiness probe MUST succeed without it, so a ClickHouse outage cannot block deploys or restart-storm the service.
+- At service startup (after `cpt-metric-cat-component-seed-migration` finishes), spawn a **background task** that walks every `metric_catalog` row, parses `metric_key` as `table.column`, and queries ClickHouse `system.columns` for existence. The task runs **post-readiness** — the analytics readiness probe MUST succeed without it, so a ClickHouse outage cannot block deploys or restart-storm the service.
 - ClickHouse queries MUST use bound parameters: `SELECT count() FROM system.columns WHERE database = ? AND table = ? AND name = ?`. The `metric_key` is parsed in Rust and the two halves are passed as parameters; raw `metric_key` is NEVER string-interpolated into SQL even though the v1 CHECK regex constrains its shape (defense in depth).
 - The ClickHouse principal used here MUST be a read-only role scoped to `system.columns` filtered to the analytics database — principle of least privilege.
 - On ClickHouse unreachable, set `schema_status = 'unchecked'` and `schema_error_code = 'clickhouse_unreachable'`, then retry the affected row(s) with exponential backoff. Emit a metric so operators see degraded mode.
@@ -756,7 +756,7 @@ Fields `type`, `title`, `status`, `detail`, `context` are always present; `insta
 #### Catalog Consumer Contract
 
 - **References**: `cpt-metric-cat-contract-consumer` (defined in PRD §7.2)
-- **Direction**: provided by `analytics-api`
+- **Direction**: provided by `analytics`
 - **Technology**: REST / JSON over HTTPS (mirrors `cpt-metric-cat-interface-read`)
 - **Location**: in this DESIGN — full FEATURE-level spec lands later
 - **Stability**: stable
@@ -769,12 +769,12 @@ Consumers MUST NOT hardcode any catalog-provided field (label, sublabel, descrip
 
 ### 3.4 Internal Dependencies
 
-All nine components live inside the `analytics-api` crate; the catalog has no inbound dependencies from other Insight services. The only internal dependencies that cross a service boundary are the Auth contract (a Rust trait) and the existing analytics-api structured logging stream.
+All nine components live inside the `analytics` crate; the catalog has no inbound dependencies from other Insight services. The only internal dependencies that cross a service boundary are the Auth contract (a Rust trait) and the existing analytics structured logging stream.
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|----------|
-| analytics-api Auth | `TenantAuthorization` trait (`cpt-metric-cat-component-auth-trait`) | Provides `actor_subject`, `tenant_id`, and `is_tenant_admin(tenant_id)` to `cpt-metric-cat-component-admin-crud` and `cpt-metric-cat-component-lock-enforcer`; bound by `cpt-metric-cat-constraint-auth-trait`. |
-| analytics-api structured logging | Structured-log stream (existing Loki / ELK sink) | Receives the real-time half of every audit event emitted by `cpt-metric-cat-component-audit-emitter` (dual sink alongside `threshold_lock_audit`) and every schema-validation state transition emitted by `cpt-metric-cat-component-schema-validator`. |
+| analytics Auth | `TenantAuthorization` trait (`cpt-metric-cat-component-auth-trait`) | Provides `actor_subject`, `tenant_id`, and `is_tenant_admin(tenant_id)` to `cpt-metric-cat-component-admin-crud` and `cpt-metric-cat-component-lock-enforcer`; bound by `cpt-metric-cat-constraint-auth-trait`. |
+| analytics structured logging | Structured-log stream (existing Loki / ELK sink) | Receives the real-time half of every audit event emitted by `cpt-metric-cat-component-audit-emitter` (dual sink alongside `threshold_lock_audit`) and every schema-validation state transition emitted by `cpt-metric-cat-component-schema-validator`. |
 
 **Dependency Rules** (per project conventions):
 
@@ -792,11 +792,11 @@ All nine components live inside the `analytics-api` crate; the catalog has no in
 | `analytics.metrics` table | Read-only (string pointer) + M:N referential link | Holds the existing `query_ref` rows; `metric_catalog.metric_key` aligns by string with the metric keys each query emits. A separate `metric_query_catalog` junction table (§3.7) carries M:N FKs `(metrics.id, metric_catalog.id)` to make "which catalog rows does this query emit" structurally enforced. Catalog still never opens `query_ref`; opacity per PRD §1.1 layer boundary is preserved (the junction carries only IDs, not the SQL payload). |
 | ClickHouse `system.columns` | Read-only schema introspection | Used by `cpt-metric-cat-component-schema-validator` to confirm each metric's `table.column` reference exists; result is cached on `metric_catalog.schema_status` so reads never hit ClickHouse on the request path. |
 | `modkit-canonical-errors` (cyberfabric-core Rust crate) | `CanonicalError` enum + RFC 9457 `Problem` serializer + `#[resource_error]` macro | Every 4xx / 5xx response across catalog endpoints is constructed through this crate per the §3.3 error envelope. Aligns the catalog's wire shape with DNA `REST/API.md §7` and other cyberfabric services so a shared client error handler works across the platform. |
-| analytics-api Helm chart (`src/backend/services/analytics-api/helm/values.yaml`) | `tenantDefaultId` (UUID, optional) → env var `ANALYTICS__metric_catalog__tenant_default_id` → Rust config `metric_catalog.tenant_default_id` | Single-tenant fallback consumed by `cpt-metric-cat-component-auth-trait.resolve_tenant` per `cpt-metric-cat-constraint-tenant-default`. Multi-tenant installs leave it unset. Mirrors `IDENTITY__identity__tenant_default_id` in the identity service. |
+| analytics Helm chart (`src/backend/services/analytics/helm/values.yaml`) | `tenantDefaultId` (UUID, optional) → env var `ANALYTICS__metric_catalog__tenant_default_id` → Rust config `metric_catalog.tenant_default_id` | Single-tenant fallback consumed by `cpt-metric-cat-component-auth-trait.resolve_tenant` per `cpt-metric-cat-constraint-tenant-default`. Multi-tenant installs leave it unset. Mirrors `IDENTITY__identity__tenant_default_id` in the identity service. |
 
 **Dependency Rules** (per project conventions):
 
-- No circular dependencies — analytics-api is the sole writer to its MariaDB schema and the only consumer of the cache; `analytics.metrics` and ClickHouse `system.columns` are read-only here.
+- No circular dependencies — analytics is the sole writer to its MariaDB schema and the only consumer of the cache; `analytics.metrics` and ClickHouse `system.columns` are read-only here.
 - All inter-system traffic crosses versioned contracts (SeaORM entities, `CacheLayer` trait); the catalog never opens or parses external opaque payloads (e.g., `query_ref`).
 - Only `cpt-metric-cat-component-cache-layer` talks to the cache backend; only `cpt-metric-cat-component-seed-migration` and `cpt-metric-cat-component-admin-crud` write to MariaDB tables owned by the catalog.
 - Tenant context is propagated across every external call — cache keys are tenant-prefixed; MariaDB writes carry `tenant_id` even when v1 CHECK constrains it to NULL.
@@ -1130,9 +1130,9 @@ Both rows point at the same catalog row because both queries pivot the same `tas
 
 - [ ] `p3` - **ID**: `cpt-metric-cat-topology-analytics-api`
 
-The catalog ships entirely inside the existing `analytics-api` service; v1 introduces **no new deployment unit**. Every analytics-api replica carries the nine components from §3.2 and, at startup, runs the SeaORM migration runner (`cpt-metric-cat-component-seed-migration`) followed by the schema-validation pass (`cpt-metric-cat-component-schema-validator`). The cache backend (Redis OR pub-sub channel), MariaDB, and the ClickHouse warehouse (queried read-only via `system.columns`) are shared across replicas. Cross-replica invalidation MUST observe `cpt-metric-cat-nfr-cross-replica-invalidation` (≤ 2 s p99) — that bound is the load-bearing reason this layer is not purely in-process.
+The catalog ships entirely inside the existing `analytics` service; v1 introduces **no new deployment unit**. Every analytics replica carries the nine components from §3.2 and, at startup, runs the SeaORM migration runner (`cpt-metric-cat-component-seed-migration`) followed by the schema-validation pass (`cpt-metric-cat-component-schema-validator`). The cache backend (Redis OR pub-sub channel), MariaDB, and the ClickHouse warehouse (queried read-only via `system.columns`) are shared across replicas. Cross-replica invalidation MUST observe `cpt-metric-cat-nfr-cross-replica-invalidation` (≤ 2 s p99) — that bound is the load-bearing reason this layer is not purely in-process.
 
-**Tenancy mode**: a deployment is **single-tenant** when the analytics-api Helm values `tenantDefaultId` is set to a UUID (the auth-trait falls back to it on every tenant-less request) and **multi-tenant** when `tenantDefaultId` is unset (tenant-less requests are rejected per `cpt-metric-cat-constraint-tenant-default`). The catalog itself is identical in both modes — only the auth-trait resolution shape differs.
+**Tenancy mode**: a deployment is **single-tenant** when the analytics Helm values `tenantDefaultId` is set to a UUID (the auth-trait falls back to it on every tenant-less request) and **multi-tenant** when `tenantDefaultId` is unset (tenant-less requests are rejected per `cpt-metric-cat-constraint-tenant-default`). The catalog itself is identical in both modes — only the auth-trait resolution shape differs.
 
 ```
                   ┌─────────────────────────┐
@@ -1142,7 +1142,7 @@ The catalog ships entirely inside the existing `analytics-api` service; v1 intro
                              │ HTTPS
                              ▼
    ┌───────────────────────────────────────────────────┐
-   │   analytics-api replicas (N, behind LB)           │
+   │   analytics replicas (N, behind LB)               │
    │   ┌────────┐  ┌────────┐   ...   ┌────────┐       │
    │   │ rep-1  │  │ rep-2  │         │ rep-N  │       │
    │   └───┬────┘  └───┬────┘         └───┬────┘       │
@@ -1193,10 +1193,10 @@ Three DESIGN-phase Open Questions carry forward from PRD §13. Each is sized to 
 
 **Options**:
 
-- **Redis shared cache** with a tenant-keyed namespace — writes invalidate the shared key; reads on any replica see the change on next fetch. Adds Redis as a runtime dependency for analytics-api.
+- **Redis shared cache** with a tenant-keyed namespace — writes invalidate the shared key; reads on any replica see the change on next fetch. Adds Redis as a runtime dependency for analytics.
 - **Pub-sub broadcast on top of in-process LRU** — each replica keeps an in-process cache; admin-write triggers a pub-sub message that peers consume to drop their keys. Keeps the hit path purely in-process (lowest latency) but doubles cache reasoning (in-process state + broadcast bus).
 
-**Recommendation**: Redis with a tenant-keyed namespace — operationally simpler, and analytics-api already runs alongside other Redis-using services in the cluster. The pub-sub variant only wins if Redis is judged too heavy or unavailable in the target environment.
+**Recommendation**: Redis with a tenant-keyed namespace — operationally simpler, and analytics already runs alongside other Redis-using services in the cluster. The pub-sub variant only wins if Redis is judged too heavy or unavailable in the target environment.
 
 **Resolution-Target**: DESIGN review (before implementation kicks off). The `CacheLayer` trait hides the choice from every other component, so resolution is a single-component swap.
 

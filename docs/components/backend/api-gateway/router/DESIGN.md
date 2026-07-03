@@ -583,7 +583,7 @@ defaults:
     - Forwarded
 routes:
   - prefix: /api/v1/analytics
-    upstream: http://analytics-api.insight.svc.cluster.local:8080
+    upstream: http://analytics.insight.svc.cluster.local:8080
     timeout_ms: 60000
     strip_prefix: false
 
@@ -606,7 +606,7 @@ routes:
     upstream: http://audit-service.insight.svc.cluster.local:8080
 
   - prefix: /api/v1/stream
-    upstream: http://analytics-api.insight.svc.cluster.local:8080
+    upstream: http://analytics.insight.svc.cluster.local:8080
     websocket: true
     timeout_ms: 0
     # Per-route override for the global gateway.websocket_max_lifetime_seconds.

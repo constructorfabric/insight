@@ -15,13 +15,13 @@ clear rule for **who authors and applies the schema**. Options include:
   directory, invoked at deploy time.
 - Per-service migrations, owned and applied by the service itself.
 
-Our one existing precedent — `analytics-api` — follows the second
+Our one existing precedent — `analytics` — follows the second
 pattern (SeaORM `Migrator` embedded in the Rust service, applied via
 `Migrator::up()` at startup). The open question for this ADR is
 whether to extend that pattern to every other service with MariaDB
 tables, or to introduce a separate mechanism alongside it. Services
 in this project are written in different languages (Rust for
-`analytics-api`, .NET 9 for `identity`); the policy must allow each
+`analytics`, .NET 9 for `identity`); the policy must allow each
 service to pick the idiomatic migration library for its language
 while keeping the ownership rules identical.
 
@@ -119,7 +119,7 @@ while keeping the ownership rules identical.
 
 ## Related
 
-- `docs/components/backend/specs/ADR/` (analytics-api SeaORM Migrator
+- `docs/components/backend/specs/ADR/` (analytics SeaORM Migrator
   is the source pattern this ADR generalises).
 - `src/backend/services/identity/src/Insight.Identity.Infrastructure/Migrations/`
   — first .NET service-owned migration set under this policy.

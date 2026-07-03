@@ -324,9 +324,9 @@ Event classification (in `zendesk__support_event`): Comment+public→`public_com
 - 7 metric keys: `support_active`, `support_updates`, `support_public_comments`, `support_private_comments`, `support_solved`, `support_csat_good`, `support_csat_total`. (`support_kb` intentionally not emitted — ComingSoon via catalog.)
 - `support_active` = 1 only when actor activity that day (`updates + public_comments + private_comments + solved > 0`); a CSAT-only day does NOT count as active. Rolls up via max (person) / sum→count-of-active-members (company).
 - `support_solved` = distinct tickets (label "Solved tickets").
-- CSAT % = Σgood / Σtotal, computed in the analytics-api `query_ref`.
+- CSAT % = Σgood / Σtotal, computed in the analytics `query_ref`.
 
-**Downstream (shipped)**: analytics-api Support metric sets (Team/IC) + `metric_catalog` + thresholds; a frontend "Support" dashboard section. Also: ticket-volume / CSAT-distribution analytics from `support_tickets` + `zendesk_satisfaction_ratings`.
+**Downstream (shipped)**: analytics Support metric sets (Team/IC) + `metric_catalog` + thresholds; a frontend "Support" dashboard section. Also: ticket-volume / CSAT-distribution analytics from `support_tickets` + `zendesk_satisfaction_ratings`.
 
 ---
 

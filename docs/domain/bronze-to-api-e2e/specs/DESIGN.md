@@ -29,15 +29,15 @@
 ## Changelog
 
 - **v1.1** (current): Authoring format moves from per-folder CSV (`bronze/*.csv` + `spec.yaml` + `expected/response.csv`) to a single declarative `<name>.test.yaml` (see `cpt-bronze-to-api-e2e-feature-yaml-rig`). Adds three components — `ref-resolver` (composition via `$ref` + sibling overrides), `schema-validator` (per-table JSON schema, padding, validation), `expect-engine` (exact-equality `find` + `equal` subset + CEL `assert` over the batch response) — and retires `csv-asserter`. `fixture-loader` is repurposed to load `*.test.yaml`. The API roundtrip targets the batch endpoint `POST /v1/metrics/queries`. The transformation path (bronze→silver→gold→API) is unchanged; only the authoring format and assertion engine change.
-- **v1.0**: Initial design. Establishes 7 components (fixture-loader, ch-seeder, dbt-runner, migration-applier, api-client, csv-asserter, session-rig), the data plane (docker compose with ClickHouse + MariaDB), the service plane (`analytics-api` binary on host with `cargo build --release`), and the assertion plane (pandas). Vertically slices through the bronze→silver→gold→API path defined in `cpt-dataflow-design-pipeline`.
+- **v1.0**: Initial design. Establishes 7 components (fixture-loader, ch-seeder, dbt-runner, migration-applier, api-client, csv-asserter, session-rig), the data plane (docker compose with ClickHouse + MariaDB), the service plane (`analytics` binary on host with `cargo build --release`), and the assertion plane (pandas). Vertically slices through the bronze→silver→gold→API path defined in `cpt-dataflow-design-pipeline`.
 
 ## 1. Architecture Overview
 
 ### 1.1 Architectural Vision
 
-The Bronze-to-API E2E Test Framework wraps Constructor Insight's existing transformation stack — ClickHouse, dbt, the migration view set, the analytics-api binary, MariaDB — and drives it from a declarative fixture format. The defining property is **layer parity**: nothing under test is simulated. The test ClickHouse is the same image as production, the dbt models are the same files dbt runs in Argo, the gold views are applied by the same SQL that runs in deploy, and the `analytics-api` binary is the same compilation artifact the K8s deployment ships. Only Airbyte (data ingress) is bypassed — bronze is seeded by direct CSV INSERT, which is what we want to test against, not Airbyte's correctness.
+The Bronze-to-API E2E Test Framework wraps Constructor Insight's existing transformation stack — ClickHouse, dbt, the migration view set, the analytics binary, MariaDB — and drives it from a declarative fixture format. The defining property is **layer parity**: nothing under test is simulated. The test ClickHouse is the same image as production, the dbt models are the same files dbt runs in Argo, the gold views are applied by the same SQL that runs in deploy, and the `analytics` binary is the same compilation artifact the K8s deployment ships. Only Airbyte (data ingress) is bypassed — bronze is seeded by direct CSV INSERT, which is what we want to test against, not Airbyte's correctness.
 
-The second defining property is **shared session, scoped work**: docker compose, ClickHouse migrations, the dbt manifest parse, and the analytics-api binary all happen once per pytest session and amortize across every test. Per-test work is narrow: TRUNCATE the touched bronze tables, INSERT this test's CSVs, run a dbt selector that touches only the slice this test needs (`--defer --state target/`), call the API, diff the response. The framework is designed so the wall-clock cost of "what changed for this test" stays near the cost of the work that actually changed, not the cost of the whole pipeline.
+The second defining property is **shared session, scoped work**: docker compose, ClickHouse migrations, the dbt manifest parse, and the analytics binary all happen once per pytest session and amortize across every test. Per-test work is narrow: TRUNCATE the touched bronze tables, INSERT this test's CSVs, run a dbt selector that touches only the slice this test needs (`--defer --state target/`), call the API, diff the response. The framework is designed so the wall-clock cost of "what changed for this test" stays near the cost of the work that actually changed, not the cost of the whole pipeline.
 
 ### 1.2 Architecture Drivers
 
@@ -51,7 +51,7 @@ The second defining property is **shared session, scoped work**: docker compose,
 | `cpt-bronze-to-api-e2e-fr-bronze-truncate` | `ch-seeder` records touched tables and `TRUNCATE`s only those in test teardown. Bronze tables themselves are created once at session start by a connector-bootstrap step. |
 | `cpt-bronze-to-api-e2e-fr-dbt-run-scoped` | `dbt-runner` parses the manifest once (`dbt parse` in session fixture) and shells out to `dbt build --select <spec.dbt_selector> --defer --state target/` per test. |
 | `cpt-bronze-to-api-e2e-fr-gold-view-queried` | `migration-applier` shells out `clickhouse-client --multiquery < migrations/*.sql` once per session, in lexical order. Idempotent (`CREATE OR REPLACE VIEW`). |
-| `cpt-bronze-to-api-e2e-fr-api-roundtrip` | `api-client` spawns `analytics-api` once per session, binds to `127.0.0.1:<random>`, drives requests via `requests`. Auth disabled via `--auth-disabled`. |
+| `cpt-bronze-to-api-e2e-fr-api-roundtrip` | `api-client` spawns `analytics` once per session, binds to `127.0.0.1:<random>`, drives requests via `requests`. Auth disabled via `--auth-disabled`. |
 | `cpt-bronze-to-api-e2e-fr-csv-assert` | `csv-asserter` flattens response `items[]` into a `DataFrame`, sorts both sides by `key_columns`, runs `pandas.testing.assert_frame_equal` with the spec's `float_tolerance`. On failure, renders first 20 mismatched cells with row key + column. |
 | `cpt-bronze-to-api-e2e-fr-test-isolation` | `session-rig` injects a `WORKER_ID` env var; `ch-seeder` and `dbt-runner` suffix every schema with `_w{N}`. |
 
@@ -59,9 +59,9 @@ The second defining property is **shared session, scoped work**: docker compose,
 
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
-| `cpt-bronze-to-api-e2e-nfr-cold-start` | Cold session ≤ 60 s warm cache | `session-rig` + `migration-applier` + `api-client` | docker compose pulls cached images; migrations idempotent; analytics-api built once with `cargo build --release` and cached in `target/`; dbt manifest parsed once | Session fixture wraps in `time.perf_counter()`; CI step fails if elapsed > 60 s on warm cache or > 180 s on cold cache |
+| `cpt-bronze-to-api-e2e-nfr-cold-start` | Cold session ≤ 60 s warm cache | `session-rig` + `migration-applier` + `api-client` | docker compose pulls cached images; migrations idempotent; analytics built once with `cargo build --release` and cached in `target/`; dbt manifest parsed once | Session fixture wraps in `time.perf_counter()`; CI step fails if elapsed > 60 s on warm cache or > 180 s on cold cache |
 | `cpt-bronze-to-api-e2e-nfr-per-test-latency` | p50 ≤ 5 s, p95 ≤ 15 s | `dbt-runner` + `ch-seeder` + `csv-asserter` | Selector-scoped dbt (only touched models); TRUNCATE-not-DROP between tests; pandas in-process diff | pytest-benchmark fixture records per-test wall clock; CI publishes p50/p95 and fails if budget exceeded over rolling 20-test window |
-| `cpt-bronze-to-api-e2e-nfr-parallel-safe` | Zero cross-worker contamination | `session-rig` + `ch-seeder` + `dbt-runner` | Per-worker schema suffix (`_w0`, `_w1`, …); analytics-api binary is read-only against per-worker schemas | `tests/e2e/meta/test_parallel_isolation.py` runs 100 randomized parallel pairs; CI fails on any contamination |
+| `cpt-bronze-to-api-e2e-nfr-parallel-safe` | Zero cross-worker contamination | `session-rig` + `ch-seeder` + `dbt-runner` | Per-worker schema suffix (`_w0`, `_w1`, …); analytics binary is read-only against per-worker schemas | `tests/e2e/meta/test_parallel_isolation.py` runs 100 randomized parallel pairs; CI fails on any contamination |
 | `cpt-bronze-to-api-e2e-nfr-diff-readability` | Cell-precise diff in pytest captured stdout | `csv-asserter` | Custom `assert_frame_equal` wrapper that catches the assertion, formats first 20 mismatches as `(key, column, expected, actual)` lines, raises a new `AssertionError` with that text — visible in pytest report | `tests/e2e/meta/test_diff_format.py` injects a known mismatch and asserts the captured stdout contains the expected (key, column) pairs |
 
 ### 1.3 Architecture Layers
@@ -88,7 +88,7 @@ flowchart TD
         CA["csv-asserter"]
     end
     subgraph Service["Service plane (host)"]
-        API["analytics-api binary<br/>(auth disabled)"]
+        API["analytics binary<br/>(auth disabled)"]
     end
 
     FX --> FL --> CS --> CH
@@ -108,7 +108,7 @@ flowchart TD
 | Test Runtime | Discovery, parameterization, parallel orchestration, lifecycle | pytest ≥ 8, pytest-xdist |
 | Data Plane | Persistent storage of bronze/staging/silver/gold rows + metric defs | docker compose: ClickHouse 24.x, MariaDB 11.x |
 | Tooling | Per-test work: load, seed, run dbt, call API, assert | Python ≥ 3.12, clickhouse-driver, pandas |
-| Service Plane | Service under test | `analytics-api` Rust/axum binary, built `--release`, run on host |
+| Service Plane | Service under test | `analytics` Rust/axum binary, built `--release`, run on host |
 
 ## 2. Principles & Constraints
 
@@ -124,7 +124,7 @@ Bronze is seeded by direct CSV INSERT. Airbyte is intentionally out of the test 
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-principle-shared-session`
 
-Expensive setup (docker compose, ClickHouse migrations, dbt manifest parse, analytics-api spawn) is paid once per pytest session. Per-test cleanup uses `TRUNCATE` on the touched bronze tables, never `DROP`. The lifecycle is `session > worker > test`; nothing more invasive runs between tests.
+Expensive setup (docker compose, ClickHouse migrations, dbt manifest parse, analytics spawn) is paid once per pytest session. Per-test cleanup uses `TRUNCATE` on the touched bronze tables, never `DROP`. The lifecycle is `session > worker > test`; nothing more invasive runs between tests.
 
 #### Fixtures are the source of truth, not snapshots
 
@@ -162,7 +162,7 @@ Tests inject data, not schemas. Migrations are applied once per session by `migr
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-constraint-loopback-only`
 
-The spawned `analytics-api` binds to `127.0.0.1:<random>`. The compose stack publishes ClickHouse / MariaDB ports on loopback only. No port is exposed on `0.0.0.0`.
+The spawned `analytics` binds to `127.0.0.1:<random>`. The compose stack publishes ClickHouse / MariaDB ports on loopback only. No port is exposed on `0.0.0.0`.
 
 ## 3. Technical Architecture
 
@@ -280,7 +280,7 @@ The contract under test is the HTTP boundary. Linking directly against the axum 
 
 ##### Responsibility scope
 
-Once per session: `cargo build --release -p analytics-api` (cached via `CARGO_TARGET_DIR`), spawn the binary with `INSIGHT_ANALYTICS_API_AUTH_DISABLED=true`, env vars pointing at the test ClickHouse and MariaDB, bind to `127.0.0.1:<random>`, wait for `/health` to return 200. Per test: build the request from `spec.yaml` (`endpoint`, `method`, `request_body`), POST/GET, deserialize, return an `ApiResponse`. On session teardown: SIGTERM, wait, SIGKILL on timeout.
+Once per session: `cargo build --release -p analytics` (cached via `CARGO_TARGET_DIR`), spawn the binary with `INSIGHT_ANALYTICS_AUTH_DISABLED=true`, env vars pointing at the test ClickHouse and MariaDB, bind to `127.0.0.1:<random>`, wait for `/health` to return 200. Per test: build the request from `spec.yaml` (`endpoint`, `method`, `request_body`), POST/GET, deserialize, return an `ApiResponse`. On session teardown: SIGTERM, wait, SIGKILL on timeout.
 
 ##### Responsibility boundaries
 
@@ -395,11 +395,11 @@ Does **NOT**: call the API; render to a frontend; persist anything except (in up
 
 ##### Why this component exists
 
-The expensive setup must happen exactly once per pytest session and be observable by every test and every worker. The framework needs a single place that owns the lifecycle of compose, ClickHouse, MariaDB, the analytics-api binary, dbt manifest, and worker context.
+The expensive setup must happen exactly once per pytest session and be observable by every test and every worker. The framework needs a single place that owns the lifecycle of compose, ClickHouse, MariaDB, the analytics binary, dbt manifest, and worker context.
 
 ##### Responsibility scope
 
-Declares pytest fixtures with `scope="session"` for: (a) docker compose up + healthcheck wait; (b) ClickHouse bronze schema bootstrap (per-connector); (c) `migration-applier` once; (d) MariaDB metric-catalog seed; (e) `dbt parse` once; (f) `analytics-api` binary build + spawn. Declares a `scope="function"` fixture that injects `Fixture` + `WorkerContext` into each test. Owns the teardown order (reverse).
+Declares pytest fixtures with `scope="session"` for: (a) docker compose up + healthcheck wait; (b) ClickHouse bronze schema bootstrap (per-connector); (c) `migration-applier` once; (d) MariaDB metric-catalog seed; (e) `dbt parse` once; (f) `analytics` binary build + spawn. Declares a `scope="function"` fixture that injects `Fixture` + `WorkerContext` into each test. Owns the teardown order (reverse).
 
 ##### Responsibility boundaries
 
@@ -411,14 +411,14 @@ Does **NOT**: perform any per-test work directly (delegates to other components)
 
 ### 3.3 API Contracts
 
-The framework consumes the existing analytics-api HTTP surface. No new endpoints are introduced.
+The framework consumes the existing analytics HTTP surface. No new endpoints are introduced.
 
 - [ ] `p2` - **ID**: `cpt-bronze-to-api-e2e-interface-pytest-entry` *(defined in PRD §7.1)*
 
 - **Contracts**: `cpt-bronze-to-api-e2e-contract-api-response`
 - **Technology**: HTTP/JSON over loopback
 
-**Endpoints Overview** (consumed; service is `analytics-api`):
+**Endpoints Overview** (consumed; service is `analytics`):
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
@@ -436,14 +436,14 @@ The framework consumes the existing analytics-api HTTP surface. No new endpoints
 |-------------------|----------------|---------|
 | `src/ingestion/dbt/` (dbt project) | dbt CLI (subprocess), `target/manifest.json` | Run staging/silver models with selectors |
 | `src/ingestion/scripts/migrations/` | `clickhouse-client --multiquery` | Apply gold views |
-| `src/backend/services/analytics-api/` | HTTP loopback against the built binary | Service under test |
+| `src/backend/services/analytics/` | HTTP loopback against the built binary | Service under test |
 | `src/ingestion/connectors/*/airbyte/connector.yaml` | Read-only — derives the bronze table list (used by session-rig connector bootstrap) | Knows which bronze schemas to create at session start |
 
 **Dependency Rules**:
 
 - No circular dependencies (the framework lives downstream of all the modules above)
 - The framework MUST NOT modify any file under `src/ingestion/dbt/` or `src/ingestion/scripts/migrations/` at runtime
-- The analytics-api binary is the only Rust artifact the framework consumes — it is built from source (no pre-built image dependency)
+- The analytics binary is the only Rust artifact the framework consumes — it is built from source (no pre-built image dependency)
 
 ### 3.5 External Dependencies
 
@@ -457,12 +457,12 @@ The framework consumes the existing analytics-api HTTP surface. No new endpoints
 
 | Dependency | Interface | Purpose |
 |------------|-----------|---------|
-| `mariadb:11.x` | MySQL protocol 3306, `mariadb` CLI | Stores `analytics.metrics`, `analytics.thresholds`, `table_columns` — the catalog the analytics-api reads |
+| `mariadb:11.x` | MySQL protocol 3306, `mariadb` CLI | Stores `analytics.metrics`, `analytics.thresholds`, `table_columns` — the catalog the analytics reads |
 
 **Dependency Rules**:
 
 - Both containers run on the docker compose private bridge network; ports are published on `127.0.0.1` only
-- Credentials are generated at session start (random per-run) and injected into both containers and the spawned `analytics-api` via env vars
+- Credentials are generated at session start (random per-run) and injected into both containers and the spawned `analytics` via env vars
 - No external network is required after image pull — the framework MUST work offline once images are cached
 
 ### 3.6 Interactions & Sequences
@@ -483,7 +483,7 @@ sequenceDiagram
     participant CH as ClickHouse
     participant DR as dbt-runner
     participant AC as api-client
-    participant API as analytics-api
+    participant API as analytics
     participant CA as csv-asserter
 
     pytest->>FL: load fixtures/<name>/
@@ -528,7 +528,7 @@ sequenceDiagram
     SR->>MD: seed analytics.metrics (test catalog)
     SR->>DR: dbt parse
     DR-->>SR: target/manifest.json
-    SR->>AC: build + spawn analytics-api on 127.0.0.1:<random>
+    SR->>AC: build + spawn analytics on 127.0.0.1:<random>
     AC->>API: ready (GET /health)
     SR-->>pytest: ready, total elapsed Tms
 ```
@@ -546,14 +546,14 @@ No new persistent tables are introduced. No DDL on `insight.*` (gold) is perform
 
 - [ ] `p3` - **ID**: `cpt-bronze-to-api-e2e-topology-localhost`
 
-`docker compose` under `src/ingestion/tests/e2e/compose/`. Two services on a private bridge network; both publish on `127.0.0.1` only. analytics-api binary runs on the developer host (not in a container) to keep the cargo build cache hot across sessions. The host process talks to compose services via published loopback ports.
+`docker compose` under `src/ingestion/tests/e2e/compose/`. Two services on a private bridge network; both publish on `127.0.0.1` only. analytics binary runs on the developer host (not in a container) to keep the cargo build cache hot across sessions. The host process talks to compose services via published loopback ports.
 
 ```text
 ┌─────────── developer host / CI runner ────────────┐
 │                                                   │
 │  pytest worker(s)  ──┐                            │
 │                      │                            │
-│  analytics-api ──────┼───► 127.0.0.1:<random-1>   │
+│  analytics ──────────┼───► 127.0.0.1:<random-1>   │
 │                      │                            │
 │                      └───► 127.0.0.1:30123 ──► CH (compose)
 │                          ► 127.0.0.1:30306 ──► MariaDB (compose)
@@ -565,12 +565,12 @@ No new persistent tables are introduced. No DDL on `insight.*` (gold) is perform
 
 **Why not testcontainers-python in v1**: testcontainers-python is a fine library, but a hand-written docker compose is more transparent for debugging (developers already use `docker compose` directly) and avoids a dependency on a Python testcontainers version pin. If the rig grows ports / services and the compose file becomes unmanageable, switching is a single-component change inside `session-rig`.
 
-**Why a host-side analytics-api binary, not a container**: cargo's incremental compile is the dominant cost in development. Running cargo against `/var/lib/docker/volumes/...` adds I/O latency and complicates cache reuse across branches. Building on the host keeps `target/` warm and fits the typical Rust developer workflow.
+**Why a host-side analytics binary, not a container**: cargo's incremental compile is the dominant cost in development. Running cargo against `/var/lib/docker/volumes/...` adds I/O latency and complicates cache reuse across branches. Building on the host keeps `target/` warm and fits the typical Rust developer workflow.
 
 **Why not Rust-side `axum::Router::oneshot`**: the OData filter parser and auth middleware are wired in `router()` setup but the codepath that calls `axum::Router::oneshot` bypasses any TCP/serialization quirks that the actual deployment would exercise. The per-request HTTP cost (a few ms on loopback) is negligible compared to dbt/ClickHouse work, and the contract fidelity is worth it.
 
 ## 5. Traceability
 
 - **PRD**: [PRD.md](./PRD.md)
-- **ADRs**: none in v1 — create under `ADR/` if a contested decision arises (e.g. compose vs testcontainers, host vs containerized analytics-api)
+- **ADRs**: none in v1 — create under `ADR/` if a contested decision arises (e.g. compose vs testcontainers, host vs containerized analytics)
 - **Features**: enumerated in [DECOMPOSITION.md](./DECOMPOSITION.md)

@@ -393,7 +393,7 @@ across all sources for a tenant". A violation indicates a corrupted
 problem and risk wrong-person responses. 422 (RFC 9110 §15.5.21
 "semantically correct request, server cannot process due to
 data state") matches the cyberfabric platform convention used by
-analytics-api for similar invariant breaches.
+the analytics service for similar invariant breaches.
 
 **Actors**: `cpt-insightspec-actor-platform-sre`
 

@@ -37,7 +37,7 @@ apiGateway:
   ingress:
     enabled: false
 
-analyticsApi:
+analytics:
   replicaCount: 1
 
 identity:

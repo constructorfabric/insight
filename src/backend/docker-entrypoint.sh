@@ -2,7 +2,7 @@
 # Shared entrypoint for the Insight backend service containers.
 #
 # Copied into the image by each service Dockerfile (api-gateway,
-# analytics-api, identity). Behaviour switches on ENABLE_AUTO_RELOAD:
+# analytics, identity). Behaviour switches on ENABLE_AUTO_RELOAD:
 #
 #   unset / anything else  : exec the command directly (prod default)
 #   true | 1               : wrap the command in `watchexec` so that a

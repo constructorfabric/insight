@@ -134,7 +134,7 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      # DB-backed components (analytics-api) run their #[ignore]d live_tests
+      # DB-backed components (analytics) run their #[ignore]d live_tests
       # against a real MariaDB. Gated on live_db so only those entries pay the
       # ~15s startup. ClickHouse is intentionally not provisioned — CH-gated
       # tests skip themselves (see cf/insight#1564).
@@ -172,7 +172,7 @@ jobs:
           if [ "${{ matrix.entry.live_db }}" = "true" ]; then
             # The gear reads its DB URL from APP__gears__<alias>__config__database_url
             # (underscore alias bridged to the kebab gear key by fold_gear_env_alias).
-            APP__gears__analytics_api__config__database_url="$INTEGRATION_TESTS_MARIADB_URL" \
+            APP__gears__analytics__config__database_url="$INTEGRATION_TESTS_MARIADB_URL" \
               cargo llvm-cov run --no-report --package "${{ matrix.entry.package }}" $feats -- \
                 -c "services/${{ matrix.entry.name }}/config/insight.yaml" migrate
             cargo llvm-cov --no-report --package "${{ matrix.entry.package }}" $feats -- --include-ignored

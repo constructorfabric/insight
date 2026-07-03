@@ -701,7 +701,7 @@ https://insight.customer.com/
 
 Ingress routing rules:
 - `/` → frontend (nginx)
-- `/api/v1/analytics/*` → analytics-api service
+- `/api/v1/analytics/*` → analytics service
 - `/api/v1/connectors/*` → connector-manager service
 - `/api/v1/identity/*` → identity-service
 - `/api/v1/alerts/*` → alerts-service
@@ -1100,7 +1100,7 @@ Bundled Prometheus + Grafana + Alertmanager stack for platform operators.
 
 Each service has its own Helm chart (co-located at `services/{name}/helm/`). Shared infrastructure has separate charts under `infra/`. ArgoCD deploys each as an independent Application. Works on any K8s cluster (AWS EKS, GCP GKE, Azure AKS, on-prem).
 
-**Per-service Helm chart structure** (e.g., `services/analytics-api/helm/`):
+**Per-service Helm chart structure** (e.g., `services/analytics/helm/`):
 
 ```text
 helm/
@@ -1221,7 +1221,7 @@ Tenant Admin can trigger Silver/Gold rebuild from Bronze via Connector Manager �
 ```text
 insight/
 ├── services/
-│   ├── analytics-api/
+│   ├── analytics/
 │   │   ├── src/
 │   │   ├── helm/                      # Service-specific Helm chart
 │   │   │   ├── Chart.yaml

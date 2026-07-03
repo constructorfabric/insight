@@ -33,10 +33,10 @@ COMPONENTS = [
     {"name": "oidc-authn-plugin", "lang": "rust", "root": "src/backend",
      "package": "oidc-authn-plugin",
      "paths": ["src/backend/plugins/oidc-authn-plugin"]},
-    {"name": "analytics-api", "lang": "rust", "root": "src/backend",
-     "package": "analytics-api",
+    {"name": "analytics", "lang": "rust", "root": "src/backend",
+     "package": "analytics",
      # DB-backed integration tests: the CI rust job provisions a MariaDB
-     # service, runs `analytics-api migrate` once up front, then runs the
+     # service, runs `analytics migrate` once up front, then runs the
      # `#[ignore]`d live_tests (INTEGRATION_TESTS_MARIADB_URL). ClickHouse
      # tests skip (no INTEGRATION_TESTS_CLICKHOUSE_URL — see cf/insight#1564).
      "live_db": True,
@@ -46,7 +46,7 @@ COMPONENTS = [
      # would let this service's report drag their number down to whatever this
      # service happens to exercise. Scope the report to this service's code.
      "cover_ignore_regex": "src/backend/libs/",
-     "paths": ["src/backend/services/analytics-api"]},
+     "paths": ["src/backend/services/analytics"]},
     {"name": "api-gateway", "lang": "rust", "root": "src/backend",
      "package": "insight-api-gateway",
      "paths": ["src/backend/services/api-gateway"]},

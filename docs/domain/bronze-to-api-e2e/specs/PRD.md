@@ -39,41 +39,41 @@
 
 ## Changelog
 
-- **v1.0** (current): Initial PRD. Establishes the Bronze-to-API E2E Test Framework as a developer-facing tool: each test is a folder of CSV fixtures (bronze inputs + expected API response) and the runner exercises the full data path bronze → dbt staging/silver → ClickHouse gold views (from migrations) → analytics-api HTTP response → CSV assert. Airbyte sync, Argo/Kestra orchestration, and the frontend are explicitly out of v1 scope. v1 ships pytest + local docker compose with one shared ClickHouse and one shared MariaDB per session.
+- **v1.0** (current): Initial PRD. Establishes the Bronze-to-API E2E Test Framework as a developer-facing tool: each test is a folder of CSV fixtures (bronze inputs + expected API response) and the runner exercises the full data path bronze → dbt staging/silver → ClickHouse gold views (from migrations) → analytics HTTP response → CSV assert. Airbyte sync, Argo/Kestra orchestration, and the frontend are explicitly out of v1 scope. v1 ships pytest + local docker compose with one shared ClickHouse and one shared MariaDB per session.
 
 ## 1. Overview
 
 ### 1.1 Purpose
 
-The Bronze-to-API E2E Test Framework is a developer-facing test harness that exercises Constructor Insight's full data transformation path — from a connector-shaped bronze row to an analytics-api HTTP response — using a declarative, folder-based fixture format. Each test is a folder of CSV files describing what the connector would have written to bronze and what the API is expected to return; the runner seeds bronze, runs dbt, applies the migration-defined gold views, calls the API, and diffs the response against the expected CSV.
+The Bronze-to-API E2E Test Framework is a developer-facing test harness that exercises Constructor Insight's full data transformation path — from a connector-shaped bronze row to an analytics HTTP response — using a declarative, folder-based fixture format. Each test is a folder of CSV files describing what the connector would have written to bronze and what the API is expected to return; the runner seeds bronze, runs dbt, applies the migration-defined gold views, calls the API, and diffs the response against the expected CSV.
 
-It exists so that a developer changing any layer of the pipeline (dbt model, migration view, analytics-api SQL builder, OData filter parser) gets a same-day signal that their change is consistent with the contract the UI consumes — without standing up a kind cluster, without running Airbyte, and without waiting for an external system.
+It exists so that a developer changing any layer of the pipeline (dbt model, migration view, analytics SQL builder, OData filter parser) gets a same-day signal that their change is consistent with the contract the UI consumes — without standing up a kind cluster, without running Airbyte, and without waiting for an external system.
 
 ### 1.2 Background / Problem Statement
 
-Today the only automated coverage of Insight's transformation pipeline is dbt's own generic tests (`unique`, `not_null`) plus a small set of hand-written assertion tests under `src/ingestion/dbt/tests/`. They catch dbt-level invariants on silver tables but they don't observe the gold views (created by ClickHouse migrations in `src/ingestion/scripts/migrations/`) and they don't observe the analytics-api response shape that the UI actually reads. A typical regression — a renamed column in a dbt model, a changed `argMax` in a migration view, a tightened OData filter parser in the Rust service — sneaks past CI and gets caught either by a developer running the stack locally or by a tenant in production.
+Today the only automated coverage of Insight's transformation pipeline is dbt's own generic tests (`unique`, `not_null`) plus a small set of hand-written assertion tests under `src/ingestion/dbt/tests/`. They catch dbt-level invariants on silver tables but they don't observe the gold views (created by ClickHouse migrations in `src/ingestion/scripts/migrations/`) and they don't observe the analytics response shape that the UI actually reads. A typical regression — a renamed column in a dbt model, a changed `argMax` in a migration view, a tightened OData filter parser in the Rust service — sneaks past CI and gets caught either by a developer running the stack locally or by a tenant in production.
 
 The transformation chain has four authoring surfaces:
 
 - **dbt models** under `src/ingestion/silver/` and `src/ingestion/connectors/*/dbt/`
 - **ClickHouse migration views** (~28 gold views, e.g. `insight.people`, `insight.commits_daily`) under `src/ingestion/scripts/migrations/`
-- **analytics-api Rust code** under `src/backend/services/analytics-api/` (metric query builder, OData filter parser, ClickHouse SQL emission)
+- **analytics Rust code** under `src/backend/services/analytics/` (metric query builder, OData filter parser, ClickHouse SQL emission)
 - **Metric catalog rows** in MariaDB (`analytics.metrics.query_ref`)
 
-A change to any one of these surfaces can break the contract `Frontend ← analytics-api ← gold view ← silver`. There is currently no test rig that observes the end-to-end contract on the same machine where the developer is editing.
+A change to any one of these surfaces can break the contract `Frontend ← analytics ← gold view ← silver`. There is currently no test rig that observes the end-to-end contract on the same machine where the developer is editing.
 
 The related "is the data correct?" question (whether a metric value is semantically right for a tenant's situation) is a different problem and is **not** solved by this PRD. This framework checks that the pipeline emits the expected value given a known input; it does not check that the input itself reflects reality.
 
 **Target Users**:
 
 - Data engineers authoring or changing dbt models and migration views
-- Backend developers changing analytics-api endpoints, query builder, or filter parsing
+- Backend developers changing analytics endpoints, query builder, or filter parsing
 - CI pipelines verifying PRs that touch any of the four authoring surfaces above
 
 **Key Problems Solved**:
 
 - No coverage of the gold-view layer (migration-defined views) in current tests
-- No coverage of the analytics-api response shape in current tests
+- No coverage of the analytics response shape in current tests
 - Setting up a full local environment to test a single dbt/view/api change takes minutes; this framework should take seconds per test
 
 ### 1.3 Goals (Business Outcomes)
@@ -90,7 +90,7 @@ The related "is the data correct?" question (whether a metric value is semantica
 - Author a test as `fixtures/<name>/bronze/*.csv` + `spec.yaml` + `expected/response.csv`
 - Seed only the affected bronze tables from CSVs; never run Airbyte
 - Run a dbt selector that builds exactly the silver/staging models needed by the test
-- Query the analytics-api over HTTP loopback and compare the response items against an expected CSV with a cell-precise diff
+- Query the analytics over HTTP loopback and compare the response items against an expected CSV with a cell-precise diff
 - Regenerate expected CSVs from actual output via an explicit flag (golden update — gated behind a follow-on FEATURE)
 - Parallelize via `pytest-xdist` with worker-scoped namespace suffixes
 
@@ -100,9 +100,9 @@ The related "is the data correct?" question (whether a metric value is semantica
 |------|------------|
 | Fixture | A folder under `src/ingestion/tests/e2e/fixtures/<test_name>/` containing `bronze/*.csv`, `spec.yaml`, and `expected/response.csv`. The unit a developer authors. |
 | Bronze input CSV | A CSV file mapping 1-to-1 onto a bronze table (`bronze_<connector>.<entity>`). First row = column names; empty cell = SQL NULL. |
-| Expected response CSV | A CSV file matching the JSON shape of `analytics-api` response `items[]` for the test's request, flattened to columns. |
+| Expected response CSV | A CSV file matching the JSON shape of `analytics` response `items[]` for the test's request, flattened to columns. |
 | Spec YAML | Per-test config: which API endpoint, request body, dbt selector, key columns for sort/diff, float tolerance. |
-| Gold view | A ClickHouse `VIEW` defined in `src/ingestion/scripts/migrations/*.sql` (e.g. `insight.people`). Read by analytics-api. |
+| Gold view | A ClickHouse `VIEW` defined in `src/ingestion/scripts/migrations/*.sql` (e.g. `insight.people`). Read by analytics. |
 | Test rig | The reusable runtime: docker compose, pytest fixtures, dbt runner, API client, CSV asserter. |
 | Session fixture | A pytest fixture with `scope="session"` — runs once per `pytest` invocation across all tests. |
 | Worker namespace | A suffix (e.g. `_w0`, `_w1`) added to schemas/tables when `pytest-xdist` runs tests in parallel. |
@@ -124,7 +124,7 @@ The related "is the data correct?" question (whether a metric value is semantica
 
 **ID**: `cpt-bronze-to-api-e2e-actor-backend-developer`
 
-**Role**: Changes analytics-api code (metric query builder, OData filter parser, ClickHouse SQL emission, MariaDB metric definitions). Adds regression tests on PRs.
+**Role**: Changes analytics code (metric query builder, OData filter parser, ClickHouse SQL emission, MariaDB metric definitions). Adds regression tests on PRs.
 **Needs**: A test rig that observes the HTTP response shape, not just the dbt or SQL output. Wants to run only the affected slice without rebuilding the whole pipeline.
 
 #### Test Author (covering both roles above)
@@ -140,7 +140,7 @@ The related "is the data correct?" question (whether a metric value is semantica
 
 **ID**: `cpt-bronze-to-api-e2e-actor-ci-pipeline`
 
-**Role**: Runs the suite on every PR that touches `src/ingestion/`, `src/backend/services/analytics-api/`, or `src/ingestion/scripts/migrations/`. Reports pass/fail and, on failure, includes the cell-precise diff in the job output.
+**Role**: Runs the suite on every PR that touches `src/ingestion/`, `src/backend/services/analytics/`, or `src/ingestion/scripts/migrations/`. Reports pass/fail and, on failure, includes the cell-precise diff in the job output.
 
 #### dbt CLI
 
@@ -148,7 +148,7 @@ The related "is the data correct?" question (whether a metric value is semantica
 
 **Role**: Subprocess invoked by the test rig with selectors (e.g. `+silver_people+`). Owns DDL of staging/silver models.
 
-#### analytics-api Binary
+#### analytics Binary
 
 **ID**: `cpt-bronze-to-api-e2e-actor-analytics-api`
 
@@ -160,7 +160,7 @@ The related "is the data correct?" question (whether a metric value is semantica
 
 - Requires Docker (Engine ≥ 24) for the compose stack (ClickHouse + MariaDB)
 - Requires Python ≥ 3.12 (matches `dbt` runtime in the repo)
-- Requires `cargo` toolchain to build the `analytics-api` binary once per session
+- Requires `cargo` toolchain to build the `analytics` binary once per session
 - Requires ClickHouse and MariaDB versions pinned to production parity — the framework MUST NOT silently downgrade to an older container image
 - Tests cannot run inside K8s — the framework is local-host only; for K8s integration use the local gitops deploy (`cd deploy/gitops && make deploy ENV=local`)
 
@@ -171,7 +171,7 @@ The related "is the data correct?" question (whether a metric value is semantica
 - Bronze seeding via CSV → ClickHouse direct INSERT
 - dbt staging and silver model execution with selectors
 - ClickHouse migration view application (the ~28 gold views)
-- analytics-api HTTP endpoint invocation: `POST /v1/metrics/{id}/query`, `GET /v1/columns`, `GET /v1/columns/{table}`, and any other endpoint declared in a test's `spec.yaml`
+- analytics HTTP endpoint invocation: `POST /v1/metrics/{id}/query`, `GET /v1/columns`, `GET /v1/columns/{table}`, and any other endpoint declared in a test's `spec.yaml`
 - CSV-based assertion of response payload with pandas-driven cell-precise diff
 - Per-test isolation via TRUNCATE between tests; per-worker isolation via namespace suffix
 - Parallel execution via `pytest-xdist`
@@ -230,18 +230,18 @@ The system **MUST** invoke `dbt build` with a selector taken from `spec.yaml` (`
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-fr-gold-view-queried`
 
-The system **MUST** apply all SQL files in `src/ingestion/scripts/migrations/*.sql` (in lexical order) against the test ClickHouse instance once at session start. Subsequent tests **MUST** read gold views via the analytics-api without re-applying migrations.
+The system **MUST** apply all SQL files in `src/ingestion/scripts/migrations/*.sql` (in lexical order) against the test ClickHouse instance once at session start. Subsequent tests **MUST** read gold views via the analytics without re-applying migrations.
 
 **Rationale**: Migrations are idempotent (`CREATE OR REPLACE VIEW`); they take a few seconds and should run once. Per-test re-application would violate the per-test latency NFR.
 **Actors**: `cpt-bronze-to-api-e2e-actor-dbt-cli`
 
 ### 5.4 API Roundtrip
 
-#### Invoke the analytics-api over HTTP loopback
+#### Invoke the analytics over HTTP loopback
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-fr-api-roundtrip`
 
-The system **MUST** spawn the `analytics-api` binary once per pytest session, bind it to a random loopback port, and route each test's request — described by `spec.yaml` (`endpoint`, `method`, `request_body`) — to that port via HTTP. The system **MUST** disable auth in the spawned binary (test fixtures inject `SecurityContext` directly).
+The system **MUST** spawn the `analytics` binary once per pytest session, bind it to a random loopback port, and route each test's request — described by `spec.yaml` (`endpoint`, `method`, `request_body`) — to that port via HTTP. The system **MUST** disable auth in the spawned binary (test fixtures inject `SecurityContext` directly).
 
 **Rationale**: HTTP-loopback round-trip is the contract the UI consumes. Skipping the HTTP layer (e.g. by linking against the axum router) would not catch regressions in router setup, serialization, or auth-middleware short-circuits.
 **Actors**: `cpt-bronze-to-api-e2e-actor-analytics-api`, `cpt-bronze-to-api-e2e-actor-backend-developer`
@@ -280,7 +280,7 @@ When tests run under `pytest-xdist`, the system **MUST** suffix every bronze sch
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-nfr-cold-start`
 
-The system **MUST** complete cold session startup — `docker compose up`, ClickHouse migrations applied, `analytics-api` binary built and spawned, dbt manifest parsed — within **60 s** on a developer laptop with a warm Docker image cache. With a cold Docker image cache the budget is **180 s**.
+The system **MUST** complete cold session startup — `docker compose up`, ClickHouse migrations applied, `analytics` binary built and spawned, dbt manifest parsed — within **60 s** on a developer laptop with a warm Docker image cache. With a cold Docker image cache the budget is **180 s**.
 
 **Threshold**: 60 s warm cache; 180 s cold cache; measured wall-clock from `pytest` invocation to first test ready to run.
 **Rationale**: A multi-minute startup makes one-test-at-a-time iteration impractical. 60 s is the threshold below which developers will choose to keep the session warm rather than redeploy.
@@ -315,7 +315,7 @@ On failure, the system **MUST** render the cell-precise diff in the pytest captu
 ### 6.2 NFR Exclusions
 
 - **Project-default availability NFR**: Not applicable — the framework is dev-time only and does not need a production SLA.
-- **Project-default security NFR (auth)**: Not applicable — the spawned `analytics-api` runs with auth disabled; the framework MUST NOT expose its loopback port outside `127.0.0.1`.
+- **Project-default security NFR (auth)**: Not applicable — the spawned `analytics` runs with auth disabled; the framework MUST NOT expose its loopback port outside `127.0.0.1`.
 
 ## 7. Public Library Interfaces
 
@@ -348,11 +348,11 @@ On failure, the system **MUST** render the cell-precise diff in the pytest captu
 **Protocol/Format**: ClickHouse table schema as defined by the existing connector descriptors and migrations
 **Compatibility**: forward-compatible additive columns OK; the CSV asserter MUST not require a CSV to list every column — missing columns inserted as NULL.
 
-#### analytics-api response shape contract
+#### analytics response shape contract
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-contract-api-response`
 
-**Direction**: provided by the `analytics-api` service; consumed by the asserter
+**Direction**: provided by the `analytics` service; consumed by the asserter
 **Protocol/Format**: `application/json`, `{"items": [...], "page_info": {...}}` per `POST /v1/metrics/{id}/query`
 **Compatibility**: any change to the response shape is a versioned breaking change to the framework.
 
@@ -409,7 +409,7 @@ On failure, the system **MUST** render the cell-precise diff in the pytest captu
 - [ ] At least one full fixture exists, exercising `insight.people` end-to-end, and passes
 - [ ] `pytest -n auto` runs the smoke suite without cross-worker contamination over 100 randomized runs
 - [ ] On a forced failure (e.g., breaking a silver model), the cell-precise diff appears in the pytest captured stdout
-- [ ] CI integration job runs the suite on every PR that touches `src/ingestion/` or `src/backend/services/analytics-api/`
+- [ ] CI integration job runs the suite on every PR that touches `src/ingestion/` or `src/backend/services/analytics/`
 
 ## 10. Dependencies
 
@@ -419,10 +419,10 @@ On failure, the system **MUST** render the cell-precise diff in the pytest captu
 | ClickHouse 24.x image | Same major version as production | p1 |
 | MariaDB 11.x image | Same major version as production | p1 |
 | Python ≥ 3.12 | Runs pytest, dbt subprocess, pandas asserter | p1 |
-| `cargo` toolchain | Builds `analytics-api` binary once per session | p1 |
+| `cargo` toolchain | Builds `analytics` binary once per session | p1 |
 | dbt project at `src/ingestion/dbt/` | The unit being exercised | p1 |
 | ClickHouse migrations at `src/ingestion/scripts/migrations/` | Define the gold views | p1 |
-| `analytics-api` Cargo workspace member | Service under test | p1 |
+| `analytics` Cargo workspace member | Service under test | p1 |
 | Metric Catalog (MariaDB `analytics.metrics`) | Defines the queries the API executes | p1 |
 | pandas ≥ 2.2 | Cell-precise CSV diff | p1 |
 | `pytest-xdist` | Parallel execution | p2 |
@@ -430,7 +430,7 @@ On failure, the system **MUST** render the cell-precise diff in the pytest captu
 ## 11. Assumptions
 
 - ClickHouse `CREATE OR REPLACE VIEW` semantics in the migration set are idempotent and safe to run against a fresh schema with bronze tables already created.
-- The `analytics-api` binary supports an auth-disabled mode suitable for local/test use.
+- The `analytics` binary supports an auth-disabled mode suitable for local/test use.
 - Per-tenant scoping in production is enforced by `SecurityContext` injection; the test framework either bypasses tenancy (single-tenant tests) or seeds it into the spawned process directly.
 - dbt's `--defer --state target/` works when the test-side manifest is built once per session and pointed back to the prior-state directory.
 - `pytest-xdist` worker IDs are stable within a single test session and can be safely embedded into ClickHouse schema names.
@@ -440,7 +440,7 @@ On failure, the system **MUST** render the cell-precise diff in the pytest captu
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | dbt selector behavior changes across dbt versions and breaks `--defer --state` reuse | Per-test latency NFR violated; suite slows to minutes | Pin dbt version in `pyproject.toml` / `requirements.txt`; rerun NFR check on dbt upgrade |
-| analytics-api binary spawn becomes slow as it accumulates dependencies | Cold session start NFR violated | Build with `--release`, cache target dir between CI runs; add explicit cargo-cache step in CI |
+| analytics binary spawn becomes slow as it accumulates dependencies | Cold session start NFR violated | Build with `--release`, cache target dir between CI runs; add explicit cargo-cache step in CI |
 | ClickHouse `TRUNCATE` between tests does not actually release storage and disk fills | Long suites OOM the disk on CI runners | Add a session-end `OPTIMIZE TABLE ... FINAL` + observe disk usage; document a periodic full-volume wipe |
 | Float comparison tolerance hides real regressions in aggregate metrics | False negatives — test passes when number is subtly wrong | Default tolerance `1e-6`; require per-test override only with a justification comment |
 | Fixture folder format drifts as the framework evolves; old fixtures stop running | Maintenance debt — every change forces a sweep of all fixtures | Version `spec.yaml` (`spec_version: 1`); the runner refuses unknown major versions; minor changes are additive |

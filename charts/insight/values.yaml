@@ -33,7 +33,7 @@
 ##    These are just strings the consumers (and the pre-install init-DB
 ##    Hook Jobs) read — the umbrella never runs the dep itself.
 ##
-## 4. Core app services (apiGateway, analyticsApi, frontend) are MANDATORY
+## 4. Core app services (apiGateway, analytics, frontend) are MANDATORY
 ##    components of the umbrella — no deploy-flag. The gateway is the
 ##    only entrance to the cluster internals; the other services are
 ##    reachable only through it. This matches the Constructor Platform
@@ -105,13 +105,13 @@ global:
   #      tenant claim).
   #   2. `IDENTITY__identity__tenant_default_id` env var on the identity
   #      service (its ConfigTenantContext fallback).
-  #   3. `APP__gears__analytics_api__config__metric_catalog__tenant_default_id`
-  #      env var on the analytics-api (Metric Catalog single-tenant fallback).
+  #   3. `APP__gears__analytics__config__metric_catalog__tenant_default_id`
+  #      env var on the analytics (Metric Catalog single-tenant fallback).
   # Set this to the UUID your `persons` / `account_person_map` /
   # `org_chart` data was seeded under (i.e. the
   # `insight_tenant_id` value in ClickHouse `identity_inputs`). Empty =
   # multi-tenant mode: the api-gateway falls back to the chart's hard
-  # default; identity and analytics-api leave the resolver strict and
+  # default; identity and analytics leave the resolver strict and
   # return 400 tenant_unresolved for header-less callers. Visible to all
   # subcharts (Helm propagates `global.*` automatically), so subchart
   # templates read `.Values.global.tenantDefaultId` directly.
@@ -349,26 +349,26 @@ apiGateway:
         # Templated — `tpl` evaluates this at install time so `.Release.Name`
         # resolves to the umbrella's release name. Override with a literal
         # URL (no template syntax) to point at an external service.
-        upstream: 'http://{{ .Release.Name }}-analytics-api:8081'
+        upstream: 'http://{{ .Release.Name }}-analytics:8081'
         public: false
       - prefix: "/identity"
         upstream: 'http://{{ .Release.Name }}-identity:8082'
         public: false
-# ─── Analytics API ───────────────────────────────────────────────────────
-analyticsApi:
+# ─── Analytics ────────────────────────────────────────────────────────────
+analytics:
   replicaCount: 2
   image:
-    repository: ghcr.io/constructorfabric/insight-analytics-api
+    repository: ghcr.io/constructorfabric/insight-analytics
     tag: "" # MUST be set (e.g. "0.1.0")
     pullPolicy: IfNotPresent
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
-  # The umbrella generates `insight-analytics-api-config` with every
-  # APP__gears__analytics_api__config__* env var filled in from the
+  # The umbrella generates `insight-analytics-config` with every
+  # APP__gears__analytics__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart
   # consumes it via envFrom (overriding its mounted config ConfigMap).
-  existingSecret: "insight-analytics-api-config"
+  existingSecret: "insight-analytics-config"
   # Metric Catalog single-tenant fallback comes from
   # `global.tenantDefaultId` (DESIGN §2.2 cpt-metric-cat-constraint-tenant-
   # default). The session-bound tenant from the gateway ALWAYS wins; this

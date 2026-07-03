@@ -2,7 +2,7 @@
 #
 # Wires each build-only service (and the runner) to the GitHub Actions BuildKit
 # cache backend so the expensive layers persist across workflow runs: the Rust
-# dependency-compile layers for analytics-api + jira-enrich, and the runner's
+# dependency-compile layers for analytics + jira-enrich, and the runner's
 # pip-install layer. On a warm cache with an unchanged Cargo.lock/pyproject.toml,
 # those layers restore instead of rebuilding.
 #
@@ -21,12 +21,12 @@ services:
       cache_to:
         - type=gha,mode=max,scope=e2e-jira-enrich
 
-  analytics-api:
+  analytics:
     build:
       cache_from:
-        - type=gha,scope=e2e-analytics-api
+        - type=gha,scope=e2e-analytics
       cache_to:
-        - type=gha,mode=max,scope=e2e-analytics-api
+        - type=gha,mode=max,scope=e2e-analytics
 
   runner:
     build:
