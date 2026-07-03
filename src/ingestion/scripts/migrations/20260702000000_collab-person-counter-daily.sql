@@ -52,7 +52,10 @@ FROM (
             c.date AS metric_date,
             if(c.total_chat_messages IS NULL, CAST(NULL AS Nullable(Float64)), toFloat64(c.total_chat_messages)) AS messages_sent,
             if(c.channel_posts IS NULL, CAST(NULL AS Nullable(Float64)), toFloat64(c.channel_posts) + toFloat64(ifNull(c.channel_replies, 0))) AS channel_posts
-        FROM silver.class_collab_chat_activity AS c
+        -- FINAL dedups the ReplacingMergeTree at read time (a re-synced day can
+        -- leave >1 version per key before a background merge) — matches the
+        -- class_collab_meeting_activity read in 20260518000000_collab-bullet-rewrite.sql.
+        FROM silver.class_collab_chat_activity AS c FINAL
         WHERE c.data_source = 'insight_m365'
           AND c.email IS NOT NULL
           AND c.email != ''
@@ -67,7 +70,7 @@ FROM (
             s.date AS metric_date,
             if(s.total_chat_messages IS NULL, CAST(NULL AS Nullable(Float64)), toFloat64(s.total_chat_messages)) AS messages_sent,
             if(s.channel_posts IS NULL, CAST(NULL AS Nullable(Float64)), toFloat64(s.channel_posts)) AS channel_posts
-        FROM silver.class_collab_chat_activity AS s
+        FROM silver.class_collab_chat_activity AS s FINAL
         WHERE s.data_source = 'insight_slack'
           AND s.email IS NOT NULL
           AND s.email != ''
@@ -82,7 +85,7 @@ FROM (
             z.date AS metric_date,
             if(z.total_chat_messages IS NULL, CAST(NULL AS Nullable(Float64)), toFloat64(z.total_chat_messages)) AS messages_sent,
             CAST(NULL AS Nullable(Float64)) AS channel_posts
-        FROM silver.class_collab_chat_activity AS z
+        FROM silver.class_collab_chat_activity AS z FINAL
         WHERE z.data_source = 'insight_zulip_proxy'
           AND z.email IS NOT NULL
           AND z.email != ''
