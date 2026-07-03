@@ -4,12 +4,12 @@ We build once per session (cargo's incremental compile keeps it fast across
 sessions) and spawn the binary directly on the host (per DESIGN §4: a host
 binary keeps target/ warm and avoids container I/O on the cargo hot path).
 
-analytics-api requires no Bearer token (auth happens at the API Gateway, which
-we bypass), but its tenant middleware rejects requests without a resolvable
-non-nil tenant. The harness therefore sends `X-Insight-Tenant-Id` with
-`config.TEST_TENANT_ID` on every request — including /health polling — and
-`metric_seed.seed_test_metrics` re-homes the seeded metric definitions onto
-that tenant.
+analytics-api runs auth-disabled (auth happens at the API Gateway, which we
+bypass), so the gears host injects a default-tenant SecurityContext. `/health`
+is served by the api-gateway host gear (public, off the tenant path). For data
+routes the harness sends `X-Insight-Tenant-Id: config.TEST_TENANT_ID`, which the
+tenant-override layer honors, and `metric_seed.seed_test_metrics` re-homes the
+seeded metric definitions onto that tenant. The header is harmless on /health.
 """
 
 from __future__ import annotations
@@ -125,42 +125,50 @@ class AnalyticsApiProcess:
 
     def start(self) -> None:
         env = os.environ.copy()
-        # bind_addr: 127.0.0.1 keeps the port loopback-only (PRD constraint
-        # cpt-bronze-to-api-e2e-constraint-loopback-only). In docker mode the
-        # pytest process is in the same container, so loopback is enough.
+        # analytics-api is now a gears-rust host (toolkit::bootstrap::run_server):
+        # the `api-gateway` system gear is the REST host and structural config
+        # (gears list, auth_disabled, resolvers, grpc-hub) lives in the checked-in
+        # config file, which we pass with `-c`. Per-run values are injected as
+        # `APP__*` env overrides (direct Popen execve preserves the hyphenated
+        # gear-name segments, unlike the compose sh entrypoint).
+        config_path = self.cfg.analytics_api_manifest_dir / "config" / "insight.yaml"
+        # bind_addr: loopback-only (PRD cpt-bronze-to-api-e2e-constraint-loopback-only).
+        # The REST host bind belongs to the api-gateway gear, so override it there.
         bind_addr = f"127.0.0.1:{self.port}"
         env.update(
             {
-                "ANALYTICS__database_url": self.cfg.mariadb_dsn,
-                "ANALYTICS__clickhouse_url": self.cfg.ch_http_url,
-                "ANALYTICS__clickhouse_database": self.cfg.ch_database,
-                "ANALYTICS__clickhouse_user": self.cfg.ch_user,
-                "ANALYTICS__clickhouse_password": self.cfg.ch_password,
-                "ANALYTICS__bind_addr": bind_addr,
-                # Single-tenant fallback. Since #522 the tenant_middleware
-                # rejects header-less requests (including /health) with 400
-                # unless a non-nil default tenant is configured. The rig sends
-                # no X-Insight-Tenant-Id header, so we pin a non-nil default.
-                # A non-nil value is required — ConfigTenantAuthorization::new
-                # filters out a nil default. Platform metric definitions are
-                # seeded under GLOBAL_TENANT (Uuid::nil()) and remain visible to
-                # any resolved tenant via `InsightTenantId IN [tenant, nil]`,
-                # and the data-plane queries skip tenant isolation in MVP, so
-                # this default never has to match the seeded bronze tenant.
-                "ANALYTICS__metric_catalog__tenant_default_id": "00000000-0000-0000-0000-000000000001",
-                # No identity_url / redis_url — leave defaults (empty strings)
+                "APP__gears__api-gateway__config__bind_addr": bind_addr,
+                # Per-spawn UDS so parallel workers / re-runs don't collide on
+                # the config's fixed grpc-hub socket path.
+                "APP__gears__grpc-hub__config__listen_addr": f"uds:///tmp/analytics-grpc-{self.port}.sock",
+                "APP__gears__analytics_api__config__database_url": self.cfg.mariadb_dsn,
+                "APP__gears__analytics_api__config__clickhouse_url": self.cfg.ch_http_url,
+                "APP__gears__analytics_api__config__clickhouse_database": self.cfg.ch_database,
+                "APP__gears__analytics_api__config__clickhouse_user": self.cfg.ch_user,
+                "APP__gears__analytics_api__config__clickhouse_password": self.cfg.ch_password,
+                # Single-tenant catalog-resolution hint. Under auth_disabled the
+                # host injects DEFAULT_TENANT_ID; the rig additionally sends
+                # `X-Insight-Tenant-Id: TEST_TENANT_ID` on every request, which
+                # the tenant-override layer honors. Platform metric definitions
+                # seed under GLOBAL_TENANT (nil) and stay visible via
+                # `InsightTenantId IN [tenant, nil]`, so this need not match the
+                # seeded bronze tenant.
+                "APP__gears__analytics_api__config__metric_catalog__tenant_default_id": "00000000-0000-0000-0000-000000000001",
+                # No identity_url / redis_url — leave config defaults (empty).
                 "RUST_LOG": env.get("RUST_LOG", "info"),
             },
         )
-        LOG.info("spawning analytics-api on 127.0.0.1:%d", self.port)
+        LOG.info("spawning analytics-api (gears host) on 127.0.0.1:%d", self.port)
         self._proc = subprocess.Popen(
-            [str(self.binary)],
+            [str(self.binary), "-c", str(config_path), "run"],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
         )
-        self._wait_healthy(timeout_s=30.0)
+        # The gears host inits every system gear + runs migrations/probes, so
+        # allow a little more startup headroom than the old bare axum server.
+        self._wait_healthy(timeout_s=60.0)
 
     def stop(self) -> None:
         if self._proc is None:
@@ -181,9 +189,8 @@ class AnalyticsApiProcess:
     def client(self) -> httpx.Client:
         """Return an httpx.Client bound to this process's base URL.
 
-        Every request carries `X-Insight-Tenant-Id`: the tenant middleware sits
-        in front of all routes (including `/health`) and rejects requests with
-        no resolvable tenant, so the header is mandatory, not per-endpoint.
+        Every request carries `X-Insight-Tenant-Id` so the tenant-override layer
+        pins data routes to the test tenant. `/health` (host gear) ignores it.
         """
         return httpx.Client(
             base_url=self.base_url,

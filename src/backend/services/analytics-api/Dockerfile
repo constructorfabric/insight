@@ -39,6 +39,7 @@ RUN rm -rf libs/insight-clickhouse/src services/analytics-api/src \
 
 COPY libs/insight-clickhouse/src/ ./libs/insight-clickhouse/src/
 COPY services/analytics-api/src/ ./services/analytics-api/src/
+COPY services/analytics-api/config/ ./services/analytics-api/config/
 
 RUN cargo build --release --bin analytics-api
 
@@ -71,6 +72,10 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 WORKDIR /app
 
 COPY --from=builder /build/target/release/analytics-api /app/analytics-api
+# Gears config baked at /app/config/. Compose bind-mounts over it for hot
+# edits; k8s mounts a ConfigMap at the same path. Env (APP__*) overrides
+# the deployment-specific leaf values (DB/tenant).
+COPY --from=builder /build/services/analytics-api/config/ /app/config/
 
 RUN useradd -U -u 1000 -m appuser && \
     chown -R 1000:1000 /app
@@ -79,4 +84,4 @@ USER 1000
 EXPOSE 8081
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["/app/analytics-api", "--", "/app/analytics-api"]
+CMD ["/app/analytics-api", "--", "/app/analytics-api", "-c", "/app/config/insight.yaml", "run"]

@@ -7,7 +7,8 @@ globs are duplicated in YAML and there is one source of truth. Runs no tests.
 Usage: python3 scripts/ci/changed.py [--all]
 Output: {"rust": [<entry>...], "dotnet": [...], "python": [...]}
         rust entries carry name/root/package/all_features plus lint+cover flags
-        (a crate may be lint-only); dotnet carries solution, python cov_package.
+        (a crate may be lint-only); dotnet carries solution + cover (a component
+        may be test-only, e.g. identity); python carries cov_package.
 """
 from __future__ import annotations
 
@@ -38,8 +39,15 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True) -> dict
         entry["lint"] = lint
         entry["cover"] = cover
         entry["clippy"] = comp.get("clippy", True)  # False ⇒ fmt-only (see #1512)
+        entry["live_db"] = comp.get("live_db", False)  # DB-backed live_tests (see #1564)
+        # Exclude dependency-crate files from this component's coverage report so
+        # a service never counts a library it merely links (each lib self-reports).
+        entry["cover_ignore_regex"] = comp.get("cover_ignore_regex", "")
     elif comp["lang"] == "dotnet":
         entry["solution"] = comp.get("solution", "")
+        # False ⇒ tests run but coverage is neither collected nor gated
+        # (identity — see components.py). Mirrors the rust cover flag.
+        entry["cover"] = comp.get("cover", True)
     elif comp["lang"] == "python":
         entry["cov_package"] = comp.get("cov_package", "")
     return entry

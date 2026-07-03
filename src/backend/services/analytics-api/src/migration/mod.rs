@@ -46,9 +46,6 @@ mod m20260624_000001_collab_zulip_chat;
 mod m20260624_000002_seed_zulip_collab_catalog;
 mod m20260624_000003_ic_chart_loc_git_breakdown;
 
-#[cfg(test)]
-mod live_tests;
-
 use sea_orm_migration::prelude::*;
 
 pub struct Migrator;

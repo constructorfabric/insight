@@ -2,7 +2,7 @@
 //!
 //! Owns the per-write sequence per DESIGN §3.2 admin-crud:
 //!
-//! 1. **authz** — `is_tenant_admin(ctx.insight_tenant_id, ctx)`.
+//! 1. **authz** — `is_tenant_admin(ctx.subject_tenant_id(), ctx)`.
 //! 2. **referential integrity** — `metric_id` resolves to an enabled
 //!    `metric_catalog` row; pull `metric_key` from there (callers never
 //!    supply `metric_key` directly — backend-internal name per §3.7).
@@ -40,7 +40,6 @@ use crate::api::admin::error_map::{
     map_db_err, not_tenant_admin_response, sanity_bound_response, scope_shape_response,
     threshold_locked_response, threshold_not_found_response, unknown_or_disabled_metric_response,
 };
-use crate::auth::SecurityContext;
 use crate::domain::admin_threshold::audit_emitter::{
     AuditEmitter, BypassAttempt, EventKind, LockTransition, attempted_values_for,
 };
@@ -52,6 +51,7 @@ use crate::domain::admin_threshold::repository;
 use crate::domain::auth::TenantAuthorization;
 use crate::domain::schema_validator::SchemaValidator;
 use crate::infra::cache::catalog_cache::{CatalogCache, InvalidateMode};
+use toolkit_security::SecurityContext;
 
 /// Maximum `lock_reason` length — matches the DB CHECK
 /// `chk_metric_threshold_lock_reason_length` and the DESIGN §3.7 line
@@ -102,10 +102,13 @@ impl AdminThresholdService {
         ctx: &SecurityContext,
         filters: &ListFilters,
     ) -> Result<ListResponse, Response> {
-        if !self.tenant_auth.is_tenant_admin(ctx.insight_tenant_id, ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
-        let rows = repository::list_thresholds(&self.db, ctx.insight_tenant_id, filters)
+        let rows = repository::list_thresholds(&self.db, ctx.subject_tenant_id(), filters)
             .await
             .map_err(|e| internal_error_response(&e))?;
         // Resolve `metric_id` + `schema_*` per metric_key. Cache the
@@ -163,14 +166,17 @@ impl AdminThresholdService {
         ctx: &SecurityContext,
         id: Uuid,
     ) -> Result<ThresholdView, Response> {
-        if !self.tenant_auth.is_tenant_admin(ctx.insight_tenant_id, ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
         let row = repository::find_threshold(&self.db, id)
             .await
             .map_err(|e| internal_error_response(&e))?
             .ok_or_else(|| threshold_not_found_response(id))?;
-        if !row_belongs_to_tenant(&row, ctx.insight_tenant_id) {
+        if !row_belongs_to_tenant(&row, ctx.subject_tenant_id()) {
             // Cross-tenant read attempt — surface as "not found" rather
             // than "not authorized" so the existence of the id under
             // another tenant doesn't leak (same convention identity
@@ -209,7 +215,10 @@ impl AdminThresholdService {
         req: &CreateRequest,
     ) -> Result<ThresholdView, Response> {
         // Step 1: authz (pure — trait call, no DB).
-        if !self.tenant_auth.is_tenant_admin(ctx.insight_tenant_id, ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
 
@@ -256,7 +265,7 @@ impl AdminThresholdService {
 
         // Step 8: lock-enforcer.
         let target = CheckTarget {
-            tenant_id: ctx.insight_tenant_id,
+            tenant_id: ctx.subject_tenant_id(),
             metric_key: &cat.metric_key,
             scope: req.scope,
         };
@@ -270,7 +279,7 @@ impl AdminThresholdService {
                 // BEFORE the 403. If the audit INSERT fails, the caller
                 // gets a 503 instead of the 403 — no silent bypass.
                 let attempt = BypassAttempt {
-                    tenant_id: ctx.insight_tenant_id,
+                    tenant_id: ctx.subject_tenant_id(),
                     metric_key: &cat.metric_key,
                     attempted_scope: req.scope,
                     attempted_values: attempted_values_for(
@@ -290,7 +299,7 @@ impl AdminThresholdService {
                 {
                     tracing::error!(
                         cause = %audit_err.cause,
-                        tenant_id = %ctx.insight_tenant_id,
+                        tenant_id = %ctx.subject_tenant_id(),
                         metric_key = %cat.metric_key,
                         "audit_emitter.emit_bypass_attempt failed; \
                          surfacing 503 audit_unavailable to avoid silent bypass"
@@ -316,7 +325,7 @@ impl AdminThresholdService {
         let inserted = match repository::insert_threshold(
             &tx,
             new_id,
-            ctx.insight_tenant_id,
+            ctx.subject_tenant_id(),
             &cat.metric_key,
             req.scope,
             &role_slug,
@@ -347,7 +356,7 @@ impl AdminThresholdService {
                     ctx,
                     &LockTransition {
                         kind: EventKind::LockSet,
-                        tenant_id: ctx.insight_tenant_id,
+                        tenant_id: ctx.subject_tenant_id(),
                         metric_key: &cat.metric_key,
                         locked_by,
                         locked_at,
@@ -371,7 +380,7 @@ impl AdminThresholdService {
         }
 
         // Step 10: cache invalidate.
-        self.invalidate_cache(ctx.insight_tenant_id, req.is_locked)
+        self.invalidate_cache(ctx.subject_tenant_id(), req.is_locked)
             .await;
 
         // Step 11: schema-validator (best-effort, debounced).
@@ -405,7 +414,10 @@ impl AdminThresholdService {
         req: &UpdateRequest,
     ) -> Result<ThresholdView, Response> {
         // Step 1: authz (pure).
-        if !self.tenant_auth.is_tenant_admin(ctx.insight_tenant_id, ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
 
@@ -427,7 +439,7 @@ impl AdminThresholdService {
             .map_err(|e| internal_error_response(&e))?
             .ok_or_else(|| threshold_not_found_response(id))?;
 
-        if !row_belongs_to_tenant(&existing, ctx.insight_tenant_id) {
+        if !row_belongs_to_tenant(&existing, ctx.subject_tenant_id()) {
             // Cross-tenant write — surface as `not_tenant_admin` per
             // DESIGN §3.3 (both `not_tenant_admin` and the actual
             // tenant-admin-failure converge on the same `reason`).
@@ -515,7 +527,7 @@ impl AdminThresholdService {
         // at a *broader* scope — the row's own scope is not broader
         // than itself.
         let target = CheckTarget {
-            tenant_id: ctx.insight_tenant_id,
+            tenant_id: ctx.subject_tenant_id(),
             metric_key: &existing.metric_key,
             scope: existing_scope,
         };
@@ -524,7 +536,7 @@ impl AdminThresholdService {
             .map_err(|e| internal_error_response(&e))?
         {
             let attempt = BypassAttempt {
-                tenant_id: ctx.insight_tenant_id,
+                tenant_id: ctx.subject_tenant_id(),
                 metric_key: &existing.metric_key,
                 attempted_scope: existing_scope,
                 attempted_values: attempted_values_for(
@@ -544,7 +556,7 @@ impl AdminThresholdService {
             {
                 tracing::error!(
                     cause = %audit_err.cause,
-                    tenant_id = %ctx.insight_tenant_id,
+                    tenant_id = %ctx.subject_tenant_id(),
                     threshold_id = %id,
                     "audit_emitter.emit_bypass_attempt failed on PUT; \
                      surfacing 503 audit_unavailable"
@@ -609,7 +621,7 @@ impl AdminThresholdService {
                     ctx,
                     &LockTransition {
                         kind,
-                        tenant_id: ctx.insight_tenant_id,
+                        tenant_id: ctx.subject_tenant_id(),
                         metric_key: &existing.metric_key,
                         locked_by: locked_by.clone(),
                         locked_at,
@@ -627,7 +639,7 @@ impl AdminThresholdService {
         }
 
         let is_lock_event = lock_transition_kind.is_some();
-        self.invalidate_cache(ctx.insight_tenant_id, is_lock_event)
+        self.invalidate_cache(ctx.subject_tenant_id(), is_lock_event)
             .await;
 
         let _ = self.validator.validate(&existing.metric_key).await;
@@ -651,14 +663,17 @@ impl AdminThresholdService {
     ///
     /// Returns a fully-formed `Response` envelope on rejection.
     pub async fn delete(&self, ctx: &SecurityContext, id: Uuid) -> Result<(), Response> {
-        if !self.tenant_auth.is_tenant_admin(ctx.insight_tenant_id, ctx) {
+        if !self
+            .tenant_auth
+            .is_tenant_admin(ctx.subject_tenant_id(), ctx)
+        {
             return Err(not_tenant_admin_response());
         }
         let existing = repository::find_threshold(&self.db, id)
             .await
             .map_err(|e| internal_error_response(&e))?
             .ok_or_else(|| threshold_not_found_response(id))?;
-        if !row_belongs_to_tenant(&existing, ctx.insight_tenant_id) {
+        if !row_belongs_to_tenant(&existing, ctx.subject_tenant_id()) {
             return Err(not_tenant_admin_response());
         }
 
@@ -686,7 +701,7 @@ impl AdminThresholdService {
                     ctx,
                     &LockTransition {
                         kind: EventKind::LockCleared,
-                        tenant_id: ctx.insight_tenant_id,
+                        tenant_id: ctx.subject_tenant_id(),
                         metric_key: &existing.metric_key,
                         locked_by: existing.locked_by.clone(),
                         locked_at: existing.locked_at,
@@ -703,7 +718,7 @@ impl AdminThresholdService {
             return Err(internal_error_response(&e));
         }
 
-        self.invalidate_cache(ctx.insight_tenant_id, was_locked)
+        self.invalidate_cache(ctx.subject_tenant_id(), was_locked)
             .await;
         Ok(())
     }

@@ -6,17 +6,18 @@
 //! and `INTEGRATION_TESTS_CLICKHOUSE_URL` (for the ClickHouse-touching tests)
 //! against throwaway services to exercise them.
 //!
+//! Migrations are applied once, up front (the `analytics-api migrate` step /
+//! the CI job) — tests never migrate or reset the DB. Each test owns a unique
+//! `metric_key` (see `unique_metric_key`), so they run in parallel against the
+//! shared catalog without colliding.
+//!
 //! ## Why the `INTEGRATION_TESTS_` prefix
 //!
-//! `reset_catalog` DROPs `metric_catalog`, `metric_threshold`, and
-//! `threshold_lock_audit` on every invocation. A plain `MARIADB_URL` /
-//! `CLICKHOUSE_URL` would collide with the same names commonly exported in
-//! a dev shell (compose stacks, docker-machine helpers, in-cluster service
-//! discovery) — running `cargo test -- --ignored` with those set would
-//! silently destroy whatever DB they pointed at. The
-//! `INTEGRATION_TESTS_` prefix forces the operator to opt in for THIS test
-//! suite specifically, so the destructive setup runs only when the env var
-//! was set with full knowledge of what it triggers.
+//! A plain `MARIADB_URL` / `CLICKHOUSE_URL` would collide with the same names
+//! commonly exported in a dev shell (compose stacks, docker-machine helpers,
+//! in-cluster service discovery) — running `cargo test -- --ignored` with those
+//! set would point the tests at whatever DB they name. The `INTEGRATION_TESTS_`
+//! prefix forces the operator to opt in for THIS test suite specifically.
 //!
 //! Coverage map (Definition of Done):
 //! - `DoD` #1 readiness on dead ClickHouse: [`validate_all_against_dead_clickhouse_marks_unchecked`].
@@ -30,13 +31,19 @@ use std::time::Duration;
 
 use chrono::Utc;
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement, Value};
-use sea_orm_migration::MigratorTrait;
 
 use crate::domain::schema_validator::error_code::SchemaErrorCode;
 use crate::domain::schema_validator::repository::{find_by_metric_key, update_schema_columns};
 use crate::domain::schema_validator::status::SchemaState;
 use crate::domain::schema_validator::{DEFAULT_DEBOUNCE, SchemaValidator, ValidationOutcome};
-use crate::migration::Migrator;
+use uuid::Uuid;
+
+/// Per-test unique `metric_key` so tests run in parallel against the shared,
+/// pre-migrated DB without colliding (migrations run once, up front; tests
+/// never reset the catalog).
+fn unique_metric_key() -> String {
+    format!("schema_validator_test_{}.exists", Uuid::now_v7().simple())
+}
 
 const MARIADB_ENV: &str = "INTEGRATION_TESTS_MARIADB_URL";
 const CLICKHOUSE_ENV: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
@@ -69,27 +76,6 @@ fn connect_clickhouse() -> Option<insight_clickhouse::Client> {
     Some(insight_clickhouse::Client::new(
         insight_clickhouse::Config::new(url, database),
     ))
-}
-
-async fn reset_catalog(db: &DatabaseConnection) -> anyhow::Result<()> {
-    // `metric_query_catalog` (ADR-001, m20260529) FKs into `metric_catalog`
-    // with `ON DELETE CASCADE` — drop it first to avoid MariaDB error 1451.
-    for table in [
-        "metric_query_catalog",
-        "threshold_lock_audit",
-        "metric_threshold",
-        "metric_catalog",
-    ] {
-        db.execute_unprepared(&format!("DROP TABLE IF EXISTS {table}"))
-            .await?;
-    }
-    db.execute_unprepared(
-        "DELETE FROM seaql_migrations \
-         WHERE version LIKE 'm20260522_%' OR version LIKE 'm20260529_%'",
-    )
-    .await?;
-    Migrator::up(db, None).await?;
-    Ok(())
 }
 
 async fn seed_row(db: &DatabaseConnection, metric_key: &str) -> anyhow::Result<()> {
@@ -128,10 +114,10 @@ async fn schema_writes_do_not_bump_updated_at() -> anyhow::Result<()> {
     let Some(db) = connect_mariadb().await else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
-    seed_row(&db, TEST_METRIC_KEY).await?;
+    let metric_key = unique_metric_key();
+    seed_row(&db, &metric_key).await?;
 
-    let initial = find_by_metric_key(&db, TEST_METRIC_KEY)
+    let initial = find_by_metric_key(&db, &metric_key)
         .await?
         .ok_or_else(|| anyhow::anyhow!("seeded row vanished"))?;
     let row_id = initial.id;
@@ -166,8 +152,8 @@ async fn validate_debounces_within_window() -> anyhow::Result<()> {
     let Some(db) = connect_mariadb().await else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
-    seed_row(&db, TEST_METRIC_KEY).await?;
+    let metric_key = unique_metric_key();
+    seed_row(&db, &metric_key).await?;
 
     // Use a deliberately broken ClickHouse URL so any second call would error
     // loudly (and fail the test). Combined with a wide debounce window, this
@@ -180,13 +166,13 @@ async fn validate_debounces_within_window() -> anyhow::Result<()> {
 
     // Prime the row's schema_checked_at to "now" so the next call hits the
     // debounce branch unambiguously, even on slow CI runners.
-    let row_id = find_by_metric_key(&db, TEST_METRIC_KEY)
+    let row_id = find_by_metric_key(&db, &metric_key)
         .await?
         .ok_or_else(|| anyhow::anyhow!("seeded row vanished"))?
         .id;
     update_schema_columns(&db, row_id, SchemaState::ok(), Utc::now()).await?;
 
-    let outcome = v.validate(TEST_METRIC_KEY).await;
+    let outcome = v.validate(&metric_key).await;
     anyhow::ensure!(
         outcome == ValidationOutcome::DebouncedSkipped,
         "expected DebouncedSkipped within the debounce window, got {outcome:?}"
@@ -206,8 +192,8 @@ async fn validate_all_against_dead_clickhouse_marks_unchecked() -> anyhow::Resul
     let Some(db) = connect_mariadb().await else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
-    seed_row(&db, TEST_METRIC_KEY).await?;
+    let metric_key = unique_metric_key();
+    seed_row(&db, &metric_key).await?;
 
     // Dead ClickHouse — port 1 is reserved by IANA and nothing listens there.
     let ch = insight_clickhouse::Client::new(
@@ -225,7 +211,7 @@ async fn validate_all_against_dead_clickhouse_marks_unchecked() -> anyhow::Resul
     tokio::time::sleep(Duration::from_secs(3)).await;
     handle.abort();
 
-    let row = find_by_metric_key(&db, TEST_METRIC_KEY)
+    let row = find_by_metric_key(&db, &metric_key)
         .await?
         .ok_or_else(|| anyhow::anyhow!("row vanished"))?;
     anyhow::ensure!(
@@ -253,7 +239,6 @@ async fn validate_all_only_writes_canonical_error_codes() -> anyhow::Result<()> 
     let Some(ch) = connect_clickhouse() else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
     seed_row(&db, TEST_METRIC_KEY_MISSING_TABLE).await?;
 
     let v = SchemaValidator::new(db.clone(), ch);
@@ -292,7 +277,6 @@ async fn column_rename_flips_status() -> anyhow::Result<()> {
     let Some(ch) = connect_clickhouse() else {
         return Ok(());
     };
-    reset_catalog(&db).await?;
     seed_row(&db, TEST_METRIC_KEY).await?;
     create_test_table(&ch).await?;
 

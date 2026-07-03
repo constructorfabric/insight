@@ -35,6 +35,17 @@ COMPONENTS = [
      "paths": ["src/backend/plugins/oidc-authn-plugin"]},
     {"name": "analytics-api", "lang": "rust", "root": "src/backend",
      "package": "analytics-api",
+     # DB-backed integration tests: the CI rust job provisions a MariaDB
+     # service, runs `analytics-api migrate` once up front, then runs the
+     # `#[ignore]`d live_tests (INTEGRATION_TESTS_MARIADB_URL). ClickHouse
+     # tests skip (no INTEGRATION_TESTS_CLICKHOUSE_URL — see cf/insight#1564).
+     "live_db": True,
+     # llvm-cov reports every instrumented file, including path-dependency
+     # crates (insight-clickhouse) compiled into this binary. Those crates are
+     # their OWN components with their own coverage jobs — counting them here
+     # would let this service's report drag their number down to whatever this
+     # service happens to exercise. Scope the report to this service's code.
+     "cover_ignore_regex": "src/backend/libs/",
      "paths": ["src/backend/services/analytics-api"]},
     {"name": "api-gateway", "lang": "rust", "root": "src/backend",
      "package": "insight-api-gateway",
@@ -51,8 +62,13 @@ COMPONENTS = [
      "paths": ["src/ingestion/connectors/task-tracking/jira/enrich"]},
 
     # .NET
+    # cover=False: identity is excluded from coverage collection and gating
+    # entirely (2026-07 decision) — its tests still run in the dotnet CI job
+    # and still fail the pipeline on regressions; only the Cobertura
+    # collection, upload, and the per-component/new-code gates are dropped.
     {"name": "identity", "lang": "dotnet", "root": "src/backend/services/identity",
      "solution": "Insight.Identity.sln",
+     "cover": False,
      "paths": ["src/backend/services/identity"]},
 
     # Python CDK connectors

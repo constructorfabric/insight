@@ -21,13 +21,27 @@ clickhouse = { workspace = true }
 axum = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
-# ToolKit REST registration: routes are declared via `OperationBuilder`
-# (not raw `axum::Router::route`) so every endpoint records an OpenAPI
-# OperationSpec + auth/license metadata in one place. We do NOT use the
-# `bootstrap` host runtime here — the existing `main.rs` keeps serving the
-# resulting `axum::Router` directly (handler-registration migration only).
-toolkit = { workspace = true }
+# ToolKit host runtime. analytics-api runs as a gears-rust host: routes are
+# declared via `OperationBuilder` and served by the `api-gateway` system gear
+# (the REST host) under `toolkit::bootstrap::run_server`. Auth is disabled on
+# this host (the platform api-gateway is the sole authenticator; see
+# config + `crate::gear`), so the host injects a single-tenant SecurityContext
+# and a thin layer overrides the tenant from `X-Insight-Tenant-Id`.
+toolkit = { workspace = true, features = ["bootstrap"] }
+toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
+
+# System gears linked for the REST host + (disabled) auth pipeline. Discovered
+# at link time via inventory; mirrors the api-gateway service's no-auth setup.
+api_gateway = { workspace = true }
+authn-resolver = { workspace = true }
+authz-resolver = { workspace = true }
+tenant-resolver = { workspace = true }
+single-tenant-tr-plugin = { workspace = true }
+static-authz-plugin = { workspace = true }
+grpc_hub = { workspace = true }
+gear_orchestrator = { workspace = true }
+types_registry = { workspace = true }
 reqwest = { workspace = true }
 redis = { workspace = true }
 
@@ -44,7 +58,6 @@ chrono = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
-figment = { workspace = true }
 
 [dev-dependencies]
 # `tower::ServiceExt::oneshot` for driving the Axum router in
