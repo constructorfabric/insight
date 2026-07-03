@@ -29,15 +29,18 @@ _SHARED_RUST_SUFFIXES = (".rs", ".toml", ".lock")
 _SHARED_BACKEND_DIRS = ("src/backend/libs/", "src/backend/plugins/")
 
 
-def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True) -> dict:
+def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True,
+                  test: bool = False) -> dict:
     """The fields a producer CI job needs for one component. Rust entries also
-    carry lint/cover flags (a rust crate may appear lint-only)."""
+    carry lint/cover/test flags (a rust crate may appear lint-only; a changed
+    crate with cover=false still runs plain `cargo test`)."""
     entry = {"name": comp["name"], "root": comp["root"]}
     if comp["lang"] == "rust":
         entry["package"] = comp.get("package", comp["name"])
         entry["all_features"] = comp.get("all_features", True)
         entry["lint"] = lint
         entry["cover"] = cover
+        entry["test"] = test
         entry["clippy"] = comp.get("clippy", True)  # False ⇒ fmt-only (see #1512)
         entry["live_db"] = comp.get("live_db", False)  # DB-backed live_tests (see #1564)
         # Exclude dependency-crate files from this component's coverage report so
@@ -84,10 +87,14 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
         name, lang = comp["name"], comp["lang"]
         if lang == "rust":
             is_backend = comp.get("root") == BACKEND_RUST_ROOT
-            cover = name in changed
-            lint = cover or (fanout_lint and is_backend)
+            # cover=False in the registry ⇒ plain tests + lint still run on
+            # change, but no Cobertura is produced or gated (api-gateway — no
+            # unit tests yet; 0% would hard-fail the overall gate).
+            cover = name in changed and comp.get("cover", True)
+            lint = name in changed or (fanout_lint and is_backend)
             if lint or cover:
-                result["rust"].append(_matrix_entry(comp, lint=lint, cover=cover))
+                result["rust"].append(_matrix_entry(
+                    comp, lint=lint, cover=cover, test=name in changed))
         elif name in changed:  # dotnet / python: in the matrix iff changed
             result[lang].append(_matrix_entry(comp))
     return result
@@ -99,7 +106,8 @@ def all_components(components: list[dict]) -> dict[str, list]:
     result: dict[str, list] = {lang: [] for lang in ("rust", "dotnet", "python")}
     for comp in components:
         if comp["lang"] == "rust":
-            result["rust"].append(_matrix_entry(comp, lint=True, cover=True))
+            result["rust"].append(_matrix_entry(
+                comp, lint=True, cover=comp.get("cover", True), test=True))
         else:
             result[comp["lang"]].append(_matrix_entry(comp))
     return result

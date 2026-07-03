@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Snapshot the metric catalog from a running analytics-api.
+"""Snapshot the metric catalog from a running analytics.
 
 NOT a pytest test — a plain script, run (via subprocess) by conftest's
-`analytics_api` fixture while the suite's analytics-api is up, so the
+`analytics` fixture while the suite's analytics is up, so the
 metric-coverage gate can read a file with no second app boot. Writes
 ``catalog_metrics.json`` (← POST /v1/catalog/get_metrics) into ``--out-dir``.
 
@@ -47,9 +47,9 @@ def collect(base_url: str, out_dir: str | Path, tenant_id: str | None) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
-        description="Snapshot the analytics-api metric catalog for the coverage gate."
+        description="Snapshot the analytics metric catalog for the coverage gate."
     )
-    p.add_argument("--url", required=True, help="analytics-api base URL")
+    p.add_argument("--url", required=True, help="analytics base URL")
     p.add_argument("--out-dir", required=True, help="directory to write the artifact into")
     p.add_argument("--tenant", help="X-Insight-Tenant-Id header (the catalog read is tenant-gated)")
     args = p.parse_args(argv)

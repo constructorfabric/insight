@@ -322,7 +322,7 @@ For cluster deployments image tags flow through automatically: the umbrella char
 | Image | Source repo | Tags |
 |---|---|---|
 | `insight-api-gateway` | `constructorfabric/insight` (this repo) | https://github.com/constructorfabric/insight/pkgs/container/insight-api-gateway |
-| `insight-analytics-api` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-analytics-api |
+| `insight-analytics` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-analytics |
 | `insight-identity` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-identity |
 | `insight-toolbox` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-toolbox |
 | `insight-front` | **separate** `constructorfabric/insight-front` | https://github.com/constructorfabric/insight/pkgs/container/insight-front |

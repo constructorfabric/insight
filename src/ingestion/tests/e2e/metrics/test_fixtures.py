@@ -20,7 +20,7 @@ import logging
 
 import pytest
 
-from lib.analytics_api import AnalyticsApiProcess
+from lib.analytics import AnalyticsProcess
 from lib.ch_seeder import CHSeeder
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
@@ -38,7 +38,7 @@ def test_metric_smoke(
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
     enrich_runner: EnrichRunner,
-    analytics_api: AnalyticsApiProcess,
+    analytics: AnalyticsProcess,
     worker_ctx: WorkerContext,
 ) -> None:
     # 1. Clear what the prior test wrote (no-op on the first test).
@@ -112,7 +112,7 @@ def test_metric_smoke(
 
     # 5. Run each case's batch request and evaluate its expect rules.
     for case in test_yaml.cases:
-        status, payload = analytics_api.call_request(case["request"])
+        status, payload = analytics.call_request(case["request"])
         if status != 200:
             LOG.warning("HTTP %d; body: %r", status, payload)
         evaluate_case(case, payload, status)

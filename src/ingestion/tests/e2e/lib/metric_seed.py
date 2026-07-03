@@ -1,6 +1,6 @@
 """Seed test-specific metric definitions into MariaDB.
 
-Runs AFTER the analytics-api binary's SeaORM auto-migrations populate prod
+Runs AFTER the analytics binary's SeaORM auto-migrations populate prod
 metrics. Reads `seed/metrics.yaml` and upserts each entry into the `metrics`
 table. Idempotent — re-runs replace existing rows by id.
 
@@ -22,7 +22,7 @@ from lib.config import SessionConfig, TEST_TENANT_ID
 
 LOG = logging.getLogger("e2e.metric_seed")
 
-# All e2e metric definitions live under TEST_TENANT_ID. The analytics-api tenant
+# All e2e metric definitions live under TEST_TENANT_ID. The analytics tenant
 # middleware rejects the nil UUID, and `find_enabled_metric` filters the
 # `metrics` table by tenant, so both the prod metrics seeded by the binary's
 # migrations (under the nil tenant) and our overrides must sit under the tenant
@@ -36,7 +36,7 @@ NIL_TENANT = uuid.UUID("00000000-0000-0000-0000-000000000000").bytes
 def seed_test_metrics(cfg: SessionConfig, seed_path: Path | None = None) -> int:
     """Align MariaDB.metrics with the e2e tenant, then upsert seed overrides.
 
-    Runs after the analytics-api binary's SeaORM migrations have seeded the prod
+    Runs after the analytics binary's SeaORM migrations have seeded the prod
     metric catalog (under the nil tenant). Returns the number of override rows.
     """
     seed_path = seed_path or (cfg.repo_root / "src/ingestion/tests/e2e/seed/metrics.yaml")

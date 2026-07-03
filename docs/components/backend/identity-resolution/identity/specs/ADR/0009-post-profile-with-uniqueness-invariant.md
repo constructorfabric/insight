@@ -102,7 +102,7 @@ partition `(tenant, person, source_type, source_id, value_type)`
 ### Consequences
 
 - Phase 1 `GET /v1/persons/{email}` stays unchanged — existing
-  callers (analytics-api, frontend via api-gateway proxy) continue
+  callers (the analytics service, frontend via api-gateway proxy) continue
   to work; migration to POST is a per-caller refactor over time.
 - Data-invariant violations surface as 422 in production — operators
   see real signal when the seed pipeline produces ambiguous rows.

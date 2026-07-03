@@ -38,13 +38,13 @@ date: 2026-05-21
 
 ### 1.1 Overview
 
-Cut a single working end-to-end test path through every layer of the Bronze-to-API E2E Test Framework. After this feature lands, a developer can author a fixture folder (`bronze/*.csv` + `spec.yaml` + `expected/response.csv`) and watch the runner load it, INSERT typed rows into bronze, run a scoped `dbt build`, call the analytics-api on a loopback port, and diff the response against the expected CSV — with cell-precise output on failure.
+Cut a single working end-to-end test path through every layer of the Bronze-to-API E2E Test Framework. After this feature lands, a developer can author a fixture folder (`bronze/*.csv` + `spec.yaml` + `expected/response.csv`) and watch the runner load it, INSERT typed rows into bronze, run a scoped `dbt build`, call the analytics on a loopback port, and diff the response against the expected CSV — with cell-precise output on failure.
 
 This feature is the integration of every component from DESIGN (`fixture-loader`, `ch-seeder`, `dbt-runner`, `api-client`, `csv-asserter`, `session-rig`) plus one reference fixture (`fixtures/people_smoke/`) that exercises `insight.people` end-to-end. The reference fixture is part of the DoD — without it, the framework has no proof of life.
 
 ### 1.2 Purpose
 
-The framework as a whole exists to give data engineers and backend developers a fast same-day signal that a dbt model, migration view, or analytics-api code change is consistent with the contract the UI consumes (`cpt-bronze-to-api-e2e-fr-bronze-seed-from-csv`, `cpt-bronze-to-api-e2e-fr-csv-assert`, `cpt-bronze-to-api-e2e-fr-api-roundtrip`). This feature is the MVP that delivers that signal for one view and one metric — the smallest scope that lets the framework be evaluated end-to-end.
+The framework as a whole exists to give data engineers and backend developers a fast same-day signal that a dbt model, migration view, or analytics code change is consistent with the contract the UI consumes (`cpt-bronze-to-api-e2e-fr-bronze-seed-from-csv`, `cpt-bronze-to-api-e2e-fr-csv-assert`, `cpt-bronze-to-api-e2e-fr-api-roundtrip`). This feature is the MVP that delivers that signal for one view and one metric — the smallest scope that lets the framework be evaluated end-to-end.
 
 **Requirements**:
 
@@ -241,7 +241,7 @@ The system **MUST** invoke `dbt build` with the selector from `spec.yaml` (e.g. 
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-dod-csv-rig-api-roundtrip`
 
-The system **MUST** POST the request derived from `spec.yaml` to the analytics-api over HTTP loopback and deserialize the JSON body into a typed `ApiResponse`. Auth **MUST** be disabled in the spawned binary. The api-client **MUST** be the same instance for every test in the session.
+The system **MUST** POST the request derived from `spec.yaml` to the analytics over HTTP loopback and deserialize the JSON body into a typed `ApiResponse`. Auth **MUST** be disabled in the spawned binary. The api-client **MUST** be the same instance for every test in the session.
 
 **Implements**:
 

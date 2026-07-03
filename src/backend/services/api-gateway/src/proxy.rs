@@ -15,7 +15,7 @@
 //!     config:
 //!       routes:
 //!         - prefix: "/analytics"
-//!           upstream: "http://analytics-api:8081"
+//!           upstream: "http://analytics:8081"
 //!         - prefix: "/public-api"
 //!           upstream: "http://public-service:8080"
 //!           public: true
@@ -40,7 +40,7 @@ use toolkit_canonical_errors::CanonicalError;
 pub struct RouteConfig {
     /// URL path prefix to match (e.g. "/analytics").
     pub prefix: String,
-    /// Upstream service base URL (e.g. `http://analytics-api:8081`).
+    /// Upstream service base URL (e.g. `http://analytics:8081`).
     pub upstream: String,
     /// If true, this route does NOT require authentication.
     /// Default: false (all routes require auth).

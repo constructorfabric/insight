@@ -9,7 +9,7 @@
 ##
 ## App layer reaches this release as
 ## `redis-master.insight-infra.svc.cluster.local:6379`.
-## Used by analytics-api as query-response cache.
+## Used by analytics as query-response cache.
 ##
 
 fullnameOverride: redis
@@ -24,7 +24,7 @@ image:
   registry: docker.io
   repository: bitnamilegacy/redis
 
-# Standalone (no replicas) — analytics-api only needs a cache; a Redis
+# Standalone (no replicas) — analytics only needs a cache; a Redis
 # failover topology adds complexity without buying much for this use.
 # Flip in a per-env overlay (architecture: replication, replica: …) if
 # a customer requires HA.

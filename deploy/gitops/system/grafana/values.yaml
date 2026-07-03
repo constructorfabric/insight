@@ -140,7 +140,7 @@ dashboards:
              "datasource": {"type": "loki", "uid": "loki"},
              "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
              "targets": [
-               {"refId": "A", "expr": "{namespace=\"insight\", container=~\"api-gateway|analytics-api|identity\"} |= \"ERROR\""}
+               {"refId": "A", "expr": "{namespace=\"insight\", container=~\"api-gateway|analytics|identity\"} |= \"ERROR\""}
              ]}
           ]
         }

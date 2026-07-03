@@ -14,7 +14,7 @@ local `file://` subchart:
 | Component             | Kind                 | Source                                       | Toggle                          |
 |-----------------------|----------------------|----------------------------------------------|---------------------------------|
 | API Gateway           | app service (req'd)  | `src/backend/services/api-gateway/helm`      | mandatory (no flag)             |
-| Analytics API         | app service (req'd)  | `src/backend/services/analytics-api/helm`    | mandatory (no flag)             |
+| Analytics             | app service (req'd)  | `src/backend/services/analytics/helm`        | mandatory (no flag)             |
 | Frontend (SPA)        | app service (req'd)  | `src/frontend/helm`                          | mandatory (no flag)             |
 | Identity (.NET 9)     | app service (opt)    | `src/backend/services/identity/helm`         | `identity.deploy`               |
 
@@ -35,7 +35,7 @@ See [`docs/distribution/README.md`](../../docs/distribution/README.md) for the f
 
 **This chart assumes release name = `insight`.**
 
-Internal DNS references between app services (e.g. `http://insight-analytics-api:8081`, `http://insight-identity:8082`) are templated with the `insight-` prefix. Helm subcharts use `{{ .Release.Name }}-{chart-suffix}` for service naming, which produces these exact names when the release is `insight`. (External L2 infra is reached via the explicit `<dep>.host` wiring, not the release-name convention.)
+Internal DNS references between app services (e.g. `http://insight-analytics:8081`, `http://insight-identity:8082`) are templated with the `insight-` prefix. Helm subcharts use `{{ .Release.Name }}-{chart-suffix}` for service naming, which produces these exact names when the release is `insight`. (External L2 infra is reached via the explicit `<dep>.host` wiring, not the release-name convention.)
 
 If you install under a different name, override all cross-service URLs in your own values.yaml. Prefer sticking to the convention.
 
@@ -90,7 +90,7 @@ Key groups:
 - `credentials.autoGenerate` — toggle umbrella-managed `insight-db-creds`
 - `global.*` — cluster-wide defaults (pull secrets, storage class)
 - `<dep>.host` / `<dep>.port` / `<dep>.passwordSecret` (Redpanda: `<dep>.brokers`) — external-infra wiring for ClickHouse, MariaDB, Redis, Redpanda
-- `apiGateway` / `analyticsApi` / `frontend` — **mandatory** app services (no deploy-flag; the gateway is the single entrance and the product is one unit)
+- `apiGateway` / `analytics` / `frontend` — **mandatory** app services (no deploy-flag; the gateway is the single entrance and the product is one unit)
 - `identity.deploy` — **optional** .NET identity service (off by default; not an OIDC provider)
 - `apiGateway.oidc` — OIDC configuration (prefer `existingSecret`; inline requires `issuer` + `clientId` + `redirectUri` together)
 - `apiGateway.proxy.routes` — reverse-proxy config to downstream services

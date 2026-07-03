@@ -1,14 +1,14 @@
 name: E2E — Bronze to API
 
 # End-to-end transformation tests covering bronze → dbt → ClickHouse
-# migration views → analytics-api HTTP response → expect rules.
+# migration views → analytics HTTP response → expect rules.
 #
 # Everything (Python, Rust, dbt, pytest) runs inside the runner image
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
 # image is used for local development via src/ingestion/tests/e2e/e2e.sh.
 #
 # Topology: ONE heavy job (`e2e`) boots the stack, runs the suite, and — while
-# analytics-api is already up — snapshots the metric catalog into `.artifacts/`,
+# analytics is already up — snapshots the metric catalog into `.artifacts/`,
 # which it uploads. The metric-coverage-gate job then analyses it as a pure-Python
 # check (no Docker, no app boot). See
 # src/ingestion/tests/e2e/lib/{metric_coverage,collect_metrics}.py.
@@ -55,7 +55,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       # ─── Build the runner image ─────────────────────────────────────────
-      # The runner bakes in analytics-api + each connector's enrich binary, each
+      # The runner bakes in analytics + each connector's enrich binary, each
       # compiled FROM ITS OWN Dockerfile via build-only services wired as
       # `additional_contexts` (see compose/docker-compose.runner.yml). Nothing is
       # compiled inside the runner at test time.
@@ -74,14 +74,14 @@ jobs:
       # mariadb `depends_on` services — compose pulls their images on demand
       # and waits for `service_healthy` — so no explicit image pre-pull is needed.
       # Serial on purpose: the session rig is not xdist-safe yet (see
-      # conftest.py — per-worker analytics-api spawns race SeaORM migrations
+      # conftest.py — per-worker analytics spawns race SeaORM migrations
       # in the shared MariaDB, non-primary workers don't wait for ClickHouse
       # migrations, and the shared dbt target/ dir is deleted by whichever
       # worker finishes first). Wall-time cost is negligible: the runner image
-      # build (which compiles analytics-api + enrich) dominates the job.
+      # build (which compiles analytics + enrich) dominates the job.
       #
       # The suite ALSO snapshots the metric catalog to .artifacts/catalog_metrics.json
-      # (lib/collect_metrics.py, while analytics-api is up) — the
+      # (lib/collect_metrics.py, while analytics is up) — the
       # metric-coverage-gate job below analyses it, no second app boot.
       - name: Run E2E suite
         run: ./e2e.sh test --tb=short -q
@@ -122,7 +122,7 @@ jobs:
 
   # ─── Gate job — pure-Python analysis of the collected catalog ─────────────
   # Runs after `e2e` (needs), downloads `coverage-inputs`, reads the catalog file.
-  # No Docker, no analytics-api boot. `!cancelled()` so it still reports when the
+  # No Docker, no analytics boot. `!cancelled()` so it still reports when the
   # suite itself failed (the artifact is usually present).
 
   metric-coverage-gate:

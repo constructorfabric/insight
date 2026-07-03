@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       api_gateway:   ${{ steps.filter.outputs.api_gateway }}
-      analytics_api: ${{ steps.filter.outputs.analytics_api }}
+      analytics: ${{ steps.filter.outputs.analytics }}
       identity:      ${{ steps.filter.outputs.identity }}
       toolbox:       ${{ steps.filter.outputs.toolbox }}
       umbrella:      ${{ steps.filter.outputs.umbrella }}
@@ -72,8 +72,8 @@ jobs:
               - 'src/backend/services/api-gateway/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
-            analytics_api:
-              - 'src/backend/services/analytics-api/**'
+            analytics:
+              - 'src/backend/services/analytics/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             identity:
@@ -296,10 +296,10 @@ jobs:
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
 
-  backend-analytics-api:
+  backend-analytics:
     needs: changes
     if: |
-      needs.changes.outputs.analytics_api == 'true'
+      needs.changes.outputs.analytics == 'true'
       || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
     strategy:
       fail-fast: false
@@ -325,11 +325,11 @@ jobs:
         id: build
         with:
           context: src/backend
-          file: src/backend/services/analytics-api/Dockerfile
+          file: src/backend/services/analytics/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-analytics-api,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          cache-from: type=gha,scope=analytics-api-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=analytics-api-${{ matrix.arch }},ignore-error=true
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-analytics,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          cache-from: type=gha,scope=analytics-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=analytics-${{ matrix.arch }},ignore-error=true
       - name: Export digest
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: |
@@ -340,16 +340,16 @@ jobs:
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: digests-analytics-api-${{ matrix.arch }}
+          name: digests-analytics-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
-  merge-analytics-api:
-    needs: [changes, backend-analytics-api]
+  merge-analytics:
+    needs: [changes, backend-analytics]
     if: |
       always()
-      && needs.backend-analytics-api.result == 'success'
+      && needs.backend-analytics.result == 'success'
       && github.event_name != 'pull_request'
       && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -358,7 +358,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-analytics-api-*
+          pattern: digests-analytics-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -369,7 +369,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ env.IMAGE_PREFIX }}/insight-analytics-api
+          images: ${{ env.IMAGE_PREFIX }}/insight-analytics
           tags: |
             type=raw,value=${{ needs.changes.outputs.build_tag }}
             type=raw,value=latest
@@ -378,18 +378,18 @@ jobs:
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.IMAGE_PREFIX }}/insight-analytics-api@sha256:%s ' *)
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-analytics@sha256:%s ' *)
       - name: Inspect manifest digest
         id: inspect
         run: |
           DIGEST=$(docker buildx imagetools inspect \
-            ${{ env.IMAGE_PREFIX }}/insight-analytics-api:${{ needs.changes.outputs.build_tag }} \
+            ${{ env.IMAGE_PREFIX }}/insight-analytics:${{ needs.changes.outputs.build_tag }} \
             --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ env.IMAGE_PREFIX }}/insight-analytics-api
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-analytics
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
 
@@ -418,7 +418,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Context is src/backend/ (uniform with api-gateway + analytics-api)
+      # Context is src/backend/ (uniform with api-gateway + analytics)
       # so the Dockerfile can reach src/backend/docker-entrypoint.sh —
       # the shared ENABLE_AUTO_RELOAD-aware entrypoint added in the
       # docker-compose dev path. Internal COPY paths inside the
@@ -792,7 +792,7 @@ jobs:
       - changes
       - discover-images
       - merge-api-gateway
-      - merge-analytics-api
+      - merge-analytics
       - merge-identity
       - merge-toolbox
       - merge-image
@@ -812,7 +812,7 @@ jobs:
       && needs.discover-images.outputs.any == 'true'
       && needs.merge-image.result == 'success'
       && (needs.merge-api-gateway.result   == 'success' || needs.merge-api-gateway.result   == 'skipped')
-      && (needs.merge-analytics-api.result == 'success' || needs.merge-analytics-api.result == 'skipped')
+      && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
       && (needs.merge-identity.result      == 'success' || needs.merge-identity.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
     runs-on: ubuntu-latest
@@ -947,7 +947,7 @@ jobs:
       - changes
       - discover-images
       - merge-api-gateway
-      - merge-analytics-api
+      - merge-analytics
       - merge-identity
       - merge-toolbox
       - merge-image
@@ -957,7 +957,7 @@ jobs:
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && github.ref == 'refs/heads/main'
       && (needs.merge-api-gateway.result   == 'success' || needs.merge-api-gateway.result   == 'skipped')
-      && (needs.merge-analytics-api.result == 'success' || needs.merge-analytics-api.result == 'skipped')
+      && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
       && (needs.merge-identity.result      == 'success' || needs.merge-identity.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
       && (needs.merge-image.result         == 'success' || needs.merge-image.result         == 'skipped')
@@ -965,7 +965,7 @@ jobs:
       && needs.bump-descriptors.outputs.committed != 'true'
       && (
         needs.changes.outputs.api_gateway   == 'true'
-        || needs.changes.outputs.analytics_api == 'true'
+        || needs.changes.outputs.analytics == 'true'
         || needs.changes.outputs.identity     == 'true'
         || needs.changes.outputs.toolbox      == 'true'
         || needs.changes.outputs.umbrella     == 'true'
@@ -1033,7 +1033,7 @@ jobs:
         env:
           BUILD_TAG:     ${{ needs.changes.outputs.build_tag }}
           API_GATEWAY:   ${{ needs.changes.outputs.api_gateway }}
-          ANALYTICS_API: ${{ needs.changes.outputs.analytics_api }}
+          ANALYTICS: ${{ needs.changes.outputs.analytics }}
           IDENTITY:      ${{ needs.changes.outputs.identity }}
         run: |
           set -euo pipefail
@@ -1041,9 +1041,9 @@ jobs:
             echo "Bumping api-gateway subchart appVersion → $BUILD_TAG"
             yq -i ".appVersion = \"$BUILD_TAG\"" src/backend/services/api-gateway/helm/Chart.yaml
           fi
-          if [ "$ANALYTICS_API" = "true" ]; then
-            echo "Bumping analytics-api subchart appVersion → $BUILD_TAG"
-            yq -i ".appVersion = \"$BUILD_TAG\"" src/backend/services/analytics-api/helm/Chart.yaml
+          if [ "$ANALYTICS" = "true" ]; then
+            echo "Bumping analytics subchart appVersion → $BUILD_TAG"
+            yq -i ".appVersion = \"$BUILD_TAG\"" src/backend/services/analytics/helm/Chart.yaml
           fi
           if [ "$IDENTITY" = "true" ]; then
             echo "Bumping identity subchart appVersion → $BUILD_TAG"
@@ -1104,7 +1104,7 @@ jobs:
           # breaks every install (charts 0.1.48–0.1.55 were affected).
           NEW_APP=$(yq -r '.appVersion' \
             src/backend/services/api-gateway/helm/Chart.yaml \
-            src/backend/services/analytics-api/helm/Chart.yaml \
+            src/backend/services/analytics/helm/Chart.yaml \
             src/backend/services/identity/helm/Chart.yaml \
             src/frontend/helm/Chart.yaml \
             | grep -Ev '^(---|null)$' \
@@ -1190,7 +1190,7 @@ jobs:
                   charts/insight/Chart.lock \
                   charts/insight/values.yaml \
                   src/backend/services/api-gateway/helm/Chart.yaml \
-                  src/backend/services/analytics-api/helm/Chart.yaml \
+                  src/backend/services/analytics/helm/Chart.yaml \
                   src/backend/services/identity/helm/Chart.yaml \
                   src/frontend/helm/Chart.yaml \
                   deploy/gitops/.insight-version

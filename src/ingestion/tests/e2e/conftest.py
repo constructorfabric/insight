@@ -5,8 +5,8 @@ Owns the lifecycle of every session-scoped resource:
   pytest_sessionstart:
     1. docker compose up (ClickHouse + MariaDB)
     2. apply ClickHouse migrations
-    3. MariaDB is seeded later by the analytics-api binary's own auto-migrations
-    4. spawn analytics-api on a free loopback port
+    3. MariaDB is seeded later by the analytics binary's own auto-migrations
+    4. spawn analytics on a free loopback port
 
   pytest_sessionfinish:
     teardown in reverse order
@@ -17,7 +17,7 @@ consume them without touching subprocess code directly.
 When pytest-xdist is active, pytest_sessionstart runs in each worker — but
 docker-compose containers are shared (same names). The compose lifecycle
 is therefore idempotent: subsequent workers attach to the already-running
-stack. The analytics-api binary spawn happens in the master only (gated on
+stack. The analytics binary spawn happens in the master only (gated on
 PYTEST_XDIST_WORKER) to avoid N processes on N workers.
 """
 
@@ -31,7 +31,7 @@ from pathlib import Path
 
 from lib import clickhouse as ch
 from lib import compose, mariadb
-from lib.analytics_api import AnalyticsApiProcess, find_free_port, locate_binary
+from lib.analytics import AnalyticsProcess, find_free_port, locate_binary
 from lib.ch_seeder import CHSeeder
 from lib.config import SessionConfig, TEST_TENANT_ID
 from lib.dbt_runner import DbtRunner
@@ -49,7 +49,7 @@ LOG = logging.getLogger("e2e.rig")
 # ----------------------------------------------------------------------
 
 # When running under xdist, all workers share the same compose stack and the
-# same analytics-api process. We elect the first worker as the "owner" of the
+# same analytics process. We elect the first worker as the "owner" of the
 # shared resources; the others wait until the owner reports ready.
 #
 # For the scaffolding MVP we keep it simple: do NOT support xdist yet (the
@@ -196,13 +196,13 @@ def dbt_runner(ch_migrations_applied: SessionConfig):
     runner.cleanup()
 
 
-def _collect_metrics(proc: AnalyticsApiProcess) -> None:
+def _collect_metrics(proc: AnalyticsProcess) -> None:
     """Run `lib/collect_metrics.py` (a script — NOT a test) against the
     live API, primary worker only. Snapshots the metric catalog into `.artifacts/`
     so the metric-coverage gate analyses a file with no second app boot.
     Best-effort: a failure just means the gate finds no artifact and fails loudly —
     never abort the session for it. Must run while the API is up (called from
-    analytics_api teardown, before proc.stop())."""
+    analytics teardown, before proc.stop())."""
     if not _IS_PRIMARY:
         return
     import subprocess
@@ -231,25 +231,25 @@ def _collect_metrics(proc: AnalyticsApiProcess) -> None:
 
 
 @pytest.fixture(scope="session")
-def analytics_api(ch_migrations_applied: SessionConfig):
-    """Spawn the analytics-api binary baked into the runner image. Its SeaORM
+def analytics(ch_migrations_applied: SessionConfig):
+    """Spawn the analytics binary baked into the runner image. Its SeaORM
     migrations run on startup; we then upsert test-specific metrics from
     seed/metrics.yaml.
 
     If the binary is missing, this is a hard FAIL — identical locally and in CI.
     A skip here would make the whole transformation suite silently green while
     testing nothing. The binary is built FROM ITS OWN Dockerfile and baked into the
-    runner image (see lib.analytics_api.locate_binary); if it isn't there the
+    runner image (see lib.analytics.locate_binary); if it isn't there the
     bronze→API tests cannot run, so the only honest result is red.
     """
     cfg = ch_migrations_applied
-    from lib.analytics_api import ApiSpawnError  # local import to keep top clean
+    from lib.analytics import ApiSpawnError  # local import to keep top clean
     try:
         binary = locate_binary(cfg)
     except ApiSpawnError as e:
-        pytest.fail(f"analytics-api binary not available: {e}", pytrace=False)
+        pytest.fail(f"analytics binary not available: {e}", pytrace=False)
     port = find_free_port()
-    proc = AnalyticsApiProcess(cfg, binary, port)
+    proc = AnalyticsProcess(cfg, binary, port)
     proc.start()
     seed_test_metrics(cfg)
     yield proc

@@ -110,7 +110,7 @@ Tenant separation across customers is at the **cluster boundary** for gitops pro
                   │ Insight umbrella chart                              │
                   │  - subcharts: clickhouse, mariadb, redis, redpanda  │
                   │              (gated by <svc>.deploy)                │
-                  │              api-gateway, analytics-api, frontend   │
+                  │              api-gateway, analytics, frontend       │
                   │              identity-resolution (opt)              │
                   │  - bridges:  {release}-platform ConfigMap           │
                   │              ingestion WorkflowTemplates            │
@@ -233,7 +233,7 @@ The published `ghcr.io/constructorfabric/insight-front` image ships only a linux
 
 - [ ] `p3` - **ID**: `cpt-insightspec-constraint-dep-release-name-default`
 
-The canonical `values.yaml` hard-codes the `insight-` prefix in a handful of app-service inline URLs (for example `analyticsApi.database.url`). Installing under a non-default release name requires overriding those URLs in an overlay. The long-term migration to `envFrom: {release}-platform` removes this constraint; noted as an open item.
+The canonical `values.yaml` hard-codes the `insight-` prefix in a handful of app-service inline URLs (for example `analytics.database.url`). Installing under a non-default release name requires overriding those URLs in an overlay. The long-term migration to `envFrom: {release}-platform` removes this constraint; noted as an open item.
 
 **ADRs**: none.
 
@@ -285,7 +285,7 @@ graph TB
         RD[redis]
         RP[redpanda]
         APIGW[apiGateway]
-        AA[analyticsApi]
+        AA[analytics]
         FE[frontend]
         IR[identityResolution]
     end
@@ -453,7 +453,7 @@ Day-to-day backend / frontend work needs a fast loop with no Kubernetes overhead
 
 ##### Responsibility scope
 
-- Runs `docker-compose.yml`: api-gateway + analytics-api (Rust) + identity (.NET 9) + frontend, plus bundled MariaDB / ClickHouse / Redis / Redpanda containers.
+- Runs `docker-compose.yml`: api-gateway + analytics (Rust) + identity (.NET 9) + frontend, plus bundled MariaDB / ClickHouse / Redis / Redpanda containers.
 - Builds the backend services and (optionally) the frontend in builder containers — no Rust / .NET / Node toolchain on the host. Per-service `<SVC>_IMAGE` overrides in `.env.compose` (or `--from-ghcr=<svc>`) pull a published image instead of building.
 - Auto-reloads each backend service in ~1 second on rebuild via `watchexec` when `ENABLE_AUTO_RELOAD=true` (compose-only; never set in a Kubernetes manifest).
 - Auto-seeds a demo dataset (identity + silver) on first `up`, tracked via `SEEDED_LOCAL_*` markers in `.env.compose`.
@@ -493,7 +493,7 @@ Day-to-day backend / frontend work needs a fast loop with no Kubernetes overhead
 | redis | `redis.deploy`, `redis.host`, `redis.port`, `redis.passwordSecret.{name,key}` | Unified shape. | unstable |
 | redpanda | `redpanda.deploy`, `redpanda.brokers`, `redpanda.tls.*`, `redpanda.auth.sasl.*` | Unified shape. | unstable |
 | apiGateway | `apiGateway.replicaCount`, `apiGateway.image.*`, `apiGateway.oidc.*`, `apiGateway.authDisabled`, `apiGateway.ingress.*`, `apiGateway.proxy.routes` | Mandatory API Gateway service. | unstable |
-| analyticsApi | `analyticsApi.replicaCount`, `analyticsApi.image.*` | Mandatory Analytics API service; reads DB/Redis/CH coordinates from auto-generated `insight-analytics-api-config` Secret. | unstable |
+| analytics | `analytics.replicaCount`, `analytics.image.*` | Mandatory Analytics API service; reads DB/Redis/CH coordinates from auto-generated `insight-analytics-config` Secret. | unstable |
 | identityResolution | `identityResolution.deploy`, `identityResolution.replicaCount`, `identityResolution.image.*` | Optional Identity Resolution stub (off by default). | unstable |
 | frontend | `frontend.replicaCount`, `frontend.image.*`, `frontend.ingress.*`, `frontend.oidc.*` | Mandatory Frontend SPA. | unstable |
 
@@ -544,7 +544,7 @@ Per-tag artifacts are immutable; the Chart Publishing CI does not overwrite. GHC
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|---------|
 | `src/backend/services/api-gateway/helm` | Helm subchart | Mandatory app service shipped under `apiGateway` alias. |
-| `src/backend/services/analytics-api/helm` | Helm subchart | Mandatory app service shipped under `analyticsApi` alias. |
+| `src/backend/services/analytics/helm` | Helm subchart | Mandatory app service shipped under `analytics` alias. |
 | `src/backend/services/identity/helm` | Helm subchart | Optional identity-resolution stub under `identityResolution` alias. |
 | `src/frontend/helm` | Helm subchart | Mandatory SPA shipped under `frontend` alias. |
 | `charts/insight/templates/ingestion/*.yaml` | First-class Helm templates | Ingestion WorkflowTemplate sources, gated by `ingestion.templates.enabled`; consume umbrella helpers directly via `include`. |
@@ -745,10 +745,10 @@ Not applicable. The Deployment subsystem stores no data; it produces a chart art
 
 - **Chart publishing auto-commit-back branch-protection token.** The default `GITHUB_TOKEN` cannot bypass branch protection on `main`; until a fine-grained PAT in `RELEASE_PUSH_PAT` or a GitHub App with bypass rights is configured, the version-bump auto-commit must be replayed manually after merge. Tracked.
 - **Frontend image tag in publish CI.** The publish-chart workflow does not bump the frontend image tag because frontend source lives in the separate `constructorfabric/insight-front` repo. Env overlays pin frontend's tag manually. Fix: emit a workflow-dispatch hook in the publish-chart job that accepts a `frontend_tag` input. Tracked as a chart-side SPEC §8 follow-up.
-- **`required` short-circuits subchart `image.tag` defaulting.** Despite the umbrella's design saying "image.tag empty → use chart appVersion", subchart deployment templates use `required` without `default`, so env overlays must pin `image.tag` explicitly for api-gateway / analytics-api / identity-resolution / frontend. Replace `required` with `default .Chart.AppVersion`. Tracked as a chart-side SPEC §8 follow-up.
+- **`required` short-circuits subchart `image.tag` defaulting.** Despite the umbrella's design saying "image.tag empty → use chart appVersion", subchart deployment templates use `required` without `default`, so env overlays must pin `image.tag` explicitly for api-gateway / analytics / identity-resolution / frontend. Replace `required` with `default .Chart.AppVersion`. Tracked as a chart-side SPEC §8 follow-up.
 - **Per-service DB provisioning Helm hook for layered mode.** The chart's `identity-db-init-job.yaml` runs only when `mariadb.deploy: true` (single-namespace fat mode). In the layered model (`mariadb.deploy: false` + external L2 MariaDB), engineers run a one-time `CREATE DATABASE identity` + `GRANT` against L2 mariadb. Fix: pre-install/pre-upgrade Helm hook that works for both bundled and external MariaDB, reading `mariadb-root-password` from `insight-db-creds`. Tracked as a chart-side SPEC §8 follow-up.
-- **`insight-{analytics-api,identity-resolution}-config` composability.** The chart validator forbids `gitops + autoGenerate=true`, so the two composed Secrets are only emitted under `autoGenerate=true`. In gitops production, engineers run `scripts/compose-app-secrets.sh` (in the gitops repo) to derive them from `insight-db-creds` + env values. Fix: either (a) compose them in a separate Helm hook job that ALWAYS runs, reading the db-creds Secret; or (b) document the engineer-side composition as the supported path. Tracked.
-- **Airbyte cross-namespace URL.** The chart's `insight.airbyte.url` helper currently uses `.Release.Namespace` (`insight`). In the layered model Airbyte runs in `insight-infra`, so analytics-api would 404 on real ingestion calls. Parameterise `airbyte.namespace` (or compute the FQDN from a values field). Tracked as a chart-side SPEC §8 follow-up.
+- **`insight-{analytics,identity-resolution}-config` composability.** The chart validator forbids `gitops + autoGenerate=true`, so the two composed Secrets are only emitted under `autoGenerate=true`. In gitops production, engineers run `scripts/compose-app-secrets.sh` (in the gitops repo) to derive them from `insight-db-creds` + env values. Fix: either (a) compose them in a separate Helm hook job that ALWAYS runs, reading the db-creds Secret; or (b) document the engineer-side composition as the supported path. Tracked.
+- **Airbyte cross-namespace URL.** The chart's `insight.airbyte.url` helper currently uses `.Release.Namespace` (`insight`). In the layered model Airbyte runs in `insight-infra`, so analytics would 404 on real ingestion calls. Parameterise `airbyte.namespace` (or compute the FQDN from a values field). Tracked as a chart-side SPEC §8 follow-up.
 - **Cross-namespace host defaults for L2 services.** When `<svc>.deploy: false`, the chart still `required`-s `<svc>.host`. Default it to `<release>.insight-infra.svc.cluster.local` (the layered-model convention) so env values stay minimal. Tracked.
 - **Artifact signing (images + chart).** Neither images nor the chart are cosign-signed today. Plan: sign at publish time, `chart-present` verifies the chart signature before allowing deploy, image admission policy verifies signatures. See the [gitops SPEC §8 open items](../gitops/README.md#8-open-items).
 - **GHCR retention for old umbrella tags.** Long-lived production pins (customer envs) should mirror to a self-hosted registry against GHCR retention deleting the tagged artifact. Documented in the gitops SPEC §8.

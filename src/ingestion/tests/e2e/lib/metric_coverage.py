@@ -1,8 +1,8 @@
 """Metric-coverage gate: every metric_key the catalog exposes has its value tested.
 
 Cross-checks, **by metric_key**, the metric universe — read over HTTP from a
-running analytics-api (`POST /v1/catalog/get_metrics`: the enabled product
-metric_keys, each a `<storage_table>.<column>` seeded by the analytics-api
+running analytics (`POST /v1/catalog/get_metrics`: the enabled product
+metric_keys, each a `<storage_table>.<column>` seeded by the analytics
 migrations) — against the metric_keys whose VALUE the tests assert
 (`find: {metric_key: …}` paired with `equal`/`assert` in the same rule). Binary
 verdict per metric_key:
@@ -20,11 +20,11 @@ The skip list is the accepted baseline — inline `SKIP_LIST` (single source of
 truth, no side-car file). Kept honest: a STALE entry (key no longer in the
 catalog) or a REDUNDANT one (now value-tested) also fails. PASS iff no FAILs.
 
-This module never spawns analytics-api. CI: the `metric-coverage-gate` job reads
+This module never spawns analytics. CI: the `metric-coverage-gate` job reads
 the universe from `--universe-file catalog_metrics.json` — the artifact the e2e
 run collects (lib/collect_metrics.py) — so no app boot. Locally:
 `./e2e.sh test` then `./e2e.sh gates`. Ad hoc against a running API:
-`ANALYTICS_API_URL=http://… python3 lib/metric_coverage.py [--md]`.
+`ANALYTICS_URL=http://… python3 lib/metric_coverage.py [--md]`.
 """
 
 from __future__ import annotations
@@ -159,7 +159,7 @@ def universe_from_url(base_url: str, tenant_id: str = DEFAULT_TENANT_ID) -> dict
 def universe_from_file(path: str | Path) -> dict[str, str]:
     """`{metric_key: label}` from a saved `POST /v1/catalog/get_metrics` response
     — the `catalog_metrics.json` artifact the e2e run collects. Lets the CI gate
-    analyse the universe from a file without booting analytics-api.
+    analyse the universe from a file without booting analytics.
     """
     return _universe_from_body(json.loads(Path(path).read_text(encoding="utf-8")))
 
@@ -418,26 +418,26 @@ def main(argv: list[str] | None = None) -> int:
 
     Two universe sources:
       --universe-file <catalog_metrics.json>  the artifact the e2e run collects
-                                               (CI gate — no analytics-api boot)
-      else $ANALYTICS_API_URL                  fetch live (local standalone runs)
-    This module never spawns analytics-api itself.
+                                               (CI gate — no analytics boot)
+      else $ANALYTICS_URL                  fetch live (local standalone runs)
+    This module never spawns analytics itself.
     """
     p = argparse.ArgumentParser(description="Metric-coverage gate (by metric_key).")
     p.add_argument(
         "--universe-file",
         help="catalog_metrics.json (a saved POST /v1/catalog/get_metrics response); "
-        "default: fetch from $ANALYTICS_API_URL",
+        "default: fetch from $ANALYTICS_URL",
     )
     args = p.parse_args(argv)
 
     if args.universe_file:
         universe = universe_from_file(args.universe_file)
     else:
-        url = os.environ.get("ANALYTICS_API_URL")
+        url = os.environ.get("ANALYTICS_URL")
         if not url:
             print(
                 "metric coverage: pass --universe-file <catalog_metrics.json> or set "
-                "ANALYTICS_API_URL to a running analytics-api.",
+                "ANALYTICS_URL to a running analytics.",
                 file=sys.stderr,
             )
             return 2

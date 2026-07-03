@@ -13,7 +13,7 @@ date: 2026-05-29
 
 ## Context and Problem Statement
 
-`metrics` (the analytics-api MariaDB table holding ClickHouse `query_ref` SQL strings) and `metric_catalog` (the consumer-facing semantic-metadata table introduced in #519) were intentionally linked only by a string match on `metric_key` — DESIGN.md §3.1 phrased it as *"Loose pointer; no FK; opacity preserved per PRD §1.1 layer boundary"*, and §6 integration table reinforced it.
+`metrics` (the analytics MariaDB table holding ClickHouse `query_ref` SQL strings) and `metric_catalog` (the consumer-facing semantic-metadata table introduced in #519) were intentionally linked only by a string match on `metric_key` — DESIGN.md §3.1 phrased it as *"Loose pointer; no FK; opacity preserved per PRD §1.1 layer boundary"*, and §6 integration table reinforced it.
 
 In practice, that left two questions structurally unanswerable from the schema alone:
 
@@ -98,6 +98,6 @@ DESIGN.md §3.1 relationship line, §3.5 dependency table, and §3.7 schema list
 
 ## More Information
 
-- Migration: `src/backend/services/analytics-api/src/migration/m20260529_000001_metric_query_catalog_link.rs`
-- Related migration that anticipated this ADR: `src/backend/services/analytics-api/src/migration/m20260522_000002_metric_threshold.rs` lines 23-31
+- Migration: `src/backend/services/analytics/src/migration/m20260529_000001_metric_query_catalog_link.rs`
+- Related migration that anticipated this ADR: `src/backend/services/analytics/src/migration/m20260522_000002_metric_threshold.rs` lines 23-31
 - DESIGN amendment locations: `docs/domain/metric-catalog/specs/DESIGN.md` §3.1 relationship line, §3.5 dependency table row for `analytics.metrics`, §3.7 new `metric_query_catalog` table block

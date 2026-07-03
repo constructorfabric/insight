@@ -179,7 +179,7 @@ The Zendesk connector closes this gap by ingesting support activity into the sam
 - Extraction of the agent directory (agents and admins) for identity resolution
 - Extraction of per-ticket Ticket Audits (`support_ticket_events`) from `GET /api/v2/tickets/{id}/audits`, driving actor-attributed activity (updates, public/private comments, solved-ticket counts)
 - The slim key-only parent stream (`support_ticket_ids`) that fans the audit substream out (`ticket_id` + `updated_at` only) to keep the CDK parent-record cache small
-- Silver `class_support_activity` person×date rollup + shared dims + Gold support metrics (`support_bullet_rows` / `support_person_period` / `support_company_stats`) + analytics-api Support metric sets + a frontend "Support" dashboard section
+- Silver `class_support_activity` person×date rollup + shared dims + Gold support metrics (`support_bullet_rows` / `support_person_period` / `support_company_stats`) + analytics Support metric sets + a frontend "Support" dashboard section
 - K8s Secret-based credential management following the Insight connector secret format
 - Bronze-layer table schemas for all Phase 1 streams
 

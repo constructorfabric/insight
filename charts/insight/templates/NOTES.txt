@@ -16,7 +16,7 @@ Resolved infra endpoints (external L2, see ConfigMap {{ .Release.Name }}-platfor
 
 Application services (always-on):
   ✓ API Gateway        http://{{ include "insight.apiGateway.host" . }}:8080
-  ✓ Analytics API      http://{{ include "insight.analyticsApi.host" . }}:8081
+  ✓ Analytics          http://{{ include "insight.analytics.host" . }}:8081
   ✓ Frontend           http://{{ include "insight.frontend.host" . }}:80
 {{- if .Values.identity.deploy }}
   ✓ Identity           http://{{ include "insight.identity.host" . }}:8082  (deployed)

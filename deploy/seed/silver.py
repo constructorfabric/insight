@@ -46,7 +46,7 @@ def _ch_client() -> clickhouse_connect.driver.client.Client:
     port = int(os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"))
     user = os.environ.get("CLICKHOUSE_USER", "insight")
     pwd = os.environ.get("CLICKHOUSE_PASSWORD", "insight-local")
-    # CRITICAL: analytics-api queries with join_use_nulls=1, so views must
+    # CRITICAL: analytics queries with join_use_nulls=1, so views must
     # be CREATED with the same setting — otherwise the view's declared
     # column types disagree with what the query sees at runtime
     # ("Nullable column having not Nullable type in structure").

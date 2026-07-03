@@ -14,7 +14,7 @@ import pytest
 
 from lib import clickhouse as ch
 from lib import mariadb
-from lib.analytics_api import AnalyticsApiProcess
+from lib.analytics import AnalyticsProcess
 from lib.config import SessionConfig
 
 
@@ -47,20 +47,20 @@ def test_migrations_create_insight_database(
     assert len(views) >= 20, f"expected many gold views, got {len(views)}: {views!r}"
 
 
-def test_analytics_api_health(analytics_api: AnalyticsApiProcess) -> None:
-    """analytics-api responds 200 on /health.
+def test_analytics_health(analytics: AnalyticsProcess) -> None:
+    """analytics responds 200 on /health.
 
     Requires a cargo/rustc satisfying `rust-version` in src/backend/Cargo.toml.
     An older toolchain now FAILS (not skips) — run `rustup update stable`.
     """
-    with analytics_api.client() as c:
+    with analytics.client() as c:
         r = c.get("/health")
         assert r.status_code == 200
 
 
-def test_analytics_api_lists_metrics(analytics_api: AnalyticsApiProcess) -> None:
+def test_analytics_lists_metrics(analytics: AnalyticsProcess) -> None:
     """SeaORM auto-migrations seed metrics on binary startup — list them."""
-    with analytics_api.client() as c:
+    with analytics.client() as c:
         r = c.get("/v1/metrics")
         assert r.status_code == 200, f"status={r.status_code} body={r.text}"
         payload = r.json()

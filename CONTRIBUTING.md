@@ -194,7 +194,7 @@ every Deployment is Ready before the chain returns.
 │  Vite dev (HMR) / nginx+dist / ghcr image — port 3000                │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Backend                                                              │
-│  api-gateway (Rust :8080)  analytics-api (Rust :8081)                │
+│  api-gateway (Rust :8080)  analytics (Rust :8081)                    │
 │  identity (.NET 9 :8082)                                              │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Infra                                                                │
@@ -268,7 +268,7 @@ Skip the local Rust/dotnet build for one or more services:
 ```bash
 # Per-run flags
 ./dev-compose.sh up --from-ghcr=api-gateway,identity
-./dev-compose.sh up --build-only=analytics-api     # invert: build only this
+./dev-compose.sh up --build-only=analytics     # invert: build only this
 
 # Or pin in .env.compose
 API_GATEWAY_IMAGE=ghcr.io/constructorfabric/insight-api-gateway:latest
@@ -283,7 +283,7 @@ drops the `build:` + bind-mount for the chosen services.
 
 - **Auto-reload** — `ENABLE_AUTO_RELOAD` (compose-only, never in k8s)
 - **Frontend** — `FRONTEND_MODE`, `INSIGHT_FRONT_PATH`, `FRONTEND_IMAGE`
-- **Backend image overrides** — `API_GATEWAY_IMAGE`, `ANALYTICS_API_IMAGE`, `IDENTITY_IMAGE`
+- **Backend image overrides** — `API_GATEWAY_IMAGE`, `ANALYTICS_IMAGE`, `IDENTITY_IMAGE`
 - **Host ports** — every published port is configurable
 - **Database mode** — `MARIADB_EXTERNAL`/`_HOST`/`_INTERNAL_PORT`/…, ClickHouse equivalents (see [External DBs](#external-mariadb--clickhouse))
 - **Credentials** — local-only, kept in dotenv per project policy
@@ -301,7 +301,7 @@ drops the `build:` + bind-mount for the chosen services.
 | --- | --- | --- |
 | Rust / C# source | `./dev-compose.sh build <service>` | watchexec → ~1s restart |
 | `src/backend/services/api-gateway/config/*.yaml` | save | watchexec → ~1s restart (bind-mounted) |
-| identity / analytics-api env | edit `docker-compose.yml`, `up -d <svc>` | container respawn |
+| identity / analytics env | edit `docker-compose.yml`, `up -d <svc>` | container respawn |
 | Frontend (`dev` mode) | save | Vite HMR |
 | Frontend (`built` mode) | `./dev-compose.sh build frontend` | nginx auto |
 | Frontend (`ghcr` mode) | switch modes | — |
@@ -310,7 +310,7 @@ Build targets:
 
 ```bash
 ./dev-compose.sh build api-gateway     # Rust gateway
-./dev-compose.sh build analytics-api   # Rust analytics
+./dev-compose.sh build analytics   # Rust analytics
 ./dev-compose.sh build identity        # .NET 9 publish
 ./dev-compose.sh build frontend        # pnpm build → dist/
 ./dev-compose.sh build rust            # both Rust services
@@ -344,7 +344,7 @@ watchexec wants, and `useradd -m` ensures `appuser` has a usable
 
 ```bash
 # Tail logs
-docker compose logs -f api-gateway analytics-api identity
+docker compose logs -f api-gateway analytics identity
 
 # Inspect databases
 docker compose exec mariadb mariadb -uinsight -pinsight-local identity
@@ -394,7 +394,7 @@ tables, every `src/ingestion/scripts/migrations/*.sql` applied
 (produces the `insight.*` gold views), ~24k rows across 16 silver
 tables profile-typed per team (`class_git_*` for devs, `class_crm_*`
 for sales, …). The full per-team activity table is in
-[`deploy/seed/profiles.py`](deploy/seed/profiles.py). analytics-api's
+[`deploy/seed/profiles.py`](deploy/seed/profiles.py). analytics's
 schema validator flips from "80 metrics error" to "80 ok".
 
 ### Compose
@@ -442,12 +442,12 @@ PLACEHOLDERS_SQL=./sql/placeholders.sql \
 MIGRATIONS_DIR=../../src/ingestion/scripts/migrations \
   .venv/bin/python seed.py all
 
-# 3. Kick analytics-api so its schema validator re-runs against the
+# 3. Kick analytics so its schema validator re-runs against the
 #    now-populated silver tables. Without this, schema_status stays
 #    cached at boot-time 'table_not_found' and the FE shows "no peer
 #    data" everywhere (cf/insight#1307).
 KUBECONFIG=/path/to/config.yaml kubectl -n insight \
-  rollout restart deploy/insight-analytics-api
+  rollout restart deploy/insight-analytics
 
 # 4. Stop the port-forwards.
 kill %1 %2

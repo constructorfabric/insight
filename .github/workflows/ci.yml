@@ -134,7 +134,7 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      # DB-backed components (analytics-api) run their #[ignore]d live_tests
+      # DB-backed components (analytics) run their #[ignore]d live_tests
       # against a real MariaDB. Gated on live_db so only those entries pay the
       # ~15s startup. ClickHouse is intentionally not provisioned — CH-gated
       # tests skip themselves (see cf/insight#1564).
@@ -170,9 +170,10 @@ jobs:
           feats=""
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
           if [ "${{ matrix.entry.live_db }}" = "true" ]; then
-            # The gear reads its DB URL from APP__gears__<alias>__config__database_url
-            # (underscore alias bridged to the kebab gear key by fold_gear_env_alias).
-            APP__gears__analytics_api__config__database_url="$INTEGRATION_TESTS_MARIADB_URL" \
+            # The gear reads its DB URL from APP__gears__analytics__config__database_url
+            # (the gear config key is "analytics" — dash-free, so the env var
+            # survives sh/dash entrypoints and k8s envFrom).
+            APP__gears__analytics__config__database_url="$INTEGRATION_TESTS_MARIADB_URL" \
               cargo llvm-cov run --no-report --package "${{ matrix.entry.package }}" $feats -- \
                 -c "services/${{ matrix.entry.name }}/config/insight.yaml" migrate
             cargo llvm-cov --no-report --package "${{ matrix.entry.package }}" $feats -- --include-ignored
@@ -188,6 +189,19 @@ jobs:
           fi
           cargo llvm-cov report --cobertura $ignore \
             --output-path "$GITHUB_WORKSPACE/coverage/rust-${{ matrix.entry.name }}.cobertura.xml"
+
+      # Changed crates with cover=false (api-gateway — no unit tests yet) still
+      # run plain `cargo test`: a failure fails this job; only the Cobertura
+      # collection and the coverage gates are skipped. Lint-only fanout entries
+      # (test=false) skip this too — coverage/tests stay per-changed-crate.
+      - name: Test (${{ matrix.entry.name }}, no coverage)
+        if: ${{ matrix.entry.test && !matrix.entry.cover }}
+        working-directory: ${{ matrix.entry.root }}
+        run: |
+          set -euo pipefail
+          feats=""
+          if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
+          cargo test -p ${{ matrix.entry.package }} $feats
 
       - name: Upload Cobertura
         if: ${{ matrix.entry.cover }}

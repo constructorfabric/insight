@@ -24,12 +24,12 @@ COPY Cargo.toml Cargo.lock ./
 COPY libs/insight-clickhouse/Cargo.toml ./libs/insight-clickhouse/Cargo.toml
 COPY plugins/oidc-authn-plugin/Cargo.toml ./plugins/oidc-authn-plugin/Cargo.toml
 COPY services/api-gateway/Cargo.toml ./services/api-gateway/Cargo.toml
-COPY services/analytics-api/Cargo.toml ./services/analytics-api/Cargo.toml
+COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
 
 RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
     mkdir -p plugins/oidc-authn-plugin/src && echo "" > plugins/oidc-authn-plugin/src/lib.rs && \
     mkdir -p services/api-gateway/src && echo "fn main() {}" > services/api-gateway/src/main.rs && \
-    mkdir -p services/analytics-api/src && echo "fn main() {}" > services/analytics-api/src/main.rs
+    mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs
 
 # Cache dependencies
 RUN cargo build --release --bin insight-api-gateway 2>/dev/null || true

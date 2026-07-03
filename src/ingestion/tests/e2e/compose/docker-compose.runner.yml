@@ -27,15 +27,15 @@ services:
       dockerfile: Dockerfile
     image: insight-e2e-enrich-jira:local
 
-  # Build-only helper: compiles analytics-api FROM ITS OWN Dockerfile (same as the
+  # Build-only helper: compiles analytics FROM ITS OWN Dockerfile (same as the
   # prod image, build context src/backend). Consumed by the runner via
   # additional_contexts (COPY --from) and baked in — the runner no longer compiles
   # anything, so its image carries no Rust toolchain.
-  analytics-api:
+  analytics:
     build:
       context: ${INSIGHT_REPO_ROOT:-../../../..}/src/backend
-      dockerfile: services/analytics-api/Dockerfile
-    image: insight-e2e-analytics-api:local
+      dockerfile: services/analytics/Dockerfile
+    image: insight-e2e-analytics:local
 
   runner:
     build:
@@ -49,7 +49,7 @@ services:
       # `COPY --from=<name>` in Dockerfile.runner pulls the compiled binary.
       additional_contexts:
         jira-enrich: "service:jira-enrich"
-        analytics-api: "service:analytics-api"
+        analytics: "service:analytics"
     image: insight-e2e-runner:latest
     container_name: insight-e2e-runner
     working_dir: /workspace/src/ingestion/tests/e2e
