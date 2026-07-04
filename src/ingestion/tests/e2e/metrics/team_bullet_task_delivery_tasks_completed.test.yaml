@@ -12,8 +12,10 @@ description: >
 
   Department: 5 Engineering members alice..erin of rank r in 1..5, each closing r
   Tasks on 2026-12-25. Custom window 2026-12-20..12-31 -> per-person counts
-  {1,2,3,4,5} -> value = avg = 3 (== median; symmetric AP dept). Filtered by the
-  department (org_unit_id) string. Empty window 2026-06 -> no items.
+  {1,2,3,4,5} -> value = avg = 3 (== median; symmetric AP dept). Scoped to the
+  5-member roster via person_id IN (how the API scopes team aggregates;
+  org_unit_id eq is not a supported filter — it would be dropped). Empty window
+  2026-06 -> no items.
 
 bronze:
   bronze_bamboohr.employees:
@@ -269,7 +271,7 @@ cases:
         queries:
           - id: task_delivery
             metric_id: 00000000-0000-0000-0001-000000000003
-            $filter: "org_unit_id eq 'Engineering' and metric_date ge '2026-12-20' and metric_date le '2026-12-31'"
+            $filter: "person_id in ('alice@example.com', 'bob@example.com', 'carol@example.com', 'dave@example.com', 'erin@example.com') and metric_date ge '2026-12-20' and metric_date le '2026-12-31'"
     expect:
       - assert: "status == 200"
       - in: task_delivery
@@ -286,7 +288,7 @@ cases:
         queries:
           - id: task_delivery
             metric_id: 00000000-0000-0000-0001-000000000003
-            $filter: "org_unit_id eq 'Engineering' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $filter: "person_id in ('alice@example.com', 'bob@example.com', 'carol@example.com', 'dave@example.com', 'erin@example.com') and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
     expect:
       - assert: "status == 200"
       - in: task_delivery

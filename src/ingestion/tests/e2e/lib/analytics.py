@@ -1,8 +1,9 @@
-"""analytics binary lifecycle: build, spawn, health-check, terminate.
+"""analytics binary lifecycle: locate, spawn, health-check, terminate.
 
-We build once per session (cargo's incremental compile keeps it fast across
-sessions) and spawn the binary directly on the host (per DESIGN §4: a host
-binary keeps target/ warm and avoids container I/O on the cargo hot path).
+The rig no longer compiles analytics: the binary is baked into the runner image
+(built from its own Dockerfile via the `e2e-analytics-build` compose service) and
+located by `locate_binary`. We spawn it in-process after the seed-once world is
+built, health-check it, and terminate on teardown.
 
 analytics runs auth-disabled (auth happens at the API Gateway, which we
 bypass), so the gears host injects a default-tenant SecurityContext. `/health`
@@ -20,8 +21,8 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -122,6 +123,7 @@ class AnalyticsProcess:
         # container, so localhost is the same loopback either way.
         self.base_url = f"http://127.0.0.1:{port}"
         self._proc: subprocess.Popen[str] | None = None
+        self._log_fh = None  # temp-file sink for the child's stdout/stderr
 
     def start(self) -> None:
         env = os.environ.copy()
@@ -159,10 +161,18 @@ class AnalyticsProcess:
             },
         )
         LOG.info("spawning analytics (gears host) on 127.0.0.1:%d", self.port)
+        # Sink stdout+stderr to a temp FILE, never subprocess.PIPE: the gears host
+        # emits one schema-validation line per metric_key at startup, which under
+        # seed-once (populated silver) exceeds the 64KB pipe buffer — an unread PIPE
+        # would block the child on write so it never serves /health. A file sink
+        # never blocks; `_read_logs()` tails it for diagnostics.
+        self._log_fh = tempfile.NamedTemporaryFile(
+            mode="w+", prefix=f"analytics-{self.port}-", suffix=".log", delete=False
+        )
         self._proc = subprocess.Popen(
             [str(self.binary), "-c", str(config_path), "run"],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=self._log_fh,
             stderr=subprocess.STDOUT,
             text=True,
         )
@@ -182,6 +192,9 @@ class AnalyticsProcess:
             self._proc.kill()
             self._proc.wait(timeout=5)
         self._proc = None
+        if self._log_fh is not None:
+            self._log_fh.close()
+            self._log_fh = None
 
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
@@ -225,10 +238,9 @@ class AnalyticsProcess:
         last_err: Exception | None = None
         while time.monotonic() < deadline:
             if not self.is_running():
-                stdout = self._proc.stdout.read() if self._proc and self._proc.stdout else ""
                 raise ApiSpawnError(
                     f"analytics exited during startup (code={self._proc.returncode if self._proc else '?'}):\n"
-                    f"{stdout[-2000:]}"
+                    f"{self._read_logs()}"
                 )
             try:
                 with httpx.Client(
@@ -244,18 +256,17 @@ class AnalyticsProcess:
                 last_err = e
             time.sleep(0.5)
         raise ApiSpawnError(
-            f"analytics did not become healthy in {timeout_s}s; last error: {last_err}"
+            f"analytics did not become healthy in {timeout_s}s; last error: {last_err}\n"
+            f"recent analytics logs:\n{self._read_logs()}"
         )
 
-
-@contextmanager
-def spawn(cfg: SessionConfig):
-    """Context manager: build (if needed), spawn, yield, stop."""
-    binary = build(cfg)
-    port = find_free_port()
-    proc = AnalyticsProcess(cfg, binary, port)
-    proc.start()
-    try:
-        yield proc
-    finally:
-        proc.stop()
+    def _read_logs(self, tail: int = 2000) -> str:
+        """Tail the child's captured stdout/stderr (a temp file, not a PIPE)."""
+        if self._log_fh is None:
+            return ""
+        try:
+            self._log_fh.flush()
+            with open(self._log_fh.name, encoding="utf-8", errors="replace") as f:
+                return f.read()[-tail:]
+        except OSError:
+            return ""

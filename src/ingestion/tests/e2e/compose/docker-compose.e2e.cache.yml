@@ -1,4 +1,4 @@
-# CI-only build-cache overlay.
+# CI-only build-cache overlay for the E2E stack.
 #
 # Wires each build-only service (and the runner) to the GitHub Actions BuildKit
 # cache backend so the expensive layers persist across workflow runs: the Rust
@@ -14,21 +14,21 @@
 # Distinct `scope` per image keeps the caches from clobbering one another.
 
 services:
-  jira-enrich:
+  e2e-jira-enrich-build:
     build:
       cache_from:
         - type=gha,scope=e2e-jira-enrich
       cache_to:
         - type=gha,mode=max,scope=e2e-jira-enrich
 
-  analytics:
+  e2e-analytics-build:
     build:
       cache_from:
         - type=gha,scope=e2e-analytics
       cache_to:
         - type=gha,mode=max,scope=e2e-analytics
 
-  runner:
+  e2e-runner:
     build:
       cache_from:
         - type=gha,scope=e2e-runner

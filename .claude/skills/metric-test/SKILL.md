@@ -283,16 +283,15 @@ ls metrics/*.test.yaml                       # list existing tests
 
 `<name>` is the file stem (e.g. `collab_emails_sent` for `metrics/collab_emails_sent.test.yaml`).
 
-Warm re-runs are fine. Isolation is **per-test**: each test first `TRUNCATE`s only the
-tables the PRIOR test recorded in a per-test ledger (`CHSeeder.TouchedLedger`;
-`metrics/test_fixtures.py`, `lib/ch_seeder.py`), then seeds its own. The rig auto-records
-the built **staging** and **silver** models too (not just bronze) — staging especially,
-because silver reads staging via the `union_by_tag` macro, so an un-truncated prior staging
-row would contaminate the silver rebuild. On TOP of that, a one-time session-start truncate
-(`conftest.py`) clears the `class_collab_*` / `m365__collab_*` tables that
-`insight.collab_bullet_rows` reads but a single collab fixture does not seed — this only
-makes WARM re-runs deterministic (CI starts fresh). `./e2e.sh down` is the e2e compose
-teardown (not a deploy), for when you want a fully clean ClickHouse.
+Warm re-runs are fine. Isolation is by **per-fixture namespacing** (`lib.namespace`), not
+per-test truncation: every fixture's bronze is seeded ONCE into one shared world, then the
+whole stack is built once (`conftest.py` `build_world` → `lib/seed_once.py`). Each fixture's
+identity keys are rewritten into its own private namespace so fixtures cannot collide; the
+guard `meta/test_seed_isolation.py` proves it. Before that one-shot seed, a session-start
+reset (`lib/seed_once.py`) clears the shared incremental / multi-reader tables (e.g.
+`class_collab_*` / `m365__collab_*` that `insight.collab_bullet_rows` reads) so WARM re-runs
+are deterministic — CI starts fresh. `./e2e.sh down` is the e2e compose teardown (not a
+deploy), for when you want a fully clean ClickHouse.
 
 To create a new test, use `/metric-test create` or hand-author `metrics/<name>.test.yaml`
 as above. There is no `./e2e.sh new` — the old CSV-rig scaffolder was removed when the

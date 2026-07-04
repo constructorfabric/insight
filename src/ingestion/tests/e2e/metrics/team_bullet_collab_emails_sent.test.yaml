@@ -12,6 +12,8 @@ description: >
   Department: 5 Engineering members alice..erin, sendCount r*10 ∈ {10,20,30,40,50}
   on 2026-12-25. Custom window 2026-12-20..12-31 -> per-person sums
   {10,20,30,40,50} -> value = avg = 30 (== median). Empty window 2026-06 -> no items.
+  Scoped to the 5-member roster via person_id IN (how the API scopes team
+  aggregates; org_unit_id eq is not a supported filter — it would be dropped).
 
 bronze:
   bronze_bamboohr.employees:
@@ -37,7 +39,7 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000005
-            $filter: "org_unit_id eq 'Engineering' and metric_date ge '2026-12-20' and metric_date le '2026-12-31'"
+            $filter: "person_id in ('alice@example.com', 'bob@example.com', 'carol@example.com', 'dave@example.com', 'erin@example.com') and metric_date ge '2026-12-20' and metric_date le '2026-12-31'"
     expect:
       - assert: "status == 200"
       - in: collaboration
@@ -54,7 +56,7 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000005
-            $filter: "org_unit_id eq 'Engineering' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $filter: "person_id in ('alice@example.com', 'bob@example.com', 'carol@example.com', 'dave@example.com', 'erin@example.com') and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
     expect:
       - assert: "status == 200"
       - in: collaboration

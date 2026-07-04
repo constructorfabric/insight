@@ -9,10 +9,11 @@ the connector pipeline, NOT a per-connector special case: any connector whose
 Build vs run split (deliberate):
   * The BINARY IS BUILT FROM THE CONNECTOR'S OWN `Dockerfile` (the same one that
     ships the prod image — no duplicated build recipe) and BAKED INTO THE RUNNER
-    IMAGE: docker-compose.runner.yml declares a build-only service per enrich
-    connector and wires it as a named build context, and Dockerfile.runner does
-    `COPY --from=<name> … /usr/local/bin/`. So the rig compiles nothing itself and
-    there is no docker-in-docker — the binary is simply on PATH inside the runner.
+    IMAGE: compose/docker-compose.e2e.yml declares a build-only service per enrich
+    connector (e.g. `e2e-jira-enrich-build`) and wires it as a named build context
+    on e2e-runner, and Dockerfile.runner does `COPY --from=<name> … /usr/local/bin/`.
+    So the rig compiles nothing itself and there is no docker-in-docker — the
+    binary is simply on PATH inside the runner.
   * This module only DISCOVERS the steps (from descriptors) and RUNS the on-PATH
     binary, between the staging and silver dbt builds — mirrors prod
     `dbt(tag:<c>) -> <c>-enrich -> dbt(silver)`. Per-test it runs ONLY the enrich
@@ -141,7 +142,7 @@ class EnrichRunner:
         if shutil.which(step.binary) is None:
             raise EnrichError(
                 f"{step.name} enrich binary {step.binary!r} not found on PATH — it should be baked "
-                f"into the runner image (docker-compose.runner.yml `{step.name}-enrich` service + "
+                f"into the runner image (compose/docker-compose.e2e.yml `e2e-{step.name}-enrich-build` service + "
                 f"Dockerfile.runner COPY --from); rebuild with `./e2e.sh build`."
             )
         for sid in source_ids:

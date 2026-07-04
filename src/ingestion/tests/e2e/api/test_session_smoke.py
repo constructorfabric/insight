@@ -21,23 +21,24 @@ from lib.config import SessionConfig
 pytestmark = pytest.mark.smoke
 
 
-def test_clickhouse_responds(compose_stack: SessionConfig) -> None:
+def test_clickhouse_responds(stack_ready: SessionConfig) -> None:
     """ClickHouse answers a trivial SELECT."""
-    rows = ch.query(compose_stack, "SELECT 1")
+    rows = ch.query(stack_ready, "SELECT 1")
     assert rows == [(1,)]
 
 
-def test_mariadb_responds(compose_stack: SessionConfig) -> None:
+def test_mariadb_responds(stack_ready: SessionConfig) -> None:
     """MariaDB answers SELECT 1 on the analytics database."""
-    rows = mariadb.query(compose_stack, "SELECT 1")
+    rows = mariadb.query(stack_ready, "SELECT 1")
     assert rows == [(1,)]
 
 
 def test_migrations_create_insight_database(
-    ch_migrations_applied: SessionConfig,
+    build_world: SessionConfig,
 ) -> None:
-    """After migrations apply, the `insight` database exists with views."""
-    cfg = ch_migrations_applied
+    """After the seed-once world is built (gold migrations applied post-dbt), the
+    `insight` database exists with views."""
+    cfg = build_world
     dbs = {row[0] for row in ch.query(cfg, "SHOW DATABASES")}
     assert "insight" in dbs, f"insight database missing; have: {dbs}"
     assert "identity" in dbs
@@ -50,8 +51,7 @@ def test_migrations_create_insight_database(
 def test_analytics_health(analytics: AnalyticsProcess) -> None:
     """analytics responds 200 on /health.
 
-    Requires a cargo/rustc satisfying `rust-version` in src/backend/Cargo.toml.
-    An older toolchain now FAILS (not skips) — run `rustup update stable`.
+    Requires the analytics binary baked into the runner image (`./e2e.sh build`).
     """
     with analytics.client() as c:
         r = c.get("/health")

@@ -1,12 +1,14 @@
-"""Seed resolved YAML records into bronze + per-test TRUNCATE ledger.
+"""Seed resolved YAML records into bronze tables (seed-once model).
 
 Each `bronze.<db>.<table>` entry in a `*.test.yaml` is a list of records that the
 fixture-loader has already `$ref`-resolved, padded to the table schema, and
 validated. This module coerces each record's values to the ClickHouse column
 types (looked up via `system.columns`) and INSERTs them.
 
-The seeder records every `(schema, table)` it touches in a per-test ledger so the
-next test's setup can TRUNCATE exactly those tables — not DROP, not the whole DB.
+Isolation between fixtures is by per-fixture namespacing (see `lib.namespace`),
+not per-test truncation: every fixture's bronze is seeded once into one shared
+world. `seed_records` truncates a table before inserting into it, and
+`truncate_table` clears the enrich-output staging tables dbt does not own.
 Duplicate records are inserted physically so dedup is exercised at the
 bronze/silver layer (cpt-bronze-to-api-e2e-dod-yaml-bronze-seed).
 """
@@ -14,9 +16,8 @@ bronze/silver layer (cpt-bronze-to-api-e2e-dod-yaml-bronze-seed).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any
 
 from lib import clickhouse as ch
 from lib.config import SessionConfig
@@ -28,38 +29,15 @@ class SeederError(RuntimeError):
     pass
 
 
-@dataclass
-class TouchedLedger:
-    """Tables touched by the current test, for next-test TRUNCATE."""
-
-    tables: set[tuple[str, str]] = field(default_factory=set)
-
-    def record(self, schema: str, table: str) -> None:
-        self.tables.add((schema, table))
-
-    def drain(self) -> Iterable[tuple[str, str]]:
-        out = list(self.tables)
-        self.tables.clear()
-        return out
-
-
 class CHSeeder:
     """Per-session helper that loads resolved test records into bronze tables."""
 
     def __init__(self, cfg: SessionConfig):
         self.cfg = cfg
-        self.ledger = TouchedLedger()
 
     # ------------------------------------------------------------------
-    # Per-test API
+    # Seeding API
     # ------------------------------------------------------------------
-
-    def truncate_touched(self) -> int:
-        """TRUNCATE every (schema, table) recorded by the last test."""
-        drained = list(self.ledger.drain())
-        for schema, table in drained:
-            self._truncate(schema, table)
-        return len(drained)
 
     def truncate_table(self, schema: str, table: str) -> None:
         """Public one-off TRUNCATE for tables dbt does not rebuild — e.g. the
@@ -73,7 +51,6 @@ class CHSeeder:
         for table_fqn, rows in bronze.items():
             schema, _, table = table_fqn.partition(".")
             self.seed_records(schema, table, rows)
-            self.ledger.record(schema, table)
 
     def seed_records(self, schema: str, table: str, rows: list[dict]) -> None:
         """TRUNCATE then INSERT `rows` (list of field maps) into `<schema>.<table>`."""
