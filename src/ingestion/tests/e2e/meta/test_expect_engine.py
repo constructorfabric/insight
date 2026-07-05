@@ -9,7 +9,7 @@ import pytest
 from lib.expect_engine import ExpectError, evaluate_case
 
 
-pytestmark = pytest.mark.smoke
+pytestmark = pytest.mark.offline
 
 
 def _batch():

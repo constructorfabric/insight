@@ -100,7 +100,7 @@ def _asserts_benchmark(case: dict) -> bool:
 _FIXTURES = [load_test(p) for p in discover_tests(_METRICS_ROOT)]
 _IDS = [ty.name for ty in _FIXTURES]
 
-pytestmark = pytest.mark.smoke
+pytestmark = pytest.mark.offline
 
 
 @pytest.mark.parametrize("ty", _FIXTURES, ids=_IDS)

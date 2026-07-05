@@ -38,6 +38,32 @@ env:
   CI: "true"
 
 jobs:
+  # ─── Offline guards — pure-Python, no Docker, no stack ────────────────────
+  # The meta/ tests are static/unit checks (fixture scoping, seed isolation,
+  # expect-engine, ref-resolver) marked `offline`. They need NO ClickHouse /
+  # MariaDB / analytics, so gating them behind the ~30-min runner-image build is
+  # wasteful and slow to fail. Run them here in seconds; the heavy `e2e` job
+  # deselects them with `-m "not offline"`.
+  offline-guards:
+    name: Offline guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src/ingestion/tests/e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Editable install pulls the framework deps the root conftest imports at
+      # collection time (clickhouse-connect, dbt, pymysql, …) — no service is
+      # started, the tests themselves touch no DB.
+      - name: Install e2e framework
+        run: pip install --quiet -e .
+      - name: Run offline guards
+        run: pytest -m offline --tb=short -q
+
   e2e:
     name: Run E2E suite
     runs-on: ubuntu-latest
@@ -85,8 +111,12 @@ jobs:
       # The suite ALSO snapshots the metric catalog to .artifacts/catalog_metrics.json
       # (lib/collect_metrics.py, while analytics is up) — the
       # metric-coverage-gate job below analyses it, no second app boot.
+      # `-m "not offline"` skips the DB-free meta/ guards — they run in the
+      # separate, Docker-free `offline-guards` job below (fast feedback, no stack).
+      # Everything that actually needs the live stack (metric tests, api/ smoke,
+      # the dbt runner) still runs here.
       - name: Run E2E suite
-        run: ./e2e.sh test --tb=short -q
+        run: ./e2e.sh test -m "not offline" --tb=short -q
 
       # ─── Hand the collected catalog to the gate job ─────────────────────
       # Uploaded even if the suite failed (the collection script still runs), so the

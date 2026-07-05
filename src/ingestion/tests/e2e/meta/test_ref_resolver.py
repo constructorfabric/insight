@@ -12,7 +12,7 @@ from lib import ref_resolver
 from lib.ref_resolver import RefError, resolve
 
 
-pytestmark = pytest.mark.smoke
+pytestmark = pytest.mark.offline
 
 
 @pytest.fixture(autouse=True)

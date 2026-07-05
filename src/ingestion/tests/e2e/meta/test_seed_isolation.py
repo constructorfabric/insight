@@ -27,6 +27,8 @@ import pytest
 from lib import namespace
 from lib.fixture_loader import discover_tests, load as load_test
 
+pytestmark = pytest.mark.offline
+
 _E2E_ROOT = Path(__file__).resolve().parent.parent
 _METRICS_ROOT = _E2E_ROOT / "metrics"
 _PLACEHOLDER_SQL = _E2E_ROOT.parents[1] / "scripts" / "create-bronze-placeholders.sh"
