@@ -11,7 +11,9 @@
 -- display labels come from tool_label / surface_label, and conversation
 -- semantics come from data presence (conversation_count is NULL for sources
 -- without a conversation concept). No vendor-specific columns, tool names, or
--- label mappings may appear in this model.
+-- label mappings may appear in this model. Every measure is emitted through
+-- the shape macros in macros/metric_observation_measures.sql; filter
+-- predicates may reference only class-contract dimension values.
 
 WITH
 ai_dev_usage_source AS (
@@ -84,191 +86,48 @@ ai_assistant_usage_dimensions AS (
         ) AS tool_surface_dimensions
     FROM ai_assistant_usage_source
 ),
-ai_active_day_source AS (
-    SELECT DISTINCT
-        tenant_id,
-        entity_id,
-        metric_date
-    FROM ai_dev_usage_source
-
-    UNION DISTINCT
-
-    SELECT DISTINCT
-        tenant_id,
-        entity_id,
-        metric_date
-    FROM ai_assistant_usage_source
-),
 measure_observations AS (
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'accepted_lines' AS measure_key,
-        if(
-            countIf(lines_added IS NOT NULL) > 0,
-            sumIf(toFloat64(lines_added), lines_added IS NOT NULL),
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_dimensions AS dimensions
-    FROM ai_dev_usage_dimensions
-    GROUP BY tenant_id, entity_id, metric_date, tool_dimensions
+    {{ sum_measure('accepted_lines', 'ai_dev_usage_dimensions', 'lines_added', 'tool_dimensions') }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'removed_lines' AS measure_key,
-        if(
-            countIf(lines_removed IS NOT NULL) > 0,
-            sumIf(toFloat64(lines_removed), lines_removed IS NOT NULL),
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_dimensions AS dimensions
-    FROM ai_dev_usage_dimensions
-    GROUP BY tenant_id, entity_id, metric_date, tool_dimensions
+    {{ sum_measure('removed_lines', 'ai_dev_usage_dimensions', 'lines_removed', 'tool_dimensions') }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'active_day' AS measure_key,
-        toNullable(toFloat64(1)) AS value,
-        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS dimensions
-    FROM ai_active_day_source
+    {{ presence_measure('active_day', ['ai_dev_usage_source', 'ai_assistant_usage_source']) }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'cost_usd' AS measure_key,
-        if(
-            countIf(cost_cents IS NOT NULL) > 0,
-            sumIf(toFloat64(cost_cents), cost_cents IS NOT NULL) / 100,
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_dimensions AS dimensions
-    FROM ai_dev_usage_dimensions
-    GROUP BY tenant_id, entity_id, metric_date, tool_dimensions
+    {{ sum_measure('cost_usd', 'ai_dev_usage_dimensions', 'cost_cents / 100', 'tool_dimensions') }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'cost_usd' AS measure_key,
-        if(
-            countIf(cost_cents IS NOT NULL) > 0,
-            sumIf(toFloat64(cost_cents), cost_cents IS NOT NULL) / 100,
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_dimensions AS dimensions
-    FROM ai_assistant_usage_dimensions
-    GROUP BY tenant_id, entity_id, metric_date, tool_dimensions
+    {{ sum_measure('cost_usd', 'ai_assistant_usage_dimensions', 'cost_cents / 100', 'tool_dimensions') }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'accepted_edit_actions' AS measure_key,
-        if(
-            countIf(tool_use_accepted IS NOT NULL) > 0,
-            sumIf(toFloat64(tool_use_accepted), tool_use_accepted IS NOT NULL),
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_dimensions AS dimensions
-    FROM ai_dev_usage_dimensions
-    GROUP BY tenant_id, entity_id, metric_date, tool_dimensions
+    {{ sum_measure('accepted_edit_actions', 'ai_dev_usage_dimensions', 'tool_use_accepted', 'tool_dimensions') }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'tool_use_offered' AS measure_key,
-        if(
-            countIf(tool_use_offered IS NOT NULL) > 0,
-            sumIf(toFloat64(tool_use_offered), tool_use_offered IS NOT NULL),
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_dimensions AS dimensions
-    FROM ai_dev_usage_dimensions
-    GROUP BY tenant_id, entity_id, metric_date, tool_dimensions
+    {{ sum_measure('tool_use_offered', 'ai_dev_usage_dimensions', 'tool_use_offered', 'tool_dimensions') }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'dev_conversations' AS measure_key,
-        if(
-            countIf(conversation_count IS NOT NULL) > 0,
-            sumIf(toFloat64(conversation_count), conversation_count IS NOT NULL),
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_dimensions AS dimensions
-    FROM ai_dev_usage_dimensions
-    GROUP BY tenant_id, entity_id, metric_date, tool_dimensions
+    {{ sum_measure('dev_conversations', 'ai_dev_usage_dimensions', 'conversation_count', 'tool_dimensions') }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'assistant_messages' AS measure_key,
-        if(
-            countIf(message_count IS NOT NULL) > 0,
-            sumIf(toFloat64(message_count), message_count IS NOT NULL),
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_surface_dimensions AS dimensions
-    FROM ai_assistant_usage_dimensions
-    GROUP BY tenant_id, entity_id, metric_date, tool_surface_dimensions
+    {{ sum_measure('assistant_messages', 'ai_assistant_usage_dimensions', 'message_count', 'tool_surface_dimensions') }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'assistant_actions' AS measure_key,
-        if(
-            countIf(action_count IS NOT NULL) > 0,
-            sumIf(toFloat64(action_count), action_count IS NOT NULL),
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_surface_dimensions AS dimensions
-    FROM ai_assistant_usage_dimensions
-    GROUP BY tenant_id, entity_id, metric_date, tool_surface_dimensions
+    {{ sum_measure('assistant_actions', 'ai_assistant_usage_dimensions', 'action_count', 'tool_surface_dimensions') }}
 
     UNION ALL
 
-    SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
-        'chat_assistant_conversations' AS measure_key,
-        if(
-            countIf(conversation_count IS NOT NULL) > 0,
-            sumIf(toFloat64(conversation_count), conversation_count IS NOT NULL),
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
-        tool_surface_dimensions AS dimensions
-    FROM ai_assistant_usage_dimensions
-    WHERE surface_value = 'chat'
-    GROUP BY tenant_id, entity_id, metric_date, tool_surface_dimensions
+    {{ sum_measure('chat_assistant_conversations', 'ai_assistant_usage_dimensions', 'conversation_count', 'tool_surface_dimensions', where="surface_value = 'chat'") }}
 )
 SELECT
     assumeNotNull(tenant_id) AS tenant_id,

@@ -350,12 +350,16 @@ no dbt change.
 
 The source exists but does not emit the measure yet.
 
-1. Add the measure branch to the source's gold model in `src/ingestion/gold/`
-   (one `UNION ALL` branch emitting the observation contract for the new
-   `measure_key`). Read only class-contract columns; never vendor-specific
-   ones — if the fact you need is not in the class contract, extend the class
-   contract first (staging models declare semantics, see the class
-   `schema.yml`).
+1. Add the measure branch to the source's gold model in `src/ingestion/gold/`:
+   one `UNION ALL` entry calling a shape macro from
+   `src/ingestion/dbt/macros/metric_observation_measures.sql` —
+   `sum_measure(measure_key, relation, value_expr, dimensions_col,
+   where=none)` for aggregated numerics, `presence_measure(measure_key,
+   relations)` for row-existence markers. Every branch is a shape-macro call;
+   a new macro is added only when a new computation kind becomes executable.
+   Read only class-contract columns; never vendor-specific ones — if the fact
+   you need is not in the class contract, extend the class contract first
+   (staging models declare semantics, see the class `schema.yml`).
 2. Add the `measure_key` to the gold model's `schema.yml` `accepted_values`
    test.
 3. Add a `MeasureSeed` to the source in `builtin.rs`.
@@ -381,6 +385,9 @@ The metric family reads data no managed source covers.
 - No metric-key-specific branches in runtime code.
 - No vendor names, vendor columns, or label mappings in gold models — labels
   and taxonomy come from class-contract columns declared by staging.
+- Measure filter predicates (`where=` on shape macros) may reference only
+  class-contract dimension columns and their normalized values — never vendor
+  columns, tool names, or label text.
 - No new `metric_catalog` seed migrations and no new ad-hoc `insight.*` views
   for metrics.
 - Do not add runtime formula JSON until generation exists.
