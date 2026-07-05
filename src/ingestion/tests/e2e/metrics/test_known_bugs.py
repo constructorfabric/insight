@@ -91,3 +91,35 @@ def test_org_unit_eq_scopes_to_department(analytics: AnalyticsProcess, fixture_n
     case, request = _org_unit_eq_case(fixture_name)
     status, payload = analytics.call_request(request)
     evaluate_case(_with_expect(case, keep_equal=True), payload, status)
+
+
+# #1658 — the AI IC bullet (catalog id ...0013) and its team sibling (...0006) lost
+# their p25/p75/n department distribution when m20260618_000001 (cc_overage)
+# redefined both query_refs last, rebuilding from the pre-distribution shape and
+# dropping the p25/p75/n that m20260611_000001 (dept-reconcile) had added. The
+# bullets now return only value/median/range_min/range_max. The value/median/range
+# checks still PASS (asserted by metrics/ai_cc_cost.test.yaml in the main suite);
+# only the missing distribution is xfailed here. ai_cc_cost seeds an Engineering
+# department whose per-person cc_cost sums are {60,120,180,240,300}c, so
+# quantileExact gives p25=sorted[1]=120, p75=sorted[3]=240, n=5.
+_XFAIL_1658 = pytest.mark.xfail(
+    reason="#1658: m20260618 clobbered the AI IC/team bullet (...0013/...0006) p25/p75/n "
+    "distribution added by m20260611; remove this marker when the query_ref re-emits them",
+    strict=True,
+)
+
+
+@_XFAIL_1658
+def test_ai_ic_bullet_emits_department_distribution(analytics: AnalyticsProcess) -> None:
+    """xfail(strict): the AI IC bullet should surface the department p25/p75/n. The
+    value/median/range checks already pass via ai_cc_cost.test.yaml; only these
+    distribution stats are absent today (#1658). Asserts the values a fixed query_ref
+    would return for ai_cc_cost's {60,120,180,240,300}c department distribution."""
+    ty = load_test(_METRICS_ROOT / "ai_cc_cost.test.yaml")
+    case = copy.deepcopy(ty.cases[0])  # the cc_cost "department of 5" custom-scope case
+    numeric = [e for e in case["expect"] if "equal" in e]
+    assert numeric, "ai_cc_cost fixture has no equal rule to build from"
+    numeric[0]["equal"] = {"p25": 120, "p75": 240, "n": 5}  # the dropped distribution
+    request = namespace.namespace_request(case["request"], namespace.token_for(ty.name))
+    status, payload = analytics.call_request(request)
+    evaluate_case({**case, "expect": numeric}, payload, status)
