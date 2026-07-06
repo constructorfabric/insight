@@ -283,7 +283,7 @@ _METRICS_ROOT = Path(__file__).parent / "metrics"
 
 
 def pytest_collection_modifyitems(config, items):
-    """Convenience: order rig smoke tests (meta/ + api/) first."""
+    """Convenience: order the fast rig/contract tests (meta/ + api/) first."""
     items.sort(key=lambda i: 0 if ("meta/" in str(i.path) or "api/" in str(i.path)) else 1)
 
 

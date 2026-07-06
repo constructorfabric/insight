@@ -73,8 +73,7 @@ e2e/
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
 ├── metrics/                      # <name>.test.yaml + schemas/ + templates/
-└── meta/                       # framework's own smoke tests
-    └── test_session_smoke.py
+└── meta/                       # the rig's own framework tests (dbt runner, expect engine, ref resolver)
 ```
 
 ## Metric coverage gate

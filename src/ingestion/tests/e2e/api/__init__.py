@@ -1,10 +1,9 @@
-"""Rig smoke tests + API endpoint contract tests.
+"""API endpoint contract tests.
 
-`test_session_smoke.py` pokes each session fixture; the other `test_*` modules
-are the endpoint contract suite: together they exercise EVERY operation in the
-committed OpenAPI spec (docs/components/backend/analytics/openapi.json) through
-the recording client, so the endpoint-coverage gate needs no SKIP_LIST. One
-module per path group, one test per (path, method, status-code) case:
+Together these modules exercise EVERY operation in the committed OpenAPI spec
+(docs/components/backend/analytics/openapi.json) through the recording client,
+so the endpoint-coverage gate needs no SKIP_LIST. One module per path group,
+one test per (path, method, status-code) case:
 
   test_catalog.py            POST /v1/catalog/get_metrics
   test_metrics.py            GET+POST /v1/metrics · GET+PUT+DELETE /v1/metrics/{id}
