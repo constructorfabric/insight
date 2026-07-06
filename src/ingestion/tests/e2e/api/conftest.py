@@ -9,10 +9,14 @@ removed its row, so a 404 there is expected, not a failure.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from api.endpoint_helpers import create_scratch_metric
+from lib import mariadb
 from lib.analytics import AnalyticsProcess
+from lib.config import SessionConfig
 
 
 @pytest.fixture
@@ -64,6 +68,34 @@ def purge_tenant_admin_rows(api, metric_id: str) -> None:
     assert r.status_code == 200, f"admin pre-clean: status={r.status_code} body={r.text}"
     for row in r.json()["items"]:
         api.delete(f"/v1/admin/metric-thresholds/{row['id']}")
+
+
+@pytest.fixture
+def seeded_columns(session_cfg: SessionConfig) -> dict:
+    """Two `table_columns` rows in two distinct tables, inserted directly into
+    MariaDB (there is no write endpoint for this catalog — it is operator/
+    migration-seeded in production, and no seed migration exists), removed in
+    teardown. Gives /v1/columns/{table} a non-empty universe so the per-table
+    filter is asserted against data, not vacuously against an empty set.
+    tenant NULL = platform-visible (the handler shows NULL-tenant rows to any
+    tenant)."""
+    tag = uuid.uuid4().hex[:8]
+    rows = {
+        "table_a": f"e2e_cols_{tag}_a",
+        "table_b": f"e2e_cols_{tag}_b",
+        "ids": [uuid.uuid4().hex.upper(), uuid.uuid4().hex.upper()],
+    }
+    mariadb.query(
+        session_cfg,
+        "INSERT INTO table_columns (id, insight_tenant_id, clickhouse_table, field_name) VALUES "
+        f"(UNHEX('{rows['ids'][0]}'), NULL, '{rows['table_a']}', 'metric_value'), "
+        f"(UNHEX('{rows['ids'][1]}'), NULL, '{rows['table_b']}', 'other_value')",
+    )
+    yield rows
+    mariadb.query(
+        session_cfg,
+        f"DELETE FROM table_columns WHERE id IN (UNHEX('{rows['ids'][0]}'), UNHEX('{rows['ids'][1]}'))",
+    )
 
 
 @pytest.fixture

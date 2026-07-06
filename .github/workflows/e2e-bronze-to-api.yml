@@ -125,6 +125,12 @@ jobs:
       #     ledger, api-endpoint-coverage-gate input; MERGED across sessions by
       #     lib.api_coverage.dump_observed, so both suites' traffic counts)
       # The gate jobs below analyse these — no second app boot.
+      # The ledger MERGES across sessions (dump_observed), so start from a
+      # clean slate — stale entries from a reused workspace (self-hosted
+      # runner) would otherwise keep dead coverage alive.
+      - name: Reset coverage artifacts
+        run: rm -rf .artifacts
+
       - name: E2E suite — api
         run: ./e2e.sh test api/ --tb=short -q
 

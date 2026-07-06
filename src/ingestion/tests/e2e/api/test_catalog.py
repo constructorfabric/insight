@@ -21,3 +21,11 @@ def test_get_metrics_200(api) -> None:
     first = body["metrics"][0]
     assert first["id"] and first["metric_key"]
     assert body["links"], "metric_query_catalog links must not be empty"
+
+
+def test_get_metrics_400_unknown_field(api) -> None:
+    """The request body is deny_unknown_fields — a smuggled/typo'd field is a
+    canonical 400, not silently ignored (same guard the admin list pins for
+    query params)."""
+    r = api.post("/v1/catalog/get_metrics", json={"tenant_idd": "oops"})
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"

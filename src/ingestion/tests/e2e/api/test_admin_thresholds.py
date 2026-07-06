@@ -1,10 +1,10 @@
 """Contract: /v1/admin/metric-thresholds path group — admin threshold CRUD.
 
   GET    /v1/admin/metric-thresholds       200 · 400 smuggled tenant_id
-  POST   /v1/admin/metric-thresholds       201
+  POST   /v1/admin/metric-thresholds       201 · 400 unknown metric_id · 409 duplicate
   GET    /v1/admin/metric-thresholds/{id}  200 · 404 unknown
-  PUT    /v1/admin/metric-thresholds/{id}  200
-  DELETE /v1/admin/metric-thresholds/{id}  204
+  PUT    /v1/admin/metric-thresholds/{id}  200 · 404 unknown
+  DELETE /v1/admin/metric-thresholds/{id}  204 · 404 unknown
 
 `metric_id` must be a `metric_catalog` row id (the `catalog_metric_id`
 fixture); the admin lifecycle operates only on its own tenant-scope row — the
@@ -54,6 +54,33 @@ def test_create_201(api, catalog_metric_id: str) -> None:
         api.delete(f"/v1/admin/metric-thresholds/{row['id']}")
 
 
+def test_create_400_unknown_metric(api) -> None:
+    """Referential integrity is checked pre-write: metric_id must resolve to an
+    enabled metric_catalog row."""
+    r = api.post(
+        "/v1/admin/metric-thresholds",
+        json={"metric_id": UNKNOWN_ID, "scope": "tenant", "good": 0.0, "warn": 0.0},
+    )
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
+def test_create_409_duplicate(api, admin_threshold_row: dict) -> None:
+    """A second create for the same (metric, tenant-scope) target violates
+    uq_metric_threshold_scope_target — a routine client conflict, answered with
+    the canonical 409 already_exists envelope (NOT the schema-drift 500)."""
+    r = api.post(
+        "/v1/admin/metric-thresholds",
+        json={
+            "metric_id": admin_threshold_row["metric_id"],
+            "scope": "tenant",
+            "good": 0.0,
+            "warn": 0.0,
+        },
+    )
+    assert r.status_code == 409, f"status={r.status_code} body={r.text}"
+    assert r.json().get("status") == 409
+
+
 def test_get_200(api, admin_threshold_row: dict) -> None:
     r = api.get(f"/v1/admin/metric-thresholds/{admin_threshold_row['id']}")
     assert r.status_code == 200, f"status={r.status_code} body={r.text}"
@@ -72,6 +99,16 @@ def test_update_200(api, admin_threshold_row: dict) -> None:
     )
     assert r.status_code == 200, f"status={r.status_code} body={r.text}"
     assert (r.json()["good"], r.json()["warn"]) == (5.0, 5.0)
+
+
+def test_update_404_unknown(api) -> None:
+    r = api.put(f"/v1/admin/metric-thresholds/{UNKNOWN_ID}", json={"good": 1.0, "warn": 1.0})
+    assert r.status_code == 404, f"status={r.status_code} body={r.text}"
+
+
+def test_delete_404_unknown(api) -> None:
+    r = api.delete(f"/v1/admin/metric-thresholds/{UNKNOWN_ID}")
+    assert r.status_code == 404, f"status={r.status_code} body={r.text}"
 
 
 def test_delete_204(api, admin_threshold_row: dict) -> None:

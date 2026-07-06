@@ -23,10 +23,13 @@ metric-coverage gate's universe) is never touched, soft-deleted scratch metrics
 stay invisible to `GET /v1/metrics`, and the yaml rig's batch-query path is
 untouched.
 
-Status codes: success codes plus every error code reachable in the rig are
-pinned (400 validation, 404 unknown/soft-deleted, 500 identity-unconfigured).
-The remaining declared codes (401/403/409/429 and generic 500s) are
-unreachable by design here — auth is disabled and nothing rate-limits.
+Status codes: each operation's success code is exercised — and the endpoint
+gate enforces that (an op only ever seen erroring fails; EXPECTED_STATUS in
+lib/api_coverage.py overrides the persons op, whose rig contract is a 500).
+Reachable error codes are pinned by explicit tests: 400 validation, 404
+unknown/soft-deleted, 409 duplicate admin create, 500 identity-unconfigured.
+The remaining declared codes (401/403/429 and generic 500s) are unreachable by
+design here — auth is disabled and nothing rate-limits.
 
 Authz notes pinned by the tests: the rig runs auth-disabled with
 `X-Insight-Tenant-Id: TEST_TENANT_ID` on every request; the admin gate

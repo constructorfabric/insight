@@ -1,8 +1,8 @@
 """Contract: /v1/metrics/{id}/thresholds path group — legacy per-metric thresholds.
 
   GET    /v1/metrics/{id}/thresholds        200 · 404 unknown metric
-  POST   /v1/metrics/{id}/thresholds        201 · 400 bad operator
-  PUT    /v1/metrics/{id}/thresholds/{tid}  200 · 404 unknown tid
+  POST   /v1/metrics/{id}/thresholds        201 · 400 bad operator · 404 unknown metric
+  PUT    /v1/metrics/{id}/thresholds/{tid}  200 · 400 bad operator · 404 unknown tid
   DELETE /v1/metrics/{id}/thresholds/{tid}  204 · 404 unknown tid
 """
 
@@ -35,6 +35,15 @@ def test_create_threshold_400_bad_operator(api, scratch_metric: dict) -> None:
     assert r.status_code == 400, f"status={r.status_code} body={r.text}"
 
 
+def test_create_threshold_404_unknown_metric(api) -> None:
+    """The metric is resolved (find_enabled_metric) before any validation."""
+    r = api.post(
+        f"/v1/metrics/{UNKNOWN_ID}/thresholds",
+        json={"field_name": "one", "operator": "ge", "value": 1.0, "level": "good"},
+    )
+    assert r.status_code == 404, f"status={r.status_code} body={r.text}"
+
+
 def test_list_thresholds_200(api, scratch_metric: dict, scratch_threshold: dict) -> None:
     r = api.get(f"/v1/metrics/{scratch_metric['id']}/thresholds")
     assert r.status_code == 200, f"status={r.status_code} body={r.text}"
@@ -52,7 +61,18 @@ def test_update_threshold_200(api, scratch_metric: dict, scratch_threshold: dict
         json={"value": 2.0, "level": "warning"},
     )
     assert r.status_code == 200, f"status={r.status_code} body={r.text}"
-    assert (r.json()["value"], r.json()["level"]) == (2.0, "warning")
+    updated = r.json()
+    assert (updated["value"], updated["level"]) == (2.0, "warning")
+    # Partial update: fields absent from the request must survive.
+    assert (updated["operator"], updated["field_name"]) == ("ge", "one")
+
+
+def test_update_threshold_400_bad_operator(api, scratch_metric: dict, scratch_threshold: dict) -> None:
+    r = api.put(
+        f"/v1/metrics/{scratch_metric['id']}/thresholds/{scratch_threshold['id']}",
+        json={"operator": "between"},
+    )
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
 
 
 def test_update_threshold_404_unknown_tid(api, scratch_metric: dict) -> None:

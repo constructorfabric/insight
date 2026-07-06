@@ -16,11 +16,13 @@ Two halves:
      OpenAPI drift gate: the `openapi_spec_matches_committed` golden test +
      openapi-specs.yml) and reports, per documented operation, whether the
      suite exercised it and which declared status codes were validated.
-     Verdict per operation is binary like the metric gate: exercised -> PASS,
-     SKIP_LIST -> baseline PASS, neither -> FAIL; a skip that is now exercised
-     or no longer in the spec -> FAIL (actualize). Coverage is total today
-     (the api/ contract tests exercise every operation), so SKIP_LIST is
-     empty — a new spec operation without a test fails this gate.
+     Verdict per operation is binary like the metric gate: exercised AND seen
+     answering an expected status (a declared 2xx, or the EXPECTED_STATUS
+     override) -> PASS, SKIP_LIST -> baseline PASS, otherwise -> FAIL; a
+     skip/override that is now exercised or no longer in the spec -> FAIL
+     (actualize). Coverage is total today (the api/ contract tests exercise
+     every operation), so SKIP_LIST is empty — a new spec operation without a
+     test fails this gate.
 
     python3 lib/api_coverage.py --observed .artifacts/observed_endpoints.json \
         --spec docs/components/backend/analytics/openapi.json
@@ -45,6 +47,18 @@ _HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "tr
 # spec. Add an entry only for a new operation that genuinely cannot run in the
 # rig (with the reason) — and prefer a contract test instead.
 SKIP_LIST: list[tuple[str, str]] = []
+
+# Per-operation override of the status codes that count as "properly exercised".
+# Default (no entry): at least one of the operation's DECLARED 2xx codes must be
+# observed — merely touching a route and only ever seeing errors is not
+# coverage. Override when the rig's reachable contract is deliberately not a
+# 2xx. Hygiene mirrors SKIP_LIST: an entry whose op is gone from the spec fails
+# the gate.
+EXPECTED_STATUS: dict[str, frozenset[int]] = {
+    # No identity service in the rig: the pinned contract is the canonical 500
+    # (see api/test_persons.py); a 200 here is unreachable by design.
+    "GET /v1/persons/{email}": frozenset({500}),
+}
 
 
 # ── recording half (imported by the rig) ──────────────────────────────────
@@ -130,11 +144,16 @@ def match_observed(observed: list[dict], spec_ops: dict[str, list[int]]) -> tupl
     observed status codes for matched spec ops; `unmatched` are observed
     requests with no spec op (path-template mismatch, or an undocumented route).
     """
-    # Pre-split spec paths once for template matching.
+    # Pre-split spec paths once for template matching. Within a method, try
+    # templates with FEWER {param} segments first, so a literal path (e.g. a
+    # future GET /v1/metrics/summary) wins over a same-arity template
+    # (GET /v1/metrics/{id}) regardless of spec ordering.
     spec_paths: dict[str, list[tuple[str, list[str]]]] = {}
     for key in spec_ops:
         method, path = key.split(" ", 1)
         spec_paths.setdefault(method, []).append((path, path.strip("/").split("/")))
+    for templates in spec_paths.values():
+        templates.sort(key=lambda t: sum(s.startswith("{") and s.endswith("}") for s in t[1]))
 
     validated: dict[str, set[int]] = {}
     unmatched: list[dict] = []
@@ -174,10 +193,28 @@ class CoverageReport:
         # Hygiene: skips that are actually exercised, or no longer in the spec.
         self.redundant_skips = sorted(op for op in self.skips if op in self.validated)
         self.stale_skips = sorted(op for op in self.skips if op not in ops)
+        # An exercised op must also have been seen answering an EXPECTED status
+        # (its declared 2xx, unless EXPECTED_STATUS overrides) — a route only
+        # ever observed erroring is touched, not covered.
+        self.status_unsatisfied: dict[str, tuple[set[int], set[int]]] = {}
+        for op in self.covered:
+            required = set(
+                EXPECTED_STATUS.get(op, frozenset(c for c in self.spec_ops[op] if 200 <= c < 300))
+            )
+            seen = self.validated[op]
+            if required and not (required & seen):
+                self.status_unsatisfied[op] = (required, seen)
+        self.stale_expected = sorted(op for op in EXPECTED_STATUS if op not in ops)
 
     @property
     def passed(self) -> bool:
-        return not (self.missing or self.redundant_skips or self.stale_skips)
+        return not (
+            self.missing
+            or self.redundant_skips
+            or self.stale_skips
+            or self.status_unsatisfied
+            or self.stale_expected
+        )
 
 
 def build_report(spec: dict, observed: list[dict]) -> CoverageReport:
@@ -198,6 +235,13 @@ def gate_violations(r: CoverageReport) -> list[str]:
         out.append(f"REDUNDANT SKIP: {op} is now exercised — drop it from SKIP_LIST")
     for op in r.stale_skips:
         out.append(f"STALE SKIP: {op} is no longer in the spec — drop it from SKIP_LIST")
+    for op, (required, seen) in sorted(r.status_unsatisfied.items()):
+        out.append(
+            f"STATUS: {op} was exercised but never answered an expected status "
+            f"(expected one of {sorted(required)}, saw {sorted(seen)})"
+        )
+    for op in r.stale_expected:
+        out.append(f"STALE EXPECTED_STATUS: {op} is no longer in the spec — drop the override")
     return out
 
 
@@ -218,7 +262,10 @@ def render_markdown(r: CoverageReport) -> str:
     for op in sorted(r.spec_ops):
         method, path = op.split(" ", 1)
         declared = _statuses(r.spec_ops[op])
-        if op in r.validated:
+        if op in r.status_unsatisfied:
+            mark = "❌ no expected status seen"
+            seen = _statuses(r.validated[op])
+        elif op in r.validated:
             mark = "✅ exercised"
             seen = _statuses(r.validated[op])
         elif op in r.skips:

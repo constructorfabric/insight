@@ -29,7 +29,8 @@ def test_create_metric_201(api) -> None:
 
 
 def test_create_metric_400_invalid_query_ref(api) -> None:
-    """POST /v1/metrics → 400: query_ref is validated on write (non-SELECT rejected)."""
+    """POST /v1/metrics → 400: query_ref is validated on write (parse_query_ref
+    requires a `SELECT ... FROM` shape; a bare DROP statement has neither)."""
     r = api.post(
         "/v1/metrics",
         json={"name": "e2e-scratch-bad", "description": "x", "query_ref": "DROP TABLE metrics"},
@@ -81,6 +82,7 @@ def test_update_metric_200(api, scratch_metric: dict) -> None:
     assert updated["name"] == scratch_metric["name"] + "-renamed"
     assert updated["description"] == "updated"
     assert updated["query_ref"] == SCRATCH_QUERY_REF
+    assert updated["is_enabled"] is True, "PUT must not reset fields it was not given"
 
 
 def test_update_metric_404_unknown(api) -> None:
@@ -113,6 +115,16 @@ def test_query_metric_404_unknown(api) -> None:
     assert r.status_code == 404, f"status={r.status_code} body={r.text}"
 
 
+def test_query_metric_400_bad_orderby(api, scratch_metric: dict) -> None:
+    """$orderby fields are validated against an identifier pattern (injection
+    guard) — a non-identifier is a canonical 400."""
+    r = api.post(
+        f"/v1/metrics/{scratch_metric['id']}/query",
+        json={"$orderby": "one; DROP TABLE metrics"},
+    )
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
 def test_batch_queries_200(api, scratch_metric: dict) -> None:
     """POST /v1/metrics/queries → 200: same engine as the single-metric query,
     per-item {status: ok} envelope (the FE's primary path — also exercised by
@@ -125,3 +137,26 @@ def test_batch_queries_200(api, scratch_metric: dict) -> None:
     result = r.json()["results"][0]
     assert (result["status"], result["id"]) == ("ok", "q1")
     assert result["items"] == [{"one": 1}]
+
+
+def test_batch_queries_200_partial_failure(api, scratch_metric: dict) -> None:
+    """A failing item does NOT fail the batch: the response stays 200 and the
+    bad item carries a per-item RFC-9457 Problem (status=error envelope) while
+    the good item still returns rows — the FE-consumed partial-failure
+    contract."""
+    r = api.post(
+        "/v1/metrics/queries",
+        json={
+            "queries": [
+                {"id": "good", "metric_id": scratch_metric["id"], "$top": 1},
+                {"id": "bad", "metric_id": UNKNOWN_ID, "$top": 1},
+            ]
+        },
+    )
+    assert r.status_code == 200, f"status={r.status_code} body={r.text}"
+    by_id = {item["id"]: item for item in r.json()["results"]}
+    assert by_id["good"]["status"] == "ok"
+    assert by_id["good"]["items"] == [{"one": 1}]
+    bad = by_id["bad"]
+    assert bad["status"] == "error"
+    assert bad["error"]["status"] == 404, bad
