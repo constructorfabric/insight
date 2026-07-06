@@ -1,0 +1,23 @@
+"""Contract: POST /v1/catalog/get_metrics — the catalog read the FE boots from."""
+
+from __future__ import annotations
+
+import pytest
+
+from lib.config import TEST_TENANT_ID
+
+pytestmark = pytest.mark.api
+
+
+def test_get_metrics_200(api) -> None:
+    """Empty context ({}) resolves through product-default/tenant: the response
+    echoes the request tenant and carries the seeded catalog. Assert 'non-empty',
+    not an exact count, so catalog growth doesn't break this contract test."""
+    r = api.post("/v1/catalog/get_metrics", json={})
+    assert r.status_code == 200, f"status={r.status_code} body={r.text}"
+    body = r.json()
+    assert body["tenant_id"] == str(TEST_TENANT_ID)
+    assert body["metrics"], "seeded metric_catalog must not be empty"
+    first = body["metrics"][0]
+    assert first["id"] and first["metric_key"]
+    assert body["links"], "metric_query_catalog links must not be empty"

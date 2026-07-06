@@ -82,7 +82,7 @@ Locally, after a run:
 
 ```bash
 ./e2e.sh test     # runs the suite + collects .artifacts/{catalog_metrics,observed_endpoints}.json
-./e2e.sh gates    # metric gate (blocking) + endpoint-coverage report, against .artifacts/ (in the runner image; no DB)
+./e2e.sh gates    # metric + api-endpoint gates, against .artifacts/ (in the runner image; no DB)
 ```
 
 The verdict per **metric_key** (each individual number) is **binary**:
@@ -100,9 +100,11 @@ ANALYTICS_URL=http://localhost:18081 python3 lib/metric_coverage.py
 
 Coverage is **per metric_key**, so every number on a bullet is validated independently — one tested key of a metric does not cover the rest. Today: **44/96** value-tested; the rest are skip-listed with a reason (`reachable — …` entries are the backlog where fixtures already exist).
 
-## API endpoint coverage (observability — non-blocking)
+## API endpoint coverage gate
 
-The suite records which analytics routes it exercises: an httpx response hook on the rig's single client chokepoint (`AnalyticsProcess.client()`) accumulates `(method, path) → {status codes}`, and `conftest.pytest_sessionfinish` dumps the ledger to `.artifacts/observed_endpoints.json` (shipped to CI inside the `coverage-inputs` artifact). [`lib/api_coverage.py`](lib/api_coverage.py) diffs it against the committed OpenAPI spec (`docs/components/backend/analytics/openapi.json` — kept accurate by the analytics OpenAPI drift gate: the `openapi_spec_matches_committed` golden test + the `openapi-specs` workflow) and reports covered / baseline-skipped / missing per documented operation. It is **not** a CI gate: a read-only metric suite touches few routes (most are write/admin), so a pass/fail there would be ~all skip-list. `./e2e.sh gates` prints it as info.
+The suite records which analytics routes it exercises: an httpx response hook on the rig's single client chokepoint (`AnalyticsProcess.client()`) accumulates `(method, path) → {status codes}`, and `conftest.pytest_sessionfinish` dumps the ledger to `.artifacts/observed_endpoints.json` (shipped to CI inside the `coverage-inputs` artifact). The `api-endpoint-coverage-gate` job diffs it against the committed OpenAPI spec (`docs/components/backend/analytics/openapi.json` — kept accurate by the analytics OpenAPI drift gate: the `openapi_spec_matches_committed` golden test + the `openapi-specs` workflow) via [`lib/api_coverage.py`](lib/api_coverage.py), **blocking**: every documented operation must be exercised by a test or carry a `SKIP_LIST` entry, and a redundant/stale skip fails too.
+
+Coverage is total: the [`api/`](api/) contract suite exercises all 20 operations — one module per path group (`test_metrics.py`, `test_metric_thresholds.py`, `test_admin_thresholds.py`, `test_catalog.py`, `test_columns.py`, `test_persons.py`), one test per (path, method, status-code) case, resources from fixtures (`api/conftest.py`) that self-clean (scratch metrics soft-deleted; admin rows removed) — so `SKIP_LIST` is empty and adding a spec operation without a test fails the gate. Reachable error codes are pinned too (400 validation, 404 unknown/soft-deleted, 500 identity-unconfigured); 401/403/409/429 are unreachable in the rig by design (auth disabled, no rate limiting).
 
 ## Ports (loopback only)
 

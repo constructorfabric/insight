@@ -77,11 +77,12 @@ case "$cmd" in
         docker compose "${COMPOSE_FILES[@]}" logs --tail=200 "$@"
         ;;
     gates)
-        # Run the metric-coverage gate + the endpoint-coverage report against the
-        # inputs a prior `./e2e.sh test` collected into .artifacts/ — pure file
-        # analysis inside the runner image (no DB via --no-deps, no second
-        # compose). Run `./e2e.sh test` first; the metric gate also runs in CI
-        # (see e2e-bronze-to-api.yml), the endpoint report is local-only.
+        # Run the two coverage gates against the inputs a prior `./e2e.sh test`
+        # collected into .artifacts/ — pure file analysis inside the runner image
+        # (no DB via --no-deps, no second compose). Run the FULL suite first:
+        # the endpoint gate needs the whole ledger (a -k subset run leaves ops
+        # unexercised and fails it). The same checks run in CI as the gate jobs
+        # (see e2e-bronze-to-api.yml).
         if [ ! -f .artifacts/catalog_metrics.json ]; then
             echo "no .artifacts/catalog_metrics.json — run './e2e.sh test' first (it collects the gate inputs)" >&2
             exit 2
@@ -91,8 +92,8 @@ case "$cmd" in
         rc=0
         echo "── metric coverage (gate) ──"
         "${run[@]}" python3 lib/metric_coverage.py --universe-file .artifacts/catalog_metrics.json || rc=1
-        echo "── api endpoint coverage (observability — non-blocking) ──"
-        "${run[@]}" python3 lib/api_coverage.py --observed .artifacts/observed_endpoints.json --spec "$spec" || true
+        echo "── api endpoint coverage (gate) ──"
+        "${run[@]}" python3 lib/api_coverage.py --observed .artifacts/observed_endpoints.json --spec "$spec" || rc=1
         exit "$rc"
         ;;
     *)

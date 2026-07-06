@@ -291,11 +291,11 @@ def pytest_sessionfinish(session, exitstatus):
     """Dump the API-endpoint ledger recorded by the httpx response hook in
     `AnalyticsProcess.client()` (`lib.api_coverage.record_response`).
 
-    The endpoint-coverage report (`lib/api_coverage.py`, printed by
-    `./e2e.sh gates`; shipped to CI in the coverage-inputs artifact) diffs this
-    against the committed OpenAPI spec. Primary worker only; best-effort — a
-    failed artifact write is logged, never fails the run (a missing ledger then
-    fails the downstream report loudly instead)."""
+    The endpoint-coverage gate (`lib/api_coverage.py`, run by `./e2e.sh gates`
+    and the api-endpoint-coverage-gate CI job via the coverage-inputs artifact)
+    diffs this against the committed OpenAPI spec. Primary worker only;
+    best-effort — a failed artifact write is logged, never fails the run (a
+    missing ledger then fails the downstream gate loudly instead)."""
     if not _IS_PRIMARY:
         return
     from lib import api_coverage

@@ -10,15 +10,17 @@ Two halves:
      module-level ledger. `conftest.pytest_sessionfinish` calls `dump_observed`
      to write it to `.artifacts/observed_endpoints.json`.
 
-  2. REPORT (run as a plain file, stdlib only — `./e2e.sh gates` prints it,
-     non-blocking). `main` loads that ledger plus the committed OpenAPI spec
-     (the universe — kept accurate by the analytics OpenAPI drift gate: the
-     `openapi_spec_matches_committed` golden test + openapi-specs.yml) and
-     reports, per documented operation, whether the suite exercised it and
-     which declared status codes were validated. Verdict per operation is
-     binary like the metric gate: exercised -> PASS, SKIP_LIST -> baseline
-     PASS, neither -> FAIL; a skip that is now exercised or no longer in the
-     spec -> FAIL (actualize).
+  2. GATE (run as a plain file, stdlib only — blocking in `./e2e.sh gates`
+     and the api-endpoint-coverage-gate CI job). `main` loads that ledger plus
+     the committed OpenAPI spec (the universe — kept accurate by the analytics
+     OpenAPI drift gate: the `openapi_spec_matches_committed` golden test +
+     openapi-specs.yml) and reports, per documented operation, whether the
+     suite exercised it and which declared status codes were validated.
+     Verdict per operation is binary like the metric gate: exercised -> PASS,
+     SKIP_LIST -> baseline PASS, neither -> FAIL; a skip that is now exercised
+     or no longer in the spec -> FAIL (actualize). Coverage is total today
+     (the api/ contract tests exercise every operation), so SKIP_LIST is
+     empty — a new spec operation without a test fails this gate.
 
     python3 lib/api_coverage.py --observed .artifacts/observed_endpoints.json \
         --spec docs/components/backend/analytics/openapi.json
@@ -38,26 +40,11 @@ _HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "tr
 # committed OpenAPI spec; anything here that the suite DOES hit (redundant) or
 # that is no longer in the spec (stale) fails the gate so the list stays honest.
 # Key = "METHOD path" (path verbatim from the spec, including {param} segments).
-SKIP_LIST: list[tuple[str, str]] = [
-    ("POST /v1/metrics", "write endpoint — suite has no metric-create fixtures"),
-    ("GET /v1/metrics/{id}", "single-metric read — suite uses batch POST /v1/metrics/queries"),
-    ("PUT /v1/metrics/{id}", "write endpoint — no metric-update fixtures"),
-    ("DELETE /v1/metrics/{id}", "write endpoint — no metric-delete fixtures"),
-    ("POST /v1/metrics/{id}/query", "single-metric query — suite uses batch POST /v1/metrics/queries"),
-    ("GET /v1/metrics/{id}/thresholds", "thresholds — not exercised by e2e"),
-    ("POST /v1/metrics/{id}/thresholds", "threshold write — not exercised by e2e"),
-    ("PUT /v1/metrics/{id}/thresholds/{tid}", "threshold write — not exercised by e2e"),
-    ("DELETE /v1/metrics/{id}/thresholds/{tid}", "threshold write — not exercised by e2e"),
-    ("GET /v1/persons/{email}", "person lookup — not exercised by e2e"),
-    ("GET /v1/columns", "column metadata — not exercised by e2e"),
-    ("GET /v1/columns/{table}", "column metadata — not exercised by e2e"),
-    ("POST /v1/catalog/get_metrics", "catalog read — exercised by the metric-coverage gate, not the suite"),
-    ("GET /v1/admin/metric-thresholds", "admin CRUD — not exercised by e2e"),
-    ("POST /v1/admin/metric-thresholds", "admin CRUD — not exercised by e2e"),
-    ("GET /v1/admin/metric-thresholds/{id}", "admin CRUD — not exercised by e2e"),
-    ("PUT /v1/admin/metric-thresholds/{id}", "admin CRUD — not exercised by e2e"),
-    ("DELETE /v1/admin/metric-thresholds/{id}", "admin CRUD — not exercised by e2e"),
-]
+#
+# EMPTY on purpose: the api/ contract tests exercise every operation in the
+# spec. Add an entry only for a new operation that genuinely cannot run in the
+# rig (with the reason) — and prefer a contract test instead.
+SKIP_LIST: list[tuple[str, str]] = []
 
 
 # ── recording half (imported by the rig) ──────────────────────────────────

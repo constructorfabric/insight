@@ -112,9 +112,9 @@ jobs:
       #
       # The suite ALSO emits .artifacts/ while analytics is up:
       #   • catalog_metrics.json     (lib/collect_metrics.py — metric-coverage-gate input)
-      #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook ledger,
-      #     endpoint-coverage observability; see the NOTE at the end of this file)
-      # The gate job below analyses the catalog — no second app boot.
+      #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook
+      #     ledger, api-endpoint-coverage-gate input)
+      # The gate jobs below analyse these — no second app boot.
       - name: Run E2E suite
         run: ./e2e.sh test --tb=short -q
 
@@ -152,10 +152,10 @@ jobs:
         if: always()
         run: ./e2e.sh down || true
 
-  # ─── Gate job — pure-Python analysis of the collected catalog ─────────────
-  # Runs after `e2e` (needs), downloads `coverage-inputs`, reads the catalog file.
-  # No Docker, no analytics boot. `!cancelled()` so it still reports when the
-  # suite itself failed (the artifact is usually present).
+  # ─── Gate jobs — pure-Python analysis of the collected artifacts ──────────
+  # Each runs after `e2e` (needs), downloads `coverage-inputs`, and reads plain
+  # files. No Docker, no analytics boot. `!cancelled()` so they still report
+  # when the suite itself failed (the artifacts are usually present).
 
   metric-coverage-gate:
     name: Metric coverage gate
@@ -182,8 +182,29 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "::error::metric coverage gate failed — a metric_key is value-tested by no test and not in SKIP_TABLES/SKIP_LIST (or a skip is stale). See the report."; fi
           exit "$rc"
 
-  # NOTE: endpoint coverage is NOT a blocking gate. The suite records the routes
-  # it exercises (httpx hook -> observed_endpoints.json, in the coverage-inputs
-  # artifact) for observability; `./e2e.sh gates` prints the report locally. A
-  # read-only metric suite touches few routes (most are write/admin), so a pass/fail
-  # gate there would be ~all skip-list — not worth blocking merge.
+  api-endpoint-coverage-gate:
+    name: API endpoint coverage gate
+    needs: e2e
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Checkout only for the gate script + the committed OpenAPI spec (the
+      # coverage universe — kept fresh by the openapi-specs drift gate).
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs
+          path: coverage-inputs
+      - name: Analyse endpoint coverage
+        run: |
+          python3 src/ingestion/tests/e2e/lib/api_coverage.py \
+            --observed coverage-inputs/observed_endpoints.json \
+            --spec docs/components/backend/analytics/openapi.json | tee api_coverage.md
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat api_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::API endpoint coverage gate failed — a spec operation is exercised by no test and not in SKIP_LIST (or a skip is stale). See the api/ contract tests (src/ingestion/tests/e2e/api/)."; fi
+          exit "$rc"

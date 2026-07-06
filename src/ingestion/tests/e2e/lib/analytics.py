@@ -241,7 +241,7 @@ class AnalyticsProcess:
             timeout=30.0,
             headers={TENANT_HEADER: str(TEST_TENANT_ID)},
             # Record every (method, path, status) the suite exercises so the
-            # endpoint-coverage report (lib/api_coverage.py) can diff it
+            # endpoint-coverage gate (lib/api_coverage.py) can diff it
             # against the OpenAPI spec. This is THE chokepoint — metric tests
             # (call_request) and smoke tests both go through client().
             event_hooks={"response": [api_coverage.record_response]},
