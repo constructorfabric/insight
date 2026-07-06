@@ -99,24 +99,40 @@ jobs:
         env:
           E2E_COMPOSE_OVERLAYS: compose/docker-compose.cache.yml
 
-      # ─── Run the suite inside the runner ────────────────────────────────
-      # `./e2e.sh test` (docker compose run runner) starts the clickhouse +
-      # mariadb `depends_on` services — compose pulls their images on demand
+      # ─── Run the suites inside the runner ───────────────────────────────
+      # `./e2e.sh test <path>` (docker compose run runner) starts the clickhouse
+      # + mariadb `depends_on` services — compose pulls their images on demand
       # and waits for `service_healthy` — so no explicit image pre-pull is needed.
-      # Serial on purpose: the session rig is not xdist-safe yet (see
-      # conftest.py — per-worker analytics spawns race SeaORM migrations
+      # Two suites, two steps (the DBs stay up in between; the second session
+      # re-attaches, so its overhead is seconds):
+      #   • api      — endpoint contract tests (every OpenAPI operation)
+      #   • metrics  — bronze→dbt→gold→API metric fixtures (the yaml rig)
+      # meta/ (the rig's own framework smoke tests) is deliberately NOT run in
+      # CI — it tests the harness, not the product; run it locally via
+      # `./e2e.sh test meta/`.
+      #
+      # Each suite is serial on purpose: the session rig is not xdist-safe yet
+      # (see conftest.py — per-worker analytics spawns race SeaORM migrations
       # in the shared MariaDB, non-primary workers don't wait for ClickHouse
       # migrations, and the shared dbt target/ dir is deleted by whichever
       # worker finishes first). Wall-time cost is negligible: the runner image
       # build (which compiles analytics + enrich) dominates the job.
       #
-      # The suite ALSO emits .artifacts/ while analytics is up:
-      #   • catalog_metrics.json     (lib/collect_metrics.py — metric-coverage-gate input)
+      # Each suite session ALSO emits .artifacts/ while analytics is up:
+      #   • catalog_metrics.json     (lib/collect_metrics.py — metric-coverage-gate
+      #     input; re-snapshotted per session, identical content)
       #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook
-      #     ledger, api-endpoint-coverage-gate input)
+      #     ledger, api-endpoint-coverage-gate input; MERGED across sessions by
+      #     lib.api_coverage.dump_observed, so both suites' traffic counts)
       # The gate jobs below analyse these — no second app boot.
-      - name: Run E2E suite
-        run: ./e2e.sh test --tb=short -q
+      - name: E2E suite — api
+        run: ./e2e.sh test api/ --tb=short -q
+
+      # `!cancelled()` so a red api suite still lets metrics report — two
+      # independent signals in one job.
+      - name: E2E suite — metrics
+        if: ${{ !cancelled() }}
+        run: ./e2e.sh test metrics/ --tb=short -q
 
       # ─── Hand the collected catalog to the gate job ─────────────────────
       # Uploaded even if the suite failed (the collection script still runs), so the

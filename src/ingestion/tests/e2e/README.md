@@ -22,14 +22,17 @@ Only one: **Docker Engine ≥ 24**. Everything else (Python 3.12, Rust matching 
 cd src/ingestion/tests/e2e
 
 ./e2e.sh build              # build the runner image (one-time, ~3-5 min cold)
-./e2e.sh test               # full suite
+./e2e.sh test               # full suite (api + metrics + meta)
+./e2e.sh test api/          # api suite: endpoint contract tests only (seconds)
+./e2e.sh test metrics/      # metrics suite: the yaml fixture rig
+./e2e.sh test meta/         # rig framework self-tests (local-only; CI skips them)
 ./e2e.sh test -k collab_emails_sent -v   # one test
 ./e2e.sh test -n auto       # ⚠️ parallel (pytest-xdist) — NOT supported yet: workers race on shared CH/MariaDB/dbt target
 ./e2e.sh shell              # interactive bash inside the runner
 ./e2e.sh down               # tear down compose stack + volumes
 ```
 
-The same image (and the same `./e2e.sh test` invocation) is used in CI — see `.github/workflows/e2e-bronze-to-api.yml`.
+The same image is used in CI, which runs two suites as separate steps — `./e2e.sh test api/` then `./e2e.sh test metrics/` (meta/ is local-only: it tests the harness, not the product) — see `.github/workflows/e2e-bronze-to-api.yml`. The endpoint ledger merges across sessions (`lib.api_coverage.dump_observed`), so the gates see both suites' traffic.
 
 First session bootstraps `cargo build --release -p analytics` (~3-5 min). Subsequent sessions reuse the named volume so cargo is incremental (~10s).
 
@@ -76,7 +79,7 @@ e2e/
 
 ## Metric coverage gate
 
-A job (`metric-coverage-gate`) in the **E2E — Bronze to API** workflow, *not* a pytest test. The `e2e` job runs the suite and, while analytics is up, snapshots the metric catalog (`POST /v1/catalog/get_metrics`) to `.artifacts/catalog_metrics.json` (uploaded as `coverage-inputs`); the gate job then checks every product `metric_key` the catalog exposes is value-asserted by a test or covered by a `SKIP_TABLES`/`SKIP_LIST` entry — pure Python, no Docker, no second app boot.
+A job (`metric-coverage-gate`) in the **E2E — Bronze to API** workflow, *not* a pytest test. The `e2e` job runs the api + metrics suites and, while analytics is up, snapshots the metric catalog (`POST /v1/catalog/get_metrics`) to `.artifacts/catalog_metrics.json` (uploaded as `coverage-inputs`); the gate job then checks every product `metric_key` the catalog exposes is value-asserted by a test or covered by a `SKIP_TABLES`/`SKIP_LIST` entry — pure Python, no Docker, no second app boot.
 
 Locally, after a run:
 

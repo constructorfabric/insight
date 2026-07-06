@@ -70,11 +70,28 @@ def reset_observed() -> None:
 
 
 def dump_observed(path: str | Path) -> Path:
+    """Write the in-process ledger, MERGING into an existing file.
+
+    CI runs the suites as separate pytest sessions (api, then metrics — see
+    e2e-bronze-to-api.yml); each session dumps at sessionfinish, so a plain
+    overwrite would keep only the last suite's traffic and fail the endpoint
+    gate. Merging unions statuses per (method, path) across sessions. The CI
+    job starts from a clean checkout; locally, delete `.artifacts/` first for
+    a from-scratch measurement.
+    """
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    merged: dict[tuple[str, str], set[int]] = {}
+    if out.exists():
+        for row in json.loads(out.read_text(encoding="utf-8")):
+            merged.setdefault((row["method"], row["path"]), set()).update(
+                int(s) for s in row["statuses"]
+            )
+    for key, codes in _OBSERVED.items():
+        merged.setdefault(key, set()).update(codes)
     rows = [
         {"method": m, "path": p, "statuses": sorted(codes)}
-        for (m, p), codes in sorted(_OBSERVED.items())
+        for (m, p), codes in sorted(merged.items())
     ]
     out.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
     return out
