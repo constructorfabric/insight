@@ -67,7 +67,7 @@ pub struct MetricResultsConfig {
     /// unless the install declares itself single-tenant via
     /// `metric_catalog.tenant_default_id`, and logs a warning when active.
     ///
-    /// Env: `ANALYTICS__metric_results__single_tenant_warehouse_id`.
+    /// Env: `APP__gears__analytics__config__metric_results__single_tenant_warehouse_id`.
     #[serde(default)]
     pub single_tenant_warehouse_id: Option<String>,
 }

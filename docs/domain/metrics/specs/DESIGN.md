@@ -184,7 +184,7 @@ Rules:
 ## Builtin Seed Reconciliation
 
 Builtin definitions are declared in one code registry
-(`src/backend/services/analytics-api/src/domain/metric_definitions/builtin.rs`)
+(`src/backend/services/analytics/src/domain/metric_definitions/builtin.rs`)
 and converged into the DB by a startup reconciler, not by migrations.
 Migrations own schema only.
 
@@ -336,11 +336,11 @@ The measure already appears in a managed observation source (check the
 `measures` list of the source in `builtin.rs` and the emitting gold model).
 
 1. Add one `MetricSeed` to `BUILTIN_METRICS` in
-   `src/backend/services/analytics-api/src/domain/metric_definitions/builtin.rs`:
+   `src/backend/services/analytics/src/domain/metric_definitions/builtin.rs`:
    metric key (`namespace.metric_name`, lowercase snake case), label,
    description, unit, format, direction, entity type, computation type,
    input role mapping to the measure, allowed dimensions, peer cohort key.
-2. Run `cargo test -p analytics-api` — the registry invariant tests validate
+2. Run `cargo test -p analytics` — the registry invariant tests validate
    key shapes, input/measure references, and computation field combinations.
 
 The reconciler seeds the definition on the next deploy. No SQL, no migration,
@@ -364,7 +364,7 @@ The source exists but does not emit the measure yet.
    test.
 3. Add a `MeasureSeed` to the source in `builtin.rs`.
 4. Add the `MetricSeed` as in case 1.
-5. Validate: `dbt parse` (dummy profile) + `cargo test -p analytics-api`.
+5. Validate: `dbt parse` (dummy profile) + `cargo test -p analytics`.
 
 ### Case 3: new observation source
 
@@ -374,10 +374,10 @@ The metric family reads data no managed source covers.
    measure observation contract, `schema=insight`, `ref()`-ing silver models.
    Document columns and measure keys in `src/ingestion/gold/schema.yml`.
 2. Add an `ObservationSource` enum variant and `from_ref`/`table_ref` mapping
-   in `src/backend/services/analytics-api/src/domain/metric_definitions/definition.rs`.
+   in `src/backend/services/analytics/src/domain/metric_definitions/definition.rs`.
 3. Add a `BuiltinSource` (source + measures + dimensions) to `builtin.rs`.
 4. Add `MetricSeed`s as in case 1.
-5. Validate: `dbt parse` + `cargo test -p analytics-api`. The runtime schema
+5. Validate: `dbt parse` + `cargo test -p analytics`. The runtime schema
    validator probes the new relation at startup.
 
 ### Rules that hold for every case

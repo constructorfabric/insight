@@ -1,5 +1,5 @@
 -- Build-integrity check (untagged → error severity under `dbt build`).
--- The analytics-api peer view joins insight.metric_entity_cohorts_current on
+-- The analytics service peer view joins insight.metric_entity_cohorts_current on
 -- (tenant_id, entity_type, entity_id, cohort_key) and assumes exactly one row
 -- per key — duplicate rows fan out the join and corrupt peer percentiles.
 -- Any returned row is a violation of that contract.

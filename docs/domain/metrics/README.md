@@ -15,11 +15,11 @@ are authored through this system.
 
 | Layer | Location |
 |---|---|
-| Metric registry (builtin seeds) | [`src/backend/services/analytics-api/src/domain/metric_definitions/builtin.rs`](../../../src/backend/services/analytics-api/src/domain/metric_definitions/builtin.rs) |
-| Definition loading, reconciler, schema validator | [`src/backend/services/analytics-api/src/domain/metric_definitions/`](../../../src/backend/services/analytics-api/src/domain/metric_definitions/) |
-| Result runtime (validation, query compiler, response builder) | [`src/backend/services/analytics-api/src/domain/metric_results/`](../../../src/backend/services/analytics-api/src/domain/metric_results/) |
-| Result endpoint | [`src/backend/services/analytics-api/src/api/metric_results.rs`](../../../src/backend/services/analytics-api/src/api/metric_results.rs) |
-| Registry schema migration | [`src/backend/services/analytics-api/src/migration/m20260625_000001_metric_definitions.rs`](../../../src/backend/services/analytics-api/src/migration/m20260625_000001_metric_definitions.rs) |
+| Metric registry (builtin seeds) | [`src/backend/services/analytics/src/domain/metric_definitions/builtin.rs`](../../../src/backend/services/analytics/src/domain/metric_definitions/builtin.rs) |
+| Definition loading, reconciler, schema validator | [`src/backend/services/analytics/src/domain/metric_definitions/`](../../../src/backend/services/analytics/src/domain/metric_definitions/) |
+| Result runtime (validation, query compiler, response builder) | [`src/backend/services/analytics/src/domain/metric_results/`](../../../src/backend/services/analytics/src/domain/metric_results/) |
+| Result endpoint | [`src/backend/services/analytics/src/api/metric_results.rs`](../../../src/backend/services/analytics/src/api/metric_results.rs) |
+| Registry schema migration | [`src/backend/services/analytics/src/migration/m20260625_000001_metric_definitions.rs`](../../../src/backend/services/analytics/src/migration/m20260625_000001_metric_definitions.rs) |
 | Managed observation sources (dbt gold models) | [`src/ingestion/gold/`](../../../src/ingestion/gold/) |
 | Class-contract data-quality tests | [`src/ingestion/dbt/tests/ai/`](../../../src/ingestion/dbt/tests/ai/) |
 

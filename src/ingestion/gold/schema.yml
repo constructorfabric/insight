@@ -5,9 +5,9 @@ models:
     description: >
       Source measure observations for the unified metrics runtime. One row per
       (tenant, entity, day, measure, dimension tuple). Emits measures, not
-      metrics: the analytics-api metric registry binds input roles to
+      metrics: the analytics service metric registry binds input roles to
       measure keys and compiles result queries against this relation. The
-      column set is a published contract — the analytics-api schema validator
+      column set is a published contract — the analytics service schema validator
       probes it at runtime (`OBSERVATION_COLUMNS`); changing it requires a
       coordinated backend change.
     columns:
@@ -77,8 +77,8 @@ models:
       Current cohort membership per entity for peer comparison. One row per
       (tenant, entity_type, entity_id, cohort_key) — uniqueness is asserted by
       tests/gold/assert_metric_entity_cohorts_unique.sql and relied on by the
-      analytics-api peer view (join fan-out would corrupt percentiles). The
-      column set is a published contract probed by the analytics-api schema
+      analytics service peer view (join fan-out would corrupt percentiles). The
+      column set is a published contract probed by the analytics service schema
       validator (`COHORT_COLUMNS`).
     columns:
       - name: tenant_id
