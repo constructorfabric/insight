@@ -46,6 +46,8 @@ mod m20260624_000001_collab_zulip_chat;
 mod m20260624_000002_seed_zulip_collab_catalog;
 mod m20260624_000003_ic_chart_loc_git_breakdown;
 mod m20260625_000001_metric_definitions;
+mod m20260702_000001_collab_messaging_queries;
+mod m20260702_000002_seed_collab_messaging_catalog;
 
 use sea_orm_migration::prelude::*;
 
@@ -101,6 +103,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260624_000002_seed_zulip_collab_catalog::Migration),
             Box::new(m20260624_000003_ic_chart_loc_git_breakdown::Migration),
             Box::new(m20260625_000001_metric_definitions::Migration),
+            Box::new(m20260702_000001_collab_messaging_queries::Migration),
+            Box::new(m20260702_000002_seed_collab_messaging_catalog::Migration),
         ]
     }
 }

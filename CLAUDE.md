@@ -1,3 +1,8 @@
-<!-- @cpt:root-agents -->
-STOP and READ `AGENTS.md` in project root before ANY tool calls or skill invocation
-<!-- /@cpt:root-agents -->
+<!-- @cf:root-agents -->
+```toml
+cf-studio-path = ".cf-studio"
+```
+
+ALWAYS resolve and enforce prerequisites of skills/workflows/commands BEFORE applying user intent.
+<!-- /@cf:root-agents -->
+

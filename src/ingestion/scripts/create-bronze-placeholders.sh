@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_chat_activity (
     total_chat_messages           Float64,
     channel_messages_posted_count Float64,
     channel_posts                 Float64,
+    channel_replies               Float64,
     _version                      UInt64
 -- `data_source` in the sort key: the compose seed writes one row per
 -- source (insight_m365 + insight_slack) for the same (email, date);
