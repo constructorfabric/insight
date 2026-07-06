@@ -2,27 +2,27 @@ use std::collections::{BTreeMap, HashMap};
 
 use toolkit_canonical_errors::CanonicalError;
 
-use crate::domain::metric_definitions::{ExecutableMetric, MetricDefinition};
+use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition};
 
 use super::compiler::{
     BreakdownQueryRow, PeerQueryRow, PeriodQueryRow, TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL,
     UNKNOWN_DIMENSION_VALUE, dimension_aliases,
 };
-use super::definition::Bucket;
 use super::dto::{
-    BreakdownValueDto, MetricDimensionDto, MetricResultDto, MetricResultViewDto,
+    BreakdownValueDto, ComputationDto, MetricDimensionDto, MetricResultDto, MetricResultViewDto,
     MetricResultsResponse, PeerValueDto, PeriodValueDto, TimeseriesDto, TimeseriesPointDto,
 };
 use super::validation::{
     ValidatedMetricResultsRequest, enumerate_buckets, metric_result_too_large, row_limit,
 };
+use super::view::Bucket;
 
 type DimensionKey = Vec<(String, String, Option<String>)>;
 type SeriesKey = (String, DimensionKey);
 type PointsByBucket = HashMap<String, Option<f64>>;
 
 pub fn build_period_view(
-    def: &ExecutableMetric,
+    def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     rows: Vec<PeriodQueryRow>,
 ) -> MetricResultViewDto {
@@ -52,7 +52,7 @@ pub fn build_period_view(
 }
 
 pub fn build_timeseries_view(
-    def: &ExecutableMetric,
+    def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     bucket: Bucket,
     dimensions: &[String],
@@ -72,7 +72,7 @@ pub fn build_timeseries_view(
     for row in rows {
         let dims = row_dimensions(&row.extra, dimensions)?;
         by_series
-            .entry((row.entity_id, dimension_key(&dims)))
+            .entry((row.entity_id, dims.clone()))
             .or_default()
             .insert(row.bucket_start, row.value);
     }
@@ -152,80 +152,20 @@ pub fn build_metric_result(
     def: &MetricDefinition,
     views: Vec<MetricResultViewDto>,
 ) -> MetricResultDto {
-    match def {
-        MetricDefinition::Sum(sum) => MetricResultDto::Sum {
-            metric_key: sum.base.key.clone(),
-            label: sum.base.label.clone(),
-            description: sum.base.description.clone(),
-            explanation: sum.base.explanation.clone(),
-            unit: sum.base.unit.clone(),
-            format: sum.base.format,
-            direction: sum.base.direction,
-            views,
-        },
-        MetricDefinition::Count(count) => MetricResultDto::Count {
-            metric_key: count.base.key.clone(),
-            label: count.base.label.clone(),
-            description: count.base.description.clone(),
-            explanation: count.base.explanation.clone(),
-            unit: count.base.unit.clone(),
-            format: count.base.format,
-            direction: count.base.direction,
-            views,
-        },
-        MetricDefinition::CountDistinct(count) => MetricResultDto::CountDistinct {
-            metric_key: count.base.key.clone(),
-            label: count.base.label.clone(),
-            description: count.base.description.clone(),
-            explanation: count.base.explanation.clone(),
-            unit: count.base.unit.clone(),
-            format: count.base.format,
-            direction: count.base.direction,
-            views,
-        },
-        MetricDefinition::Ratio(ratio) => MetricResultDto::Ratio {
-            metric_key: ratio.base.key.clone(),
-            label: ratio.base.label.clone(),
-            description: ratio.base.description.clone(),
-            explanation: ratio.base.explanation.clone(),
-            unit: ratio.base.unit.clone(),
-            format: ratio.base.format,
-            direction: ratio.base.direction,
-            scale: ratio.scale,
-            views,
-        },
-        MetricDefinition::Distribution(distribution) => MetricResultDto::Distribution {
-            metric_key: distribution.base.key.clone(),
-            label: distribution.base.label.clone(),
-            description: distribution.base.description.clone(),
-            explanation: distribution.base.explanation.clone(),
-            unit: distribution.base.unit.clone(),
-            format: distribution.base.format,
-            direction: distribution.base.direction,
-            statistic: distribution.statistic,
-            views,
-        },
-        MetricDefinition::Gauge(gauge) => MetricResultDto::Gauge {
-            metric_key: gauge.base.key.clone(),
-            label: gauge.base.label.clone(),
-            description: gauge.base.description.clone(),
-            explanation: gauge.base.explanation.clone(),
-            unit: gauge.base.unit.clone(),
-            format: gauge.base.format,
-            direction: gauge.base.direction,
-            method: gauge.method,
-            views,
-        },
-        MetricDefinition::Derived(derived) => MetricResultDto::Derived {
-            metric_key: derived.base.key.clone(),
-            label: derived.base.label.clone(),
-            description: derived.base.description.clone(),
-            explanation: derived.base.explanation.clone(),
-            unit: derived.base.unit.clone(),
-            format: derived.base.format,
-            direction: derived.base.direction,
-            views,
-        },
+    let computation = match &def.spec {
+        ComputationSpec::Sum { .. } => ComputationDto::Sum,
+        ComputationSpec::Ratio { scale, .. } => ComputationDto::Ratio { scale: *scale },
+    };
+    MetricResultDto {
+        metric_key: def.base.key.clone(),
+        label: def.base.label.clone(),
+        description: def.base.description.clone(),
+        explanation: def.base.explanation.clone(),
+        unit: def.base.unit.clone(),
+        format: def.base.format,
+        direction: def.base.direction,
+        computation,
+        views,
     }
 }
 
@@ -240,15 +180,7 @@ fn response_size(response: &MetricResultsResponse) -> usize {
     response
         .metrics
         .iter()
-        .flat_map(|metric| match metric {
-            MetricResultDto::Sum { views, .. }
-            | MetricResultDto::Count { views, .. }
-            | MetricResultDto::CountDistinct { views, .. }
-            | MetricResultDto::Ratio { views, .. }
-            | MetricResultDto::Distribution { views, .. }
-            | MetricResultDto::Gauge { views, .. }
-            | MetricResultDto::Derived { views, .. } => views,
-        })
+        .flat_map(|metric| &metric.views)
         .map(|view| match view {
             MetricResultViewDto::Period { values } => values.len(),
             MetricResultViewDto::Timeseries { series, .. } => {
@@ -294,14 +226,6 @@ fn json_string(value: Option<&serde_json::Value>) -> Option<String> {
     }
 }
 
-fn dimension_key(
-    dims: &[(String, String, Option<String>)],
-) -> Vec<(String, String, Option<String>)> {
-    dims.iter()
-        .map(|d| (d.0.clone(), d.1.clone(), d.2.clone()))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,9 +234,8 @@ mod tests {
 
     use crate::domain::metric_definitions::definition::{
         MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationSource,
-        RatioMetricDefinition, SumMetricDefinition,
     };
-    use crate::domain::metric_results::definition::Bucket;
+    use crate::domain::metric_results::view::Bucket;
 
     fn base() -> MetricBase {
         MetricBase {
@@ -338,20 +261,24 @@ mod tests {
         }
     }
 
-    fn sum_metric() -> ExecutableMetric {
-        ExecutableMetric::Sum(SumMetricDefinition {
+    fn sum_metric() -> MetricDefinition {
+        MetricDefinition {
             base: base(),
-            value: input(MetricInputRole::Value, "accepted_lines"),
-        })
+            spec: ComputationSpec::Sum {
+                value: input(MetricInputRole::Value, "accepted_lines"),
+            },
+        }
     }
 
-    fn ratio_metric() -> ExecutableMetric {
-        ExecutableMetric::Ratio(RatioMetricDefinition {
+    fn ratio_metric() -> MetricDefinition {
+        MetricDefinition {
             base: base(),
-            numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
-            denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
-            scale: 100.0,
-        })
+            spec: ComputationSpec::Ratio {
+                numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
+                denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
+                scale: 100.0,
+            },
+        }
     }
 
     fn request(entity_ids: Vec<&str>, from: &str, to: &str) -> ValidatedMetricResultsRequest {
@@ -501,18 +428,29 @@ mod tests {
     }
 
     #[test]
+    fn metric_result_wire_shape_is_flat_with_computation_tag() {
+        let sum = build_metric_result(&sum_metric(), Vec::new());
+        let sum_json = serde_json::to_value(&sum).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(sum_json["computation"], "sum");
+        assert_eq!(sum_json["metric_key"], "ai.accepted_lines");
+        assert_eq!(sum_json["format"], "integer");
+        assert!(sum_json.get("scale").is_none());
+
+        let ratio = build_metric_result(&ratio_metric(), Vec::new());
+        let ratio_json = serde_json::to_value(&ratio).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(ratio_json["computation"], "ratio");
+        assert_eq!(ratio_json["scale"], 100.0);
+    }
+
+    #[test]
     fn response_size_counts_densified_points() {
         let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-10");
         let Ok(view) = build_timeseries_view(&sum_metric(), &req, Bucket::Day, &[], Vec::new())
         else {
             panic!("expected timeseries view");
         };
-        let def = MetricDefinition::Sum(SumMetricDefinition {
-            base: base(),
-            value: input(MetricInputRole::Value, "accepted_lines"),
-        });
         let response = MetricResultsResponse {
-            metrics: vec![build_metric_result(&def, vec![view])],
+            metrics: vec![build_metric_result(&sum_metric(), vec![view])],
         };
         assert_eq!(response_size(&response), 10);
     }

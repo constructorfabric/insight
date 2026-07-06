@@ -1,8 +1,8 @@
 mod builder;
 mod compiler;
-mod definition;
 mod dto;
 mod validation;
+mod view;
 
 pub use builder::{
     build_breakdown_view, build_metric_result, build_peer_view, build_period_view,

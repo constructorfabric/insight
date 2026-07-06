@@ -45,9 +45,12 @@ Rules:
 - `source_key` identifies the logical source.
 - `measure_key` identifies the source measure.
 - `entity_type` and `entity_id` identify the measured entity.
-- `observed_at` is available for gauge/latest semantics.
-- `subject_key` is available for distinct-count semantics.
-- Missing dimensions use value `__unknown__` and label `Unknown`.
+- `observed_at` is reserved for future point-in-time semantics.
+- `subject_key` is reserved for future distinct-count semantics.
+- A row is emitted only when the source provides a value; `value` is never
+  NULL (the column stays nullable in the contract).
+- Dimension values and labels come from class-contract columns declared by
+  staging models; gold does not synthesize fallbacks.
 - Observations do not contain chart metadata.
 - Observations do not contain cohort membership. Peer comparison reads the
   cohort view directly.
@@ -72,35 +75,17 @@ asserts it.
 
 ## Computations
 
-Executable computation vocabulary:
+The computation vocabulary is closed and fully executable:
 
 ```text
 sum
-count
-count_distinct
 ratio
-distribution
-gauge
-derived
-```
-
-Current execution support:
-
-```text
-sum      executable
-ratio    executable
-others   typed and stored, rejected with UNSUPPORTED_COMPUTATION when requested
 ```
 
 Semantics:
 
 - `sum`: sum one numeric measure.
-- `count`: count source rows for one event measure.
-- `count_distinct`: count distinct `subject_key` values.
 - `ratio`: aggregate numerator and denominator measures first, then divide.
-- `distribution`: compute one configured statistic from sample values.
-- `gauge`: compute one configured snapshot method.
-- `derived`: reserved for expressions over other metrics.
 
 Ratios use:
 
@@ -111,8 +96,14 @@ sum(numerator) / nullIf(sum(denominator), 0) * scale
 They are not averages of row-level ratios.
 
 Ratio numerator and denominator inputs must resolve to measures of the same
-source. Cross-source ratios are a configuration error; they belong to the
-`derived` computation when it becomes executable.
+source. Cross-source ratios are a configuration error.
+
+Extending the vocabulary (anticipated kinds: count-distinct over
+`subject_key`, distribution statistics, point-in-time gauges over
+`observed_at`, derived expressions over other metrics) is one coordinated
+change: a `ComputationSpec` variant, a compiler arm, the `computation_type`
+DB enum, a shape macro if the observation shape is new, and the response
+`computation` tag. Nothing is stored before it executes.
 
 ## Storage Model
 
@@ -148,11 +139,8 @@ direction
 entity_type
 computation_type
 scale
-distribution_statistic
-gauge_method
 peer_cohort_key
 origin
-definition_version
 is_enabled
 schema_status
 schema_error_code
@@ -162,12 +150,8 @@ schema_error_code
 
 ```text
 value
-event
 numerator
 denominator
-sample
-snapshot
-dependency
 ```
 
 `metric_definition_dimensions` maps metrics to source dimensions.
@@ -230,27 +214,23 @@ type MetricResultsRequest = {
 Response:
 
 ```ts
-type MetricResult =
-  | { computation: "sum"; views: MetricResultView[] }
-  | { computation: "count"; views: MetricResultView[] }
-  | { computation: "count_distinct"; views: MetricResultView[] }
-  | { computation: "ratio"; scale: number; views: MetricResultView[] }
-  | { computation: "distribution"; statistic: string; views: MetricResultView[] }
-  | { computation: "gauge"; method: string; views: MetricResultView[] }
-  | { computation: "derived"; views: MetricResultView[] }
+type MetricResult = {
+  metric_key: string
+  label: string
+  description?: string
+  explanation?: string
+  unit: string | null
+  format: "integer" | "decimal" | "currency" | "percent"
+  direction: "higher_is_better" | "lower_is_better" | "neutral"
+  views: MetricResultView[]
+} & (
+  | { computation: "sum" }
+  | { computation: "ratio"; scale: number }
+)
 ```
 
-Every metric result also includes:
-
-```text
-metric_key
-label
-description
-explanation
-unit
-format
-direction
-```
+The computation tag and its fields are flattened into the result object; a
+serde wire-shape test in `metric_results/builder.rs` pins this layout.
 
 View values use `entity_id`, not person-specific fields.
 
@@ -260,12 +240,11 @@ View values use `entity_id`, not person-specific fields.
 2. Validate entity, period, metric keys, view specs, and dimensions.
 3. Load visible metric definitions from DB.
 4. Convert DB rows into Rust discriminated unions.
-5. Reject unsupported computations with `UNSUPPORTED_COMPUTATION`.
-6. Compile one ClickHouse query per requested metric view.
-7. Execute queries with bounded concurrency.
-8. Shape rows into typed result views.
-9. Enforce final response row cap.
-10. Return metrics in request order.
+5. Compile one ClickHouse query per requested metric view.
+6. Execute queries with bounded concurrency.
+7. Shape rows into typed result views.
+8. Enforce final response row cap.
+9. Return metrics in request order.
 
 Execution rules:
 
@@ -273,6 +252,9 @@ Execution rules:
 - `ratio` missing or zero denominator returns `null`.
 - Ungrouped timeseries are dense per requested entity and bucket.
 - Dimensioned timeseries are dense per requested entity, observed dimension group, and bucket.
+- Rows missing a requested dimension group under value `__unknown__` with
+  label `Unknown` (runtime guard; the schema validator's coverage probe makes
+  this rare).
 - Breakdown returns observed dimension groups only.
 - Peer starts from the generic current cohort view so zero-activity peers can be included.
 - Target entities missing cohort membership are omitted from peer values.
@@ -303,7 +285,6 @@ Reject with a client error when:
 - a breakdown has no dimensions.
 - a peer view has no requested or default cohort key.
 - projected or final result size exceeds the row cap.
-- computation is typed but not executable.
 
 ## Authorization
 
@@ -364,23 +345,27 @@ The source exists but does not emit the measure yet.
    (staging models declare semantics, see the class `schema.yml`).
 2. Add the `measure_key` to the gold model's `schema.yml` `accepted_values`
    test.
-3. Add a `MeasureSeed` to the source in `builtin.rs`.
+3. Add the measure key to the source's `measures` list in `builtin.rs`.
 4. Add the `MetricSeed` as in case 1.
-5. Validate: `dbt parse` (dummy profile) + `cargo test -p analytics`.
+5. Validate: `dbt parse` + `cargo test -p analytics` (see Validation
+   commands).
 
 ### Case 3: new observation source
 
 The metric family reads data no managed source covers.
 
 1. Create a dbt gold model in `src/ingestion/gold/` emitting the source
-   measure observation contract, `schema=insight`, `ref()`-ing silver models.
+   measure observation contract, `schema=insight`, `ref()`-ing silver models
+   (medallion layering rules: `docs/domain/ingestion-data-flow/specs/DESIGN.md`).
    Document columns and measure keys in `src/ingestion/gold/schema.yml`.
 2. Add an `ObservationSource` enum variant and `from_ref`/`table_ref` mapping
-   in `src/backend/services/analytics/src/domain/metric_definitions/definition.rs`.
+   in `src/backend/services/analytics/src/domain/metric_definitions/definition.rs`
+   (the `db_strings_round_trip` test covers the new pair).
 3. Add a `BuiltinSource` (source + measures + dimensions) to `builtin.rs`.
 4. Add `MetricSeed`s as in case 1.
-5. Validate: `dbt parse` + `cargo test -p analytics`. The runtime schema
-   validator probes the new relation at startup.
+5. Validate: `dbt parse` + `cargo test -p analytics` (see Validation
+   commands). The runtime schema validator probes the new relation at
+   startup.
 
 ### Rules that hold for every case
 
@@ -393,6 +378,21 @@ The metric family reads data no managed source covers.
 - No new `metric_catalog` seed migrations and no new ad-hoc `insight.*` views
   for metrics.
 - Do not add runtime formula JSON until generation exists.
+
+### Validation commands
+
+```sh
+# from src/backend — registry invariants, enum round-trips, compiler tests
+cargo test -p analytics
+
+# from src/ingestion/dbt — manifest validation, no warehouse connection.
+# CI runs the same gate (build-images.yml, toolbox job).
+dbt parse --profiles-dir <dir-with-dummy-profile>
+```
+
+The dummy profile is a `profiles.yml` with profile name `ingestion` and any
+unreachable `type: clickhouse` output; `dbt parse` loads the adapter but never
+connects.
 
 Future developer-side generation may use source models and formulas to produce
 the managed observation SQL and seed rows, but runtime execution still

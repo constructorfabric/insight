@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::definition::{Bucket, MetricResultViewKind};
-use crate::domain::metric_definitions::{
-    DistributionStatistic, GaugeMethod, MetricDirection, MetricFormat,
-};
+use super::view::{Bucket, MetricResultViewKind};
+use crate::domain::metric_definitions::{MetricDirection, MetricFormat};
 
 #[derive(Debug, Deserialize)]
 pub struct MetricResultsRequest {
@@ -64,95 +62,26 @@ pub struct MetricResultsResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct MetricResultDto {
+    pub metric_key: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+    pub unit: Option<String>,
+    pub format: MetricFormat,
+    pub direction: MetricDirection,
+    #[serde(flatten)]
+    pub computation: ComputationDto,
+    pub views: Vec<MetricResultViewDto>,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(tag = "computation", rename_all = "snake_case")]
-pub enum MetricResultDto {
-    Sum {
-        metric_key: String,
-        label: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        explanation: Option<String>,
-        unit: Option<String>,
-        format: MetricFormat,
-        direction: MetricDirection,
-        views: Vec<MetricResultViewDto>,
-    },
-    Count {
-        metric_key: String,
-        label: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        explanation: Option<String>,
-        unit: Option<String>,
-        format: MetricFormat,
-        direction: MetricDirection,
-        views: Vec<MetricResultViewDto>,
-    },
-    CountDistinct {
-        metric_key: String,
-        label: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        explanation: Option<String>,
-        unit: Option<String>,
-        format: MetricFormat,
-        direction: MetricDirection,
-        views: Vec<MetricResultViewDto>,
-    },
-    Ratio {
-        metric_key: String,
-        label: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        explanation: Option<String>,
-        unit: Option<String>,
-        format: MetricFormat,
-        direction: MetricDirection,
-        scale: f64,
-        views: Vec<MetricResultViewDto>,
-    },
-    Distribution {
-        metric_key: String,
-        label: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        explanation: Option<String>,
-        unit: Option<String>,
-        format: MetricFormat,
-        direction: MetricDirection,
-        statistic: DistributionStatistic,
-        views: Vec<MetricResultViewDto>,
-    },
-    Gauge {
-        metric_key: String,
-        label: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        explanation: Option<String>,
-        unit: Option<String>,
-        format: MetricFormat,
-        direction: MetricDirection,
-        method: GaugeMethod,
-        views: Vec<MetricResultViewDto>,
-    },
-    Derived {
-        metric_key: String,
-        label: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        explanation: Option<String>,
-        unit: Option<String>,
-        format: MetricFormat,
-        direction: MetricDirection,
-        views: Vec<MetricResultViewDto>,
-    },
+pub enum ComputationDto {
+    Sum,
+    Ratio { scale: f64 },
 }
 
 #[derive(Debug, Serialize)]

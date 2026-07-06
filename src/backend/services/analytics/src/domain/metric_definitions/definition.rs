@@ -21,44 +21,15 @@ pub enum MetricFormat {
 #[serde(rename_all = "snake_case")]
 pub enum MetricComputation {
     Sum,
-    Count,
-    CountDistinct,
     Ratio,
-    Distribution,
-    Gauge,
-    Derived,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricInputRole {
     Value,
-    Event,
     Numerator,
     Denominator,
-    Sample,
-    Snapshot,
-    Dependency,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DistributionStatistic {
-    P50,
-    P75,
-    P90,
-    P95,
-    P99,
-    Avg,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GaugeMethod {
-    Latest,
-    Min,
-    Max,
-    Avg,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,14 +66,9 @@ pub enum CohortSource {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum MetricDefinition {
-    Sum(SumMetricDefinition),
-    Count(CountMetricDefinition),
-    CountDistinct(CountDistinctMetricDefinition),
-    Ratio(RatioMetricDefinition),
-    Distribution(DistributionMetricDefinition),
-    Gauge(GaugeMetricDefinition),
-    Derived(DerivedMetricDefinition),
+pub struct MetricDefinition {
+    pub base: MetricBase,
+    pub spec: ComputationSpec,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -120,6 +86,18 @@ pub struct MetricBase {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ComputationSpec {
+    Sum {
+        value: MetricInput,
+    },
+    Ratio {
+        numerator: MetricInput,
+        denominator: MetricInput,
+        scale: f64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MetricInput {
     pub role: MetricInputRole,
     pub observation_source: ObservationSource,
@@ -127,117 +105,27 @@ pub struct MetricInput {
     pub measure_key: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SumMetricDefinition {
-    pub base: MetricBase,
-    pub value: MetricInput,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct CountMetricDefinition {
-    pub base: MetricBase,
-    pub event: MetricInput,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct CountDistinctMetricDefinition {
-    pub base: MetricBase,
-    pub event: MetricInput,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RatioMetricDefinition {
-    pub base: MetricBase,
-    pub numerator: MetricInput,
-    pub denominator: MetricInput,
-    pub scale: f64,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DistributionMetricDefinition {
-    pub base: MetricBase,
-    pub sample: MetricInput,
-    pub statistic: DistributionStatistic,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct GaugeMetricDefinition {
-    pub base: MetricBase,
-    pub snapshot: MetricInput,
-    pub method: GaugeMethod,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DerivedMetricDefinition {
-    pub base: MetricBase,
-    pub dependencies: Vec<MetricInput>,
-}
-
 impl MetricDefinition {
     pub fn key(&self) -> &str {
-        self.base().key.as_str()
-    }
-
-    pub fn base(&self) -> &MetricBase {
-        match self {
-            Self::Sum(def) => &def.base,
-            Self::Count(def) => &def.base,
-            Self::CountDistinct(def) => &def.base,
-            Self::Ratio(def) => &def.base,
-            Self::Distribution(def) => &def.base,
-            Self::Gauge(def) => &def.base,
-            Self::Derived(def) => &def.base,
-        }
-    }
-
-    pub fn computation(&self) -> MetricComputation {
-        match self {
-            Self::Sum(_) => MetricComputation::Sum,
-            Self::Count(_) => MetricComputation::Count,
-            Self::CountDistinct(_) => MetricComputation::CountDistinct,
-            Self::Ratio(_) => MetricComputation::Ratio,
-            Self::Distribution(_) => MetricComputation::Distribution,
-            Self::Gauge(_) => MetricComputation::Gauge,
-            Self::Derived(_) => MetricComputation::Derived,
-        }
+        self.base.key.as_str()
     }
 
     pub fn allowed_dimension(&self, dimension: &str) -> Option<&str> {
-        self.base()
+        self.base
             .allowed_dimensions
             .iter()
             .map(String::as_str)
             .find(|d| *d == dimension)
     }
 
-    pub fn executable(&self) -> Option<ExecutableMetric> {
-        match self {
-            Self::Sum(def) => Some(ExecutableMetric::Sum(def.clone())),
-            Self::Ratio(def) => Some(ExecutableMetric::Ratio(def.clone())),
-            Self::Count(_)
-            | Self::CountDistinct(_)
-            | Self::Distribution(_)
-            | Self::Gauge(_)
-            | Self::Derived(_) => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExecutableMetric {
-    Sum(SumMetricDefinition),
-    Ratio(RatioMetricDefinition),
-}
-
-impl ExecutableMetric {
     pub fn is_zero_filled(&self) -> bool {
-        matches!(self, Self::Sum(_))
+        matches!(self.spec, ComputationSpec::Sum { .. })
     }
 
     pub fn observation_source(&self) -> ObservationSource {
-        match self {
-            Self::Sum(def) => def.value.observation_source,
-            Self::Ratio(def) => def.numerator.observation_source,
+        match &self.spec {
+            ComputationSpec::Sum { value } => value.observation_source,
+            ComputationSpec::Ratio { numerator, .. } => numerator.observation_source,
         }
     }
 }
@@ -312,28 +200,18 @@ impl MetricDirection {
 }
 
 impl MetricComputation {
-    pub fn from_db(value: &str) -> Option<Self> {
-        match value {
-            "sum" => Some(Self::Sum),
-            "count" => Some(Self::Count),
-            "count_distinct" => Some(Self::CountDistinct),
-            "ratio" => Some(Self::Ratio),
-            "distribution" => Some(Self::Distribution),
-            "gauge" => Some(Self::Gauge),
-            "derived" => Some(Self::Derived),
-            _ => None,
-        }
-    }
-
     pub fn as_db(self) -> &'static str {
         match self {
             Self::Sum => "sum",
-            Self::Count => "count",
-            Self::CountDistinct => "count_distinct",
             Self::Ratio => "ratio",
-            Self::Distribution => "distribution",
-            Self::Gauge => "gauge",
-            Self::Derived => "derived",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "sum" => Some(Self::Sum),
+            "ratio" => Some(Self::Ratio),
+            _ => None,
         }
     }
 }
@@ -342,50 +220,16 @@ impl MetricInputRole {
     pub fn as_db(self) -> &'static str {
         match self {
             Self::Value => "value",
-            Self::Event => "event",
             Self::Numerator => "numerator",
             Self::Denominator => "denominator",
-            Self::Sample => "sample",
-            Self::Snapshot => "snapshot",
-            Self::Dependency => "dependency",
         }
     }
 
     pub fn from_db(value: &str) -> Option<Self> {
         match value {
             "value" => Some(Self::Value),
-            "event" => Some(Self::Event),
             "numerator" => Some(Self::Numerator),
             "denominator" => Some(Self::Denominator),
-            "sample" => Some(Self::Sample),
-            "snapshot" => Some(Self::Snapshot),
-            "dependency" => Some(Self::Dependency),
-            _ => None,
-        }
-    }
-}
-
-impl DistributionStatistic {
-    pub fn from_db(value: &str) -> Option<Self> {
-        match value {
-            "p50" => Some(Self::P50),
-            "p75" => Some(Self::P75),
-            "p90" => Some(Self::P90),
-            "p95" => Some(Self::P95),
-            "p99" => Some(Self::P99),
-            "avg" => Some(Self::Avg),
-            _ => None,
-        }
-    }
-}
-
-impl GaugeMethod {
-    pub fn from_db(value: &str) -> Option<Self> {
-        match value {
-            "latest" => Some(Self::Latest),
-            "min" => Some(Self::Min),
-            "max" => Some(Self::Max),
-            "avg" => Some(Self::Avg),
             _ => None,
         }
     }
@@ -412,23 +256,24 @@ mod tests {
         ] {
             assert_eq!(MetricDirection::from_db(direction.as_db()), Some(direction));
         }
+        for computation in [MetricComputation::Sum, MetricComputation::Ratio] {
+            assert_eq!(
+                MetricComputation::from_db(computation.as_db()),
+                Some(computation)
+            );
+        }
         for role in [
             MetricInputRole::Value,
-            MetricInputRole::Event,
             MetricInputRole::Numerator,
             MetricInputRole::Denominator,
-            MetricInputRole::Sample,
-            MetricInputRole::Snapshot,
-            MetricInputRole::Dependency,
         ] {
             assert_eq!(MetricInputRole::from_db(role.as_db()), Some(role));
         }
-        for source in [ObservationSource::AiMetricObservations] {
-            assert_eq!(
-                ObservationSource::from_ref(source.source_ref()),
-                Some(source)
-            );
-        }
+        let source = ObservationSource::AiMetricObservations;
+        assert_eq!(
+            ObservationSource::from_ref(source.source_ref()),
+            Some(source)
+        );
         for kind in [
             SourceKind::ManagedObservation,
             SourceKind::CustomObservationSql,

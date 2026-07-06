@@ -8,10 +8,8 @@ use crate::api::error::MetricError;
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 
 use crate::domain::metric_definitions::definition::{
-    CountDistinctMetricDefinition, CountMetricDefinition, DerivedMetricDefinition,
-    DistributionMetricDefinition, DistributionStatistic, GaugeMethod, GaugeMetricDefinition,
-    MetricBase, MetricComputation, MetricDefinition, MetricDirection, MetricFormat, MetricInput,
-    MetricInputRole, ObservationSource, RatioMetricDefinition, SourceKind, SumMetricDefinition,
+    ComputationSpec, MetricBase, MetricComputation, MetricDefinition, MetricDirection,
+    MetricFormat, MetricInput, MetricInputRole, ObservationSource, SourceKind,
 };
 
 #[derive(Debug, FromQueryResult)]
@@ -28,8 +26,6 @@ struct DefinitionRow {
     entity_type: String,
     computation_type: String,
     scale: Option<f64>,
-    distribution_statistic: Option<String>,
-    gauge_method: Option<String>,
     peer_cohort_key: Option<String>,
     definition_enabled: bool,
     definition_schema_status: String,
@@ -105,9 +101,9 @@ pub async fn load_definitions(
             continue;
         };
         let definition_id = row.definition_id;
-        let row_inputs = match inputs.get(&definition_id) {
-            Some(ClassifiedInputs::Available(row_inputs)) => row_inputs.clone(),
-            Some(ClassifiedInputs::Unavailable | ClassifiedInputs::Corrupt) | None => Vec::new(),
+        let row_inputs: &[MetricInput] = match inputs.get(&definition_id) {
+            Some(ClassifiedInputs::Available(row_inputs)) => row_inputs,
+            Some(ClassifiedInputs::Unavailable | ClassifiedInputs::Corrupt) | None => &[],
         };
         let definition = build_definition(
             &row,
@@ -198,8 +194,6 @@ async fn fetch_definition_rows(
             d.entity_type AS entity_type, \
             d.computation_type AS computation_type, \
             CAST(d.scale AS DOUBLE) AS scale, \
-            d.distribution_statistic AS distribution_statistic, \
-            d.gauge_method AS gauge_method, \
             d.peer_cohort_key AS peer_cohort_key, \
             d.is_enabled AS definition_enabled, \
             d.schema_status AS definition_schema_status \
@@ -422,7 +416,7 @@ async fn fetch_dimensions(
 
 fn build_definition(
     row: &DefinitionRow,
-    inputs: Vec<MetricInput>,
+    inputs: &[MetricInput],
     allowed_dimensions: Vec<String>,
 ) -> Result<MetricDefinition, CanonicalError> {
     let computation = MetricComputation::from_db(&row.computation_type).ok_or_else(|| {
@@ -433,26 +427,33 @@ fn build_definition(
     })?;
     let base = build_base(row, allowed_dimensions)?;
 
-    match computation {
-        MetricComputation::Sum => Ok(MetricDefinition::Sum(SumMetricDefinition {
-            base,
-            value: one_input(&row.metric_key, &inputs, MetricInputRole::Value)?,
-        })),
-        MetricComputation::Count => Ok(MetricDefinition::Count(CountMetricDefinition {
-            base,
-            event: one_input(&row.metric_key, &inputs, MetricInputRole::Event)?,
-        })),
-        MetricComputation::CountDistinct => Ok(MetricDefinition::CountDistinct(
-            CountDistinctMetricDefinition {
-                base,
-                event: one_input(&row.metric_key, &inputs, MetricInputRole::Event)?,
-            },
-        )),
-        MetricComputation::Ratio => build_ratio_definition(base, row, &inputs),
-        MetricComputation::Distribution => build_distribution_definition(base, row, &inputs),
-        MetricComputation::Gauge => build_gauge_definition(base, row, &inputs),
-        MetricComputation::Derived => build_derived_definition(base, &row.metric_key, inputs),
-    }
+    let spec = match computation {
+        MetricComputation::Sum => ComputationSpec::Sum {
+            value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+        },
+        MetricComputation::Ratio => {
+            let numerator = one_input(&row.metric_key, inputs, MetricInputRole::Numerator)?;
+            let denominator = one_input(&row.metric_key, inputs, MetricInputRole::Denominator)?;
+            if numerator.observation_source != denominator.observation_source
+                || numerator.source_key != denominator.source_key
+            {
+                return Err(config_error(&format!(
+                    "ratio inputs must share one source for {}",
+                    row.metric_key
+                )));
+            }
+            let scale = row.scale.ok_or_else(|| {
+                config_error(&format!("missing ratio scale for {}", row.metric_key))
+            })?;
+            ComputationSpec::Ratio {
+                numerator,
+                denominator,
+                scale,
+            }
+        }
+    };
+
+    Ok(MetricDefinition { base, spec })
 }
 
 fn build_base(
@@ -476,97 +477,6 @@ fn build_base(
         peer_cohort_key: row.peer_cohort_key.clone(),
         allowed_dimensions,
     })
-}
-
-fn build_ratio_definition(
-    base: MetricBase,
-    row: &DefinitionRow,
-    inputs: &[MetricInput],
-) -> Result<MetricDefinition, CanonicalError> {
-    let numerator = one_input(&row.metric_key, inputs, MetricInputRole::Numerator)?;
-    let denominator = one_input(&row.metric_key, inputs, MetricInputRole::Denominator)?;
-    if numerator.observation_source != denominator.observation_source
-        || numerator.source_key != denominator.source_key
-    {
-        return Err(config_error(&format!(
-            "ratio inputs must share one source for {}",
-            row.metric_key
-        )));
-    }
-    let scale = row
-        .scale
-        .ok_or_else(|| config_error(&format!("missing ratio scale for {}", row.metric_key)))?;
-
-    Ok(MetricDefinition::Ratio(RatioMetricDefinition {
-        base,
-        numerator,
-        denominator,
-        scale,
-    }))
-}
-
-fn build_distribution_definition(
-    base: MetricBase,
-    row: &DefinitionRow,
-    inputs: &[MetricInput],
-) -> Result<MetricDefinition, CanonicalError> {
-    let statistic = row
-        .distribution_statistic
-        .as_deref()
-        .and_then(DistributionStatistic::from_db)
-        .ok_or_else(|| {
-            config_error(&format!(
-                "missing distribution statistic for {}",
-                row.metric_key
-            ))
-        })?;
-
-    Ok(MetricDefinition::Distribution(
-        DistributionMetricDefinition {
-            base,
-            sample: one_input(&row.metric_key, inputs, MetricInputRole::Sample)?,
-            statistic,
-        },
-    ))
-}
-
-fn build_gauge_definition(
-    base: MetricBase,
-    row: &DefinitionRow,
-    inputs: &[MetricInput],
-) -> Result<MetricDefinition, CanonicalError> {
-    let method = row
-        .gauge_method
-        .as_deref()
-        .and_then(GaugeMethod::from_db)
-        .ok_or_else(|| config_error(&format!("missing gauge method for {}", row.metric_key)))?;
-
-    Ok(MetricDefinition::Gauge(GaugeMetricDefinition {
-        base,
-        snapshot: one_input(&row.metric_key, inputs, MetricInputRole::Snapshot)?,
-        method,
-    }))
-}
-
-fn build_derived_definition(
-    base: MetricBase,
-    metric_key: &str,
-    inputs: Vec<MetricInput>,
-) -> Result<MetricDefinition, CanonicalError> {
-    let dependencies = inputs
-        .into_iter()
-        .filter(|input| input.role == MetricInputRole::Dependency)
-        .collect::<Vec<_>>();
-    if dependencies.is_empty() {
-        return Err(config_error(&format!(
-            "missing derived dependencies for {metric_key}"
-        )));
-    }
-
-    Ok(MetricDefinition::Derived(DerivedMetricDefinition {
-        base,
-        dependencies,
-    }))
 }
 
 fn one_input(
@@ -615,6 +525,9 @@ pub async fn all_managed_sources(
     })
 }
 
+// `updated_at = updated_at` in the status writers below pins the column so
+// ON UPDATE CURRENT_TIMESTAMP(3) does not fire: updated_at tracks config
+// edits, not validator sweeps.
 pub async fn update_source_status(
     db: &DatabaseConnection,
     source_id: Uuid,
@@ -748,8 +661,6 @@ mod tests {
             entity_type: "person".to_owned(),
             computation_type: "sum".to_owned(),
             scale: None,
-            distribution_statistic: None,
-            gauge_method: None,
             peer_cohort_key: Some("org_unit".to_owned()),
             definition_enabled: enabled,
             definition_schema_status: schema_status.to_owned(),

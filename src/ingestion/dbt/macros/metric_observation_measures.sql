@@ -4,15 +4,12 @@
         entity_id,
         metric_date,
         '{{ measure_key }}' AS measure_key,
-        if(
-            countIf(({{ value_expr }}) IS NOT NULL) > 0,
-            sumIf(toFloat64({{ value_expr }}), ({{ value_expr }}) IS NOT NULL),
-            CAST(NULL AS Nullable(Float64))
-        ) AS value,
+        toNullable(sumIf(toFloat64({{ value_expr }}), ({{ value_expr }}) IS NOT NULL)) AS value,
         {{ dimensions_col }} AS dimensions
     FROM {{ relation }}
     {% if where %}WHERE {{ where }}
     {% endif %}GROUP BY tenant_id, entity_id, metric_date, {{ dimensions_col }}
+    HAVING countIf(({{ value_expr }}) IS NOT NULL) > 0
 {% endmacro %}
 
 {% macro presence_measure(measure_key, relations) %}

@@ -4,19 +4,6 @@ use crate::domain::metric_definitions::definition::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MeasureValueType {
-    Number,
-}
-
-impl MeasureValueType {
-    pub fn as_db(self) -> &'static str {
-        match self {
-            Self::Number => "number",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityType {
     Person,
 }
@@ -70,20 +57,10 @@ pub struct SourceSeed {
     pub source_ref: ObservationSource,
 }
 
-pub struct MeasureSeed {
-    pub measure_key: &'static str,
-    pub value_type: MeasureValueType,
-}
-
-pub struct DimensionSeed {
-    pub dimension_key: &'static str,
-    pub label: &'static str,
-}
-
 pub struct BuiltinSource {
     pub source: SourceSeed,
-    pub measures: &'static [MeasureSeed],
-    pub dimensions: &'static [DimensionSeed],
+    pub measures: &'static [&'static str],
+    pub dimensions: &'static [&'static str],
 }
 
 pub struct MetricSeed {
@@ -114,57 +91,18 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[BuiltinSource {
         source_ref: ObservationSource::AiMetricObservations,
     },
     measures: &[
-        MeasureSeed {
-            measure_key: "accepted_lines",
-            value_type: MeasureValueType::Number,
-        },
-        MeasureSeed {
-            measure_key: "removed_lines",
-            value_type: MeasureValueType::Number,
-        },
-        MeasureSeed {
-            measure_key: "active_day",
-            value_type: MeasureValueType::Number,
-        },
-        MeasureSeed {
-            measure_key: "cost_usd",
-            value_type: MeasureValueType::Number,
-        },
-        MeasureSeed {
-            measure_key: "accepted_edit_actions",
-            value_type: MeasureValueType::Number,
-        },
-        MeasureSeed {
-            measure_key: "tool_use_offered",
-            value_type: MeasureValueType::Number,
-        },
-        MeasureSeed {
-            measure_key: "assistant_messages",
-            value_type: MeasureValueType::Number,
-        },
-        MeasureSeed {
-            measure_key: "assistant_actions",
-            value_type: MeasureValueType::Number,
-        },
-        MeasureSeed {
-            measure_key: "dev_conversations",
-            value_type: MeasureValueType::Number,
-        },
-        MeasureSeed {
-            measure_key: "chat_assistant_conversations",
-            value_type: MeasureValueType::Number,
-        },
+        "accepted_lines",
+        "removed_lines",
+        "active_day",
+        "cost_usd",
+        "accepted_edit_actions",
+        "tool_use_offered",
+        "assistant_messages",
+        "assistant_actions",
+        "dev_conversations",
+        "chat_assistant_conversations",
     ],
-    dimensions: &[
-        DimensionSeed {
-            dimension_key: "tool",
-            label: "Tool",
-        },
-        DimensionSeed {
-            dimension_key: "surface",
-            label: "Surface",
-        },
-    ],
+    dimensions: &["tool", "surface"],
 }];
 
 pub const BUILTIN_METRICS: &[MetricSeed] = &[
@@ -398,14 +336,14 @@ mod tests {
     fn measure_and_dimension_keys_are_unique_per_source() {
         for builtin_source in BUILTIN_SOURCES {
             let mut measures = BTreeSet::new();
-            for measure in builtin_source.measures {
-                assert!(is_snake_case(measure.measure_key));
-                assert!(measures.insert(measure.measure_key));
+            for measure_key in builtin_source.measures {
+                assert!(is_snake_case(measure_key));
+                assert!(measures.insert(*measure_key));
             }
             let mut dimensions = BTreeSet::new();
-            for dimension in builtin_source.dimensions {
-                assert!(is_snake_case(dimension.dimension_key));
-                assert!(dimensions.insert(dimension.dimension_key));
+            for dimension_key in builtin_source.dimensions {
+                assert!(is_snake_case(dimension_key));
+                assert!(dimensions.insert(*dimension_key));
             }
         }
     }
@@ -426,11 +364,7 @@ mod tests {
             .map(|builtin_source| {
                 (
                     builtin_source.source.key,
-                    builtin_source
-                        .measures
-                        .iter()
-                        .map(|measure| measure.measure_key)
-                        .collect(),
+                    builtin_source.measures.iter().copied().collect(),
                 )
             })
             .collect();
@@ -458,11 +392,7 @@ mod tests {
             .map(|builtin_source| {
                 (
                     builtin_source.source.key,
-                    builtin_source
-                        .dimensions
-                        .iter()
-                        .map(|dimension| dimension.dimension_key)
-                        .collect(),
+                    builtin_source.dimensions.iter().copied().collect(),
                 )
             })
             .collect();

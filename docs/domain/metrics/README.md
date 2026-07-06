@@ -46,7 +46,7 @@ either side knowing the other exists.
 | | Observation | Definition | Metric result |
 |---|---|---|---|
 | What | a fact | the meaning of facts | the computed answer |
-| Lives | ClickHouse rows | registry (MariaDB, seeded from Rust) | nowhere — made per request |
+| Lives | ClickHouse views over silver (computed on read, nothing stored) | registry (MariaDB, seeded from Rust) | nowhere — made per request |
 | Knows | what happened | what it is called, how to compute, how to show | both, combined |
 | Authored by | connector + gold model | one struct per metric | nobody — the runtime derives it |
 

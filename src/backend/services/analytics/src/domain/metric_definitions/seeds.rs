@@ -29,39 +29,35 @@ async fn reconcile_source(
     upsert_source(db, builtin_source).await?;
     let source_id = fetch_source_id(db, builtin_source.source.key).await?;
 
-    for measure in builtin_source.measures {
+    for measure_key in builtin_source.measures {
         db.execute(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_measures \
-                (id, source_id, measure_key, value_type, is_enabled) \
-             VALUES (?, ?, ?, ?, TRUE) \
+                (id, source_id, measure_key, is_enabled) \
+             VALUES (?, ?, ?, TRUE) \
              ON DUPLICATE KEY UPDATE \
-                value_type = VALUES(value_type), \
                 is_enabled = VALUES(is_enabled)",
             [
                 uuid_value(Uuid::now_v7()),
                 uuid_value(source_id),
-                Value::from(measure.measure_key),
-                Value::from(measure.value_type.as_db()),
+                Value::from(*measure_key),
             ],
         ))
         .await?;
     }
 
-    for (idx, dimension) in builtin_source.dimensions.iter().enumerate() {
+    for (idx, dimension_key) in builtin_source.dimensions.iter().enumerate() {
         db.execute(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_dimensions \
-                (id, source_id, dimension_key, label, display_order) \
-             VALUES (?, ?, ?, ?, ?) \
+                (id, source_id, dimension_key, display_order) \
+             VALUES (?, ?, ?, ?) \
              ON DUPLICATE KEY UPDATE \
-                label = VALUES(label), \
                 display_order = VALUES(display_order)",
             [
                 uuid_value(Uuid::now_v7()),
                 uuid_value(source_id),
-                Value::from(dimension.dimension_key),
-                Value::from(dimension.label),
+                Value::from(*dimension_key),
                 Value::from(order_value(idx)),
             ],
         ))
@@ -101,9 +97,8 @@ async fn upsert_metric(db: &DatabaseConnection, metric: &MetricSeed) -> Result<(
         db.get_database_backend(),
         "INSERT INTO metric_definitions \
             (id, tenant_id, metric_key, label, description, explanation, unit, format, direction, entity_type, \
-             computation_type, scale, distribution_statistic, gauge_method, peer_cohort_key, \
-             origin, definition_version, is_enabled) \
-         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'builtin', 1, TRUE) \
+             computation_type, scale, peer_cohort_key, origin, is_enabled) \
+         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'builtin', TRUE) \
          ON DUPLICATE KEY UPDATE \
             label = VALUES(label), \
             description = VALUES(description), \
@@ -114,11 +109,8 @@ async fn upsert_metric(db: &DatabaseConnection, metric: &MetricSeed) -> Result<(
             entity_type = VALUES(entity_type), \
             computation_type = VALUES(computation_type), \
             scale = VALUES(scale), \
-            distribution_statistic = VALUES(distribution_statistic), \
-            gauge_method = VALUES(gauge_method), \
             peer_cohort_key = VALUES(peer_cohort_key), \
             origin = VALUES(origin), \
-            definition_version = VALUES(definition_version), \
             is_enabled = VALUES(is_enabled)",
         [
             uuid_value(Uuid::now_v7()),
@@ -135,8 +127,6 @@ async fn upsert_metric(db: &DatabaseConnection, metric: &MetricSeed) -> Result<(
                 Some(scale) => Value::from(scale),
                 None => Value::Double(None),
             },
-            Value::String(None),
-            Value::String(None),
             nullable_str(metric.peer_cohort_key.map(CohortKey::as_db)),
         ],
     ))
@@ -157,19 +147,18 @@ async fn replace_inputs(
     ))
     .await?;
 
-    for (idx, input) in inputs.iter().enumerate() {
+    for input in inputs {
         let measure_id = fetch_measure_id(db, source_id, input.measure_key).await?;
         db.execute(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_definition_inputs \
-                (id, metric_definition_id, input_role, source_measure_id, display_order) \
-             VALUES (?, ?, ?, ?, ?)",
+                (id, metric_definition_id, input_role, source_measure_id) \
+             VALUES (?, ?, ?, ?)",
             [
                 uuid_value(Uuid::now_v7()),
                 uuid_value(metric_id),
                 Value::from(input.input_role.as_db()),
                 uuid_value(measure_id),
-                Value::from(order_value(idx)),
             ],
         ))
         .await?;
@@ -238,11 +227,7 @@ async fn disable_missing_builtin_rows(db: &DatabaseConnection) -> Result<(), DbE
 
     for builtin_source in BUILTIN_SOURCES {
         let source_id = fetch_source_id(db, builtin_source.source.key).await?;
-        let measure_keys = builtin_source
-            .measures
-            .iter()
-            .map(|measure| measure.measure_key)
-            .collect::<Vec<_>>();
+        let measure_keys = builtin_source.measures.to_vec();
         let placeholders = vec!["?"; measure_keys.len()].join(", ");
         let sql = format!(
             "UPDATE metric_source_measures SET is_enabled = FALSE \

@@ -73,14 +73,14 @@ impl MetricDefinitionValidator {
             Some(SourceKind::ManagedObservation) => {}
             Some(SourceKind::CustomObservationSql) => return ProbeOutcome::Inconclusive,
             None => {
-                return ProbeOutcome::Definitive(ValidationState::error(
+                return ProbeOutcome::Definitive(ValidationState::Error(
                     MetricSchemaErrorCode::Unknown,
                 ));
             }
         }
 
         let Some(source) = ObservationSource::from_ref(source_ref) else {
-            return ProbeOutcome::Definitive(ValidationState::error(
+            return ProbeOutcome::Definitive(ValidationState::Error(
                 MetricSchemaErrorCode::Unknown,
             ));
         };
@@ -92,7 +92,7 @@ impl MetricDefinitionValidator {
         {
             Ok(ColumnCheck::Present) => {}
             Ok(missing) => {
-                return ProbeOutcome::Definitive(ValidationState::error(missing.error_code()));
+                return ProbeOutcome::Definitive(ValidationState::Error(missing.error_code()));
             }
             Err(error) => {
                 tracing::warn!(error = %error, "metric observation source validation failed");
@@ -101,8 +101,8 @@ impl MetricDefinitionValidator {
         }
 
         match self.has_columns(cohort.table_ref(), COHORT_COLUMNS).await {
-            Ok(ColumnCheck::Present) => ProbeOutcome::Definitive(ValidationState::ok()),
-            Ok(missing) => ProbeOutcome::Definitive(ValidationState::error(missing.error_code())),
+            Ok(ColumnCheck::Present) => ProbeOutcome::Definitive(ValidationState::Ok),
+            Ok(missing) => ProbeOutcome::Definitive(ValidationState::Error(missing.error_code())),
             Err(error) => {
                 tracing::warn!(error = %error, "metric cohort source validation failed");
                 ProbeOutcome::Inconclusive
@@ -158,7 +158,7 @@ impl MetricDefinitionValidator {
             .filter(|input| input.observation_source == source)
             .collect::<Vec<_>>();
         if inputs.is_empty() {
-            return ProbeOutcome::Definitive(ValidationState::error(
+            return ProbeOutcome::Definitive(ValidationState::Error(
                 MetricSchemaErrorCode::Unknown,
             ));
         }
@@ -170,12 +170,12 @@ impl MetricDefinitionValidator {
             .into_iter()
             .collect::<Vec<_>>();
         let Some(source_key) = source_keys.first().copied() else {
-            return ProbeOutcome::Definitive(ValidationState::error(
+            return ProbeOutcome::Definitive(ValidationState::Error(
                 MetricSchemaErrorCode::Unknown,
             ));
         };
         if source_keys.len() != 1 {
-            return ProbeOutcome::Definitive(ValidationState::error(
+            return ProbeOutcome::Definitive(ValidationState::Error(
                 MetricSchemaErrorCode::Unknown,
             ));
         }
@@ -190,7 +190,7 @@ impl MetricDefinitionValidator {
             .await
         {
             Ok(true) => {}
-            Ok(false) => return ProbeOutcome::Definitive(ValidationState::unchecked()),
+            Ok(false) => return ProbeOutcome::Definitive(ValidationState::Unchecked),
             Err(error) => {
                 tracing::warn!(error = %error, "metric observation row probe failed");
                 return ProbeOutcome::Inconclusive;
@@ -241,10 +241,10 @@ impl MetricDefinitionValidator {
                 unobserved = ?unobserved,
                 "declared measures without recent observations; definition stays unchecked"
             );
-            return ProbeOutcome::Definitive(ValidationState::unchecked());
+            return ProbeOutcome::Definitive(ValidationState::Unchecked);
         }
 
-        ProbeOutcome::Definitive(ValidationState::ok())
+        ProbeOutcome::Definitive(ValidationState::Ok)
     }
 
     async fn check_dimension_coverage(
@@ -270,7 +270,7 @@ impl MetricDefinitionValidator {
             {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Some(ProbeOutcome::Definitive(ValidationState::error(
+                    return Some(ProbeOutcome::Definitive(ValidationState::Error(
                         MetricSchemaErrorCode::DimensionNotCovered,
                     )));
                 }
@@ -500,18 +500,6 @@ enum ValidationState {
 }
 
 impl ValidationState {
-    fn ok() -> Self {
-        Self::Ok
-    }
-
-    fn error(code: MetricSchemaErrorCode) -> Self {
-        Self::Error(code)
-    }
-
-    fn unchecked() -> Self {
-        Self::Unchecked
-    }
-
     fn is_ok(self) -> bool {
         matches!(self, Self::Ok)
     }

@@ -6,8 +6,8 @@ mod seeds;
 pub mod validator;
 
 pub use definition::{
-    CohortSource, DistributionStatistic, ExecutableMetric, GaugeMethod, MetricDefinition,
-    MetricDirection, MetricFormat, ObservationSource,
+    CohortSource, ComputationSpec, MetricDefinition, MetricDirection, MetricFormat,
+    ObservationSource,
 };
 pub use repository::load_definitions;
 pub use seeds::reconcile_builtin_definitions;

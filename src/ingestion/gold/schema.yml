@@ -39,8 +39,8 @@ models:
           - not_null
       - name: observed_at
         description: >
-          Observation timestamp for gauge/latest semantics. NULL for day-grain
-          aggregate measures.
+          Intra-day observation timestamp for future point-in-time semantics.
+          NULL for day-grain aggregate measures.
       - name: measure_key
         description: "Source measure key registered in the metric registry"
         tests:
@@ -60,17 +60,20 @@ models:
                   - chat_assistant_conversations
       - name: value
         description: >
-          Measure value. NULL only when the source cannot provide a value for
-          an otherwise-present observation row.
+          Measure value. Rows are emitted only when the source provides a
+          value, so value is never NULL; the column stays Nullable(Float64)
+          in the published contract.
+        tests:
+          - not_null
       - name: subject_key
         description: >
-          Distinct-count subject for count_distinct semantics. NULL for
+          Distinct-count subject for future distinct-count semantics. NULL for
           measures without distinct-count support.
       - name: dimensions
         description: >
           Array(Tuple(key, value, label)) of all dimensions the source emits
-          for the measure. Missing dimension values use value '__unknown__'
-          and label 'Unknown'.
+          for the measure. Values and labels come straight from class-contract
+          columns, which the silver contract guarantees non-null.
 
   - name: metric_entity_cohorts_current
     description: >

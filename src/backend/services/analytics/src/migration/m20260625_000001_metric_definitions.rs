@@ -25,13 +25,9 @@ pub const REQUIRED_DEFINITION_CHECKS: &[&str] = &[
     "chk_metric_definitions_entity_type_shape",
     "chk_metric_definitions_peer_cohort_key_shape",
     "chk_metric_definitions_computation_fields",
-    "chk_metric_definitions_version_positive",
     "chk_metric_definitions_schema_error_biconditional",
     "chk_metric_definitions_schema_error_enum",
 ];
-
-pub const REQUIRED_INPUT_CHECKS: &[&str] =
-    &["chk_metric_definition_inputs_display_order_nonnegative"];
 
 pub const REQUIRED_DIMENSION_CHECKS: &[&str] =
     &["chk_metric_definition_dimensions_display_order_nonnegative"];
@@ -75,7 +71,6 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         id BINARY(16) NOT NULL PRIMARY KEY,
         source_id BINARY(16) NOT NULL,
         measure_key VARCHAR(128) NOT NULL,
-        value_type ENUM('number','event','identifier') NOT NULL,
         is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         schema_status ENUM('ok','error','unchecked') NOT NULL DEFAULT 'unchecked',
         schema_checked_at DATETIME(3) NULL,
@@ -92,7 +87,6 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         id BINARY(16) NOT NULL PRIMARY KEY,
         source_id BINARY(16) NOT NULL,
         dimension_key VARCHAR(64) NOT NULL,
-        label VARCHAR(128) NOT NULL,
         display_order INT NOT NULL,
         created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         UNIQUE KEY uq_metric_source_dimensions_key (source_id, dimension_key),
@@ -112,13 +106,10 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         format ENUM('integer','decimal','currency','percent') NOT NULL,
         direction ENUM('higher_is_better','lower_is_better','neutral') NOT NULL,
         entity_type VARCHAR(64) NOT NULL,
-        computation_type ENUM('sum','count','count_distinct','ratio','distribution','gauge','derived') NOT NULL,
+        computation_type ENUM('sum','ratio') NOT NULL,
         scale DOUBLE NULL,
-        distribution_statistic ENUM('p50','p75','p90','p95','p99','avg') NULL,
-        gauge_method ENUM('latest','min','max','avg') NULL,
         peer_cohort_key VARCHAR(64) NULL,
         origin ENUM('builtin','custom') NOT NULL,
-        definition_version INT NOT NULL DEFAULT 1,
         is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         schema_status ENUM('ok','error','unchecked') NOT NULL DEFAULT 'unchecked',
         schema_checked_at DATETIME(3) NULL,
@@ -131,26 +122,21 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         CONSTRAINT chk_metric_definitions_entity_type_shape CHECK (entity_type REGEXP BINARY '^[a-z][a-z0-9_]*$'),
         CONSTRAINT chk_metric_definitions_peer_cohort_key_shape CHECK (peer_cohort_key IS NULL OR peer_cohort_key REGEXP BINARY '^[a-z][a-z0-9_]*$'),
         CONSTRAINT chk_metric_definitions_computation_fields CHECK (
-            (computation_type IN ('sum','count','count_distinct','derived') AND scale IS NULL AND distribution_statistic IS NULL AND gauge_method IS NULL)
-            OR (computation_type = 'ratio' AND scale IS NOT NULL AND distribution_statistic IS NULL AND gauge_method IS NULL)
-            OR (computation_type = 'distribution' AND scale IS NULL AND distribution_statistic IS NOT NULL AND gauge_method IS NULL)
-            OR (computation_type = 'gauge' AND scale IS NULL AND distribution_statistic IS NULL AND gauge_method IS NOT NULL)
+            (computation_type = 'sum' AND scale IS NULL)
+            OR (computation_type = 'ratio' AND scale IS NOT NULL)
         ),
-        CONSTRAINT chk_metric_definitions_version_positive CHECK (definition_version > 0),
         CONSTRAINT chk_metric_definitions_schema_error_biconditional CHECK ((schema_status = 'error') = (schema_error_code IS NOT NULL)),
         CONSTRAINT chk_metric_definitions_schema_error_enum CHECK (schema_error_code IS NULL OR schema_error_code IN ('table_not_found','column_not_found','dimension_not_covered','unknown'))
     )",
     "CREATE TABLE IF NOT EXISTS metric_definition_inputs (
         id BINARY(16) NOT NULL PRIMARY KEY,
         metric_definition_id BINARY(16) NOT NULL,
-        input_role ENUM('value','event','numerator','denominator','sample','snapshot','dependency') NOT NULL,
+        input_role ENUM('value','numerator','denominator') NOT NULL,
         source_measure_id BINARY(16) NOT NULL,
-        display_order INT NOT NULL,
         created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         UNIQUE KEY uq_metric_definition_inputs_role_measure (metric_definition_id, input_role, source_measure_id),
         CONSTRAINT fk_metric_definition_inputs_definition FOREIGN KEY (metric_definition_id) REFERENCES metric_definitions(id) ON DELETE CASCADE,
-        CONSTRAINT fk_metric_definition_inputs_measure FOREIGN KEY (source_measure_id) REFERENCES metric_source_measures(id) ON DELETE RESTRICT,
-        CONSTRAINT chk_metric_definition_inputs_display_order_nonnegative CHECK (display_order >= 0)
+        CONSTRAINT fk_metric_definition_inputs_measure FOREIGN KEY (source_measure_id) REFERENCES metric_source_measures(id) ON DELETE RESTRICT
     )",
     "CREATE TABLE IF NOT EXISTS metric_definition_dimensions (
         id BINARY(16) NOT NULL PRIMARY KEY,
@@ -200,7 +186,6 @@ mod tests {
             .chain(REQUIRED_SOURCE_MEASURE_CHECKS)
             .chain(REQUIRED_SOURCE_DIMENSION_CHECKS)
             .chain(REQUIRED_DEFINITION_CHECKS)
-            .chain(REQUIRED_INPUT_CHECKS)
             .chain(REQUIRED_DIMENSION_CHECKS)
         {
             assert!(all_sql.contains(check), "missing CHECK {check}");

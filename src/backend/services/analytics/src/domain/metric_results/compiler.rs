@@ -3,9 +3,11 @@ use std::fmt::Write;
 
 use serde::Deserialize;
 
-use super::definition::Bucket;
 use super::validation::{ValidatedMetricResultsRequest, ValidatedMetricView, query_row_limit};
-use crate::domain::metric_definitions::{CohortSource, ExecutableMetric, ObservationSource};
+use super::view::Bucket;
+use crate::domain::metric_definitions::{
+    CohortSource, ComputationSpec, MetricDefinition, ObservationSource,
+};
 
 pub(crate) const UNKNOWN_DIMENSION_VALUE: &str = "__unknown__";
 pub(crate) const UNKNOWN_DIMENSION_LABEL: &str = "Unknown";
@@ -53,7 +55,7 @@ pub struct BreakdownQueryRow {
 }
 
 pub fn compile_view_query(
-    def: &ExecutableMetric,
+    def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     tenant_id: &str,
     view: &ValidatedMetricView,
@@ -73,7 +75,7 @@ pub fn compile_view_query(
 }
 
 fn compile_period_query(
-    def: &ExecutableMetric,
+    def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     tenant_id: &str,
 ) -> CompiledQuery {
@@ -82,8 +84,8 @@ fn compile_period_query(
     let entities = placeholders(req.entity_ids.len());
     let observation_table = observation_table(def.observation_source());
     let limit = query_row_limit();
-    let sql = match def {
-        ExecutableMetric::Sum(_) => format!(
+    let sql = match &def.spec {
+        ComputationSpec::Sum { .. } => format!(
             r"
             SELECT
                 entity_id,
@@ -96,7 +98,7 @@ fn compile_period_query(
             ",
             metric_where = metric_where(def),
         ),
-        ExecutableMetric::Ratio(ratio) => format!(
+        ComputationSpec::Ratio { scale, .. } => format!(
             r"
             SELECT
                 entity_id,
@@ -108,7 +110,7 @@ fn compile_period_query(
             GROUP BY entity_id
             LIMIT {limit}
             ",
-            scale = ratio.scale,
+            scale = scale,
             metric_where = metric_where(def),
         ),
     };
@@ -116,7 +118,7 @@ fn compile_period_query(
 }
 
 fn compile_timeseries_query(
-    def: &ExecutableMetric,
+    def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     tenant_id: &str,
     bucket: Bucket,
@@ -134,8 +136,8 @@ fn compile_timeseries_query(
     };
     let observation_table = observation_table(def.observation_source());
     let limit = query_row_limit();
-    let sql = match def {
-        ExecutableMetric::Sum(_) => format!(
+    let sql = match &def.spec {
+        ComputationSpec::Sum { .. } => format!(
             r"
             SELECT
                 entity_id,
@@ -150,7 +152,7 @@ fn compile_timeseries_query(
             ",
             metric_where = metric_where(def),
         ),
-        ExecutableMetric::Ratio(ratio) => format!(
+        ComputationSpec::Ratio { scale, .. } => format!(
             r"
             SELECT
                 entity_id,
@@ -165,14 +167,14 @@ fn compile_timeseries_query(
             LIMIT {limit}
             ",
             metric_where = metric_where(def),
-            scale = ratio.scale,
+            scale = scale,
         ),
     };
     CompiledQuery { sql, params }
 }
 
 fn compile_breakdown_query(
-    def: &ExecutableMetric,
+    def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     tenant_id: &str,
     dimensions: &[String],
@@ -188,8 +190,8 @@ fn compile_breakdown_query(
     };
     let observation_table = observation_table(def.observation_source());
     let limit = query_row_limit();
-    let sql = match def {
-        ExecutableMetric::Sum(_) => format!(
+    let sql = match &def.spec {
+        ComputationSpec::Sum { .. } => format!(
             r"
             SELECT
                 entity_id{dim_select},
@@ -203,7 +205,7 @@ fn compile_breakdown_query(
             ",
             metric_where = metric_where(def),
         ),
-        ExecutableMetric::Ratio(ratio) => format!(
+        ComputationSpec::Ratio { scale, .. } => format!(
             r"
             SELECT
                 entity_id{dim_select},
@@ -217,14 +219,14 @@ fn compile_breakdown_query(
             LIMIT {limit}
             ",
             metric_where = metric_where(def),
-            scale = ratio.scale,
+            scale = scale,
         ),
     };
     CompiledQuery { sql, params }
 }
 
 fn compile_peer_query(
-    def: &ExecutableMetric,
+    def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     tenant_id: &str,
     cohort_key: &str,
@@ -242,11 +244,10 @@ fn compile_peer_query(
     let entities = placeholders(req.entity_ids.len());
     let observation_table = observation_table(def.observation_source());
     let cohort_table = cohort_table(CohortSource::MetricEntityCohortsCurrent);
-    let metric_value = match def {
-        ExecutableMetric::Sum(_) => "sumIf(value, value IS NOT NULL)".to_owned(),
-        ExecutableMetric::Ratio(ratio) => format!(
-            "{} * sumIf(value, measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0)",
-            ratio.scale
+    let metric_value = match &def.spec {
+        ComputationSpec::Sum { .. } => "sumIf(value, value IS NOT NULL)".to_owned(),
+        ComputationSpec::Ratio { scale, .. } => format!(
+            "{scale} * sumIf(value, measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0)"
         ),
     };
     let peer_value = if def.is_zero_filled() {
@@ -325,44 +326,48 @@ fn compile_peer_query(
     CompiledQuery { sql, params }
 }
 
-fn metric_where(def: &ExecutableMetric) -> &'static str {
-    match def {
-        ExecutableMetric::Sum(_) => {
+fn metric_where(def: &MetricDefinition) -> &'static str {
+    match &def.spec {
+        ComputationSpec::Sum { .. } => {
             "tenant_id = ? AND source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key = ?"
         }
-        ExecutableMetric::Ratio(_) => {
+        ComputationSpec::Ratio { .. } => {
             "tenant_id = ? AND source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key IN (?, ?)"
         }
     }
 }
 
 fn metric_params(
-    def: &ExecutableMetric,
+    def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     tenant_id: &str,
 ) -> Vec<String> {
-    match def {
-        ExecutableMetric::Sum(sum) => vec![
+    match &def.spec {
+        ComputationSpec::Sum { value } => vec![
             tenant_id.to_owned(),
-            sum.value.source_key.clone(),
+            value.source_key.clone(),
             req.entity_type.clone(),
             req.from.to_string(),
             req.to.to_string(),
-            sum.value.measure_key.clone(),
+            value.measure_key.clone(),
         ],
-        ExecutableMetric::Ratio(ratio) => {
+        ComputationSpec::Ratio {
+            numerator,
+            denominator,
+            ..
+        } => {
             let mut params = vec![
-                ratio.numerator.measure_key.clone(),
-                ratio.denominator.measure_key.clone(),
+                numerator.measure_key.clone(),
+                denominator.measure_key.clone(),
             ];
             params.extend([
                 tenant_id.to_owned(),
-                ratio.numerator.source_key.clone(),
+                numerator.source_key.clone(),
                 req.entity_type.clone(),
                 req.from.to_string(),
                 req.to.to_string(),
-                ratio.numerator.measure_key.clone(),
-                ratio.denominator.measure_key.clone(),
+                numerator.measure_key.clone(),
+                denominator.measure_key.clone(),
             ]);
             params
         }
@@ -470,7 +475,6 @@ mod tests {
 
     use crate::domain::metric_definitions::definition::{
         MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
-        RatioMetricDefinition, SumMetricDefinition,
     };
 
     fn base(dimensions: Vec<&str>) -> MetricBase {
@@ -497,20 +501,24 @@ mod tests {
         }
     }
 
-    fn sum_metric() -> ExecutableMetric {
-        ExecutableMetric::Sum(SumMetricDefinition {
+    fn sum_metric() -> MetricDefinition {
+        MetricDefinition {
             base: base(vec!["tool"]),
-            value: input(MetricInputRole::Value, "accepted_lines"),
-        })
+            spec: ComputationSpec::Sum {
+                value: input(MetricInputRole::Value, "accepted_lines"),
+            },
+        }
     }
 
-    fn ratio_metric() -> ExecutableMetric {
-        ExecutableMetric::Ratio(RatioMetricDefinition {
+    fn ratio_metric() -> MetricDefinition {
+        MetricDefinition {
             base: base(vec!["tool"]),
-            numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
-            denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
-            scale: 100.0,
-        })
+            spec: ComputationSpec::Ratio {
+                numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
+                denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
+                scale: 100.0,
+            },
+        }
     }
 
     fn request() -> ValidatedMetricResultsRequest {

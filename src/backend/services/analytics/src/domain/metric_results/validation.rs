@@ -6,10 +6,10 @@ use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
 use crate::api::error::MetricError;
-use crate::domain::metric_definitions::{ExecutableMetric, MetricDefinition, load_definitions};
+use crate::domain::metric_definitions::{MetricDefinition, load_definitions};
 
-use super::definition::Bucket;
 use super::dto::{MetricResultsRequest, MetricViewRequest};
+use super::view::Bucket;
 
 const ROW_LIMIT: usize = 5000;
 const MAX_METRICS: usize = 50;
@@ -28,7 +28,6 @@ pub struct ValidatedMetricResultsRequest {
 #[derive(Debug)]
 pub struct ValidatedMetricRequest {
     pub def: MetricDefinition,
-    pub exec: ExecutableMetric,
     pub views: Vec<ValidatedMetricView>,
 }
 
@@ -75,27 +74,19 @@ pub async fn validate_request(
     for metric in req.metrics {
         let metric_key = metric.metric_key.trim();
         let def = definitions.remove(metric_key).ok_or_else(|| {
-            MetricError::invalid_argument()
-                .with_field_violation(
-                    "metrics.metric_key",
-                    format!("unknown or unavailable metric key: {metric_key}"),
-                    "UNAVAILABLE",
-                )
-                .create()
+            tracing::error!(metric_key = %metric_key, "definition missing after successful load");
+            CanonicalError::internal("metric definition lookup failed").create()
         })?;
-        if def.base().entity_type != entity_type {
+        if def.base.entity_type != entity_type {
             return invalid(
                 "entity.type",
                 format!(
                     "metric {} is defined for entity type {}",
                     def.key(),
-                    def.base().entity_type
+                    def.base.entity_type
                 ),
             );
         }
-        let Some(exec) = def.executable() else {
-            return unsupported_computation(&def);
-        };
         if metric.views.is_empty() {
             return invalid(
                 "metrics.views",
@@ -116,7 +107,7 @@ pub async fn validate_request(
             views.push(validate_view(&def, view)?);
         }
 
-        metrics.push(ValidatedMetricRequest { def, exec, views });
+        metrics.push(ValidatedMetricRequest { def, views });
     }
 
     let validated = ValidatedMetricResultsRequest {
@@ -186,11 +177,14 @@ fn validate_request_shape(req: &MetricResultsRequest) -> Result<RequestShape, Ca
     })
 }
 
-pub fn row_limit() -> usize {
+pub const fn row_limit() -> usize {
     ROW_LIMIT
 }
 
-pub fn query_row_limit() -> usize {
+// One past the response cap: a query returning ROW_LIMIT + 1 rows proves
+// truncation, which the final enforce_row_limit pass then converts into a
+// whole-request failure instead of a silently clipped result.
+pub const fn query_row_limit() -> usize {
     ROW_LIMIT + 1
 }
 
@@ -213,7 +207,7 @@ fn validate_view(
         MetricViewRequest::Peer { cohort_key } => {
             let cohort_key = match cohort_key {
                 Some(key) => normalize_key("metrics.views.cohort_key", &key)?,
-                None => def.base().peer_cohort_key.clone().ok_or_else(|| {
+                None => def.base.peer_cohort_key.clone().ok_or_else(|| {
                     MetricError::invalid_argument()
                         .with_field_violation(
                             "metrics.views.cohort_key",
@@ -381,20 +375,6 @@ fn parse_date(field: &'static str, value: &str) -> Result<NaiveDate, CanonicalEr
     })
 }
 
-fn unsupported_computation<T>(def: &MetricDefinition) -> Result<T, CanonicalError> {
-    Err(MetricError::invalid_argument()
-        .with_field_violation(
-            "metrics.computation",
-            format!(
-                "metric {} uses unsupported computation {}",
-                def.key(),
-                def.computation().as_db()
-            ),
-            "UNSUPPORTED_COMPUTATION",
-        )
-        .create())
-}
-
 fn invalid<T>(field: &'static str, message: impl Into<String>) -> Result<T, CanonicalError> {
     Err(MetricError::invalid_argument()
         .with_field_violation(field, message.into(), "INVALID")
@@ -406,8 +386,8 @@ mod tests {
     use super::super::dto::MetricResultsEntity;
     use super::*;
     use crate::domain::metric_definitions::definition::{
-        ExecutableMetric, MetricBase, MetricDefinition, MetricDirection, MetricFormat, MetricInput,
-        MetricInputRole, ObservationSource, SumMetricDefinition,
+        ComputationSpec, MetricBase, MetricDefinition, MetricDirection, MetricFormat, MetricInput,
+        MetricInputRole, ObservationSource,
     };
 
     fn shape_request(
@@ -436,7 +416,7 @@ mod tests {
     }
 
     fn sum_definition(dimensions: Vec<&str>) -> MetricDefinition {
-        MetricDefinition::Sum(SumMetricDefinition {
+        MetricDefinition {
             base: MetricBase {
                 key: "ai.accepted_lines".to_owned(),
                 label: "AI-added lines".to_owned(),
@@ -449,13 +429,15 @@ mod tests {
                 peer_cohort_key: Some("org_unit".to_owned()),
                 allowed_dimensions: dimensions.into_iter().map(str::to_owned).collect(),
             },
-            value: MetricInput {
-                role: MetricInputRole::Value,
-                observation_source: ObservationSource::AiMetricObservations,
-                source_key: "ai_usage".to_owned(),
-                measure_key: "accepted_lines".to_owned(),
+            spec: ComputationSpec::Sum {
+                value: MetricInput {
+                    role: MetricInputRole::Value,
+                    observation_source: ObservationSource::AiMetricObservations,
+                    source_key: "ai_usage".to_owned(),
+                    measure_key: "accepted_lines".to_owned(),
+                },
             },
-        })
+        }
     }
 
     fn day(value: &str) -> NaiveDate {
@@ -631,9 +613,6 @@ mod tests {
     #[test]
     fn projected_row_limit_counts_timeseries_buckets() {
         let def = sum_definition(vec![]);
-        let Some(exec) = def.executable() else {
-            panic!("sum must be executable");
-        };
         let validated = ValidatedMetricResultsRequest {
             entity_type: "person".to_owned(),
             entity_ids: (0..100).map(|i| format!("p{i}@x.io")).collect(),
@@ -641,7 +620,6 @@ mod tests {
             to: day("2026-03-31"),
             metrics: vec![ValidatedMetricRequest {
                 def,
-                exec,
                 views: vec![ValidatedMetricView::Timeseries {
                     bucket: Bucket::Day,
                     dimensions: vec![],
@@ -654,9 +632,6 @@ mod tests {
     #[test]
     fn projected_row_limit_allows_small_requests() {
         let def = sum_definition(vec![]);
-        let Some(exec) = def.executable() else {
-            panic!("sum must be executable");
-        };
         let validated = ValidatedMetricResultsRequest {
             entity_type: "person".to_owned(),
             entity_ids: vec!["a@x.io".to_owned()],
@@ -664,7 +639,6 @@ mod tests {
             to: day("2026-01-31"),
             metrics: vec![ValidatedMetricRequest {
                 def,
-                exec,
                 views: vec![
                     ValidatedMetricView::Period,
                     ValidatedMetricView::Peer {
@@ -674,11 +648,5 @@ mod tests {
             }],
         };
         assert!(validate_projected_row_limit(&validated).is_ok());
-    }
-
-    #[test]
-    fn executable_projection_covers_sum() {
-        let def = sum_definition(vec![]);
-        assert!(matches!(def.executable(), Some(ExecutableMetric::Sum(_))));
     }
 }

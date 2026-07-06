@@ -140,10 +140,6 @@ pub const REQUIRED_CHECKS_BY_TABLE: &[(&str, &[&str])] = &[
         m20260625_000001_metric_definitions::REQUIRED_DEFINITION_CHECKS,
     ),
     (
-        "metric_definition_inputs",
-        m20260625_000001_metric_definitions::REQUIRED_INPUT_CHECKS,
-    ),
-    (
         "metric_definition_dimensions",
         m20260625_000001_metric_definitions::REQUIRED_DIMENSION_CHECKS,
     ),
@@ -198,10 +194,6 @@ mod tests {
             (
                 "metric_definitions",
                 m20260625_000001_metric_definitions::REQUIRED_DEFINITION_CHECKS,
-            ),
-            (
-                "metric_definition_inputs",
-                m20260625_000001_metric_definitions::REQUIRED_INPUT_CHECKS,
             ),
             (
                 "metric_definition_dimensions",

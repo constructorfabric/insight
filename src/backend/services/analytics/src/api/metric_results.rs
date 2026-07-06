@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 use toolkit_canonical_errors::CanonicalError;
 
 use super::AppState;
-use crate::domain::metric_definitions::ExecutableMetric;
+use crate::domain::metric_definitions::MetricDefinition;
 use crate::domain::metric_results::{
     BreakdownQueryRow, CompiledQuery, MetricResultViewDto, MetricResultsRequest,
     MetricResultsResponse, PeerQueryRow, PeriodQueryRow, TimeseriesQueryRow,
@@ -81,7 +81,7 @@ fn warehouse_tenant_id(state: &AppState, ctx: &SecurityContext) -> String {
 struct MetricViewTask {
     metric_index: usize,
     view_index: usize,
-    exec: ExecutableMetric,
+    def: MetricDefinition,
     view: ValidatedMetricView,
     query: CompiledQuery,
 }
@@ -104,9 +104,9 @@ fn compile_tasks(req: &ValidatedMetricResultsRequest, tenant_id: &str) -> Vec<Me
                 .map(move |(view_index, view)| MetricViewTask {
                     metric_index,
                     view_index,
-                    exec: metric.exec.clone(),
+                    def: metric.def.clone(),
                     view: view.clone(),
-                    query: compile_view_query(&metric.exec, req, tenant_id, view),
+                    query: compile_view_query(&metric.def, req, tenant_id, view),
                 })
         })
         .collect()
@@ -120,7 +120,7 @@ async fn execute_task(
     let MetricViewTask {
         metric_index,
         view_index,
-        exec,
+        def,
         view,
         query,
     } = task;
@@ -128,7 +128,7 @@ async fn execute_task(
     let view = match view {
         ValidatedMetricView::Period => {
             let rows = fetch_rows::<PeriodQueryRow>(state, query).await?;
-            build_period_view(&exec, req, rows)
+            build_period_view(&def, req, rows)
         }
         ValidatedMetricView::Peer { .. } => {
             let rows = fetch_rows::<PeerQueryRow>(state, query).await?;
@@ -136,7 +136,7 @@ async fn execute_task(
         }
         ValidatedMetricView::Timeseries { bucket, dimensions } => {
             let rows = fetch_rows::<TimeseriesQueryRow>(state, query).await?;
-            build_timeseries_view(&exec, req, bucket, &dimensions, rows)?
+            build_timeseries_view(&def, req, bucket, &dimensions, rows)?
         }
         ValidatedMetricView::Breakdown { dimensions } => {
             let rows = fetch_rows::<BreakdownQueryRow>(state, query).await?;
