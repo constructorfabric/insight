@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Person info returned by the Identity service.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Person {
     pub email: String,
     pub display_name: String,
@@ -22,12 +22,16 @@ pub struct Person {
 }
 
 /// Subordinate summary.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Subordinate {
     pub email: String,
     pub display_name: String,
     pub job_title: String,
 }
+
+// `Person` is the `GET /v1/persons/{email}` response body. `Subordinate` is
+// nested inside it and needs only `ToSchema` (above).
+impl toolkit::api::api_dto::ResponseApiDto for Person {}
 
 /// Identity API client.
 #[derive(Clone)]

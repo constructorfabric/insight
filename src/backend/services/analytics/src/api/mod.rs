@@ -13,20 +13,28 @@ mod tenant_resolution_tests;
 #[cfg(test)]
 mod http_live_tests;
 
+#[cfg(test)]
+mod openapi_tests;
+
 use axum::http::StatusCode;
 use axum::middleware::from_fn;
 use axum::{Extension, Router};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
-use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder};
 
 use crate::auth;
 use crate::config::GearConfig;
 use crate::domain::admin_threshold::AdminThresholdService;
+use crate::domain::admin_threshold::dto as admin_dto;
 use crate::domain::auth::TenantAuthorization;
 use crate::domain::catalog::CatalogReader;
+use crate::domain::catalog::response as catalog_response;
+use crate::domain::metric;
+use crate::domain::query;
 use crate::domain::schema_validator::SchemaValidator;
-use crate::infra::identity::IdentityClient;
+use crate::domain::threshold;
+use crate::infra::identity::{IdentityClient, Person};
 
 /// Shared application state.
 #[derive(Clone)]
@@ -81,6 +89,26 @@ pub fn register_routes(
     host_router.merge(api)
 }
 
+/// `OpenAPI` document metadata — the stable API-contract identity baked into
+/// the committed `docs/components/backend/analytics/openapi.json` and the
+/// spec the offline `analytics openapi` subcommand emits. `version` is the
+/// API-contract version (deliberately not `CARGO_PKG_VERSION`), so the drift
+/// gate fires only on real route/schema changes, not release bumps.
+fn openapi_info() -> OpenApiInfo {
+    OpenApiInfo {
+        title: "Analytics API".to_owned(),
+        version: "1.0.0".to_owned(),
+        description: Some(
+            "Read-only query service over predefined ClickHouse metrics. Admins \
+             define metrics (named SQL queries) in MariaDB; the frontend queries \
+             them by UUID with OData-style filtering. The API Gateway mounts this \
+             service at /api/analytics."
+                .to_owned(),
+        ),
+        servers: Vec::new(),
+    }
+}
+
 /// Declare every analytics operation on a **stateless** router.
 ///
 /// Routes are declared through the toolkit's [`OperationBuilder`], so each
@@ -105,7 +133,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("List metrics")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of metrics")
+        .json_response_with_schema::<metric::MetricListResponse>(
+            openapi,
+            StatusCode::OK,
+            "List of metrics",
+        )
         .standard_errors(openapi)
         .handler(handlers::list_metrics)
         .register(router, openapi);
@@ -115,7 +147,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Create a metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::CREATED, "Created metric")
+        .json_request::<metric::CreateMetricRequest>(openapi, "Metric to create")
+        .json_response_with_schema::<metric::Metric>(openapi, StatusCode::CREATED, "Created metric")
         .standard_errors(openapi)
         .handler(handlers::create_metric)
         .register(router, openapi);
@@ -125,7 +158,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Get a metric by id")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Metric")
+        .json_response_with_schema::<metric::Metric>(openapi, StatusCode::OK, "Metric")
         .standard_errors(openapi)
         .handler(handlers::get_metric)
         .register(router, openapi);
@@ -135,7 +168,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Update a metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Updated metric")
+        .json_request::<metric::UpdateMetricRequest>(openapi, "Metric fields to update")
+        .json_response_with_schema::<metric::Metric>(openapi, StatusCode::OK, "Updated metric")
         .standard_errors(openapi)
         .handler(handlers::update_metric)
         .register(router, openapi);
@@ -156,7 +190,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Query a single metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Query result")
+        .json_request::<query::QueryRequest>(openapi, "OData-style query parameters")
+        .json_response_with_schema::<query::QueryResponse>(openapi, StatusCode::OK, "Query result")
         .standard_errors(openapi)
         .handler(handlers::query_metric)
         .register(router, openapi);
@@ -166,7 +201,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Query metrics in batch")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Batch query result")
+        .json_request::<query::BatchQueryRequest>(openapi, "Batch of per-metric queries")
+        .json_response_with_schema::<query::BatchQueryResponse>(
+            openapi,
+            StatusCode::OK,
+            "Batch query result",
+        )
         .standard_errors(openapi)
         .handler(handlers::query_metrics_batch)
         .register(router, openapi);
@@ -187,7 +227,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("List thresholds for a metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of thresholds")
+        .json_response_with_schema::<threshold::ThresholdListResponse>(
+            openapi,
+            StatusCode::OK,
+            "List of thresholds",
+        )
         .standard_errors(openapi)
         .handler(handlers::list_thresholds)
         .register(router, openapi);
@@ -197,7 +241,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Create a threshold for a metric")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::CREATED, "Created threshold")
+        .json_request::<threshold::CreateThresholdRequest>(openapi, "Threshold to create")
+        .json_response_with_schema::<threshold::Threshold>(
+            openapi,
+            StatusCode::CREATED,
+            "Created threshold",
+        )
         .standard_errors(openapi)
         .handler(handlers::create_threshold)
         .register(router, openapi);
@@ -207,7 +256,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Update a threshold")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Updated threshold")
+        .json_request::<threshold::UpdateThresholdRequest>(openapi, "Threshold fields to update")
+        .json_response_with_schema::<threshold::Threshold>(
+            openapi,
+            StatusCode::OK,
+            "Updated threshold",
+        )
         .standard_errors(openapi)
         .handler(handlers::update_threshold)
         .register(router, openapi);
@@ -228,7 +282,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Resolve a person by email")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Person")
+        .json_response_with_schema::<Person>(openapi, StatusCode::OK, "Person")
         .standard_errors(openapi)
         .handler(handlers::get_person)
         .register(router, openapi);
@@ -239,7 +293,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("List queryable columns")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of columns")
+        .json_response_with_schema::<metric::ColumnListResponse>(
+            openapi,
+            StatusCode::OK,
+            "List of columns",
+        )
         .standard_errors(openapi)
         .handler(handlers::list_columns)
         .register(router, openapi);
@@ -249,7 +307,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("List queryable columns for a table")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of columns")
+        .json_response_with_schema::<metric::ColumnListResponse>(
+            openapi,
+            StatusCode::OK,
+            "List of columns",
+        )
         .standard_errors(openapi)
         .handler(handlers::list_columns_for_table)
         .register(router, openapi);
@@ -264,7 +326,15 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Read the metric catalog for the request context")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Resolved metric catalog")
+        .json_request::<catalog_response::GetMetricsRequest>(
+            openapi,
+            "Catalog read request context (role, team)",
+        )
+        .json_response_with_schema::<catalog_response::CatalogResponse>(
+            openapi,
+            StatusCode::OK,
+            "Resolved metric catalog",
+        )
         .standard_errors(openapi)
         .handler(catalog::get_metrics)
         .register(router, openapi);
@@ -279,7 +349,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("List admin metric thresholds")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "List of metric thresholds")
+        .json_response_with_schema::<admin_dto::ListResponse>(
+            openapi,
+            StatusCode::OK,
+            "List of metric thresholds",
+        )
         .standard_errors(openapi)
         .handler(admin::list)
         .register(router, openapi);
@@ -289,7 +363,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Create an admin metric threshold")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::CREATED, "Created metric threshold")
+        .json_request::<admin_dto::CreateRequest>(openapi, "Metric threshold to create")
+        .json_response_with_schema::<admin_dto::ThresholdView>(
+            openapi,
+            StatusCode::CREATED,
+            "Created metric threshold",
+        )
         .standard_errors(openapi)
         .handler(admin::create)
         .register(router, openapi);
@@ -299,7 +378,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Get an admin metric threshold by id")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Metric threshold")
+        .json_response_with_schema::<admin_dto::ThresholdView>(
+            openapi,
+            StatusCode::OK,
+            "Metric threshold",
+        )
         .standard_errors(openapi)
         .handler(admin::get_one)
         .register(router, openapi);
@@ -309,7 +392,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Update an admin metric threshold")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Updated metric threshold")
+        .json_request::<admin_dto::UpdateRequest>(openapi, "Metric threshold fields to update")
+        .json_response_with_schema::<admin_dto::ThresholdView>(
+            openapi,
+            StatusCode::OK,
+            "Updated metric threshold",
+        )
         .standard_errors(openapi)
         .handler(admin::update)
         .register(router, openapi);
@@ -329,6 +417,18 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     // "Overlapping method route". State + the (stateless `from_fn`) tenant
     // middleware are layered by `register_routes`, not here.
     router
+}
+
+/// Build the analytics `OpenAPI` document **offline** — no `AppState`, DB,
+/// or HTTP listener. Backs the `analytics openapi` subcommand (committed-doc
+/// regeneration + drift gate), reusing the exact `build_operations` route table
+/// the live gear serves, so the two can never diverge.
+pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
+    let openapi = OpenApiRegistryImpl::new();
+    let _ = build_operations(Router::new(), &openapi);
+    openapi
+        .build_openapi(&openapi_info())
+        .map_err(|e| anyhow::anyhow!("failed to build analytics OpenAPI document: {e}"))
 }
 
 #[cfg(test)]

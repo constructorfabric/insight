@@ -47,6 +47,12 @@ redis = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
+# OpenAPI schemas for request/response DTOs. Version pinned to 5.5 to match the
+# `utoipa::ToSchema` the toolkit (`OperationBuilder::json_request` /
+# `json_response_with_schema`) is compiled against (already in Cargo.lock via
+# the toolkit). `chrono` + `uuid` features cover the timestamp / UUID fields on
+# the DTOs; no `time` types are used here.
+utoipa = { version = "5.5", features = ["chrono", "uuid"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
