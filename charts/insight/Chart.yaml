@@ -24,8 +24,8 @@ type: application
 # version    — packaging version of the chart. Bump on EVERY chart change.
 # appVersion — product version. Matches the image tag of all insight-* images.
 # Release pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
-version: 0.3.2
-appVersion: "2026.07.03.11.35-5c7f37a"
+version: 0.3.3
+appVersion: "2026.07.06.10.57-0108f4c"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/constructorfabric/insight
 sources:
