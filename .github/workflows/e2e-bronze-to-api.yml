@@ -110,9 +110,11 @@ jobs:
       # worker finishes first). Wall-time cost is negligible: the runner image
       # build (which compiles analytics + enrich) dominates the job.
       #
-      # The suite ALSO snapshots the metric catalog to .artifacts/catalog_metrics.json
-      # (lib/collect_metrics.py, while analytics is up) — the
-      # metric-coverage-gate job below analyses it, no second app boot.
+      # The suite ALSO emits .artifacts/ while analytics is up:
+      #   • catalog_metrics.json     (lib/collect_metrics.py — metric-coverage-gate input)
+      #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook ledger,
+      #     endpoint-coverage observability; see the NOTE at the end of this file)
+      # The gate job below analyses the catalog — no second app boot.
       - name: Run E2E suite
         run: ./e2e.sh test --tb=short -q
 
@@ -179,3 +181,9 @@ jobs:
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat metric_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then echo "::error::metric coverage gate failed — a metric_key is value-tested by no test and not in SKIP_TABLES/SKIP_LIST (or a skip is stale). See the report."; fi
           exit "$rc"
+
+  # NOTE: endpoint coverage is NOT a blocking gate. The suite records the routes
+  # it exercises (httpx hook -> observed_endpoints.json, in the coverage-inputs
+  # artifact) for observability; `./e2e.sh gates` prints the report locally. A
+  # read-only metric suite touches few routes (most are write/admin), so a pass/fail
+  # gate there would be ~all skip-list — not worth blocking merge.

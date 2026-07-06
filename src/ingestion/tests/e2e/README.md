@@ -64,6 +64,7 @@ e2e/
 │   ├── analytics.py        # builds + spawns the analytics binary
 │   ├── worker.py               # WorkerContext (resolves pytest-xdist worker id)
 │   ├── metric_coverage.py      # metric-coverage gate: SKIP_TABLES + SKIP_LIST (--universe-file)
+│   ├── api_coverage.py         # endpoint-coverage report + httpx recording hook
 │   ├── collect_metrics.py      # script: snapshot the metric catalog → .artifacts/
 │   └── config.py               # session config (ports, random creds)
 ├── seed/
@@ -80,8 +81,8 @@ A job (`metric-coverage-gate`) in the **E2E — Bronze to API** workflow, *not* 
 Locally, after a run:
 
 ```bash
-./e2e.sh test     # runs the suite + snapshots .artifacts/catalog_metrics.json
-./e2e.sh gates    # runs the metric-coverage gate against it (in the runner image; no DB)
+./e2e.sh test     # runs the suite + collects .artifacts/{catalog_metrics,observed_endpoints}.json
+./e2e.sh gates    # metric gate (blocking) + endpoint-coverage report, against .artifacts/ (in the runner image; no DB)
 ```
 
 The verdict per **metric_key** (each individual number) is **binary**:
@@ -98,6 +99,10 @@ ANALYTICS_URL=http://localhost:18081 python3 lib/metric_coverage.py
 ```
 
 Coverage is **per metric_key**, so every number on a bullet is validated independently — one tested key of a metric does not cover the rest. Today: **44/96** value-tested; the rest are skip-listed with a reason (`reachable — …` entries are the backlog where fixtures already exist).
+
+## API endpoint coverage (observability — non-blocking)
+
+The suite records which analytics routes it exercises: an httpx response hook on the rig's single client chokepoint (`AnalyticsProcess.client()`) accumulates `(method, path) → {status codes}`, and `conftest.pytest_sessionfinish` dumps the ledger to `.artifacts/observed_endpoints.json` (shipped to CI inside the `coverage-inputs` artifact). [`lib/api_coverage.py`](lib/api_coverage.py) diffs it against the committed OpenAPI spec (`docs/components/backend/analytics/openapi.json` — kept accurate by the analytics OpenAPI drift gate: the `openapi_spec_matches_committed` golden test + the `openapi-specs` workflow) and reports covered / baseline-skipped / missing per documented operation. It is **not** a CI gate: a read-only metric suite touches few routes (most are write/admin), so a pass/fail there would be ~all skip-list. `./e2e.sh gates` prints it as info.
 
 ## Ports (loopback only)
 
