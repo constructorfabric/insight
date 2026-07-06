@@ -20,6 +20,7 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -31,6 +32,20 @@ import httpx
 from lib.config import SessionConfig, TENANT_HEADER, TEST_TENANT_ID
 
 LOG = logging.getLogger("e2e.api")
+
+# Seconds to wait for analytics's `/health` after spawn. The gears host binds
+# its HTTP listener only AFTER initialising every system gear — MariaDB connect,
+# sea-orm migrations, metric-catalog seed, boot probes (`/health` itself answers
+# 200 immediately once bound). On a cold first run — a freshly-initialised
+# MariaDB container, an unwarmed InnoDB buffer pool — that pre-bind work
+# routinely overruns a tight gate, so the /health poll sees "connection
+# refused" the whole time and the fixture errors before the API ever comes up.
+# The wait returns the instant /health answers, so a generous ceiling costs
+# nothing on the warm path and only absorbs cold-start jitter. Override on an
+# especially slow host (e.g. a constrained CI runner) via the env var.
+_HEALTH_TIMEOUT_S = float(
+    os.environ.get("E2E_API_HEALTH_TIMEOUT_S", "120")  # RULE-DEFAULTS-OK: rig readiness ceiling, not a data-config input
+)
 
 
 @dataclass(frozen=True)
@@ -122,6 +137,12 @@ class AnalyticsProcess:
         # container, so localhost is the same loopback either way.
         self.base_url = f"http://127.0.0.1:{port}"
         self._proc: subprocess.Popen[str] | None = None
+        # Child stdout+stderr stream to a file (not a PIPE) so the startup log
+        # can be tailed into an error message even while the process is still
+        # running — a blocking read on a live PIPE would hang, which is why the
+        # old health-timeout path surfaced no logs at all.
+        self._log_fh: Any = None
+        self._log_path: Path | None = None
 
     def start(self) -> None:
         env = os.environ.copy()
@@ -158,30 +179,52 @@ class AnalyticsProcess:
                 "RUST_LOG": env.get("RUST_LOG", "info"),
             },
         )
-        LOG.info("spawning analytics (gears host) on 127.0.0.1:%d", self.port)
+        # Stream the binary's stdout+stderr to a temp file rather than a PIPE so
+        # `_read_log_tail` can surface it on a health-timeout (process still
+        # alive → a PIPE read would block forever). Cleaned up in `stop()`.
+        self._log_fh = tempfile.NamedTemporaryFile(  # noqa: SIM115 — handle lives until stop()
+            mode="w", suffix=".log", prefix=f"analytics-{self.port}-", delete=False
+        )
+        self._log_path = Path(self._log_fh.name)
+        LOG.info(
+            "spawning analytics (gears host) on 127.0.0.1:%d (startup log: %s)",
+            self.port,
+            self._log_path,
+        )
         self._proc = subprocess.Popen(
             [str(self.binary), "-c", str(config_path), "run"],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=self._log_fh,
             stderr=subprocess.STDOUT,
             text=True,
         )
-        # The gears host inits every system gear + runs migrations/probes, so
-        # allow a little more startup headroom than the old bare axum server.
-        self._wait_healthy(timeout_s=60.0)
+        self._wait_healthy(timeout_s=_HEALTH_TIMEOUT_S)
 
     def stop(self) -> None:
-        if self._proc is None:
-            return
-        LOG.info("terminating analytics (pid=%d)", self._proc.pid)
-        self._proc.terminate()
-        try:
-            self._proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            LOG.warning("analytics did not exit on SIGTERM; killing")
-            self._proc.kill()
-            self._proc.wait(timeout=5)
-        self._proc = None
+        if self._proc is not None:
+            LOG.info("terminating analytics (pid=%d)", self._proc.pid)
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                LOG.warning("analytics did not exit on SIGTERM; killing")
+                self._proc.kill()
+                self._proc.wait(timeout=5)
+            self._proc = None
+        # Close + remove the startup-log temp file (best-effort; runs even when
+        # the process never started so a failed `start()` leaks nothing).
+        if self._log_fh is not None:
+            try:
+                self._log_fh.close()
+            except (OSError, ValueError):
+                pass
+            self._log_fh = None
+        if self._log_path is not None:
+            try:
+                self._log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._log_path = None
 
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
@@ -220,15 +263,35 @@ class AnalyticsProcess:
                 payload = response.text
             return response.status_code, payload
 
+    def _read_log_tail(self, limit: int = 4000) -> str:
+        """Return the tail of the child's captured stdout+stderr.
+
+        Reads the on-disk log file (not the PIPE), so it works whether the
+        process has already exited or is still running — the latter is the
+        health-timeout case the old PIPE-based read could not surface without
+        blocking on a pipe that never reaches EOF.
+        """
+        if self._log_fh is not None:
+            try:
+                self._log_fh.flush()
+            except (OSError, ValueError):
+                pass
+        if self._log_path is None:
+            return ""
+        try:
+            return self._log_path.read_text(errors="replace")[-limit:]
+        except OSError:
+            return ""
+
     def _wait_healthy(self, *, timeout_s: float) -> None:
         deadline = time.monotonic() + timeout_s
         last_err: Exception | None = None
         while time.monotonic() < deadline:
             if not self.is_running():
-                stdout = self._proc.stdout.read() if self._proc and self._proc.stdout else ""
+                code = self._proc.returncode if self._proc else "?"
                 raise ApiSpawnError(
-                    f"analytics exited during startup (code={self._proc.returncode if self._proc else '?'}):\n"
-                    f"{stdout[-2000:]}"
+                    f"analytics exited during startup (code={code}):\n"
+                    f"{self._read_log_tail()}"
                 )
             try:
                 with httpx.Client(
@@ -243,8 +306,14 @@ class AnalyticsProcess:
             except Exception as e:
                 last_err = e
             time.sleep(0.5)
+        # Timed out with the process still alive — almost always cold-start
+        # latency (raise the ceiling via E2E_API_HEALTH_TIMEOUT_S), occasionally
+        # a wedged boot. Surface the binary's own log either way — the old code
+        # swallowed it on this path, leaving only an opaque "connection refused".
         raise ApiSpawnError(
-            f"analytics did not become healthy in {timeout_s}s; last error: {last_err}"
+            f"analytics did not become healthy in {timeout_s:.0f}s; "
+            f"last error: {last_err}\n"
+            f"--- analytics startup log (tail) ---\n{self._read_log_tail()}"
         )
 
 
