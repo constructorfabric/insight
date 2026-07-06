@@ -1,0 +1,876 @@
+# Constructor Studio artifacts registry
+
+[[systems]]
+name = "InsightSpec"
+slug = "insightspec"
+kit = "sdlc"
+codebase = ["docs"]
+children = ["identity-svc", "ir", "person", "orgchart", "metric-cat", "dataflow"]
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/architecture/permissions/PERMISSION_DESIGN.md"
+name = "Permission Architecture"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/architecture/permissions/ADR_001_ROLE_SCOPE_GRANT.md"
+name = "ADR-001: Role + Explicit Scope Grant vs ABAC"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/architecture/permissions/PERMISSION_PRD.md"
+name = "Permission Architecture"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/architecture/permissions/ADR_002_WORKSPACE_ISOLATION.md"
+name = "ADR-002: Multi-tenant Workspace Isolation"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/architecture/PRODUCT_SPECIFICATION.md"
+name = "Insight Product Specification"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/architecture/STORAGE_TECHNOLOGY_EVALUATION.md"
+name = "Storage Technology Evaluation"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/architecture/CONNECTORS_ARCHITECTURE.md"
+name = "Connectors Architecture"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/CONNECTORS_REFERENCE.md"
+name = "Connectors Reference"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/README.md"
+name = "Connector Specifications Index"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/git/README.md"
+name = "Git Connector Specification (Multi-Source)"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/git/github.md"
+name = "GitHub Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/git/github/specs/PRD.md"
+name = "GitHub Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/git/github/specs/DESIGN.md"
+name = "GitHub Connector Design"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/git/bitbucket.md"
+name = "Bitbucket Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/git/bitbucket-server/specs/PRD.md"
+name = "Bitbucket Server Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/git/bitbucket-server/specs/DESIGN.md"
+name = "Bitbucket Server Connector Design"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/hr-directory/README.md"
+name = "HR Silver Layer"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/hr-directory/bamboohr.md"
+name = "BambooHR Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/crm/salesforce/specs/PRD.md"
+name = "Salesforce Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/crm/salesforce/specs/DESIGN.md"
+name = "Salesforce Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/hr-directory/workday/specs/PRD.md"
+name = "Workday Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/hr-directory/workday/specs/DESIGN.md"
+name = "Workday Connector Design"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/hr-directory/ldap.md"
+name = "LDAP Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/hr-directory/ms-entra/specs/PRD.md"
+name = "MS Entra Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/hr-directory/ms-entra/specs/DESIGN.md"
+name = "MS Entra Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/task-tracking/silver/specs/PRD.md"
+name = "Task Tracking Silver Layer PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/task-tracking/silver/specs/DESIGN.md"
+name = "Task Tracking Silver Layer Design"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/task-tracking/youtrack.md"
+name = "YouTrack Connector Specification"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/task-tracking/jira.md"
+name = "Jira Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/task-tracking/jira/specs/PRD.md"
+name = "Jira Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/task-tracking/jira/specs/DESIGN.md"
+name = "Jira Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/task-tracking/youtrack/specs/PRD.md"
+name = "YouTrack Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/task-tracking/youtrack/specs/DESIGN.md"
+name = "YouTrack Connector Design"
+
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/components/connectors/task-tracking/youtrack/specs/DECOMPOSITION.md"
+name = "YouTrack Task-Tracker Connector Decomposition"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/task-tracking/youtrack/specs/ADR/ADR-001-project-scoped-custom-fields.md"
+name = "YouTrack Connector ADR-001: Project-Scoped Custom Fields"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/task-tracking/youtrack/specs/ADR/ADR-002-activitiespage-cursor-pagination.md"
+name = "YouTrack Connector ADR-002: activitiesPage Cursor Pagination"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/task-tracking/youtrack/specs/ADR/ADR-003-no-whitelist-full-ingestion.md"
+name = "YouTrack Connector ADR-003: No-Whitelist Full-Ingestion Scope"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/collaboration/m365/specs/PRD.md"
+name = "Microsoft 365 Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/collaboration/m365/specs/DESIGN.md"
+name = "Microsoft 365 Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/collaboration/zoom/specs/PRD.md"
+name = "Zoom Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/collaboration/zoom/specs/DESIGN.md"
+name = "Zoom Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/collaboration/zulip-proxy/specs/PRD.md"
+name = "Zulip-Proxy Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/collaboration/zulip-proxy/specs/DESIGN.md"
+name = "Zulip-Proxy Connector Design"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/components/connectors/collaboration/zulip-proxy/specs/FEATURE.md"
+name = "Zulip-Proxy Connector Bring-up Feature"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/zulip.md"
+name = "Zulip Connector Specification"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/collaboration/slack.md"
+name = "Slack Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/collaboration/slack/specs/PRD.md"
+name = "Slack Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/collaboration/slack/specs/DESIGN.md"
+name = "Slack Connector Design"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/wiki/README.md"
+name = "Wiki Connector Specification (Multi-Source)"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/wiki/confluence.md"
+name = "Confluence Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/wiki/confluence/specs/PRD.md"
+name = "Confluence Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/wiki/confluence/specs/DESIGN.md"
+name = "Confluence Connector Design"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/wiki/outline.md"
+name = "Outline Connector Specification"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/cursor.md"
+name = "Cursor Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/ai/cursor/specs/PRD.md"
+name = "Cursor Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/cursor/specs/DESIGN.md"
+name = "Cursor Connector Design"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/windsurf.md"
+name = "Windsurf Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/ai/github-copilot/specs/PRD.md"
+name = "GitHub Copilot Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/github-copilot/specs/DESIGN.md"
+name = "GitHub Copilot Connector Design"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/claude-admin/README.md"
+name = "Claude Admin Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/ai/claude-admin/specs/PRD.md"
+name = "Claude Admin Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/claude-admin/specs/DESIGN.md"
+name = "Claude Admin Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/ai/claude-enterprise/specs/PRD.md"
+name = "Claude Enterprise Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md"
+name = "Claude Enterprise Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/ai/chatgpt-team/specs/PRD.md"
+name = "ChatGPT Team Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/chatgpt-team/specs/DESIGN.md"
+name = "ChatGPT Team Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/ai/openai-api/specs/PRD.md"
+name = "OpenAI API Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/openai-api/specs/DESIGN.md"
+name = "OpenAI API Connector Design"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/crm/hubspot.md"
+name = "HubSpot Connector Specification"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/allure.md"
+name = "Allure TestOps Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/connector/specs/PRD.md"
+name = "Connector Framework"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/connector/specs/DESIGN.md"
+name = "Connector Framework Design"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/connector/specs/ADR/0001-connector-integration-protocol.md"
+name = "ADR-0001: Connector-to-System Integration Protocol"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/connector/specs/ADR/0002-connector-responsibility-scope.md"
+name = "ADR-0002: Connector Responsibility Scope"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/connector/specs/ADR/0003-connector-message-protocol.md"
+name = "ADR-0003: Connector Message Protocol"
+
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/domain/ingestion/specs/DECOMPOSITION.md"
+name = "Ingestion Layer Decomposition"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/ingestion/specs/PRD.md"
+name = "Ingestion Layer PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/ingestion/specs/DESIGN.md"
+name = "Ingestion Layer Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion/specs/ADR/0001-kestra-over-airflow.md"
+name = "ADR-0001: Kestra over Airflow (superseded)"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion/specs/ADR/0002-argo-over-kestra.md"
+name = "ADR-0002: Argo Workflows over Kestra"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion/specs/ADR/0003-k8s-secrets-credentials.md"
+name = "ADR-0003: K8s Secrets as Credential Source"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/ingestion/specs/feature-k8s-secret-credentials/FEATURE.md"
+name = "K8s Secret Credential Resolution"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/airbyte-connector/specs/DESIGN.md"
+name = "Airbyte Connector Development Guide"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/airbyte-toolkit/specs/PRD.md"
+name = "Airbyte Toolkit PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/airbyte-toolkit/specs/DESIGN.md"
+name = "Airbyte Toolkit Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0001-version-driven-reconcile.md"
+name = "ADR-0001: Descriptor-Version-Driven Reconcile"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0002-adoption-of-existing-resources.md"
+name = "ADR-0002: Adoption of Existing Airbyte Resources via Tag Annotation"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0003-credential-rotation-no-env.md"
+name = "ADR-0003: Credential Rotation via sources/update API"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0004-cluster-config-via-configmap.md"
+name = "ADR-0004: Cluster Config via Kubernetes ConfigMap"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0005-connection-name-as-argo-identifier.md"
+name = "ADR-0005: Connection Name as Argo Identifier"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0006-cron-self-run-with-file-persistent-logs.md"
+name = "ADR-0006: Cron Self-Run with File-Persistent Logs"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0007-required-fields-in-descriptor-not-example.md"
+name = "ADR-0007: Required Secret Fields Declared in descriptor.yaml"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0008-auto-trigger-sync-on-data-change.md"
+name = "ADR-0008: Auto-Trigger Sync on Data-Affecting Reconcile Actions"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0009-airbyte-workspace-as-namespace.md"
+name = "ADR-0009: Insight connectors in one Airbyte workspace, identified by custom flag"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0010-nocode-via-builder-projects.md"
+name = "ADR-0010: NoCode connectors managed via connector_builder_projects"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0011-cdk-prebuilt-images.md"
+name = "ADR-0011 (SUPERSEDED by ADR-0016): CDK connectors use pre-built ghcr.io images, reconcile never builds at runtime — image location moved from top-level descriptor.cdk_image to descriptor.images.cdk.image per ADR-0016"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0014-enrich-image-in-descriptor.md"
+name = "ADR-0014 (SUPERSEDED by ADR-0016): Enrich sidecar image sourced from descriptor.yaml.enrich_image — replaced by the map-style images: block per ADR-0016 (image now at descriptor.yaml.images.enrich.image)"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0015-semver-and-full-refresh.md"
+name = "ADR-0015: Strict semver MAJOR.MINOR.PATCH; any bump re-discovers catalog; major bump dispatches one-shot dbt --full-refresh; no cross-connector cascade"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/airbyte-toolkit/specs/ADR/0016-descriptor-images-block.md"
+name = "ADR-0016: map-style descriptor.yaml.images: block as SOLE source of truth for connector image identity (supersedes ADR-0011 and ADR-0014); CI uses dynamic discovery to build all entries; reconcile reads images.cdk.image and images.enrich.image; no top-level cdk_image: / enrich_image: fields"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/components/airbyte-toolkit/specs/feature-reconcile/FEATURE.md"
+name = "Reconcile Engine Feature"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/deployment/specs/PRD.md"
+name = "Deployment PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/deployment/specs/DESIGN.md"
+name = "Deployment Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md"
+name = "ADR-0001: Chart Publishing on Merge"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/specs/PRD.md"
+name = "Backend PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/specs/ADR/0001-redpanda-over-kafka.md"
+name = "ADR-0001: Redpanda over Kafka"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/components/backend/specs/DECOMPOSITION.md"
+name = "Backend Decomposition"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/specs/DESIGN.md"
+name = "Backend Architecture"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/api-gateway/bff/PRD.md"
+name = "BFF (Backend-for-Frontend) PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/api-gateway/bff/DESIGN.md"
+name = "BFF Architecture"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/api-gateway/router/PRD.md"
+name = "API Gateway Router PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/api-gateway/router/DESIGN.md"
+name = "API Gateway Router Architecture"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/shared/glossary/ADR/0001-uuidv7-primary-key.md"
+name = "ADR-0001: UUIDv7 as Universal Primary Key"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/shared/glossary/ADR/0002-database-field-conventions.md"
+name = "ADR-0002: Database Field Naming and Type Conventions"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/shared/glossary/ADR/0003-insight-prefixed-tenant-id.md"
+name = "ADR-0003: Use insight_tenant_id Instead of tenant_id"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/analytics/DESIGN.md"
+name = "Analytics API Design"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Identity Service"
+slug = "identity-svc"
+kit = "sdlc"
+codebase = [
+    "docs/components/backend/identity-resolution/identity",
+    "src/backend/services/identity",
+]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/identity-resolution/identity/specs/PRD.md"
+name = "Identity Service PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/identity-resolution/identity/specs/DESIGN.md"
+name = "Identity Service Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0002-read-from-mariadb-persons.md"
+name = "ADR-0002: Read From the MariaDB persons Table"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0003-latest-per-source-semantics.md"
+name = "ADR-0003: Latest-Per-Source Lookup Semantics"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0004-lowercase-email-lookup.md"
+name = "ADR-0004: Lowercase Emails on Storage and Lookup"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0005-tenant-context-strategy.md"
+name = "ADR-0005: Composite Tenant Context With JWT Stub"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0006-display-name-split-fallback.md"
+name = "ADR-0006: Display-Name Split Fallback for First/Last Name"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0007-value-type-routing.md"
+name = "ADR-0007: value_type Routing for Identity Reads"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0008-bamboohr-identity-inputs-extension.md"
+name = "ADR-0008: Extend BambooHR identity_inputs With Person Attributes"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0009-post-profile-with-uniqueness-invariant.md"
+name = "ADR-0009: POST /v1/profiles with Single-Result Invariant"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0010-org-chart-cache.md"
+name = "ADR-0010: Materialized SCD2 Cache for Person Parent/Child Edges (org_chart)"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0011-persons-relax-uniqueness-and-collation.md"
+name = "ADR-0011: Persons Relax UNIQUE and Switch value_id Collation"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0012-admin-only-orgchart-visibility-reads.md"
+name = "ADR-0012: Admin-Only Reads on OrgChart Visibility Tables"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0013-roles-hard-delete-with-in-use-guard.md"
+name = "ADR-0013: roles Table Hard DELETE Guarded by Active-Assignment Count"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/identity-resolution/identity/specs/ADR/0014-last-admin-protection.md"
+name = "ADR-0014: Last-Admin Protection on person_roles Revoke"
+
+[[systems]]
+name = "Orchestrator"
+slug = "orch"
+kit = "sdlc"
+codebase = ["docs/components/orchestrator"]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/orchestrator/specs/PRD.md"
+name = "Orchestrator PRD"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Identity Resolution"
+slug = "ir"
+kit = "sdlc"
+codebase = ["docs/domain/identity-resolution"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/identity-resolution/specs/DESIGN.md"
+name = "Identity Resolution Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/identity-resolution/specs/PRD.md"
+name = "Identity Resolution PRD"
+
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/domain/identity-resolution/specs/DECOMPOSITION.md"
+name = "Identity Resolution Decomposition"
+
+
+[[systems]]
+name = "Person Domain"
+slug = "person"
+kit = "sdlc"
+codebase = ["docs/domain/person"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/person/specs/DESIGN.md"
+name = "Person Domain Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/person/specs/PRD.md"
+name = "Person Domain PRD"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/person/specs/ADR/0001-shared-unmapped-table.md"
+name = "ADR-0001: Shared unmapped table for identity and person domains"
+
+[[systems]]
+name = "Org-Chart Domain"
+slug = "orgchart"
+kit = "sdlc"
+codebase = ["docs/domain/org-chart"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/org-chart/specs/DESIGN.md"
+name = "Org-Chart Domain Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/org-chart/specs/PRD.md"
+name = "Org-Chart Domain PRD"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Ingestion Data Flow"
+slug = "dataflow"
+kit = "sdlc"
+codebase = ["docs/domain/ingestion-data-flow", "src/ingestion"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/ingestion-data-flow/specs/DESIGN.md"
+name = "Ingestion Data Flow Design"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0001-rmt-with-version-and-unique-key.md"
+name = "ADR-0001: ReplacingMergeTree(_version) + ORDER BY (unique_key)"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0002-promote-bronze-to-rmt.md"
+name = "ADR-0002: Promote bronze MergeTree → RMT on first dbt run"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0003-ephemeral-rust-passthrough.md"
+name = "ADR-0003: Ephemeral materialization for Rust-owned staging pass-through"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0004-unique-key-formula.md"
+name = "ADR-0004: unique_key formula"
+traceability = "FULL"
+
+[[systems]]
+name = "Metric Catalog"
+slug = "metric-cat"
+kit = "sdlc"
+codebase = ["docs/domain/metric-catalog"]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/metric-catalog/specs/PRD.md"
+name = "Metric Catalog PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/metric-catalog/specs/DESIGN.md"
+name = "Metric Catalog DESIGN"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Bronze-to-API E2E Tests"
+slug = "bronze-to-api-e2e"
+kit = "sdlc"
+codebase = ["docs/domain/bronze-to-api-e2e", "src/ingestion/tests/e2e"]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/bronze-to-api-e2e/specs/PRD.md"
+name = "Bronze-to-API E2E Tests PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/bronze-to-api-e2e/specs/DESIGN.md"
+name = "Bronze-to-API E2E Tests Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/domain/bronze-to-api-e2e/specs/DECOMPOSITION.md"
+name = "Bronze-to-API E2E Tests Decomposition"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/bronze-to-api-e2e/specs/feature-csv-rig/FEATURE.md"
+name = "Bronze-to-API E2E Tests — CSV Rig Feature"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md"
+name = "Bronze-to-API E2E Tests — Declarative YAML Rig Feature"
+traceability = "FULL"
