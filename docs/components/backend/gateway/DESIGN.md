@@ -77,7 +77,7 @@ The gateway carries its share of the NFRs the authenticator PRD pins:
 |--------|-------------|--------------|-----------------|----------------------|
 | `cpt-insightspec-nfr-auth-exchange-p95` | Exchange within 5 ms p95; 15 ms p95 total edge overhead | Lua exchange cache | Hot path is a shared-memory lookup; only about one exchange per session per cache window per pod reaches the authenticator | Load test measured at the gateway |
 | `cpt-insightspec-nfr-auth-rate-limit` | Layered `/auth/*` rate limiting | `limit_req` zone | Coarse per-IP flood guard (layer 1); precise layer 2 lives in the authenticator | Flood test: excess requests rejected at the edge before reaching the authenticator |
-| `cpt-insightspec-nfr-auth-fail-closed` | No auth without a live session check | `auth_request` + error shaping | Subrequest failure never passes through -- shaped 503 + `Retry-After`; readiness fails without a reachable authenticator | Kill the authenticator; assert 503 problem-details and not-ready |
+| `cpt-insightspec-nfr-auth-fail-closed` | No auth without a live session check | `auth_request` + error shaping | Subrequest failure never passes through -- shaped 503 + `Retry-After` per request; readiness stays local so an authenticator blip does not drain the fleet (see 3.15) | Kill the authenticator; assert per-request 503 problem-details while the gateway stays Ready and keeps serving cache hits, `/auth/*`, and the SPA |
 
 **ADRs**: decisions captured inline in [section 4](#4-design-decisions); to be extracted alongside implementation.
 
@@ -247,14 +247,15 @@ Never learns the Redis schema or exchange semantics beyond the HTTP contract (th
 | ANY | `/auth/*` | Plain proxy to the authenticator (no `auth_request` -- it IS the auth); coarse `limit_req` | stable |
 | GET | `/.well-known/jwks.json` | Proxy to the authenticator | stable |
 | ANY | `/api/**` | `auth_request` exchange, hygiene block, proxy to the routed upstream | stable |
-| GET | `/healthz` | Static liveness | stable |
+| GET | `/healthz` | Static liveness + local readiness (no dependency gating) | stable |
+| GET | `/healthz/authenticator` | Dependency health (probes authenticator `/ready`); for monitoring/alerting only, never the readiness gate | stable |
 | ANY | `/internal/*` | 404, always | stable |
 
 ### 3.4 Internal Dependencies
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|----------|
-| Authenticator | `GET /internal/authz` subrequest (`cpt-insightspec-contract-auth-authz-exchange`) | Cookie-to-JWT exchange; also the readiness signal |
+| Authenticator | `GET /internal/authz` subrequest (`cpt-insightspec-contract-auth-authz-exchange`) | Cookie-to-JWT exchange; surfaced as a separate dependency health signal, not wired to the readiness gate (3.15) |
 | Authenticator | `/auth/*` + JWKS plain proxy | Login surface and key distribution |
 | insight-front | HTTP (static) | SPA shell at `/` |
 | Downstream services | HTTP upstreams from `routes.yaml` | Routed business APIs |
@@ -392,6 +393,14 @@ The gateway side of `cpt-insightspec-contract-auth-authz-exchange` ([authenticat
 
 Revocation staleness price, stated honestly: logout / revoke-all / back-channel / `invalid_grant` take effect at the gateway within at most the cache max-age (default 30 s -- well inside the 300 s acceptance bound), and the cache is per gateway pod, so staleness does not grow with replicas. `authz_cache_max_age_seconds: 0` disables caching for per-request checks.
 
+**Cookie rotation and the cache.** Because the cache key is the raw session-token value, a `200` cached against a token that the authenticator then rotates away on `/auth/refresh` keeps authorizing that *retired* token at this pod until the entry expires -- extending its effective life from the authenticator's rotation grace (`refresh_grace_ms`, default 250 ms) to at most `authz_cache_max_age` (default 30 s). This is the **same bounded staleness envelope already accepted for revocation above**, applied to rotation, and it is bounded on every axis:
+
+- It does **not** extend a session or defeat revocation. The cached artifact is the session-linked JWT (keyed by the stable `session_id`, not the token); killing the session -- logout, revoke-all, `invalid_grant` -- still takes effect within the same max-age, and any served JWT still dies at its own `exp` (<= 300 s).
+- It benefits **only** a party still presenting the old cookie. The legitimate client switched to the new cookie the instant refresh returned, so its old cache entry simply goes unused and ages out; the exposure is exactly the stolen-old-cookie case that cookie rotation targets -- and per the authenticator's own model that detection is deliberately probabilistic and noisy, not deterministic.
+- The lever is explicit: `authz_cache_max_age_seconds: 0` disables the cache and returns rotation to the authenticator's 250 ms grace with per-request checks; any value in between trades authenticator load for a correspondingly shorter retired-cookie window.
+
+A cache-purge-on-rotation hook is deliberately **not** added in v1: the gateway is intentionally a dumb, dependency-free cache (no Redis, no rotation events -- see DD-GW-03), and a per-pod invalidation channel would reintroduce exactly the coupling that design avoids, to shave a bounded 30 s window off an already-probabilistic theft-detection mechanism. If a deployment needs a tighter bound, it lowers `authz_cache_max_age`; if it needs zero, it sets `0`.
+
 ### 3.11 Lua Module
 
 - [ ] `p2` - **ID**: `cpt-insightspec-design-gateway-lua-module`
@@ -421,7 +430,7 @@ Based on the decision document's failure analysis; upstream errors keep their ow
 | Route not matched under `/api/` | 404 (no upstream call) |
 | `/internal/*` from outside | 404, always |
 | Invalid generated config at reload | `nginx -t` refuses; old workers keep serving (last-good-config) |
-| Gateway pod without reachable authenticator | readiness fails (readiness = authenticator `/ready`) |
+| Authenticator unreachable fleet-wide | gateway pods stay Ready (local readiness); each `/api/*` cache miss fails closed with a shaped 503 while cache hits, `/auth/*`, JWKS, and the SPA keep serving; a separate dependency health check flips for alerting (see 3.15) |
 
 ### 3.13 Reload Procedure
 
@@ -451,7 +460,7 @@ One OpenResty Deployment (at least 2 replicas) behind the single ingress backend
 
 - Image: OpenResty; config mounted from the ConfigMap the configurator generated in CI; the Lua module ships in the image.
 - Reloader sidecar (or checksum-annotation pod roll) applies config changes with `nginx -t && nginx -s reload` (3.13).
-- Probes: liveness = static `/healthz`; readiness = authenticator `/ready` reachable (a gateway pod that cannot authenticate anything must not receive traffic).
+- Probes: liveness = static `/healthz`; **readiness = local only** (nginx workers accepting connections + a valid config loaded). Readiness is deliberately **not** gated on the authenticator: coupling a caching reverse proxy's readiness to a downstream dependency turns a transient auth blip into a fleet-wide outage -- every pod drops from the Service endpoints at once, draining the very exchange cache meant to absorb the blip and taking down cache hits, `/auth/*` login, JWKS, and SPA delivery along with it. The gateway already degrades gracefully per request (cache hits keep serving; each `/api/*` cache miss fails closed with a shaped 503 + `Retry-After`), so a Ready-but-degraded pod is strictly better than a NotReady one. The authenticator dependency is exposed as a **separate** health check (e.g. `/healthz/authenticator`, probing the authenticator `/ready`) consumed by monitoring/alerting only -- never by the readiness gate.
 - No volumes, no Redis, no K8s API access -- mounted files only; pods are disposable (3.7).
 
 ## 4. Design Decisions

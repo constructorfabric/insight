@@ -43,6 +43,8 @@ date: 2026-07-06
   - [7.1 Public API Surface](#71-public-api-surface)
   - [7.2 External Integration Contracts](#72-external-integration-contracts)
 - [8. Use Cases](#8-use-cases)
+  - [8.1 Browser Session Lifecycle](#81-browser-session-lifecycle)
+  - [8.2 Service-to-Service Authentication](#82-service-to-service-authentication)
 - [9. Acceptance Criteria](#9-acceptance-criteria)
 - [10. Dependencies](#10-dependencies)
 - [11. Assumptions](#11-assumptions)
@@ -614,6 +616,8 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 ## 8. Use Cases
 
+### 8.1 Browser Session Lifecycle
+
 #### Login
 
 - [ ] `p1` - **ID**: `cpt-insightspec-usecase-auth-login`
@@ -691,6 +695,8 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 **Alternative Flows**:
 - **Transient failure (timeout, 5xx, 429)**: retry with backoff, honoring `Retry-After`; nobody is logged out by a blip; consecutive-failure gauge rises for alerting.
+
+### 8.2 Service-to-Service Authentication
 
 #### Service Token Issuance
 
