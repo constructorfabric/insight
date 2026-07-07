@@ -254,7 +254,7 @@ fn compile_peer_query(
         r"
         WITH
         targets AS (
-            SELECT
+            SELECT DISTINCT
                 entity_id,
                 cohort_id
             FROM {cohort_table}
@@ -264,7 +264,7 @@ fn compile_peer_query(
               AND cohort_id IS NOT NULL
         ),
         cohort AS (
-            SELECT
+            SELECT DISTINCT
                 entity_id,
                 cohort_id
             FROM {cohort_table}
@@ -292,6 +292,7 @@ fn compile_peer_query(
         peers AS (
             SELECT
                 cohort_id,
+                entity_id,
                 value
             FROM entity_values
             WHERE value IS NOT NULL
@@ -299,12 +300,12 @@ fn compile_peer_query(
         SELECT
             targets.entity_id AS entity_id,
             target_values.value AS target_value,
-            if(count(peers.value) >= {min_peer_n}, toNullable(quantileExact(0.25)(peers.value)), NULL) AS p25,
-            if(count(peers.value) >= {min_peer_n}, toNullable(quantileExact(0.5)(peers.value)), NULL) AS median,
-            if(count(peers.value) >= {min_peer_n}, toNullable(quantileExact(0.75)(peers.value)), NULL) AS p75,
-            if(count(peers.value) >= {min_peer_n}, toNullable(min(peers.value)), NULL) AS min,
-            if(count(peers.value) >= {min_peer_n}, toNullable(max(peers.value)), NULL) AS max,
-            toUInt64(count(peers.value)) AS n
+            if(uniqExact(peers.entity_id) >= {min_peer_n}, toNullable(quantileExact(0.25)(peers.value)), NULL) AS p25,
+            if(uniqExact(peers.entity_id) >= {min_peer_n}, toNullable(quantileExact(0.5)(peers.value)), NULL) AS median,
+            if(uniqExact(peers.entity_id) >= {min_peer_n}, toNullable(quantileExact(0.75)(peers.value)), NULL) AS p75,
+            if(uniqExact(peers.entity_id) >= {min_peer_n}, toNullable(min(peers.value)), NULL) AS min,
+            if(uniqExact(peers.entity_id) >= {min_peer_n}, toNullable(max(peers.value)), NULL) AS max,
+            toUInt64(uniqExact(peers.entity_id)) AS n
         FROM targets
         LEFT JOIN entity_values AS target_values
             ON target_values.entity_id = targets.entity_id
@@ -312,6 +313,7 @@ fn compile_peer_query(
             ON peers.cohort_id = targets.cohort_id
         GROUP BY targets.entity_id, target_values.value
         LIMIT {limit}
+        SETTINGS join_use_nulls = 1
         ",
         metric_where = metric_where(def),
         min_peer_n = MIN_PEER_N,
@@ -674,13 +676,21 @@ mod tests {
                     cohort_key: "org_unit".to_owned(),
                 },
             );
-            let guard = format!("count(peers.value) >= {MIN_PEER_N}");
+            let guard = format!("uniqExact(peers.entity_id) >= {MIN_PEER_N}");
             assert_eq!(
                 query.sql.matches(&guard).count(),
                 5,
                 "every percentile/min/max must carry the disclosure guard"
             );
-            assert!(query.sql.contains("toUInt64(count(peers.value)) AS n"));
+            assert!(
+                query
+                    .sql
+                    .contains("toUInt64(uniqExact(peers.entity_id)) AS n")
+            );
+            // Duplicate cohort membership must not fan out the pool.
+            assert_eq!(query.sql.matches("SELECT DISTINCT").count(), 2);
+            // Honest-null must not depend on server config or column typing.
+            assert!(query.sql.contains("SETTINGS join_use_nulls = 1"));
         }
     }
 

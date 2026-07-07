@@ -267,9 +267,11 @@ Execution rules:
 - Target entities without observed values get a null `target_value`.
 - Null values are excluded from peer percentiles and `n`.
 - Peer percentiles and min/max are suppressed (returned as null) when the
-  peer pool has fewer than 5 members; `n` still reports the pool size.
-  Quartiles over a handful of people are noise, and tiny pools disclose
-  individual values. Enforced server-side so every consumer inherits it.
+  peer pool has fewer than 5 distinct observed members; `n` reports that
+  distinct count. Quartiles over a handful of people are noise, and tiny
+  pools disclose individual values. Enforced server-side so every consumer
+  inherits it, and counted with `uniqExact` so duplicate cohort membership
+  rows can neither inflate the pool nor defeat the floor.
 
 ## Validation
 
