@@ -1,0 +1,48 @@
+# fakeidp — a deliberately silly fake OIDC provider for dev/e2e.
+#
+# NOT a toolkit gear, NOT production code, NEVER shipped in a production
+# image or referenced by a production chart. It exists so the authenticator's
+# *real* OIDC code path (code + PKCE, refresh-token rotation, back-channel
+# logout, IdP-refusal handling) can be exercised end-to-end locally and in CI.
+#
+# See cf/NGINX_BFF.md §10 G6 for the decision and the control-hook rationale.
+#
+# Workspace lints are intentionally NOT inherited (`[lints] workspace = true`
+# is absent): this is a throwaway test double, so the pedantic/`unwrap_used`
+# denials the real services carry would be noise here.
+[package]
+name = "fakeidp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "fakeidp"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+reqwest.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Test-double-only deps (kept out of the shared [workspace.dependencies]
+# table on purpose — nothing in production links these).
+jsonwebtoken = "9"
+rsa = { version = "0.9", features = ["pem"] }
+sha2 = "0.10"
+base64 = "0.22"
+serde_yaml = "0.9"
+rand = "0.8"
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true }
