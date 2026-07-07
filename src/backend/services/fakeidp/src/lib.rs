@@ -143,6 +143,9 @@ struct AuthCode {
 struct RefreshEntry {
     email: String,
     sid: String,
+    /// The `client_id` from the original authorize request, so rotated ID
+    /// tokens keep the same `aud` an RP with a non-default client would expect.
+    client_id: String,
     active: bool,
 }
 
@@ -281,6 +284,9 @@ struct IdTokenClaims<'a> {
     email: &'a str,
     name: &'a str,
     sid: &'a str,
+    /// Tenant hints from users.yaml, so e2e can assert/map them. Always emitted
+    /// (possibly empty) for predictability.
+    tenants: &'a [String],
 }
 
 fn sign_id_token(state: &AppState, user: &User, aud: &str, nonce: Option<String>) -> String {
@@ -295,6 +301,7 @@ fn sign_id_token(state: &AppState, user: &User, aud: &str, nonce: Option<String>
         email: &user.email,
         name: &user.name,
         sid: &user.sid,
+        tenants: &user.tenants,
     };
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(KID.to_string());
@@ -520,6 +527,7 @@ fn token_code_grant(state: &AppState, req: &TokenRequest, scope: &str) -> Respon
         RefreshEntry {
             email: user.email.clone(),
             sid: user.sid.clone(),
+            client_id,
             active: true,
         },
     );
@@ -546,7 +554,7 @@ fn token_refresh_grant(state: &AppState, req: &TokenRequest, scope: &str) -> Res
 
     // Validate + rotate under one lock: reuse of a rotated token, an unknown
     // token, or a revoked user all fail closed with invalid_grant.
-    let (email, new_refresh) = {
+    let (email, client_id, new_refresh) = {
         let mut guard = state.lock();
         let Some(entry) = guard.refresh_tokens.get(token) else {
             return oauth_error(
@@ -564,6 +572,7 @@ fn token_refresh_grant(state: &AppState, req: &TokenRequest, scope: &str) -> Res
         }
         let email = entry.email.clone();
         let sid = entry.sid.clone();
+        let client_id = entry.client_id.clone();
         if guard.revoked.contains(&email) {
             // Retire the token so the debug dump reflects the kill.
             if let Some(e) = guard.refresh_tokens.get_mut(token) {
@@ -585,10 +594,11 @@ fn token_refresh_grant(state: &AppState, req: &TokenRequest, scope: &str) -> Res
             RefreshEntry {
                 email: email.clone(),
                 sid,
+                client_id: client_id.clone(),
                 active: true,
             },
         );
-        (email, new_refresh)
+        (email, client_id, new_refresh)
     };
 
     let Some(user) = state.user_by_email(&email) else {
@@ -596,7 +606,9 @@ fn token_refresh_grant(state: &AppState, req: &TokenRequest, scope: &str) -> Res
     };
     let user = user.clone();
 
-    let id_token = sign_id_token(state, &user, &state.config.default_aud, None);
+    // Reuse the original client's audience so a non-default RP still accepts
+    // the rotated ID token.
+    let id_token = sign_id_token(state, &user, &client_id, None);
     Json(TokenResponse {
         access_token: opaque(),
         token_type: "Bearer",
@@ -657,7 +669,11 @@ async fn control_backchannel(State(state): State<Shared>, Path(email): Path<Stri
     };
     let logout_token = sign_logout_token(&state, user);
 
-    let client = reqwest::Client::new();
+    // Bounded: a stalled RP must not hang the control hook indefinitely.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("reqwest client builds");
     let resp = client
         .post(&url)
         .form(&[("logout_token", logout_token.as_str())])

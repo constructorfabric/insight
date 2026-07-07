@@ -77,6 +77,13 @@ fn code_from_location(location: &str) -> String {
         .to_string()
 }
 
+/// Decode a JWT payload without verifying the signature — for tests that only
+/// assert claim values.
+fn unverified_claims(jwt: &str) -> Value {
+    let payload = jwt.split('.').nth(1).expect("jwt has a payload segment");
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+}
+
 /// Run the S256 `/authorize` (as `user`) → grab code → exchange it for tokens,
 /// returning the parsed token response. Shared by several tests.
 async fn login(base: &str, client: &reqwest::Client, user: &str) -> (Value, String) {
@@ -148,6 +155,11 @@ async fn full_login_refresh_rotation_and_revoke() {
     assert_eq!(claims["email"], "alice@example.com");
     assert_eq!(claims["nonce"], "n1");
     assert!(claims["sub"].as_str().unwrap().starts_with("fakeidp|"));
+    // Tenant hints from users.yaml are emitted for e2e to assert/map.
+    assert_eq!(
+        claims["tenants"],
+        serde_json::json!(["00000000-df51-5b42-9538-d2b56b7ee953"])
+    );
 
     // ── refresh rotates; the old token then fails closed ─────────────────
     let refreshed: Value = client
@@ -614,6 +626,65 @@ async fn backchannel_hook() {
         .await
         .unwrap();
     assert_eq!(bad.status().as_u16(), 502);
+}
+
+#[tokio::test]
+async fn refresh_preserves_non_default_audience() {
+    let base = spawn().await;
+    let client = no_redirect_client();
+
+    // Log in with a non-default client_id (no PKCE, for brevity).
+    let authz = client
+        .get(format!("{base}/authorize"))
+        .query(&[
+            ("client_id", "spa-client"),
+            ("redirect_uri", "http://rp.test/cb"),
+            ("user", "bob@example.com"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let code = code_from_location(authz.headers()["location"].to_str().unwrap());
+    let tok: Value = client
+        .post(format!("{base}/token"))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("client_id", "spa-client"),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        unverified_claims(tok["id_token"].as_str().unwrap())["aud"],
+        "spa-client"
+    );
+
+    // The rotated ID token must keep the original client's audience, not fall
+    // back to the default.
+    let refresh = tok["refresh_token"].as_str().unwrap();
+    let refreshed: Value = client
+        .post(format!("{base}/token"))
+        .form(&[("grant_type", "refresh_token"), ("refresh_token", refresh)])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let claims = unverified_claims(refreshed["id_token"].as_str().unwrap());
+    assert_eq!(
+        claims["aud"], "spa-client",
+        "audience preserved across refresh"
+    );
+    assert_eq!(
+        claims["tenants"],
+        serde_json::json!(["00000000-df51-5b42-9538-d2b56b7ee953"]),
+        "bob's tenant hint present on refreshed token too"
+    );
 }
 
 async fn rp_receiver(
