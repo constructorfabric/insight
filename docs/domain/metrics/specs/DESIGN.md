@@ -256,8 +256,15 @@ Execution rules:
   label `Unknown` (runtime guard; the schema validator's coverage probe makes
   this rare).
 - Breakdown returns observed dimension groups only.
-- Peer starts from the generic current cohort view so zero-activity peers can be included.
+- The cohort view scopes who counts as a peer; only members with observed
+  values contribute to the percentiles. The peer query never fabricates zero
+  observations: absence of rows is indistinguishable from "not covered by the
+  source" (no seat, no account), so inventing zeros would rank people the
+  data never measured. A source for which covered-but-inactive genuinely
+  means zero can emit explicit zero observations — the coverage knowledge
+  lives in the connector, not the runtime.
 - Target entities missing cohort membership are omitted from peer values.
+- Target entities without observed values get a null `target_value`.
 - Null values are excluded from peer percentiles and `n`.
 - Peer percentiles and min/max are suppressed (returned as null) when the
   peer pool has fewer than 5 members; `n` still reports the pool size.

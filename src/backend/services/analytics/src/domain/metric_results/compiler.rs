@@ -249,11 +249,6 @@ fn compile_peer_query(
             "{scale} * sumIf(value, measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0)"
         ),
     };
-    let peer_value = if def.is_zero_filled() {
-        "coalesce(metric_values.value, 0)"
-    } else {
-        "metric_values.value"
-    };
     let limit = query_row_limit();
     let sql = format!(
         r"
@@ -289,7 +284,7 @@ fn compile_peer_query(
             SELECT
                 cohort.entity_id AS entity_id,
                 cohort.cohort_id AS cohort_id,
-                {peer_value} AS value
+                metric_values.value AS value
             FROM cohort
             LEFT JOIN metric_values
                 ON metric_values.entity_id = cohort.entity_id
@@ -632,7 +627,6 @@ mod tests {
         );
         assert!(query.sql.contains("WHERE value IS NOT NULL"));
         assert!(!query.sql.contains("AND peer.value IS NOT NULL"));
-        assert!(query.sql.contains("coalesce(metric_values.value, 0)"));
         assert_eq!(
             query.params,
             vec![
@@ -652,16 +646,22 @@ mod tests {
     }
 
     #[test]
-    fn ratio_peer_query_keeps_null_peer_values() {
-        let query = compile_view_query(
-            &ratio_metric(),
-            &request(),
-            &ValidatedMetricView::Peer {
-                cohort_key: "org_unit".to_owned(),
-            },
-        );
-        assert!(query.sql.contains("metric_values.value AS value"));
-        assert!(!query.sql.contains("coalesce(metric_values.value, 0)"));
+    fn peer_queries_never_fabricate_zero_observations() {
+        // Honest-null through the runtime: cohort members without observed
+        // values stay NULL and drop out of the peer pool — absence of rows
+        // cannot be distinguished from "not covered by the source", so the
+        // peer query must not invent zeros for them.
+        for def in [sum_metric(), ratio_metric()] {
+            let query = compile_view_query(
+                &def,
+                &request(),
+                &ValidatedMetricView::Peer {
+                    cohort_key: "org_unit".to_owned(),
+                },
+            );
+            assert!(query.sql.contains("metric_values.value AS value"));
+            assert!(!query.sql.contains("coalesce(metric_values.value, 0)"));
+        }
     }
 
     #[test]
