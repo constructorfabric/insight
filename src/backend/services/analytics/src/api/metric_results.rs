@@ -32,11 +32,6 @@ pub async fn query_metric_results(
 ) -> Result<Json<MetricResultsResponse>, CanonicalError> {
     let req = validate_request(&state.db, ctx.subject_tenant_id(), req).await?;
     let tasks = compile_tasks(&req);
-    let results = stream::iter(tasks)
-        .map(|task| execute_task(&state, &req, task))
-        .buffer_unordered(QUERY_CONCURRENCY)
-        .collect::<Vec<_>>()
-        .await;
 
     let mut views_by_metric: Vec<Vec<Option<MetricResultViewDto>>> = req
         .metrics
@@ -44,7 +39,12 @@ pub async fn query_metric_results(
         .map(|metric| (0..metric.views.len()).map(|_| None).collect())
         .collect();
 
-    for result in results {
+    // Consuming results as they complete bails on the first error; dropping
+    // the stream cancels the in-flight and queued view queries.
+    let mut results = stream::iter(tasks)
+        .map(|task| execute_task(&state, &req, task))
+        .buffer_unordered(QUERY_CONCURRENCY);
+    while let Some(result) = results.next().await {
         let result = result?;
         views_by_metric[result.metric_index][result.view_index] = Some(result.view);
     }

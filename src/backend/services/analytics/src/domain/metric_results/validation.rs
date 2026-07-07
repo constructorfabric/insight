@@ -206,7 +206,19 @@ fn validate_view(
         MetricViewRequest::Period => Ok(ValidatedMetricView::Period),
         MetricViewRequest::Peer { cohort_key } => {
             let cohort_key = match cohort_key {
-                Some(key) => normalize_key("metrics.views.cohort_key", &key)?,
+                Some(key) => {
+                    let key = normalize_key("metrics.views.cohort_key", &key)?;
+                    if def.base.peer_cohort_key.as_deref() != Some(key.as_str()) {
+                        return Err(MetricError::invalid_argument()
+                            .with_field_violation(
+                                "metrics.views.cohort_key",
+                                format!("cohort {key} is not declared for metric {}", def.key()),
+                                "INVALID",
+                            )
+                            .create());
+                    }
+                    key
+                }
                 None => def.base.peer_cohort_key.clone().ok_or_else(|| {
                     MetricError::invalid_argument()
                         .with_field_violation(
@@ -574,6 +586,27 @@ mod tests {
             Ok(ValidatedMetricView::Peer { cohort_key }) => assert_eq!(cohort_key, "org_unit"),
             other => panic!("expected peer, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn validate_view_peer_accepts_explicit_declared_cohort() {
+        let def = sum_definition(vec![]);
+        let view = MetricViewRequest::Peer {
+            cohort_key: Some("org_unit".to_owned()),
+        };
+        match validate_view(&def, view) {
+            Ok(ValidatedMetricView::Peer { cohort_key }) => assert_eq!(cohort_key, "org_unit"),
+            other => panic!("expected peer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_view_peer_rejects_undeclared_cohort() {
+        let def = sum_definition(vec![]);
+        let view = MetricViewRequest::Peer {
+            cohort_key: Some("team".to_owned()),
+        };
+        assert!(validate_view(&def, view).is_err());
     }
 
     #[test]
