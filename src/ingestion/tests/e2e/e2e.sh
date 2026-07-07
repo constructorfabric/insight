@@ -21,6 +21,16 @@ INSIGHT_REPO_ROOT="$(cd ../../../.. && pwd)"
 export INSIGHT_REPO_ROOT
 
 COMPOSE_FILES=(-f compose/docker-compose.yml -f compose/docker-compose.runner.yml)
+
+# Optional extra compose overlays, space-separated, resolved relative to this
+# script's dir. CI injects compose/docker-compose.cache.yml here to enable the
+# gha build cache; locally it stays empty so builds don't require ACTIONS_*.
+if [ -n "${E2E_COMPOSE_OVERLAYS:-}" ]; then
+    for overlay in ${E2E_COMPOSE_OVERLAYS}; do
+        COMPOSE_FILES+=(-f "$overlay")
+    done
+fi
+
 ENV_FILE=compose/.env
 
 # Generate a .env if one is not present — every session needs a password.
@@ -66,8 +76,19 @@ case "$cmd" in
     logs)
         docker compose "${COMPOSE_FILES[@]}" logs --tail=200 "$@"
         ;;
+    gates)
+        # Run the metric-coverage gate against the catalog a prior `./e2e.sh test`
+        # collected into .artifacts/ — pure file analysis inside the runner image
+        # (no DB via --no-deps, no second compose). Run `./e2e.sh test` first.
+        if [ ! -f .artifacts/catalog_metrics.json ]; then
+            echo "no .artifacts/catalog_metrics.json — run './e2e.sh test' first (it collects the catalog)" >&2
+            exit 2
+        fi
+        docker compose "${COMPOSE_FILES[@]}" run --rm --no-deps -T runner \
+            python3 lib/metric_coverage.py --universe-file .artifacts/catalog_metrics.json
+        ;;
     *)
-        echo "usage: $0 {build|test|run|shell|up|down|logs} [args...]" >&2
+        echo "usage: $0 {build|test|run|shell|up|down|logs|gates} [args...]" >&2
         exit 2
         ;;
 esac

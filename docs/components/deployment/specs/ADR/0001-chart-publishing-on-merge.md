@@ -109,7 +109,7 @@ The gitops repo's Makefile resolves `$CHART` to `../insight/charts/insight` -- a
 
 ### Per-service OCI chart publishing
 
-Each subchart is published independently to its own OCI repo: `oci://ghcr.io/constructorfabric/charts/insight-api-gateway:<tag>`, `…/insight-analytics-api:<tag>`, etc. The umbrella references them as remote dependencies.
+Each subchart is published independently to its own OCI repo: `oci://ghcr.io/constructorfabric/charts/insight-api-gateway:<tag>`, `…/insight-analytics:<tag>`, etc. The umbrella references them as remote dependencies.
 
 * Good, because finest possible granularity.
 * Good, because subcharts can be consumed outside the umbrella.

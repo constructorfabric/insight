@@ -4,50 +4,38 @@ description: >
   How it's computed (bronze → silver → gold):
     • bronze: daily Teams meeting report per person (audio/video/screen durations)
     • silver: deduped to per-person/day durations
-    • gold:   per meeting take the longest single modality; metric = sum of those
-              hours over the window, Teams-only — the M365 slice of meeting_hours
-              (Zoom is filtered out by definition)
+    • gold:   per meeting take the longest single modality; value = the requested
+              member's per-person SUM of those hours over the window, Teams-only —
+              the M365 slice of meeting_hours (Zoom is excluded by definition).
+              median/p25/p75/range = the distribution of those per-person SUMs
+              across the member's DEPARTMENT (org_unit_id).
 
-  Team (median/range = the person's department):
-    alice greatest(2h audio, 1h video) = 2.0 · bob 1.0 · carol 0.5
-    → median 1.0, range [0.5, 2.0].
-  Cases: alice (2.0 vs the team; longest modality — 2h audio beats 1h video → 2.0, not 3.0).
+  Department: 5 Engineering members (alice, bob, carol, dave, erin) with meeting
+  hours {1,2,3,4,5}, each seeded as one Teams meeting-row dated 2026-12-25 carrying
+  AUDIO-only duration (video / screen = PT0S) so the longest single modality is
+  exactly the audio hours. The IC case requests erin (5), so value = 5; the
+  department of 5 yields median 3, p25 2, p75 4, range [1,5].
+  Cases: custom scope (single window over the department) · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
 
   bronze_m365.teams_activity:
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-tmh-20260105
-      audioDuration: PT2H
-      videoDuration: PT1H
-      screenShareDuration: PT0S
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams  # verbatim duplicate -> must dedup, not double
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-tmh-20260105
-      audioDuration: PT2H
-      videoDuration: PT1H
-      screenShareDuration: PT0S
-    - $ref: templates/m365_teams.yaml#/templates/bob_teams
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-bob-tmh-20260105
-      audioDuration: PT1H
-      videoDuration: PT0S
-      screenShareDuration: PT0S
-    - $ref: templates/m365_teams.yaml#/templates/carol_teams
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-carol-tmh-20260105
-      audioDuration: PT30M
-      videoDuration: PT0S
-      screenShareDuration: PT0S
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tmh-alice-20261225, audioDuration: PT1H, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tmh-alice-20261225, audioDuration: PT1H, videoDuration: PT0S, screenShareDuration: PT0S }   # duplicate → dedup, not 2h
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: bob@example.com,   reportRefreshDate: "2026-12-25", unique_key: tmh-bob-20261225,   audioDuration: PT2H, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: tmh-carol-20261225, audioDuration: PT3H, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: tmh-dave-20261225,  audioDuration: PT4H, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com,  reportRefreshDate: "2026-12-25", unique_key: tmh-erin-20261225,  audioDuration: PT5H, videoDuration: PT0S, screenShareDuration: PT0S }
 
 cases:
-  # alice teams_meeting_hours = 2.0 ; team {2.0,1.0,0.5} → median 1.0, range [0.5,2.0]
-  - name: teams_meeting_hours — IC bullet (alice value vs team median/range)
+  # dept {1,2,3,4,5}; erin value 5. p25=2 median=3 p75=4 range=[1,5]
+  - name: "teams_meeting_hours — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -55,11 +43,28 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
     expect:
       - assert: "status == 200"
       - in: collaboration
         assert: "result.status == 'ok'"
       - in: collaboration
         find: { metric_key: teams_meeting_hours }
-        equal: { value: 2.0, median: 1.0, range_min: 0.5, range_max: 2.0 }
+        equal: { value: 5, median: 3, range_min: 1, range_max: 5, p25: 2, p75: 4 }
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "teams_meeting_hours — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"

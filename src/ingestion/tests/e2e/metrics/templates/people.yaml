@@ -67,3 +67,21 @@ templates:
     lastName: Gamma
     displayName: Carol Gamma
     workEmail: carol@example.com
+
+  dave:
+    $ref: "#/templates/bamboohr_employee"
+    id: e004
+    unique_key: bamboohr-test-e004
+    firstName: Dave
+    lastName: Delta
+    displayName: Dave Delta
+    workEmail: dave@example.com
+
+  erin:
+    $ref: "#/templates/bamboohr_employee"
+    id: e005
+    unique_key: bamboohr-test-e005
+    firstName: Erin
+    lastName: Epsilon
+    displayName: Erin Epsilon
+    workEmail: erin@example.com

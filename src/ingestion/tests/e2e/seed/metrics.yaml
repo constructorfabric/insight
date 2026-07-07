@@ -1,12 +1,12 @@
 # Test-specific metric overrides.
 #
-# Inserted into MariaDB.metrics AFTER the analytics-api binary's SeaORM
+# Inserted into MariaDB.metrics AFTER the analytics binary's SeaORM
 # auto-migrations seed prod metrics. Use these for fixtures that need a
 # narrow metric not in the prod catalog (e.g. a direct read of insight.people
 # without the heavier joins of "Team Members").
 #
 # Each row is inserted under config.TEST_TENANT_ID — the tenant the harness
-# sends as X-Insight-Tenant-Id on every request (the analytics-api tenant
+# sends as X-Insight-Tenant-Id on every request (the analytics tenant
 # middleware rejects nil/absent tenants, see lib/metric_seed.py).
 
 overrides: []

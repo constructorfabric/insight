@@ -15,3 +15,17 @@ pub enum Error {
     #[error("invalid query: {0}")]
     InvalidQuery(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_messages_are_stable() {
+        assert_eq!(Error::Timeout.to_string(), "query timed out");
+        assert_eq!(
+            Error::InvalidQuery("bad table".into()).to_string(),
+            "invalid query: bad table"
+        );
+    }
+}

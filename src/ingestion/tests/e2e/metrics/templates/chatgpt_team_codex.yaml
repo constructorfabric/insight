@@ -1,0 +1,39 @@
+# Reusable ChatGPT Team Codex records (bronze_chatgpt_team.chatgpt_team_codex_user_daily).
+# Base carries every schema column (unused = null) incl. the 4 _airbyte_* CDK
+# columns. chatgpt_team__ai_dev_usage (tool='codex') emits a row only when any of
+# credits / n_turns / n_threads / lines_added > 0, so each test sets the counter
+# under test. Variants override identity (email) only; the fields under test
+# (date, unique_key, n_threads, lines_added) are set in each test's `bronze`.
+templates:
+  codex_daily:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "chatgpt-team-test"
+    unique_key: null
+    collected_at: "2026-01-05T00:00:00Z"
+    data_source: "insight_chatgpt_team"
+    date: null
+    email: null
+    user_id: null
+    name: null
+    credits: null
+    n_threads: null
+    n_turns: null
+    current_streak: null
+    text_tokens: null
+    lines_added: null
+
+  alice:
+    $ref: "#/templates/codex_daily"
+    email: alice@example.com
+
+  bob:
+    $ref: "#/templates/codex_daily"
+    email: bob@example.com
+
+  carol:
+    $ref: "#/templates/codex_daily"
+    email: carol@example.com

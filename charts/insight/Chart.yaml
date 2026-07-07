@@ -5,7 +5,7 @@
 ## Emits almost nothing on its own — it orchestrates subcharts.
 ##
 ## What is INCLUDED here:
-##   - Application: api-gateway, analytics-api, identity, frontend
+##   - Application: api-gateway, analytics, identity, frontend
 ##
 ## What is NOT included (deployed separately):
 ##   - L2 infra (ClickHouse, MariaDB, Redis, Redpanda) — deployed as
@@ -24,8 +24,8 @@ type: application
 # version    — packaging version of the chart. Bump on EVERY chart change.
 # appVersion — product version. Matches the image tag of all insight-* images.
 # Release pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
-version: 0.2.33
-appVersion: "2026.06.26.14.27-a7db6c2"
+version: 0.3.10
+appVersion: "2026.07.07.09.21-630657c"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/constructorfabric/insight
 sources:
@@ -64,10 +64,10 @@ dependencies:
     alias: apiGateway
     version: "0.1.0"
     repository: "file://../../src/backend/services/api-gateway/helm"
-  - name: insight-analytics-api
-    alias: analyticsApi
-    version: "0.1.0"
-    repository: "file://../../src/backend/services/analytics-api/helm"
+  - name: insight-analytics
+    alias: analytics
+    version: "0.2.0"
+    repository: "file://../../src/backend/services/analytics/helm"
   # Identity — .NET 9 service that reads from the MariaDB `persons` table
   # (per identity ADR-0002). Gated because it needs `persons` populated
   # by the seed pipeline.

@@ -1,0 +1,42 @@
+##
+## GitHub Actions functional K3s smoke environment.
+##
+## This committed env keeps .github/workflows/functional-k3s.yml small while
+## still exercising the deploy/gitops Makefile path in CI.
+##
+
+kubeContext: k3d-insight-functional
+protected: false
+
+namespaces:
+  services: insight
+  infra: insight-infra
+
+release: insight
+
+bootstrap:
+  namespaces: true
+  ingressNginx: false
+  certManager: false
+  sealedSecrets: true
+
+system:
+  mariadb: true
+  clickhouse: true
+  redis: true
+  redpanda: false
+  redpandaConsole: false
+  airbyte: false
+  argoWorkflows: false
+  loki: false
+  alloy: false
+  grafana: false
+
+secrets:
+  infra:
+    - { name: mariadb-creds, enabled: true }
+    - { name: clickhouse-creds, enabled: true }
+    - { name: redis-creds, enabled: true }
+  services:
+    - { name: insight-db-creds, enabled: true }
+    - { name: insight-oidc, enabled: false }

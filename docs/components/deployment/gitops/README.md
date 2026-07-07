@@ -131,7 +131,7 @@ Insight on Kubernetes is split into three deploy layers. Each layer has its own 
 |------|---------|-----------|---------------|-------------------------------------------|
 | **L0 — Bootstrap** | Cluster prerequisites. Installs sealed-secrets-controller, ingress-nginx, cert-manager (and any cluster-scoped issuers/CRDs); creates the `insight-infra` and `insight` namespaces. | cluster-scoped | `make bootstrap ENV=<env>` (idempotent) | `bootstrap/<env>/` |
 | **L2 — System** | Shared stateful infrastructure: MariaDB, ClickHouse, Redis, Redpanda + Redpanda Console, Airbyte, Argo Workflows. **One Helm release per service.** Each service can also be replaced by a managed external endpoint (RDS, MSK, etc.) — in which case its `system/<service>/` is simply not installed and the app values point at the external host. | `insight-infra` (one per cluster, shared by every app deploy on that cluster) | manually, deliberately. Either `cd system/<service> && helm upgrade --install …` for a values-only release, or `make system-<service> ENV=<env>` when a sealed-secret needs to be created/refreshed in the same step. | `system/<service>/` (base) + `environments/<env>/<service>-values.yaml` (per-env overlay) + `environments/<env>/sealed-secrets/insight-infra/` |
-| **L3 — App** | The Insight platform itself: api-gateway, analytics-api, identity-resolution, frontend. The umbrella chart, app services only — no infra subcharts. | `insight` (one Insight install per cluster; ENV selects the **cluster**, not the namespace) | `make deploy-app ENV=<env>` (alias `make deploy`); pulls the umbrella chart from `oci://ghcr.io/constructorfabric/charts/insight` pinned to `.insight-version`. | `environments/<env>/values.yaml` + `environments/<env>/sealed-secrets/insight/` |
+| **L3 — App** | The Insight platform itself: api-gateway, analytics, identity-resolution, frontend. The umbrella chart, app services only — no infra subcharts. | `insight` (one Insight install per cluster; ENV selects the **cluster**, not the namespace) | `make deploy-app ENV=<env>` (alias `make deploy`); pulls the umbrella chart from `oci://ghcr.io/constructorfabric/charts/insight` pinned to `.insight-version`. | `environments/<env>/values.yaml` + `environments/<env>/sealed-secrets/insight/` |
 
 There is no L1. The numbering is reserved: cluster + node provisioning (k3s install, kubelet config, OS) sit conceptually below L0 and are out of scope for this SPEC.
 
@@ -152,7 +152,7 @@ For one cluster carrying environment `<env>`:
 | `ingress-nginx` | L0 | ingress-nginx controller |
 | `cert-manager` | L0 | cert-manager + webhook + cainjector |
 | `insight-infra` | L2 | mariadb, clickhouse, redis, redpanda, redpanda-console, airbyte, argo-workflows (each as its own Helm release) |
-| `insight` | L3 | the umbrella chart (api-gateway, analytics-api, identity-resolution, frontend) |
+| `insight` | L3 | the umbrella chart (api-gateway, analytics, identity-resolution, frontend) |
 
 Each cluster hosts exactly one Insight install. The cluster's identity (which env it represents) lives in the kube-context name (`insight-<env>`) and the gitops repo's `environments/<env>/` directory — not in the namespace. Operationally this keeps the two well-known namespace names (`insight`, `insight-infra`) the same across every install — including the local cluster (`ENV=local`) — and matches any external chart consumer's expectation of a single `insight` release.
 
@@ -263,7 +263,7 @@ The workflow:
    export TAG="$(date -u +%Y.%m.%d.%H.%M)-$(echo "${GITHUB_SHA}" | cut -c1-7)"
    ```
 3. Logs in to GHCR with the workflow's `GITHUB_TOKEN` (no PAT).
-4. For each service (api-gateway, analytics-api, frontend, identity-resolution, …):
+4. For each service (api-gateway, analytics, frontend, identity-resolution, …):
    - `docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/constructorfabric/insight-<service>:${TAG} .`
    - `docker push ghcr.io/constructorfabric/insight-<service>:${TAG}`
 5. Optionally pushes `:latest` for `main` builds (consumed only by local dev, never by the poller).

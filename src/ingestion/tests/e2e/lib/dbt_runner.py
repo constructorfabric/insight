@@ -1,4 +1,13 @@
-"""dbt CLI wrapper: parse once per session, build per test.
+"""In-process dbt runner: one long-lived runner, parse warmed once, build per test.
+
+Uses dbt's programmatic entrypoint (`dbtRunner`) rather than shelling out to the
+`dbt` CLI per build. A single runner is reused across the session, so every build
+skips the interpreter cold-start and dbt/adapter import — the dominant cost of a
+subprocess-per-build. Each build still runs its own parse, but `setup()` warms
+dbt's partial-parse cache so those re-parses are cheap and, critically, every
+build compiles from a fresh manifest — ephemeral models inject their CTEs anew
+each time (dbt's ephemeral-CTE injection is a one-shot, in-place mutation, so a
+shared/copied manifest drops a reused ephemeral model's CTE from a later build).
 
 We do NOT modify the existing `src/ingestion/dbt/profiles.yml` — instead we
 generate a session-local profiles directory under `target/test-profiles/`
@@ -16,10 +25,10 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-import subprocess
 from pathlib import Path
 
 import yaml
+from dbt.cli.main import dbtRunner
 
 from lib.config import SessionConfig
 from lib.worker import WorkerContext
@@ -32,7 +41,7 @@ class DbtError(RuntimeError):
 
 
 class DbtRunner:
-    """Session-scoped wrapper around the `dbt` CLI."""
+    """Session-scoped in-process dbt runner."""
 
     def __init__(self, cfg: SessionConfig):
         self.cfg = cfg
@@ -41,62 +50,52 @@ class DbtRunner:
         self.dbt_project_dir = cfg.dbt_project_dir
         self.target_dir = cfg.repo_root / "src/ingestion/tests/e2e/target/dbt"
         self.profiles_dir = self.target_dir / "profiles"
-        self._parsed = False
+        # One runner reused for every invocation; created in setup().
+        self._runner: dbtRunner | None = None
 
     def setup(self) -> None:
-        """One-time per session: write test profiles.yml + `dbt parse`."""
+        """One-time per session: write test profiles.yml + warm the parse cache."""
         self._write_profiles()
+        self._runner = dbtRunner()
         self._parse()
-        self._parsed = True
 
     def build(
         self,
         selector: str,
         *,
         worker_ctx: WorkerContext,
-        timeout_s: float = 120.0,
     ) -> None:
-        """Run `dbt build --select <selector> --defer --state <target>`.
+        """Build the selected models via the in-process runner.
 
-        Raises DbtError on non-zero exit, with the failing model + compiled SQL
-        excerpt from `run_results.json` surfaced in the message.
+        Reuses the session runner (no interpreter cold-start), and dbt's
+        partial-parse cache — warmed in `setup()` — keeps this build's parse
+        cheap. Each build parses fresh so ephemeral models inject their CTEs
+        correctly. Raises DbtError on failure, with the failing model + compiled
+        SQL excerpt from `run_results.json` surfaced in the message.
         """
-        if not self._parsed:
+        if self._runner is None:
             raise DbtError("dbt_runner.setup() must be called before build()")
         worker_n = worker_ctx.worker_id.removeprefix("gw") if worker_ctx.worker_id != "master" else "0"
-        cmd = [
-            "dbt",
-            "build",
-            "--select",
-            selector,
-            "--profiles-dir",
-            str(self.profiles_dir),
-            "--target",
-            "test",
-            "--target-path",
-            str(self.target_dir),
-            "--defer",
-            "--state",
-            str(self.target_dir),
-            "--vars",
-            json.dumps({"worker_id": worker_n}),
-        ]
         LOG.info("dbt build --select %s (worker=%s)", selector, worker_ctx.worker_id)
-        result = subprocess.run(
-            cmd,
-            cwd=str(self.dbt_project_dir),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout_s,
+        res = self._runner.invoke(
+            [
+                "build",
+                "--select",
+                selector,
+                *self._base_flags(),
+                "--defer",
+                "--state",
+                str(self.target_dir),
+                "--vars",
+                json.dumps({"worker_id": worker_n}),
+            ]
         )
-        if result.returncode != 0:
+        if not res.success:
             failed = self._extract_failed_model_summary()
             raise DbtError(
-                f"dbt build failed (exit={result.returncode}) for selector {selector!r}\n"
+                f"dbt build failed for selector {selector!r}\n"
                 f"failed models: {failed}\n"
-                f"stdout tail:\n{result.stdout[-2000:]}\n"
-                f"stderr tail:\n{result.stderr[-1000:]}"
+                f"exception: {res.exception!r}"
             )
 
     def derive_selectors(self, tables: set[tuple[str, str]]) -> tuple[list[str], list[str]]:
@@ -193,6 +192,24 @@ class DbtRunner:
     # internals
     # ----------------------------------------------------------------------
 
+    def _base_flags(self) -> list[str]:
+        """Flags shared by every invocation: which project, profile, target.
+
+        `--project-dir` is required because the in-process runner inherits the
+        pytest process's cwd (the e2e dir), not the dbt project dir a subprocess
+        would `cd` into.
+        """
+        return [
+            "--profiles-dir",
+            str(self.profiles_dir),
+            "--project-dir",
+            str(self.dbt_project_dir),
+            "--target",
+            "test",
+            "--target-path",
+            str(self.target_dir),
+        ]
+
     def _write_profiles(self) -> None:
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
         profiles = {
@@ -224,31 +241,26 @@ class DbtRunner:
         LOG.debug("wrote test profiles.yml to %s", self.profiles_dir)
 
     def _parse(self) -> None:
-        """`dbt parse` produces target/manifest.json — reused by every per-test build via --defer."""
-        cmd = [
-            "dbt",
-            "parse",
-            "--profiles-dir",
-            str(self.profiles_dir),
-            "--target",
-            "test",
-            "--target-path",
-            str(self.target_dir),
-        ]
-        LOG.info("dbt parse (one-time)")
-        result = subprocess.run(
-            cmd,
-            cwd=str(self.dbt_project_dir),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
+        """Parse once at session start to warm dbt's partial-parse cache.
+
+        Validates the project up front (fail fast) and writes both
+        target/manifest.json — which `build --defer --state` reads to resolve
+        unselected upstream refs — and target/partial_parse.msgpack, so each
+        per-test build's parse is an incremental no-op rather than a full parse.
+        """
+        if self._runner is None:
+            raise DbtError("dbt_runner.setup() must create the runner before _parse()")
+        LOG.info("dbt parse (one-time, in-process)")
+        res = self._runner.invoke(
+            [
+                "parse",
+                *self._base_flags(),
+                "--vars",
+                json.dumps({"worker_id": "0"}),
+            ]
         )
-        if result.returncode != 0:
-            raise DbtError(
-                f"dbt parse failed (exit={result.returncode}):\n"
-                f"stdout:\n{result.stdout[-2000:]}\nstderr:\n{result.stderr[-1000:]}"
-            )
+        if not res.success:
+            raise DbtError(f"dbt parse failed: {res.exception!r}")
         manifest = self.target_dir / "manifest.json"
         if not manifest.exists():
             raise DbtError(f"dbt parse did not produce {manifest}")

@@ -66,7 +66,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 - **Out of scope**:
   - Reading or interpreting individual fixture folders (that's `fixture-loader`)
   - dbt manifest parsing (that's `dbt-runner`)
-  - analytics-api binary build/spawn (that's `api-spawner`)
+  - analytics binary build/spawn (that's `api-spawner`)
   - CSV diff (that's `csv-asserter`)
   - `--update-snapshots` CLI flag (that's `snapshot-update`)
   - GitHub Actions workflow file (that's `ci-integration`)
@@ -228,20 +228,20 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-feature-api-spawner`
 
-- **Purpose**: Build `analytics-api` once per session with `cargo build --release`, spawn on `127.0.0.1:<random>`, expose a request-builder client. Owns the HTTP boundary.
+- **Purpose**: Build `analytics` once per session with `cargo build --release`, spawn on `127.0.0.1:<random>`, expose a request-builder client. Owns the HTTP boundary.
 
 - **Depends On**: `cpt-bronze-to-api-e2e-feature-test-rig-scaffolding`
 
 - **Scope**:
-  - `cargo build --release -p analytics-api` with `CARGO_TARGET_DIR` cached
-  - Spawn with `INSIGHT_ANALYTICS_API_AUTH_DISABLED=true` and env vars pointing at the test ClickHouse + MariaDB
+  - `cargo build --release -p analytics` with `CARGO_TARGET_DIR` cached
+  - Spawn with env vars pointing at the test ClickHouse + MariaDB
   - Random loopback port allocation
   - Startup wait against `GET /health`
   - Per-test request helper: builds the request from `spec.yaml`, POSTs, returns deserialized `ApiResponse`
   - Session teardown: SIGTERM, wait, SIGKILL on timeout
 
 - **Out of scope**:
-  - The `analytics-api` codebase itself (out of scope for this domain; lives in `src/backend/services/analytics-api`)
+  - The `analytics` codebase itself (out of scope for this domain; lives in `src/backend/services/analytics`)
   - CSV assertion
 
 - **Requirements Covered**:
@@ -326,7 +326,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
 - [ ] `p2` - **ID**: `cpt-bronze-to-api-e2e-feature-ci-integration`
 
-- **Purpose**: Run the suite on every PR touching `src/ingestion/`, `src/backend/services/analytics-api/`, or `src/ingestion/scripts/migrations/`. Surface diffs in the job output.
+- **Purpose**: Run the suite on every PR touching `src/ingestion/`, `src/backend/services/analytics/`, or `src/ingestion/scripts/migrations/`. Surface diffs in the job output.
 
 - **Depends On**: `cpt-bronze-to-api-e2e-feature-csv-rig`
 

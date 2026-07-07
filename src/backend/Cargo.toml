@@ -3,7 +3,7 @@ members = [
     "libs/insight-clickhouse",
     "plugins/oidc-authn-plugin",
     "services/api-gateway",
-    "services/analytics-api",
+    "services/analytics",
 ]
 resolver = "3"
 
@@ -42,7 +42,7 @@ async-trait = "0.1"
 futures = "0.3"
 # `Stream` + `StreamExt::next` for driving SeaORM result cursors. Already
 # pulled in transitively by sea-orm; declared at workspace scope so
-# consumers (today: analytics-api schema-validator) can use it explicitly
+# consumers (today: analytics schema-validator) can use it explicitly
 # without leaning on a transitive dep.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
@@ -101,6 +101,6 @@ figment = { version = "0.10", features = ["yaml", "env"] }
 # Internal crates
 insight-clickhouse = { path = "libs/insight-clickhouse" }
 
-# CI rebuild marker — bumped to retrigger the api-gateway + analytics-api
+# CI rebuild marker — bumped to retrigger the api-gateway + analytics
 # image builds on the cf → gears crate migration (2026-06-12).
 

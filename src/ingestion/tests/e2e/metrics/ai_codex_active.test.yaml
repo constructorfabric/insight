@@ -1,0 +1,55 @@
+spec_version: 1
+description: >
+  Metric: codex_active — IC Bullet AI (…0013), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Codex daily per-user leaderboard — one row marks a Codex user
+    • silver: deduped to one row per user/day
+    • gold:   an "active" metric — value=1 for the requested person; range_max =
+              count of active Codex members in the team (median is 0 by rule)
+
+  Team (median/range = the person's department):
+    alice · bob · carol all active → value 1, median 0, range [0, 3].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_chatgpt_team.chatgpt_team_codex_user_daily:
+    # Any active codex row counts; the model emits a row when a counter > 0.
+    - $ref: templates/chatgpt_team_codex.yaml#/templates/alice
+      unique_key: codex-alice-20260105
+      date: "2026-01-05"
+      lines_added: 5
+    - $ref: templates/chatgpt_team_codex.yaml#/templates/alice   # re-sync dup → must dedup (active stays 1, not 2)
+      unique_key: codex-alice-20260105
+      date: "2026-01-05"
+      lines_added: 5
+    - $ref: templates/chatgpt_team_codex.yaml#/templates/bob
+      unique_key: codex-bob-20260105
+      date: "2026-01-05"
+      lines_added: 5
+    - $ref: templates/chatgpt_team_codex.yaml#/templates/carol
+      unique_key: codex-carol-20260105
+      date: "2026-01-05"
+      lines_added: 5
+
+cases:
+  - name: codex_active — IC bullet (1 of 3 active members)
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        find: { metric_key: codex_active }
+        equal: { value: 1, median: 0, range_min: 0, range_max: 3 }

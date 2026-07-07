@@ -118,7 +118,7 @@ Locks are the feature that turns the catalog from a config store into a complian
 
 **Where locks can be set (v1):** only at `product-default` (by the product team, via seed migration) and at `tenant` (by tenant admins, via API). Narrower-scope locks are explicitly out of v1 — they'd be more nuance than the feature currently needs. If someone has a real use case, we widen later.
 
-**What gets recorded:** every lock set, every lock cleared, and every rejected bypass attempt lands in the `threshold_lock_audit` MariaDB table, **and** in the analytics-api structured log stream. The table is the source of truth for long-term audit (≥ 1 year), because log retention tends to be shorter than regulatory cycles; the log stream is for real-time observability.
+**What gets recorded:** every lock set, every lock cleared, and every rejected bypass attempt lands in the `threshold_lock_audit` MariaDB table, **and** in the analytics structured log stream. The table is the source of truth for long-term audit (≥ 1 year), because log retention tends to be shorter than regulatory cycles; the log stream is for real-time observability.
 
 **What's required on a lock:** `locked_by` (the authenticated actor), `locked_at` (server timestamp), and `lock_reason` (human-authored justification). All three are DB-enforced — a lock without a reason is rejected both by the API and by the DB CHECK constraint. This is deliberate: an audit trail that says "someone locked this, no idea why" fails at audit time.
 

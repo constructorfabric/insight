@@ -4,7 +4,7 @@ Test framework that exercises the full data path:
 
 ```
 metrics/<name>.test.yaml (bronze records)  →  bronze tables  →  dbt staging/silver  →
-ClickHouse migration gold-views  →  analytics-api HTTP (POST /v1/metrics/queries)  →  expect rules
+ClickHouse migration gold-views  →  analytics HTTP (POST /v1/metrics/queries)  →  expect rules
 ```
 
 Airbyte / Kestra / Argo are NOT exercised — bronze is seeded by direct INSERT of the
@@ -31,7 +31,7 @@ cd src/ingestion/tests/e2e
 
 The same image (and the same `./e2e.sh test` invocation) is used in CI — see `.github/workflows/e2e-bronze-to-api.yml`.
 
-First session bootstraps `cargo build --release -p analytics-api` (~3-5 min). Subsequent sessions reuse the named volume so cargo is incremental (~10s).
+First session bootstraps `cargo build --release -p analytics` (~3-5 min). Subsequent sessions reuse the named volume so cargo is incremental (~10s).
 
 ## Run (advanced — host-local)
 
@@ -56,13 +56,15 @@ e2e/
 ├── compose/
 │   ├── docker-compose.yml      # ClickHouse + MariaDB, loopback-only
 │   └── .env.example            # example creds (real values generated per-session)
-├── lib/                    # framework Python package
+├── lib/                        # framework Python package
 │   ├── compose.py              # docker compose up/down + healthcheck wait
 │   ├── clickhouse.py           # CH HTTP client wrapper
 │   ├── mariadb.py              # MariaDB connection helper
 │   ├── migration_applier.py    # applies src/ingestion/scripts/migrations/*.sql
-│   ├── analytics_api.py        # builds + spawns the analytics-api binary
+│   ├── analytics.py        # builds + spawns the analytics binary
 │   ├── worker.py               # WorkerContext (resolves pytest-xdist worker id)
+│   ├── metric_coverage.py      # metric-coverage gate: SKIP_TABLES + SKIP_LIST (--universe-file)
+│   ├── collect_metrics.py      # script: snapshot the metric catalog → .artifacts/
 │   └── config.py               # session config (ports, random creds)
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
@@ -71,6 +73,32 @@ e2e/
     └── test_session_smoke.py
 ```
 
+## Metric coverage gate
+
+A job (`metric-coverage-gate`) in the **E2E — Bronze to API** workflow, *not* a pytest test. The `e2e` job runs the suite and, while analytics is up, snapshots the metric catalog (`POST /v1/catalog/get_metrics`) to `.artifacts/catalog_metrics.json` (uploaded as `coverage-inputs`); the gate job then checks every product `metric_key` the catalog exposes is value-asserted by a test or covered by a `SKIP_TABLES`/`SKIP_LIST` entry — pure Python, no Docker, no second app boot.
+
+Locally, after a run:
+
+```bash
+./e2e.sh test     # runs the suite + snapshots .artifacts/catalog_metrics.json
+./e2e.sh gates    # runs the metric-coverage gate against it (in the runner image; no DB)
+```
+
+The verdict per **metric_key** (each individual number) is **binary**:
+
+- **value-tested** — a `metrics/*.test.yaml` asserts it (`find: {metric_key: …}` paired with `equal`/`assert`) → **PASS**
+- **skip-listed** (in the inline `SKIP_LIST` in [`lib/metric_coverage.py`](lib/metric_coverage.py)) → **PASS** (baseline)
+- **neither** → **FAIL** — a number nobody validates must get an assertion or a `SKIP_LIST` entry.
+
+Catalog keys are dotted (`collab_bullet_rows.m365_emails_sent`); a test asserts the bare response key (`m365_emails_sent`). The column suffix is unique across the catalog, so the gate maps bare→dotted by suffix (a future collision raises). `SKIP_LIST` is the accepted baseline and single source of truth (no side-car file — just `(metric_key, reason)`). Kept honest: a **stale** entry (key no longer in the catalog), a **redundant** one (now value-tested), or a test asserting a **non-catalog** key (typo / unseeded → matches 0 rows) all fail. PASS iff no FAILs.
+
+```bash
+# ad hoc against a running analytics (instead of the collected artifact):
+ANALYTICS_URL=http://localhost:18081 python3 lib/metric_coverage.py
+```
+
+Coverage is **per metric_key**, so every number on a bullet is validated independently — one tested key of a metric does not cover the rest. Today: **44/96** value-tested; the rest are skip-listed with a reason (`reachable — …` entries are the backlog where fixtures already exist).
+
 ## Ports (loopback only)
 
 | Service | Host port | Container port |
@@ -78,14 +106,14 @@ e2e/
 | ClickHouse HTTP | `127.0.0.1:30523` | 8123 |
 | ClickHouse native | `127.0.0.1:30529` | 9000 |
 | MariaDB | `127.0.0.1:30506` | 3306 |
-| analytics-api | `127.0.0.1:<random>` | — |
+| analytics | `127.0.0.1:<random>` | — |
 
 These ports avoid conflict with a local gitops dev cluster (which forwards 8123 / 3306) and the dbt local profile (30123).
 
 ## Notes for fixture authors
 
-- Auth in `analytics-api` requires no Bearer token, but its tenant middleware rejects requests without a non-nil tenant. The harness sends `X-Insight-Tenant-Id` with `lib.config.TEST_TENANT_ID` on every request and re-homes seeded metric definitions onto that tenant (`metric_seed.py`). The ClickHouse query path does not filter by tenant yet, so seeded bronze rows may use any tenant value.
-- Metric definitions are auto-seeded by the analytics-api binary's SeaORM migrations. Look up the metric UUID with `GET /v1/metrics` once the session is up, or add overrides in `seed/metrics.yaml`.
+- Auth in `analytics` requires no Bearer token, but its tenant middleware rejects requests without a non-nil tenant. The harness sends `X-Insight-Tenant-Id` with `lib.config.TEST_TENANT_ID` on every request and re-homes seeded metric definitions onto that tenant (`metric_seed.py`). The ClickHouse query path does not filter by tenant yet, so seeded bronze rows may use any tenant value.
+- Metric definitions are auto-seeded by the analytics binary's SeaORM migrations. Look up the metric UUID with `GET /v1/metrics` once the session is up, or add overrides in `seed/metrics.yaml`.
 
 ## `cases` / `expect` (declarative YAML rig)
 

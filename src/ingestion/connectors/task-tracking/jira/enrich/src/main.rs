@@ -6,17 +6,20 @@ mod core;
 mod io;
 
 #[derive(Parser, Debug)]
-#[command(name = "jira-enrich", about = "Jira Silver enrich — materializes task_tracker_field_history.")]
+#[command(
+    name = "jira-enrich",
+    about = "Jira Silver enrich — materializes task_tracker_field_history."
+)]
 struct Args {
     /// Connector instance scope (e.g. jira-alpha).
     #[arg(long, env = "INSIGHT_SOURCE_ID")]
     insight_source_id: String,
 
-    /// ClickHouse host.
+    /// `ClickHouse` host.
     #[arg(long, env = "CLICKHOUSE_HOST")]
     clickhouse_host: String,
 
-    /// ClickHouse HTTP port (the `clickhouse` crate drives the HTTP interface).
+    /// `ClickHouse` HTTP port (the `clickhouse` crate drives the HTTP interface).
     /// Default 8123 matches the CH HTTP default; pass a different value only when
     /// operators expose CH HTTP on a non-default port (e.g. 8443 behind a proxy).
     #[arg(long, env = "CLICKHOUSE_PORT", default_value_t = 8123)]
@@ -29,7 +32,7 @@ struct Args {
     #[arg(long, default_value_t = 50_000)]
     batch_size: usize,
 
-    /// Number of concurrent writer tasks. Each owns its own HTTP connection to ClickHouse.
+    /// Number of concurrent writer tasks. Each owns its own HTTP connection to `ClickHouse`.
     /// 3–4 is a good balance on a local Kind cluster; bump to 8–16 for production CH.
     #[arg(long, default_value_t = 4)]
     writers: usize,
@@ -92,15 +95,16 @@ async fn main() -> Result<()> {
 fn init_tracing() {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt().json().with_env_filter(env_filter).init();
+    tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(env_filter)
+        .init();
 }
 
 #[cfg(feature = "io")]
 async fn run(args: Args) -> Result<()> {
     use crate::core::process_issue;
-    use crate::core::types::{
-        DeltaEvent, FieldHistoryRecord, FieldMeta, IssueSnapshot, LastState,
-    };
+    use crate::core::types::{DeltaEvent, FieldHistoryRecord, FieldMeta, IssueSnapshot, LastState};
     use crate::io::ch_client::ChConfig;
     use crate::io::{reader, schema, writer};
     use std::collections::HashMap;
@@ -125,7 +129,10 @@ async fn run(args: Args) -> Result<()> {
     tracing::info!(fields = meta.len(), "loaded field metadata");
 
     let hwms = reader::per_issue_hwm(&cfg, &args.insight_source_id).await?;
-    tracing::info!(issues_known = hwms.len(), "loaded per-issue high-water-marks");
+    tracing::info!(
+        issues_known = hwms.len(),
+        "loaded per-issue high-water-marks"
+    );
 
     let snapshots = reader::fetch_all_snapshots(&cfg, &args.insight_source_id).await?;
     tracing::info!(snapshots = snapshots.len(), "loaded all issue snapshots");
@@ -202,8 +209,7 @@ async fn run(args: Args) -> Result<()> {
     }
 
     // --- Phase 3: reader task streaming cursor → events channel. ---
-    let (events_tx, mut events_rx) =
-        mpsc::channel::<DeltaEvent>(args.events_channel_capacity);
+    let (events_tx, mut events_rx) = mpsc::channel::<DeltaEvent>(args.events_channel_capacity);
     let reader_cfg = cfg.clone();
     let reader_source = args.insight_source_id.clone();
     let reader_meta = Arc::clone(&meta);
@@ -252,8 +258,7 @@ async fn run(args: Args) -> Result<()> {
                 if writer_send_failed.is_some() {
                     break;
                 }
-                let chunk: Vec<FieldHistoryRecord> =
-                    out_batch.drain(..args.batch_size).collect();
+                let chunk: Vec<FieldHistoryRecord> = out_batch.drain(..args.batch_size).collect();
                 let idx = next_writer;
                 next_writer = (next_writer + 1) % args.writers;
                 batches_dispatched += 1;

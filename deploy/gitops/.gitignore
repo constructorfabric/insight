@@ -32,6 +32,11 @@ environments/local/values.yaml
 environments/local/pub-cert.pem
 environments/local/sealed-secrets/*/*-sealedsecret.yaml
 
+# CI smoke env keeps inventory/values committed, but fetch-cert/seal-from-file
+# still generate cluster-specific artifacts at runtime.
+environments/functional-ci/pub-cert.pem
+environments/functional-ci/sealed-secrets/*/*-sealedsecret.yaml
+
 # Never commit the sealed-secrets-controller's private key.
 *.key
 *.pkcs8

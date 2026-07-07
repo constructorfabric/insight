@@ -1,0 +1,66 @@
+spec_version: 1
+description: >
+  Metric: wiki_active_authors (Confluence) — IC Bullet Wiki (…0041), #1440. SINGLE-WINDOW fixture.
+  Department of 5 Engineering members (alice…erin); requested IC member = erin.
+  One narrow custom window (2026-10-04 … 2026-10-10) holds ALL of this
+  fixture's rows (dated 2026-10-07); a second case probes an empty window.
+
+  ISOLATION: silver.class_wiki_pages / class_wiki_engagement are incremental
+  delete+insert tables the e2e rig resets only at SESSION START — the per-test
+  ledger truncates only the bronze a fixture seeds, so a sibling fixture's silver
+  rows persist across tests. Every wiki fixture is therefore pinned to its OWN
+  disjoint date + window so a leaked foreign row falls OUTSIDE this window and
+  cannot perturb the stats. All 5 members author a page in the window; value=1 (erin active), median=0 (rule), range_max = count of active authors = 5.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+  bronze_confluence.wiki_pages:
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/alice", page_id: cp-alice-1, unique_key: cf-alice-1, version_number: 1, created_at: "2026-10-07T00:00:00Z" }
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/bob", page_id: cp-bob-1, unique_key: cf-bob-1, version_number: 1, created_at: "2026-10-07T00:00:00Z" }
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/carol", page_id: cp-carol-1, unique_key: cf-carol-1, version_number: 1, created_at: "2026-10-07T00:00:00Z" }
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/dave", page_id: cp-dave-1, unique_key: cf-dave-1, version_number: 1, created_at: "2026-10-07T00:00:00Z" }
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/erin", page_id: cp-erin-1, unique_key: cf-erin-1, version_number: 1, created_at: "2026-10-07T00:00:00Z" }
+    - { $ref: "templates/confluence_wiki_pages.yaml#/templates/erin", page_id: cp-erin-1, unique_key: cf-erin-1, version_number: 1, created_at: "2026-10-07T00:00:00Z" }   # re-sync dup → active stays 1
+
+cases:
+  - name: "wiki_active_authors (Confluence) — custom scope (department of 5)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: wiki
+            metric_id: 00000000-0000-0000-0001-000000000041
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-10-04' and metric_date le '2026-10-10'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: wiki
+        assert: "result.status == 'ok'"
+      - in: wiki
+        find: { metric_key: wiki_active_authors }
+        equal: { value: 1, median: 0, range_min: 0, range_max: 5 }
+
+  - name: "wiki_active_authors (Confluence) — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: wiki
+            metric_id: 00000000-0000-0000-0001-000000000041
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-07-01' and metric_date le '2026-07-07'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: wiki
+        assert: "result.status == 'ok'"
+      - in: wiki
+        assert: "size(items) == 0"

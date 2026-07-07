@@ -20,11 +20,11 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 
 
-# Header analytics-api's tenant middleware reads to resolve the request tenant
+# Header the analytics service's tenant middleware reads to resolve the request tenant
 # (auth.rs::TENANT_HEADER). The harness sends it on EVERY request.
 TENANT_HEADER = "X-Insight-Tenant-Id"
 
-# Session tenant for the whole e2e run. analytics-api's tenant middleware
+# Session tenant for the whole e2e run. The analytics service's tenant middleware
 # rejects the nil UUID (a non-identity value must not pin tenant context), so
 # the harness cannot use 0000…0. Instead it seeds metric definitions under this
 # non-nil tenant and sends it as `X-Insight-Tenant-Id` on every request. The
@@ -58,7 +58,7 @@ class SessionConfig:
     compose_dir: Path
     migrations_dir: Path
     dbt_project_dir: Path
-    analytics_api_manifest_dir: Path
+    analytics_manifest_dir: Path
 
     # Runtime mode (where pytest runs relative to CH/MariaDB)
     run_mode: str = "host"  # "host" | "docker"
@@ -91,7 +91,7 @@ class SessionConfig:
                 compose_dir=repo_root / "src/ingestion/tests/e2e/compose",
                 migrations_dir=repo_root / "src/ingestion/scripts/migrations",
                 dbt_project_dir=repo_root / "src/ingestion/dbt",
-                analytics_api_manifest_dir=repo_root / "src/backend/services/analytics-api",
+                analytics_manifest_dir=repo_root / "src/backend/services/analytics",
                 run_mode="docker",
                 ch_host=os.environ.get("E2E_CH_HOST", "clickhouse"),
                 ch_http_port=int(os.environ.get("E2E_CH_HTTP_PORT", 8123)),
@@ -110,7 +110,7 @@ class SessionConfig:
             compose_dir=repo_root / "src/ingestion/tests/e2e/compose",
             migrations_dir=repo_root / "src/ingestion/scripts/migrations",
             dbt_project_dir=repo_root / "src/ingestion/dbt",
-            analytics_api_manifest_dir=repo_root / "src/backend/services/analytics-api",
+            analytics_manifest_dir=repo_root / "src/backend/services/analytics",
             ch_http_port=int(os.environ.get("E2E_CH_HTTP_PORT", 30523)),
             ch_native_port=int(os.environ.get("E2E_CH_NATIVE_PORT", 30529)),
             mariadb_port=int(os.environ.get("E2E_MARIADB_PORT", 30506)),
@@ -122,7 +122,7 @@ class SessionConfig:
 
     @property
     def mariadb_dsn(self) -> str:
-        """SeaORM / SQLAlchemy-style URL for analytics-api."""
+        """SeaORM / SQLAlchemy-style URL for analytics."""
         return (
             f"mysql://{self.mariadb_user}:{self.mariadb_password}"
             f"@{self.mariadb_host}:{self.mariadb_port}/{self.mariadb_database}"

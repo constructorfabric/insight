@@ -1,17 +1,23 @@
 name: E2E — Bronze to API
 
 # End-to-end transformation tests covering bronze → dbt → ClickHouse
-# migration views → analytics-api HTTP response → expect rules.
+# migration views → analytics HTTP response → expect rules.
 #
 # Everything (Python, Rust, dbt, pytest) runs inside the runner image
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
 # image is used for local development via src/ingestion/tests/e2e/e2e.sh.
 #
+# Topology: ONE heavy job (`e2e`) boots the stack, runs the suite, and — while
+# analytics is already up — snapshots the metric catalog into `.artifacts/`,
+# which it uploads. The metric-coverage-gate job then analyses it as a pure-Python
+# check (no Docker, no app boot). See
+# src/ingestion/tests/e2e/lib/{metric_coverage,collect_metrics}.py.
+#
 # Specs: docs/domain/bronze-to-api-e2e/specs/
 # Code:  src/ingestion/tests/e2e/
 
 on:
-  # PR-only — same reasoning as backend-checks: branch protection gates
+  # PR-only — branch protection gates
   # merge on PR success, and re-running the full bronze→API stack
   # (clickhouse + mariadb + dbt + pytest) on the merge commit just burns
   # ~30 minutes for an outcome we already proved. workflow_dispatch
@@ -44,29 +50,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # docker-container buildx driver — required for the gha cache export that
+      # compose/docker-compose.cache.yml wires onto the build-only services.
+      - uses: docker/setup-buildx-action@v3
+
       # ─── Build the runner image ─────────────────────────────────────────
-      # The runner bakes in analytics-api + each connector's enrich binary, each
+      # The runner bakes in analytics + each connector's enrich binary, each
       # compiled FROM ITS OWN Dockerfile via build-only services wired as
       # `additional_contexts` (see compose/docker-compose.runner.yml). Nothing is
-      # compiled inside the runner at test time, so there is no host cargo cache to
-      # restore. NOTE: those component builds are not yet wired into a cross-run
-      # BuildKit cache, so a full compile happens each run (follow-up: add buildx
-      # `type=gha` cache to the build-only services if it bites).
+      # compiled inside the runner at test time.
+      #
+      # E2E_COMPOSE_OVERLAYS layers compose/docker-compose.cache.yml on top, which
+      # points each Rust build (and the runner's pip layer) at the GitHub Actions
+      # BuildKit cache. On a warm cache with an unchanged Cargo.lock/pyproject.toml
+      # the dependency-compile layers restore instead of recompiling.
       - name: Build runner image
         run: ./e2e.sh build
+        env:
+          E2E_COMPOSE_OVERLAYS: compose/docker-compose.cache.yml
 
       # ─── Run the suite inside the runner ────────────────────────────────
       # `./e2e.sh test` (docker compose run runner) starts the clickhouse +
       # mariadb `depends_on` services — compose pulls their images on demand
       # and waits for `service_healthy` — so no explicit image pre-pull is needed.
       # Serial on purpose: the session rig is not xdist-safe yet (see
-      # conftest.py — per-worker analytics-api spawns race SeaORM migrations
+      # conftest.py — per-worker analytics spawns race SeaORM migrations
       # in the shared MariaDB, non-primary workers don't wait for ClickHouse
       # migrations, and the shared dbt target/ dir is deleted by whichever
       # worker finishes first). Wall-time cost is negligible: the runner image
-      # build (which compiles analytics-api + enrich) dominates the job.
+      # build (which compiles analytics + enrich) dominates the job.
+      #
+      # The suite ALSO snapshots the metric catalog to .artifacts/catalog_metrics.json
+      # (lib/collect_metrics.py, while analytics is up) — the
+      # metric-coverage-gate job below analyses it, no second app boot.
       - name: Run E2E suite
         run: ./e2e.sh test --tb=short -q
+
+      # ─── Hand the collected catalog to the gate job ─────────────────────
+      # Uploaded even if the suite failed (the collection script still runs), so the
+      # gate reports alongside a red suite. `path` is workspace-relative (actions
+      # ignore defaults.run.working-directory).
+      - name: Upload coverage inputs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-inputs
+          path: src/ingestion/tests/e2e/.artifacts/
+          # `.artifacts/` is a dotdir; upload-artifact@v4 skips hidden paths by
+          # default (include-hidden-files: false) — without this it uploads
+          # nothing and the gate job fails with "artifact not found".
+          include-hidden-files: true
+          # The gate is useless without the catalog; fail loudly here rather than
+          # as a confusing downstream "artifact not found".
+          if-no-files-found: error
+          retention-days: 7
 
       # ─── Diagnostics on failure ─────────────────────────────────────────
       - name: Dump compose logs on failure
@@ -82,3 +119,33 @@ jobs:
       - name: Tear down
         if: always()
         run: ./e2e.sh down || true
+
+  # ─── Gate job — pure-Python analysis of the collected catalog ─────────────
+  # Runs after `e2e` (needs), downloads `coverage-inputs`, reads the catalog file.
+  # No Docker, no analytics boot. `!cancelled()` so it still reports when the
+  # suite itself failed (the artifact is usually present).
+
+  metric-coverage-gate:
+    name: Metric coverage gate
+    needs: e2e
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs
+          path: coverage-inputs
+      - name: Analyse metric coverage
+        run: |
+          pip install --quiet pyyaml
+          python3 src/ingestion/tests/e2e/lib/metric_coverage.py \
+            --universe-file coverage-inputs/catalog_metrics.json | tee metric_coverage.md
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat metric_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::metric coverage gate failed — a metric_key is value-tested by no test and not in SKIP_TABLES/SKIP_LIST (or a skip is stale). See the report."; fi
+          exit "$rc"

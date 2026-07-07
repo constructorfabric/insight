@@ -1,0 +1,63 @@
+spec_version: 1
+description: >
+  Metric: m365_emails_sent — Team Bullet Collaboration (…0005), the TEAM variant
+  of the IC bullet (…0012); department-of-5 distribution + 6 stats in a single
+  custom window.
+  bronze -> silver -> gold: daily M365 email-activity per person; silver dedups to
+  one row per person/day; per person v_period = Σ emails sent over the window; the
+  TEAM bullet value = the department AVERAGE of those per-person sums (the IC bullet
+  …0012 returns the requested member's own sum). median/p25/p75/range = the
+  department (org_unit_id) distribution.
+
+  Department: 5 Engineering members alice..erin, sendCount r*10 ∈ {10,20,30,40,50}
+  on 2026-12-25. Custom window 2026-12-20..12-31 -> per-person sums
+  {10,20,30,40,50} -> value = avg = 30 (== median). Empty window 2026-06 -> no items.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_m365.email_activity:
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-25", unique_key: team-sent-alice-20261225, sendCount: 10 }
+    - { $ref: templates/m365_email.yaml#/templates/bob_email, reportRefreshDate: "2026-12-25", unique_key: team-sent-bob-20261225, sendCount: 20 }
+    - { $ref: templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-12-25", unique_key: team-sent-carol-20261225, sendCount: 30 }
+    - { $ref: templates/m365_email.yaml#/templates/dave_email, reportRefreshDate: "2026-12-25", unique_key: team-sent-dave-20261225, sendCount: 40 }
+    - { $ref: templates/m365_email.yaml#/templates/erin_email, reportRefreshDate: "2026-12-25", unique_key: team-sent-erin-20261225, sendCount: 50 }
+
+cases:
+  - name: "m365_emails_sent — custom scope (department of 5)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000005
+            $filter: "org_unit_id eq 'Engineering' and metric_date ge '2026-12-20' and metric_date le '2026-12-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: m365_emails_sent }
+        equal: { value: 30, median: 30, range_min: 10, range_max: 50, p25: 20, p75: 40 }
+
+  - name: "m365_emails_sent — empty window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000005
+            $filter: "org_unit_id eq 'Engineering' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"

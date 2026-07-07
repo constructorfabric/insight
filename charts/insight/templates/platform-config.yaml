@@ -55,10 +55,10 @@ data:
   AIRBYTE_JWT_SECRET_KEY:   {{ .Values.airbyte.jwtSecret.key   | quote }}
 
   # ─── App service hosts (for sidecars and debugging) ───
-  INSIGHT_API_GATEWAY_HOST:   {{ include "insight.apiGateway.host"   . | quote }}
-  INSIGHT_ANALYTICS_API_HOST: {{ include "insight.analyticsApi.host" . | quote }}
-  INSIGHT_IDENTITY_HOST:      {{ include "insight.identity.host"     . | quote }}
-  INSIGHT_FRONTEND_HOST:      {{ include "insight.frontend.host"     . | quote }}
+  INSIGHT_API_GATEWAY_HOST: {{ include "insight.apiGateway.host" . | quote }}
+  INSIGHT_ANALYTICS_HOST:   {{ include "insight.analytics.host"  . | quote }}
+  INSIGHT_IDENTITY_HOST:    {{ include "insight.identity.host"   . | quote }}
+  INSIGHT_FRONTEND_HOST:    {{ include "insight.frontend.host"   . | quote }}
 
   # ─── Observability (emission contract) ───
   # JSON-to-stdout is always on; this is the log level plus, when an OTLP

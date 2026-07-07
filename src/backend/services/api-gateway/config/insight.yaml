@@ -109,7 +109,7 @@ gears:
     config:
       routes:
         - prefix: "/analytics"
-          upstream: "${PROXY_ANALYTICS_URL:=http://analytics-api:8081}"
+          upstream: "${PROXY_ANALYTICS_URL:=http://analytics:8081}"
 
 # ─── Local development ──────────────────────────────────────
 # To run without OIDC (auth disabled), override:

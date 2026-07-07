@@ -1,6 +1,6 @@
 use super::types::{
-    DataSource, Delta, DeltaAction, DeltaEvent, EventKind, FieldCardinality, FieldMeta, FieldValue,
-    IssueSnapshot, LastState, ValueIdType, synthetic_initial_event_id,
+    synthetic_initial_event_id, DataSource, Delta, DeltaAction, DeltaEvent, EventKind,
+    FieldCardinality, FieldMeta, FieldValue, IssueSnapshot, LastState, ValueIdType,
 };
 use super::{apply_delta, process_issue, reverse_delta};
 use chrono::{DateTime, TimeZone, Utc};
@@ -55,12 +55,7 @@ fn set_full(from: Option<(&str, &str)>, to: Option<(&str, &str)>) -> Delta {
     }
 }
 
-fn ev(
-    event_id: &str,
-    event_at: DateTime<Utc>,
-    field: &FieldMeta,
-    delta: Delta,
-) -> DeltaEvent {
+fn ev(event_id: &str, event_at: DateTime<Utc>, field: &FieldMeta, delta: Delta) -> DeltaEvent {
     DeltaEvent {
         insight_source_id: "jira-alpha".into(),
         issue_id: "10042".into(),
@@ -105,7 +100,11 @@ fn apply_set_replaces_single_value() {
         ids: vec!["1".into()],
         displays: vec!["To Do".into()],
     };
-    let out = apply_delta(initial, &set(Some("1"), Some("3")), FieldCardinality::Single);
+    let out = apply_delta(
+        initial,
+        &set(Some("1"), Some("3")),
+        FieldCardinality::Single,
+    );
     assert_eq!(out.ids, vec!["3".to_string()]);
 }
 
@@ -143,7 +142,10 @@ fn apply_add_appends_and_dedups() {
         },
         FieldCardinality::Multi,
     );
-    assert_eq!(second.ids, vec!["urgent".to_string(), "backend".to_string()]);
+    assert_eq!(
+        second.ids,
+        vec!["urgent".to_string(), "backend".to_string()]
+    );
 }
 
 #[test]
@@ -223,7 +225,10 @@ fn reverse_remove_adds_the_item_back() {
         },
         FieldCardinality::Multi,
     );
-    assert_eq!(before.ids, vec!["urgent".to_string(), "backend".to_string()]);
+    assert_eq!(
+        before.ids,
+        vec!["urgent".to_string(), "backend".to_string()]
+    );
 }
 
 // ---------------- process_issue bootstrap ----------------
@@ -421,10 +426,30 @@ fn incremental_emits_only_new_events() {
 
     // Full changelog we know about.
     let events = vec![
-        ev("cl-1", ts(2026, 1, 2, 9), &status, set(Some("1"), Some("2"))),
-        ev("cl-2", ts(2026, 1, 3, 9), &status, set(Some("2"), Some("3"))),
-        ev("cl-3", ts(2026, 1, 4, 9), &status, set(Some("3"), Some("2"))), // reopened
-        ev("cl-4", ts(2026, 1, 5, 9), &status, set(Some("2"), Some("3"))),
+        ev(
+            "cl-1",
+            ts(2026, 1, 2, 9),
+            &status,
+            set(Some("1"), Some("2")),
+        ),
+        ev(
+            "cl-2",
+            ts(2026, 1, 3, 9),
+            &status,
+            set(Some("2"), Some("3")),
+        ),
+        ev(
+            "cl-3",
+            ts(2026, 1, 4, 9),
+            &status,
+            set(Some("3"), Some("2")),
+        ), // reopened
+        ev(
+            "cl-4",
+            ts(2026, 1, 5, 9),
+            &status,
+            set(Some("2"), Some("3")),
+        ),
     ];
 
     // Already processed up to cl-2 at 2026-01-03 09:00.
@@ -497,12 +522,7 @@ fn incremental_drops_late_events_below_hwm() {
     let status = meta_status();
 
     let snapshot = snap(HashMap::new(), ts(2026, 1, 1, 10));
-    let late_event = ev(
-        "cl-late",
-        ts(2026, 1, 2, 8),
-        &status,
-        set(None, Some("2")),
-    );
+    let late_event = ev("cl-late", ts(2026, 1, 2, 8), &status, set(None, Some("2")));
     let existing = HashMap::from([(
         "status".to_string(),
         LastState {
@@ -560,10 +580,7 @@ fn sprint_snapshot_delta_replaces_full_value() {
     assert_eq!(out[1].field_id, "customfield_10020");
     assert_eq!(out[1].value_ids, vec!["24".to_string()]);
     assert_eq!(out[2].event_kind, EventKind::Changelog);
-    assert_eq!(
-        out[2].value_ids,
-        vec!["24".to_string(), "25".to_string()]
-    );
+    assert_eq!(out[2].value_ids, vec!["24".to_string(), "25".to_string()]);
 }
 
 // ---------------- unknown field handling ----------------
@@ -894,16 +911,14 @@ fn full_issue_last_changelog_per_field_matches_snapshot() {
     // event of each field must equal the snapshot's current value.
     let last_status = out
         .iter()
-        .filter(|r| r.field_id == "status" && r.event_kind == EventKind::Changelog)
-        .next_back()
+        .rfind(|r| r.field_id == "status" && r.event_kind == EventKind::Changelog)
         .unwrap();
     assert_eq!(last_status.value_ids, vec!["3".to_string()]);
     assert_eq!(last_status.value_displays, vec!["Done".to_string()]);
 
     let last_labels = out
         .iter()
-        .filter(|r| r.field_id == "labels" && r.event_kind == EventKind::Changelog)
-        .next_back()
+        .rfind(|r| r.field_id == "labels" && r.event_kind == EventKind::Changelog)
         .unwrap();
     assert_eq!(
         last_labels.value_ids,
@@ -1114,7 +1129,8 @@ fn bootstrap_mixed_known_and_unknown_field() {
     // Unknown field produces NO rows.
     assert_eq!(out.len(), 3);
     assert!(
-        out.iter().all(|r| r.field_id == "status" || r.field_id == "created"),
+        out.iter()
+            .all(|r| r.field_id == "status" || r.field_id == "created"),
         "no row should reference the unknown field"
     );
 
@@ -1449,8 +1465,18 @@ fn incremental_emits_no_creation_marker() {
     );
 
     let events = vec![
-        ev("cl-1", ts(2026, 1, 2, 9), &status, set(Some("1"), Some("2"))),
-        ev("cl-2", ts(2026, 1, 3, 9), &status, set(Some("2"), Some("3"))),
+        ev(
+            "cl-1",
+            ts(2026, 1, 2, 9),
+            &status,
+            set(Some("1"), Some("2")),
+        ),
+        ev(
+            "cl-2",
+            ts(2026, 1, 3, 9),
+            &status,
+            set(Some("2"), Some("3")),
+        ),
     ];
 
     let existing = HashMap::from([(

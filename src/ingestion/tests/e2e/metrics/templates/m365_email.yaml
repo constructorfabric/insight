@@ -41,3 +41,11 @@ templates:
   carol_email:
     $ref: "#/templates/m365_email"
     userPrincipalName: carol@example.com
+
+  dave_email:
+    $ref: "#/templates/m365_email"
+    userPrincipalName: dave@example.com
+
+  erin_email:
+    $ref: "#/templates/m365_email"
+    userPrincipalName: erin@example.com

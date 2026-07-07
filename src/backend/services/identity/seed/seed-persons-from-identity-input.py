@@ -744,7 +744,7 @@ def main():
         -- WHERE is_active = 1 filter in `active_intervals` -- otherwise
         -- the window operates on Active-only rows and never sees the
         -- next Inactive row, leaving every interval_end = NULL even
-        -- when the employee was deactivated (cypilot-pr-review #477
+        -- when the employee was deactivated (PR-review #477
         -- Finding 1, latent bug that didn't surface in the kind-cluster
         -- test only because BambooHR data had no Active->Inactive
         -- transitions in the snapshot).

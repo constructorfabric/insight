@@ -3,48 +3,43 @@ description: >
   Metric: m365_files_engaged — IC Bullet Collaboration (…0012), #1413.
   How it's computed (bronze → silver → gold):
     • bronze: daily OneDrive and SharePoint file-activity reports per person
-    • silver: each product deduped to per-person/day file counts (viewed/edited, shared)
-    • gold:   metric = sum of files viewed or edited over the window, across both products
+    • silver: each product deduped to per-person/day file counts (viewed/edited)
+    • gold:   value = the requested member's per-person SUM of files viewed-or-edited
+              over the window (across both products); median/p25/p75/range = the
+              distribution of those per-person SUMs across the member's DEPARTMENT
+              (same org_unit_id).
 
-  Team (median/range = the person's department):
-    alice 30 OneDrive + 20 SharePoint = 50 · bob 15 OneDrive · carol 5 SharePoint
-    → median 15, range [5, 50].
-  Cases: alice cross-product (50) · bob OneDrive-only (15) · carol SharePoint-only (5).
+  Department: 5 Engineering members (alice, bob, carol, dave, erin), base rates
+  r ∈ {10,20,30,40,50}, each seeded one OneDrive row on the same day inside the
+  queried window → per-person window SUM = r. The IC case requests erin (r=50), so
+  value = 50; the department of 5 yields the median/p25/p75/range below.
+
+  dave/erin OneDrive rows are composed inline from the base m365_onedrive template
+  with a userPrincipalName override (named per-person OneDrive records cover
+  alice/bob/carol only).
+  Cases: custom scope (department of 5) · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
 
   bronze_m365.onedrive_activity:
-    - $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-od-eng-20260105
-      viewedOrEditedFileCount: 30
-    - $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive  # verbatim duplicate -> must dedup, not double
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-od-eng-20260105
-      viewedOrEditedFileCount: 30
-    - $ref: templates/m365_onedrive.yaml#/templates/bob_onedrive
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-bob-od-eng-20260105
-      viewedOrEditedFileCount: 15
-
-  bronze_m365.sharepoint_activity:
-    - $ref: templates/m365_sharepoint.yaml#/templates/alice_sharepoint
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-sp-eng-20260105
-      viewedOrEditedFileCount: 20
-    - $ref: templates/m365_sharepoint.yaml#/templates/carol_sharepoint
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-carol-sp-eng-20260105
-      viewedOrEditedFileCount: 5
+    - { $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive, reportRefreshDate: "2026-12-25", unique_key: eng-alice-20261225, viewedOrEditedFileCount: 10 }   # r=10
+    - { $ref: templates/m365_onedrive.yaml#/templates/alice_onedrive, reportRefreshDate: "2026-12-25", unique_key: eng-alice-20261225, viewedOrEditedFileCount: 10 }   # duplicate → dedup to 10, not 20
+    - { $ref: templates/m365_onedrive.yaml#/templates/bob_onedrive,   reportRefreshDate: "2026-12-25", unique_key: eng-bob-20261225,   viewedOrEditedFileCount: 20 }   # r=20
+    - { $ref: templates/m365_onedrive.yaml#/templates/carol_onedrive, reportRefreshDate: "2026-12-25", unique_key: eng-carol-20261225, viewedOrEditedFileCount: 30 }   # r=30
+    - { $ref: templates/m365_onedrive.yaml#/templates/m365_onedrive, userPrincipalName: dave@example.com, reportRefreshDate: "2026-12-25", unique_key: eng-dave-20261225, viewedOrEditedFileCount: 40 }   # r=40 (inline base + UPN override)
+    - { $ref: templates/m365_onedrive.yaml#/templates/m365_onedrive, userPrincipalName: erin@example.com, reportRefreshDate: "2026-12-25", unique_key: eng-erin-20261225, viewedOrEditedFileCount: 50 }   # r=50 (the requested IC member; inline base + UPN override)
 
 cases:
-  # team m365_files_engaged = [alice 30+20=50, bob 15, carol 5]
-  #   value (alice) = 50 ; median[5,15,50] = 15 ; range = [5,50]
-  - name: m365_files_engaged — alice OneDrive+SharePoint (cross-product sum vs team median/range)
+  # ── CUSTOM scope (Dec 23 .. Dec 29) — department of 5 ────────────────────────
+  # per-person SUM r → dept {10,20,30,40,50}; erin value 50.
+  # p25=20 median=30 p75=40 range=[10,50]
+  - name: "m365_files_engaged — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -52,17 +47,17 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-23' and metric_date le '2026-12-29'"
     expect:
       - assert: "status == 200"
       - in: collaboration
         assert: "result.status == 'ok'"
       - in: collaboration
         find: { metric_key: m365_files_engaged }
-        equal: { value: 50, median: 15, range_min: 5, range_max: 50 }
+        equal: { value: 50, median: 30, range_min: 10, range_max: 50, p25: 20, p75: 40 }
 
-  # bob is engaged via OneDrive only — proves the OneDrive product path directly
-  - name: m365_files_engaged — bob OneDrive-only (value 15 vs team median/range)
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "m365_files_engaged — EMPTY window (no data → no items)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -70,25 +65,10 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'bob@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
     expect:
       - assert: "status == 200"
       - in: collaboration
-        find: { metric_key: m365_files_engaged }
-        equal: { value: 15, median: 15, range_min: 5, range_max: 50 }
-
-  # carol is engaged via SharePoint only — proves the SharePoint product path directly
-  - name: m365_files_engaged — carol SharePoint-only (value 5 vs team median/range)
-    request:
-      url: /v1/metrics/queries
-      method: POST
-      body:
-        queries:
-          - id: collaboration
-            metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'carol@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
-    expect:
-      - assert: "status == 200"
+        assert: "result.status == 'ok'"
       - in: collaboration
-        find: { metric_key: m365_files_engaged }
-        equal: { value: 5, median: 15, range_min: 5, range_max: 50 }
+        assert: "size(items) == 0"

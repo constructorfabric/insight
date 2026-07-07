@@ -1,0 +1,33 @@
+# JSON schema for bronze_chatgpt_team.chatgpt_team_codex_user_daily (all real
+# columns). Mirrors the connector catalog (connectors/ai/chatgpt-team,
+# configured_catalog.json — stream chatgpt_team_codex_user_daily, from
+# chatgpt.com /backend-api/wham/analytics/usage-leaderboard) plus the 4
+# _airbyte_* CDK columns. NOTE: identity columns (tenant_id, source_id,
+# unique_key, collected_at, data_source, date, email) are non-null `string` in
+# the catalog; the numeric counters are `[number, null]`. `date` is a date
+# STRING ("2026-01-05") — Silver casts via toDate().
+schemas:
+  bronze_chatgpt_team.chatgpt_team_codex_user_daily:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: string }
+      source_id: { type: string }
+      unique_key: { type: string }
+      collected_at: { type: string }
+      data_source: { type: string }
+      date: { type: string }
+      email: { type: string }
+      user_id: { type: [string, "null"] }
+      name: { type: [string, "null"] }
+      credits: { type: [number, "null"] }
+      n_threads: { type: [number, "null"] }
+      n_turns: { type: [number, "null"] }
+      current_streak: { type: [number, "null"] }
+      text_tokens: { type: [number, "null"] }
+      lines_added: { type: [number, "null"] }

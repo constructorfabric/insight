@@ -19,7 +19,7 @@ the HTTP backend in lib/ch-exec.sh).
 Hook timing: `post-install,post-upgrade`. The post-* phase runs after the
 main release (so the `clickhouse-init-svcdbs` pre-install Hook has created
 the app database and the app pods have rolled). post-* over pre-* is safe
-because gold-view consumers (analytics-api) resolve VIEW source tables
+because gold-view consumers (analytics) resolve VIEW source tables
 lazily at query time, so views materialising shortly after pod startup is
 fine. (hook-weight "5" is inert today — it only orders hooks within the
 same phase, and this is currently the only post-* hook; kept as a

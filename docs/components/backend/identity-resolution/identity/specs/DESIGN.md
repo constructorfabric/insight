@@ -91,7 +91,7 @@ Architecture-shaping decisions are captured as ADRs in
 
 | Requirement | Design Response |
 |-------------|-----------------|
-| [`cpt-insightspec-nfr-identity-latency`](PRD.md#p95-lookup-latency) | Single-row covered-index lookup (`idx_value_id`) + connection pooling via MySqlConnector; pool max size tuned to 16 (smaller than analytics-api per design review). |
+| [`cpt-insightspec-nfr-identity-latency`](PRD.md#p95-lookup-latency) | Single-row covered-index lookup (`idx_value_id`) + connection pooling via MySqlConnector; pool max size tuned to 16 (smaller than the analytics service per design review). |
 | [`cpt-insightspec-nfr-identity-memory`](PRD.md#memory-budget-without-caching) | No in-memory cache; helm `resources.limits.memory: 384Mi`; query results streamed via `DbDataReader`. |
 | [`cpt-insightspec-nfr-identity-logging-pii`](PRD.md#structured-json-logs-with-pii-redaction) | Serilog `CompactJsonFormatter`; `UseSerilogRequestLogging` `EnrichDiagnosticContext` callback rewrites `RequestPath` for `/v1/persons/*` to `/v1/persons/<redacted>`; exception handler emits sanitised `db_target` for DB exceptions only. |
 | [`cpt-insightspec-nfr-identity-uuid-roundtrip`](PRD.md#binary16-uuid-round-trip) | All `Guid` parameters bound via `MySqlParameter { MySqlDbType = MySqlDbType.Binary, Size = 16, Value = guid.ToByteArray() }`; reads use `reader.GetBytes` → `new Guid(byte[])`. Integration test pins the round-trip. |
@@ -686,7 +686,7 @@ separate aggregate concept, use the suffix exception.
 | `IDENTITY__mariadb__url` | _none_ (required) | `mysql://user:pass@host:port/db`; percent-encoding allowed for users / passwords. Mutually exclusive with `connection_string`. |
 | `IDENTITY__mariadb__connection_string` | _none_ | Raw MySqlConnector KV form for callers needing options the URL shape cannot express. |
 | `IDENTITY__mariadb__min_pool_size` | 0 | Lazily opens connections. |
-| `IDENTITY__mariadb__max_pool_size` | 16 | Smaller than analytics-api per design review. |
+| `IDENTITY__mariadb__max_pool_size` | 16 | Smaller than the analytics service per design review. |
 | `IDENTITY__identity__bind_addr` | `0.0.0.0:8082` | Listener address. |
 | `IDENTITY__identity__tenant_default_id` | _empty_ | Optional; opt-in for single-tenant clusters. |
 | `IDENTITY__identity__expand_subordinates` | `false` | Phase 2 toggle (recursive supervisor walk). |

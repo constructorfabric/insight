@@ -1,0 +1,598 @@
+{
+  "components": {
+    "schemas": {
+      "CreatePersonRoleCommandModel": {
+        "properties": {
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "role_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "role_id",
+          "valid_from",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "CreateRoleCommandModel": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "CreateVisibilityCommandModel": {
+        "properties": {
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "viewed_person_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "viewer_person_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "viewer_person_id",
+          "viewed_person_id",
+          "valid_from",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "PersonsSeedRequest": {
+        "nullable": true,
+        "properties": {
+          "mode": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "ResolveProfileCommandModel": {
+        "properties": {
+          "insight_source_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "insight_source_type": {
+            "nullable": true,
+            "type": "string"
+          },
+          "value": {
+            "nullable": true,
+            "type": "string"
+          },
+          "value_type": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "value_type",
+          "value",
+          "insight_source_type",
+          "insight_source_id"
+        ],
+        "type": "object"
+      },
+      "RevokeReasonModel": {
+        "nullable": true,
+        "properties": {
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Resolves people, org-chart parent/subordinates, roles, and row-level visibility for Insight. Backed by MariaDB (identity tables) with a ClickHouse-sourced bulk re-seed. Fronted by the API Gateway.",
+    "title": "Identity API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.0.1",
+  "paths": {
+    "/health": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/person-roles": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "person",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "active",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePersonRoleCommandModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/person-roles/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeReasonModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/persons-seed": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonsSeedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/persons-seed/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/persons/{email}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "email",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/profiles": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveProfileCommandModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/roles": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRoleCommandModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/roles/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/subchart": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "depth",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "valid_at",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/subchart/{personId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "personId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "depth",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "valid_at",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/visibility": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "viewer",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "viewed",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "active",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVisibilityCommandModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    },
+    "/v1/visibility/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeReasonModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Insight.Identity.Api"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Insight.Identity.Api"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+# Reusable records for outline_wiki_comments.yaml (base carries every schema column; unused = null).
+templates:
+  outline_comment:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    unique_key: null
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "wiki-test"
+    page_id: null
+    comment_id: null
+    author_id: null
+    created_at: null
+    resolution_status: null
+    parent_comment_id: null
+    anchor_text: null
+
+  c:
+    $ref: "#/templates/outline_comment"
+    author_id: outline-commenter
