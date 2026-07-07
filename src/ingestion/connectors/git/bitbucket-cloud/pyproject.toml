@@ -12,8 +12,16 @@ dependencies = [
     "requests>=2.31.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 source-bitbucket-cloud-insight = "source_bitbucket_cloud.source:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["."]
