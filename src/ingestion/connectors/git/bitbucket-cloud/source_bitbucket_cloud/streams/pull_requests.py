@@ -71,6 +71,14 @@ class PullRequestsStream(HttpSubStream, BitbucketCloudStream):
             "pagelen": str(self.page_size),
             "state": ["OPEN", "MERGED", "DECLINED", "SUPERSEDED"],
             "sort": "-updated_on",
+            # The pullrequests LIST representation OMITS `participants` by
+            # default (it is only in the per-PR detail representation), so
+            # reviewer facts must be pulled in explicitly. `+values.<field>`
+            # augments the default field set rather than replacing it; requests
+            # url-encodes the leading '+' to %2B, which is what the API wants.
+            # closed_by is already in the default list representation. The
+            # `next` page URLs carry this param forward.
+            "fields": "+values.participants",
         }
 
     def next_page_token(self, response):
