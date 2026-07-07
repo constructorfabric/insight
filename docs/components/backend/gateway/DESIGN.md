@@ -79,7 +79,7 @@ The gateway carries its share of the NFRs the authenticator PRD pins:
 | `cpt-insightspec-nfr-auth-rate-limit` | Layered `/auth/*` rate limiting | `limit_req` zone | Coarse per-IP flood guard (layer 1); precise layer 2 lives in the authenticator | Flood test: excess requests rejected at the edge before reaching the authenticator |
 | `cpt-insightspec-nfr-auth-fail-closed` | No auth without a live session check | `auth_request` + error shaping | Subrequest failure never passes through -- shaped 503 + `Retry-After` per request; readiness stays local so an authenticator blip does not drain the fleet (see 3.15) | Kill the authenticator; assert per-request 503 problem-details while the gateway stays Ready and keeps serving cache hits, `/auth/*`, and the SPA |
 
-**ADRs**: decisions captured inline in [section 4](#4-design-decisions); to be extracted alongside implementation.
+**ADRs**: [`cpt-insightspec-adr-gw-0001-access-by-lua-over-auth-request`](specs/ADR/0001-access-by-lua-over-auth-request.md) -- the access-phase-Lua-vs-`auth_request` mechanism decision behind `DD-GW-03` (spike-validated, EPIC #1583 step 02). Remaining decisions are captured inline in [section 4](#4-design-decisions); to be extracted alongside implementation.
 
 ### 1.3 Architecture Layers
 
@@ -405,9 +405,13 @@ A cache-purge-on-rotation hook is deliberately **not** added in v1: the gateway 
 
 - [ ] `p2` - **ID**: `cpt-insightspec-design-gateway-lua-module`
 
-About 50 lines of access-phase Lua plus helpers, deliberately trivial:
+About 50 lines of access-phase Lua plus helpers, deliberately trivial. The mechanism is the
+pure `access_by_lua` exchange, **not** the stock `auth_request` directive: the two do not
+compose (an `auth_request` cannot be skipped on a `lua_shared_dict` hit), so the miss-path
+subrequest is issued from Lua -- a `lua-resty-http` cosocket call, which requires a `resolver`
+in the `http` block. Validated end-to-end by the step-02 spike; see [`cpt-insightspec-adr-gw-0001-access-by-lua-over-auth-request`](specs/ADR/0001-access-by-lua-over-auth-request.md).
 
-- **Exchange cache**: `lua_shared_dict jwt_cache` -- cookie token in, JWT out. Hit: set `Authorization`, done. Miss: subrequest to the exchange, cache per the response `Cache-Control` (never a non-200). The dict is a **pre-allocated fixed-size shared-memory zone with native LRU eviction**: it structurally cannot grow past its declared size (gateway OOM via cache is impossible by construction), and eviction costs one extra subrequest on the next hit for the evicted session. Sizing: an entry is cookie token + JWT, about 1.5 KB; entries expire with their max-age, so steady state tracks sessions active per cache window; the default `64m` zone covers roughly 40k concurrently active sessions -- a set-and-forget Helm value emitted by the configurator.
+- **Exchange cache**: `lua_shared_dict jwt_cache` -- cookie token in, JWT out. Hit: set `Authorization`, done. Miss: cosocket subrequest to the exchange, cache per the response `Cache-Control` (never a non-200). The dict is a **pre-allocated fixed-size shared-memory zone with native LRU eviction**: it structurally cannot grow past its declared size (gateway OOM via cache is impossible by construction), and eviction costs one extra subrequest on the next hit for the evicted session. Sizing: an entry is cookie token + JWT, about 1.5 KB; entries expire with their max-age, so steady state tracks sessions active per cache window; the default `64m` zone covers roughly 40k concurrently active sessions -- a set-and-forget Helm value emitted by the configurator.
 - **Correlation ids**: per-request UUIDv7 generated in the access phase and injected as `X-Correlation-Id` -- never read from the cacheable subrequest response. Stock-nginx `$request_id` (random hex) is the documented fallback.
 - **Error shaping**: the access phase sees the subrequest outcome directly and emits RFC 9457 problem-details distinguishing refused / unreachable / timed out, with a dynamic `Retry-After` -- the same error format the toolkit's canonical errors produce, one format from the edge to the gear.
 
@@ -531,4 +535,4 @@ One OpenResty Deployment (at least 2 replicas) behind the single ingress backend
 - **Sibling**: [Authenticator PRD](../authenticator/PRD.md), [Authenticator DESIGN](../authenticator/DESIGN.md) -- session lifecycle, exchange contract (`cpt-insightspec-contract-auth-authz-exchange`), JWT claim contract, JWKS
 - **Parent**: [Backend PRD](../specs/PRD.md), [Backend DESIGN](../specs/DESIGN.md)
 - **Decision document**: the nginx + authorization analysis (workspace-level) that mandated this architecture
-- **ADRs**: decisions captured inline in section 4 until extracted alongside implementation
+- **ADRs**: [ADR-0001](specs/ADR/0001-access-by-lua-over-auth-request.md) (`cpt-insightspec-adr-gw-0001-access-by-lua-over-auth-request`) -- access-phase Lua over `auth_request` for the exchange (`DD-GW-03`), spike-validated. Remaining decisions captured inline in section 4 until extracted alongside implementation.

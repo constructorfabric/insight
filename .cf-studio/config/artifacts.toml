@@ -594,6 +594,11 @@ traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "ADR"
+path = "docs/components/backend/gateway/specs/ADR/0001-access-by-lua-over-auth-request.md"
+name = "ADR-0001: Pure access_by_lua Exchange Instead of the auth_request Directive"
+
+[[systems.artifacts]]
+kind = "ADR"
 path = "docs/shared/glossary/ADR/0001-uuidv7-primary-key.md"
 name = "ADR-0001: UUIDv7 as Universal Primary Key"
 
