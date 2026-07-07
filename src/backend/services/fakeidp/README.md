@@ -8,10 +8,28 @@ IdP**. It also exposes `/_control/*` hooks that an off-the-shelf IdP can't give
 us, so e2e tests can force the hard paths (IdP refusal, back-channel logout,
 token-endpoint outages).
 
-> **This is a test double. It signs tokens with a keypair checked into the repo
+> **This is a test double. It generates a throwaway RS256 signing key at startup
 > and lets anyone mint a session for any test user. It must NEVER run in
 > production, ship in a production image, or be referenced by a production
 > chart.** See `cf/NGINX_BFF.md` §10 G6 for the decision.
+
+## Why this is NOT a gears-rust toolkit gear (by intent, not by mistake)
+
+Every other backend service here is an idiomatic gears-rust gear
+(`#[toolkit::gear]`, OperationBuilder, CanonicalError, the global type system).
+**fakeidp is deliberately a plain axum binary and deliberately does not use the
+toolkit.** This is a conscious choice, not an oversight or unfinished work:
+
+- The requirement (NGINX_BFF.md §10 G6) is literally *"as silly as it can be"* —
+  a few hundred lines with zero framework ceremony, so it starts fast in CI and
+  is trivial to read and throw away.
+- It fakes the **customer's** IdP — an external, third-party system. Modelling
+  someone else's OIDC provider as one of our gears would be a category error.
+- It ships in **no** production image and is referenced by **no** production
+  chart, so none of the toolkit's operational guarantees (auth, tenancy, GTS,
+  canonical errors) buy anything here — they would only add weight.
+
+If you are tempted to "upgrade" it to a gear: don't. The silliness is the point.
 
 ## Running it
 
@@ -34,10 +52,18 @@ cargo run -p fakeidp             # → http://localhost:8084
 | `FAKEIDP_BACKCHANNEL_URL`| _(unset)_                 | RP back-channel logout endpoint; required for `/_control/backchannel`. |
 | `FAKEIDP_DEFAULT_AUD`    | `authenticator`           | `aud` for the back-channel `logout_token`.                     |
 | `FAKEIDP_USERS`          | _(baked `users.yaml`)_    | Path to an alternate users file.                               |
+| `FAKEIDP_DEV_USER_EMAIL` | _(unset)_                 | Overrides the **first** user's email — the default-login identity. Compose wires it from `VITE_DEV_USER_EMAIL`. |
 
 Test users live in [`users.yaml`](./users.yaml) (baked into the binary). The
-first user (`alice@example.com`) is the default when `/authorize` is called with
-no `user=` parameter.
+**first** user is the default when `/authorize` is called with no `user=`
+parameter. Its baked email (`dev@company.nonpresent`) matches dev-compose.sh's
+`VITE_DEV_USER_EMAIL` default — the same dev person the seeder writes into
+identity — so a plain `docker compose up` + login resolves to a real person.
+When the wizard is given a different dev email, compose forwards it via
+`FAKEIDP_DEV_USER_EMAIL` so the default login still matches the seeded person.
+
+The signing key is **generated fresh at each startup** — nothing is checked in.
+Clients fetch the current public key from `GET /jwks`.
 
 ## Endpoints
 

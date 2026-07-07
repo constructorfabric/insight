@@ -32,16 +32,12 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rand::RngCore;
 use rsa::RsaPrivateKey;
-use rsa::pkcs8::DecodePrivateKey;
+use rsa::pkcs8::{EncodePrivateKey, LineEnding};
 use rsa::traits::PublicKeyParts;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-/// Static, test-only signing keypair, baked into the binary. RS256 is fine:
-/// this fakes the *customer* IdP (which signs id_tokens the authenticator
-/// verifies via our JWKS), not our own gateway JWT.
-const PRIVATE_PEM: &str = include_str!("../keys/private.pem");
 const KID: &str = "fakeidp-key-1";
 
 /// Baked default users, used when `FAKEIDP_USERS` is not set (so `cargo run`
@@ -102,6 +98,11 @@ struct UsersFile {
 
 /// Load test users from `FAKEIDP_USERS` (a path) or fall back to the baked
 /// `users.yaml`. Panics on malformed input — this is a test binary; loud is fine.
+///
+/// If `FAKEIDP_DEV_USER_EMAIL` is set, it overrides the *first* user's email.
+/// Compose wires this from the wizard's `VITE_DEV_USER_EMAIL`, so the default
+/// login always matches the dev person the seeder wrote into identity — even
+/// when the operator picked a non-default dev email.
 pub fn load_users() -> Vec<User> {
     let raw = match std::env::var("FAKEIDP_USERS") {
         Ok(path) => {
@@ -110,11 +111,18 @@ pub fn load_users() -> Vec<User> {
         Err(_) => DEFAULT_USERS_YAML.to_string(),
     };
     let parsed: UsersFile = serde_yaml::from_str(&raw).expect("users.yaml is not valid YAML");
+    let mut users = parsed.users;
     assert!(
-        !parsed.users.is_empty(),
+        !users.is_empty(),
         "users.yaml must define at least one user"
     );
-    parsed.users
+
+    if let Ok(email) = std::env::var("FAKEIDP_DEV_USER_EMAIL")
+        && !email.is_empty()
+    {
+        users[0].email = email;
+    }
+    users
 }
 
 // ─── Mutable state ─────────────────────────────────────────────────────────
@@ -165,13 +173,12 @@ pub type Shared = Arc<AppState>;
 
 impl AppState {
     pub fn new(config: Config, users: Vec<User>) -> Self {
-        let signing_key = EncodingKey::from_rsa_pem(PRIVATE_PEM.as_bytes())
-            .expect("baked private key is valid RSA PEM");
+        let (signing_key, jwks) = generate_signing_material();
         Self {
             config,
             users,
             signing_key,
-            jwks: build_jwks(),
+            jwks,
             inner: Mutex::new(Mutable::default()),
         }
     }
@@ -187,15 +194,26 @@ impl AppState {
 
 // ─── Crypto helpers ──────────────────────────────────────────────────────
 
-/// Derive the JWKS from the baked private key so `/jwks` and the signing key
-/// can never drift apart.
-fn build_jwks() -> Value {
-    let priv_key =
-        RsaPrivateKey::from_pkcs8_pem(PRIVATE_PEM).expect("baked private key is valid PKCS#8 PEM");
+/// Generate a fresh RS256 keypair at startup and return the signing key plus a
+/// matching JWKS derived from it, so `/jwks` and the signer can never drift.
+///
+/// Nothing is persisted: the key lives only in this process. It fakes the
+/// *customer* IdP (whose id_tokens the authenticator verifies via our JWKS),
+/// not our own gateway JWT, and consumers fetch `/jwks` at runtime — so a fresh
+/// key per boot is exactly right and keeps key material out of the repo.
+fn generate_signing_material() -> (EncodingKey, Value) {
+    let mut rng = rand::thread_rng();
+    let priv_key = RsaPrivateKey::new(&mut rng, 2048).expect("generate RSA key");
+    let pem = priv_key
+        .to_pkcs8_pem(LineEnding::LF)
+        .expect("encode generated key as PKCS#8 PEM");
+    let signing_key =
+        EncodingKey::from_rsa_pem(pem.as_bytes()).expect("generated key is valid RSA PEM");
+
     let pub_key = priv_key.to_public_key();
     let n = URL_SAFE_NO_PAD.encode(pub_key.n().to_bytes_be());
     let e = URL_SAFE_NO_PAD.encode(pub_key.e().to_bytes_be());
-    json!({
+    let jwks = json!({
         "keys": [{
             "kty": "RSA",
             "use": "sig",
@@ -204,7 +222,8 @@ fn build_jwks() -> Value {
             "n": n,
             "e": e,
         }]
-    })
+    });
+    (signing_key, jwks)
 }
 
 fn now() -> u64 {

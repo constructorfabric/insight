@@ -1,8 +1,8 @@
 # Multi-stage build for the fake IdP (dev/e2e ONLY).
 #
 # This image must NEVER be published to a production registry or referenced by
-# a production chart — fakeidp signs tokens with a keypair checked into the
-# repo and exposes `/_control/*` test hooks. It exists so `docker compose up`
+# a production chart — fakeidp signs tokens with a throwaway keypair generated
+# at startup and exposes `/_control/*` test hooks. It exists so `docker compose up`
 # and CI can drive the authenticator's real OIDC code path. See
 # services/fakeidp/README.md and cf/NGINX_BFF.md §10 G6.
 #
@@ -39,10 +39,10 @@ RUN cargo build --release --bin fakeidp 2>/dev/null || true
 RUN rm -rf services/fakeidp/src \
     target/release/fakeidp target/release/deps/fakeidp* target/release/deps/libfakeidp*
 
-# The signing keypair and users.yaml are baked into the binary via include_str!,
-# so the source tree must carry them at compile time.
+# The default users.yaml is baked into the binary via include_str!, so the
+# source tree must carry it at compile time. The signing keypair is generated
+# at startup — nothing to copy.
 COPY services/fakeidp/src/ ./services/fakeidp/src/
-COPY services/fakeidp/keys/ ./services/fakeidp/keys/
 COPY services/fakeidp/users.yaml ./services/fakeidp/users.yaml
 
 RUN cargo build --release --bin fakeidp
