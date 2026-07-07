@@ -1,12 +1,12 @@
 """Contract: /v1/metrics path group — definition CRUD + the two query endpoints.
 
   GET    /v1/metrics              200 list · 200 excludes soft-deleted
-  POST   /v1/metrics              201 create · 400 invalid query_ref
-  GET    /v1/metrics/{id}         200 · 404 unknown · 404 soft-deleted
-  PUT    /v1/metrics/{id}         200 · 404 unknown
-  DELETE /v1/metrics/{id}         204 · 404 unknown
-  POST   /v1/metrics/{id}/query   200 · 404 unknown
-  POST   /v1/metrics/queries      200 batch
+  POST   /v1/metrics              201 · 400 query_ref · 415 wrong-ct · 400 off-schema (xfail: #1670)
+  GET    /v1/metrics/{id}         200 · 400 non-uuid · 404 unknown · 404 soft-deleted
+  PUT    /v1/metrics/{id}         200 · 400 non-uuid · 404 unknown · 415 wrong-ct · 400 off-schema (xfail: #1670)
+  DELETE /v1/metrics/{id}         204 · 400 non-uuid · 404 unknown
+  POST   /v1/metrics/{id}/query   200 · 400 orderby · 404 unknown · 415 wrong-ct · 400 off-schema (xfail: #1670)
+  POST   /v1/metrics/queries      200 batch · 400 malformed · 415 wrong-ct · 400 off-schema (xfail: #1670)
 
 The scratch metric's query_ref runs the REAL engine end-to-end: parsed,
 validated, wrapped (`SELECT ... FROM system.one WHERE 1=1 LIMIT n`) and
@@ -17,7 +17,13 @@ from __future__ import annotations
 
 import pytest
 
-from api.endpoint_helpers import SCRATCH_QUERY_REF, UNKNOWN_ID, create_scratch_metric
+from api.endpoint_helpers import (
+    NON_UUID,
+    SCRATCH_QUERY_REF,
+    UNKNOWN_ID,
+    create_scratch_metric,
+    text_body_request,
+)
 
 pytestmark = pytest.mark.api
 
@@ -160,3 +166,97 @@ def test_batch_queries_200_partial_failure(api, scratch_metric: dict) -> None:
     bad = by_id["bad"]
     assert bad["status"] == "error"
     assert bad["error"]["status"] == 404, bad
+
+
+# ── body-parse contracts (415 wrong Content-Type, 400 off-schema) ──────────
+# 415 (wrong Content-Type) is both the intended and the real status. An
+# off-schema body SHOULD be a canonical 400 (as admin/catalog answer via
+# CanonicalJson); the legacy `axum::Json` handlers return a non-canonical 422
+# instead — #1670. The *_400_schema_mismatch cases assert the intended 400 and
+# xfail(strict) until the body extractor is unified (developer error-design).
+
+
+def test_create_metric_415_wrong_content_type(api) -> None:
+    r = text_body_request(api, "POST", "/v1/metrics")
+    assert r.status_code == 415, f"status={r.status_code} body={r.text}"
+
+
+@pytest.mark.xfail(
+    reason="#1670: off-schema body should be canonical 400; legacy axum::Json returns 422",
+    strict=True,
+)
+def test_create_metric_400_schema_mismatch(api) -> None:
+    """Intended: `name` is a String, a numeric value is an off-schema body → 400."""
+    r = api.post("/v1/metrics", json={"name": 123, "query_ref": SCRATCH_QUERY_REF})
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
+def test_get_metric_400_non_uuid(api) -> None:
+    """`{id}` binds `Path<Uuid>`; a non-UUID segment is a 400 before handler logic."""
+    r = api.get(f"/v1/metrics/{NON_UUID}")
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
+def test_update_metric_400_non_uuid(api) -> None:
+    r = api.put(f"/v1/metrics/{NON_UUID}", json={"name": "x"})
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
+def test_update_metric_415_wrong_content_type(api, scratch_metric: dict) -> None:
+    r = text_body_request(api, "PUT", f"/v1/metrics/{scratch_metric['id']}")
+    assert r.status_code == 415, f"status={r.status_code} body={r.text}"
+
+
+@pytest.mark.xfail(
+    reason="#1670: off-schema body should be canonical 400; legacy axum::Json returns 422",
+    strict=True,
+)
+def test_update_metric_400_schema_mismatch(api, scratch_metric: dict) -> None:
+    """Intended: `name` is `Option<String>`, a numeric value is off-schema → 400."""
+    r = api.put(f"/v1/metrics/{scratch_metric['id']}", json={"name": 123})
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
+def test_delete_metric_400_non_uuid(api) -> None:
+    r = api.delete(f"/v1/metrics/{NON_UUID}")
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
+def test_query_metric_415_wrong_content_type(api, scratch_metric: dict) -> None:
+    r = text_body_request(api, "POST", f"/v1/metrics/{scratch_metric['id']}/query")
+    assert r.status_code == 415, f"status={r.status_code} body={r.text}"
+
+
+@pytest.mark.xfail(
+    reason="#1670: off-schema body should be canonical 400; legacy axum::Json returns 422",
+    strict=True,
+)
+def test_query_metric_400_schema_mismatch(api, scratch_metric: dict) -> None:
+    """Intended: `$top` is a `u64`, a string value is off-schema → 400."""
+    r = api.post(f"/v1/metrics/{scratch_metric['id']}/query", json={"$top": "not-a-number"})
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
+def test_batch_queries_400_malformed_json(api) -> None:
+    """Malformed JSON body (correct Content-Type) is a syntax error → 400."""
+    r = api.post(
+        "/v1/metrics/queries",
+        content=b"{not valid json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
+def test_batch_queries_415_wrong_content_type(api) -> None:
+    r = text_body_request(api, "POST", "/v1/metrics/queries")
+    assert r.status_code == 415, f"status={r.status_code} body={r.text}"
+
+
+@pytest.mark.xfail(
+    reason="#1670: off-schema body should be canonical 400; legacy axum::Json returns 422",
+    strict=True,
+)
+def test_batch_queries_400_schema_mismatch(api) -> None:
+    """Intended: `queries` is an array, a string value is off-schema → 400."""
+    r = api.post("/v1/metrics/queries", json={"queries": "not-an-array"})
+    assert r.status_code == 400, f"status={r.status_code} body={r.text}"

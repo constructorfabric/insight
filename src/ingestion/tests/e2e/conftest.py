@@ -292,8 +292,8 @@ def pytest_sessionfinish(session, exitstatus):
     `AnalyticsProcess.client()` (`lib.api_coverage.record_response`).
 
     The endpoint-coverage gate (`lib/api_coverage.py`, run by `./e2e.sh gates`
-    and the api-endpoint-coverage-gate CI job via the coverage-inputs artifact)
-    diffs this against the committed OpenAPI spec. Primary worker only;
+    and the api-endpoint-coverage-gate CI job via the coverage-inputs-api
+    artifact) diffs this against the committed OpenAPI spec. Primary worker only;
     best-effort — a failed artifact write is logged, never fails the run (a
     missing ledger then fails the downstream gate loudly instead)."""
     if not _IS_PRIMARY:

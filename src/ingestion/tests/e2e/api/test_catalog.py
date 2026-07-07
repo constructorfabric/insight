@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from api.endpoint_helpers import text_body_request
 from lib.config import TEST_TENANT_ID
 
 pytestmark = pytest.mark.api
@@ -29,3 +30,10 @@ def test_get_metrics_400_unknown_field(api) -> None:
     query params)."""
     r = api.post("/v1/catalog/get_metrics", json={"tenant_idd": "oops"})
     assert r.status_code == 400, f"status={r.status_code} body={r.text}"
+
+
+def test_get_metrics_415_wrong_content_type(api) -> None:
+    """Catalog extracts with `CanonicalJson`; a non-JSON Content-Type is a
+    canonical 415 unsupported-media-type."""
+    r = text_body_request(api, "POST", "/v1/catalog/get_metrics")
+    assert r.status_code == 415, f"status={r.status_code} body={r.text}"

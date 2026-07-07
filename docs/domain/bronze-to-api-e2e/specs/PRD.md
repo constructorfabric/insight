@@ -23,6 +23,7 @@
   - [5.4 API Roundtrip](#54-api-roundtrip)
   - [5.5 Assertion](#55-assertion)
   - [5.6 Isolation](#56-isolation)
+  - [5.7 Coverage Enforcement](#57-coverage-enforcement)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -39,7 +40,8 @@
 
 ## Changelog
 
-- **v1.0** (current): Initial PRD. Establishes the Bronze-to-API E2E Test Framework as a developer-facing tool: each test is a folder of CSV fixtures (bronze inputs + expected API response) and the runner exercises the full data path bronze → dbt staging/silver → ClickHouse gold views (from migrations) → analytics HTTP response → CSV assert. Airbyte sync, Argo/Kestra orchestration, and the frontend are explicitly out of v1 scope. v1 ships pytest + local docker compose with one shared ClickHouse and one shared MariaDB per session.
+- **v1.1** (current): Adds `cpt-bronze-to-api-e2e-fr-coverage-gate` (§5.7) — every operation documented in the committed analytics OpenAPI spec must be exercised by the e2e suite and observed answering an expected status, enforced as a blocking CI coverage gate (the endpoint gate mirroring the already-blocking metric gate). This names an enforcement capability the suite already carries; the transformation path, scope, and every other FR are unchanged.
+- **v1.0**: Initial PRD. Establishes the Bronze-to-API E2E Test Framework as a developer-facing tool: each test is a folder of CSV fixtures (bronze inputs + expected API response) and the runner exercises the full data path bronze → dbt staging/silver → ClickHouse gold views (from migrations) → analytics HTTP response → CSV assert. Airbyte sync, Argo/Kestra orchestration, and the frontend are explicitly out of v1 scope. v1 ships pytest + local docker compose with one shared ClickHouse and one shared MariaDB per session.
 
 ## 1. Overview
 
@@ -271,6 +273,17 @@ When tests run under `pytest-xdist`, the system **MUST** suffix every bronze sch
 
 **Rationale**: Without per-worker namespaces, parallel runs see each other's bronze data and tests flake.
 **Actors**: `cpt-bronze-to-api-e2e-actor-ci-pipeline`
+
+### 5.7 Coverage Enforcement
+
+#### Exercise and enforce every documented API operation
+
+- [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-fr-coverage-gate`
+
+Every operation documented in the committed analytics OpenAPI spec (`docs/components/backend/analytics/openapi.json`) **MUST** be exercised by the e2e suite, and each of its declared status codes **MUST** be observed by the suite — except a code the gate excludes as unreachable by a black-box rig: any server-fault code at or above 500 (never deterministically inducible), the universal boilerplate `{401, 429}` (auth is disabled and nothing rate-limits, so these are declared on every route but never emitted), and a per-operation `BLOCKED` set of declared codes a route provably cannot answer (over-declared spec boilerplate, or a pinned rig/product limitation). This **MUST** be enforced as a blocking CI gate (the endpoint coverage gate), mirroring the already-blocking metric-coverage gate: an operation added to the spec without a matching test — or a required declared code the suite never observes — **MUST** fail the gate.
+
+**Rationale**: Route reachability alone is not coverage — an operation touched only by requests that error, or that never exercises one of its other declared outcomes, is untested against its real contract. A per-status-code gate that blocks CI keeps the documented API surface and the e2e suite from silently drifting apart, the same way the metric-coverage gate keeps the metric catalog and the metric suite aligned.
+**Actors**: `cpt-bronze-to-api-e2e-actor-backend-developer`, `cpt-bronze-to-api-e2e-actor-ci-pipeline`
 
 ## 6. Non-Functional Requirements
 
