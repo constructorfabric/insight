@@ -28,7 +28,35 @@ SELECT
     COALESCE(pr.destination_branch, '') AS destination_branch,
     parseDateTimeBestEffortOrNull(pr.created_on) AS created_on,
     parseDateTimeBestEffortOrNull(pr.updated_on) AS updated_on,
-    parseDateTimeBestEffortOrNull(if(pr.state IN ('MERGED', 'DECLINED', 'SUPERSEDED'), toString(pr.updated_on), '')) AS closed_on,
+    -- closed_on heuristic: Bitbucket's PR list payload carries no dedicated
+    -- merge/close timestamp, so this stays an approximation. Best available
+    -- proxy is the closer's own participated_on (when the account that
+    -- merged/declined last acted, matched out of participants by closed_by_uuid);
+    -- fall back to updated_on (last mutation) when the closer isn't a listed
+    -- participant or has no timestamp. Only terminal PRs get a closed_on.
+    parseDateTimeBestEffortOrNull(
+        if(
+            pr.state IN ('MERGED', 'DECLINED', 'SUPERSEDED'),
+            COALESCE(
+                NULLIF(
+                    if(
+                        COALESCE(pr.closed_by_uuid, '') != '',
+                        JSONExtractString(
+                            arrayFirst(
+                                x -> JSONExtractString(x, 'uuid') = COALESCE(pr.closed_by_uuid, ''),
+                                JSONExtractArrayRaw(COALESCE(toString(pr.participants), '[]'))
+                            ),
+                            'participated_on'
+                        ),
+                        ''
+                    ),
+                    ''
+                ),
+                toString(pr.updated_on)
+            ),
+            ''
+        )
+    ) AS closed_on,
     COALESCE(pr.merge_commit_hash, '') AS merge_commit_hash,
     COALESCE(fc.files_changed, 0) AS files_changed,
     COALESCE(fc.lines_added, 0) AS lines_added,

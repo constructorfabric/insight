@@ -1,6 +1,6 @@
 ---
 status: proposed
-date: 2026-03-31
+date: 2026-07-06
 ---
 
 # PRD -- Backend
@@ -181,6 +181,8 @@ The product is deployed as a standalone installation on customer Kubernetes clus
 - Credential management with per-tenant envelope encryption
 - Org tree sync from HR/directory systems via pluggable adapters
 - OIDC-to-person identity resolution (login mapping)
+- Session-based browser authentication via the Authenticator service (token-handler pattern; see [authenticator/PRD.md](../authenticator/PRD.md))
+- Edge routing and cookie-to-JWT exchange via the nginx gateway (see [gateway/DESIGN.md](../gateway/DESIGN.md))
 - Cross-source identity resolution (alias matching, golden records, merge/split)
 - RBAC with five roles (Viewer, Analyst, Connector Admin, Identity Admin, Tenant Admin)
 - Org-tree-based data visibility with follow-the-unit-strict policy
@@ -328,9 +330,11 @@ The system **MUST** map disparate identity signals (emails, usernames, employee 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-be-oidc-auth`
 
-The system **MUST** authenticate all API requests via OIDC/JWT tokens issued by the customer's identity provider. No bundled identity provider or user/password management **MUST** be included.
+The system **MUST** authenticate users against the customer's identity provider via OIDC. No bundled identity provider or user/password management **MUST** be included.
 
-**Rationale**: Enterprise customers have existing IdPs. The product must integrate, not replace.
+Browser authentication follows the token-handler pattern: the [Authenticator service](../authenticator/PRD.md) runs the OIDC flow, keeps IdP tokens server-side, and gives the browser only an opaque session cookie. The [nginx gateway](../gateway/DESIGN.md) exchanges that cookie for a short-lived signed gateway JWT on every API request; every backend service **MUST** verify that gateway JWT (via JWKS) and authorize from its signed claims -- fail closed, no production disable knob.
+
+**Rationale**: Enterprise customers have existing IdPs. The product must integrate, not replace. Keeping IdP tokens out of the browser and verifying a signed claim set in every service removes token-theft-via-XSS and unsigned-header trust.
 
 **Actors**: `cpt-insightspec-actor-oidc-provider`
 

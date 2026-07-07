@@ -576,27 +576,26 @@ traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "PRD"
-path = "docs/components/backend/api-gateway/bff/PRD.md"
-name = "BFF (Backend-for-Frontend) PRD"
+path = "docs/components/backend/authenticator/PRD.md"
+name = "Authenticator Service PRD"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/backend/api-gateway/bff/DESIGN.md"
-name = "BFF Architecture"
-traceability = "DOCS-ONLY"
-
-[[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/backend/api-gateway/router/PRD.md"
-name = "API Gateway Router PRD"
+path = "docs/components/backend/authenticator/DESIGN.md"
+name = "Authenticator Service Design"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/backend/api-gateway/router/DESIGN.md"
-name = "API Gateway Router Architecture"
+path = "docs/components/backend/gateway/DESIGN.md"
+name = "Gateway (nginx edge) Design"
 traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/gateway/specs/ADR/0001-access-by-lua-over-auth-request.md"
+name = "ADR-0001: Pure access_by_lua Exchange Instead of the auth_request Directive"
 
 [[systems.artifacts]]
 kind = "ADR"
