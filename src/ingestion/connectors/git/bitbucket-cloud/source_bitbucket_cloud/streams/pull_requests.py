@@ -172,6 +172,12 @@ class PullRequestsStream(HttpSubStream, BitbucketCloudStream):
             src_branch = (pr.get("source") or {}).get("branch") or {}
             dst_branch = (pr.get("destination") or {}).get("branch") or {}
             merge_commit = pr.get("merge_commit") or {}
+            # closed_by is the account that merged/declined the PR. Present only
+            # on terminal PRs (MERGED/DECLINED); null while OPEN. The API exposes
+            # the actor but no dedicated close timestamp on the list payload, so
+            # downstream derives closed_on from participants[].participated_on /
+            # updated_on (see bitbucket_cloud__pull_requests.sql).
+            closed_by = pr.get("closed_by") or {}
 
             participants = []
             for p in pr.get("participants") or []:
@@ -183,6 +189,9 @@ class PullRequestsStream(HttpSubStream, BitbucketCloudStream):
                     "role": p.get("role"),
                     "approved": p.get("approved", False),
                     "state": p.get("state"),
+                    # When this participant last approved / requested changes.
+                    # Drives reviewed_at in bitbucket_cloud__pull_requests_reviewers.
+                    "participated_on": p.get("participated_on"),
                 })
 
             record = {
@@ -197,6 +206,8 @@ class PullRequestsStream(HttpSubStream, BitbucketCloudStream):
                 "updated_on": updated_on,
                 "author_display_name": author.get("display_name"),
                 "author_uuid": author.get("uuid"),
+                "closed_by_display_name": closed_by.get("display_name"),
+                "closed_by_uuid": closed_by.get("uuid"),
                 "source_branch": src_branch.get("name"),
                 "destination_branch": dst_branch.get("name"),
                 "merge_commit_hash": merge_commit.get("hash"),
@@ -252,6 +263,8 @@ class PullRequestsStream(HttpSubStream, BitbucketCloudStream):
                 "updated_on": {"type": ["null", "string"]},
                 "author_display_name": {"type": ["null", "string"]},
                 "author_uuid": {"type": ["null", "string"]},
+                "closed_by_display_name": {"type": ["null", "string"]},
+                "closed_by_uuid": {"type": ["null", "string"]},
                 "source_branch": {"type": ["null", "string"]},
                 "destination_branch": {"type": ["null", "string"]},
                 "merge_commit_hash": {"type": ["null", "string"]},
