@@ -3,9 +3,10 @@
 
    Counterpart of `bitbucket_cloud__bronze_promoted`. The `promote_bronze_to_rmt`
    macro is idempotent — already-RMT tables are detected and skipped on
-   subsequent runs. Only tables that feed a `class_git_*` staging model are
-   promoted; the connector's other bronze tables (merge_request_discussions,
-   merge_request_state_events, issues) have no silver target yet.
+   subsequent runs. Every full-refresh bronze table the connector writes is
+   promoted so read-time dedup by `unique_key` (via FINAL) is well-defined,
+   including tables that do not yet feed a `class_git_*` staging model
+   (issues, merge_request_discussions, merge_request_state_events).
    ------------------------------------------------------------------------- #}
 
 -- @cpt-principle:cpt-dataflow-principle-promote-bronze:p1
@@ -24,5 +25,8 @@
 {% do promote_bronze_to_rmt(table='bronze_gitlab.merge_request_notes',     order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_gitlab.merge_request_approvals', order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_gitlab.users',                   order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_gitlab.issues',                          order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_gitlab.merge_request_discussions',       order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_gitlab.merge_request_state_events',      order_by='unique_key') %}
 
 SELECT 1 AS promoted

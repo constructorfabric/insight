@@ -926,7 +926,11 @@ streams:
       path: /api/issues
       request_parameters:
         query: 'updated: {{ stream_slice.start_time }} .. {{ stream_slice.end_time }} sort by: updated asc'
-        fields: id,idReadable,summary,description,resolved,created,updated,project(id,shortName),reporter(id,login,fullName,email),tags(id,name),attachments(id,name,url,mimeType),links(id,direction,linkType(id,name,sourceToTarget,targetToSource),trimmedIssues(id,idReadable)),customFields(id,name,projectCustomField(id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue))),value(id,name,fullName,login,presentation,localizedName,text,minutes,description,color(presentation)))
+        # links: `issues` (full list) instead of `trimmedIssues` — trimmedIssues
+        # silently caps at 20 per link direction; issuesSize kept for QA.
+        # value: FieldStyle has no `presentation` field, so color(id); isResolved
+        # marks resolved-type State values.
+        fields: id,idReadable,summary,description,resolved,created,updated,project(id,shortName),reporter(id,login,fullName,email),tags(id,name),attachments(id,name,url,mimeType),links(id,direction,issuesSize,linkType(id,name,sourceToTarget,targetToSource),issues(id,idReadable)),customFields(id,name,projectCustomField(id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue))),value(id,name,fullName,login,presentation,localizedName,text,minutes,description,isResolved,color(id)))
   incremental_sync:
     type: DatetimeBasedCursor
     cursor_field: updated
@@ -1168,7 +1172,13 @@ streams:
           - 403
       path: /api/issues/{{ stream_partition.youtrack_id }}/activitiesPage
       request_parameters:
-        fields: afterCursor,hasAfter,activities($type,id,timestamp,category(id,localizedName),targetMember,author(id,login,fullName),field($type,id,presentation,customField(id,fieldType(id,valueType,isMultiValue))),added,removed)
+        # added/removed are polymorphic (BundleElement, User, Tag, Issue, Sprint,
+        # VcsChange, ...). YouTrack ignores selectors that don't apply to a given
+        # $type, so one union selector covers all of them; without it YouTrack
+        # returns only {$type} and the actual changed value (e.g. which State was
+        # set) is lost. String-valued added/removed (text changes) pass through
+        # a sub-selector unchanged.
+        fields: afterCursor,hasAfter,activities($type,id,timestamp,category(id,localizedName),targetMember,author(id,login,fullName),field($type,id,presentation,customField(id,fieldType(id,valueType,isMultiValue))),added($type,id,name,localizedName,login,fullName,idReadable,isResolved,minutes,presentation,text,version,date),removed($type,id,name,localizedName,login,fullName,idReadable,isResolved,minutes,presentation,text,version,date))
         categories: IssueCreatedCategory,SummaryCategory,DescriptionCategory,ProjectCategory,AttachmentsCategory,AttachmentRenameCategory,IssueResolvedCategory,IssueVisibilityCategory,TicketCCEventCategory,IssueDeletedCategory,IssueRestoredCategory,CommentsCategory,CustomFieldCategory,SprintCategory,TagsCategory,LinksCategory,VotersCategory,TotalVotesCategory,VcsChangeCategory,CommentAttachmentsCategory,CommentVisibilityCategory,CommentTextCategory,AttachmentVisibilityCategory
     partition_router:
       type: SubstreamPartitionRouter
@@ -1225,7 +1235,11 @@ streams:
               path: /api/issues
               request_parameters:
                 query: 'updated: {{ stream_slice.start_time }} .. {{ stream_slice.end_time }} sort by: updated asc'
-                fields: id,idReadable,summary,description,resolved,created,updated,project(id,shortName),reporter(id,login,fullName,email),tags(id,name),attachments(id,name,url,mimeType),links(id,direction,linkType(id,name,sourceToTarget,targetToSource),trimmedIssues(id,idReadable)),customFields(id,name,projectCustomField(id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue))),value(id,name,fullName,login,presentation,localizedName,text,minutes,description,color(presentation)))
+                # links: `issues` (full list) instead of `trimmedIssues` — trimmedIssues
+                # silently caps at 20 per link direction; issuesSize kept for QA.
+                # value: FieldStyle has no `presentation` field, so color(id); isResolved
+                # marks resolved-type State values.
+                fields: id,idReadable,summary,description,resolved,created,updated,project(id,shortName),reporter(id,login,fullName,email),tags(id,name),attachments(id,name,url,mimeType),links(id,direction,issuesSize,linkType(id,name,sourceToTarget,targetToSource),issues(id,idReadable)),customFields(id,name,projectCustomField(id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue))),value(id,name,fullName,login,presentation,localizedName,text,minutes,description,isResolved,color(id)))
           incremental_sync:
             type: DatetimeBasedCursor
             cursor_field: updated
@@ -1692,7 +1706,11 @@ streams:
               path: /api/issues
               request_parameters:
                 query: 'updated: {{ stream_slice.start_time }} .. {{ stream_slice.end_time }} sort by: updated asc'
-                fields: id,idReadable,summary,description,resolved,created,updated,project(id,shortName),reporter(id,login,fullName,email),tags(id,name),attachments(id,name,url,mimeType),links(id,direction,linkType(id,name,sourceToTarget,targetToSource),trimmedIssues(id,idReadable)),customFields(id,name,projectCustomField(id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue))),value(id,name,fullName,login,presentation,localizedName,text,minutes,description,color(presentation)))
+                # links: `issues` (full list) instead of `trimmedIssues` — trimmedIssues
+                # silently caps at 20 per link direction; issuesSize kept for QA.
+                # value: FieldStyle has no `presentation` field, so color(id); isResolved
+                # marks resolved-type State values.
+                fields: id,idReadable,summary,description,resolved,created,updated,project(id,shortName),reporter(id,login,fullName,email),tags(id,name),attachments(id,name,url,mimeType),links(id,direction,issuesSize,linkType(id,name,sourceToTarget,targetToSource),issues(id,idReadable)),customFields(id,name,projectCustomField(id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue))),value(id,name,fullName,login,presentation,localizedName,text,minutes,description,isResolved,color(id)))
           incremental_sync:
             type: DatetimeBasedCursor
             cursor_field: updated
@@ -2111,7 +2129,11 @@ streams:
               path: /api/issues
               request_parameters:
                 query: 'updated: {{ stream_slice.start_time }} .. {{ stream_slice.end_time }} sort by: updated asc'
-                fields: id,idReadable,summary,description,resolved,created,updated,project(id,shortName),reporter(id,login,fullName,email),tags(id,name),attachments(id,name,url,mimeType),links(id,direction,linkType(id,name,sourceToTarget,targetToSource),trimmedIssues(id,idReadable)),customFields(id,name,projectCustomField(id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue))),value(id,name,fullName,login,presentation,localizedName,text,minutes,description,color(presentation)))
+                # links: `issues` (full list) instead of `trimmedIssues` — trimmedIssues
+                # silently caps at 20 per link direction; issuesSize kept for QA.
+                # value: FieldStyle has no `presentation` field, so color(id); isResolved
+                # marks resolved-type State values.
+                fields: id,idReadable,summary,description,resolved,created,updated,project(id,shortName),reporter(id,login,fullName,email),tags(id,name),attachments(id,name,url,mimeType),links(id,direction,issuesSize,linkType(id,name,sourceToTarget,targetToSource),issues(id,idReadable)),customFields(id,name,projectCustomField(id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue))),value(id,name,fullName,login,presentation,localizedName,text,minutes,description,isResolved,color(id)))
           incremental_sync:
             type: DatetimeBasedCursor
             cursor_field: updated
@@ -2482,7 +2504,8 @@ streams:
           - 403
       path: /api/admin/projects/{{ stream_partition.project_id }}/customFields
       request_parameters:
-        fields: id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue)),bundle(id,values(id,name,description,archived,color(id,presentation),ordinal)),canBeEmpty,ordinal,emptyFieldText,isPublic
+        # FieldStyle has no `presentation` field — only id/background/foreground.
+        fields: id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue)),bundle(id,values(id,name,description,archived,isResolved,color(id),ordinal)),canBeEmpty,ordinal,emptyFieldText,isPublic
     partition_router:
       type: SubstreamPartitionRouter
       parent_stream_configs:
