@@ -180,3 +180,26 @@ models:
         description: "Lines added in spec/test-category files (file_category='spec')."
       - name: config_loc
         description: "Lines added in config-category files (file_category='config')."
+
+  - name: git_actor_emails
+    description: >
+      Identity bridge: (tenant_id, data_source, actor_name) -> resolved work
+      email, for git rows carrying an actor name but no email. Tier (a)
+      commit co-occurrence elects the dominant email per (tenant, lowered
+      name), a tie between distinct emails resolves to no row; tier (b)
+      falls back to directory identity_inputs display_name -> email, with
+      ambiguous display names likewise excluded. Rows exist only for
+      resolved names; consumers LEFT JOIN and drop misses. A view so new
+      commits retroactively re-elect the dominant email; tagged gold so the
+      deploy-gate dbt run builds it before git_metric_observations.
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: data_source
+        tests: [not_null]
+      - name: actor_name
+        description: "lower(trimBoth(author_name)) join key"
+        tests: [not_null]
+      - name: email
+        description: "Resolved lowercased email; non-empty by contract"
+        tests: [not_null]
