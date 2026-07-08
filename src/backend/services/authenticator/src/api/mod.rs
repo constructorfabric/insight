@@ -38,10 +38,17 @@ pub fn register_routes(
 }
 
 /// Declare every operation through the toolkit's `OperationBuilder` so each
-/// lands in the generated OpenAPI (the machine-checkable subrequest contract).
-/// All step-04 endpoints are `.public()` — the credential is the session
-/// cookie, checked inside the handler.
+/// lands in the generated OpenAPI (the machine-checkable subrequest contract),
+/// grouped by surface. All step-04 endpoints are `.public()` — the credential
+/// is the session cookie, checked inside the handler.
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let router = register_auth_routes(router, openapi);
+    let router = register_internal_routes(router, openapi);
+    register_well_known_routes(router, openapi)
+}
+
+/// The browser-facing `/auth/*` surface (proxied plainly by the gateway).
+fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let mut router = router;
 
     router = OperationBuilder::get("/auth/login")
@@ -62,25 +69,6 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(handlers::callback)
         .register(router, openapi);
 
-    router = OperationBuilder::get("/internal/authz")
-        .operation_id("authenticator.authz")
-        .summary("Exchange the session cookie for the linked gateway JWT")
-        .tag("internal")
-        .public()
-        .no_content_response(StatusCode::OK, "JWT attached via X-Gateway-Jwt")
-        .error_401(openapi)
-        .handler(handlers::authz)
-        .register(router, openapi);
-
-    router = OperationBuilder::get("/.well-known/jwks.json")
-        .operation_id("authenticator.jwks")
-        .summary("Public JWKS for gateway-JWT verification")
-        .tag("internal")
-        .public()
-        .text_response(StatusCode::OK, "JWKS document", "application/json")
-        .handler(handlers::jwks)
-        .register(router, openapi);
-
     router = OperationBuilder::get("/auth/me")
         .operation_id("authenticator.me")
         .summary("Current session summary for the SPA")
@@ -91,14 +79,37 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(handlers::me)
         .register(router, openapi);
 
-    router = OperationBuilder::post("/auth/logout")
+    OperationBuilder::post("/auth/logout")
         .operation_id("authenticator.logout")
         .summary("Revoke the session, clear the cookie, return the RP-logout URL")
         .tag("auth")
         .public()
         .text_response(StatusCode::OK, "RP-logout URL", "application/json")
         .handler(handlers::logout)
-        .register(router, openapi);
+        .register(router, openapi)
+}
 
-    router
+/// The gateway-facing `/internal/*` surface (the `auth_request` target).
+fn register_internal_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    OperationBuilder::get("/internal/authz")
+        .operation_id("authenticator.authz")
+        .summary("Exchange the session cookie for the linked gateway JWT")
+        .tag("internal")
+        .public()
+        .no_content_response(StatusCode::OK, "JWT attached via X-Gateway-Jwt")
+        .error_401(openapi)
+        .handler(handlers::authz)
+        .register(router, openapi)
+}
+
+/// The public JWKS at `/.well-known/jwks.json` (downstream JWT verification).
+fn register_well_known_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    OperationBuilder::get("/.well-known/jwks.json")
+        .operation_id("authenticator.jwks")
+        .summary("Public JWKS for gateway-JWT verification")
+        .tag("internal")
+        .public()
+        .text_response(StatusCode::OK, "JWKS document", "application/json")
+        .handler(handlers::jwks)
+        .register(router, openapi)
 }

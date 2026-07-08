@@ -1,44 +1,48 @@
 //! The single owner of the session cookie (DESIGN §4.1). Attributes are
-//! hard-coded; only `Max-Age` varies. Any other code path setting cookies
-//! fails review. A snapshot test pins the exact `Set-Cookie` bytes.
+//! hard-coded — only `Max-Age` varies. Built on axum-extra's `CookieJar`, so
+//! reads (extractor) and writes (Set-Cookie response part) go through the
+//! standard `cookie` crate instead of hand-rolled header strings.
 
-use axum::http::HeaderMap;
-use axum::http::header::COOKIE;
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use time::Duration;
 
 /// The session cookie name. `__Host-` forbids `Domain=` and requires `Secure`
 /// + `Path=/`, pinning the cookie to one host.
 pub const COOKIE_NAME: &str = "__Host-sid";
 
-/// Build the `Set-Cookie` value for a fresh session token with `max_age` TTL.
+/// The hardened session cookie carrying `token`, valid for `max_age_seconds`.
 #[must_use]
-pub fn set_session_cookie(token: &str, max_age_seconds: u64) -> String {
-    format!(
-        "{COOKIE_NAME}={token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={max_age_seconds}"
+pub fn session_cookie(token: &str, max_age_seconds: u64) -> Cookie<'static> {
+    build(
+        token.to_owned(),
+        Duration::seconds(i64::try_from(max_age_seconds).unwrap_or(0)),
     )
 }
 
-/// Build the `Set-Cookie` value that clears the session cookie (logout).
+/// A cookie that clears the session (logout): empty value, `Max-Age=0`.
 #[must_use]
-pub fn clear_session_cookie() -> String {
-    format!("{COOKIE_NAME}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0")
+pub fn clear_cookie() -> Cookie<'static> {
+    build(String::new(), Duration::ZERO)
 }
 
-/// Extract the session token from the request `Cookie` header, if present.
+/// The session token from the request jar, if present and non-empty.
 #[must_use]
-pub fn read_session_token(headers: &HeaderMap) -> Option<String> {
-    let prefix = format!("{COOKIE_NAME}=");
-    for header in headers.get_all(COOKIE) {
-        let raw = header.to_str().ok()?;
-        for part in raw.split(';') {
-            let part = part.trim();
-            if let Some(value) = part.strip_prefix(&prefix)
-                && !value.is_empty()
-            {
-                return Some(value.to_owned());
-            }
-        }
-    }
-    None
+pub fn read(jar: &CookieJar) -> Option<String> {
+    jar.get(COOKIE_NAME)
+        .map(|c| c.value().to_owned())
+        .filter(|v| !v.is_empty())
+}
+
+fn build(value: String, max_age: Duration) -> Cookie<'static> {
+    // HttpOnly keeps it out of JS; SameSite=Strict blocks CSRF; Secure + Path=/
+    // + the __Host- prefix (no Domain) pin it to the single gateway host.
+    Cookie::build((COOKIE_NAME, value))
+        .path("/")
+        .secure(true)
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .max_age(max_age)
+        .build()
 }
 
 #[cfg(test)]
@@ -47,37 +51,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn set_cookie_snapshot() {
-        // The exact bytes the browser must receive. HttpOnly + Secure +
-        // SameSite=Strict + Path=/ + __Host- prefix, no Domain.
-        assert_eq!(
-            set_session_cookie("tok-abc123", 600),
-            "__Host-sid=tok-abc123; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=600"
-        );
+    fn session_cookie_has_hardened_attributes() {
+        let rendered = session_cookie("tok-abc123", 600).to_string();
+        assert!(rendered.starts_with("__Host-sid=tok-abc123"), "{rendered}");
+        for attr in ["Secure", "HttpOnly", "SameSite=Strict", "Path=/", "Max-Age=600"] {
+            assert!(rendered.contains(attr), "missing {attr} in: {rendered}");
+        }
     }
 
     #[test]
-    fn clear_cookie_snapshot() {
-        assert_eq!(
-            clear_session_cookie(),
-            "__Host-sid=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0"
-        );
+    fn clear_cookie_expires_immediately() {
+        let rendered = clear_cookie().to_string();
+        assert!(rendered.starts_with("__Host-sid="), "{rendered}");
+        assert!(rendered.contains("Max-Age=0"), "{rendered}");
     }
 
     #[test]
-    fn reads_token_among_other_cookies() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            COOKIE,
-            "foo=bar; __Host-sid=the-token; baz=qux".parse().unwrap(),
-        );
-        assert_eq!(read_session_token(&headers).as_deref(), Some("the-token"));
+    fn read_extracts_token() {
+        let jar = CookieJar::new().add(Cookie::new(COOKIE_NAME, "the-token"));
+        assert_eq!(read(&jar).as_deref(), Some("the-token"));
     }
 
     #[test]
-    fn absent_token_is_none() {
-        let mut headers = HeaderMap::new();
-        headers.insert(COOKIE, "foo=bar".parse().unwrap());
-        assert_eq!(read_session_token(&headers), None);
+    fn read_absent_is_none() {
+        assert_eq!(read(&CookieJar::new()), None);
     }
 }

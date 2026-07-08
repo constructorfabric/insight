@@ -9,9 +9,10 @@ use std::sync::Arc;
 use axum::Extension;
 use axum::body::Body;
 use axum::extract::Query;
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION, SET_COOKIE};
-use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION};
+use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse as _, Response};
+use axum_extra::extract::cookie::CookieJar;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use rand::RngCore as _;
@@ -101,7 +102,7 @@ pub struct CallbackParams {
 #[allow(clippy::too_many_lines)]
 pub async fn callback(
     Extension(state): Extension<Arc<AppState>>,
-    headers: HeaderMap,
+    jar: CookieJar,
     Query(params): Query<CallbackParams>,
 ) -> Response {
     if let Some(err) = params.error {
@@ -157,7 +158,7 @@ pub async fn callback(
 
     // Session-fixation guard: never reuse an incoming session; revoke any live
     // one named by the presented cookie before minting the new session.
-    if let Some(old_token) = cookie::read_session_token(&headers)
+    if let Some(old_token) = cookie::read(&jar)
         && let Ok(Some((old_sid, _))) = state.sessions.resolve_by_token(&old_token).await
     {
         let _ = state.sessions.revoke_session(&old_sid).await;
@@ -187,17 +188,15 @@ pub async fn callback(
     // `return_to` was sanitized at login time and stored with the login state.
     let return_to = login_state.return_to.clone();
     match mint_and_store_session(&state, &idp, &resolution).await {
-        Ok(token) => build_response(
-            StatusCode::FOUND,
-            vec![
-                (LOCATION.clone(), return_to),
-                (
-                    SET_COOKIE.clone(),
-                    cookie::set_session_cookie(&token, state.cfg.session_ttl_seconds),
-                ),
-            ],
-            Body::empty(),
-        ),
+        Ok(token) => {
+            let jar = jar.add(cookie::session_cookie(&token, state.cfg.session_ttl_seconds));
+            let redirect = build_response(
+                StatusCode::FOUND,
+                vec![(LOCATION.clone(), return_to)],
+                Body::empty(),
+            );
+            (jar, redirect).into_response()
+        }
         Err(e) => internal_problem("create_session", &e),
     }
 }
@@ -285,8 +284,8 @@ async fn mint_and_store_session(
 
 /// The gateway `auth_request` target: cookie -> linked JWT, reissue ahead of
 /// expiry, emit `X-Gateway-Jwt` + `Cache-Control`.
-pub async fn authz(Extension(state): Extension<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let Some(token) = cookie::read_session_token(&headers) else {
+pub async fn authz(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> Response {
+    let Some(token) = cookie::read(&jar) else {
         return unauthenticated();
     };
     let resolved = match state.sessions.resolve_by_token(&token).await {
@@ -382,8 +381,8 @@ pub async fn jwks(Extension(state): Extension<Arc<AppState>>) -> Response {
 // ── /auth/me ────────────────────────────────────────────────────────────────
 
 /// Return the current session summary for the SPA.
-pub async fn me(Extension(state): Extension<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let Some(token) = cookie::read_session_token(&headers) else {
+pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> Response {
+    let Some(token) = cookie::read(&jar) else {
         return unauthenticated();
     };
     let (_, record) = match state.sessions.resolve_by_token(&token).await {
@@ -413,10 +412,10 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, headers: HeaderMap) 
 // ── /auth/logout ─────────────────────────────────────────────────────────────
 
 /// Revoke the session, clear the cookie, and return the RP-logout URL.
-pub async fn logout(Extension(state): Extension<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub async fn logout(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> Response {
     let mut rp_logout_url = serde_json::Value::Null;
 
-    if let Some(token) = cookie::read_session_token(&headers)
+    if let Some(token) = cookie::read(&jar)
         && let Ok(Some((session_id, record))) = state.sessions.resolve_by_token(&token).await
     {
         let _ = state.sessions.revoke_session(&session_id).await;
@@ -433,14 +432,13 @@ pub async fn logout(Extension(state): Extension<Arc<AppState>>, headers: HeaderM
     }
 
     let body = serde_json::json!({ "rp_logout_url": rp_logout_url }).to_string();
-    build_response(
+    let jar = jar.add(cookie::clear_cookie());
+    let resp = build_response(
         StatusCode::OK,
-        vec![
-            (CONTENT_TYPE.clone(), "application/json".to_owned()),
-            (SET_COOKIE.clone(), cookie::clear_session_cookie()),
-        ],
+        vec![(CONTENT_TYPE.clone(), "application/json".to_owned())],
         Body::from(body),
-    )
+    );
+    (jar, resp).into_response()
 }
 
 // ── Pure helpers (unit-tested) ───────────────────────────────────────────────

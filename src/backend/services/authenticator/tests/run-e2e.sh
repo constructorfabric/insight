@@ -24,8 +24,13 @@ cleanup() {
   set +e
   for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null; done
   docker rm -f "$REDIS_CT" >/dev/null 2>&1
+  [[ -n "${KEYS_DIR:-}" ]] && rm -rf "$KEYS_DIR"
 }
 trap cleanup EXIT
+
+echo "==> dev ES256 signing key"
+KEYS_DIR="$(mktemp -d)"
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$KEYS_DIR/current.pem"
 
 echo "==> Redis"
 docker rm -f "$REDIS_CT" >/dev/null 2>&1 || true
@@ -46,6 +51,7 @@ pids+=($!)
 
 echo "==> authenticator :$AUTH_PORT"
 APP__gears__authenticator__config__redis_url=redis://localhost:6399 \
+APP__gears__authenticator__config__signing_keys_path="$KEYS_DIR" \
 APP__gears__authenticator__config__identity_url="http://localhost:$IDENTITY_PORT" \
 APP__gears__authenticator__config__gateway_issuer=http://localhost:8080 \
 APP__gears__authenticator__config__idp__issuer_url="http://localhost:$IDP_PORT" \

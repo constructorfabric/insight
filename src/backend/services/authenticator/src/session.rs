@@ -46,6 +46,71 @@ pub struct SessionRecord {
     pub current_token: String,
 }
 
+impl SessionRecord {
+    /// The HASH fields for `asm:session:{session_id}` (DESIGN §3.7). `Vec`
+    /// arrays serialize as JSON; optional fields store `""` when absent.
+    fn to_fields(&self) -> Vec<(&'static str, String)> {
+        let json = |v: &[String]| serde_json::to_string(v).unwrap_or_else(|_| "[]".to_owned());
+        vec![
+            ("person_id", self.person_id.clone()),
+            ("tenants", json(&self.tenants)),
+            ("roles", json(&self.roles)),
+            ("idp_iss", self.idp_iss.clone()),
+            ("idp_sub", self.idp_sub.clone()),
+            ("idp_sid", self.idp_sid.clone().unwrap_or_default()),
+            ("id_token", self.id_token.clone()),
+            (
+                "idp_refresh_token",
+                self.idp_refresh_token.clone().unwrap_or_default(),
+            ),
+            (
+                "idp_access_expires_at",
+                self.idp_access_expires_at
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+            ),
+            ("created_at", self.created_at.to_string()),
+            ("expires_at", self.expires_at.to_string()),
+            ("absolute_expires_at", self.absolute_expires_at.to_string()),
+            ("user_agent", self.user_agent.clone()),
+            ("ip", self.ip.clone()),
+            ("csrf_token", self.csrf_token.clone()),
+            ("current_token", self.current_token.clone()),
+        ]
+    }
+
+    /// Parse a session HASH map; empty strings become `None` for optional
+    /// fields, malformed numbers/JSON degrade to defaults.
+    fn from_map(map: &HashMap<String, String>) -> Self {
+        let get = |k: &str| map.get(k).cloned().unwrap_or_default();
+        let opt = |k: &str| {
+            let v = get(k);
+            if v.is_empty() { None } else { Some(v) }
+        };
+        let parse_vec = |k: &str| serde_json::from_str::<Vec<String>>(&get(k)).unwrap_or_default();
+        let parse_u64 = |k: &str| get(k).parse::<u64>().unwrap_or(0);
+
+        Self {
+            person_id: get("person_id"),
+            tenants: parse_vec("tenants"),
+            roles: parse_vec("roles"),
+            idp_iss: get("idp_iss"),
+            idp_sub: get("idp_sub"),
+            idp_sid: opt("idp_sid"),
+            id_token: get("id_token"),
+            idp_refresh_token: opt("idp_refresh_token"),
+            idp_access_expires_at: opt("idp_access_expires_at").and_then(|v| v.parse().ok()),
+            created_at: parse_u64("created_at"),
+            expires_at: parse_u64("expires_at"),
+            absolute_expires_at: parse_u64("absolute_expires_at"),
+            user_agent: get("user_agent"),
+            ip: get("ip"),
+            csrf_token: get("csrf_token"),
+            current_token: get("current_token"),
+        }
+    }
+}
+
 /// Everything needed to persist a brand-new session in one pipeline.
 pub struct NewSession {
     pub session_id: String,
@@ -187,30 +252,7 @@ impl SessionManager {
         let skey = session_key(&s.session_id);
         let expires_at = i64::try_from(r.expires_at).unwrap_or(i64::MAX);
 
-        let fields: Vec<(&str, String)> = vec![
-            ("person_id", r.person_id.clone()),
-            ("tenants", serde_json::to_string(&r.tenants)?),
-            ("roles", serde_json::to_string(&r.roles)?),
-            ("idp_iss", r.idp_iss.clone()),
-            ("idp_sub", r.idp_sub.clone()),
-            ("idp_sid", r.idp_sid.clone().unwrap_or_default()),
-            ("id_token", r.id_token.clone()),
-            (
-                "idp_refresh_token",
-                r.idp_refresh_token.clone().unwrap_or_default(),
-            ),
-            (
-                "idp_access_expires_at",
-                r.idp_access_expires_at.map(|v| v.to_string()).unwrap_or_default(),
-            ),
-            ("created_at", r.created_at.to_string()),
-            ("expires_at", r.expires_at.to_string()),
-            ("absolute_expires_at", r.absolute_expires_at.to_string()),
-            ("user_agent", r.user_agent.clone()),
-            ("ip", r.ip.clone()),
-            ("csrf_token", r.csrf_token.clone()),
-            ("current_token", s.token.clone()),
-        ];
+        let fields = r.to_fields();
 
         let mut pipe = redis::pipe();
         pipe.atomic();
@@ -286,7 +328,7 @@ impl SessionManager {
         if map.is_empty() {
             return Ok(None);
         }
-        Ok(Some(record_from_map(&map)))
+        Ok(Some(SessionRecord::from_map(&map)))
     }
 
     /// The linked JWT for a session, if the stored copy is still fresh.
@@ -368,36 +410,5 @@ impl SessionManager {
             }
         }
         Ok(revoked)
-    }
-}
-
-/// Parse a session HASH map into a [`SessionRecord`]; empty strings become
-/// `None` for the optional fields.
-fn record_from_map(map: &HashMap<String, String>) -> SessionRecord {
-    let get = |k: &str| map.get(k).cloned().unwrap_or_default();
-    let opt = |k: &str| {
-        let v = get(k);
-        if v.is_empty() { None } else { Some(v) }
-    };
-    let parse_vec = |k: &str| serde_json::from_str::<Vec<String>>(&get(k)).unwrap_or_default();
-    let parse_u64 = |k: &str| get(k).parse::<u64>().unwrap_or(0);
-
-    SessionRecord {
-        person_id: get("person_id"),
-        tenants: parse_vec("tenants"),
-        roles: parse_vec("roles"),
-        idp_iss: get("idp_iss"),
-        idp_sub: get("idp_sub"),
-        idp_sid: opt("idp_sid"),
-        id_token: get("id_token"),
-        idp_refresh_token: opt("idp_refresh_token"),
-        idp_access_expires_at: opt("idp_access_expires_at").and_then(|v| v.parse().ok()),
-        created_at: parse_u64("created_at"),
-        expires_at: parse_u64("expires_at"),
-        absolute_expires_at: parse_u64("absolute_expires_at"),
-        user_agent: get("user_agent"),
-        ip: get("ip"),
-        csrf_token: get("csrf_token"),
-        current_token: get("current_token"),
     }
 }

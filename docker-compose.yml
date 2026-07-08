@@ -294,9 +294,10 @@ services:
   # The BFF / token-handler service (nginx+auth step 04). Runs the OIDC
   # code+PKCE login against fakeidp, keeps opaque sessions in Redis, and mints
   # the linked ES256 gateway JWT served at /internal/authz. signing_keys_path
-  # is left empty here, so the gear generates an EPHEMERAL ES256 key at startup
-  # (dev/CI only — no key material is checked in); prod mounts a K8s Secret.
-  # Login requires the person to exist in Identity (seed the DB with
+  # points at a bind-mounted dev key that dev-compose.sh generates on `up`
+  # (deploy/compose/authenticator-dev-keys, gitignored — never baked into an
+  # image); prod mounts a K8s Secret. Login requires the person to exist in
+  # Identity (seed the DB with
   # ./dev-compose.sh seed identity — the fakeidp dev user resolves to a seeded
   # person); an unknown person is denied (403). First-admin bootstrap / RBAC are
   # out of scope (a separate universe-admin initiative).
@@ -314,7 +315,7 @@ services:
     environment:
       <<: *backend-env
       APP__gears__authenticator__config__redis_url:         "redis://redis:6379"
-      # signing_keys_path unset -> ephemeral in-process ES256 key (dev/CI only).
+      APP__gears__authenticator__config__signing_keys_path: "/app/keys"
       APP__gears__authenticator__config__identity_url:      "${AUTHENTICATOR_IDENTITY_URL:-http://identity:8082}"
       APP__gears__authenticator__config__gateway_issuer:    "${AUTHENTICATOR_GATEWAY_ISSUER:-http://localhost:8080}"
       # OIDC: discovery/token/JWKS are fetched in-network at fakeidp:8084; the

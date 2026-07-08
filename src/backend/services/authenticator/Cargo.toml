@@ -56,11 +56,15 @@ clap = { workspace = true }
 reqwest = { workspace = true }
 redis = { workspace = true }
 url = "2.5"
+axum-extra = { version = "0.12", features = ["cookie"] }
+time = { workspace = true }
 
 # Crypto: ES256 gateway-JWT minting/verification (§9.6 decision — ES256 over
 # EdDSA for zero downstream-verifier friction), JWKS export, PKCE, CSPRNG.
-jsonwebtoken = "9"
-p256 = { version = "0.13", features = ["pkcs8", "jwk", "ecdsa"] }
+# v10 needs an explicit crypto provider; rust_crypto keeps it pure-Rust
+# (consistent with p256/sha2, no C/system deps in the Docker build).
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
