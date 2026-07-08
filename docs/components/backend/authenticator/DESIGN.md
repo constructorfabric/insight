@@ -830,7 +830,7 @@ All tunable via Helm values; defaults chosen so everything holds without touchin
 | `authenticator.idp.refresh_safety_margin_seconds` | `60` | Refresh IdP tokens this long before their expiry. |
 | `authenticator.idp.refresh_concurrency` | `128` | Max in-flight IdP refresh calls from the leader -- politeness toward the customer IdP, not our capacity. |
 | `authenticator.idp.no_refresh_token_policy` | `strict` | When the IdP issues no refresh token: `strict` = session capped at the IdP access-token lifetime; `login_only` = sessions live to the absolute cap, killed only by back-channel logout / manual revoke. |
-| `authenticator.bootstrap_first_admin` | `true` | Empty persons table: first IdP-authenticated login is auto-created as universe admin. Window closes permanently on the first created person; always loudly audited. |
+| `authenticator.bootstrap_first_admin` | *(deferred)* | First-admin bootstrap is out of step-04 scope and not implemented — no such config exists in the shipped gear; unknown persons are denied (403). Retained here as design intent for the separate universe-admin initiative (see 4.6). |
 | `authenticator.authz_cache_max_age_seconds` | `30` | Upper bound for the gateway-side cookie-to-JWT exchange cache, emitted as `Cache-Control: max-age` on `/internal/authz` 200s (actual value = `min(this, jwt_exp - now - 60 s)`; non-200 = `no-store`). Bounds revocation staleness at the gateway. `0` = per-request checks, instant revocation. |
 
 Inherited from the deleted BFF spec unchanged: `authenticator.refresh_grace_ms` (default `250`) -- the TTL applied to the superseded token mapping on rotation; plus the CSRF origin allowlist, back-channel clock-skew tolerance, layer-2 rate-limit knobs, and OIDC client settings (`issuer_url`, `client_id`, `client_secret`).
@@ -878,7 +878,7 @@ JWT signing keys are a plain mounted secret (`current` + optional `previous`); r
 
 ### 4.6 Bootstrap Guardrails
 
-The empty-table first-admin path checks the persons table emptiness inside the login transaction; it admits only an IdP-authenticated principal; the window closes permanently on the first created person; every use emits a dedicated audit event and log line; `bootstrap_first_admin: false` disables it entirely. The INSTALLER (separate component; formalizes the existing seeding flows) is the production path and closes the window by populating the table before first login.
+**Deferred out of step 04 (implementation note).** First-admin bootstrap (DD-AUTH-08) is **not implemented** and no `bootstrap_first_admin` config exists in the shipped gear. An unknown person is simply denied (403, audited `login_denied_unknown_person`); local development seeds the persons table, and populating persons for real installs plus any "universe admin" designation is owned by a separate initiative (the INSTALLER / universe-admin work). The design intent below is retained as the record for that later work.
 
 ### 4.7 Observability
 
@@ -994,6 +994,8 @@ Recorded here so the decisions survive the deleted tree; rationale as originally
 **Consequences**: Worst-case staleness = the 8 h absolute cap, in practice bounded by revoke-on-change. If login-time-only ever proves too stale, re-fetching on JWT reissue (once per TTL) is a drop-in upgrade inside the authenticator -- no contract change.
 
 ### DD-AUTH-08: Empty-Table First-Admin Bootstrap plus INSTALLER
+
+**Status: DEFERRED — not implemented in step 04.** First-admin bootstrap and RBAC/ACL are carved out to a separate universe-admin initiative; the shipped gear denies unknown persons (403) and local dev seeds the persons table. The decision below is retained as the record for that later work.
 
 **Decision**: Ship both bootstrap ways: guardrailed empty-table first-admin (on by default, off-switchable) and the INSTALLER as the documented production path.
 

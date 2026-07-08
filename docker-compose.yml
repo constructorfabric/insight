@@ -296,8 +296,10 @@ services:
   # the linked ES256 gateway JWT served at /internal/authz. signing_keys_path
   # is left empty here, so the gear generates an EPHEMERAL ES256 key at startup
   # (dev/CI only — no key material is checked in); prod mounts a K8s Secret.
-  # identity_url is left empty locally so the first login takes the audited
-  # bootstrap-admin path (no seeded persons table needed).
+  # Login requires the person to exist in Identity (seed the DB with
+  # ./dev-compose.sh seed identity — the fakeidp dev user resolves to a seeded
+  # person); an unknown person is denied (403). First-admin bootstrap / RBAC are
+  # out of scope (a separate universe-admin initiative).
   authenticator:
     <<: *backend-common
     image: ${AUTHENTICATOR_IMAGE:-insight-authenticator:dev}
@@ -306,14 +308,14 @@ services:
       context: src/backend
       dockerfile: services/authenticator/Dockerfile
     depends_on:
-      redis:   { condition: service_healthy }
-      fakeidp: { condition: service_started }
+      redis:    { condition: service_healthy }
+      fakeidp:  { condition: service_started }
+      identity: { condition: service_started }
     environment:
       <<: *backend-env
       APP__gears__authenticator__config__redis_url:         "redis://redis:6379"
       # signing_keys_path unset -> ephemeral in-process ES256 key (dev/CI only).
-      # Empty -> unknown persons take the audited first-admin bootstrap path.
-      APP__gears__authenticator__config__identity_url:      "${AUTHENTICATOR_IDENTITY_URL:-}"
+      APP__gears__authenticator__config__identity_url:      "${AUTHENTICATOR_IDENTITY_URL:-http://identity:8082}"
       APP__gears__authenticator__config__gateway_issuer:    "${AUTHENTICATOR_GATEWAY_ISSUER:-http://localhost:8080}"
       # OIDC: discovery/token/JWKS are fetched in-network at fakeidp:8084; the
       # browser-facing redirect_uri is host-visible (the SPA / e2e runs there).

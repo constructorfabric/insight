@@ -97,9 +97,10 @@ pub struct AuthenticatorConfig {
     /// named no (or an unsafe) `return_to`. A site-relative path.
     pub default_return_to: String,
 
-    // ── Bootstrap (§4.6 / G7) ────────────────────────────────────────────
-    /// Empty persons table -> first IdP-authenticated login becomes universe admin.
-    pub bootstrap_first_admin: bool,
+    // NOTE: first-admin bootstrap (DD-AUTH-08) and RBAC/ACL are deliberately
+    // NOT in step 04 — deferred to a separate universe-admin initiative. Local
+    // dev seeds the persons table; an unknown person is denied (403). Every
+    // session carries `default_roles` only.
 
     // ── Cross-cutting ────────────────────────────────────────────────────
     /// CSRF `Origin` allowlist (empty = token-required, fail closed).
@@ -144,7 +145,6 @@ impl Default for AuthenticatorConfig {
                 "offline_access".to_owned(),
             ],
             default_return_to: "/".to_owned(),
-            bootstrap_first_admin: true,
             csrf_origins: Vec::new(),
             redis_url: String::new(),
             signing_keys_path: String::new(),

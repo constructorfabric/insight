@@ -11,10 +11,12 @@
 #   src/backend/services/authenticator/tests/run-e2e.sh
 set -euo pipefail
 
-cd "$(dirname "$0")/../../../.."   # -> src/backend
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE/../../../.."   # -> src/backend
 
 AUTH_PORT=8083
 IDP_PORT=8084
+IDENTITY_PORT=8092
 REDIS_CT=authenticator-e2e-redis
 pids=()
 
@@ -38,9 +40,13 @@ FAKEIDP_ISSUER="http://localhost:$IDP_PORT" FAKEIDP_BIND="0.0.0.0:$IDP_PORT" \
   ./target/release/fakeidp >/tmp/authenticator-e2e-fakeidp.log 2>&1 &
 pids+=($!)
 
+echo "==> identity stub :$IDENTITY_PORT (resolves any email to a person)"
+python3 "$HERE/identity-stub.py" "127.0.0.1:$IDENTITY_PORT" >/tmp/authenticator-e2e-identity.log 2>&1 &
+pids+=($!)
+
 echo "==> authenticator :$AUTH_PORT"
 APP__gears__authenticator__config__redis_url=redis://localhost:6399 \
-APP__gears__authenticator__config__identity_url= \
+APP__gears__authenticator__config__identity_url="http://localhost:$IDENTITY_PORT" \
 APP__gears__authenticator__config__gateway_issuer=http://localhost:8080 \
 APP__gears__authenticator__config__idp__issuer_url="http://localhost:$IDP_PORT" \
 APP__gears__authenticator__config__idp__client_id=insight-authenticator \

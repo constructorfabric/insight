@@ -1,31 +1,24 @@
-//! Person resolution and the first-admin bootstrap, behind a trait.
+//! Person resolution, behind a trait.
 //!
 //! The callback resolves the IdP-authenticated principal to an internal
 //! `person_id` + tenant memberships (DESIGN §3.4). The Identity Service's
 //! `GET /v1/persons/{email}` returns `ResolveProfileCommandModel`
-//! (`insight_source_id` = the person id) but **no tenant memberships and no
-//! count/create API**. Per the step-04 brief we therefore:
+//! (`insight_source_id` = the person id) but **no tenant memberships**, so:
 //!
-//! - take `person_id` from `insight_source_id` when Identity knows the email;
-//! - source `tenants` from the validated id_token claim (fakeidp supplies it;
-//!   real-IdP tenant resolution is a follow-up — see [`BOOTSTRAP_FOLLOWUP`]);
-//! - gate first-admin bootstrap on the **config flag only** (no emptiness API
-//!   exists), loudly audited, with the INSTALLER as the real production path.
+//! - `person_id` comes from `insight_source_id` when Identity knows the email;
+//! - `tenants` are sourced from the validated id_token claim (fakeidp supplies
+//!   it; real-IdP tenant-membership resolution is a follow-up —
+//!   constructorfabric/insight#1687);
+//! - an unknown person is denied (the callback returns 403). First-admin
+//!   bootstrap / RBAC are out of step-04 scope (a separate universe-admin
+//!   initiative); local dev seeds the persons table.
 //!
-//! All of this sits behind [`PersonResolver`] so a richer Identity contract (or
-//! the permissions service) swaps the impl without touching the callback.
+//! Sitting behind [`PersonResolver`] lets a richer Identity contract (or the
+//! permissions service) swap the impl without touching the callback.
 
 use anyhow::Context as _;
 use async_trait::async_trait;
-use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
-
-/// Tracking note for the follow-up issue: real emptiness guard + Identity
-/// create/count API + first-class tenant-membership resolution.
-pub const BOOTSTRAP_FOLLOWUP: &str =
-    "authenticator bootstrap uses config-flag gating (no Identity count/create API) and \
-     id_token-sourced tenants; replace with the INSTALLER + Identity membership API \
-     (constructorfabric/insight#1687)";
 
 /// The IdP-authenticated principal, distilled from the validated id_token.
 #[derive(Debug, Clone)]
@@ -41,26 +34,17 @@ pub struct IdpIdentity {
 pub struct PersonResolution {
     pub person_id: String,
     pub tenants: Vec<String>,
-    /// True only on the audited first-admin bootstrap path.
-    pub is_universe_admin: bool,
 }
 
-/// Resolves the IdP principal to an internal person, and performs the audited
-/// first-admin bootstrap when permitted.
+/// Resolves the IdP principal to an internal person.
 #[async_trait]
 pub trait PersonResolver: Send + Sync {
-    /// Resolve an existing person. `Ok(None)` = unknown person (-> 403 unless
-    /// bootstrap applies).
+    /// Resolve an existing person. `Ok(None)` = unknown person (the callback
+    /// then returns 403).
     ///
     /// # Errors
     /// Fails when the Identity Service is unreachable or errors.
     async fn resolve(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>>;
-
-    /// Create the first admin for a fresh install (config-flag gated, audited).
-    ///
-    /// # Errors
-    /// Fails when the backing create path (best-effort) errors unexpectedly.
-    async fn bootstrap_first_admin(&self, id: &IdpIdentity) -> anyhow::Result<PersonResolution>;
 }
 
 /// `PersonResolver` backed by the Identity Service.
@@ -116,29 +100,8 @@ impl PersonResolver for IdentityPersonResolver {
         Ok(Some(PersonResolution {
             person_id: person_id.to_string(),
             tenants: id.tenants.clone(),
-            is_universe_admin: false,
         }))
     }
-
-    async fn bootstrap_first_admin(&self, id: &IdpIdentity) -> anyhow::Result<PersonResolution> {
-        // No Identity count/create API exists (see BOOTSTRAP_FOLLOWUP), so the
-        // person id is derived deterministically from the IdP subject: stable
-        // across the admin's re-logins without persisting anything here. The
-        // INSTALLER is the production path that populates the persons table.
-        Ok(PersonResolution {
-            person_id: deterministic_person_id(&id.sub).to_string(),
-            tenants: id.tenants.clone(),
-            is_universe_admin: true,
-        })
-    }
-}
-
-/// Derive a stable internal person id from an IdP subject (SHA-256 -> UUID).
-fn deterministic_person_id(sub: &str) -> Uuid {
-    let digest = Sha256::digest(format!("authenticator:bootstrap:{sub}").as_bytes());
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    Uuid::from_bytes(bytes)
 }
 
 /// Minimal percent-encoding for an email in a path segment (encodes the few

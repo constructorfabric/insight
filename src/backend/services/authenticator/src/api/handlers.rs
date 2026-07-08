@@ -164,26 +164,18 @@ pub async fn callback(
         tracing::info!(session_id = %old_sid, "session-fixation guard: revoked presented session");
     }
 
-    // Resolve the internal person (audited bootstrap on a fresh install).
+    // Resolve the internal person. Unknown -> 403 (first-admin bootstrap / RBAC
+    // are out of step-04 scope; local dev seeds the persons table).
     let resolution = match state.resolver.resolve(&idp.identity).await {
         Ok(Some(p)) => p,
-        Ok(None) if state.cfg.bootstrap_first_admin => {
-            // Loud audit line — never skipped. Redpanda audit emitter is a
-            // later step; this structured WARN is the step-04 audit record.
+        Ok(None) => {
             tracing::warn!(
                 target: "audit",
-                event = "bootstrap_first_admin",
+                event = "login_denied_unknown_person",
                 idp_sub = %idp.identity.sub,
                 email = %idp.identity.email,
-                followup = crate::identity::BOOTSTRAP_FOLLOWUP,
-                "creating first universe-admin from an IdP-authenticated login (config-gated)"
+                "login denied: no matching person in Identity"
             );
-            match state.resolver.bootstrap_first_admin(&idp.identity).await {
-                Ok(p) => p,
-                Err(e) => return internal_problem("bootstrap_first_admin", &e),
-            }
-        }
-        Ok(None) => {
             return PersonError::permission_denied()
                 .with_reason("unknown_person")
                 .create()
@@ -226,10 +218,9 @@ async fn mint_and_store_session(
     let token = csprng_token();
     let csrf_token = csprng_token();
 
-    let mut roles = cfg.default_roles.clone();
-    if resolution.is_universe_admin && !roles.iter().any(|r| r == "admin") {
-        roles.push("admin".to_owned());
-    }
+    // Default roles only — RBAC/ACL is a later initiative (DD-AUTH-07); the
+    // permissions service will replace these values, never the claim shape.
+    let roles = cfg.default_roles.clone();
 
     // exp clamped to the session absolute cap (cheap hygiene, G3).
     let exp = (now + cfg.jwt_ttl_seconds).min(absolute_expires_at);
