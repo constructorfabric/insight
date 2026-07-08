@@ -407,13 +407,21 @@ The metric family reads data no managed source covers.
 - Measure filter predicates (`where=` on shape macros) may reference only
   class-contract dimension columns and their normalized values — never vendor
   columns, tool names, or label text.
-- Adding a class-contract column to existing staging models needs a history
-  backfill plan: columns derived from source data require re-materialization
-  — major-bump every affected connector (ADR-0015 dispatches a scoped
-  one-shot full refresh; CDK connectors need an explicit invocation until
-  the toolkit closes its semver-storage gap). Declared-constant columns
-  (labels) are repaired in place by the migrate hook; any rebuild
-  independently converges to the same values.
+- Adding a class-contract column that a gold model reads needs TWO things,
+  because the gold model is built at deploy time — before any connector
+  re-syncs — against class tables that already exist as real (non-placeholder)
+  relations:
+  1. Schema presence at deploy: add the column unconditionally via a
+     ClickHouse migration (`ADD COLUMN IF NOT EXISTS`). The placeholder script
+     only reconciles placeholder-marked tables, so it does NOT cover existing
+     installs; without the migration the gold `dbt run` fails on the missing
+     column and `--atomic` rolls the whole upgrade back.
+  2. Values: columns derived from source data require re-materialization —
+     major-bump every affected connector (ADR-0015 dispatches a scoped
+     one-shot full refresh; CDK connectors need an explicit invocation until
+     the toolkit closes its semver-storage gap), and stay NULL until it runs.
+     Declared-constant columns (labels) are backfilled in place by the same
+     migration; any rebuild independently converges to the same values.
 - No new `metric_catalog` seed migrations and no new ad-hoc `insight.*` views
   for metrics.
 - Do not add runtime formula JSON until generation exists.
