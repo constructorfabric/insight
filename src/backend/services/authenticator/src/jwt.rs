@@ -21,7 +21,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use p256::SecretKey;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
-use p256::pkcs8::DecodePrivateKey as _;
+use p256::pkcs8::{DecodePrivateKey as _, EncodePrivateKey as _, LineEnding};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -143,6 +143,22 @@ impl KeyStore {
         Ok(Self { current, previous })
     }
 
+    /// Generate an in-memory ES256 key — **DEV / CI ONLY**, used when
+    /// `signing_keys_path` is empty. Keys are fresh per process, so JWTs do not
+    /// verify across restarts or replicas; real deployments mount stable keys.
+    ///
+    /// # Errors
+    /// Fails only on an internal key-generation error.
+    pub fn generate_ephemeral() -> anyhow::Result<Self> {
+        let pem = SecretKey::random(&mut rand::rngs::OsRng)
+            .to_pkcs8_pem(LineEnding::LF)
+            .context("generate ephemeral ES256 signing key")?;
+        Ok(Self {
+            current: LoadedKey::from_pkcs8_pem(&pem)?,
+            previous: None,
+        })
+    }
+
     /// The JWKS document: current key first, then previous during an overlap.
     #[must_use]
     pub fn jwks(&self) -> serde_json::Value {
@@ -203,7 +219,6 @@ impl KeyStore {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use p256::pkcs8::{EncodePrivateKey as _, LineEnding};
 
     fn gen_pem() -> String {
         p256::SecretKey::random(&mut rand::rngs::OsRng)

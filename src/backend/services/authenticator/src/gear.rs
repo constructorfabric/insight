@@ -53,8 +53,20 @@ impl Gear for AuthenticatorGear {
             "starting authenticator gear"
         );
 
-        // ES256 signing keys from the mounted secret (fail closed if absent).
-        let keystore = Arc::new(KeyStore::load(Path::new(&cfg.signing_keys_path))?);
+        // ES256 signing keys. Real deployments mount stable keys via a Secret
+        // (`signing_keys_path`, fail closed if absent). An empty path is the
+        // dev/CI escape hatch: generate an ephemeral key in-process so
+        // docker-compose needs no checked-in key material.
+        let keystore = if cfg.signing_keys_path.trim().is_empty() {
+            tracing::warn!(
+                "DEV ONLY: signing_keys_path is empty — generating an EPHEMERAL ES256 key. \
+                 JWTs will not verify across restarts or replicas. Set signing_keys_path to a \
+                 mounted Secret in dev/demo/prod."
+            );
+            Arc::new(KeyStore::generate_ephemeral()?)
+        } else {
+            Arc::new(KeyStore::load(Path::new(&cfg.signing_keys_path))?)
+        };
 
         // Redis session store (fail closed — no in-process fallback). Probe at
         // boot so a missing Redis surfaces here rather than on first request.

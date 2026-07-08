@@ -18,7 +18,7 @@
 //! `FAKEIDP_REWRITE_FROM=http://fakeidp:8084` and `FAKEIDP_REWRITE_TO=http://localhost:8084`
 //! to rewrite it. In an all-localhost process stack no rewrite is needed.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
@@ -50,10 +50,10 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
     for hv in resp.headers().get_all(reqwest::header::SET_COOKIE) {
         let raw = hv.to_str().ok()?;
         for part in raw.split(';') {
-            if let Some(v) = part.trim().strip_prefix(&format!("{COOKIE}=")) {
-                if !v.is_empty() {
-                    return Some(v.to_owned());
-                }
+            if let Some(v) = part.trim().strip_prefix(&format!("{COOKIE}="))
+                && !v.is_empty()
+            {
+                return Some(v.to_owned());
             }
         }
     }

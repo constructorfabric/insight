@@ -10,9 +10,14 @@ data:
   # injected as APP__* env vars from the `insight-authenticator-config` Secret
   # (see deployment.yaml `envFrom`), which override this YAML at load time.
   #
-  # Every step-04 endpoint is `.public()` (the credential is the session
-  # cookie, checked in the handler), so the REST host runs with auth disabled
-  # and no OIDC plugin. The signing keys come from the mounted Secret at
+  # The `api-gateway` gear below is the gears-rust toolkit REST-host system gear
+  # (`cf-gears-api-gateway`) — the HTTP server every gear-based service runs on,
+  # NOT the Insight platform gateway that nginx replaces. The authenticator
+  # hosts on it, behind the nginx edge.
+  #
+  # Every step-04 endpoint is `.public()` (the credential is the session cookie,
+  # checked in the handler), so the REST host runs with auth disabled and no
+  # OIDC plugin. The signing keys come from the mounted Secret at
   # `signingKeysPath`.
   authenticator.yaml: |
     server:

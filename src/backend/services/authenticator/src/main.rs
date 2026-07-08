@@ -2,11 +2,13 @@
 //! behind the nginx gateway (the BFF / token-handler pattern; NGINX_BFF.md §4.1,
 //! §11).
 //!
-//! Runs as a gears-rust host on [`toolkit::bootstrap::run_server`]. The
-//! `api-gateway` system gear is the REST host; the authenticator functionality
-//! is [`gear::AuthenticatorGear`] (`rest` + `stateful`). Its `/auth/*` and
-//! `/internal/authz` endpoints are `.public()` — the credential is the session
-//! cookie, checked in the handler.
+//! Runs as a gears-rust host on [`toolkit::bootstrap::run_server`]. The REST
+//! host is the gears-rust toolkit `api-gateway` system gear
+//! (`cf-gears-api-gateway`, the HTTP-server framework every gear runs on — NOT
+//! the Insight platform api-gateway service that the nginx edge replaces); the
+//! authenticator functionality is [`gear::AuthenticatorGear`] (`rest` +
+//! `stateful`). Its `/auth/*` and `/internal/authz` endpoints are `.public()`
+//! — the credential is the session cookie, checked in the handler.
 //!
 //! # Usage
 //! ```text

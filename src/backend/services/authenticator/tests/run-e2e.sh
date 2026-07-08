@@ -12,7 +12,6 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../../../.."   # -> src/backend
-KEYS="$(cd ../../deploy/compose/authenticator-dev-keys && pwd)"
 
 AUTH_PORT=8083
 IDP_PORT=8084
@@ -41,7 +40,6 @@ pids+=($!)
 
 echo "==> authenticator :$AUTH_PORT"
 APP__gears__authenticator__config__redis_url=redis://localhost:6399 \
-APP__gears__authenticator__config__signing_keys_path="$KEYS" \
 APP__gears__authenticator__config__identity_url= \
 APP__gears__authenticator__config__gateway_issuer=http://localhost:8080 \
 APP__gears__authenticator__config__idp__issuer_url="http://localhost:$IDP_PORT" \

@@ -96,6 +96,9 @@ pub struct CallbackParams {
 /// Complete login: validate state, exchange the code, guard against session
 /// fixation, resolve the person (with audited bootstrap), then create the
 /// session + linked JWT in one pipeline and set the cookie.
+// One linear login flow with per-step error mapping; splitting it would scatter
+// the sequence without making it clearer.
+#[allow(clippy::too_many_lines)]
 pub async fn callback(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,

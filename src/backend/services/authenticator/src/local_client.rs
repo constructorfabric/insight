@@ -5,7 +5,8 @@
 //! wiring that proves the contract; no remote consumer exists yet.
 
 use async_trait::async_trait;
-use authenticator_sdk::{AuthenticatorClientV1, AuthenticatorError, RevokeOutcome};
+use authenticator_sdk::AuthenticatorClientV1;
+use toolkit_canonical_errors::CanonicalError;
 
 use crate::session::SessionManager;
 
@@ -23,14 +24,15 @@ impl LocalClient {
 
 #[async_trait]
 impl AuthenticatorClientV1 for LocalClient {
-    async fn revoke_user_sessions(
-        &self,
-        person_id: &str,
-    ) -> Result<RevokeOutcome, AuthenticatorError> {
+    async fn revoke_user_sessions(&self, person_id: &str) -> Result<u64, CanonicalError> {
         self.sessions
             .revoke_user_sessions(person_id)
             .await
-            .map(|revoked| RevokeOutcome { revoked })
-            .map_err(|e| AuthenticatorError::Unavailable(e.to_string()))
+            // Session store unreachable -> fail closed with a retryable 503.
+            .map_err(|e| {
+                CanonicalError::service_unavailable()
+                    .with_detail(format!("session store unavailable: {e}"))
+                    .create()
+            })
     }
 }

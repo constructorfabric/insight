@@ -2,11 +2,17 @@
 #
 # Usage: authenticator -c config/insight.yaml run
 #
-# The `api-gateway` system gear is the REST host with auth DISABLED — every
-# authenticator endpoint in step 04 is `.public()` (the credential is the
-# session cookie, checked in the handler), so no OIDC plugin is registered on
-# this host. The admin session-revoke surface (later step) will flip to an
-# authenticated pipeline verifying gateway JWTs.
+# NOTE on the `api-gateway` gear below: this is the gears-rust toolkit REST-host
+# system gear (`cf-gears-api-gateway`) — the HTTP server + OpenAPI + auth
+# pipeline that every gear-based service runs on (analytics uses it too). It is
+# NOT the Insight platform api-gateway *service* that the nginx gateway replaces
+# in this EPIC. The authenticator hosts its endpoints on this REST-host gear and
+# runs behind the nginx edge.
+#
+# Auth is DISABLED on the host because every step-04 endpoint is `.public()`
+# (the credential is the session cookie, checked in the handler), so no OIDC
+# plugin is registered. The admin session-revoke surface (later step) will flip
+# to an authenticated pipeline verifying gateway JWTs.
 #
 # Deployment-specific leaf values are injected via env overrides
 # (APP__gears__authenticator__config__*) from the umbrella Secret / compose;

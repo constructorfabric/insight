@@ -12,6 +12,6 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-serde = { workspace = true }
 async-trait = { workspace = true }
-thiserror = { workspace = true }
+# Canonical errors cross the boundary like every other gear (toolkit ADR 0005).
+toolkit-canonical-errors = { workspace = true }

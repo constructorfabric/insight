@@ -293,10 +293,11 @@ services:
   #
   # The BFF / token-handler service (nginx+auth step 04). Runs the OIDC
   # code+PKCE login against fakeidp, keeps opaque sessions in Redis, and mints
-  # the linked ES256 gateway JWT served at /internal/authz. Signing keys are
-  # bind-mounted dev-only keys (deploy/compose/authenticator-dev-keys); prod
-  # mounts a K8s Secret. identity_url is left empty locally so the first login
-  # takes the audited bootstrap-admin path (no seeded persons table needed).
+  # the linked ES256 gateway JWT served at /internal/authz. signing_keys_path
+  # is left empty here, so the gear generates an EPHEMERAL ES256 key at startup
+  # (dev/CI only — no key material is checked in); prod mounts a K8s Secret.
+  # identity_url is left empty locally so the first login takes the audited
+  # bootstrap-admin path (no seeded persons table needed).
   authenticator:
     <<: *backend-common
     image: ${AUTHENTICATOR_IMAGE:-insight-authenticator:dev}
@@ -310,7 +311,7 @@ services:
     environment:
       <<: *backend-env
       APP__gears__authenticator__config__redis_url:         "redis://redis:6379"
-      APP__gears__authenticator__config__signing_keys_path: "/app/keys"
+      # signing_keys_path unset -> ephemeral in-process ES256 key (dev/CI only).
       # Empty -> unknown persons take the audited first-admin bootstrap path.
       APP__gears__authenticator__config__identity_url:      "${AUTHENTICATOR_IDENTITY_URL:-}"
       APP__gears__authenticator__config__gateway_issuer:    "${AUTHENTICATOR_GATEWAY_ISSUER:-http://localhost:8080}"
@@ -323,8 +324,6 @@ services:
     volumes:
       - ./deploy/compose/build/authenticator/authenticator:/app/authenticator:ro
       - ./src/backend/services/authenticator/config:/app/config:ro
-      # Dev-only ES256 signing keys (never used in a real cluster).
-      - ./deploy/compose/authenticator-dev-keys:/app/keys:ro
     command:
       - "/app/authenticator"   # <watched path>
       - "--"
