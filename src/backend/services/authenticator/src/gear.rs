@@ -102,12 +102,13 @@ impl RestApiCapability for AuthenticatorGear {
 
 #[async_trait]
 impl RunnableCapability for AuthenticatorGear {
-    async fn start(&self, cancel: CancellationToken) -> anyhow::Result<()> {
-        // Step 04: no background workers yet. The IdP refresher (G5) and the
-        // janitor land in steps 06/10; until then this is a well-behaved stub
-        // that idles until the platform signals shutdown.
+    async fn start(&self, _cancel: CancellationToken) -> anyhow::Result<()> {
+        // `start` must return promptly — the host awaits it before starting the
+        // next gear (including the api-gateway HTTP server). Step 04 has no
+        // background workers, so there is nothing to spawn; the IdP refresher
+        // (G5) and janitor land in steps 06/10 and will `tokio::spawn` here and
+        // return, holding the `cancel` token for graceful shutdown.
         tracing::info!("authenticator runnable: no background workers yet (steps 06/10)");
-        cancel.cancelled().await;
         Ok(())
     }
 

@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insight-authenticator.fullname" . }}
+  labels:
+    {{- include "insight-authenticator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "insight-authenticator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insight-authenticator.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll pods when the gears config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global }}
+      {{- with .imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
+      # kubelet auto-injects for every Service in the namespace.
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: authenticator
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # gears-rust host: structural config from the mounted ConfigMap; leaf
+          # values (Redis/Identity/OIDC) from the Secret via envFrom below; the
+          # ES256 signing keys from a separate mounted Secret.
+          command: ["/app/authenticator"]
+          args: ["-c", "/app/config/authenticator.yaml", "run"]
+          volumeMounts:
+            - name: authenticator-config
+              mountPath: /app/config/authenticator.yaml
+              subPath: authenticator.yaml
+              readOnly: true
+            - name: signing-keys
+              mountPath: {{ .Values.signingKeysPath | quote }}
+              readOnly: true
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          envFrom:
+            # Operator MUST pre-create this Secret (umbrella does it
+            # automatically as `insight-authenticator-config`). Provides the
+            # APP__gears__authenticator__config__* leaf overrides.
+            - secretRef:
+                name: {{ required "existingSecret is required (umbrella provides `insight-authenticator-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: authenticator-config
+          configMap:
+            name: {{ include "insight-authenticator.fullname" . }}-gears-config
+        - name: signing-keys
+          secret:
+            secretName: {{ required "signingKeysSecret is required (mount the ES256 current.pem/previous.pem)" .Values.signingKeysSecret | quote }}

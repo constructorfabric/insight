@@ -46,7 +46,7 @@ date: 2026-07-06
   - [DD-AUTH-06: Two Listeners for Two Internal Surfaces](#dd-auth-06-two-listeners-for-two-internal-surfaces)
   - [DD-AUTH-07: Access-Control Claims Fetched Once, at Login](#dd-auth-07-access-control-claims-fetched-once-at-login)
   - [DD-AUTH-08: Empty-Table First-Admin Bootstrap plus INSTALLER](#dd-auth-08-empty-table-first-admin-bootstrap-plus-installer)
-  - [OPEN: EdDSA vs ES256 for the Gateway JWT](#open-eddsa-vs-es256-for-the-gateway-jwt)
+  - [RESOLVED (step 04): ES256 for the Gateway JWT](#resolved-step-04-es256-for-the-gateway-jwt)
 - [6. Traceability](#6-traceability)
 
 <!-- /toc -->
@@ -1001,9 +1001,9 @@ Recorded here so the decisions survive the deleted tree; rationale as originally
 
 **Consequences**: The documented race ("first colleague to log in wins the universe") is bounded to IdP-authenticated principals on an empty install and is loudly audited; security-sensitive installs disable it.
 
-### OPEN: EdDSA vs ES256 for the Gateway JWT
+### RESOLVED (step 04): ES256 for the Gateway JWT
 
-The deleted spec mandated EdDSA (DD-BFF-05: small signatures, fast verify), but the existing downstream verifier (oidc-authn-plugin) validates RS256/ES256 today. Either extend the plugin for EdDSA (`jsonwebtoken` supports it -- a small, upstreamable change) or mint ES256 and change nothing anywhere; both satisfy the original rationale; leaning ES256 for zero friction unless the plugin extension proves trivial. **Recorded as open; resolved in implementation step 04 of the nginx + authorization plan, before any signing code lands.**
+**Decision: mint ES256 (ECDSA P-256 / SHA-256).** The deleted spec mandated EdDSA (DD-BFF-05: small signatures, fast verify), but the downstream verifier (oidc-authn-plugin) validates RS256/ES256 today; EdDSA would need a non-trivial plugin extension, and downstream verification is a later phase (the R1 rule). ES256 satisfies DD-BFF-05's rationale -- 64-byte signatures, fast verify -- with **zero downstream friction**. The authenticator's Key Store loads a mounted PKCS#8 EC P-256 private key (`current.pem` + optional `previous.pem`), the `kid` is the RFC 7638 JWK thumbprint (stable, no manifest), and `/.well-known/jwks.json` publishes the EC public keys. If a future need for EdDSA arises, the plugin extension remains the documented upgrade path (it changes only the signing alg, not the claim contract). Implemented in step 04 before any signing code shipped.
 
 ## 6. Traceability
 

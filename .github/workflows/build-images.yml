@@ -58,6 +58,7 @@ jobs:
     outputs:
       api_gateway:   ${{ steps.filter.outputs.api_gateway }}
       analytics: ${{ steps.filter.outputs.analytics }}
+      authenticator: ${{ steps.filter.outputs.authenticator }}
       identity:      ${{ steps.filter.outputs.identity }}
       toolbox:       ${{ steps.filter.outputs.toolbox }}
       umbrella:      ${{ steps.filter.outputs.umbrella }}
@@ -74,6 +75,11 @@ jobs:
               - 'src/backend/Cargo.lock'
             analytics:
               - 'src/backend/services/analytics/**'
+              - 'src/backend/Cargo.toml'
+              - 'src/backend/Cargo.lock'
+            authenticator:
+              - 'src/backend/services/authenticator/**'
+              - 'src/backend/libs/authenticator-sdk/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             identity:
@@ -390,6 +396,103 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-analytics
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+
+  backend-authenticator:
+    needs: changes
+    if: |
+      needs.changes.outputs.authenticator == 'true'
+      || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
+        with:
+          context: src/backend
+          file: src/backend/services/authenticator/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-authenticator,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          cache-from: type=gha,scope=authenticator-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=authenticator-${{ matrix.arch }},ignore-error=true
+      - name: Export digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-authenticator-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-authenticator:
+    needs: [changes, backend-authenticator]
+    if: |
+      always()
+      && needs.backend-authenticator.result == 'success'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-authenticator-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/insight-authenticator
+          tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-authenticator@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-authenticator:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-authenticator
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
 
@@ -793,6 +896,7 @@ jobs:
       - discover-images
       - merge-api-gateway
       - merge-analytics
+      - merge-authenticator
       - merge-identity
       - merge-toolbox
       - merge-image
@@ -813,6 +917,7 @@ jobs:
       && needs.merge-image.result == 'success'
       && (needs.merge-api-gateway.result   == 'success' || needs.merge-api-gateway.result   == 'skipped')
       && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
+      && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
       && (needs.merge-identity.result      == 'success' || needs.merge-identity.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
     runs-on: ubuntu-latest
@@ -948,6 +1053,7 @@ jobs:
       - discover-images
       - merge-api-gateway
       - merge-analytics
+      - merge-authenticator
       - merge-identity
       - merge-toolbox
       - merge-image
@@ -958,6 +1064,7 @@ jobs:
       && github.ref == 'refs/heads/main'
       && (needs.merge-api-gateway.result   == 'success' || needs.merge-api-gateway.result   == 'skipped')
       && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
+      && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
       && (needs.merge-identity.result      == 'success' || needs.merge-identity.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
       && (needs.merge-image.result         == 'success' || needs.merge-image.result         == 'skipped')
