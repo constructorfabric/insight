@@ -24,7 +24,8 @@ use uuid::Uuid;
 /// create/count API + first-class tenant-membership resolution.
 pub const BOOTSTRAP_FOLLOWUP: &str =
     "authenticator bootstrap uses config-flag gating (no Identity count/create API) and \
-     id_token-sourced tenants; replace with the INSTALLER + Identity membership API";
+     id_token-sourced tenants; replace with the INSTALLER + Identity membership API \
+     (constructorfabric/insight#1687)";
 
 /// The IdP-authenticated principal, distilled from the validated id_token.
 #[derive(Debug, Clone)]
