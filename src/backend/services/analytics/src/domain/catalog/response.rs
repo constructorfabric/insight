@@ -33,7 +33,7 @@ use uuid::Uuid;
 /// `deny_unknown_fields` enforces that defensively at the parser layer: a
 /// caller that smuggles `"tenant_id": "..."` into the body gets a 400 instead
 /// of a silent ignore.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetMetricsRequest {
     /// Role slug for `role` / `team+role` resolution chains. `None` and `Some("")`
@@ -55,7 +55,7 @@ pub struct GetMetricsRequest {
 /// `links` carries the `metric_query_catalog` M:N mapping per ADR-003. The
 /// mapping is time/filter-invariant, so consumers cache it for the same TTL as
 /// the catalog itself; see [`MetricQueryLink`].
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct CatalogResponse {
     pub tenant_id: Uuid,
     pub generated_at: DateTime<Utc>,
@@ -72,7 +72,7 @@ pub struct CatalogResponse {
 /// produces. The set is empty only when the linked catalog rows are all
 /// `is_enabled = false` (filtered out of the `metrics` array) — consumers
 /// degrade gracefully on empty.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct MetricQueryLink {
     /// `metrics.id` — the ClickHouse `query_ref` row this link is FROM.
     pub query_id: Uuid,
@@ -83,7 +83,7 @@ pub struct MetricQueryLink {
 
 /// One catalog metric on the wire. `metric_key` is surfaced per ADR-002 as the
 /// transitional FE-bridge identifier; consumers MUST still key lookups by `id`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct MetricView {
     pub id: Uuid,
     /// Backend's `<table_name>.<column_name>` identifier. Surfaced per ADR-002
@@ -122,7 +122,14 @@ pub struct MetricView {
 /// future seed entries need full-precision decimals, this is the place to switch
 /// to a string serializer; the FE byte-for-byte comparison gate (PRD §12) is
 /// the regression detector.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// The OpenAPI component is named `CatalogThresholdView` (via `#[schema(as)]`)
+/// to disambiguate from the admin-CRUD `ThresholdView`
+/// (`domain::admin_threshold::dto::ThresholdView`), which is a different wire
+/// shape registered under `AdminMetricThresholdView`. `#[schema(as)]` renames
+/// only the OpenAPI component — it does NOT affect serde / the wire format.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
+#[schema(as = CatalogThresholdView)]
 pub struct ThresholdView {
     pub good: f64,
     pub warn: f64,
@@ -138,6 +145,13 @@ pub struct ThresholdView {
     /// always names the row that won.
     pub bounded_by_lock: bool,
 }
+
+// Marker traits — `GetMetricsRequest` is the `POST /v1/catalog/get_metrics`
+// request body; `CatalogResponse` is its response. `MetricView` /
+// `MetricQueryLink` / `ThresholdView` are nested inside `CatalogResponse` and
+// need only `ToSchema` (above).
+impl toolkit::api::api_dto::RequestApiDto for GetMetricsRequest {}
+impl toolkit::api::api_dto::ResponseApiDto for CatalogResponse {}
 
 #[cfg(test)]
 mod tests {

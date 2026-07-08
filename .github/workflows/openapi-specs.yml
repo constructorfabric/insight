@@ -1,0 +1,98 @@
+name: OpenAPI Specs
+
+# Offline OpenAPI contract drift gate — checks that the committed OpenAPI docs
+# under docs/components/backend/<service>/ still correspond to the backend code.
+# Kept SEPARATE from the E2E suite (e2e-bronze-to-api.yml) because it doesn't
+# need the bronze→API stack: each service emits its OpenAPI document from its
+# own code and scripts/ci/openapi_spec.py diffs it against the committed doc.
+#
+#   • analytics — the offline `analytics openapi` subcommand (no DB,
+#     no HTTP listener; see api::openapi_document).
+#   • identity — the served GET /openapi.json, dumped by its integration test
+#     (Testcontainers MariaDB); the drift comparison is external (this workflow),
+#     so the test project itself has no docs/ coupling.
+
+on:
+  # Deliberately NO `paths:` filter — this is meant to be a required status
+  # check on main, and a path-filtered required check never reports on PRs
+  # outside the filter (they hang on "Expected" forever). Running on every PR
+  # keeps the gate uniform.
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # ─── analytics — offline emit via the `openapi` subcommand ───────────────
+  analytics:
+    name: OpenAPI spec drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/backend -> target
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate the OpenAPI doc offline and drift-check it
+        run: |
+          # `analytics openapi` builds offline and prints the doc; a build
+          # failure here should abort loudly under the runner's default `set -e`.
+          (cd src/backend && cargo run --quiet -p analytics --bin analytics -- openapi) > openapi.live.json
+          # Relax errexit from here: we capture the drift-check rc ourselves,
+          # write the committed-vs-generated diff to the step summary, and emit a
+          # friendly ::error:: before exiting non-zero. Without this, the runner's
+          # `set -eo pipefail` aborts at the failing pipe and skips all reporting.
+          set +e
+          python3 scripts/ci/openapi_spec.py check --live-file openapi.live.json | tee openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::OpenAPI spec drift — docs/components/backend/analytics/openapi.json is stale. Regenerate: (cd src/backend && cargo run -p analytics -- openapi) > docs/components/backend/analytics/openapi.json"; fi
+          exit "$rc"
+
+  # ─── identity — serve GET /openapi.json (integration test) + external diff ──
+  # The test boots the API against a Testcontainers MariaDB, fetches
+  # /openapi.json, and writes it to IDENTITY_OPENAPI_DUMP; openapi_spec.py then
+  # normalizes + diffs it against the committed doc. ubuntu-latest ships the
+  # Docker daemon Testcontainers needs.
+  identity:
+    name: Identity OpenAPI spec drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Emit the served OpenAPI doc and drift-check it
+        # `runner.*` is only in scope at the step level, so IDENTITY_OPENAPI_DUMP
+        # (an absolute temp path the .NET test host writes and the drift check
+        # reads) lives here, not in a job-level `env:`.
+        env:
+          IDENTITY_OPENAPI_DUMP: ${{ runner.temp }}/identity.openapi.json
+          IDENTITY_SPEC: docs/components/backend/identity/openapi.json
+        run: |
+          # Relax errexit: dotnet test's non-zero rc is handled explicitly below,
+          # and the drift-check rc after it drives the committed-vs-generated diff
+          # + ::error::. The runner's default `set -eo pipefail` would otherwise
+          # abort at the first failing command and skip all of that reporting.
+          set +e
+          dotnet test src/backend/services/identity/tests/Insight.Identity.Tests.Integration \
+            --filter "FullyQualifiedName~OpenApiContractTests" --nologo
+          test_rc=$?
+          if [ "$test_rc" -ne 0 ]; then
+            echo "::error::identity integration test failed — could not produce the OpenAPI dump"
+            exit "$test_rc"
+          fi
+          python3 scripts/ci/openapi_spec.py check --file "$IDENTITY_SPEC" --live-file "$IDENTITY_OPENAPI_DUMP" | tee identity_openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat identity_openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Identity OpenAPI spec drift — $IDENTITY_SPEC is stale. Regenerate: IDENTITY_OPENAPI_DUMP=/tmp/id.json dotnet test --filter ~OpenApiContractTests && python3 scripts/ci/openapi_spec.py update --file $IDENTITY_SPEC --live-file /tmp/id.json"; fi
+          exit "$rc"

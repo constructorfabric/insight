@@ -22,6 +22,7 @@
 //! ```text
 //! analytics --config config.yaml          # run the host
 //! analytics --config config.yaml migrate  # run migrations + probes and exit
+//! analytics openapi                        # print the OpenAPI document and exit
 //! ```
 
 mod api;
@@ -81,6 +82,11 @@ enum Commands {
     Migrate,
     /// Validate configuration and exit.
     Check,
+    /// Print the OpenAPI document to stdout and exit. Built offline from the
+    /// route table — no database, no HTTP listener, no config needed. Used to
+    /// regenerate docs/components/backend/analytics/openapi.json and to
+    /// drift-check it in CI.
+    Openapi,
 }
 
 #[tokio::main]
@@ -103,5 +109,26 @@ async fn main() -> Result<()> {
         // Validate the gear config (section present, deserializes, required
         // URLs set) without connecting to any backend.
         Commands::Check => gear::check_config(&config),
+        // Emit the OpenAPI document offline (no backends) — see `print_openapi`.
+        Commands::Openapi => print_openapi(),
+    }
+}
+
+/// Print the analytics `OpenAPI` document as pretty JSON. Offline — see
+/// [`api::openapi_document`]. No config or backends are touched, and no logging
+/// subscriber is initialized on this path, so stdout stays pure JSON.
+fn print_openapi() -> Result<()> {
+    let doc = api::openapi_document()?;
+    println!("{}", serde_json::to_string_pretty(&doc)?);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// The `openapi` subcommand's happy path: build the document offline and
+    /// write it to stdout (captured by the harness).
+    #[test]
+    fn print_openapi_writes_the_document() -> anyhow::Result<()> {
+        super::print_openapi()
     }
 }

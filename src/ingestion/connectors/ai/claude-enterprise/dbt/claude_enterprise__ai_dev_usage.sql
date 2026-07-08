@@ -53,7 +53,9 @@ SELECT
     CAST(NULL AS Nullable(String))                                     AS api_key_id,
     toDate(parseDateTimeBestEffortOrNull(date))                        AS day,
     'claude_code'                                                      AS tool,
+    'Claude Code'                                                      AS tool_label,
     toUInt32(coalesce(code_session_count, 0))                          AS session_count,
+    toUInt32OrNull(toString(code_session_count))                       AS conversation_count,
     toUInt32(coalesce(code_lines_added, 0))                            AS lines_added,
     toUInt32(coalesce(code_lines_removed, 0))                          AS lines_removed,
     -- Enterprise reports AI-accepted lines only — no view of total user keystrokes.

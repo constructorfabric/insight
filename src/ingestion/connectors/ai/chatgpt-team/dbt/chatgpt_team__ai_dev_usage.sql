@@ -42,8 +42,10 @@ SELECT
     CAST(NULL AS Nullable(String))                      AS api_key_id,
     toDate(date)                                        AS day,
     'codex'                                             AS tool,
+    'Codex'                                             AS tool_label,
     -- Codex threads ≈ coding sessions. Non-nullable UInt32 per contract.
     toUInt32(coalesce(toUInt32OrNull(toString(n_threads)), 0))        AS session_count,
+    toUInt32OrNull(toString(n_threads))                               AS conversation_count,
     toUInt32(coalesce(toUInt32OrNull(toString(lines_added)), 0))      AS lines_added,
     -- Codex does not surface AI-removed lines / total keystrokes.
     CAST(NULL AS Nullable(UInt32))                      AS lines_removed,

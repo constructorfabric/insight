@@ -1,0 +1,112 @@
+version: 2
+
+models:
+  - name: ai_metric_observations
+    description: >
+      Source measure observations for the unified metrics runtime. One row per
+      (tenant, entity, day, measure, dimension tuple). Emits measures, not
+      metrics: the analytics service metric registry binds input roles to
+      measure keys and compiles result queries against this relation. The
+      column set is a published contract — the analytics service schema validator
+      probes it at runtime (`OBSERVATION_COLUMNS`); changing it requires a
+      coordinated backend change.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ai_usage']
+      - name: entity_type
+        description: "Measured entity type"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['person']
+      - name: entity_id
+        description: "Normalized entity identifier (lowercased email for person)"
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Observation date"
+        tests:
+          - not_null
+      - name: observed_at
+        description: >
+          Intra-day observation timestamp for future point-in-time semantics.
+          NULL for day-grain aggregate measures.
+      - name: measure_key
+        description: "Source measure key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - accepted_lines
+                  - removed_lines
+                  - active_day
+                  - cost_usd
+                  - accepted_edit_actions
+                  - tool_use_offered
+                  - dev_conversations
+                  - assistant_messages
+                  - assistant_actions
+                  - chat_assistant_conversations
+      - name: value
+        description: >
+          Measure value. Rows are emitted only when the source provides a
+          value, so value is never NULL; the column stays Nullable(Float64)
+          in the published contract.
+        tests:
+          - not_null
+      - name: subject_key
+        description: >
+          Distinct-count subject for future distinct-count semantics. NULL for
+          measures without distinct-count support.
+      - name: dimensions
+        description: >
+          Array(Tuple(key, value, label)) of all dimensions the source emits
+          for the measure. Values and labels come straight from class-contract
+          columns, which the silver contract guarantees non-null.
+
+  - name: metric_entity_cohorts_current
+    description: >
+      Current cohort membership per entity for peer comparison. One row per
+      (tenant, entity_type, entity_id, cohort_key) — uniqueness is asserted by
+      tests/gold/assert_metric_entity_cohorts_unique.sql and relied on by the
+      analytics service peer view (join fan-out would corrupt percentiles). The
+      column set is a published contract probed by the analytics service schema
+      validator (`COHORT_COLUMNS`).
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: entity_type
+        description: "Entity type the cohort row applies to"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['person']
+      - name: entity_id
+        description: "Normalized entity identifier (lowercased email for person)"
+        tests:
+          - not_null
+      - name: cohort_key
+        description: "Cohort basis identifier"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['org_unit']
+      - name: cohort_id
+        description: >
+          Cohort membership value: org unit id when present, department name
+          fallback otherwise. NULL when the person has neither.

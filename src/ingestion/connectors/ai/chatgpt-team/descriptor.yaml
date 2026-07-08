@@ -12,7 +12,11 @@ name: chatgpt-team
 #   leaderboard (daily range only), remove the hardcoded min_datetime floor,
 #   add lookback_window P2D, dedup on lower(trim(email)) and add a Codex
 #   activity filter. Behaviour + dbt output change → reconcile must re-run.
-version: "1.1.1"
+# 2.0.0: dbt staging maps Codex threads (n_threads) into class-contract
+#   conversation_count and declares tool_label / surface_label — MAJOR per
+#   ADR-0015: pre-existing rows must re-materialize from Bronze to populate
+#   the new columns (one-shot scoped full refresh).
+version: "2.0.0"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that
 # may also hit it (same rationale as claude-team).

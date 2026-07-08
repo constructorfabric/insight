@@ -39,7 +39,9 @@ SELECT
     CAST(NULL AS Nullable(String))                  AS api_key_id,
     toDate(fromUnixTimestamp64Milli(CAST(date AS Int64))) AS day,
     'cursor'                                        AS tool,
+    'Cursor'                                        AS tool_label,
     toUInt32(1)                                     AS session_count,
+    CAST(NULL AS Nullable(UInt32))                  AS conversation_count,
     toUInt32(coalesce(acceptedLinesAdded, 0))       AS lines_added,
     toUInt32(coalesce(acceptedLinesDeleted, 0))     AS lines_removed,
     -- total_lines_added/removed = ALL lines the user wrote/deleted that day

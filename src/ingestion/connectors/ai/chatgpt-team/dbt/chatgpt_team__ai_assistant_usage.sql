@@ -38,7 +38,9 @@ SELECT
     lower(trim(email))                                              AS email,
     toDate(date)                                                    AS day,
     'chatgpt'                                                       AS tool,
+    'ChatGPT'                                                       AS tool_label,
     'chat'                                                          AS surface,
+    'Chat'                                                          AS surface_label,
     -- chat is not session-bounded in the API → session_count NULL
     CAST(NULL AS Nullable(UInt32))                                  AS session_count,
     CAST(NULL AS Nullable(UInt32))                                  AS conversation_count,

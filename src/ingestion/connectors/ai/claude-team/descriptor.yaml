@@ -11,7 +11,11 @@ name: claude-team
 # limit_type) and new dbt models (claude_team__ai_overage → class_ai_overage).
 # Populates only once the proxy sessionKey holds billing:view / Owner;
 # otherwise the stream stays empty and the Silver rows are zero (no failure).
-version: "1.3.0"
+# 2.0.0: dbt staging maps total_sessions into class-contract
+#   conversation_count and declares tool_label — MAJOR per ADR-0015:
+#   pre-existing rows must re-materialize from Bronze to populate the new
+#   columns (one-shot scoped full refresh).
+version: "2.0.0"
 # Daily at 04:00 UTC — off-peak vs other connectors. The customer's
 # proxy runs a single browser instance, so we avoid scheduling
 # claude-team next to anything else that may also hit it.

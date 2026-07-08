@@ -59,6 +59,13 @@ COMPONENTS = [
      # zero-hit dependency files would gate THOSE components at 0%.
      "cover_ignore_regex": "src/backend/(libs|plugins)/",
      "paths": ["src/backend/services/api-gateway"]},
+    # fakeidp is a dev/e2e test double (see cf/NGINX_BFF.md §10 G6), not shipped
+    # code — but it has real integration tests, so it is covered + gated like any
+    # other crate. Its only cross-crate files are none (standalone deps), so no
+    # cover_ignore_regex is needed.
+    {"name": "fakeidp", "lang": "rust", "root": "src/backend",
+     "package": "fakeidp",
+     "paths": ["src/backend/services/fakeidp"]},
     # jira-enrich is a standalone workspace; its `io` feature needs a live
     # ClickHouse, so cover with default features only (core tests are io-free).
     # clippy: False — jira-enrich's strict [lints.clippy] (pedantic/unwrap_used/…)

@@ -29,7 +29,7 @@ use uuid::Uuid;
 /// `serde(rename_all = "kebab-case")` would NOT produce the right value for
 /// `team+role` (kebab would yield `team-role`), so we spell each variant
 /// explicitly with `#[serde(rename = ...)]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum Scope {
     #[serde(rename = "product-default")]
     ProductDefault,
@@ -161,7 +161,7 @@ pub struct ListFilters {
 ///
 /// `role_slug` / `team_id` use `Option<String>` — `None` is the canonical
 /// empty-string sentinel (DESIGN §3.7 + `infra/cache/catalog_cache.rs::cache_field`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
     pub metric_id: Uuid,
@@ -189,7 +189,7 @@ pub struct CreateRequest {
 /// compares the value to the row's current value and rejects with
 /// `failed_precondition` + `type: "immutable_field"` if they differ. Re-
 /// scoping requires DELETE + POST per DESIGN §3.7 line 1034.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateRequest {
     /// Echoed by the caller as a sanity check; the gauntlet validates it
@@ -217,7 +217,15 @@ pub struct UpdateRequest {
 /// `metric_key` is NOT serialized — same backend-internal opacity rule the
 /// read endpoint follows (`domain/catalog/response.rs::MetricView`).
 /// Consumers identify a metric by `metric_id`.
-#[derive(Debug, Clone, Serialize)]
+///
+/// The OpenAPI component is named `AdminMetricThresholdView` (via
+/// `#[schema(as)]`) to disambiguate from the catalog read path's
+/// `ThresholdView` (`domain::catalog::response::ThresholdView`, registered as
+/// `CatalogThresholdView`), which is a different wire shape. `#[schema(as)]`
+/// renames only the OpenAPI component — it does NOT affect serde / the wire
+/// format.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = AdminMetricThresholdView)]
 pub struct ThresholdView {
     pub id: Uuid,
     /// `Some(_)` for tenant-scoped rows, `None` for `product-default`.
@@ -261,10 +269,20 @@ pub struct ThresholdView {
 /// Wraps `items` in an object (instead of a bare array) so future
 /// additions (pagination cursor, count, generated-at) are additive and
 /// non-breaking. Mirrors the catalog read endpoint's envelope shape.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListResponse {
     pub items: Vec<ThresholdView>,
 }
+
+// Marker traits — `CreateRequest` / `UpdateRequest` are request bodies;
+// `ThresholdView` (get / create / update response) and `ListResponse` (list
+// response) are response-side. `Scope` is nested in both directions and needs
+// only `ToSchema` (above). `ListFilters` is a query-string type, not a JSON
+// body, so it carries no `json_request` schema and needs no marker.
+impl toolkit::api::api_dto::RequestApiDto for CreateRequest {}
+impl toolkit::api::api_dto::RequestApiDto for UpdateRequest {}
+impl toolkit::api::api_dto::ResponseApiDto for ThresholdView {}
+impl toolkit::api::api_dto::ResponseApiDto for ListResponse {}
 
 #[cfg(test)]
 mod tests {

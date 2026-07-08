@@ -59,6 +59,12 @@ impl Gear for AnalyticsApiGear {
         // Run pending migrations.
         infra::db::run_migrations(&db).await?;
 
+        // Converge builtin metric definitions to the code registry before
+        // serving traffic. MySQL-only, so it does not violate the
+        // post-readiness ClickHouse rule; failure aborts startup because the
+        // registry state must be consistent before the first request.
+        crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
+
         // Refuse to start if any required CHECK constraint is missing. See
         // `infra/db/check_probe` and DESIGN §2.2
         // `cpt-metric-cat-constraint-mariadb-check`.
@@ -125,7 +131,11 @@ impl Gear for AnalyticsApiGear {
         // Schema-validator (Refs #521). Held in AppState (admin-crud per-write
         // hook) and cloned into the post-init startup pass below.
         let validator = SchemaValidator::new(db.clone(), ch.clone());
-
+        let metric_definition_validator =
+            crate::domain::metric_definitions::MetricDefinitionValidator::new(
+                db.clone(),
+                ch.clone(),
+            );
         // Catalog auth-trait (Refs #522 / #525). v1 stub — see `domain::auth`.
         let tenant_auth: Arc<dyn crate::domain::auth::TenantAuthorization> = Arc::new(
             ConfigTenantAuthorization::new(cfg.metric_catalog.tenant_default_id),
@@ -160,6 +170,10 @@ impl Gear for AnalyticsApiGear {
         tokio::spawn(async move {
             validator.validate_all().await;
         });
+        // Periodic, not one-shot: the managed observation views are
+        // dbt-created after boot on a fresh deploy, and the registry has no
+        // write path that would re-trigger probing.
+        tokio::spawn(metric_definition_validator.run());
 
         Ok(())
     }
@@ -198,6 +212,10 @@ pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<
 
     let db = infra::db::connect(&cfg.database_url).await?;
     infra::db::run_migrations(&db).await?;
+
+    // Same convergence as `init`: `migrate` run as a standalone step must
+    // leave builtin metric definitions matching the code registry.
+    crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
 
     // Same probes as `init`. An operator running `migrate` standalone wants
     // the integrity signals too (DESIGN §2.2 / §3.6).

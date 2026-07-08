@@ -1,5 +1,10 @@
 name: youtrack
-version: "1.0"
+# 2.0.0: enriched added/removed in issue history, full issue links instead of
+# trimmedIssues, color(id)+isResolved on field values. Strict-semver major so
+# reconcile republishes the manifest and refreshes the connection sync_catalog
+# (the frozen catalog predates the #620 normalizer fix). Requires a full
+# re-pull of youtrack_issue_history to replace impoverished bronze payloads.
+version: "2.0.0"
 
 schedule: "0 3 * * *"
 workflow: sync

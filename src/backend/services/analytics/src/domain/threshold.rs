@@ -8,7 +8,7 @@ use uuid::Uuid;
 ///
 /// The query engine evaluates every result row against the metric's thresholds
 /// and attaches a `_thresholds` map to the response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Threshold {
     pub id: Uuid,
     pub insight_tenant_id: Uuid,
@@ -21,8 +21,18 @@ pub struct Threshold {
     pub updated_at: NaiveDateTime,
 }
 
+/// Response envelope for `GET /v1/metrics/{id}/thresholds`
+/// (`{ "items": [Threshold] }`).
+///
+/// Docs-only wrapper mirroring the inline `serde_json::json!` shape the list
+/// handler emits.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct ThresholdListResponse {
+    pub items: Vec<Threshold>,
+}
+
 /// Request to create a threshold.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateThresholdRequest {
     pub field_name: String,
     /// Comparison operator: `gt`, `ge`, `lt`, `le`, `eq`.
@@ -33,13 +43,20 @@ pub struct CreateThresholdRequest {
 }
 
 /// Request to update a threshold.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateThresholdRequest {
     pub field_name: Option<String>,
     pub operator: Option<String>,
     pub value: Option<f64>,
     pub level: Option<String>,
 }
+
+// Marker traits — `Threshold` / `ThresholdListResponse` are response-side;
+// the two `*Request` shapes are request bodies.
+impl toolkit::api::api_dto::ResponseApiDto for Threshold {}
+impl toolkit::api::api_dto::ResponseApiDto for ThresholdListResponse {}
+impl toolkit::api::api_dto::RequestApiDto for CreateThresholdRequest {}
+impl toolkit::api::api_dto::RequestApiDto for UpdateThresholdRequest {}
 
 pub const VALID_OPERATORS: &[&str] = &["gt", "ge", "lt", "le", "eq"];
 pub const VALID_LEVELS: &[&str] = &["good", "warning", "critical"];

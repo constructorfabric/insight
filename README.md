@@ -189,9 +189,9 @@ Incoming documents pending triage and integration into `docs/`. Not yet canonica
 | `stats/frontend/` | Draft | `docs/components/frontend/specs/` |
 | `streams/` | Draft schemas | `docs/components/connectors/` — per-source stream definitions |
 
-### `cypilot/`
+### `cypilot/` (Legacy)
 
-This repo uses [Cypilot](https://github.com/cyberfabric/cyber-pilot) — an AI agent framework for spec authoring, validation, and traceability. The `cypilot/` directory contains the project-specific configuration (artifact registry, rules, kit bindings). The engine itself lives in the upstream repo.
+This repo uses [Constructor Studio](https://github.com/constructorfabric/studio) — an AI agent framework for spec authoring, validation, and traceability. The active configuration lives in `.cf-studio/` (artifact registry, rules, kit bindings). The legacy `cypilot/` directory is retained during transition and will be removed in a future update. The engine itself lives in the upstream repo.
 
 ---
 
@@ -362,7 +362,7 @@ See [`src/backend/services/LOCAL_DEV.md`](src/backend/services/LOCAL_DEV.md) for
 - **Understand a domain** — Read the relevant `docs/domain/{domain}/specs/DESIGN.md` first. These documents describe the platform's core algorithms, data contracts, and architectural decisions that span multiple components.
 - **Add a connector** — Follow the layout in any existing `docs/components/connectors/{domain}/{source}/` directory. Use `specs/PRD.md` for requirements and `specs/DESIGN.md` for table schemas and pipeline mappings.
 - **Add source code** — Place code under `src/{component}/`. The structure mirrors `docs/components/` — `src/connectors/`, `src/backend/`, `src/frontend/`, `src/orchestrator/`.
-- **Cypilot** — Run `cypilot on` in a supported AI agent to activate assisted spec authoring, validation, and traceability. Cypilot is sourced from [github.com/cyberfabric/cyber-pilot](https://github.com/cyberfabric/cyber-pilot).
+- **Constructor Studio** — Run `cfs` in a supported AI agent to activate assisted spec authoring, validation, and traceability. Constructor Studio is sourced from [github.com/constructorfabric/studio](https://github.com/constructorfabric/studio).
 - **Inbox** — Documents in `inbox/` are drafts awaiting review. Do not reference them as canonical sources.
 
 ---

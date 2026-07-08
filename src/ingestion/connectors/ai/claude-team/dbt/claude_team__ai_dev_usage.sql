@@ -54,7 +54,9 @@ SELECT
     CAST(NULL AS Nullable(String))                      AS api_key_id,
     toDate(metric_date)                                 AS day,
     'claude_code'                                       AS tool,
+    'Claude Code'                                       AS tool_label,
     toUInt32(coalesce(total_sessions, 0))               AS session_count,
+    toUInt32OrNull(toString(total_sessions))            AS conversation_count,
     toUInt32(coalesce(total_lines_accepted, 0))         AS lines_added,
     -- NULL per NULL-policy (PR #553): Claude Team does not expose AI-removed
     -- lines — structural absence, not zero.

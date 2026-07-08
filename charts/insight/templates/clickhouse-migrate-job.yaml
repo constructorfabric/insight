@@ -36,6 +36,13 @@ Idempotent: migrations are re-run on every upgrade and are CREATE OR
 REPLACE / IF NOT EXISTS; placeholders are guarded by `ch_table_exists`.
 No migration ledger — same contract as the legacy init.sh path.
 
+The script's final step builds the dbt gold models (`dbt run --select
+tag:gold`) so dbt-owned views exist right after deploy instead of after
+the first connector sync — the analytics service reports metrics as
+unavailable while an observation view is missing. The toolbox image
+already bundles the dbt project; placeholders guarantee the view DDL
+type-checks on a fresh cluster.
+
 Gated on `clickhouse.runMigrations` (default true) AND the availability of
 `ingestion.toolboxImage` (the image that ships the migration SQL).
 */}}

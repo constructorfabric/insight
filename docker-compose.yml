@@ -289,6 +289,40 @@ services:
     ports:
       - "${IDENTITY_PORT:-8082}:8082"
 
+  # ── Fake IdP (dev/e2e ONLY — never shipped to production) ──────────────
+  #
+  # A tiny in-repo OIDC provider so the authenticator's real login / refresh /
+  # logout code path runs locally and in CI with no external IdP. It signs with
+  # a throwaway keypair generated at startup and exposes /_control/* test hooks. Builds
+  # entirely from its own Dockerfile (no host-built-binary bind mount), so it is
+  # self-contained. See src/backend/services/fakeidp/README.md and
+  # cf/NGINX_BFF.md §10 G6. On the default profile — comes up with the stack.
+  fakeidp:
+    <<: *backend-common
+    image: ${FAKEIDP_IMAGE:-insight-fakeidp:dev}
+    container_name: insight-fakeidp
+    build:
+      context: src/backend
+      dockerfile: services/fakeidp/Dockerfile
+    environment:
+      # Issuer defaults to the host-visible URL so the README curl flow works
+      # from your laptop. When the authenticator (step 04) consumes this from
+      # inside the compose network, override to http://fakeidp:8084 so the
+      # discovery issuer matches the URL used to fetch it.
+      FAKEIDP_ISSUER: "${FAKEIDP_ISSUER:-http://localhost:8084}"
+      FAKEIDP_BIND: "0.0.0.0:8084"
+      FAKEIDP_TOKEN_TTL: "${FAKEIDP_TOKEN_TTL:-300}"
+      # Default login identity: the dev-impersonation person the seeder writes
+      # into identity (dev-compose.sh's VITE_DEV_USER_EMAIL). Overrides the
+      # first user in users.yaml so a plain login resolves to a seeded person.
+      FAKEIDP_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-dev@company.nonpresent}"
+      # Set once the authenticator exists to enable POST /_control/backchannel/{email},
+      # e.g. http://authenticator:8083/auth/oidc/back-channel-logout
+      FAKEIDP_BACKCHANNEL_URL: "${FAKEIDP_BACKCHANNEL_URL:-}"
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${FAKEIDP_PORT:-8084}:8084"
+
   # ── Frontend (one variant active per FRONTEND_MODE) ────────────────────
   #
   # The dev-compose.sh up script translates FRONTEND_MODE=dev|built|ghcr
@@ -483,5 +517,7 @@ services:
     volumes:
       # Bind-mount the source so seed.py edits don't need a rebuild.
       - ./deploy/seed:/app:ro
-      # Phase 2 will read these to apply gold view migrations.
-      - ./src/ingestion/scripts/migrations:/migrations:ro
+      # Schema inputs: create-bronze-placeholders.sh + lib/ch-exec.sh
+      # (the same placeholder DDL the k8s clickhouse-migrate Hook Job
+      # applies) and the gold-view migrations/*.sql.
+      - ./src/ingestion/scripts:/ingestion-scripts:ro
