@@ -156,12 +156,13 @@ impl Default for AuthenticatorConfig {
 }
 
 impl AuthenticatorConfig {
-    /// Validate cross-field invariants that the type system can't express.
+    /// Validate cross-field invariants and required fields, so a misconfigured
+    /// gear fails fast at boot rather than on the first request.
     ///
     /// # Errors
     /// Returns an error when a lifetime relationship is nonsensical (e.g. the
     /// reissue age is not strictly below the JWT TTL, which would erase the
-    /// travel margin the whole design depends on).
+    /// travel margin) or a required connection/OIDC field is empty.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.jwt_reissue_after_seconds < self.jwt_ttl_seconds,
@@ -173,6 +174,21 @@ impl AuthenticatorConfig {
             self.session_ttl_seconds <= self.session_absolute_lifetime_seconds,
             "session_ttl_seconds must be <= session_absolute_lifetime_seconds"
         );
+
+        // Required fields (all injected per-deployment). `idp.client_secret` is
+        // intentionally optional — public OIDC clients (e.g. the dev fakeidp)
+        // authenticate with PKCE and no secret. `redis_url` is checked in
+        // SessionManager::connect.
+        for (name, value) in [
+            ("gateway_issuer", &self.gateway_issuer),
+            ("redirect_uri", &self.redirect_uri),
+            ("signing_keys_path", &self.signing_keys_path),
+            ("identity_url", &self.identity_url),
+            ("idp.issuer_url", &self.idp.issuer_url),
+            ("idp.client_id", &self.idp.client_id),
+        ] {
+            anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
+        }
         Ok(())
     }
 }

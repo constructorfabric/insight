@@ -39,15 +39,27 @@ docker run -d --name "$REDIS_CT" -p 6399:6379 redis:7-alpine >/dev/null
 echo "==> build fakeidp + authenticator"
 cargo build --release --bin fakeidp --bin authenticator
 
+# Wait for an HTTP endpoint to answer, or fail loudly.
+wait_ready() { # name url
+  for _ in $(seq 1 30); do
+    curl -fsS -o /dev/null "$2" && return 0
+    sleep 1
+  done
+  echo "ERROR: $1 did not become ready ($2)" >&2
+  return 1
+}
+
 echo "==> fakeidp :$IDP_PORT"
 FAKEIDP_ISSUER="http://localhost:$IDP_PORT" FAKEIDP_BIND="0.0.0.0:$IDP_PORT" \
   FAKEIDP_DEFAULT_AUD=insight-authenticator \
   ./target/release/fakeidp >/tmp/authenticator-e2e-fakeidp.log 2>&1 &
 pids+=($!)
+wait_ready fakeidp "http://localhost:$IDP_PORT/.well-known/openid-configuration"
 
 echo "==> identity stub :$IDENTITY_PORT (resolves any email to a person)"
 python3 "$HERE/identity-stub.py" "127.0.0.1:$IDENTITY_PORT" >/tmp/authenticator-e2e-identity.log 2>&1 &
 pids+=($!)
+wait_ready identity-stub "http://localhost:$IDENTITY_PORT/v1/persons/probe@example.com"
 
 echo "==> authenticator :$AUTH_PORT"
 APP__gears__authenticator__config__redis_url=redis://localhost:6399 \
@@ -61,11 +73,11 @@ APP__gears__authenticator__config__redirect_uri="http://localhost:$AUTH_PORT/aut
   >/tmp/authenticator-e2e-auth.log 2>&1 &
 pids+=($!)
 
-echo "==> wait for readiness"
-for _ in $(seq 1 30); do
-  if curl -fsS -o /dev/null "http://localhost:$AUTH_PORT/.well-known/jwks.json"; then break; fi
-  sleep 1
-done
+echo "==> wait for authenticator readiness"
+if ! wait_ready authenticator "http://localhost:$AUTH_PORT/.well-known/jwks.json"; then
+  tail -20 /tmp/authenticator-e2e-auth.log >&2 || true
+  exit 1
+fi
 
 echo "==> run the login loop"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \

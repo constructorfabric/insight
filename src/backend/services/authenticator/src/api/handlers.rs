@@ -390,6 +390,12 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
         Ok(None) => return unauthenticated(),
         Err(e) => return internal_problem("session_store", &e),
     };
+    // Same expiry guard as the exchange: don't summarize a session that has
+    // passed its cap in the window before Redis's EXPIREAT removes the key.
+    let now = now_secs();
+    if record.expires_at <= now || record.absolute_expires_at <= now {
+        return unauthenticated();
+    }
 
     let margin = state.cfg.session_refresh_safety_margin_seconds;
     let half_jitter = state.cfg.refresh_jitter_seconds / 2;

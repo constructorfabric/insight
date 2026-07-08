@@ -8,7 +8,7 @@
 use anyhow::Context as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use jsonwebtoken::{DecodingKey, Validation, decode, decode_header};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use rand::RngCore as _;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
@@ -254,7 +254,10 @@ impl OidcClient {
         );
         let decoding = DecodingKey::from_rsa_components(n, e).context("build RSA decoding key")?;
 
-        let mut validation = Validation::new(header.alg);
+        // Pin the algorithm to RS256 (the RSA JWK we just built) rather than
+        // trusting the token's own `alg` header — RFC 8725 algorithm-confusion
+        // guard. `Validation::new` sets `algorithms = [RS256]`.
+        let mut validation = Validation::new(Algorithm::RS256);
         validation.set_audience(&[&self.client_id]);
         validation.set_issuer(&[&d.issuer]);
         validation.validate_exp = true;

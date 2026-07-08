@@ -399,14 +399,19 @@ impl SessionManager {
     /// Fails on a Redis error.
     pub async fn revoke_user_sessions(&self, person_id: &str) -> anyhow::Result<u64> {
         let mut conn = self.conn.clone();
+        let ukey = user_sessions_key(person_id);
         let session_ids: Vec<String> = conn
-            .zrange(user_sessions_key(person_id), 0, -1)
+            .zrange(&ukey, 0, -1)
             .await
             .context("list user sessions")?;
         let mut revoked = 0u64;
-        for sid in session_ids {
-            if self.revoke_session(&sid).await? {
+        for sid in &session_ids {
+            if self.revoke_session(sid).await? {
                 revoked += 1;
+            } else {
+                // Session hash already expired (TTL) but its index member
+                // lingers — trim it so the ZSET can't accumulate stale ids.
+                let _: i64 = conn.zrem(&ukey, sid).await.context("trim stale session index")?;
             }
         }
         Ok(revoked)
