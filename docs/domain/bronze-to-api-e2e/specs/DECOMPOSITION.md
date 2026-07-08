@@ -4,14 +4,16 @@
 
 - [1. Overview](#1-overview)
 - [2. Entries](#2-entries)
-  - [2.1 Test Rig Scaffolding ⏳ HIGH](#21-test-rig-scaffolding--high)
-  - [2.2 Fixture Loader ⏳ HIGH](#22-fixture-loader--high)
-  - [2.3 CSV Rig (vertical slice MVP) ⏳ HIGH](#23-csv-rig-vertical-slice-mvp--high)
-  - [2.4 Dbt Runner ⏳ HIGH](#24-dbt-runner--high)
-  - [2.5 API Spawner ⏳ HIGH](#25-api-spawner--high)
-  - [2.6 ClickHouse Seeder & CSV Asserter ⏳ HIGH](#26-clickhouse-seeder--csv-asserter--high)
-  - [2.7 Snapshot Update ⏳ MEDIUM](#27-snapshot-update--medium)
-  - [2.8 CI Integration ⏳ MEDIUM](#28-ci-integration--medium)
+  - [2.1 Test Rig Scaffolding HIGH](#21-test-rig-scaffolding-high)
+  - [2.2 Fixture Loader HIGH](#22-fixture-loader-high)
+  - [2.3 CSV Rig (vertical slice MVP) HIGH](#23-csv-rig-vertical-slice-mvp-high)
+  - [2.4 Dbt Runner HIGH](#24-dbt-runner-high)
+  - [2.5 API Spawner HIGH](#25-api-spawner-high)
+  - [2.6 ClickHouse Seeder & CSV Asserter HIGH](#26-clickhouse-seeder--csv-asserter-high)
+  - [2.7 Snapshot Update MEDIUM](#27-snapshot-update-medium)
+  - [2.8 CI Integration MEDIUM](#28-ci-integration-medium)
+  - [2.9 Declarative YAML Rig ✅ IMPLEMENTED](#29-declarative-yaml-rig--implemented)
+  - [2.10 API Endpoint Contract Suite & Coverage Gate ✅ IMPLEMENTED](#210-api-endpoint-contract-suite--coverage-gate--implemented)
 - [3. Feature Dependencies](#3-feature-dependencies)
 - [4. Coverage Matrix](#4-coverage-matrix)
 - [5. Execution Order](#5-execution-order)
@@ -22,7 +24,7 @@
 
 ## 1. Overview
 
-The DESIGN is decomposed into 8 features. The order is deliberate: a foundation feature (`scaffolding`) sets up docker compose, pytest layout, and session lifecycle; a vertical-slice feature (`csv-rig`) cuts through every layer end-to-end so the rest of the work has a working harness to land into; the remaining six features add depth to each component plus the polish needed for daily developer use and CI.
+The DESIGN is decomposed into 10 features. The order is deliberate: a foundation feature (`scaffolding`) sets up docker compose, pytest layout, and session lifecycle; a vertical-slice feature (`csv-rig`) cuts through every layer end-to-end so the rest of the work has a working harness to land into; the remaining six of the original MVP-era features add depth to each component plus the polish needed for daily developer use and CI. Two later features evolve the rig after the MVP landed: `yaml-rig` (§2.9) replaces the CSV authoring format with a single declarative `<name>.test.yaml` per test (implemented; DESIGN v1.1), and `api-coverage-gate` (§2.10) adds the `api/` contract suite plus a blocking, per-status-code endpoint coverage gate (implemented; DESIGN v1.2). `api-coverage-gate` is test-only: it ships zero changes to `src/backend` — the committed OpenAPI spec and `analytics/src/api/mod.rs` are unchanged on this branch.
 
 **Decomposition Strategy**:
 
@@ -46,7 +48,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-status-overall`
 
-### 2.1 [Test Rig Scaffolding](feature-test-rig-scaffolding/) ⏳ HIGH
+### 2.1 [Test Rig Scaffolding](feature-test-rig-scaffolding/) HIGH
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-feature-test-rig-scaffolding`
 
@@ -103,7 +105,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
 - **Data**: (consumes existing bronze/silver/gold schemas)
 
-### 2.2 [Fixture Loader](feature-fixture-loader/) ⏳ HIGH
+### 2.2 [Fixture Loader](feature-fixture-loader/) HIGH
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-feature-fixture-loader`
 
@@ -141,7 +143,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
 - **Data**: (read-only filesystem)
 
-### 2.3 [CSV Rig (vertical slice MVP)](feature-csv-rig/) ⏳ HIGH
+### 2.3 [CSV Rig (vertical slice MVP)](feature-csv-rig/) HIGH
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-feature-csv-rig`
 
@@ -195,7 +197,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
   - [ ] `p1` - `cpt-bronze-to-api-e2e-usecase-author-test`
 
-### 2.4 [Dbt Runner](feature-dbt-runner/) ⏳ HIGH
+### 2.4 [Dbt Runner](feature-dbt-runner/) HIGH
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-feature-dbt-runner`
 
@@ -224,7 +226,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
   - [ ] `p1` - `cpt-bronze-to-api-e2e-component-dbt-runner`
 
-### 2.5 [API Spawner](feature-api-spawner/) ⏳ HIGH
+### 2.5 [API Spawner](feature-api-spawner/) HIGH
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-feature-api-spawner`
 
@@ -257,7 +259,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
   - [ ] `p1` - `cpt-bronze-to-api-e2e-constraint-loopback-only`
 
-### 2.6 [ClickHouse Seeder & CSV Asserter](feature-csv-asserter/) ⏳ HIGH
+### 2.6 [ClickHouse Seeder & CSV Asserter](feature-csv-asserter/) HIGH
 
 - [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-feature-csv-asserter`
 
@@ -290,7 +292,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
   - [ ] `p1` - `cpt-bronze-to-api-e2e-component-ch-seeder`
   - [ ] `p1` - `cpt-bronze-to-api-e2e-component-csv-asserter`
 
-### 2.7 [Snapshot Update](feature-snapshot-update/) ⏳ MEDIUM
+### 2.7 [Snapshot Update](feature-snapshot-update/) MEDIUM
 
 - [ ] `p2` - **ID**: `cpt-bronze-to-api-e2e-feature-snapshot-update`
 
@@ -322,7 +324,7 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
   - [ ] `p2` - `cpt-bronze-to-api-e2e-component-csv-asserter`
 
-### 2.8 [CI Integration](feature-ci-integration/) ⏳ MEDIUM
+### 2.8 [CI Integration](feature-ci-integration/) MEDIUM
 
 - [ ] `p2` - **ID**: `cpt-bronze-to-api-e2e-feature-ci-integration`
 
@@ -355,6 +357,103 @@ The DESIGN is decomposed into 8 features. The order is deliberate: a foundation 
 
   - [ ] `p2` - `cpt-bronze-to-api-e2e-usecase-diagnose-failure`
 
+### 2.9 [Declarative YAML Rig](feature-yaml-rig/) ✅ IMPLEMENTED
+
+- [ ] `p2` - **ID**: `cpt-bronze-to-api-e2e-feature-yaml-rig`
+
+- **Purpose**: Replace the folder-based CSV rig (`feature-csv-rig`: `bronze/*.csv` + `spec.yaml` + `expected/response.csv`) with a single declarative `<name>.test.yaml` per test — one file describing what raw rows to seed (`bronze`), what to call (`cases[].request`, batched against `POST /v1/metrics/queries`), and what must hold (`cases[].expect`). Supersedes `csv-rig`'s authoring format end to end: the `spec.yaml`/CSV loader, the `csv-asserter`, and the per-folder fixture layout are removed. The bronze→silver→gold→API path itself is unchanged; only the authoring format and the assertion engine change. (Retroactive entry — this feature is already implemented; see DESIGN v1.1.)
+
+- **Depends On**:
+
+  - `cpt-bronze-to-api-e2e-feature-csv-rig` (supersedes its authoring format; reuses its `session-rig` / `dbt-runner` / `api-client`)
+
+- **Scope**:
+  - Single-file `<name>.test.yaml` discovery by suffix (`metrics/**/*.test.yaml`)
+  - `$ref` + sibling-override record composition (templates in `metrics/templates/*.yaml`)
+  - Per-table JSON schema padding + validation (`metrics/schemas/<db>.<table>.yaml`, `additionalProperties:false`)
+  - Batch roundtrip to `POST /v1/metrics/queries`
+  - `expect` engine: exact-equality `find`, `equal` subset, CEL `assert`
+  - One reference test `metrics/collab_emails_sent.test.yaml` plus shared schemas/templates
+
+- **Out of scope**:
+  - The CSV authoring format and `csv-asserter` (retired by this feature)
+  - The `api/` endpoint contract suite and its coverage gate (that's `api-coverage-gate`)
+
+- **Requirements Covered**:
+
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-fr-bronze-seed-from-csv` *(re-interpreted: seed from resolved YAML records, not CSV)*
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-fr-bronze-truncate`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-fr-dbt-run-scoped`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-fr-gold-view-queried`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-fr-api-roundtrip` *(re-interpreted: batch endpoint)*
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-fr-csv-assert` *(re-interpreted: expect-rule engine, not CSV diff)*
+
+- **Design Principles Covered**:
+
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-principle-shared-session`
+  - [ ] `p2` - `cpt-bronze-to-api-e2e-principle-fixtures-are-truth`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-principle-record-composition`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-principle-schema-is-truth`
+
+- **Design Constraints Covered**:
+
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-constraint-no-ddl-mutation`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-constraint-loopback-only`
+
+- **Design Components**:
+
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-component-ref-resolver`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-component-schema-validator`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-component-expect-engine`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-component-fixture-loader` (repurposed to load `*.test.yaml`)
+
+- **API**: `POST /v1/metrics/queries` (batch)
+
+### 2.10 [API Endpoint Contract Suite & Coverage Gate](feature-api-coverage-gate/) ✅ IMPLEMENTED
+
+- [ ] `p2` - **ID**: `cpt-bronze-to-api-e2e-feature-api-coverage-gate`
+
+- **Purpose**: Add a per-case contract suite under `api/` that exercises every documented analytics operation (one test per `(path, method, status-code)` case, self-cleaning fixtures), and promote the observed-ledger-vs-spec diff into a blocking `api-endpoint-coverage-gate` CI job — a per-status-code endpoint gate mirroring the already-blocking `metric-coverage-gate`. A backend developer who adds an operation to the OpenAPI surface without a matching contract test, or whose route never actually answers one of its declared codes, fails a required CI check instead of merging silently uncovered. Test-only: this feature ships no `src/backend` diff — the committed OpenAPI spec stays the uniform `.standard_errors` boilerplate, and spec-fidelity/handler bugs it exposes are filed for the backend devs rather than fixed here.
+
+- **Depends On**:
+
+  - `cpt-bronze-to-api-e2e-feature-csv-rig` (reuses its `session-rig` / `api-client`, the sole observation chokepoint)
+  - `cpt-bronze-to-api-e2e-feature-ci-integration` (adds a second blocking gate lane alongside the metric gate)
+
+- **Scope**:
+  - `api/` contract suite: one module per path group, one test per `(path, method, status-code)` case, self-cleaning function-scoped fixtures
+  - httpx `response` event-hook recording `(method, path) -> {status codes}` into `.artifacts/observed_endpoints.json`
+  - Per-status-code `CoverageReport` gate: an operation passes only when `required(op) = declared - {codes >= 500} - UNIVERSAL_BOILERPLATE{401,429} - BLOCKED[op]` is a subset of the observed codes
+  - `SKIP_LIST` / `BLOCKED` hygiene (redundant / stale detection), with `SKIP_LIST` empty and `BLOCKED` absorbing the spec's over-declared `.standard_errors` boilerplate plus pinned rig/product limitations
+  - Two independent CI lanes (`e2e-api`, `e2e-metrics`), each feeding its own gate
+  - Two pinned product bugs (#1663 legacy-threshold reads 500 on a non-empty table, #1664 duplicate admin-threshold create 500s instead of 409) as `strict=True` xfails with matching `BLOCKED` entries; two filed spec/handler bugs (#1669 `.standard_errors` boilerplate over/under-declares codes, #1670 non-canonical 422/400 on a malformed legacy `axum::Json` body) pinned by strict xfails on the `_400_schema_mismatch` cases
+
+- **Out of scope**:
+  - The metric-coverage gate itself (predates this feature; lives with `ci-integration`)
+  - Any change to the analytics endpoints or the committed OpenAPI spec (the gate observes, never alters, requests; spec/handler corrections are filed as bugs, not made in this PR)
+
+- **Requirements Covered**:
+
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-fr-coverage-gate`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-fr-api-roundtrip` (per-operation contract cases)
+  - [ ] `p2` - `cpt-bronze-to-api-e2e-nfr-per-test-latency` (the gate is a sub-second, stdlib-only diff)
+
+- **Design Principles Covered**:
+
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-principle-shared-session`
+  - [ ] `p2` - `cpt-bronze-to-api-e2e-principle-fixtures-are-truth`
+
+- **Design Constraints Covered**:
+
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-constraint-loopback-only`
+
+- **Design Components**:
+
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-component-api-coverage`
+  - [ ] `p1` - `cpt-bronze-to-api-e2e-component-api-client` (supplies the recording client)
+
+- **API**: (no new endpoints; exercises the full committed OpenAPI spec — 20 operations)
+
 ---
 
 ## 3. Feature Dependencies
@@ -374,8 +473,13 @@ cpt-bronze-to-api-e2e-feature-test-rig-scaffolding (foundation)
                                                               ▼
                                   cpt-bronze-to-api-e2e-feature-csv-rig (MVP)
                                                               │
-                                                              ▼
-                                  cpt-bronze-to-api-e2e-feature-ci-integration
+                          ┌───────────────────────────────────┴───────────────────┐
+                          ▼                                                         ▼
+    cpt-bronze-to-api-e2e-feature-yaml-rig            cpt-bronze-to-api-e2e-feature-ci-integration
+    (supersedes csv-rig authoring format)                                          │
+                                                                                   ▼
+                                          cpt-bronze-to-api-e2e-feature-api-coverage-gate
+                                          (also reuses csv-rig session-rig / api-client)
 ```
 
 **Dependency Rationale**:
@@ -385,6 +489,8 @@ cpt-bronze-to-api-e2e-feature-test-rig-scaffolding (foundation)
 - `csv-rig` is the integration point — it consumes every prior feature. It MUST be last among the MVP set, because that's where the per-test orchestration lives.
 - `snapshot-update` depends on `csv-asserter` (it's an alternate branch of the same component) and `fixture-loader` (to know where to write back). It does NOT block the MVP.
 - `ci-integration` depends on `csv-rig` because there's nothing to run in CI until at least one full test passes.
+- `yaml-rig` supersedes `csv-rig`'s authoring format (a single `<name>.test.yaml` in place of the CSV folder) and reuses its `session-rig` / `dbt-runner` / `api-client`; the transformation path is unchanged. It does NOT block anything downstream.
+- `api-coverage-gate` depends on `ci-integration` (it adds a second blocking gate lane next to the metric gate) and reuses `csv-rig`'s `session-rig` / `api-client` for the `api/` contract suite. It observes traffic the suite already generates and introduces no endpoint.
 
 **No circular dependencies** — verified by topological sort below.
 
@@ -394,40 +500,45 @@ cpt-bronze-to-api-e2e-feature-test-rig-scaffolding (foundation)
 
 Every PRD FR/NFR is covered by ≥ 1 feature. Cells marked ✓ indicate primary ownership; cells marked (✓) indicate participation.
 
-| Requirement / Component | scaffolding | fixture-loader | csv-rig | dbt-runner | api-spawner | csv-asserter | snapshot-update | ci-integration |
-|---|---|---|---|---|---|---|---|---|
-| **FR — bronze-seed-from-csv** | | (✓) | (✓) | | | ✓ | | |
-| **FR — bronze-truncate** | | | (✓) | | | ✓ | | |
-| **FR — dbt-run-scoped** | | | (✓) | ✓ | | | | |
-| **FR — gold-view-queried** | ✓ | | (✓) | | | | | |
-| **FR — api-roundtrip** | | | (✓) | | ✓ | | | |
-| **FR — csv-assert** | | | (✓) | | | ✓ | (✓) | |
-| **FR — test-isolation** | (✓) | | | ✓ | | | | |
-| **NFR — cold-start** | ✓ | | | | (✓) | | | (✓) |
-| **NFR — per-test-latency** | | | ✓ | (✓) | | | | (✓) |
-| **NFR — parallel-safe** | (✓) | | | (✓) | | | | |
-| **NFR — diff-readability** | | | | | | ✓ | (✓) | |
-| **Component — fixture-loader** | | ✓ | | | | | | |
-| **Component — ch-seeder** | | | | | | ✓ | | |
-| **Component — dbt-runner** | | | | ✓ | | | | |
-| **Component — migration-applier** | ✓ | | | | | | | |
-| **Component — api-client** | | | | | ✓ | | | |
-| **Component — csv-asserter** | | | | | | ✓ | (✓) | |
-| **Component — session-rig** | ✓ | | (✓) | | | | | |
-| **Sequence — session-startup** | ✓ | | | | | | | |
-| **Sequence — one-test-execution** | | | ✓ | | | | | |
-| **Use case — author-test** | | | ✓ | | | | | |
-| **Use case — diagnose-failure** | | | | | | (✓) | | ✓ |
+| Requirement / Component | scaffolding | fixture-loader | csv-rig | dbt-runner | api-spawner | csv-asserter | snapshot-update | ci-integration | yaml-rig | api-coverage-gate |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **FR — bronze-seed-from-csv** | | (✓) | (✓) | | | ✓ | | | (✓) | |
+| **FR — bronze-truncate** | | | (✓) | | | ✓ | | | (✓) | |
+| **FR — dbt-run-scoped** | | | (✓) | ✓ | | | | | (✓) | |
+| **FR — gold-view-queried** | ✓ | | (✓) | | | | | | (✓) | |
+| **FR — api-roundtrip** | | | (✓) | | ✓ | | | | (✓) | (✓) |
+| **FR — csv-assert** | | | (✓) | | | ✓ | (✓) | | (✓) | |
+| **FR — test-isolation** | (✓) | | | ✓ | | | | | | |
+| **FR — coverage-gate** | | | | | | | | | | ✓ |
+| **NFR — cold-start** | ✓ | | | | (✓) | | | (✓) | | |
+| **NFR — per-test-latency** | | | ✓ | (✓) | | | | (✓) | | (✓) |
+| **NFR — parallel-safe** | (✓) | | | (✓) | | | | | | |
+| **NFR — diff-readability** | | | | | | ✓ | (✓) | | | |
+| **Component — fixture-loader** | | ✓ | | | | | | | (✓) | |
+| **Component — ch-seeder** | | | | | | ✓ | | | (✓) | |
+| **Component — dbt-runner** | | | | ✓ | | | | | (✓) | |
+| **Component — migration-applier** | ✓ | | | | | | | | | |
+| **Component — api-client** | | | | | ✓ | | | | (✓) | (✓) |
+| **Component — csv-asserter** | | | | | | ✓ | (✓) | | | |
+| **Component — session-rig** | ✓ | | (✓) | | | | | | (✓) | (✓) |
+| **Component — ref-resolver** | | | | | | | | | ✓ | |
+| **Component — schema-validator** | | | | | | | | | ✓ | |
+| **Component — expect-engine** | | | | | | | | | ✓ | |
+| **Component — api-coverage** | | | | | | | | | | ✓ |
+| **Sequence — session-startup** | ✓ | | | | | | | | | |
+| **Sequence — one-test-execution** | | | ✓ | | | | | | | |
+| **Use case — author-test** | | | ✓ | | | | | | (✓) | |
+| **Use case — diagnose-failure** | | | | | | (✓) | | ✓ | | |
 
 **Coverage check**:
 
-- All 7 FRs covered: ✓
+- All 8 FRs covered: ✓
 - All 4 NFRs covered: ✓
-- All 7 components covered: ✓
+- All 11 components covered: ✓ (the 7 CSV-era components plus `ref-resolver` / `schema-validator` / `expect-engine` from DESIGN v1.1 and `api-coverage` from v1.2; `csv-asserter` is retired but retained for traceability)
 - Both sequences covered: ✓
 - Both use cases covered: ✓
-- All 3 principles covered (across feature `Design Principles Covered` lists): `no-airbyte` → scaffolding; `shared-session` → scaffolding, csv-rig, ci-integration; `fixtures-are-truth` → fixture-loader, csv-rig, snapshot-update
-- All 3 constraints covered: `version-parity` → scaffolding; `no-ddl-mutation` → scaffolding; `loopback-only` → scaffolding, api-spawner
+- All 5 principles covered (across feature `Design Principles Covered` lists): `no-airbyte` → scaffolding; `shared-session` → scaffolding, csv-rig, ci-integration, yaml-rig, api-coverage-gate; `fixtures-are-truth` → fixture-loader, csv-rig, snapshot-update, yaml-rig, api-coverage-gate; `record-composition` → yaml-rig; `schema-is-truth` → yaml-rig
+- All 3 constraints covered: `version-parity` → scaffolding; `no-ddl-mutation` → scaffolding, yaml-rig; `loopback-only` → scaffolding, api-spawner, yaml-rig, api-coverage-gate
 
 ---
 
@@ -441,6 +552,8 @@ Every PRD FR/NFR is covered by ≥ 1 feature. Cells marked ✓ indicate primary 
 | 4 | `feature-csv-rig` (MVP) | Integration point — consumes everything above. Includes one passing reference fixture against `insight.people`. **After this phase the framework is usable.** |
 | 5 | `feature-snapshot-update` | Polish — developer experience for authoring new fixtures. Safe to land any time after `csv-asserter` |
 | 6 | `feature-ci-integration` | Wire the framework into PR checks. Safe to land any time after `csv-rig`; runs in parallel with Phase 5 |
+| 7 | `feature-yaml-rig` | Post-MVP evolution — replaces the CSV authoring format with a declarative `<name>.test.yaml`. Lands after `csv-rig`; already implemented |
+| 8 | `feature-api-coverage-gate` | Post-MVP evolution — adds the `api/` contract suite and a blocking endpoint coverage gate. Lands after `ci-integration`; implemented, test-only (zero `src/backend` diff) |
 
 **Topological sort** (proves DAG has no cycles):
 
@@ -453,4 +566,5 @@ Every PRD FR/NFR is covered by ≥ 1 feature. Cells marked ✓ indicate primary 
 6. feature-csv-rig
 7. feature-snapshot-update
 8. feature-ci-integration
-```
+9. feature-yaml-rig
+10. feature-api-coverage-gate```
