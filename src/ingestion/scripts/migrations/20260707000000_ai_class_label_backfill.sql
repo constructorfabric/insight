@@ -1,21 +1,28 @@
--- Backfill connector-declared label columns on the AI class tables.
+-- Ensure the AI class tables carry the gold-contract columns the unified
+-- metrics gold model reads, and backfill connector-declared labels.
 --
--- Rows ingested before the label columns existed read them as '' (String
--- DEFAULT materialized by on_schema_change='append_new_columns'), while the
--- class contract (silver/ai/schema.yml) requires non-empty labels and Gold
--- consumes them verbatim. The mappings below freeze the labels the staging
--- models declare; new rows are labeled at staging and never match the WHERE.
--- Unknown discriminator values fall back to the value itself so the
--- non-empty contract holds for every row.
+-- The gold model (insight.ai_metric_observations) is built at deploy time,
+-- before any connector re-syncs. It reads class-contract columns that the
+-- rework introduced. On an existing install the class tables are real
+-- (not placeholders), so create-bronze-placeholders.sh — which reconciles
+-- these columns only on placeholder-marked tables — never touches them, and
+-- the full-refresh that a connector major-bump dispatches has not run yet.
+-- The gold `dbt run` therefore fails on a missing column unless the column
+-- exists at deploy time. This migration adds the columns unconditionally so
+-- the schema is present immediately; their VALUES arrive later:
+--   * labels are declared constants — backfilled in place below;
+--   * conversation_count is source data — stays NULL until the connector
+--     full-refresh re-materializes the class table from Bronze.
 --
--- Idempotent: re-runs match zero rows.
+-- Idempotent: ADD COLUMN IF NOT EXISTS; UPDATE re-runs match zero rows.
 --
--- Historical STAGING rows get the same repair from the guarded step in
+-- Historical STAGING rows get the label repair from the guarded step in
 -- apply-ch-migrations.sh (staging tables may not exist on fresh installs,
 -- so their repair cannot live in this unconditional channel). Class rows
 -- are repaired here directly so instances whose connectors never trigger a
 -- full re-materialization still converge.
 
+ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS conversation_count Nullable(Float64);
 ALTER TABLE silver.class_ai_dev_usage ADD COLUMN IF NOT EXISTS tool_label String DEFAULT '';
 
 ALTER TABLE silver.class_ai_dev_usage
