@@ -104,7 +104,11 @@ async fn full_login_exchange_logout_loop() {
         .send()
         .await
         .unwrap();
-    assert_eq!(authorized.status(), 302, "authorize should redirect to callback");
+    assert_eq!(
+        authorized.status(),
+        302,
+        "authorize should redirect to callback"
+    );
     let callback = rewrite_host(
         authorized.headers()[reqwest::header::LOCATION]
             .to_str()
@@ -113,7 +117,11 @@ async fn full_login_exchange_logout_loop() {
 
     // 3. Follow the callback -> session created, cookie set, 302 to return_to.
     let cb = http.get(&callback).send().await.unwrap();
-    assert_eq!(cb.status(), 302, "callback should set the cookie and redirect");
+    assert_eq!(
+        cb.status(),
+        302,
+        "callback should set the cookie and redirect"
+    );
     assert_eq!(
         cb.headers()[reqwest::header::LOCATION].to_str().unwrap(),
         "/dashboard",
@@ -133,8 +141,13 @@ async fn full_login_exchange_logout_loop() {
         authz.headers().contains_key("cache-control"),
         "authz must emit Cache-Control"
     );
-    let bearer = authz.headers()["x-gateway-jwt"].to_str().unwrap().to_owned();
-    let jwt = bearer.strip_prefix("Bearer ").expect("X-Gateway-Jwt is a Bearer token");
+    let bearer = authz.headers()["x-gateway-jwt"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let jwt = bearer
+        .strip_prefix("Bearer ")
+        .expect("X-Gateway-Jwt is a Bearer token");
 
     // 5. Verify the JWT against the published JWKS (ES256).
     let jwks: Jwks = http
@@ -160,7 +173,10 @@ async fn full_login_exchange_logout_loop() {
         .claims;
     assert!(!claims.sub.is_empty(), "JWT sub (person_id) must be set");
     assert_eq!(claims.aud, "internal-services");
-    assert!(claims.roles.contains(&"user".to_owned()), "default role present");
+    assert!(
+        claims.roles.contains(&"user".to_owned()),
+        "default role present"
+    );
     assert!(!claims.sid.is_empty(), "stable sid present");
     let _ = &claims.tenants; // present (may be empty in a keyless local run)
 

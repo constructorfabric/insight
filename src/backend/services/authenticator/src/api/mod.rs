@@ -6,8 +6,8 @@ pub mod handlers;
 
 use std::sync::Arc;
 
-use axum::{Extension, Router};
 use axum::http::StatusCode;
+use axum::{Extension, Router};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
 
 use crate::config::AuthenticatorConfig;
@@ -65,7 +65,10 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .summary("Complete login: exchange the code and set the session cookie")
         .tag("auth")
         .public()
-        .no_content_response(StatusCode::FOUND, "Redirect to the SPA with the session cookie set")
+        .no_content_response(
+            StatusCode::FOUND,
+            "Redirect to the SPA with the session cookie set",
+        )
         .handler(handlers::callback)
         .register(router, openapi);
 

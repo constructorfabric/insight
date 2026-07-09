@@ -71,7 +71,11 @@ pub async fn login(
         return internal_problem("login_state_store", &e);
     }
 
-    build_response(StatusCode::FOUND, vec![(LOCATION.clone(), start.url)], Body::empty())
+    build_response(
+        StatusCode::FOUND,
+        vec![(LOCATION.clone(), start.url)],
+        Body::empty(),
+    )
 }
 
 // ── /auth/callback ─────────────────────────────────────────────────────────
@@ -175,7 +179,10 @@ pub async fn callback(
     let return_to = login_state.return_to.clone();
     match mint_and_store_session(&state, &idp, &resolution).await {
         Ok(token) => {
-            let jar = jar.add(cookie::session_cookie(&token, state.cfg.session_ttl_seconds));
+            let jar = jar.add(cookie::session_cookie(
+                &token,
+                state.cfg.session_ttl_seconds,
+            ));
             let redirect = build_response(
                 StatusCode::FOUND,
                 vec![(LOCATION.clone(), return_to)],

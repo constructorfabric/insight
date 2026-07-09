@@ -54,7 +54,13 @@ mod tests {
     fn session_cookie_has_hardened_attributes() {
         let rendered = session_cookie("tok-abc123", 600).to_string();
         assert!(rendered.starts_with("__Host-sid=tok-abc123"), "{rendered}");
-        for attr in ["Secure", "HttpOnly", "SameSite=Strict", "Path=/", "Max-Age=600"] {
+        for attr in [
+            "Secure",
+            "HttpOnly",
+            "SameSite=Strict",
+            "Path=/",
+            "Max-Age=600",
+        ] {
             assert!(rendered.contains(attr), "missing {attr} in: {rendered}");
         }
     }

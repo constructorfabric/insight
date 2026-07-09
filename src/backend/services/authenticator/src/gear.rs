@@ -11,9 +11,9 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use authenticator_sdk::AuthenticatorClientV1;
+use tokio_util::sync::CancellationToken;
 use toolkit::api::OpenApiRegistry;
 use toolkit::{Gear, GearCtx, RestApiCapability, RunnableCapability};
-use tokio_util::sync::CancellationToken;
 
 use crate::api::{self, AppState};
 use crate::config::AuthenticatorConfig;
@@ -63,7 +63,11 @@ impl Gear for AuthenticatorGear {
         let sessions = SessionManager::connect(&cfg.redis_url).await?;
         sessions.ping().await?;
 
-        let oidc = OidcClient::new(&cfg.idp.issuer_url, &cfg.idp.client_id, &cfg.idp.client_secret)?;
+        let oidc = OidcClient::new(
+            &cfg.idp.issuer_url,
+            &cfg.idp.client_id,
+            &cfg.idp.client_secret,
+        )?;
         let resolver: Arc<dyn PersonResolver> =
             Arc::new(IdentityPersonResolver::new(&cfg.identity_url));
 

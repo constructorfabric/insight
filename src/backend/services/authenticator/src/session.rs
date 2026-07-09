@@ -287,13 +287,20 @@ impl SessionManager {
         if let Some(sid) = &r.idp_sid {
             let idx = sid_index_key(&r.idp_iss, sid);
             pipe.sadd(&idx, &s.session_id).ignore();
-            pipe.expire_at(&idx, i64::try_from(r.absolute_expires_at).unwrap_or(i64::MAX))
-                .ignore();
+            pipe.expire_at(
+                &idx,
+                i64::try_from(r.absolute_expires_at).unwrap_or(i64::MAX),
+            )
+            .ignore();
         }
         // IdP refresh schedule (consumer lands in step 10).
         if let Some(due) = s.refresh_due_at {
-            pipe.zadd(REFRESH_DUE_KEY, &s.session_id, i64::try_from(due).unwrap_or(i64::MAX))
-                .ignore();
+            pipe.zadd(
+                REFRESH_DUE_KEY,
+                &s.session_id,
+                i64::try_from(due).unwrap_or(i64::MAX),
+            )
+            .ignore();
         }
 
         pipe.query_async::<()>(&mut conn)
@@ -392,9 +399,11 @@ impl SessionManager {
         pipe.del(session_key(session_id)).ignore();
         pipe.del(jwt_key(session_id)).ignore();
         pipe.del(token_key(&r.current_token)).ignore();
-        pipe.zrem(user_sessions_key(&r.person_id), session_id).ignore();
+        pipe.zrem(user_sessions_key(&r.person_id), session_id)
+            .ignore();
         if let Some(sid) = &r.idp_sid {
-            pipe.srem(sid_index_key(&r.idp_iss, sid), session_id).ignore();
+            pipe.srem(sid_index_key(&r.idp_iss, sid), session_id)
+                .ignore();
         }
         pipe.zrem(REFRESH_DUE_KEY, session_id).ignore();
         pipe.query_async::<()>(&mut conn)
@@ -421,7 +430,10 @@ impl SessionManager {
             } else {
                 // Session hash already expired (TTL) but its index member
                 // lingers — trim it so the ZSET can't accumulate stale ids.
-                let _: i64 = conn.zrem(&ukey, sid).await.context("trim stale session index")?;
+                let _: i64 = conn
+                    .zrem(&ukey, sid)
+                    .await
+                    .context("trim stale session index")?;
             }
         }
         Ok(revoked)

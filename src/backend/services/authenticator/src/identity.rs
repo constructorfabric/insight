@@ -77,7 +77,12 @@ impl IdentityPersonResolver {
         }
         let encoded = urlencoding_min(email);
         let url = format!("{}/v1/persons/{encoded}", self.base_url);
-        let resp = self.http.get(&url).send().await.context("Identity request")?;
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .context("Identity request")?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }

@@ -108,7 +108,9 @@ impl OidcClient {
             ClientId::new(self.client_id.clone()),
             self.secret(),
         )
-        .set_redirect_uri(RedirectUrl::new(redirect_uri.to_owned()).context("invalid redirect_uri")?);
+        .set_redirect_uri(
+            RedirectUrl::new(redirect_uri.to_owned()).context("invalid redirect_uri")?,
+        );
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
 
         let mut builder = client.authorize_url(
@@ -148,7 +150,9 @@ impl OidcClient {
             ClientId::new(self.client_id.clone()),
             self.secret(),
         )
-        .set_redirect_uri(RedirectUrl::new(redirect_uri.to_owned()).context("invalid redirect_uri")?);
+        .set_redirect_uri(
+            RedirectUrl::new(redirect_uri.to_owned()).context("invalid redirect_uri")?,
+        );
         let token = client
             .exchange_code(AuthorizationCode::new(code.to_owned()))
             .context("build code-exchange request")?
@@ -159,7 +163,10 @@ impl OidcClient {
 
         let id_token = token.id_token().context("token response has no id_token")?;
         let claims = id_token
-            .claims(&client.id_token_verifier(), &Nonce::new(expected_nonce.to_owned()))
+            .claims(
+                &client.id_token_verifier(),
+                &Nonce::new(expected_nonce.to_owned()),
+            )
             .context("id_token validation failed")?;
 
         // Standard claims from the typed API.
@@ -201,7 +208,10 @@ impl OidcClient {
         }
         let disco: Disco = self
             .http
-            .get(format!("{}/.well-known/openid-configuration", self.issuer_url))
+            .get(format!(
+                "{}/.well-known/openid-configuration",
+                self.issuer_url
+            ))
             .send()
             .await
             .ok()?
