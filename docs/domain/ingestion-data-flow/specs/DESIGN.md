@@ -355,7 +355,7 @@ Not applicable. This DESIGN describes the data-flow architecture between layers 
 
 | Dependency Module | Interface Used | Purpose |
 |---|---|---|
-| `cypilot/config/rules/architecture.md` | rule reference | Agent-time guidance pointing back to this DESIGN |
+| `.cf-studio/config/rules/architecture.md` | rule reference | Agent-time guidance pointing back to this DESIGN |
 | `docs/domain/connector/specs/DESIGN.md` | conceptual peer | Connector framework (this doc covers data flow inside the framework) |
 | `docs/domain/identity-resolution/specs/DESIGN.md` | downstream consumer | Identity Manager reads `silver.identity_inputs` |
 | `docs/components/connectors/task-tracking/jira/specs/DESIGN.md` | implementation peer | Jira connector concrete details |
@@ -641,4 +641,4 @@ String `unique_key` is human-readable in queries / logs / debugging, can be part
   - [ADR-0002: Promote bronze MergeTree → RMT on first dbt run](./ADR/0002-promote-bronze-to-rmt.md)
   - [ADR-0003: Ephemeral materialization for Rust-owned staging pass-through](./ADR/0003-ephemeral-rust-passthrough.md)
   - [ADR-0004: unique_key formula = {tenant}-{source}-{natural_keys}](./ADR/0004-unique-key-formula.md)
-- **Project rule** (agent-loaded): [cypilot/config/rules/architecture.md](../../../../cypilot/config/rules/architecture.md) §dbt Materialization Conventions
+- **Project rule** (agent-loaded): [.cf-studio/config/rules/architecture.md](../../../../.cf-studio/config/rules/architecture.md) §dbt Materialization Conventions

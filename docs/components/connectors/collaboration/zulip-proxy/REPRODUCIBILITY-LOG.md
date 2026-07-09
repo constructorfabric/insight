@@ -25,7 +25,7 @@ Conventions:
   `docs/components/connectors/collaboration/zulip/zulip.md` (+ `specs/DESIGN.md`, `specs/PRD.md`,
   `specs/ADR/`).
 - **Manifest version** chosen: 7.0.4 (matches `collaboration/m365/connector.yaml`; recommended for
-  new connectors by `cypilot/.core/skills/connector/workflows/create.md` §3.1).
+  new connectors by `.cf-studio/.core/skills/connector/workflows/create.md` §3.1).
 
 ## 1. Scope decisions
 
@@ -33,7 +33,7 @@ Conventions:
   replacement for the existing `collaboration/zulip/` Basic-Auth spec. Reason: same Bronze data
   shape but distinct transport (proxy host, Bearer token), distinct source contract, distinct
   K8s Secret. The existing `zulip` spec stays untouched.
-- `CHOICE`: cypilot artifacts: PRD + DESIGN + FEATURE under
+- `CHOICE`: Constructor Studio artifacts: PRD + DESIGN + FEATURE under
   `docs/components/connectors/collaboration/zulip-proxy/specs/` (no ADR initially — no contested
   architectural decision unique to this connector).
 - `CHOICE`: dbt scope: full bronze → silver, with `identity_inputs` and `promote_bronze_to_rmt`
@@ -50,7 +50,7 @@ Conventions:
 
 ### DEV-01 — `start_date` declared as a config parameter
 
-- **Convention**: `cypilot/.core/skills/connector/workflows/create.md` §3.1 says: "MUST include …
+- **Convention**: `.cf-studio/.core/skills/connector/workflows/create.md` §3.1 says: "MUST include …
   Incremental sync with **computed dates (no config params for start/end)**".
 - **Deviation**: `zulip_proxy_start_date` is a required field in `connection_specification` and is
   injected into the `DatetimeBasedCursor.start_datetime` Jinja template. Same pattern as
@@ -103,7 +103,7 @@ Conventions:
 
 ### DEV-04 — Connector implemented manually rather than via the `/connector create` skill flow
 
-- **Workflow expected**: `cypilot/.core/skills/connector/workflows/create.md` Phase 1 asks 6
+- **Workflow expected**: `.cf-studio/.core/skills/connector/workflows/create.md` Phase 1 asks 6
   interactive questions and scaffolds files. Run inside an LLM client that supports the slash
   command.
 - **Reality**: the agent assembled files directly from the create.md template by reading example
@@ -118,7 +118,7 @@ Conventions:
 
 ### GAP-01 — `/connector create` does not generate `dbt/` Silver-layer scaffolding for nocode
 
-- **Where**: `cypilot/.core/skills/connector/workflows/create.md` §3.5–3.6 — defines a single
+- **Where**: `.cf-studio/.core/skills/connector/workflows/create.md` §3.5–3.6 — defines a single
   staging dbt model (`<name>__<domain>.sql`) and `schema.yml`. It does NOT mention:
   - `<name>__bronze_promoted.sql` (RMT promotion bootstrap — required by
     `docs/domain/ingestion-data-flow/specs/ADR/0002-promote-bronze-to-rmt.md`)
@@ -154,7 +154,7 @@ Conventions:
 
 ### GAP-03 — `create.md` says "do NOT add `username`/`password` if using BasicHttpAuthenticator" but does not warn about Bearer-token spec naming
 
-- **Where**: `cypilot/.core/skills/connector/workflows/create.md` §3.3, last bullet of the K8s
+- **Where**: `.cf-studio/.core/skills/connector/workflows/create.md` §3.3, last bullet of the K8s
   Secret rules: "Do NOT include `username`/`password` if using `BasicHttpAuthenticator` — these
   are Builder artifacts".
 - **Gap**: there is no equivalent note for `BearerAuthenticator`. In this connector the Bearer
@@ -189,7 +189,7 @@ Conventions:
 
 ### GAP-07 — `validate-bronze-promoted.py` referenced by skill but missing in repo
 
-- **Where**: `cypilot/.core/skills/connector/workflows/validate.md` §"Bronze Promotion" calls
+- **Where**: `.cf-studio/.core/skills/connector/workflows/validate.md` §"Bronze Promotion" calls
   `./airbyte-toolkit/validate-bronze-promoted.py <category>/<connector>`.
 - **Gap**: that script does not exist in `src/ingestion/airbyte-toolkit/` (verified via `find`).
   This run substituted manual `grep`+inspection of the bronze_promoted file.

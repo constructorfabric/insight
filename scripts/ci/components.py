@@ -66,6 +66,27 @@ COMPONENTS = [
     {"name": "fakeidp", "lang": "rust", "root": "src/backend",
      "package": "fakeidp",
      "paths": ["src/backend/services/fakeidp"]},
+    # cover=False (mirrors api-gateway): the authenticator's security-critical
+    # flow (OIDC login, sessions, cookie->JWT exchange) is proven by the e2e
+    # login-loop, which drives the server as a SEPARATE process — so it can't
+    # feed `cargo llvm-cov` (that instruments the test binary, not a spawned
+    # server). Only the pure-logic unit tests (cookie/jwt/cache-control/config)
+    # would count, gating the crate far below the 80% line. Tests + lint still
+    # run and gate the pipeline. Re-enable coverage when in-process integration
+    # tests (axum router + a testcontainer Redis) land.
+    {"name": "authenticator", "lang": "rust", "root": "src/backend",
+     "package": "authenticator",
+     "cover": False,
+     # Linked dependency crates (authenticator-sdk, workspace libs/plugins)
+     # self-report in their own jobs; scope this component to its own code.
+     "cover_ignore_regex": "src/backend/(libs|plugins)/",
+     "paths": ["src/backend/services/authenticator"]},
+    # authenticator-sdk is the inter-gear contract crate (a trait + models, no
+    # runtime logic to exercise); lint + build only.
+    {"name": "authenticator-sdk", "lang": "rust", "root": "src/backend",
+     "package": "authenticator-sdk",
+     "cover": False,
+     "paths": ["src/backend/libs/authenticator-sdk"]},
     # jira-enrich is a standalone workspace; its `io` feature needs a live
     # ClickHouse, so cover with default features only (core tests are io-free).
     # clippy: False — jira-enrich's strict [lints.clippy] (pedantic/unwrap_used/…)

@@ -171,6 +171,12 @@ impl ObservationRelation {
     pub fn table_ref(&self) -> (&'static str, &str) {
         (Self::DATABASE, &self.0)
     }
+
+    /// The stored relation name, as written to `metric_sources.source_ref`.
+    /// Used to group same-source metrics for batched queries.
+    pub fn source_ref(&self) -> &str {
+        &self.0
+    }
 }
 
 impl CohortSource {

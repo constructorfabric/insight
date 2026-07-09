@@ -255,4 +255,4 @@ docker run --rm \
   -c "python3 /scripts/validate_strict.py /input/connector.yaml"
 ```
 
-For lower-level inspection (every error including the noisy `oneOf` branches), edit `validate_strict.py` locally — keeping the logic in a `.py` file is the project's no-inline-Python rule (`cypilot/config/rules/code-conventions.md` §"No inline scripts").
+For lower-level inspection (every error including the noisy `oneOf` branches), edit `validate_strict.py` locally — keeping the logic in a `.py` file is the project's no-inline-Python rule (`.cf-studio/config/rules/code-conventions.md` §"No inline scripts").

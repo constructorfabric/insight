@@ -77,18 +77,53 @@ case "$cmd" in
         docker compose "${COMPOSE_FILES[@]}" logs --tail=200 "$@"
         ;;
     gates)
-        # Run the metric-coverage gate against the catalog a prior `./e2e.sh test`
-        # collected into .artifacts/ — pure file analysis inside the runner image
-        # (no DB via --no-deps, no second compose). Run `./e2e.sh test` first.
-        if [ ! -f .artifacts/catalog_metrics.json ]; then
-            echo "no .artifacts/catalog_metrics.json — run './e2e.sh test' first (it collects the catalog)" >&2
-            exit 2
+        # Run the coverage gate(s) against the inputs a prior `./e2e.sh test`
+        # collected into .artifacts/ — pure file analysis inside the runner
+        # image (no DB via --no-deps, no second compose). Each suite's
+        # contract coverage is self-contained now: the api/ contract suite
+        # alone exercises every spec operation, so `./e2e.sh test api/`
+        # followed by `./e2e.sh gates api` is a complete endpoint-gate loop,
+        # and `./e2e.sh test metrics/` + `./e2e.sh gates metrics` likewise for
+        # the metric gate. A `-k` subset run within either suite still
+        # under-fills that suite's ledger and will fail its gate. CI mirrors
+        # this split as two independent lanes (e2e-api / e2e-metrics), each
+        # uploading its own artifact and feeding only its own gate job (see
+        # e2e-bronze-to-api.yml).
+        which=${1:-all}
+        case "$which" in
+            all|metrics|api) ;;
+            *)
+                echo "usage: $0 gates [api|metrics]" >&2
+                exit 2
+                ;;
+        esac
+        if [ "$which" = all ] || [ "$which" = metrics ]; then
+            if [ ! -f .artifacts/catalog_metrics.json ]; then
+                echo "no .artifacts/catalog_metrics.json — run './e2e.sh test metrics/' first (it collects the metric catalog)" >&2
+                exit 2
+            fi
         fi
-        docker compose "${COMPOSE_FILES[@]}" run --rm --no-deps -T runner \
-            python3 lib/metric_coverage.py --universe-file .artifacts/catalog_metrics.json
+        if [ "$which" = all ] || [ "$which" = api ]; then
+            if [ ! -f .artifacts/observed_endpoints.json ]; then
+                echo "no .artifacts/observed_endpoints.json — run './e2e.sh test api/' first (it collects the endpoint ledger)" >&2
+                exit 2
+            fi
+        fi
+        spec=/workspace/docs/components/backend/analytics/openapi.json
+        run=(docker compose "${COMPOSE_FILES[@]}" run --rm --no-deps -T runner)
+        rc=0
+        if [ "$which" = all ] || [ "$which" = metrics ]; then
+            echo "── metric coverage (gate) ──"
+            "${run[@]}" python3 lib/metric_coverage.py --universe-file .artifacts/catalog_metrics.json || rc=1
+        fi
+        if [ "$which" = all ] || [ "$which" = api ]; then
+            echo "── api endpoint coverage (gate) ──"
+            "${run[@]}" python3 lib/api_coverage.py --observed .artifacts/observed_endpoints.json --spec "$spec" || rc=1
+        fi
+        exit "$rc"
         ;;
     *)
-        echo "usage: $0 {build|test|run|shell|up|down|logs|gates} [args...]" >&2
+        echo "usage: $0 {build|test|run|shell|up|down|logs|gates [api|metrics]} [args...]" >&2
         exit 2
         ;;
 esac

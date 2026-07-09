@@ -471,7 +471,7 @@ strategy, and incremental-sync configuration.
   Bearer token and proxy URL.
 - [ ] `/check-dbt-conventions` passes for the connector's dbt models (engine, order_by,
   append-only sync, RMT promotion).
-- [ ] `cpt validate` passes for PRD, DESIGN, FEATURE in this folder.
+- [ ] `cfs validate` passes for PRD, DESIGN, FEATURE in this folder.
 
 ## 10. Dependencies
 

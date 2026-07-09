@@ -289,6 +289,54 @@ services:
     ports:
       - "${IDENTITY_PORT:-8082}:8082"
 
+  # ── Authenticator (OIDC login + sessions + cookie-to-JWT exchange) ─────
+  #
+  # The BFF / token-handler service (nginx+auth step 04). Runs the OIDC
+  # code+PKCE login against fakeidp, keeps opaque sessions in Redis, and mints
+  # the linked ES256 gateway JWT served at /internal/authz. signing_keys_path
+  # points at a bind-mounted dev key that dev-compose.sh generates on `up`
+  # (deploy/compose/authenticator-dev-keys, gitignored — never baked into an
+  # image); prod mounts a K8s Secret. Login requires the person to exist in
+  # Identity (seed the DB with
+  # ./dev-compose.sh seed identity — the fakeidp dev user resolves to a seeded
+  # person); an unknown person is denied (403). First-admin bootstrap / RBAC are
+  # out of scope (a separate universe-admin initiative).
+  authenticator:
+    <<: *backend-common
+    image: ${AUTHENTICATOR_IMAGE:-insight-authenticator:dev}
+    container_name: insight-authenticator
+    build:
+      context: src/backend
+      dockerfile: services/authenticator/Dockerfile
+    depends_on:
+      redis:    { condition: service_healthy }
+      fakeidp:  { condition: service_started }
+      identity: { condition: service_started }
+    environment:
+      <<: *backend-env
+      APP__gears__authenticator__config__redis_url:         "redis://redis:6379"
+      APP__gears__authenticator__config__signing_keys_path: "/app/keys"
+      APP__gears__authenticator__config__identity_url:      "${AUTHENTICATOR_IDENTITY_URL:-http://identity:8082}"
+      APP__gears__authenticator__config__gateway_issuer:    "${AUTHENTICATOR_GATEWAY_ISSUER:-http://localhost:8080}"
+      # OIDC: discovery/token/JWKS are fetched in-network at fakeidp:8084; the
+      # browser-facing redirect_uri is host-visible (the SPA / e2e runs there).
+      APP__gears__authenticator__config__idp__issuer_url:    "${AUTHENTICATOR_OIDC_ISSUER:-http://fakeidp:8084}"
+      APP__gears__authenticator__config__idp__client_id:     "${OIDC_CLIENT_ID:-insight-authenticator}"
+      APP__gears__authenticator__config__idp__client_secret: "${OIDC_CLIENT_SECRET:-}"
+      APP__gears__authenticator__config__redirect_uri:       "${AUTHENTICATOR_REDIRECT_URI:-http://localhost:8083/auth/callback}"
+    volumes:
+      - ./deploy/compose/build/authenticator/authenticator:/app/authenticator:ro
+      - ./src/backend/services/authenticator/config:/app/config:ro
+    command:
+      - "/app/authenticator"   # <watched path>
+      - "--"
+      - "/app/authenticator"
+      - "-c"
+      - "/app/config/insight.yaml"
+      - "run"
+    ports:
+      - "${AUTHENTICATOR_PORT:-8083}:8083"
+
   # ── Fake IdP (dev/e2e ONLY — never shipped to production) ──────────────
   #
   # A tiny in-repo OIDC provider so the authenticator's real login / refresh /
@@ -305,20 +353,22 @@ services:
       context: src/backend
       dockerfile: services/fakeidp/Dockerfile
     environment:
-      # Issuer defaults to the host-visible URL so the README curl flow works
-      # from your laptop. When the authenticator (step 04) consumes this from
-      # inside the compose network, override to http://fakeidp:8084 so the
-      # discovery issuer matches the URL used to fetch it.
-      FAKEIDP_ISSUER: "${FAKEIDP_ISSUER:-http://localhost:8084}"
+      # Issuer is the in-network URL: the authenticator (step 04) fetches
+      # discovery / JWKS / token here and validates the id_token `iss` against
+      # it, so it must match the URL used inside the compose network. The
+      # host-curl README flow rewrites fakeidp:8084 -> localhost:8084.
+      FAKEIDP_ISSUER: "${FAKEIDP_ISSUER:-http://fakeidp:8084}"
       FAKEIDP_BIND: "0.0.0.0:8084"
+      # Audience of issued tokens = the authenticator's OIDC client_id.
+      FAKEIDP_DEFAULT_AUD: "${OIDC_CLIENT_ID:-insight-authenticator}"
       FAKEIDP_TOKEN_TTL: "${FAKEIDP_TOKEN_TTL:-300}"
       # Default login identity: the dev-impersonation person the seeder writes
       # into identity (dev-compose.sh's VITE_DEV_USER_EMAIL). Overrides the
       # first user in users.yaml so a plain login resolves to a seeded person.
       FAKEIDP_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-dev@company.nonpresent}"
-      # Set once the authenticator exists to enable POST /_control/backchannel/{email},
-      # e.g. http://authenticator:8083/auth/oidc/back-channel-logout
-      FAKEIDP_BACKCHANNEL_URL: "${FAKEIDP_BACKCHANNEL_URL:-}"
+      # Back-channel logout receiver on the authenticator (endpoint lands in a
+      # later step; wired here so the /_control/backchannel hook has a target).
+      FAKEIDP_BACKCHANNEL_URL: "${FAKEIDP_BACKCHANNEL_URL:-http://authenticator:8083/auth/oidc/back-channel-logout}"
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "${FAKEIDP_PORT:-8084}:8084"
@@ -446,10 +496,11 @@ services:
       - |
         set -eux
         apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
-        cargo build --release --bin insight-api-gateway --bin analytics
-        mkdir -p /out/api-gateway /out/analytics
+        cargo build --release --bin insight-api-gateway --bin analytics --bin authenticator
+        mkdir -p /out/api-gateway /out/analytics /out/authenticator
         install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway
         install -m 0755 /target/release/analytics           /out/analytics/analytics
+        install -m 0755 /target/release/authenticator       /out/authenticator/authenticator
 
   build-dotnet:
     profiles: ["build"]

@@ -1,0 +1,60 @@
+replicaCount: 1
+
+podAnnotations: {}
+
+image:
+  repository: ghcr.io/constructorfabric/insight-authenticator
+  tag: ""                  # MUST be set by the operator. No `:latest` default.
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8083
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Pre-provisioned Secret carrying the gears-rust host's leaf-config overrides
+# (injected via envFrom; they override the mounted config ConfigMap):
+#   APP__gears__authenticator__config__redis_url
+#   APP__gears__authenticator__config__identity_url
+#   APP__gears__authenticator__config__gateway_issuer
+#   APP__gears__authenticator__config__redirect_uri
+#   APP__gears__authenticator__config__idp__issuer_url
+#   APP__gears__authenticator__config__idp__client_id
+#   APP__gears__authenticator__config__idp__client_secret
+#
+# The umbrella populates `insight-authenticator-config` automatically; for
+# standalone installs the operator pre-creates an equivalent Secret and sets
+# `existingSecret` to its name.
+existingSecret: ""
+
+# Secret holding the ES256 signing keys, mounted at `signingKeysPath`. Keys:
+#   current.pem   (PKCS#8 EC P-256 private key, required)
+#   previous.pem  (optional, during a rotation overlap)
+# Rotate by shipping a new `current.pem` (+ keeping `previous.pem` for at least
+# jwt_ttl + downstream JWKS cache age, ~65 min) and rolling the pods.
+signingKeysSecret: ""
+signingKeysPath: /app/keys
+
+# Health probes. Boot fails closed if Redis is unreachable or the signing keys
+# are missing (the gear pings Redis and loads keys in `init`), so a Ready pod
+# has both. (A dedicated /ready that re-checks Redis at runtime is a follow-up.)
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5

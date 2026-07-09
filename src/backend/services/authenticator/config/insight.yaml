@@ -1,0 +1,94 @@
+# Insight Authenticator — gears-rust host config.
+#
+# Usage: authenticator -c config/insight.yaml run
+#
+# NOTE on the `api-gateway` gear below: this is the gears-rust toolkit REST-host
+# system gear (`cf-gears-api-gateway`) — the HTTP server + OpenAPI + auth
+# pipeline that every gear-based service runs on (analytics uses it too). It is
+# NOT the Insight platform api-gateway *service* that the nginx gateway replaces
+# in this EPIC. The authenticator hosts its endpoints on this REST-host gear and
+# runs behind the nginx edge.
+#
+# Auth is DISABLED on the host because every step-04 endpoint is `.public()`
+# (the credential is the session cookie, checked in the handler), so no OIDC
+# plugin is registered. The admin session-revoke surface (later step) will flip
+# to an authenticated pipeline verifying gateway JWTs.
+#
+# Deployment-specific leaf values are injected via env overrides
+# (APP__gears__authenticator__config__*) from the umbrella Secret / compose;
+# they are left empty here so no credential is committed:
+#   APP__gears__authenticator__config__redis_url
+#   APP__gears__authenticator__config__signing_keys_path
+#   APP__gears__authenticator__config__identity_url
+#   APP__gears__authenticator__config__gateway_issuer
+#   APP__gears__authenticator__config__redirect_uri
+#   APP__gears__authenticator__config__idp__issuer_url
+#   APP__gears__authenticator__config__idp__client_id
+#   APP__gears__authenticator__config__idp__client_secret
+
+server:
+  home_dir: "~/.insight"
+
+logging:
+  default:
+    console_level: info
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "0.0.0.0:8083"
+      enable_docs: true
+      cors_enabled: true
+      openapi:
+        title: "Insight Authenticator"
+        version: "0.1.0"
+        description: "OIDC login, opaque sessions, and the cookie-to-JWT exchange (BFF / token-handler)"
+      auth_disabled: true
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/authenticator-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "hyperspot"
+
+  authz-resolver:
+    config:
+      vendor: "hyperspot"
+
+  static-authz-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "hyperspot"
+
+  single-tenant-tr-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 20
+
+  authenticator:
+    config:
+      # HTTP bind is owned by api-gateway above; retained for diagnostics only.
+      bind_addr: "0.0.0.0:8083"
+      # Session + JWT lifecycle defaults are the §4.1 table (baked into the
+      # config struct); overridden here only when a deployment needs to.
+      # Connection strings + OIDC client secret are injected via env.
+      redis_url: ""
+      signing_keys_path: ""
+      identity_url: ""
+      gateway_issuer: ""
+      jwt_audience: "internal-services"
+      redirect_uri: ""
+      default_return_to: "/"
+      idp:
+        issuer_url: ""
+        client_id: ""
+        client_secret: ""

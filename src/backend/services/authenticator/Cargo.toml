@@ -1,0 +1,76 @@
+[package]
+name = "authenticator"
+version = "0.1.0"
+description = "Authenticator — OIDC login, opaque sessions, and the cookie-to-JWT exchange behind the nginx gateway (BFF / token-handler pattern)"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+authenticator-sdk = { workspace = true }
+
+# ToolKit host runtime. The authenticator runs as a gears-rust host: routes are
+# declared via `OperationBuilder` and served by the `api-gateway` system gear
+# (the REST host) under `toolkit::bootstrap::run_server`. Its own `/auth/*` +
+# `/internal/authz` are `.public()` (credential is the session cookie, checked
+# in the handler); the admin session-revoke surface (later step) is
+# `.authenticated()` and verified by the same authn pipeline as any downstream.
+toolkit = { workspace = true, features = ["bootstrap"] }
+toolkit-security = { workspace = true }
+toolkit-canonical-errors = { workspace = true }
+
+# System gears linked for the REST host + auth pipeline. Discovered at link time
+# via inventory; mirrors the analytics service's gear set.
+api_gateway = { workspace = true }
+authn-resolver = { workspace = true }
+authz-resolver = { workspace = true }
+tenant-resolver = { workspace = true }
+single-tenant-tr-plugin = { workspace = true }
+static-authz-plugin = { workspace = true }
+grpc_hub = { workspace = true }
+gear_orchestrator = { workspace = true }
+types_registry = { workspace = true }
+
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# OpenAPI schemas for request/response DTOs; version tracks the `utoipa` the
+# toolkit's `OperationBuilder` is compiled against (see analytics).
+utoipa = { version = "5.5", features = ["chrono", "uuid"] }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tokio-util = "0.7"
+async-trait = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+redis = { workspace = true }
+url = "2.5"
+openidconnect = "4"
+axum-extra = { version = "0.12", features = ["cookie"] }
+time = { workspace = true }
+
+# Crypto: ES256 gateway-JWT minting/verification (§9.6 decision — ES256 over
+# EdDSA for zero downstream-verifier friction), JWKS export, PKCE, CSPRNG.
+# v10 needs exactly one crypto provider process-wide. Match cf-gears-toolkit-auth's
+# choice (aws_lc_rs) — enabling a different one (e.g. rust_crypto) makes both
+# providers active under feature unification, and jsonwebtoken panics because it
+# can't pick one (breaks every service that verifies JWTs).
+jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

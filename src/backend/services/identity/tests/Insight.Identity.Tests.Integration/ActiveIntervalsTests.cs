@@ -15,7 +15,7 @@ namespace Insight.Identity.Tests.Integration;
 /// "closed at the deactivation moment". The full rebuild also
 /// joins parent_email -> email and produces org_chart rows;
 /// `OrgChartTests.cs` covers the reader side. This file
-/// drills into the SCD2 logic specifically because the cypilot-pr-review
+/// drills into the SCD2 logic specifically because the cf-sdlc-pr-review
 /// on PR #477 (Finding F1) caught a window-over-filtered-rows bug
 /// here that the kind-cluster run did not surface (the production
 /// BambooHR snapshot had no Active->Inactive transitions).

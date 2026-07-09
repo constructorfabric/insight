@@ -8,7 +8,7 @@ allowed-tools: Bash, Read, Glob, Grep
 
 # Check dbt Pipeline Conventions
 
-This skill audits the codebase against the four ADRs in `docs/domain/ingestion-data-flow/specs/ADR/` plus the DESIGN. It is **LLM-based correctness validation** — complements `cpt validate` which only checks artifact structure and code-marker presence (not engine config content).
+This skill audits the codebase against the four ADRs in `docs/domain/ingestion-data-flow/specs/ADR/` plus the DESIGN. It is **LLM-based correctness validation** — complements `cfs validate` which only checks artifact structure and code-marker presence (not engine config content).
 
 ## Source of truth
 

@@ -12,9 +12,11 @@ verdict per metric_key:
   • neither                         → FAIL  (a number nobody validates)
 
 Catalog keys are dotted (`collab_bullet_rows.m365_emails_sent`); a test asserts
-the bare response key (`m365_emails_sent`). The column suffix is unique across
-the catalog, so we map bare→dotted by suffix (a future collision raises — see
-`CoverageReport.__post_init__`).
+either the bare response key (`m365_emails_sent`, the bullet paths) or the full
+dotted key (`collab_person_counter_daily.messages_sent`, the unified-metrics
+path). A dotted assertion matches the catalog directly; a bare one maps to its
+dotted key by the column suffix, which is unique across the catalog (a future
+collision raises — see `CoverageReport.__post_init__`).
 
 The skip list is the accepted baseline — inline `SKIP_LIST` (single source of
 truth, no side-car file). Kept honest: a STALE entry (key no longer in the
@@ -168,7 +170,7 @@ def universe_from_file(path: str | Path) -> dict[str, str]:
 
 
 def asserted_keys_from_tests(metrics_dir: Path = METRICS_DIR) -> dict[str, set[str]]:
-    """`{bare_metric_key: {test files}}` — keys whose VALUE a test checks.
+    """`{metric_key: {test files}}` — keys whose VALUE a test checks (bare or dotted).
 
     A key counts only when a `find: {metric_key: …}` selector is paired with an
     `equal` or `assert` in the SAME expect rule (i.e. the value is validated, not
@@ -219,7 +221,12 @@ class CoverageReport:
             by_suffix[s] = k
 
         for bare in self.asserted:
-            full = by_suffix.get(bare)
+            # A fully-qualified dotted key (the response `metric_key` of the
+            # unified-metrics path, e.g. `collab_person_counter_daily.messages_sent`)
+            # matches the catalog directly; bare column keys resolve via the
+            # unique suffix. Without the direct match, dotted assertions were
+            # miscounted as unasserted and their keys flagged MISSING.
+            full = bare if bare in self.universe else by_suffix.get(bare)
             (self.covered if full else self.unknown_asserted).add(full or bare)
 
         u, s = set(self.universe), set(self.skips)

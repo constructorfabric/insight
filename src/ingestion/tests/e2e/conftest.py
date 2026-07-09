@@ -37,6 +37,7 @@ from lib.config import SessionConfig, TEST_TENANT_ID
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
 from lib.fixture_loader import TestYaml, discover_tests, load as load_test
+from lib.identity_stub import IdentityStub
 from lib.metric_seed import seed_test_metrics
 from lib.migration_applier import apply_all as apply_ch_migrations
 from lib.worker import WorkerContext
@@ -231,7 +232,24 @@ def _collect_metrics(proc: AnalyticsProcess) -> None:
 
 
 @pytest.fixture(scope="session")
-def analytics(ch_migrations_applied: SessionConfig):
+def identity_stub():
+    """In-process loopback Identity stub (lib.identity_stub).
+
+    The rig runs no Identity service, so GET /v1/persons/{email} would 500
+    ("identity not configured"). This stub resolves one seeded email (→ 200) and
+    404s the rest, so the persons endpoint exercises its real 200/404 contract
+    (#1691). Started before `analytics` (which depends on it) so its URL is known
+    when the binary boots — the analytics IdentityClient reads identity_url once
+    at gear init.
+    """
+    stub = IdentityStub()
+    stub.start()
+    yield stub
+    stub.stop()
+
+
+@pytest.fixture(scope="session")
+def analytics(ch_migrations_applied: SessionConfig, identity_stub: IdentityStub):
     """Spawn the analytics binary baked into the runner image. Its SeaORM
     migrations run on startup; we then upsert test-specific metrics from
     seed/metrics.yaml.
@@ -249,7 +267,7 @@ def analytics(ch_migrations_applied: SessionConfig):
     except ApiSpawnError as e:
         pytest.fail(f"analytics binary not available: {e}", pytrace=False)
     port = find_free_port()
-    proc = AnalyticsProcess(cfg, binary, port)
+    proc = AnalyticsProcess(cfg, binary, port, identity_url=identity_stub.url)
     proc.start()
     seed_test_metrics(cfg)
     yield proc
@@ -283,8 +301,29 @@ _METRICS_ROOT = Path(__file__).parent / "metrics"
 
 
 def pytest_collection_modifyitems(config, items):
-    """Convenience: order rig smoke tests (meta/ + api/) first."""
+    """Convenience: order the fast rig/contract tests (meta/ + api/) first."""
     items.sort(key=lambda i: 0 if ("meta/" in str(i.path) or "api/" in str(i.path)) else 1)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Dump the API-endpoint ledger recorded by the httpx response hook in
+    `AnalyticsProcess.client()` (`lib.api_coverage.record_response`).
+
+    The endpoint-coverage gate (`lib/api_coverage.py`, run by `./e2e.sh gates`
+    and the api-endpoint-coverage-gate CI job via the coverage-inputs-api
+    artifact) diffs this against the committed OpenAPI spec. Primary worker only;
+    best-effort — a failed artifact write is logged, never fails the run (a
+    missing ledger then fails the downstream gate loudly instead)."""
+    if not _IS_PRIMARY:
+        return
+    from lib import api_coverage
+
+    out = Path(__file__).parent / ".artifacts" / "observed_endpoints.json"
+    try:
+        api_coverage.dump_observed(out)
+        LOG.info("wrote API-endpoint ledger (%d ops): %s", len(api_coverage._OBSERVED), out)
+    except OSError as e:
+        LOG.warning("could not write API-endpoint ledger %s: %s", out, e)
 
 
 def pytest_generate_tests(metafunc):
