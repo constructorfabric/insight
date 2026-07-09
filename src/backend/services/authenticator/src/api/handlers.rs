@@ -24,7 +24,6 @@ use crate::api::error::{OidcError, PersonError};
 use crate::cookie;
 use crate::identity::PersonResolution;
 use crate::jwt::GatewayClaims;
-use crate::oidc::Pkce;
 use crate::session::{LoginState, NewSession, SessionRecord};
 
 /// Header carrying the minted JWT back to nginx (`auth_request_set`).
@@ -43,23 +42,26 @@ pub async fn login(
     Extension(state): Extension<Arc<AppState>>,
     Query(params): Query<LoginParams>,
 ) -> Response {
-    let discovery = match state.oidc.discover().await {
-        Ok(d) => d,
-        Err(e) => return internal_problem("oidc_discovery", &e),
-    };
-
-    let oidc_state = csprng_token();
-    let nonce = csprng_token();
-    let pkce = Pkce::generate();
     let return_to = sanitize_return_to(params.return_to.as_deref(), &state.cfg.default_return_to);
+
+    // openidconnect generates the state, nonce, and PKCE pair; we stash the
+    // verifier + nonce under the state key for the callback to replay.
+    let start = match state
+        .oidc
+        .authorize(&state.cfg.redirect_uri, &state.cfg.oidc_scopes)
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => return internal_problem("oidc_authorize", &e),
+    };
 
     if let Err(e) = state
         .sessions
         .put_login_state(
-            &oidc_state,
+            &start.state,
             &LoginState {
-                pkce_verifier: pkce.verifier.clone(),
-                nonce: nonce.clone(),
+                pkce_verifier: start.pkce_verifier,
+                nonce: start.nonce,
                 return_to,
             },
             300,
@@ -69,17 +71,7 @@ pub async fn login(
         return internal_problem("login_state_store", &e);
     }
 
-    match state.oidc.authorize_url(
-        &discovery,
-        &state.cfg.redirect_uri,
-        &state.cfg.oidc_scopes,
-        &oidc_state,
-        &nonce,
-        &pkce,
-    ) {
-        Ok(url) => build_response(StatusCode::FOUND, vec![(LOCATION.clone(), url)], Body::empty()),
-        Err(e) => internal_problem("authorize_url", &e),
-    }
+    build_response(StatusCode::FOUND, vec![(LOCATION.clone(), start.url)], Body::empty())
 }
 
 // ── /auth/callback ─────────────────────────────────────────────────────────
@@ -130,17 +122,11 @@ pub async fn callback(
         Err(e) => return internal_problem("login_state_take", &e),
     };
 
-    let discovery = match state.oidc.discover().await {
-        Ok(d) => d,
-        Err(e) => return internal_problem("oidc_discovery", &e),
-    };
-
     let idp = match state
         .oidc
         .exchange_code_pkce(
-            &discovery,
-            &code,
             &state.cfg.redirect_uri,
+            &code,
             &login_state.pkce_verifier,
             &login_state.nonce,
         )
@@ -426,12 +412,10 @@ pub async fn logout(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) 
     {
         let _ = state.sessions.revoke_session(&session_id).await;
         tracing::info!(session_id = %session_id, "logout: session revoked");
-        if let Ok(discovery) = state.oidc.discover().await
-            && let Some(url) = crate::oidc::OidcClient::rp_logout_url(
-                &discovery,
-                &record.id_token,
-                &state.cfg.default_return_to,
-            )
+        if let Some(url) = state
+            .oidc
+            .rp_logout_url(&record.id_token, &state.cfg.default_return_to)
+            .await
         {
             rp_logout_url = serde_json::Value::String(url);
         }

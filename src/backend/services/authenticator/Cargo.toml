@@ -56,6 +56,7 @@ clap = { workspace = true }
 reqwest = { workspace = true }
 redis = { workspace = true }
 url = "2.5"
+openidconnect = "4"
 axum-extra = { version = "0.12", features = ["cookie"] }
 time = { workspace = true }
 
