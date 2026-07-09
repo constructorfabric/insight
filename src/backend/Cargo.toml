@@ -1,9 +1,11 @@
 [workspace]
 members = [
     "libs/insight-clickhouse",
+    "libs/authenticator-sdk",
     "plugins/oidc-authn-plugin",
     "services/api-gateway",
     "services/analytics",
+    "services/authenticator",
     # Dev/e2e-only fake OIDC provider (never shipped in a prod image). See
     # services/fakeidp/README.md and cf/NGINX_BFF.md §10 G6.
     "services/fakeidp",
@@ -78,31 +80,34 @@ redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 clap = { version = "4.5", features = ["derive"] }
 
 # gears-rust toolkit (crates.io, `cf-gears-toolkit-*` family)
-toolkit = { package = "cf-gears-toolkit", version = "=0.6.12" }
-toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.7.1" }
-toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.7.1" }
+# Versions tracked to gears-rust HEAD (the authoritative source); bumped for
+# the authenticator gear (nginx+auth step 04).
+toolkit = { package = "cf-gears-toolkit", version = "=0.6.13" }
+toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.7.2" }
+toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.7.2" }
 toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.7.4", features = ["axum", "sea-orm"] }
 
 # gears-rust SDKs (crates.io)
-authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.17" }
-types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.2.3" }
+authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.18" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.0" }
 
 # gears-rust system gears (crates.io)
-api_gateway = { package = "cf-gears-api-gateway", version = "0.2.8" }
-authn-resolver = { package = "cf-gears-authn-resolver", version = "0.2.17" }
-authz-resolver = { package = "cf-gears-authz-resolver", version = "0.1.24" }
-tenant-resolver = { package = "cf-gears-tenant-resolver", version = "0.1.21" }
-static-authz-plugin = { package = "cf-gears-static-authz-plugin", version = "0.1.20" }
-single-tenant-tr-plugin = { package = "cf-gears-single-tenant-tr-plugin", version = "0.1.22" }
-grpc_hub = { package = "cf-gears-grpc-hub", version = "0.2.7" }
-gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.1.26" }
-types_registry = { package = "cf-gears-types-registry", version = "0.1.22" }
+api_gateway = { package = "cf-gears-api-gateway", version = "0.2.9" }
+authn-resolver = { package = "cf-gears-authn-resolver", version = "0.2.18" }
+authz-resolver = { package = "cf-gears-authz-resolver", version = "0.1.25" }
+tenant-resolver = { package = "cf-gears-tenant-resolver", version = "0.1.22" }
+static-authz-plugin = { package = "cf-gears-static-authz-plugin", version = "0.1.21" }
+single-tenant-tr-plugin = { package = "cf-gears-single-tenant-tr-plugin", version = "0.1.23" }
+grpc_hub = { package = "cf-gears-grpc-hub", version = "0.2.8" }
+gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.1.27" }
+types_registry = { package = "cf-gears-types-registry", version = "0.1.23" }
 
 # Config
 figment = { version = "0.10", features = ["yaml", "env"] }
 
 # Internal crates
 insight-clickhouse = { path = "libs/insight-clickhouse" }
+authenticator-sdk = { path = "libs/authenticator-sdk" }
 
 # CI rebuild marker — bumped to retrigger the api-gateway + analytics
 # image builds on the cf → gears crate migration (2026-06-12).

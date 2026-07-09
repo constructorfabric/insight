@@ -118,6 +118,22 @@ Out-of-scope:
 EOF
 }
 
+# Generate the dev-only ES256 signing key the authenticator mounts at
+# signing_keys_path. Never committed (gitignored) and never baked into an
+# image; regenerated on demand. Prod mounts a real key via a K8s Secret.
+ensure_authenticator_dev_key() {
+  local dir="deploy/compose/authenticator-dev-keys"
+  local key="$dir/current.pem"
+  [[ -f "$key" ]] && return 0
+  mkdir -p "$dir"
+  echo "=== Generating dev ES256 signing key for the authenticator ($key) ==="
+  if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$key" 2>/dev/null; then
+    echo "WARN: openssl unavailable — the authenticator will fail to start without $key" >&2
+    return 1
+  fi
+  chmod 600 "$key"
+}
+
 cmd_up() {
   local env_file=".env.compose"
   local from_ghcr_csv=""
@@ -223,6 +239,9 @@ YML
       done
     fi
   } > "$override"
+
+  # Ensure the authenticator's dev signing key exists before bring-up.
+  ensure_authenticator_dev_key
 
   local compose_cmd=(docker compose --env-file "$env_file" -f docker-compose.yml -f "$override")
   local profiles=()

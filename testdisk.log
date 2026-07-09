@@ -1,0 +1,17 @@
+
+
+Thu Jul  9 10:20:32 2026
+Command line: TestDisk
+
+TestDisk 7.2, Data Recovery Utility, February 2024
+Christophe GRENIER <grenier@cgsecurity.org>
+https://www.cgsecurity.org
+OS: Darwin, kernel 23.6.0 (Darwin Kernel Version 23.6.0: Thu Dec 19 20:44:43 PST 2024; root:xnu-10063.141.1.703.2~1/RELEASE_ARM64_T6020) arm64
+Compiler: GCC 4.2
+ext2fs lib: none, ntfs lib: none, reiserfs lib: none, ewf lib: none, curses lib: ncurses 6.0
+User is not root!
+Hard disk list
+
+No disk found
+
+TestDisk exited normally.

@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "insight-authenticator.fullname" . }}-gears-config
+  labels:
+    {{- include "insight-authenticator.labels" . | nindent 4 }}
+data:
+  # gears-rust host config. Structural only — deployment-specific leaf values
+  # (redis_url / identity_url / gateway_issuer / redirect_uri / idp.*) are
+  # injected as APP__* env vars from the `insight-authenticator-config` Secret
+  # (see deployment.yaml `envFrom`), which override this YAML at load time.
+  #
+  # The `api-gateway` gear below is the gears-rust toolkit REST-host system gear
+  # (`cf-gears-api-gateway`) — the HTTP server every gear-based service runs on,
+  # NOT the Insight platform gateway that nginx replaces. The authenticator
+  # hosts on it, behind the nginx edge.
+  #
+  # Every step-04 endpoint is `.public()` (the credential is the session cookie,
+  # checked in the handler), so the REST host runs with auth disabled and no
+  # OIDC plugin. The signing keys come from the mounted Secret at
+  # `signingKeysPath`.
+  authenticator.yaml: |
+    server:
+      home_dir: "/app/data"
+
+    logging:
+      default:
+        console_level: info
+
+    gears:
+      api-gateway:
+        config:
+          bind_addr: "0.0.0.0:{{ .Values.service.port }}"
+          auth_disabled: true
+          cors_enabled: false
+          enable_docs: false
+          openapi:
+            title: "Insight Authenticator"
+            version: "0.1.0"
+            description: "OIDC login, opaque sessions, and the cookie-to-JWT exchange"
+
+      gear-orchestrator:
+        config: {}
+
+      grpc-hub:
+        config:
+          listen_addr: "uds:///tmp/authenticator-grpc"
+
+      authn-resolver:
+        config:
+          vendor: "hyperspot"
+
+      authz-resolver:
+        config:
+          vendor: "hyperspot"
+
+      static-authz-plugin:
+        config:
+          vendor: "hyperspot"
+          priority: 100
+
+      tenant-resolver:
+        config:
+          vendor: "hyperspot"
+
+      single-tenant-tr-plugin:
+        config:
+          vendor: "hyperspot"
+          priority: 20
+
+      # Leaf values (redis_url, identity_url, gateway_issuer, redirect_uri,
+      # idp.*) come from the Secret via envFrom. The signing-keys path is
+      # structural and points at the mounted Secret volume.
+      authenticator:
+        config:
+          signing_keys_path: {{ .Values.signingKeysPath | quote }}

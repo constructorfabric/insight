@@ -1,0 +1,17 @@
+[package]
+name = "authenticator-sdk"
+version = "0.1.0"
+description = "Inter-gear contract for the authenticator service — client trait, DTOs, typed error projection. Consumers depend on this crate only, never the impl."
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+# Canonical errors cross the boundary like every other gear (toolkit ADR 0005).
+toolkit-canonical-errors = { workspace = true }
