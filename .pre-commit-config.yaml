@@ -7,6 +7,16 @@
 # or all with `git commit --no-verify`.
 minimum_pre_commit_version: "3.2.0"
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: "v6.0.0"
+    hooks:
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-json
+      - id: check-xml
+      - id: check-executables-have-shebangs
+      - id: check-toml
+      - id: check-added-large-files
   - repo: local
     hooks:
       - id: cargo-fmt
@@ -25,11 +35,16 @@ repos:
   # Python: ruff lints + formats staged Python (it auto-discovers each file's
   # nearest pyproject.toml [tool.ruff], falling back to ruff defaults).
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.20
+    rev: v0.15.21
     hooks:
-      - id: ruff
+      - id: ruff-check
       - id: ruff-format
-
+  - repo: https://github.com/hadialqattan/pycln
+    rev: v2.6.0
+    hooks:
+      - id: pycln
+        language_version: python3.13
+        args: ["--all"]
   # YAML formatting. Helm chart templates are Go-templated (not parseable YAML)
   # and packaged subcharts are vendored, so they are excluded.
   - repo: https://github.com/google/yamlfmt
