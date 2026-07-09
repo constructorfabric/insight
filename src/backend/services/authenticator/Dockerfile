@@ -1,24 +1,21 @@
-# Rebuild marker (2026-06-11, take 2): republish so the chart-pinned tag advances to
-# an SLSA-attested image — current appVersion predates the provenance
-# attestation steps in build-images.yml.
-# Take 2: the first publish-chart attempt failed before committing the
-# appVersion bumps back to main (chart attest step lacked registry login).
-# Multi-stage build for Insight Analytics API
+# Multi-stage build for the Insight Authenticator.
 #
 # Build context: src/backend/
-# Usage: cd src/backend && docker build -f services/analytics/Dockerfile -t insight-analytics:dev .
+# Usage: cd src/backend && docker build -f services/authenticator/Dockerfile -t insight-authenticator:dev .
 
 # Stage 1: Builder
 FROM rust:1.95-bookworm AS builder
 
-# Install protobuf-compiler (required by grpc-hub → prost-build)
+# protobuf-compiler is required by grpc-hub -> prost-build.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# --- Dependency caching layer ---
+# --- Dependency caching layer: copy every workspace member's manifest + a stub
+#     source so the dependency graph resolves and deps get cached without the
+#     real code. ---
 COPY Cargo.toml Cargo.lock ./
 COPY libs/insight-clickhouse/Cargo.toml ./libs/insight-clickhouse/Cargo.toml
 COPY libs/authenticator-sdk/Cargo.toml ./libs/authenticator-sdk/Cargo.toml
@@ -26,8 +23,6 @@ COPY plugins/oidc-authn-plugin/Cargo.toml ./plugins/oidc-authn-plugin/Cargo.toml
 COPY services/api-gateway/Cargo.toml ./services/api-gateway/Cargo.toml
 COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
 COPY services/authenticator/Cargo.toml ./services/authenticator/Cargo.toml
-# fakeidp is a dev/e2e workspace member; cargo must load its manifest to
-# resolve the workspace even though this image never builds or ships it.
 COPY services/fakeidp/Cargo.toml ./services/fakeidp/Cargo.toml
 
 RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
@@ -36,20 +31,21 @@ RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/sr
     mkdir -p services/api-gateway/src && echo "fn main() {}" > services/api-gateway/src/main.rs && \
     mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs && \
     mkdir -p services/authenticator/src && echo "fn main() {}" > services/authenticator/src/main.rs && \
-    mkdir -p services/fakeidp/src && echo "fn main() {}" > services/fakeidp/src/main.rs
+    mkdir -p services/fakeidp/src && echo "fn main() {}" > services/fakeidp/src/main.rs && \
+    echo "" > services/fakeidp/src/lib.rs
 
-RUN cargo build --release --bin analytics 2>/dev/null || true
+RUN cargo build --release --bin authenticator 2>/dev/null || true
 
 # --- Source layer ---
-RUN rm -rf libs/insight-clickhouse/src services/analytics/src \
-    target/release/analytics target/release/deps/analytics* \
-    target/release/deps/insight_clickhouse* target/release/deps/libinsight_clickhouse*
+RUN rm -rf libs/authenticator-sdk/src services/authenticator/src \
+    target/release/authenticator target/release/deps/authenticator* \
+    target/release/deps/libauthenticator*
 
-COPY libs/insight-clickhouse/src/ ./libs/insight-clickhouse/src/
-COPY services/analytics/src/ ./services/analytics/src/
-COPY services/analytics/config/ ./services/analytics/config/
+COPY libs/authenticator-sdk/src/ ./libs/authenticator-sdk/src/
+COPY services/authenticator/src/ ./services/authenticator/src/
+COPY services/authenticator/config/ ./services/authenticator/config/
 
-RUN cargo build --release --bin analytics
+RUN cargo build --release --bin authenticator
 
 # Stage 2: Runtime
 FROM debian:bookworm-slim
@@ -57,7 +53,8 @@ FROM debian:bookworm-slim
 ARG TARGETARCH
 ARG WATCHEXEC_VERSION=2.3.2
 
-# Runtime deps + watchexec. See api-gateway/Dockerfile for rationale.
+# Runtime deps + watchexec (auto-reload wrapper in compose). See
+# api-gateway/Dockerfile for rationale.
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
       amd64) WX_ARCH=x86_64-unknown-linux-musl ;; \
@@ -79,17 +76,16 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /app
 
-COPY --from=builder /build/target/release/analytics /app/analytics
-# Gears config baked at /app/config/. Compose bind-mounts over it for hot
-# edits; k8s mounts a ConfigMap at the same path. Env (APP__*) overrides
-# the deployment-specific leaf values (DB/tenant).
-COPY --from=builder /build/services/analytics/config/ /app/config/
+COPY --from=builder /build/target/release/authenticator /app/authenticator
+# Gears config baked at /app/config/. Compose bind-mounts over it for hot edits;
+# k8s mounts a ConfigMap here. Signing keys are NOT baked — they come from a
+# mounted Secret (signing_keys_path); compose bind-mounts the dev keys.
+COPY --from=builder /build/services/authenticator/config/ /app/config/
 
-RUN useradd -U -u 1000 -m appuser && \
-    chown -R 1000:1000 /app
+RUN useradd -U -u 1000 -m appuser && chown -R 1000:1000 /app
 USER 1000
 
-EXPOSE 8081
+EXPOSE 8083
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["/app/analytics", "--", "/app/analytics", "-c", "/app/config/insight.yaml", "run"]
+CMD ["/app/authenticator", "--", "/app/authenticator", "-c", "/app/config/insight.yaml", "run"]
