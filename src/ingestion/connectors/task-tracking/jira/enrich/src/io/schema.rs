@@ -3,8 +3,8 @@
 //! stale dbt-managed DDL (see ADR-003). The Rust binary writes its output into
 //! this staging table, which dbt then unions into `silver.class_task_field_history`.
 
-use super::IoError;
 use super::ch_client::ChConfig;
+use super::IoError;
 use clickhouse::Row;
 use serde::Deserialize;
 

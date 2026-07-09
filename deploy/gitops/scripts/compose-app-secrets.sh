@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# compose-app-secrets.sh — derive insight-analytics-api-config and
+# compose-app-secrets.sh — derive insight-analytics-config and
 # insight-identity-config from the credentials already materialised in
 # the cluster's `insight-db-creds` Secret, plus the L2 service hosts
 # declared in environments/<env>/values.yaml.
@@ -27,7 +27,7 @@
 #   .redis.host      .redis.port
 #   .identity.databaseName       (defaults to "identity")
 #   .global.tenantDefaultId      (optional; empty disables the resolver
-#                                 on both identity and analytics-api.
+#                                 on both identity and analytics.
 #                                 Single source of truth for the
 #                                 single-tenant UUID — matches the
 #                                 chart's `global.tenantDefaultId` knob
@@ -113,36 +113,40 @@ fi
 apiVersion: v1
 kind: Secret
 metadata:
-  name: insight-analytics-api-config
+  name: insight-analytics-config
   namespace: $NS_APP
   annotations:
     # Tell helm to leave this Secret alone on upgrade/uninstall — the
     # chart no longer emits it (credentials.autoGenerate=false in gitops
-    # mode), and this script owns its lifecycle. Without `keep`, helm
+    # mode), and this script owns its lifecycle. Without keep, helm
     # sees the Secret in the prior release's manifest, finds it absent
     # from the new release's manifest, and deletes it mid-upgrade —
-    # causing analytics-api init container to fail with "Secret not
+    # causing analytics init container to fail with "Secret not
     # found" and the upgrade to time out + roll back.
     helm.sh/resource-policy: keep
 type: Opaque
 stringData:
-  ANALYTICS__database_url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${MDB_DB}"
-  ANALYTICS__clickhouse_url: "http://${CH_HOST}:${CH_PORT}"
-  ANALYTICS__clickhouse_database: "${CH_DB}"
-  ANALYTICS__clickhouse_user: "${CH_USER}"
-  ANALYTICS__clickhouse_password: "${CH_PW}"
-  ANALYTICS__identity_url: "http://${RELEASE}-identity:8082"
-  ANALYTICS__redis_url: "${REDIS_URL}"
-  ANALYTICS__bind_addr: "0.0.0.0:8081"
+  # gears-rust host config: leaf values override the mounted config YAML.
+  # Prefix is APP__gears__analytics__config__ (toolkit Env::prefixed, gear
+  # config key "analytics"). Note: no backticks in these heredoc comments --
+  # the heredoc is unquoted (for \${..} expansion), so backticks would be
+  # run as commands.
+  APP__gears__analytics__config__database_url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${MDB_DB}"
+  APP__gears__analytics__config__clickhouse_url: "http://${CH_HOST}:${CH_PORT}"
+  APP__gears__analytics__config__clickhouse_database: "${CH_DB}"
+  APP__gears__analytics__config__clickhouse_user: "${CH_USER}"
+  APP__gears__analytics__config__clickhouse_password: "${CH_PW}"
+  APP__gears__analytics__config__identity_url: "http://${RELEASE}-identity:8082"
+  APP__gears__analytics__config__redis_url: "${REDIS_URL}"
 EOF
   # Metric Catalog single-tenant fallback. Mirrors the chart-side block
   # (charts/insight/templates/secrets.yaml) — emit only when set so
   # multi-tenant installs keep the resolver strict.
   if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
-    echo "  ANALYTICS__metric_catalog__tenant_default_id: \"${TENANT_DEFAULT}\""
+    echo "  APP__gears__analytics__config__metric_catalog__tenant_default_id: \"${TENANT_DEFAULT}\""
   fi
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
-echo "composed → $NS_APP/insight-analytics-api-config"
+echo "composed → $NS_APP/insight-analytics-config"
 
 # `insight-identity-config` carries the .NET identity service's
 # IDENTITY__* config. The service applies its own DbUp migrations
@@ -158,7 +162,7 @@ metadata:
   name: insight-identity-config
   namespace: $NS_APP
   annotations:
-    helm.sh/resource-policy: keep   # see analytics-api-config rationale above
+    helm.sh/resource-policy: keep   # see analytics-config rationale above
 type: Opaque
 stringData:
   IDENTITY__mariadb__url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${IDENTITY_DB}"

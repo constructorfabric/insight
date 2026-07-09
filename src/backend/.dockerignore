@@ -1,5 +1,5 @@
 # Build context = src/backend/ for all three backend services
-# (api-gateway, analytics-api, identity). This file mirrors the union of
+# (api-gateway, analytics, identity). This file mirrors the union of
 # the per-service ignore patterns. Without it, host build artifacts leak
 # into the image and Linux builds fail on Windows-built `project.assets.json`
 # or stale Rust target trees.

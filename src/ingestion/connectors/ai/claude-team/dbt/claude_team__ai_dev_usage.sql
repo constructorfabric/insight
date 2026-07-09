@@ -54,7 +54,9 @@ SELECT
     CAST(NULL AS Nullable(String))                      AS api_key_id,
     toDate(metric_date)                                 AS day,
     'claude_code'                                       AS tool,
+    'Claude Code'                                       AS tool_label,
     toUInt32(coalesce(total_sessions, 0))               AS session_count,
+    toUInt32OrNull(toString(total_sessions))            AS conversation_count,
     toUInt32(coalesce(total_lines_accepted, 0))         AS lines_added,
     -- NULL per NULL-policy (PR #553): Claude Team does not expose AI-removed
     -- lines — structural absence, not zero.
@@ -96,8 +98,16 @@ WHERE status = 'active'
   -- corrupts the incremental boundary (same guard as cursor__ai_dev_usage).
   AND metric_date IS NOT NULL
 {% if is_incremental() %}
-  AND toDate(metric_date) > (
-      SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
-      FROM {{ this }}
+  -- Empty-table guard. Over an empty `this` (the e2e rig resets staging between
+  -- tests) `max(day)` is the Date epoch (1970-01-01) and `- INTERVAL 3 DAY`
+  -- underflows the Date range, wrapping to ~2149-06-04 — which filters out every
+  -- row and leaves the model empty. Short-circuit when empty so the full set is
+  -- (re)loaded. Mirrors the cursor__ai_dev_usage / m365__collab_* guard.
+  AND (
+    (SELECT count() FROM {{ this }}) = 0
+    OR toDate(metric_date) > (
+        SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
+        FROM {{ this }}
+    )
   )
 {% endif %}

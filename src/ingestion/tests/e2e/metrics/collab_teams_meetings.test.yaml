@@ -4,40 +4,36 @@ description: >
   How it's computed (bronze → silver → gold):
     • bronze: daily Teams meeting report per person (meetings attended)
     • silver: deduped to meetings-attended per person/day
-    • gold:   metric = sum of meetings attended over the window, Teams-only — the
-              M365 slice of meetings_count (Zoom is filtered out by definition)
+    • gold:   value = the requested member's per-person SUM of Teams meetings over
+              the window, Teams-only — the M365 slice of meetings_count (Zoom is
+              filtered out by definition). median/p25/p75/range = the distribution
+              of those per-person SUMs across the member's DEPARTMENT (org_unit_id).
 
-  Team (median/range = the person's department):
-    alice 4 · bob 2 · carol 1 → median 2, range [1, 4].
-  Cases: alice (4 vs the team).
+  Department: 5 Engineering members (alice, bob, carol, dave, erin) with meetings
+  attended {1,2,3,4,5}, each seeded as one Teams meeting-row dated 2026-12-25.
+  The IC case requests erin (5), so value = 5; the department of 5 yields
+  median 3, p25 2, p75 4, range [1,5] (quantileExact over the ascending peers).
+  Cases: custom scope (single window over the department) · empty window.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
     - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
 
   bronze_m365.teams_activity:
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-tm-20260105
-      meetingsAttendedCount: 4
-    - $ref: templates/m365_teams.yaml#/templates/alice_teams  # verbatim duplicate -> must dedup, not double
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-alice-tm-20260105
-      meetingsAttendedCount: 4
-    - $ref: templates/m365_teams.yaml#/templates/bob_teams
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-bob-tm-20260105
-      meetingsAttendedCount: 2
-    - $ref: templates/m365_teams.yaml#/templates/carol_teams
-      reportRefreshDate: "2026-01-05"
-      unique_key: m365-carol-tm-20260105
-      meetingsAttendedCount: 1
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-alice-20261225, meetingsAttendedCount: 1 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-alice-20261225, meetingsAttendedCount: 1 }   # duplicate → dedup, not 2
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: bob@example.com,   reportRefreshDate: "2026-12-25", unique_key: tm-bob-20261225,   meetingsAttendedCount: 2 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-carol-20261225, meetingsAttendedCount: 3 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: tm-dave-20261225,  meetingsAttendedCount: 4 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com,  reportRefreshDate: "2026-12-25", unique_key: tm-erin-20261225,  meetingsAttendedCount: 5 }
 
 cases:
-  # alice teams_meetings = 4 ; team {4,2,1} → median 2, range [1,4]
-  - name: teams_meetings — IC bullet (alice value vs team median/range)
+  # dept {1,2,3,4,5}; erin value 5. p25=2 median=3 p75=4 range=[1,5]
+  - name: "teams_meetings — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -45,11 +41,28 @@ cases:
         queries:
           - id: collaboration
             metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
     expect:
       - assert: "status == 200"
       - in: collaboration
         assert: "result.status == 'ok'"
       - in: collaboration
         find: { metric_key: teams_meetings }
-        equal: { value: 4, median: 2, range_min: 1, range_max: 4 }
+        equal: { value: 5, median: 3, range_min: 1, range_max: 5, p25: 2, p75: 4 }
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "teams_meetings — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"

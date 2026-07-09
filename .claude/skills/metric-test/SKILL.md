@@ -9,7 +9,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 # Author a metric test (declarative YAML)
 
 This skill writes and validates `*.test.yaml` fixtures that drive the full
-`bronze → dbt silver → gold view → analytics-api` path and assert the result.
+`bronze → dbt silver → gold view → analytics` path and assert the result.
 
 ## Source of truth (reference — open only if you need the detail)
 
@@ -193,7 +193,7 @@ with a dedicated spec (see `metrics/collab_emails_read.test.yaml`):
 ## Scaffolding a new test
 
 1. **Resolve the metric_id and its shape.** Find it in the seed catalog
-   (`grep -rn "<label>" src/backend/services/analytics-api/src/migration/*.rs`) and
+   (`grep -rn "<label>" src/backend/services/analytics/src/migration/*.rs`) and
    the live `query_ref` rewrite for that metric. Note whether it returns a bullet
    (`metric_key`/`value`/`median`/`range_*`) or per-person rows. For the collaboration
    bullets the median/range is **DEPARTMENT/org_unit-scoped for BOTH** the Team
@@ -316,12 +316,12 @@ connector that isn't there yet:
 ## Gotchas (rig operations + cross-test impact)
 
 - **Stale binary / your migration didn't run.** Historically the biggest trap:
-  `./e2e.sh` builds analytics-api into the `cargo-target` Docker volume, and on
+  `./e2e.sh` builds analytics into the `cargo-target` Docker volume, and on
   Docker Desktop (macOS) the mtimes cargo reads through the bind mount don't
   reliably advance, so cargo relinked a stale object and the binary silently
   lacked new SeaORM migrations (symptoms: `query_ref`/catalog changes have no
   effect, a `find` matches 0 rows, `size(items)` off by your new key). FIXED in
-  `lib/analytics_api.py::build` — it now `touch`es the analytics-api crate
+  `lib/analytics.py::build` — it now `touch`es the analytics crate
   sources before `cargo build`, forcing a recompile every run (~1-2 min, only
   that crate). So a plain `./e2e.sh test` picks up new migrations now; you should
   NOT need `down -v` for this. If you still suspect a stale binary, confirm by

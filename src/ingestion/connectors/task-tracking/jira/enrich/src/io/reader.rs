@@ -1,15 +1,15 @@
 //! Read-side queries: Bronze events + snapshot; Silver high-water-marks + last state;
 //! field metadata.
 
-use super::IoError;
 use super::ch_client::ChConfig;
+use super::IoError;
 use crate::core::types::{
     Delta, DeltaEvent, FieldCardinality, FieldMeta, FieldValue, IssueSnapshot, LastState,
     ValueIdType,
 };
 use chrono::{DateTime, TimeZone, Utc};
-use clickhouse::Row;
 use clickhouse::query::RowCursor;
+use clickhouse::Row;
 use serde::Deserialize;
 use std::collections::HashMap;
 

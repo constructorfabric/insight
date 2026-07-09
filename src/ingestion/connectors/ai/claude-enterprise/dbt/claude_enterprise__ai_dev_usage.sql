@@ -53,7 +53,9 @@ SELECT
     CAST(NULL AS Nullable(String))                                     AS api_key_id,
     toDate(parseDateTimeBestEffortOrNull(date))                        AS day,
     'claude_code'                                                      AS tool,
+    'Claude Code'                                                      AS tool_label,
     toUInt32(coalesce(code_session_count, 0))                          AS session_count,
+    toUInt32OrNull(toString(code_session_count))                       AS conversation_count,
     toUInt32(coalesce(code_lines_added, 0))                            AS lines_added,
     toUInt32(coalesce(code_lines_removed, 0))                          AS lines_removed,
     -- Enterprise reports AI-accepted lines only — no view of total user keystrokes.
@@ -113,8 +115,16 @@ WHERE user_email IS NOT NULL
        OR coalesce(code_commit_count, 0) > 0
        OR coalesce(code_pull_request_count, 0) > 0)
 {% if is_incremental() %}
-  AND toDate(parseDateTimeBestEffortOrNull(date)) > (
-      SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
-      FROM {{ this }}
+  -- Empty-table guard. Over an empty `this` (the e2e rig resets staging between
+  -- tests) max(day) is the Date epoch (1970-01-01) and `- INTERVAL 3 DAY`
+  -- underflows the Date range, wrapping to ~2149-06-04 — which filters out every
+  -- row and leaves the model empty. Short-circuit when empty so the full set is
+  -- (re)loaded. Mirrors the cursor / claude_team / m365__collab_* guard.
+  AND (
+    (SELECT count() FROM {{ this }}) = 0
+    OR toDate(parseDateTimeBestEffortOrNull(date)) > (
+        SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
+        FROM {{ this }}
+    )
   )
 {% endif %}

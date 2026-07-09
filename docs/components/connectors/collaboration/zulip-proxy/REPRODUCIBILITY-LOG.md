@@ -1,6 +1,6 @@
 # Zulip-Proxy Connector — Reproducibility Log
 
-Purpose: track every deviation from the documented workflow (`/connector create`, `/cypilot`,
+Purpose: track every deviation from the documented workflow (`/connector create`, Constructor Studio,
 existing connector conventions) and every gap in the skills/specs encountered while building this
 connector. Future contributors should be able to reproduce the package end-to-end and the
 maintainers should be able to close the gaps in the skills/specs.
@@ -25,7 +25,7 @@ Conventions:
   `docs/components/connectors/collaboration/zulip/zulip.md` (+ `specs/DESIGN.md`, `specs/PRD.md`,
   `specs/ADR/`).
 - **Manifest version** chosen: 7.0.4 (matches `collaboration/m365/connector.yaml`; recommended for
-  new connectors by `cypilot/.core/skills/connector/workflows/create.md` §3.1).
+  new connectors by `.cf-studio/.core/skills/connector/workflows/create.md` §3.1).
 
 ## 1. Scope decisions
 
@@ -33,7 +33,7 @@ Conventions:
   replacement for the existing `collaboration/zulip/` Basic-Auth spec. Reason: same Bronze data
   shape but distinct transport (proxy host, Bearer token), distinct source contract, distinct
   K8s Secret. The existing `zulip` spec stays untouched.
-- `CHOICE`: cypilot artifacts: PRD + DESIGN + FEATURE under
+- `CHOICE`: Constructor Studio artifacts: PRD + DESIGN + FEATURE under
   `docs/components/connectors/collaboration/zulip-proxy/specs/` (no ADR initially — no contested
   architectural decision unique to this connector).
 - `CHOICE`: dbt scope: full bronze → silver, with `identity_inputs` and `promote_bronze_to_rmt`
@@ -50,7 +50,7 @@ Conventions:
 
 ### DEV-01 — `start_date` declared as a config parameter
 
-- **Convention**: `cypilot/.core/skills/connector/workflows/create.md` §3.1 says: "MUST include …
+- **Convention**: `.cf-studio/.core/skills/connector/workflows/create.md` §3.1 says: "MUST include …
   Incremental sync with **computed dates (no config params for start/end)**".
 - **Deviation**: `zulip_proxy_start_date` is a required field in `connection_specification` and is
   injected into the `DatetimeBasedCursor.start_datetime` Jinja template. Same pattern as
@@ -103,7 +103,7 @@ Conventions:
 
 ### DEV-04 — Connector implemented manually rather than via the `/connector create` skill flow
 
-- **Workflow expected**: `cypilot/.core/skills/connector/workflows/create.md` Phase 1 asks 6
+- **Workflow expected**: `.cf-studio/.core/skills/connector/workflows/create.md` Phase 1 asks 6
   interactive questions and scaffolds files. Run inside an LLM client that supports the slash
   command.
 - **Reality**: the agent assembled files directly from the create.md template by reading example
@@ -118,7 +118,7 @@ Conventions:
 
 ### GAP-01 — `/connector create` does not generate `dbt/` Silver-layer scaffolding for nocode
 
-- **Where**: `cypilot/.core/skills/connector/workflows/create.md` §3.5–3.6 — defines a single
+- **Where**: `.cf-studio/.core/skills/connector/workflows/create.md` §3.5–3.6 — defines a single
   staging dbt model (`<name>__<domain>.sql`) and `schema.yml`. It does NOT mention:
   - `<name>__bronze_promoted.sql` (RMT promotion bootstrap — required by
     `docs/domain/ingestion-data-flow/specs/ADR/0002-promote-bronze-to-rmt.md`)
@@ -154,7 +154,7 @@ Conventions:
 
 ### GAP-03 — `create.md` says "do NOT add `username`/`password` if using BasicHttpAuthenticator" but does not warn about Bearer-token spec naming
 
-- **Where**: `cypilot/.core/skills/connector/workflows/create.md` §3.3, last bullet of the K8s
+- **Where**: `.cf-studio/.core/skills/connector/workflows/create.md` §3.3, last bullet of the K8s
   Secret rules: "Do NOT include `username`/`password` if using `BasicHttpAuthenticator` — these
   are Builder artifacts".
 - **Gap**: there is no equivalent note for `BearerAuthenticator`. In this connector the Bearer
@@ -189,7 +189,7 @@ Conventions:
 
 ### GAP-07 — `validate-bronze-promoted.py` referenced by skill but missing in repo
 
-- **Where**: `cypilot/.core/skills/connector/workflows/validate.md` §"Bronze Promotion" calls
+- **Where**: `.cf-studio/.core/skills/connector/workflows/validate.md` §"Bronze Promotion" calls
   `./airbyte-toolkit/validate-bronze-promoted.py <category>/<connector>`.
 - **Gap**: that script does not exist in `src/ingestion/airbyte-toolkit/` (verified via `find`).
   This run substituted manual `grep`+inspection of the bronze_promoted file.
@@ -209,9 +209,9 @@ Conventions:
 
 | Step | Tool | Expected outcome | Status (this run) |
 |------|------|------------------|-------------------|
-| `cpt --json validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/PRD.md` | cypilot | PASS — structure, IDs, cross-refs | ✅ PASS |
-| `cpt --json validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/DESIGN.md` | cypilot | PASS | ✅ PASS (after TOC regen + `component`/`seq` IDs added) |
-| `cpt --json validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/FEATURE.md` | cypilot | PASS | ✅ PASS (after restructure to mandatory section list: States/DoD/AC) |
+| `cfs validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/PRD.md` | Constructor Studio | PASS — structure, IDs, cross-refs | ✅ PASS |
+| `cfs validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/DESIGN.md` | Constructor Studio | PASS | ✅ PASS (after TOC regen + `component`/`seq` IDs added) |
+| `cfs validate --artifact docs/components/connectors/collaboration/zulip-proxy/specs/FEATURE.md` | Constructor Studio | PASS | ✅ PASS (after restructure to mandatory section list: States/DoD/AC) |
 | `./tools/declarative-connector/source.sh validate-strict collaboration/zulip-proxy` | connector | PASS — Builder strict | ✅ PASS (after inlining `BearerAuthenticator` per-stream — strict validator doesn't follow `$ref` for `type`) |
 | `./tools/declarative-connector/source.sh validate collaboration/zulip-proxy` | connector | PASS — CDK runtime | ✅ PASS |
 | `./tools/declarative-connector/source.sh check collaboration/zulip-proxy <tenant>` | connector | PASS — Bearer token accepted | ✅ PASS — `CONNECTION_STATUS: SUCCEEDED` after fixing DEV-05 (throttle type) |
@@ -220,7 +220,7 @@ Conventions:
 | `./tools/declarative-connector/source.sh read messages` (first read, narrow window 2026-05-15…) | connector | records > 0, errors = 0, STATE emitted | ✅ PASS — 1417 records, 0 errors, 2 STATE messages; persisted `created_at=2026-05-20T00:00:00.000000+0000` |
 | `./tools/declarative-connector/source.sh read messages` (resume read from STATE) | connector | strict subset of first read | ✅ PASS — 532 records (< 1417), cursor range 2026-05-19…2026-05-20 (vs first 2026-05-14…2026-05-20), cursor advanced |
 | `/check-dbt-conventions` (zulip-proxy scope) | dbt | PASS — silver model is RMT(_version) + order_by [unique_key]; bronze_promoted correct; matches zoom convention on intermediate models (Check 2/7 noise — see GAP-06) | ✅ PASS |
-| `cpt --json validate --skip-code` (whole project) | cypilot | 242 pre-existing errors elsewhere, 0 for zulip-proxy artifacts | ✅ PASS (zulip-proxy scope) |
+| `cfs validate --skip-code` (whole project) | Constructor Studio | 242 pre-existing errors elsewhere, 0 for zulip-proxy artifacts | ✅ PASS (zulip-proxy scope) |
 
 ## 5. Open follow-ups
 

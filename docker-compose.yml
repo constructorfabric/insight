@@ -13,7 +13,7 @@
 #
 # Layout:
 #   * infra services  : mariadb, clickhouse, redis, redpanda
-#   * backend         : api-gateway, analytics-api, identity
+#   * backend         : api-gateway, analytics, identity
 #   * frontend        : ONE of insight-front-{dev,built,ghcr}, selected by
 #                       FRONTEND_MODE (profile-gated)
 #   * builders        : build-rust, build-dotnet, build-frontend
@@ -175,7 +175,7 @@ services:
   #
   # All three use the EXISTING service Dockerfiles (modified to bundle
   # docker-entrypoint.sh + watchexec). For ghcr mode, set
-  # API_GATEWAY_IMAGE / ANALYTICS_API_IMAGE / IDENTITY_IMAGE to a registry
+  # API_GATEWAY_IMAGE / ANALYTICS_IMAGE / IDENTITY_IMAGE to a registry
   # ref in .env.compose — the dev-compose.sh up script generates an
   # override that drops `build:` and the bind-mount for affected services.
 
@@ -218,13 +218,13 @@ services:
     ports:
       - "${API_GATEWAY_PORT:-8080}:8080"
 
-  analytics-api:
+  analytics:
     <<: *backend-common
-    image: ${ANALYTICS_API_IMAGE:-insight-analytics-api:dev}
-    container_name: insight-analytics-api
+    image: ${ANALYTICS_IMAGE:-insight-analytics:dev}
+    container_name: insight-analytics
     build:
       context: src/backend
-      dockerfile: services/analytics-api/Dockerfile
+      dockerfile: services/analytics/Dockerfile
     depends_on:
       # required: false → compose skips this dependency when the local
       # profile isn't active (external MariaDB / ClickHouse modes).
@@ -233,23 +233,33 @@ services:
       redis:      { condition: service_healthy }
     environment:
       <<: *backend-env
-      ANALYTICS__bind_addr:          "0.0.0.0:8081"
-      ANALYTICS__database_url:       "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
-      ANALYTICS__clickhouse_url:     "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
-      ANALYTICS__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
-      ANALYTICS__clickhouse_user:    "${CLICKHOUSE_USER:-insight}"
-      ANALYTICS__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
-      ANALYTICS__identity_url:       "http://identity:8082"
-      ANALYTICS__redis_url:          "redis://redis:6379"
-      ANALYTICS__metric_catalog__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
+      # analytics runs on the gears-rust host: structural config
+      # (gears list, api-gateway REST host w/ auth_disabled) lives in the
+      # bind-mounted config/insight.yaml; these APP__gears__analytics__config__*
+      # env vars (toolkit `Env::prefixed`, gear config key `analytics`)
+      # override the deployment-specific leaf values.
+      APP__gears__analytics__config__database_url:       "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
+      APP__gears__analytics__config__clickhouse_url:     "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
+      APP__gears__analytics__config__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
+      APP__gears__analytics__config__clickhouse_user:    "${CLICKHOUSE_USER:-insight}"
+      APP__gears__analytics__config__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
+      APP__gears__analytics__config__identity_url:       "http://identity:8082"
+      APP__gears__analytics__config__redis_url:          "redis://redis:6379"
+      APP__gears__analytics__config__metric_catalog__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
     volumes:
-      - ./deploy/compose/build/analytics-api/analytics-api:/app/analytics-api:ro
+      - ./deploy/compose/build/analytics/analytics:/app/analytics:ro
+      # Mount the gears config so YAML edits don't require an image rebuild
+      # (mirrors api-gateway). watchexec restarts the binary on change.
+      - ./src/backend/services/analytics/config:/app/config:ro
     command:
-      - "/app/analytics-api"
+      - "/app/analytics"   # <watched path>
       - "--"
-      - "/app/analytics-api"
+      - "/app/analytics"
+      - "-c"
+      - "/app/config/insight.yaml"
+      - "run"
     ports:
-      - "${ANALYTICS_API_PORT:-8081}:8081"
+      - "${ANALYTICS_PORT:-8081}:8081"
 
   identity:
     <<: *backend-common
@@ -278,6 +288,40 @@ services:
       - "/app/Insight.Identity.Api.dll"
     ports:
       - "${IDENTITY_PORT:-8082}:8082"
+
+  # ── Fake IdP (dev/e2e ONLY — never shipped to production) ──────────────
+  #
+  # A tiny in-repo OIDC provider so the authenticator's real login / refresh /
+  # logout code path runs locally and in CI with no external IdP. It signs with
+  # a throwaway keypair generated at startup and exposes /_control/* test hooks. Builds
+  # entirely from its own Dockerfile (no host-built-binary bind mount), so it is
+  # self-contained. See src/backend/services/fakeidp/README.md and
+  # cf/NGINX_BFF.md §10 G6. On the default profile — comes up with the stack.
+  fakeidp:
+    <<: *backend-common
+    image: ${FAKEIDP_IMAGE:-insight-fakeidp:dev}
+    container_name: insight-fakeidp
+    build:
+      context: src/backend
+      dockerfile: services/fakeidp/Dockerfile
+    environment:
+      # Issuer defaults to the host-visible URL so the README curl flow works
+      # from your laptop. When the authenticator (step 04) consumes this from
+      # inside the compose network, override to http://fakeidp:8084 so the
+      # discovery issuer matches the URL used to fetch it.
+      FAKEIDP_ISSUER: "${FAKEIDP_ISSUER:-http://localhost:8084}"
+      FAKEIDP_BIND: "0.0.0.0:8084"
+      FAKEIDP_TOKEN_TTL: "${FAKEIDP_TOKEN_TTL:-300}"
+      # Default login identity: the dev-impersonation person the seeder writes
+      # into identity (dev-compose.sh's VITE_DEV_USER_EMAIL). Overrides the
+      # first user in users.yaml so a plain login resolves to a seeded person.
+      FAKEIDP_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-dev@company.nonpresent}"
+      # Set once the authenticator exists to enable POST /_control/backchannel/{email},
+      # e.g. http://authenticator:8083/auth/oidc/back-channel-logout
+      FAKEIDP_BACKCHANNEL_URL: "${FAKEIDP_BACKCHANNEL_URL:-}"
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${FAKEIDP_PORT:-8084}:8084"
 
   # ── Frontend (one variant active per FRONTEND_MODE) ────────────────────
   #
@@ -402,10 +446,10 @@ services:
       - |
         set -eux
         apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
-        cargo build --release --bin insight-api-gateway --bin analytics-api
-        mkdir -p /out/api-gateway /out/analytics-api
+        cargo build --release --bin insight-api-gateway --bin analytics
+        mkdir -p /out/api-gateway /out/analytics
         install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway
-        install -m 0755 /target/release/analytics-api      /out/analytics-api/analytics-api
+        install -m 0755 /target/release/analytics           /out/analytics/analytics
 
   build-dotnet:
     profiles: ["build"]
@@ -473,5 +517,7 @@ services:
     volumes:
       # Bind-mount the source so seed.py edits don't need a rebuild.
       - ./deploy/seed:/app:ro
-      # Phase 2 will read these to apply gold view migrations.
-      - ./src/ingestion/scripts/migrations:/migrations:ro
+      # Schema inputs: create-bronze-placeholders.sh + lib/ch-exec.sh
+      # (the same placeholder DDL the k8s clickhouse-migrate Hook Job
+      # applies) and the gold-view migrations/*.sql.
+      - ./src/ingestion/scripts:/ingestion-scripts:ro

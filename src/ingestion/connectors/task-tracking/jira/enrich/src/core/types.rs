@@ -64,7 +64,10 @@ pub struct FieldValue {
 impl FieldValue {
     #[must_use]
     pub fn empty() -> Self {
-        Self { ids: Vec::new(), displays: Vec::new() }
+        Self {
+            ids: Vec::new(),
+            displays: Vec::new(),
+        }
     }
 
     #[must_use]
@@ -84,7 +87,7 @@ pub struct IssueSnapshot {
 }
 
 /// A single field change. Carries both sides (from / to) so the same value can be applied
-/// forward (during forward_apply) or reverse (during reconstruct::reverse_apply).
+/// forward (during `forward_apply`) or reverse (during `reconstruct::reverse_apply`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Delta {
     /// Single-value replacement. Either side may be NULL (field was empty / became empty).
@@ -135,7 +138,7 @@ pub struct FieldHistoryRecord {
     pub event_id: String,
     pub event_at: DateTime<Utc>,
     pub event_kind: EventKind,
-    /// Secondary sort key. 0 for changelog rows. For synthetic_initial rows: the 0-based
+    /// Secondary sort key. 0 for changelog rows. For `synthetic_initial` rows: the 0-based
     /// index of the field in the sorted (by `field_id` ASC) list of issue fields — so
     /// consumers sorting by `(event_at, _seq)` get stable deterministic order.
     pub seq: u32,

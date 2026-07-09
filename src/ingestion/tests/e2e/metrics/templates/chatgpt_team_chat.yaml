@@ -1,0 +1,39 @@
+# Reusable ChatGPT Team chat records (bronze_chatgpt_team.chatgpt_team_chat_activity).
+# Base carries every schema column (unused = null) incl. the 4 _airbyte_* CDK
+# columns. chatgpt_team__ai_assistant_usage (tool='chatgpt') emits a row only
+# when any of messages / *_messages > 0, so each test sets the counter under
+# test. Variants override identity (email) only; the fields under test (date,
+# unique_key, messages) are set in each test's `bronze`.
+templates:
+  chat_daily:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "chatgpt-team-test"
+    unique_key: null
+    collected_at: "2026-01-05T00:00:00Z"
+    data_source: "insight_chatgpt_team"
+    date: null
+    email: null
+    name: null
+    seat_type: null
+    messages: null
+    gpt_messages: null
+    tool_messages: null
+    connector_messages: null
+    project_messages: null
+    credits_used: null
+
+  alice:
+    $ref: "#/templates/chat_daily"
+    email: alice@example.com
+
+  bob:
+    $ref: "#/templates/chat_daily"
+    email: bob@example.com
+
+  carol:
+    $ref: "#/templates/chat_daily"
+    email: carol@example.com

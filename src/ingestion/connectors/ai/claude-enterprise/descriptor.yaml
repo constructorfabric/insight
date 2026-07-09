@@ -1,5 +1,10 @@
 name: claude-enterprise
-version: "2.0.0"
+# 3.0.0: dbt staging maps code_session_count / chat_conversation_count into
+#   class-contract conversation_count and declares tool_label /
+#   surface_label — MAJOR per ADR-0015: pre-existing rows must
+#   re-materialize from Bronze to populate the new columns (one-shot scoped
+#   full refresh).
+version: "3.0.0"
 schedule: "0 11 * * *"   # daily at 11:00 UTC — accommodates Anthropic's 10:00 UTC aggregation
 workflow: sync
 

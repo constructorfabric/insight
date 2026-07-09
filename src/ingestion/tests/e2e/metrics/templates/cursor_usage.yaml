@@ -1,0 +1,59 @@
+# Reusable Cursor daily-usage records (bronze_cursor.cursor_daily_usage).
+# A record is a plain field map; an optional `$ref` inherits from another record
+# and sibling keys override it. Carry ONLY the boilerplate (identity); the fields
+# under test (date, acceptedLinesAdded, unique_key) are set in each test's `bronze`.
+#
+# The base lists EVERY schema column so a merged bronze row is complete; unused
+# fields default to null. The 4 _airbyte_* CDK columns are included too
+# (transforms key dedup off _airbyte_extracted_at). isActive defaults to true —
+# cursor__ai_dev_usage filters `WHERE isActive = true`.
+templates:
+  cursor_usage:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "cursor-test"
+    unique_key: null
+    userId: null
+    email: null
+    day: null
+    date: null
+    isActive: true
+    chatRequests: null
+    cmdkUsages: null
+    composerRequests: null
+    agentRequests: null
+    bugbotUsages: null
+    totalTabsShown: null
+    totalTabsAccepted: null
+    totalAccepts: null
+    totalApplies: null
+    totalRejects: null
+    totalLinesAdded: null
+    totalLinesDeleted: null
+    acceptedLinesAdded: null
+    acceptedLinesDeleted: null
+    mostUsedModel: null
+    tabMostUsedExtension: null
+    applyMostUsedExtension: null
+    clientVersion: null
+    subscriptionIncludedReqs: null
+    usageBasedReqs: null
+    apiKeyReqs: null
+
+  alice:
+    $ref: "#/templates/cursor_usage"
+    email: alice@example.com
+    userId: cursor-alice
+
+  bob:
+    $ref: "#/templates/cursor_usage"
+    email: bob@example.com
+    userId: cursor-bob
+
+  carol:
+    $ref: "#/templates/cursor_usage"
+    email: carol@example.com
+    userId: cursor-carol

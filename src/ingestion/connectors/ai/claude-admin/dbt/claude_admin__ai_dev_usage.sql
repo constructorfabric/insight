@@ -99,7 +99,9 @@ SELECT
     CASE WHEN u.actor_type = 'api_actor' THEN k.api_key_id END AS api_key_id,
     u.day,
     'claude_code'                                           AS tool,
+    'Claude Code'                                           AS tool_label,
     toUInt32(u.sessions_sum)                                AS session_count,
+    toUInt32OrNull(toString(u.sessions_sum))                AS conversation_count,
     toUInt32(u.lines_added_sum)                             AS lines_added,
     toUInt32(u.lines_removed_sum)                           AS lines_removed,
     -- total_lines_added/removed: Admin code_usage doesn't expose total keystrokes. NULL.
@@ -115,6 +117,10 @@ SELECT
     -- CE-specific columns — NULL for Admin (Admin code_usage does not expose git attribution).
     CAST(NULL AS Nullable(UInt32))                          AS commits_count,
     CAST(NULL AS Nullable(UInt32))                          AS pull_requests_count,
+    -- prs_with_cc_count / prs_total_count: Claude Team-only (Anthropic GitHub-app attribution).
+    -- Structural NULL per Silver NULL-policy (presence of column required for UNION ALL parity).
+    CAST(NULL AS Nullable(UInt32))                          AS prs_with_cc_count,
+    CAST(NULL AS Nullable(UInt32))                          AS prs_total_count,
     CAST(NULL AS Nullable(String))                          AS tool_action_breakdown_json,
     'claude_admin'                                          AS source,
     'insight_claude_admin'                                  AS data_source,

@@ -2,7 +2,7 @@
 <!--
   ClickHouse profile override mounted into /etc/clickhouse-server/users.d/.
 
-  The analytics-api Rust service issues LEFT JOIN queries against the
+  The analytics Rust service issues LEFT JOIN queries against the
   gold `insight.*` views with `join_use_nulls=1`, but those views are
   CREATEd by our seed-sample migrations with the default (0). When the
   two disagree, CH 24+ rejects the query:

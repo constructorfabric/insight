@@ -455,7 +455,7 @@ If the operator wants per-run row counts, they query `bronze_zulip_proxy.users` 
   - `cpt-airbyte-toolkit-adr-airbyte-workspace-as-namespace` — connector lives in the shared
     Insight workspace.
 - **Skill workflows that govern construction**:
-  - `cypilot/.core/skills/connector/workflows/create.md` — package layout and manifest rules.
-  - `cypilot/.core/skills/connector/workflows/validate.md` — validation checks.
+  - `.cf-studio/.core/skills/connector/workflows/create.md` — package layout and manifest rules.
+  - `.cf-studio/.core/skills/connector/workflows/validate.md` — validation checks.
 - **Reproducibility log**: [../REPRODUCIBILITY-LOG.md](../REPRODUCIBILITY-LOG.md) — captures
   deviations from `create.md` (DEV-01 `start_date`, DEV-02 `url_base`, DEV-03 `throttle`).

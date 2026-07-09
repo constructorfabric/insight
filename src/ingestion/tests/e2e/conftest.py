@@ -5,8 +5,8 @@ Owns the lifecycle of every session-scoped resource:
   pytest_sessionstart:
     1. docker compose up (ClickHouse + MariaDB)
     2. apply ClickHouse migrations
-    3. MariaDB is seeded later by the analytics-api binary's own auto-migrations
-    4. spawn analytics-api on a free loopback port
+    3. MariaDB is seeded later by the analytics binary's own auto-migrations
+    4. spawn analytics on a free loopback port
 
   pytest_sessionfinish:
     teardown in reverse order
@@ -17,7 +17,7 @@ consume them without touching subprocess code directly.
 When pytest-xdist is active, pytest_sessionstart runs in each worker — but
 docker-compose containers are shared (same names). The compose lifecycle
 is therefore idempotent: subsequent workers attach to the already-running
-stack. The analytics-api binary spawn happens in the master only (gated on
+stack. The analytics binary spawn happens in the master only (gated on
 PYTEST_XDIST_WORKER) to avoid N processes on N workers.
 """
 
@@ -31,12 +31,13 @@ from pathlib import Path
 
 from lib import clickhouse as ch
 from lib import compose, mariadb
-from lib.analytics_api import AnalyticsApiProcess, find_free_port, locate_binary
+from lib.analytics import AnalyticsProcess, find_free_port, locate_binary
 from lib.ch_seeder import CHSeeder
-from lib.config import SessionConfig
+from lib.config import SessionConfig, TEST_TENANT_ID
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
 from lib.fixture_loader import TestYaml, discover_tests, load as load_test
+from lib.identity_stub import IdentityStub
 from lib.metric_seed import seed_test_metrics
 from lib.migration_applier import apply_all as apply_ch_migrations
 from lib.worker import WorkerContext
@@ -49,7 +50,7 @@ LOG = logging.getLogger("e2e.rig")
 # ----------------------------------------------------------------------
 
 # When running under xdist, all workers share the same compose stack and the
-# same analytics-api process. We elect the first worker as the "owner" of the
+# same analytics process. We elect the first worker as the "owner" of the
 # shared resources; the others wait until the owner reports ready.
 #
 # For the scaffolding MVP we keep it simple: do NOT support xdist yet (the
@@ -137,6 +138,40 @@ _SESSION_START_TRUNCATE = [
     ("staging", "jira_issue_field_snapshot"),
     ("staging", "jira_changelog_items"),
     ("staging", "jira__task_field_metadata"),
+    # claude_team specs build staging.claude_team__ai_dev_usage — an incremental
+    # `append` model with a dbt `unique` test on unique_key. Session-start reset
+    # keeps warm re-runs (reused CH volume, no `./e2e.sh down`) from accumulating
+    # duplicate keys.
+    ("staging", "claude_team__ai_dev_usage"),
+    # claude_team__ai_overage (cc_overage) is also incremental `append` with a
+    # dbt `unique` test — reset it too for warm-rerun determinism.
+    ("staging", "claude_team__ai_overage"),
+    # claude_enterprise specs build staging.claude_enterprise__ai_dev_usage — an
+    # incremental `append` model with a dbt `unique` test on unique_key.
+    # Session-start reset keeps warm re-runs (reused CH volume, no `./e2e.sh
+    # down`) from accumulating duplicate keys.
+    ("staging", "claude_enterprise__ai_dev_usage"),
+    # Wiki: class_wiki_pages / class_wiki_engagement are incremental
+    # (delete+insert, `_version > max`) and union BOTH outline + confluence. A
+    # warm re-run with the same seed _version produces no new rows, leaving the
+    # prior test's data in place → cross-test contamination. Reset at session
+    # start (max(_version) over the emptied table = 0, so the first test's real
+    # millis _version reloads fully). CI starts fresh anyway.
+    ("silver", "class_wiki_pages"),
+    ("silver", "class_wiki_engagement"),
+    ("silver", "class_wiki_activity"),
+    # ai_smoke (cursor) builds staging.cursor__ai_dev_usage — an incremental
+    # `append` model guarded by a dbt `unique` test on unique_key. Without a
+    # session-start reset, a warm re-run (reused CH volume, no `./e2e.sh down`)
+    # appends the same rows again → duplicate unique_keys → the unique test fails.
+    ("staging", "cursor__ai_dev_usage"),
+    # chatgpt_team specs build staging.chatgpt_team__ai_dev_usage (codex) and
+    # staging.chatgpt_team__ai_assistant_usage (chat) — both incremental `append`
+    # models with a dbt `unique` test on unique_key. Session-start reset keeps
+    # warm re-runs (reused CH volume, no `./e2e.sh down`) from accumulating
+    # duplicate keys.
+    ("staging", "chatgpt_team__ai_dev_usage"),
+    ("staging", "chatgpt_team__ai_assistant_usage"),
 ]
 
 
@@ -162,30 +197,87 @@ def dbt_runner(ch_migrations_applied: SessionConfig):
     runner.cleanup()
 
 
+def _collect_metrics(proc: AnalyticsProcess) -> None:
+    """Run `lib/collect_metrics.py` (a script — NOT a test) against the
+    live API, primary worker only. Snapshots the metric catalog into `.artifacts/`
+    so the metric-coverage gate analyses a file with no second app boot.
+    Best-effort: a failure just means the gate finds no artifact and fails loudly —
+    never abort the session for it. Must run while the API is up (called from
+    analytics teardown, before proc.stop())."""
+    if not _IS_PRIMARY:
+        return
+    import subprocess
+    import sys
+
+    script = Path(__file__).parent / "lib" / "collect_metrics.py"
+    out_dir = Path(__file__).parent / ".artifacts"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--url",
+            proc.base_url,
+            "--out-dir",
+            str(out_dir),
+            "--tenant",
+            str(TEST_TENANT_ID),
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        LOG.warning(
+            "coverage-artifact collection failed (rc=%d); gate jobs may lack inputs",
+            result.returncode,
+        )
+
+
 @pytest.fixture(scope="session")
-def analytics_api(ch_migrations_applied: SessionConfig):
-    """Spawn the analytics-api binary baked into the runner image. Its SeaORM
+def identity_stub():
+    """In-process loopback Identity stub (lib.identity_stub).
+
+    The rig runs no Identity service, so GET /v1/persons/{email} would 500
+    ("identity not configured"). This stub resolves one seeded email (→ 200) and
+    404s the rest, so the persons endpoint exercises its real 200/404 contract
+    (#1691). Started before `analytics` (which depends on it) so its URL is known
+    when the binary boots — the analytics IdentityClient reads identity_url once
+    at gear init.
+    """
+    stub = IdentityStub()
+    stub.start()
+    yield stub
+    stub.stop()
+
+
+@pytest.fixture(scope="session")
+def analytics(ch_migrations_applied: SessionConfig, identity_stub: IdentityStub):
+    """Spawn the analytics binary baked into the runner image. Its SeaORM
     migrations run on startup; we then upsert test-specific metrics from
     seed/metrics.yaml.
 
     If the binary is missing, this is a hard FAIL — identical locally and in CI.
     A skip here would make the whole transformation suite silently green while
     testing nothing. The binary is built FROM ITS OWN Dockerfile and baked into the
-    runner image (see lib.analytics_api.locate_binary); if it isn't there the
+    runner image (see lib.analytics.locate_binary); if it isn't there the
     bronze→API tests cannot run, so the only honest result is red.
     """
     cfg = ch_migrations_applied
-    from lib.analytics_api import ApiSpawnError  # local import to keep top clean
+    from lib.analytics import ApiSpawnError  # local import to keep top clean
     try:
         binary = locate_binary(cfg)
     except ApiSpawnError as e:
-        pytest.fail(f"analytics-api binary not available: {e}", pytrace=False)
+        pytest.fail(f"analytics binary not available: {e}", pytrace=False)
     port = find_free_port()
-    proc = AnalyticsApiProcess(cfg, binary, port)
+    proc = AnalyticsProcess(cfg, binary, port, identity_url=identity_stub.url)
     proc.start()
     seed_test_metrics(cfg)
     yield proc
-    proc.stop()
+    # Snapshot the metric catalog while the API is still up (a script, run via
+    # subprocess — see _collect_metrics). Always
+    # stop the process afterward, even if collection raised.
+    try:
+        _collect_metrics(proc)
+    finally:
+        proc.stop()
 
 
 @pytest.fixture(scope="session")
@@ -209,8 +301,29 @@ _METRICS_ROOT = Path(__file__).parent / "metrics"
 
 
 def pytest_collection_modifyitems(config, items):
-    """Convenience: order rig smoke tests (meta/ + api/) first."""
+    """Convenience: order the fast rig/contract tests (meta/ + api/) first."""
     items.sort(key=lambda i: 0 if ("meta/" in str(i.path) or "api/" in str(i.path)) else 1)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Dump the API-endpoint ledger recorded by the httpx response hook in
+    `AnalyticsProcess.client()` (`lib.api_coverage.record_response`).
+
+    The endpoint-coverage gate (`lib/api_coverage.py`, run by `./e2e.sh gates`
+    and the api-endpoint-coverage-gate CI job via the coverage-inputs-api
+    artifact) diffs this against the committed OpenAPI spec. Primary worker only;
+    best-effort — a failed artifact write is logged, never fails the run (a
+    missing ledger then fails the downstream gate loudly instead)."""
+    if not _IS_PRIMARY:
+        return
+    from lib import api_coverage
+
+    out = Path(__file__).parent / ".artifacts" / "observed_endpoints.json"
+    try:
+        api_coverage.dump_observed(out)
+        LOG.info("wrote API-endpoint ledger (%d ops): %s", len(api_coverage._OBSERVED), out)
+    except OSError as e:
+        LOG.warning("could not write API-endpoint ledger %s: %s", out, e)
 
 
 def pytest_generate_tests(metafunc):

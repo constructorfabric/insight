@@ -1,0 +1,43 @@
+# Test users for the fake IdP. Checked in, test-only, no secrets.
+#
+# The first entry is the default returned by /authorize when no `user=<email>`
+# query parameter is given. `sub` is the stable IdP subject; `sid` is the IdP
+# session id echoed into id_tokens and back-channel logout_tokens. `tenants`
+# are hints the downstream identity/authenticator flow may map from — the fake
+# IdP just carries them so e2e fixtures have something to assert on.
+#
+# The first user's email is the dev-impersonation identity. Its default here
+# matches dev-compose.sh's VITE_DEV_USER_EMAIL default (dev@company.nonpresent),
+# which is the same email the seeder writes into identity.persons — so a plain
+# `docker compose up` + login "just works". Set FAKEIDP_DEV_USER_EMAIL (compose
+# wires it from VITE_DEV_USER_EMAIL) to override this first user's email when
+# the wizard was given a different value.
+users:
+  - email: dev@company.nonpresent
+    name: Dev User
+    sub: fakeidp|dev
+    sid: sid-dev-0001
+    tenants:
+      - 00000000-df51-5b42-9538-d2b56b7ee953
+
+  - email: alice@example.com
+    name: Alice Admin
+    sub: fakeidp|alice
+    sid: sid-alice-0001
+    tenants:
+      - 00000000-df51-5b42-9538-d2b56b7ee953
+
+  - email: bob@example.com
+    name: Bob Builder
+    sub: fakeidp|bob
+    sid: sid-bob-0001
+    tenants:
+      - 00000000-df51-5b42-9538-d2b56b7ee953
+
+  - email: carol@example.com
+    name: Carol Contractor
+    sub: fakeidp|carol
+    sid: sid-carol-0001
+    tenants:
+      - 11111111-df51-5b42-9538-d2b56b7ee953
+      - 00000000-df51-5b42-9538-d2b56b7ee953

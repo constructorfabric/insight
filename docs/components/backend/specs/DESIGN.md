@@ -1,6 +1,6 @@
 ---
 status: proposed
-date: 2026-03-31
+date: 2026-07-06
 ---
 
 # DESIGN -- Backend
@@ -81,7 +81,7 @@ The system is deployed as a **standalone product** on Kubernetes via per-service
 | `cpt-insightspec-fr-be-business-alerts` | Alerts Service evaluates metric thresholds on schedule, sends email via Email Service |
 | `cpt-insightspec-fr-be-audit-trail` | Audit Service consumes events from Redpanda, stores in ClickHouse |
 | `cpt-insightspec-fr-be-email-delivery` | Email Service consumes from Redpanda, renders templates, delivers via SMTP |
-| `cpt-insightspec-fr-be-oidc-auth` | modkit-auth validates OIDC/JWT tokens from customer IdP |
+| `cpt-insightspec-fr-be-oidc-auth` | Authenticator service runs OIDC against the customer IdP and holds sessions (token-handler pattern); the nginx gateway exchanges the session cookie for a signed gateway JWT; every service verifies that JWT via JWKS (see [Authenticator](../authenticator/DESIGN.md) and [Gateway](../gateway/DESIGN.md)) |
 | `cpt-insightspec-fr-be-identity-resolution-service` | Identity Resolution Service maps cross-source aliases to canonical person_id, golden record, merge/split |
 | `cpt-insightspec-fr-be-transform-rules` | Transform Service manages dbt model configs, Silver/Gold rules, field mappings, triggers dbt runs via Kestra |
 | `cpt-insightspec-fr-be-forward-only-migrations` | Forward-only MariaDB migrations via modkit-db (SeaORM); no rollback scripts |
@@ -113,6 +113,11 @@ The system is deployed as a **standalone product** on Kubernetes via per-service
 graph TB
     subgraph Ingress
         ING[Ingress<br/>TLS/HTTPS]
+    end
+
+    subgraph EdgeGW["Edge"]
+        GW[nginx gateway<br/>routing + auth_request + HSTS]
+        AUTH[Authenticator<br/>OIDC, sessions, gateway JWT]
     end
 
     subgraph Frontend
@@ -152,14 +157,16 @@ graph TB
         PM[Prometheus + Grafana<br/>+ Alertmanager]
     end
 
-    ING --> FE
-    ING --> AA
-    ING --> CM
-    ING --> IS
-    ING --> IR
-    ING --> TS
-    ING --> AS
-    ING --> AU
+    ING --> GW
+    GW -->|/| FE
+    GW -->|/auth/*, subrequests| AUTH
+    GW -->|Bearer gateway JWT| AA
+    GW -->|Bearer gateway JWT| CM
+    GW -->|Bearer gateway JWT| IS
+    GW -->|Bearer gateway JWT| IR
+    GW -->|Bearer gateway JWT| TS
+    GW -->|Bearer gateway JWT| AS
+    GW -->|Bearer gateway JWT| AU
 
     AA -->|read| CH
     AA -->|CRUD| MDB
@@ -190,16 +197,19 @@ graph TB
     AA -->|cache| RD
     IS -->|cache| RD
     IR -->|cache| RD
+    AUTH -->|sessions| RD
+    AUTH <-->|code + PKCE, refresh| OIDC
+    AUTH -->|person resolution| IS
 
     AB -->|extract| DS
     AB -->|load| CH
     KS -->|orchestrate| AB
     KS -->|run dbt| CH
-
-    OIDC -.->|JWT tokens| ING
 ```
 
-**Services (8 custom + 1 infra stack)**:
+**Services (9 custom + edge + 1 infra stack)**:
+- **Authenticator** — OIDC login, server-side sessions, linked gateway JWT, service tokens ([docs](../authenticator/PRD.md))
+- **nginx gateway** — edge routing, cookie-to-JWT exchange via `auth_request`, security headers ([docs](../gateway/DESIGN.md))
 - **Analytics API** — query ClickHouse, metrics catalog, dashboards, CSV export
 - **Connector Manager** — connector CRUD, credentials, Airbyte API
 - **Identity Service** — org tree, OIDC mapping, RBAC, HR/directory sync
@@ -614,9 +624,53 @@ No public API. Purely internal (Redpanda consumer + SMTP producer). Does NOT aut
 - `cpt-insightspec-component-be-alerts-service` -- subscribes to: receives email requests
 - `cpt-insightspec-component-be-connector-manager` -- subscribes to: receives email requests
 
+#### Authenticator
+
+- [ ] `p1` - **ID**: `cpt-insightspec-component-be-authenticator`
+
+##### Why this component exists
+
+The security-critical auth core: browsers must not hold IdP tokens, sessions must be instantly revocable, and every service needs a signed, complete description of the request author.
+
+##### Responsibility scope
+
+OIDC login (code + PKCE) against the customer IdP; server-side sessions in Redis; opaque rotating session cookie; gateway JWT minted at login and linked 1:1 to the session; cookie-to-JWT exchange for the gateway (`/internal/authz`); JWKS; logout (local, RP-initiated, back-channel); background IdP token refresh; service tokens for no-user workloads; first-admin bootstrap. Detailed in [authenticator/PRD.md](../authenticator/PRD.md) + [DESIGN.md](../authenticator/DESIGN.md).
+
+##### Responsibility boundaries
+
+Does not proxy or route traffic (the gateway does). Does not own person data (Identity Service does) or permissions (separate service, later). Does not authorize business operations -- downstream services do, from signed claims.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-be-gateway` -- serves: answers its auth subrequests, receives its `/auth/*` traffic
+- `cpt-insightspec-component-be-identity-service` -- depends on: resolves IdP subject to person and tenants at login
+- `cpt-insightspec-component-be-audit-service` -- publishes to: emits auth audit events via Redpanda
+
+#### Nginx Gateway
+
+- [ ] `p1` - **ID**: `cpt-insightspec-component-be-gateway`
+
+##### Why this component exists
+
+The single entry point for all browser traffic: commodity edge work (routing, proxying, streaming, WebSockets, security headers) done by nginx instead of custom code.
+
+##### Responsibility scope
+
+OpenResty deployment with generated config (route configurator compiles `routes.yaml`); `auth_request` cookie-to-JWT exchange with a bounded per-pod cache; JWT injection upstream; cookie stripping; correlation ids; HSTS; SPA delivery through one origin. Detailed in [gateway/DESIGN.md](../gateway/DESIGN.md).
+
+##### Responsibility boundaries
+
+Not the security boundary -- every downstream service verifies the gateway JWT itself, fail closed. Holds no sessions, verifies no signatures, never reaches Redis or the IdP.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-be-authenticator` -- depends on: exchange subrequests, `/auth/*` proxying, JWKS
+- `cpt-insightspec-component-be-analytics-api` -- routes to: `/api/v1/analytics`
+- `cpt-insightspec-component-be-identity-service` -- routes to: `/api/v1/identity`
+
 ### 3.3 API Contracts
 
-Single Ingress routes to all services by path prefix. Each service owns its prefix and versions independently. Email Service has no public API.
+The ingress routes one hostname to the nginx gateway; the gateway routes by path prefix. Each service owns its prefix and versions independently. Email Service has no public API.
 
 ```text
 https://insight.customer.com/
@@ -699,9 +753,11 @@ https://insight.customer.com/
 │   └── GET    /events                         → Query audit trail (OData)
 ```
 
-Ingress routing rules:
-- `/` → frontend (nginx)
-- `/api/v1/analytics/*` → analytics-api service
+Routing rules (owned by the nginx gateway; the ingress only terminates TLS and forwards the host to the gateway):
+- `/` → frontend (insight-front static server)
+- `/auth/*`, `/.well-known/jwks.json` → authenticator (plain proxy, no auth subrequest -- it IS the auth)
+- `/internal/*` → 404, never routed
+- `/api/v1/analytics/*` → analytics service
 - `/api/v1/connectors/*` → connector-manager service
 - `/api/v1/identity/*` → identity-service
 - `/api/v1/alerts/*` → alerts-service
@@ -709,12 +765,16 @@ Ingress routing rules:
 - `/api/v1/transforms/*` → transform-service
 - `/api/v1/audit/*` → audit-service
 
+Every `/api/*` route carries the gateway's `auth_request` exchange: session cookie in, `Authorization: Bearer <gateway JWT>` out (see [gateway/DESIGN.md](../gateway/DESIGN.md)).
+
 All responses use RFC 9457 Problem Details for errors. All list endpoints support OData `$filter`, `$orderby`, `$select`, cursor-based pagination per [DNA REST conventions](../../../../DNA/REST/API.md).
 
 ### 3.4 Internal Dependencies
 
 | From | To | Protocol | Purpose |
 |------|------|----------|---------|
+| Nginx gateway | Authenticator | HTTP (`auth_request` subrequest) | Cookie-to-JWT exchange per request; `/auth/*` plain proxy; JWKS |
+| Authenticator | Identity Service | HTTP (SDK) | Resolve IdP `sub` → person_id + tenants at login; back-channel `(iss, sub)` fallback |
 | Analytics API | Identity Service | HTTP (SDK) | Resolve person_id → org scope for query filtering |
 | Connector Manager | Identity Service | HTTP (SDK) | Validate tenant context for connector operations |
 | Alerts Service | Analytics API | HTTP (SDK) | Resolve metric definitions for threshold queries |
@@ -787,16 +847,19 @@ All responses use RFC 9457 Problem Details for errors. All list endpoints suppor
 ```mermaid
 sequenceDiagram
     participant U as User (Browser)
-    participant GW as API Gateway
+    participant GW as nginx gateway
+    participant AUTH as Authenticator
     participant AA as Analytics API
     participant AZ as Authz Plugin
     participant IS as Identity Service
     participant CH as ClickHouse
     participant RP as Redpanda
 
-    U->>GW: GET /api/v1/analytics/metrics/query (OIDC token)
-    GW->>GW: Validate JWT (modkit-auth)
-    GW->>AA: Forward with SecurityContext
+    U->>GW: GET /api/v1/analytics/metrics/query (session cookie)
+    GW->>AUTH: auth_request /internal/authz (on exchange-cache miss)
+    AUTH-->>GW: 200 + X-Gateway-Jwt
+    GW->>AA: Forward with Authorization: Bearer gateway JWT (cookie stripped)
+    AA->>AA: Verify JWT via JWKS; build SecurityContext from signed claims
     AA->>AZ: PolicyEnforcer.access_scope(ctx, METRIC, "list")
     AZ->>IS: Get person roles + org memberships (cached)
     IS-->>AZ: roles=[analyst], units=[unit-B], effective_from/to
@@ -847,20 +910,23 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant GW as API Gateway
+    participant AUTH as Authenticator
+    participant I as OIDC Provider
     participant IS as Identity Service
     participant DB as MariaDB
 
-    U->>GW: First request with OIDC token
-    GW->>GW: Validate JWT, extract sub + email
-    GW->>IS: Resolve person_id for (oidc_issuer, oidc_sub)
+    U->>AUTH: GET /auth/callback?code&state (first login, via gateway)
+    AUTH->>I: exchange code (PKCE) for tokens
+    AUTH->>AUTH: validate id_token, extract sub + email
+    AUTH->>IS: Resolve person_id for (oidc_issuer, oidc_sub)
     IS->>DB: SELECT person_id FROM user_identities WHERE oidc_sub=?
     DB-->>IS: Not found
     IS->>DB: SELECT id FROM persons WHERE email=? AND tenant_id=?
     DB-->>IS: person_id found
     IS->>DB: INSERT INTO user_identities (oidc_issuer, oidc_sub, person_id)
-    IS-->>GW: person_id
-    GW->>GW: Attach person_id to SecurityContext
+    IS-->>AUTH: person_id + tenants
+    AUTH->>AUTH: create session, mint linked gateway JWT<br/>(sub=person_id, tenants, roles, sid)
+    AUTH-->>U: Set-Cookie __Host-sid + 302 to SPA
 ```
 
 ### 3.7 Database Schemas & Tables
@@ -986,10 +1052,12 @@ All async communication flows through Redpanda. All messages include `tenant_id`
 
 ### 4.1 Authentication
 
-OIDC only -- connects to customer's existing identity provider. No bundled IdP.
+OIDC only -- connects to customer's existing identity provider. No bundled IdP. Token-handler pattern: IdP tokens never reach the browser.
 
-- modkit-auth validates inbound JWT/OIDC tokens
-- OIDC `sub` → `person_id` mapping via Identity Service `user_identities` table
+- The [Authenticator](../authenticator/DESIGN.md) runs the OIDC flow, holds the session server-side, and mints a short-lived signed **gateway JWT** (`sub` = person_id, `tenants`, `roles`, `sid`) linked to the session
+- The [nginx gateway](../gateway/DESIGN.md) exchanges the opaque session cookie for that JWT on every `/api/*` request and injects it as `Authorization: Bearer`
+- Every service validates the gateway JWT against the authenticator's JWKS (authn-resolver pipeline) -- mandatory, fail closed, no production disable knob
+- OIDC `sub` → `person_id` mapping via Identity Service `user_identities` table, resolved once at login
 - First login triggers email-based matching (see SEQ-BE-03)
 
 ### 4.2 Authorization (RBAC + Org Tree)
@@ -1100,7 +1168,7 @@ Bundled Prometheus + Grafana + Alertmanager stack for platform operators.
 
 Each service has its own Helm chart (co-located at `services/{name}/helm/`). Shared infrastructure has separate charts under `infra/`. ArgoCD deploys each as an independent Application. Works on any K8s cluster (AWS EKS, GCP GKE, Azure AKS, on-prem).
 
-**Per-service Helm chart structure** (e.g., `services/analytics-api/helm/`):
+**Per-service Helm chart structure** (e.g., `services/analytics/helm/`):
 
 ```text
 helm/
@@ -1221,7 +1289,7 @@ Tenant Admin can trigger Silver/Gold rebuild from Bronze via Connector Manager �
 ```text
 insight/
 ├── services/
-│   ├── analytics-api/
+│   ├── analytics/
 │   │   ├── src/
 │   │   ├── helm/                      # Service-specific Helm chart
 │   │   │   ├── Chart.yaml

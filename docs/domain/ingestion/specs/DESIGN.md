@@ -654,7 +654,7 @@ K8s Cluster
     └── Helm release: insight (chart: charts/insight, this repo)
         ├── ClickHouse (StatefulSet — separate L2 release, see §4 below)
         ├── MariaDB (Bitnami subchart — per-service databases:
-        │              analytics-api owns `insight`, identity-resolution
+        │              analytics owns `insight`, identity-resolution
         │              owns `identity` per ADR-0006)
         ├── Redis (Bitnami subchart — cache for API Gateway / Analytics API)
         ├── Redpanda (subchart — Kafka-compatible event broker)
@@ -808,8 +808,8 @@ There is **no global MariaDB migration mechanism** in this project.
 Each backend service that owns MariaDB tables carries its own
 migrations inside the service codebase and applies them at startup.
 
-- **analytics-api** (Rust): SeaORM `Migrator` at
-  `src/backend/services/analytics-api/src/migration/`; tracker table
+- **analytics** (Rust): SeaORM `Migrator` at
+  `src/backend/services/analytics/src/migration/`; tracker table
   `seaql_migrations` in the database referenced by
   `mariadb.database` (umbrella chart, default `insight`).
 - **identity** (.NET 9): DbUp at

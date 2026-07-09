@@ -18,7 +18,6 @@ This repository is the **monorepo** for the Insight product. It contains:
   - [`src/`](#src)
   - [`docs/`](#docs)
   - [`inbox/`](#inbox)
-  - [`cypilot/`](#cypilot)
 - [Connector Coverage](#connector-coverage)
 - [Key Concepts](#key-concepts)
 - [Quick Start](#quick-start)
@@ -189,10 +188,6 @@ Incoming documents pending triage and integration into `docs/`. Not yet canonica
 | `stats/frontend/` | Draft | `docs/components/frontend/specs/` |
 | `streams/` | Draft schemas | `docs/components/connectors/` — per-source stream definitions |
 
-### `cypilot/`
-
-This repo uses [Cypilot](https://github.com/cyberfabric/cyber-pilot) — an AI agent framework for spec authoring, validation, and traceability. The `cypilot/` directory contains the project-specific configuration (artifact registry, rules, kit bindings). The engine itself lives in the upstream repo.
-
 ---
 
 ## Connector Coverage
@@ -322,7 +317,7 @@ For cluster deployments image tags flow through automatically: the umbrella char
 | Image | Source repo | Tags |
 |---|---|---|
 | `insight-api-gateway` | `constructorfabric/insight` (this repo) | https://github.com/constructorfabric/insight/pkgs/container/insight-api-gateway |
-| `insight-analytics-api` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-analytics-api |
+| `insight-analytics` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-analytics |
 | `insight-identity` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-identity |
 | `insight-toolbox` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-toolbox |
 | `insight-front` | **separate** `constructorfabric/insight-front` | https://github.com/constructorfabric/insight/pkgs/container/insight-front |
@@ -362,7 +357,7 @@ See [`src/backend/services/LOCAL_DEV.md`](src/backend/services/LOCAL_DEV.md) for
 - **Understand a domain** — Read the relevant `docs/domain/{domain}/specs/DESIGN.md` first. These documents describe the platform's core algorithms, data contracts, and architectural decisions that span multiple components.
 - **Add a connector** — Follow the layout in any existing `docs/components/connectors/{domain}/{source}/` directory. Use `specs/PRD.md` for requirements and `specs/DESIGN.md` for table schemas and pipeline mappings.
 - **Add source code** — Place code under `src/{component}/`. The structure mirrors `docs/components/` — `src/connectors/`, `src/backend/`, `src/frontend/`, `src/orchestrator/`.
-- **Cypilot** — Run `cypilot on` in a supported AI agent to activate assisted spec authoring, validation, and traceability. Cypilot is sourced from [github.com/cyberfabric/cyber-pilot](https://github.com/cyberfabric/cyber-pilot).
+- **Constructor Studio** — Run `cfs` in a supported AI agent to activate assisted spec authoring, validation, and traceability. Constructor Studio is sourced from [github.com/constructorfabric/studio](https://github.com/constructorfabric/studio).
 - **Inbox** — Documents in `inbox/` are drafts awaiting review. Do not reference them as canonical sources.
 
 ---

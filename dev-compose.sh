@@ -101,7 +101,7 @@ services to ghcr images, then `docker compose up -d`.
 Options:
   --from-ghcr=svc1,svc2     Pull these backend services from ghcr instead
                             of building. Recognised: api-gateway,
-                            analytics-api, identity.
+                            analytics, identity.
   --build-only=svc1,svc2    Build only these; everything else from ghcr.
   --frontend-mode=MODE      Override FRONTEND_MODE for this run.
                             (dev | built | ghcr)
@@ -164,12 +164,12 @@ cmd_up() {
   FRONTEND_MODE="${FRONTEND_MODE:-dev}"
 
   # ── Resolve which services go to ghcr ────────────────────────────
-  local all_backend="api-gateway analytics-api identity"
+  local all_backend="api-gateway analytics identity"
   local ghcr_list=""
   local build_list=""
 
   [[ -n "${API_GATEWAY_IMAGE:-}"   ]] && ghcr_list=$(add "$ghcr_list" api-gateway)
-  [[ -n "${ANALYTICS_API_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" analytics-api)
+  [[ -n "${ANALYTICS_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" analytics)
   [[ -n "${IDENTITY_IMAGE:-}"      ]] && ghcr_list=$(add "$ghcr_list" identity)
 
   if [[ -n "$from_ghcr_csv" ]]; then
@@ -189,7 +189,7 @@ cmd_up() {
   fi
 
   contains "$ghcr_list" api-gateway   && [[ -z "${API_GATEWAY_IMAGE:-}"   ]] && export API_GATEWAY_IMAGE="ghcr.io/constructorfabric/insight-api-gateway:${API_GATEWAY_GHCR_TAG:-latest}"
-  contains "$ghcr_list" analytics-api && [[ -z "${ANALYTICS_API_IMAGE:-}" ]] && export ANALYTICS_API_IMAGE="ghcr.io/constructorfabric/insight-analytics-api:${ANALYTICS_API_GHCR_TAG:-latest}"
+  contains "$ghcr_list" analytics && [[ -z "${ANALYTICS_IMAGE:-}" ]] && export ANALYTICS_IMAGE="ghcr.io/constructorfabric/insight-analytics:${ANALYTICS_GHCR_TAG:-latest}"
   contains "$ghcr_list" identity      && [[ -z "${IDENTITY_IMAGE:-}"      ]] && export IDENTITY_IMAGE="ghcr.io/constructorfabric/insight-identity:${IDENTITY_GHCR_TAG:-latest}"
   true
 
@@ -242,8 +242,8 @@ YML
   if [[ "$skip_build" != "true" ]]; then
     echo "=== Building artefacts (skip with --skip-build) ==="
     local rust_bins=""
-    contains "$ghcr_list" api-gateway   || rust_bins="$rust_bins insight-api-gateway"
-    contains "$ghcr_list" analytics-api || rust_bins="$rust_bins analytics-api"
+    contains "$ghcr_list" api-gateway || rust_bins="$rust_bins insight-api-gateway"
+    contains "$ghcr_list" analytics   || rust_bins="$rust_bins analytics"
     rust_bins=$(trim "$rust_bins")
     if [[ -n "$rust_bins" ]]; then
       echo "--- Rust:$rust_bins"
@@ -256,9 +256,9 @@ YML
           apt-get update && apt-get install -y --no-install-recommends \
             protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
           cargo build --release$bin_flags
-          mkdir -p /out/api-gateway /out/analytics-api
+          mkdir -p /out/api-gateway /out/analytics
           [ -f /target/release/insight-api-gateway ] && install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway || true
-          [ -f /target/release/analytics-api ]       && install -m 0755 /target/release/analytics-api       /out/analytics-api/analytics-api || true
+          [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
         "
     fi
     if ! contains "$ghcr_list" identity; then
@@ -375,7 +375,7 @@ pick it up via ENABLE_AUTO_RELOAD.
 
 Targets:
   api-gateway        Rust gateway binary only.
-  analytics-api      Rust analytics binary only.
+  analytics          Rust analytics binary only.
   identity           .NET 9 publish output.
   frontend           pnpm build → dist/.
   rust               Both Rust services.
@@ -404,20 +404,20 @@ cmd_build() {
       apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
       cargo build --release$bin_flags
-      mkdir -p /out/api-gateway /out/analytics-api
+      mkdir -p /out/api-gateway /out/analytics
       [ -f /target/release/insight-api-gateway ] && install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway || true
-      [ -f /target/release/analytics-api ]       && install -m 0755 /target/release/analytics-api       /out/analytics-api/analytics-api || true
+      [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
     "
   }
 
   case "$target" in
-    api-gateway)   build_rust_bins insight-api-gateway ;;
-    analytics-api) build_rust_bins analytics-api ;;
-    rust)          build_rust_bins insight-api-gateway analytics-api ;;
-    identity)      "${compose_cmd[@]}" run --rm build-dotnet ;;
-    frontend)      "${compose_cmd[@]}" run --rm build-frontend ;;
+    api-gateway) build_rust_bins insight-api-gateway ;;
+    analytics)   build_rust_bins analytics ;;
+    rust)        build_rust_bins insight-api-gateway analytics ;;
+    identity)    "${compose_cmd[@]}" run --rm build-dotnet ;;
+    frontend)    "${compose_cmd[@]}" run --rm build-frontend ;;
     all)
-      build_rust_bins insight-api-gateway analytics-api
+      build_rust_bins insight-api-gateway analytics
       "${compose_cmd[@]}" run --rm build-dotnet
       "${compose_cmd[@]}" run --rm build-frontend
       ;;
@@ -441,7 +441,7 @@ Populate the demo dataset. Stack must be up first.
              ~24k rows of 60-day per-team activity in ClickHouse.
   all        Both (default if no arg).
 
-After `silver` or `all` runs, analytics-api is restarted so its
+After `silver` or `all` runs, analytics is restarted so its
 metric-catalog schema validator re-checks the freshly-populated tables.
 Without that bounce, every metric stays cached at the boot-time
 `schema_status='error'`, the FE flags every bullet row schema_error=true,
@@ -467,22 +467,22 @@ cmd_seed() {
   [[ ${#args[@]} -eq 0 ]] && args=("all")
 
   # Run the seed step itself. NOT `exec` — we still want to bounce
-  # analytics-api after silver/all completes (see cf/insight#1307).
+  # analytics after silver/all completes (see cf/insight#1307).
   "${compose_cmd[@]}" --profile seed run --rm seed-sample "${args[@]}"
   local seed_status=$?
   if [[ $seed_status -ne 0 ]]; then
     return $seed_status
   fi
 
-  # Restart analytics-api when ClickHouse data was touched. Its schema
+  # Restart analytics when ClickHouse data was touched. Its schema
   # validator caches schema_status at startup and never re-checks; without
   # this nudge the catalog keeps serving the pre-seed 'table_not_found'
   # verdict and the FE shows "no peer data" everywhere.
   case "${args[0]}" in
     silver|all)
       echo
-      echo "=== restarting analytics-api so it re-validates schema (cf/insight#1307) ==="
-      "${compose_cmd[@]}" restart analytics-api >/dev/null
+      echo "=== restarting analytics so it re-validates schema (cf/insight#1307) ==="
+      "${compose_cmd[@]}" restart analytics >/dev/null
       ;;
   esac
 }

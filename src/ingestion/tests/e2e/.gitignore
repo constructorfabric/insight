@@ -9,5 +9,9 @@ __pycache__/
 *.egg-info/
 target/
 
+# API-endpoint coverage ledger (written by pytest_sessionfinish; consumed by
+# the endpoint-coverage CI gate — see lib/api_coverage.py)
+.artifacts/
+
 # pytest cache
 .pytest_cache/

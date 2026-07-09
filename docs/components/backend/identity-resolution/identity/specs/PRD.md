@@ -393,7 +393,7 @@ across all sources for a tenant". A violation indicates a corrupted
 problem and risk wrong-person responses. 422 (RFC 9110 §15.5.21
 "semantically correct request, server cannot process due to
 data state") matches the cyberfabric platform convention used by
-analytics-api for similar invariant breaches.
+the analytics service for similar invariant breaches.
 
 **Actors**: `cpt-insightspec-actor-platform-sre`
 
@@ -1203,7 +1203,7 @@ non-breaking.
 - [ ] DbUp creates `persons` and `account_person_map` against an
       empty `identity` MariaDB on first pod start; re-running the
       pod is a no-op against `SchemaVersions`.
-- [ ] `cypilot validate --skip-code --artifact docs/components/backend/identity-resolution/identity`
+- [ ] `cfs validate --skip-code --artifact docs/components/backend/identity-resolution/identity`
       reports zero errors.
 
 ## 10. Dependencies

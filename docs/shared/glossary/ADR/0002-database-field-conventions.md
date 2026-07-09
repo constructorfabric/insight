@@ -60,7 +60,7 @@ Adopt the six conventions documented below as mandatory for all internal Insight
 ### Confirmation
 
 * Code review: all `CREATE TABLE` statements in DESIGN documents use the mandated column names and types
-* `cypilot validate` checks cross-reference consistency for traceability IDs
+* `cfs validate` checks cross-reference consistency for traceability IDs
 * Grep for anti-patterns: `valid_from`, `owned_from`, `performed_by VARCHAR`, `TIMESTAMP` (MariaDB), `Enum8`, `Nullable(String)` (ClickHouse)
 * Each service's integration tests use real databases (testcontainers) -- schema mismatches surface as test failures
 

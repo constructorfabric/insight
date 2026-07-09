@@ -2,7 +2,7 @@
 #
 # Bakes in:
 #   - Python 3.12 + lib deps (pytest, clickhouse-connect, pandas, dbt-clickhouse, …)
-#   - the analytics-api binary and each connector's enrich binary, each COMPILED
+#   - the analytics binary and each connector's enrich binary, each COMPILED
 #     FROM ITS OWN Dockerfile and pulled in via `COPY --from=<ctx>` (the contexts
 #     are wired in docker-compose.runner.yml `runner.build.additional_contexts`).
 #
@@ -39,10 +39,10 @@ RUN mkdir -p lib && touch lib/__init__.py \
 
 # ── Pre-built binaries (baked from each component's OWN Dockerfile) ───────
 # Named build contexts come from docker-compose.runner.yml build-only services;
-# the rig RUNS these (analytics-api as a spawned service; enrich between the
+# the rig RUNS these (analytics as a spawned service; enrich between the
 # staging and silver dbt builds) but never compiles them. One COPY per binary
 # (matches the `additional_contexts` entries).
-COPY --from=analytics-api /app/analytics-api /usr/local/bin/analytics-api
+COPY --from=analytics /app/analytics /usr/local/bin/analytics
 COPY --from=jira-enrich /usr/local/bin/jira-enrich /usr/local/bin/jira-enrich
 
 # ── Defaults ────────────────────────────────────────────────────────────

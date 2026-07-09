@@ -13,3 +13,8 @@ sources:
         description: Per-person, per-date individual-contributor KPI view.
       - name: ic_chart_loc
         description: Per-person, per-week LOC breakdown view (code/spec/config lines).
+      - name: collab_person_counter_daily
+        description: >
+          Per-person, per-date collaboration peer-counter view (#1527). Shared
+          scaffold for the modality-named collab counters; Messaging modality
+          exposes messages_sent + channel_posts with per-org_unit peer bands.

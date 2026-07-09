@@ -1,0 +1,33 @@
+# JSON schema for bronze_chatgpt_team.chatgpt_team_chat_activity (all real
+# columns). Mirrors the connector catalog (connectors/ai/chatgpt-team,
+# configured_catalog.json — stream chatgpt_team_chat_activity, from chatgpt.com
+# /backend-api/accounts/{id}/analytics/user_list) plus the 4 _airbyte_* CDK
+# columns. NOTE: identity columns (tenant_id, source_id, unique_key,
+# collected_at, data_source, date, email) are non-null `string` in the catalog;
+# the message counters are `[number, null]`. `date` is a date STRING
+# ("2026-01-05") — Silver casts via toDate().
+schemas:
+  bronze_chatgpt_team.chatgpt_team_chat_activity:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: string }
+      source_id: { type: string }
+      unique_key: { type: string }
+      collected_at: { type: string }
+      data_source: { type: string }
+      date: { type: string }
+      email: { type: string }
+      name: { type: [string, "null"] }
+      seat_type: { type: [string, "null"] }
+      messages: { type: [number, "null"] }
+      gpt_messages: { type: [number, "null"] }
+      tool_messages: { type: [number, "null"] }
+      connector_messages: { type: [number, "null"] }
+      project_messages: { type: [number, "null"] }
+      credits_used: { type: [number, "null"] }

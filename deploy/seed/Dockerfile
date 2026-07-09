@@ -13,6 +13,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# curl: needed by src/ingestion/scripts/create-bronze-placeholders.sh
+# (bind-mounted at /ingestion-scripts), which silver.py runs to create
+# the placeholder tables — same script as the k8s clickhouse-migrate Job.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 

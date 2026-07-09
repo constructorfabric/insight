@@ -15,7 +15,7 @@ separate root in this chart's contract. The external CH MUST grant the
 service user CREATE DATABASE — that's the operator-side contract.
 
 Hook timing: `pre-install,pre-upgrade`. Mirrors the MariaDB Hook —
-the DB must exist BEFORE application pods that read it (analytics-api,
+the DB must exist BEFORE application pods that read it (analytics,
 ingestion workflows) start, otherwise helm `--wait` blocks on their
 CrashLoopBackOff'd pods until timeout and never reaches post-*
 hooks.

@@ -1,0 +1,41 @@
+# Reusable Claude Team code-metrics records (bronze_claude_team.claude_team_code_metrics).
+# Base carries every schema column (unused = null) incl. the 4 _airbyte_* CDK
+# columns. status defaults to "active" — claude_team__ai_dev_usage filters
+# `WHERE status = 'active'`. Variants override identity (email) only; the fields
+# under test (metric_date, unique_key, total_*) are set in each test's `bronze`.
+templates:
+  claude_team_metrics:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "claude-team-test"
+    unique_key: null
+    collected_at: null
+    data_source: "insight_claude_team"
+    metric_date: null
+    email: null
+    api_key_name: null
+    status: "active"
+    avg_cost_per_day: null
+    avg_lines_accepted_per_day: null
+    total_cost: null
+    total_lines_accepted: null
+    total_sessions: null
+    last_active: null
+    prs_with_cc: null
+    total_prs: null
+    prs_with_cc_percentage: null
+
+  alice:
+    $ref: "#/templates/claude_team_metrics"
+    email: alice@example.com
+
+  bob:
+    $ref: "#/templates/claude_team_metrics"
+    email: bob@example.com
+
+  carol:
+    $ref: "#/templates/claude_team_metrics"
+    email: carol@example.com

@@ -1,0 +1,92 @@
+spec_version: 1
+description: >
+  Metric: cc_sessions — IC Bullet AI (…0013), #1440.
+  How it's computed (bronze → silver → gold):
+    • bronze: Claude Team daily per-user metrics (session count)
+    • silver: class_ai_dev_usage, deduped to one row per user/day (tool='claude_code')
+    • gold:   ai_bullet_rows branch 3 emits ('cc_sessions', session_count) per day;
+              the served IC query SUMs the requested person's per-day sessions over
+              the window (value), and reports the DEPARTMENT distribution of those
+              per-person SUMs as median/range_min/range_max.
+
+  NOTE on the served stat set: the IC Bullet AI query_ref (id …0013) is last
+  re-seeded by migration m20260618_000001 (cc_overage), which carries only
+  value/median/range_min/range_max — NOT p25/p75/n. (The m20260611 reconcile
+  added p25/p75/n, but m20260618 runs after it and reverts to the median/min/max
+  shape.) So these AI fixtures assert the four stats the API actually returns; the
+  no-unasserted-stat gate is self-scoping and never requires p25/p75 on a row that
+  does not carry them.
+
+  Department: 5 Engineering members (alice, bob, carol, dave, erin), base rates
+  r ∈ {3,6,9,12,15}. Each member is seeded two session-rows inside the custom window
+  (Nov 01 .. Dec 12) — one Nov 15 (2*r) + one Dec 10 (1*r) — so each per-person
+  window SUM = 3*r. The IC case requests erin (r=15) → value 45; the department of 5
+  yields the median/range below. Cases: custom scope · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_claude_team.claude_team_code_metrics:
+    # Per member: Nov 15 = 2*r, Dec 10 = 1*r → window SUM = 3*r.
+    # ── alice, r=3 ──────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-15", unique_key: cc-alice-20261115, total_sessions: 6 }   # 2r
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-12-10", unique_key: cc-alice-20261210, total_sessions: 3 }   # 1r
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-12-10", unique_key: cc-alice-20261210, total_sessions: 3 }   # duplicate → dedup to 3, not 6
+    # ── bob, r=6 ────────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/bob,   metric_date: "2026-11-15", unique_key: cc-bob-20261115,   total_sessions: 12 }  # 2r
+    - { $ref: templates/claude_team_usage.yaml#/templates/bob,   metric_date: "2026-12-10", unique_key: cc-bob-20261210,   total_sessions: 6 }   # 1r
+    # ── carol, r=9 ──────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/carol, metric_date: "2026-11-15", unique_key: cc-carol-20261115, total_sessions: 18 }  # 2r
+    - { $ref: templates/claude_team_usage.yaml#/templates/carol, metric_date: "2026-12-10", unique_key: cc-carol-20261210, total_sessions: 9 }   # 1r
+    # ── dave, r=12 ──────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-11-15", unique_key: cc-dave-20261115,  total_sessions: 24 }  # 2r
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-12-10", unique_key: cc-dave-20261210,  total_sessions: 12 }  # 1r
+    # ── erin, r=15 (the requested IC member) ────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-11-15", unique_key: cc-erin-20261115,  total_sessions: 30 }  # 2r
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-12-10", unique_key: cc-erin-20261210,  total_sessions: 15 }  # 1r
+
+cases:
+  # ── CUSTOM scope (Nov 01 .. Dec 12) — Nov 15 + Dec 10 rows ───────────────────
+  # per-person sums 3r → dept {9,18,27,36,45}; erin value 45.
+  - name: "cc_sessions — custom scope (department of 5)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-11-01' and metric_date le '2026-12-12'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        find: { metric_key: cc_sessions }
+        equal: { value: 45, median: 27, range_min: 9, range_max: 45 }
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "cc_sessions — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: ai
+            metric_id: 00000000-0000-0000-0001-000000000013
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: ai
+        assert: "result.status == 'ok'"
+      - in: ai
+        assert: "size(items) == 0"

@@ -76,6 +76,6 @@ gears:
     config:
       routes:
         - prefix: "/analytics"
-          upstream: "http://analytics-api:8081"
+          upstream: "http://analytics:8081"
         - prefix: "/identity"
           upstream: "http://identity:8082"

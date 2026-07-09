@@ -126,4 +126,4 @@ No build identity lives in the workflow YAML. Renaming a GHCR image, moving a Do
 - [ADR-0001](../ADR/0001-chart-publishing-on-merge.md) — Chart publishing on merge.
 - [ADR-0016](../../../airbyte-toolkit/specs/ADR/0016-descriptor-images-block.md) — Descriptor `images:` block as single source of truth (supersedes ADR-0011 and ADR-0014).
 - [build-images.yml](../../../../../.github/workflows/build-images.yml) — the workflow itself.
-- [Connector creation skill](../../../../../cypilot/.core/skills/connector/workflows/create.md) — Phase 3.7 documents the `images:` block + CI contract for image-bearing connectors.
+- [Connector creation skill](../../../../../.cf-studio/.core/skills/connector/workflows/create.md) — Phase 3.7 documents the `images:` block + CI contract for image-bearing connectors.

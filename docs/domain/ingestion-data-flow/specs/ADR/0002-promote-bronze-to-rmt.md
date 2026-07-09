@@ -60,7 +60,7 @@ Chosen option: **"A. dbt-managed atomic migration"**, because it lets us keep Ai
 
 ### Confirmation
 
-- `cpt validate` confirms the bootstrap model and `promote_bronze_to_rmt` macro carry traceability markers referencing this ADR
+- `cfs validate` confirms the bootstrap model and `promote_bronze_to_rmt` macro carry traceability markers referencing this ADR
 - Manual check: `clickhouse-client -q "SELECT name, engine FROM system.tables WHERE database LIKE 'bronze_%'"` should show `Replacing*` for every promoted table after first dbt run
 - The macro itself logs `info=True` on every action so the dbt run output records the migration
 

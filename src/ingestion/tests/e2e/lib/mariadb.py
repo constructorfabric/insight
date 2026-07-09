@@ -1,7 +1,7 @@
 """MariaDB connection helper.
 
 Used to verify MariaDB readiness in smoke tests and (later) inspect/seed the
-`metrics` table that analytics-api consumes.
+`metrics` table that analytics consumes.
 """
 
 from __future__ import annotations

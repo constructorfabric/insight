@@ -4,8 +4,8 @@ pub mod types;
 use std::collections::{BTreeMap, HashMap};
 
 use types::{
-    DataSource, Delta, DeltaAction, DeltaEvent, EventKind, FieldCardinality, FieldHistoryRecord,
-    FieldId, FieldMeta, FieldValue, IssueSnapshot, LastState, synthetic_initial_event_id,
+    synthetic_initial_event_id, DataSource, Delta, DeltaAction, DeltaEvent, EventKind,
+    FieldCardinality, FieldHistoryRecord, FieldId, FieldMeta, FieldValue, IssueSnapshot, LastState,
 };
 
 /// Sentinel `field_id` for the per-issue creation marker. NOT a real Jira field — downstream
@@ -63,17 +63,16 @@ fn bootstrap(
     for (seq, (field_id, value)) in ordered.iter_mut().enumerate() {
         let seq = seq + 1;
         let meta_entry = meta.get(*field_id);
-        let (cardinality, value_id_type, field_name) = match meta_entry {
-            Some(m) => (m.cardinality, m.value_id_type, m.field_name.clone()),
-            None => {
-                // Field not in metadata — infer cardinality from shape, use None for id_type.
-                let card = if value.ids.len() > 1 {
-                    FieldCardinality::Multi
-                } else {
-                    FieldCardinality::Single
-                };
-                (card, types::ValueIdType::None, (*field_id).clone())
-            }
+        let (cardinality, value_id_type, field_name) = if let Some(m) = meta_entry {
+            (m.cardinality, m.value_id_type, m.field_name.clone())
+        } else {
+            // Field not in metadata — infer cardinality from shape, use None for id_type.
+            let card = if value.ids.len() > 1 {
+                FieldCardinality::Multi
+            } else {
+                FieldCardinality::Single
+            };
+            (card, types::ValueIdType::None, (*field_id).clone())
         };
         out.push(emit_synthetic_initial_row(
             snapshot,
@@ -118,8 +117,10 @@ fn incremental(
     let cutoff = events_sorted.partition_point(|ev| ev.event_at <= hwm);
     let new_events = &events_sorted[cutoff..];
 
-    let mut state: HashMap<FieldId, FieldValue> =
-        existing.iter().map(|(k, v)| (k.clone(), v.value.clone())).collect();
+    let mut state: HashMap<FieldId, FieldValue> = existing
+        .iter()
+        .map(|(k, v)| (k.clone(), v.value.clone()))
+        .collect();
 
     let mut out = Vec::with_capacity(new_events.len());
     for ev in new_events {
@@ -172,7 +173,14 @@ pub(crate) fn apply_delta(
             },
             _ => FieldValue::empty(),
         },
-        (Delta::Snapshot { to_ids, to_displays, .. }, _) => FieldValue {
+        (
+            Delta::Snapshot {
+                to_ids,
+                to_displays,
+                ..
+            },
+            _,
+        ) => FieldValue {
             ids: to_ids.clone(),
             displays: to_displays.clone(),
         },
@@ -206,7 +214,12 @@ pub(crate) fn reverse_delta(
     cardinality: FieldCardinality,
 ) -> FieldValue {
     match (delta, cardinality) {
-        (Delta::Set { from, from_display, .. }, _) => match (from, from_display) {
+        (
+            Delta::Set {
+                from, from_display, ..
+            },
+            _,
+        ) => match (from, from_display) {
             (Some(id), Some(disp)) => FieldValue {
                 ids: vec![id.clone()],
                 displays: vec![disp.clone()],
@@ -217,7 +230,14 @@ pub(crate) fn reverse_delta(
             },
             _ => FieldValue::empty(),
         },
-        (Delta::Snapshot { from_ids, from_displays, .. }, _) => FieldValue {
+        (
+            Delta::Snapshot {
+                from_ids,
+                from_displays,
+                ..
+            },
+            _,
+        ) => FieldValue {
             ids: from_ids.clone(),
             displays: from_displays.clone(),
         },
@@ -244,7 +264,7 @@ pub(crate) fn reverse_delta(
 /// Per-issue creation marker. A synthetic `event_kind = synthetic_initial` row with the
 /// sentinel `field_id = "created"`, `seq = 0`, no value — it records only *who* created the
 /// issue (`author_id = reporter`) and *when* (`event_at = created_at`). Shares the
-/// `initial:<issue_id>` event_id with the per-field synthetic rows; `unique_key` stays distinct
+/// `initial:<issue_id>` `event_id` with the per-field synthetic rows; `unique_key` stays distinct
 /// because `field_id` differs. See `bootstrap` for the cross-source contract.
 fn emit_creation_row(snapshot: &IssueSnapshot) -> FieldHistoryRecord {
     FieldHistoryRecord {
@@ -311,16 +331,16 @@ fn emit_changelog_row(
     state_after: &FieldValue,
 ) -> FieldHistoryRecord {
     let (delta_action, delta_value_id, delta_value_display) = match &ev.delta {
-        Delta::Set { to, to_display, .. } => {
-            (DeltaAction::Set, to.clone(), to_display.clone())
-        }
-        Delta::Add { id, display } => {
-            (DeltaAction::Add, Some(id.clone()), Some(display.clone()))
-        }
+        Delta::Set { to, to_display, .. } => (DeltaAction::Set, to.clone(), to_display.clone()),
+        Delta::Add { id, display } => (DeltaAction::Add, Some(id.clone()), Some(display.clone())),
         Delta::Remove { id, display } => {
             (DeltaAction::Remove, Some(id.clone()), Some(display.clone()))
         }
-        Delta::Snapshot { to_ids, to_displays, .. } => (
+        Delta::Snapshot {
+            to_ids,
+            to_displays,
+            ..
+        } => (
             DeltaAction::Set,
             to_ids.first().cloned(),
             to_displays.first().cloned(),

@@ -55,7 +55,7 @@ deploy/gitops/
     ├── doctor.sh                # invoked by `make doctor`
     ├── render-diff.sh           # invoked by `make diff`
     ├── secret-fetch.sh          # password-manager stub for `make seal-secret`
-    ├── compose-app-secrets.sh   # derives insight-{analytics-api,identity}-config from insight-db-creds
+    ├── compose-app-secrets.sh   # derives insight-{analytics,identity}-config from insight-db-creds
     └── airbyte-setup.sh         # post-install Airbyte setup-wizard automation
 ```
 
@@ -183,7 +183,7 @@ make system-status       ENV=local   # what's installed in insight-infra
 
 # L3 — the umbrella app. Only touches the `insight` namespace. Applies
 # every L3 sealed manifest, waits for `insight-db-creds` to materialise,
-# composes the derived `insight-analytics-api-config` +
+# composes the derived `insight-analytics-config` +
 # `insight-identity-config` Secrets, then helm-upgrades. Image tags are
 # inherited from the umbrella chart's appVersion — no per-service tag
 # overrides are needed in values.yaml for the sandbox path.
