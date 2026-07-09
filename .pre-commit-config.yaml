@@ -1,0 +1,23 @@
+# pre-commit framework config (https://pre-commit.com).
+# Install once:  pre-commit install
+#
+# Backend Rust: the same checks CI's "Rust" job gates on, so a fmt/clippy slip
+# fails locally instead of in CI. Both hooks only run when Rust (or a backend
+# Cargo manifest) is staged; skip one run with `SKIP=cargo-clippy git commit`
+# or all with `git commit --no-verify`.
+minimum_pre_commit_version: "3.2.0"
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt (backend)
+        language: system
+        entry: cargo fmt --manifest-path src/backend/Cargo.toml --all --check
+        files: '^src/backend/.*\.rs$'
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy (backend)
+        language: system
+        entry: cargo clippy --manifest-path src/backend/Cargo.toml --workspace --all-targets -- -D warnings
+        files: '^src/backend/(.*\.rs|(.*/)?Cargo\.(toml|lock))$'
+        pass_filenames: false
