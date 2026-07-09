@@ -21,3 +21,25 @@ repos:
         entry: cargo clippy --manifest-path src/backend/Cargo.toml --workspace --all-targets -- -D warnings
         files: '^src/backend/(.*\.rs|(.*/)?Cargo\.(toml|lock))$'
         pass_filenames: false
+
+  # Python: ruff lints + formats staged Python (it auto-discovers each file's
+  # nearest pyproject.toml [tool.ruff], falling back to ruff defaults).
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff
+      - id: ruff-format
+
+  # YAML formatting. Helm chart templates are Go-templated (not parseable YAML)
+  # and packaged subcharts are vendored, so they are excluded.
+  - repo: https://github.com/google/yamlfmt
+    rev: v0.21.0
+    hooks:
+      - id: yamlfmt
+        args: ["-formatter", "retain_line_breaks_single=true"]
+        exclude: |
+          (?x)^(
+            .*/helm/templates/.*|
+            charts/.*/templates/.*|
+            charts/.*/charts/.*
+          )
