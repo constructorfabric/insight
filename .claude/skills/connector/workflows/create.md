@@ -788,7 +788,70 @@ Acceptance criteria for each stream:
 
 If any stream fails, do NOT deploy. Fix the manifest and re-run both `validate-strict` and the per-stream `read`.
 
-### 5.7 Only then deploy to Airbyte
+### 5.7 Write mock-server tests (MANDATORY before deploy)
+
+Normative spec: `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md` (L1 of the connector test ladder). Mock tests are credential-free pytest suites that load `connector.yaml` in-process through the pinned `airbyte-cdk`, intercept HTTP with `HttpMocker`, and run a full protocol `read` — they are the only deterministic, CI-runnable check of pagination, cursors, error handling, and transformations.
+
+Create `CONNECTOR_DIR/tests/`:
+
+```
+tests/
+  config.py            # ConfigBuilder extending the shared base (always carries insight_tenant_id / insight_source_id)
+  test_<stream>.py     # one module per stream
+  fixtures/*.json      # response bodies: shapes from real API, values synthetic
+```
+
+Shared harness: `src/ingestion/tests/connectors/` (`get_source`, `read_stream`, `HttpMocker` re-exports, schema-conformance asserter). Reference suite to copy from: `src/ingestion/connectors/task-tracking/youtrack/tests/`.
+
+**Fixture rule**: take the response *shape* from the real payloads captured in the §5.6 read logs; replace every value (ids, emails, hostnames, tokens) with synthetic ones. NEVER commit real customer data.
+
+For every stream, cover each row of the coverage matrix whose precondition the manifest satisfies (full matrix in the spec, §"Stream Coverage Matrix"):
+
+| Case | Required when |
+|---|---|
+| `full_refresh_single_page`, `schema_conformance`, `tenant_source_stamping`, `empty_page`, `error_retry` (429) | always |
+| `pagination_multi_page` | stream declares a paginator |
+| `incremental_state` (state emitted + resume read filters from cursor) | stream declares `incremental_sync` |
+| `substream_partition` (one child request per parent partition) | stream has a parent stream |
+| `record_filter` / `transformations` | manifest declares them |
+| `error_ignore` (ignored status → 0 records, no ERROR log) | manifest ignores status codes |
+
+A matrix row skipped despite a satisfied precondition MUST carry an explicit skip reason in the test module.
+
+Skeleton:
+
+```python
+from freezegun import freeze_time
+from connector_tests import ConfigBuilder, read_stream, assert_records_conform
+from airbyte_cdk.test.mock_http import HttpMocker, HttpRequest, HttpResponse
+
+@freeze_time("2026-01-01T00:00:00Z")          # mandatory when the stream has a cursor or datetime params
+@HttpMocker()
+def test_users_full_refresh(http_mocker: HttpMocker):
+    config = ConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest("https://api.example.com/v1/users", query_params={"page": "1"}),
+        HttpResponse(body=load_fixture("users.json"), status_code=200),
+    )
+    output = read_stream("<category>/<name>", "users", config)
+    assert len(output.records) == 2
+    rec = output.records[0].record.data
+    assert rec["tenant_id"] == config["insight_tenant_id"]
+    assert rec["unique_key"].startswith(f'{config["insight_tenant_id"]}-{config["insight_source_id"]}-')
+    assert_records_conform(output.records, "<category>/<name>", "users")
+```
+
+Run (deterministic — no credentials, no Docker, no network; an unmatched HTTP request fails the test):
+
+```bash
+pytest src/ingestion/connectors/<category>/<name>/tests/
+```
+
+Acceptance:
+- [ ] Every stream from `descriptor.yaml` has a `test_<stream>.py` covering all applicable matrix rows (or explicit skip reasons)
+- [ ] Suite is green from a fresh checkout without credentials
+
+### 5.8 Only then deploy to Airbyte
 
 ```bash
 /connector deploy <name>
@@ -805,6 +868,7 @@ Completed:
   ✓ Credentials checked against API
   ✓ Streams discovered, schema generated from real data
   ✓ Data read locally — all mandatory fields present
+  ✓ Mock-server tests written in tests/ and green (coverage matrix satisfied)
 
 If your connector ships a Dockerfile (CDK or enrich sidecar), also verify
 the descriptor + CI wiring (per Phase 3.7 and ADR-0016):
