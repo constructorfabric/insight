@@ -607,7 +607,7 @@ for connector_dir in unique(discover.matrix[].connector_dir):
 
 The minor version bump makes reconcile classify the diff as `bump_kind: minor` per ADR-0015 → catalog re-discovery on the next deploy, no `dbt --full-refresh`.
 
-**Strict-semver gate (FATAL)**: `bump-descriptor-version.py` rejects values that aren't strict semver `MAJOR.MINOR.PATCH` — no leading zeros, no `v` prefix, no pre-release suffix, no two-segment forms. Date-style legacy values like `2026.05.04` and two-segment like `1.0` fail loud, halting the CI job. Your descriptor's `version:` MUST be on-spec before the first CI run; the `cpt validate` rule `connector-images-triad` covers this. If it slips through, the operator fixes the version manually and re-pushes.
+**Strict-semver gate (FATAL)**: `bump-descriptor-version.py` rejects values that aren't strict semver `MAJOR.MINOR.PATCH` — no leading zeros, no `v` prefix, no pre-release suffix, no two-segment forms. Date-style legacy values like `2026.05.04` and two-segment like `1.0` fail loud, halting the CI job. Your descriptor's `version:` MUST be on-spec before the first CI run; the `cfs validate` rule `connector-images-triad` covers this. If it slips through, the operator fixes the version manually and re-pushes.
 
 No per-connector wiring in `bump-descriptors` itself. Your descriptor declaring `images:` plus a strict-semver `version:` IS your wiring.
 
@@ -616,7 +616,7 @@ No per-connector wiring in `bump-descriptors` itself. Your descriptor declaring 
 After your descriptor edit lands, run:
 
 ```bash
-cpt --json validate --artifact src/ingestion/connectors/<category>/<name>/descriptor.yaml
+cfs --json validate --artifact src/ingestion/connectors/<category>/<name>/descriptor.yaml
 yq '.images' src/ingestion/connectors/<category>/<name>/descriptor.yaml   # confirm block present
 yq '.cdk_image, .enrich_image' src/ingestion/connectors/<category>/<name>/descriptor.yaml   # MUST return null (no top-level legacy fields)
 ```

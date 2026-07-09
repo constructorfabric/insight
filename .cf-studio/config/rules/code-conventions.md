@@ -1,5 +1,5 @@
 ---
-cypilot: true
+cf: true
 type: project-rule
 topic: code-conventions
 version: 1.0

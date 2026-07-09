@@ -28,7 +28,8 @@
 
 ## Changelog
 
-- **v1.1** (current): Authoring format moves from per-folder CSV (`bronze/*.csv` + `spec.yaml` + `expected/response.csv`) to a single declarative `<name>.test.yaml` (see `cpt-bronze-to-api-e2e-feature-yaml-rig`). Adds three components — `ref-resolver` (composition via `$ref` + sibling overrides), `schema-validator` (per-table JSON schema, padding, validation), `expect-engine` (exact-equality `find` + `equal` subset + CEL `assert` over the batch response) — and retires `csv-asserter`. `fixture-loader` is repurposed to load `*.test.yaml`. The API roundtrip targets the batch endpoint `POST /v1/metrics/queries`. The transformation path (bronze→silver→gold→API) is unchanged; only the authoring format and assertion engine change.
+- **v1.2** (current): Adds the `api-coverage` component (`src/ingestion/tests/e2e/lib/api_coverage.py`) — an httpx response event-hook records every `(method, path) -> status` the suite exercises into an observed ledger, and a stdlib-only gate diffs that ledger against the committed OpenAPI spec to produce a per-status-code `CoverageReport` verdict and a blocking CLI exit code (see `cpt-bronze-to-api-e2e-feature-api-coverage-gate`). No endpoint is introduced by the rig; the exercised surface widens from the handful the YAML rig touched to the full committed spec. §3.3 (API Contracts) is updated to state that surface truthfully. This PR is test-only: the committed OpenAPI spec and `src/backend/services/analytics/src/api/mod.rs` carry no changes on this branch (`.standard_errors` boilerplate is unchanged) — the gate absorbs the spec's over-declared boilerplate codes via `BLOCKED` rather than correcting the spec, and files the correction as a bug (#1669) for the backend devs.
+- **v1.1**: Authoring format moves from per-folder CSV (`bronze/*.csv` + `spec.yaml` + `expected/response.csv`) to a single declarative `<name>.test.yaml` (see `cpt-bronze-to-api-e2e-feature-yaml-rig`). Adds three components — `ref-resolver` (composition via `$ref` + sibling overrides), `schema-validator` (per-table JSON schema, padding, validation), `expect-engine` (exact-equality `find` + `equal` subset + CEL `assert` over the batch response) — and retires `csv-asserter`. `fixture-loader` is repurposed to load `*.test.yaml`. The API roundtrip targets the batch endpoint `POST /v1/metrics/queries`. The transformation path (bronze→silver→gold→API) is unchanged; only the authoring format and assertion engine change.
 - **v1.0**: Initial design. Establishes 7 components (fixture-loader, ch-seeder, dbt-runner, migration-applier, api-client, csv-asserter, session-rig), the data plane (docker compose with ClickHouse + MariaDB), the service plane (`analytics` binary on host with `cargo build --release`), and the assertion plane (pandas). Vertically slices through the bronze→silver→gold→API path defined in `cpt-dataflow-design-pipeline`.
 
 ## 1. Architecture Overview
@@ -409,26 +410,49 @@ Does **NOT**: perform any per-test work directly (delegates to other components)
 
 - All other components — orchestrates them
 
+#### API Coverage (added in v1.2)
+
+- [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-component-api-coverage`
+
+##### Why this component exists
+
+Reachability alone does not prove the suite tests an operation's contract — a route touched only by requests that error, or that never exercises one of its other declared codes, is untested where it matters. This component is an independent, **per-status-code** proof that every documented operation was exercised AND every one of its *required* declared codes was actually observed. It is deliberately decoupled from the assertion path: it observes the traffic the suite already generates rather than driving any request itself, so it can never change what the suite tests.
+
+##### Responsibility scope
+
+Attaches `record_response` as an httpx `response` event-hook on the single client `api-client` returns, recording `(method, path) -> {status codes}` into an in-process ledger (reading only metadata off the already-received response, never the body); dumps and merges that ledger to `.artifacts/observed_endpoints.json` at `pytest_sessionfinish`. As a gate (`python3 lib/api_coverage.py`, stdlib only), it loads the ledger plus the committed OpenAPI spec (`docs/components/backend/analytics/openapi.json` — the coverage universe), matches observed requests onto spec operations by path-template arity, and builds a `CoverageReport`. The verdict is per status code: for each operation, `required = declared - {codes >= 500} - UNIVERSAL_BOILERPLATE{401,429} - BLOCKED[op]`, and the operation passes iff `required` is a subset of the codes actually observed. Server-fault codes (>= 500) are declared for spec fidelity but never required. `UNIVERSAL_BOILERPLATE` (401/429) is subtracted on every route (gateway auth disabled, no rate limiter). `BLOCKED` is a per-operation set of declared codes the black-box rig provably cannot observe — either because the committed spec's `.standard_errors` boilerplate over-declares codes a route cannot answer (spec-fidelity bug, #1669), or because of a pinned product bug (#1663, #1664). Exits non-zero — blocking `./e2e.sh gates` and the `api-endpoint-coverage-gate` CI job — on any missing operation, uncovered required code, or stale/redundant `SKIP_LIST` / `BLOCKED` entry (an excluded code that is now observed, or a `BLOCKED` entry no longer in the spec, fails the gate so the exclusion list stays honest).
+
+##### Responsibility boundaries
+
+Does **NOT**: alter, add, or reorder any request (it only observes); introduce any endpoint; assert response content (that is `expect-engine`); own the OpenAPI spec (kept accurate by the analytics OpenAPI drift gate, upstream of this component; this PR ships zero changes to the committed spec or to `analytics/src/api/mod.rs` — spec-fidelity corrections are filed as bugs, not made here).
+
+##### Related components (by ID)
+
+- `cpt-bronze-to-api-e2e-component-api-client` — supplies the single recording client, the sole observation chokepoint
+- `cpt-bronze-to-api-e2e-component-session-rig` — its `pytest_sessionfinish` hook dumps the ledger
+
 ### 3.3 API Contracts
 
-The framework consumes the existing analytics HTTP surface. No new endpoints are introduced.
+The framework consumes the existing analytics HTTP surface. The rig introduces **no new endpoints** — every operation it drives is one the `analytics` service already documents. What changed across versions is the *breadth* exercised: the YAML rig (v1.1) touched only the handful of query/list operations below; the `api/` contract suite (v1.2, `cpt-bronze-to-api-e2e-feature-api-coverage-gate`) exercises the **full committed OpenAPI spec** — `docs/components/backend/analytics/openapi.json`, **20 operations** — which is the authoritative operation list and the coverage universe the `api-coverage` component gates against. The table below groups that surface by path family; the committed spec remains the source of truth for the exact set.
 
 - [ ] `p2` - **ID**: `cpt-bronze-to-api-e2e-interface-pytest-entry` *(defined in PRD §7.1)*
 
 - **Contracts**: `cpt-bronze-to-api-e2e-contract-api-response`
 - **Technology**: HTTP/JSON over loopback
 
-**Endpoints Overview** (consumed; service is `analytics`):
+**Endpoints Overview** (consumed; service is `analytics`; authoritative list is the committed OpenAPI spec):
 
-| Method | Path | Description | Stability |
+| Method(s) | Path(s) | Description | Stability |
 |--------|------|-------------|-----------|
 | `POST` | `/v1/metrics/queries` | Batch metric query — `{queries:[{id, metric_id, $filter,...}]}` → `{results:[{id, status, items \| error}]}`. Primary roundtrip for the YAML rig. | stable |
 | `POST` | `/v1/metrics/{id}/query` | Execute a single metric query (OData `$filter`, `$top`, `$orderby`, `$select`) | stable |
-| `GET` | `/v1/metrics` | List metric definitions | stable |
-| `GET` | `/v1/metrics/{id}` | Get one metric definition | stable |
-| `GET` | `/v1/columns` | List column catalog | stable |
-| `GET` | `/v1/columns/{table}` | List columns for a table | stable |
-| `GET` | `/health` | Liveness probe (used by `api-client` startup wait) | stable |
+| `GET` `POST` `PUT` `DELETE` | `/v1/metrics`, `/v1/metrics/{id}` | Metric-definition CRUD (list / create / get / update / delete) | stable |
+| `GET` `POST` `PUT` `DELETE` | `/v1/admin/metric-thresholds`, `/v1/admin/metric-thresholds/{id}` | Admin metric-threshold CRUD (list / create / get / update / delete) | stable |
+| `GET` `POST` `PUT` `DELETE` | `/v1/metrics/{id}/thresholds`, `/v1/metrics/{id}/thresholds/{tid}` | Legacy per-metric threshold CRUD; success paths are unreachable in the rig pending bugs #1663/#1664, so only their pinned error contracts are exercised | stable |
+| `POST` | `/v1/catalog/get_metrics` | Catalog metric lookup | stable |
+| `GET` | `/v1/columns`, `/v1/columns/{table}` | List column catalog / columns for a table | stable |
+| `GET` | `/v1/persons/{email}` | Person lookup via the identity service — the rig wires an in-process identity stub (`lib/identity_stub.py`) so both documented outcomes are observed: 200 (a seeded email resolves) and 404 (an unknown email). The real identity service stays out of scope per PRD §4.2 | deprecated |
+| `GET` | `/health` | Liveness probe (used by `api-client` startup wait; not part of the committed coverage universe) | stable |
 
 ### 3.4 Internal Dependencies
 

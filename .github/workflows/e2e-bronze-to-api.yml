@@ -7,11 +7,24 @@ name: E2E — Bronze to API
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
 # image is used for local development via src/ingestion/tests/e2e/e2e.sh.
 #
-# Topology: ONE heavy job (`e2e`) boots the stack, runs the suite, and — while
-# analytics is already up — snapshots the metric catalog into `.artifacts/`,
-# which it uploads. The metric-coverage-gate job then analyses it as a pure-Python
-# check (no Docker, no app boot). See
-# src/ingestion/tests/e2e/lib/{metric_coverage,collect_metrics}.py.
+# Topology: a shared upstream `build` job compiles the runner image ONCE (the
+# expensive step — baking in analytics + each connector's enrich binary via
+# build-only services) and hands it to both heavy lanes — `e2e-api` and
+# `e2e-metrics` — as a saved image artifact. This halves total build compute
+# versus each lane building its own copy, and makes `build` the SOLE writer
+# of the GHA BuildKit cache scopes wired in compose/docker-compose.cache.yml
+# (two concurrent writers to the same scope key just thrash each other's
+# cache). Each lane loads the pre-built image, boots its own stack, runs its
+# own suite, and — while analytics is already up — snapshots that session's
+# `.artifacts/` into its own uploaded artifact (coverage-inputs-api /
+# coverage-inputs-metrics). The lanes still share nothing AT RUNTIME
+# (separate stacks, separate artifacts), so a red api suite can never take
+# down the metrics lane or vice versa — only a red `build` takes down both,
+# by design: a broken image shouldn't spend 2x compute proving it's broken.
+# The metric-coverage-gate and api-endpoint-coverage-gate jobs then each
+# analyse their own lane's artifact as a pure-Python check (no Docker, no app
+# boot). See
+# src/ingestion/tests/e2e/lib/{metric_coverage,collect_metrics,api_coverage}.py.
 #
 # Specs: docs/domain/bronze-to-api-e2e/specs/
 # Code:  src/ingestion/tests/e2e/
@@ -68,9 +81,26 @@ permissions:
   contents: read
 
 jobs:
-  e2e:
-    name: Run E2E suite
+  # NB: each lane job reports its `name:` as the status-check context — now
+  # "api" and "metrics" (was "E2E suite — api"/"E2E suite — metrics"). Heads-up
+  # for whoever wires branch protection: the `main` ruleset ("Soft Protection")
+  # still REQUIRES a check named "Run E2E suite" — the pre-split job name — which
+  # no job here emits anymore. That required check must be reconciled (point the
+  # ruleset at the "api"/"metrics" lanes and/or the coverage gates, or re-add an
+  # umbrella "Run E2E suite" job) before this branch can merge. If `build` fails,
+  # `e2e-api`/`e2e-metrics` are skipped by default `needs` semantics (a red build
+  # must not run either lane), and GitHub reports a required check's skipped job
+  # as failed/pending rather than green.
+
+  # ─── Build the runner image once, shared by both lanes ────────────────────
+  build:
+    name: Build runner image
     runs-on: ubuntu-latest
+    # This compile-only job keeps the old combined job's full ceiling: a cold
+    # GHA cache (Cargo.lock bump, the 7-day cache eviction, or the 10 GB
+    # per-repo cache quota getting evicted by other workflows) means a full
+    # Rust recompile of analytics + each connector's enrich binary — the
+    # warm-cache fast path below is not guaranteed.
     timeout-minutes: 30
 
     defaults:
@@ -99,22 +129,103 @@ jobs:
         env:
           E2E_COMPOSE_OVERLAYS: compose/docker-compose.cache.yml
 
+      # ─── Hand the built image to both lanes ─────────────────────────────
+      # Only insight-e2e-runner:latest travels: analytics and jira-enrich
+      # (compose/docker-compose.runner.yml) are build-only services consumed
+      # as `additional_contexts` while building the runner above and are
+      # never started themselves, so their images aren't needed at test time.
+      # zstd (multi-threaded, default level) keeps the round-trip fast — the
+      # tarball only needs to survive the few minutes until the two lanes
+      # download it, hence retention-days: 1.
+      # zstd ships in the ubuntu-latest runner image today; the guard keeps a
+      # future image revision from failing the required check with a bare
+      # command-not-found.
+      - name: Ensure zstd is available
+        run: command -v zstd >/dev/null || (sudo apt-get update && sudo apt-get install -y zstd)
+
+      - name: Save runner image
+        run: docker save insight-e2e-runner:latest | zstd -T0 -o runner-image.tar.zst
+
+      - name: Upload runner image
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-runner-image
+          path: src/ingestion/tests/e2e/runner-image.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+          # Single-writer per-run artifact; lets "Re-run failed jobs" replace
+          # a half-uploaded tarball instead of erroring "artifact already
+          # exists".
+          overwrite: true
+
+  e2e-api:
+    name: api
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: src/ingestion/tests/e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ─── Load the shared runner image ───────────────────────────────────
+      # Built once by the `build` job above; loading tags it back as
+      # insight-e2e-runner:latest, exactly what compose expects, so the
+      # `./e2e.sh test` below never re-triggers a build.
+      - name: Download runner image
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-runner-image
+          path: src/ingestion/tests/e2e
+
+      # zstd ships in the ubuntu-latest runner image today; the guard keeps a
+      # future image revision from failing the required check with a bare
+      # command-not-found.
+      - name: Ensure zstd is available
+        run: command -v zstd >/dev/null || (sudo apt-get update && sudo apt-get install -y zstd)
+
+      - name: Load runner image
+        run: zstd -d < runner-image.tar.zst | docker load
+
+      # This job runs a single suite session, so there's no cross-session
+      # ledger merge to worry about — but a reused workspace (self-hosted
+      # runner) could still leave a stale .artifacts/ behind from a previous
+      # run; start from a clean slate so dead coverage can't survive.
+      - name: Reset coverage artifacts
+        run: rm -rf .artifacts
+
       # ─── Run the suite inside the runner ────────────────────────────────
-      # `./e2e.sh test` (docker compose run runner) starts the clickhouse +
-      # mariadb `depends_on` services — compose pulls their images on demand
+      # `./e2e.sh test <path>` (docker compose run runner) starts the clickhouse
+      # + mariadb `depends_on` services — compose pulls their images on demand
       # and waits for `service_healthy` — so no explicit image pre-pull is needed.
-      # Serial on purpose: the session rig is not xdist-safe yet (see
-      # conftest.py — per-worker analytics spawns race SeaORM migrations
-      # in the shared MariaDB, non-primary workers don't wait for ClickHouse
-      # migrations, and the shared dbt target/ dir is deleted by whichever
-      # worker finishes first). Wall-time cost is negligible: the runner image
-      # build (which compiles analytics + enrich) dominates the job.
       #
-      # The suite ALSO snapshots the metric catalog to .artifacts/catalog_metrics.json
-      # (lib/collect_metrics.py, while analytics is up) — the
-      # metric-coverage-gate job below analyses it, no second app boot.
-      - name: Run E2E suite
-        run: ./e2e.sh test --tb=short -q
+      # This lane runs only the api/ suite — endpoint contract tests covering
+      # every OpenAPI operation. It's serial on purpose: the session rig is not
+      # xdist-safe yet (see conftest.py — per-worker analytics spawns race
+      # SeaORM migrations in the shared MariaDB, non-primary workers don't wait
+      # for ClickHouse migrations, and the shared dbt target/ dir is deleted by
+      # whichever worker finishes first). Wall-time cost is negligible: this
+      # lane only loads the pre-built runner image and runs the comparatively
+      # fast api/ suite — the expensive analytics+enrich compile happens once,
+      # upstream, in the `build` job.
+      #
+      # meta/ (the rig's own framework smoke tests) is deliberately NOT run in
+      # CI — it tests the harness, not the product; run it locally via
+      # `./e2e.sh test meta/`.
+      #
+      # This session ALSO emits BOTH .artifacts/ files while analytics is up:
+      #   • catalog_metrics.json     (lib/collect_metrics.py)
+      #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook
+      #     ledger)
+      # but only the lane-relevant one is consumed downstream: this api lane
+      # feeds api-endpoint-coverage-gate — the api/ contract suite exercises
+      # every spec operation by itself, so this session's ledger is complete
+      # on its own. (The metrics lane below feeds metric-coverage-gate instead.)
+      - name: E2E suite — api
+        run: ./e2e.sh test api/ --tb=short -q
 
       # ─── Hand the collected catalog to the gate job ─────────────────────
       # Uploaded even if the suite failed (the collection script still runs), so the
@@ -124,8 +235,11 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-inputs
+          name: coverage-inputs-api
           path: src/ingestion/tests/e2e/.artifacts/
+          # Single-writer per-run artifact; lets "Re-run failed jobs" replace a
+          # prior partial upload instead of erroring "artifact already exists".
+          overwrite: true
           # `.artifacts/` is a dotdir; upload-artifact@v4 skips hidden paths by
           # default (include-hidden-files: false) — without this it uploads
           # nothing and the gate job fails with "artifact not found".
@@ -150,15 +264,127 @@ jobs:
         if: always()
         run: ./e2e.sh down || true
 
-  # ─── Gate job — pure-Python analysis of the collected catalog ─────────────
-  # Runs after `e2e` (needs), downloads `coverage-inputs`, reads the catalog file.
-  # No Docker, no analytics boot. `!cancelled()` so it still reports when the
-  # suite itself failed (the artifact is usually present).
+  e2e-metrics:
+    name: metrics
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: src/ingestion/tests/e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ─── Load the shared runner image ───────────────────────────────────
+      # Built once by the `build` job above; loading tags it back as
+      # insight-e2e-runner:latest, exactly what compose expects, so the
+      # `./e2e.sh test` below never re-triggers a build.
+      - name: Download runner image
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-runner-image
+          path: src/ingestion/tests/e2e
+
+      # zstd ships in the ubuntu-latest runner image today; the guard keeps a
+      # future image revision from failing the required check with a bare
+      # command-not-found.
+      - name: Ensure zstd is available
+        run: command -v zstd >/dev/null || (sudo apt-get update && sudo apt-get install -y zstd)
+
+      - name: Load runner image
+        run: zstd -d < runner-image.tar.zst | docker load
+
+      # This job runs a single suite session, so there's no cross-session
+      # ledger merge to worry about — but a reused workspace (self-hosted
+      # runner) could still leave a stale .artifacts/ behind from a previous
+      # run; start from a clean slate so dead coverage can't survive.
+      - name: Reset coverage artifacts
+        run: rm -rf .artifacts
+
+      # ─── Run the suite inside the runner ────────────────────────────────
+      # `./e2e.sh test <path>` (docker compose run runner) starts the clickhouse
+      # + mariadb `depends_on` services — compose pulls their images on demand
+      # and waits for `service_healthy` — so no explicit image pre-pull is needed.
+      #
+      # This lane runs only the metrics/ suite — the bronze→dbt→gold→API metric
+      # fixtures (the yaml rig). It's serial on purpose: the session rig is not
+      # xdist-safe yet (see conftest.py — per-worker analytics spawns race
+      # SeaORM migrations in the shared MariaDB, non-primary workers don't wait
+      # for ClickHouse migrations, and the shared dbt target/ dir is deleted by
+      # whichever worker finishes first). Wall-time cost is negligible: this
+      # lane only loads the pre-built runner image and runs the metrics/ suite
+      # — the expensive analytics+enrich compile happens once, upstream, in
+      # the `build` job.
+      #
+      # meta/ (the rig's own framework smoke tests) is deliberately NOT run in
+      # CI — it tests the harness, not the product; run it locally via
+      # `./e2e.sh test meta/`.
+      #
+      # This session ALSO emits BOTH .artifacts/ files while analytics is up:
+      #   • catalog_metrics.json     (lib/collect_metrics.py)
+      #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook
+      #     ledger)
+      # but only the lane-relevant one is consumed downstream: this metrics
+      # lane feeds metric-coverage-gate. (The api lane above feeds
+      # api-endpoint-coverage-gate instead, since that suite alone already
+      # exercises every spec operation.)
+      - name: E2E suite — metrics
+        run: ./e2e.sh test metrics/ --tb=short -q
+
+      # ─── Hand the collected catalog to the gate job ─────────────────────
+      # Uploaded even if the suite failed (the collection script still runs), so the
+      # gate reports alongside a red suite. `path` is workspace-relative (actions
+      # ignore defaults.run.working-directory).
+      - name: Upload coverage inputs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-inputs-metrics
+          path: src/ingestion/tests/e2e/.artifacts/
+          # Single-writer per-run artifact; lets "Re-run failed jobs" replace a
+          # prior partial upload instead of erroring "artifact already exists".
+          overwrite: true
+          # `.artifacts/` is a dotdir; upload-artifact@v4 skips hidden paths by
+          # default (include-hidden-files: false) — without this it uploads
+          # nothing and the gate job fails with "artifact not found".
+          include-hidden-files: true
+          # The gate is useless without the catalog; fail loudly here rather than
+          # as a confusing downstream "artifact not found".
+          if-no-files-found: error
+          retention-days: 7
+
+      # ─── Diagnostics on failure ─────────────────────────────────────────
+      - name: Dump compose logs on failure
+        if: failure()
+        run: |
+          echo "::group::clickhouse logs"
+          ./e2e.sh logs clickhouse || true
+          echo "::endgroup::"
+          echo "::group::mariadb logs"
+          ./e2e.sh logs mariadb || true
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always()
+        run: ./e2e.sh down || true
+
+  # ─── Gate jobs — pure-Python analysis of the collected artifacts ──────────
+  # Each runs after its own lane's suite job (needs), downloads that lane's
+  # artifact, and reads plain files. No Docker, no analytics boot.
+  # `!cancelled()` so they still report when the suite itself failed (the
+  # artifacts are usually present). The `needs.<lane>.result != 'skipped'`
+  # clause guards the other case: a lane is SKIPPED (not failed) when the
+  # upstream `build` job fails, and in that case there's no artifact to
+  # download at all — without this clause the gate would still run and fail
+  # noisily on a missing artifact instead of just skipping cleanly alongside
+  # its lane.
 
   metric-coverage-gate:
     name: Metric coverage gate
-    needs: e2e
-    if: ${{ !cancelled() }}
+    needs: e2e-metrics
+    if: ${{ !cancelled() && needs.e2e-metrics.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -168,7 +394,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
-          name: coverage-inputs
+          name: coverage-inputs-metrics
           path: coverage-inputs
       - name: Analyse metric coverage
         run: |
@@ -179,3 +405,55 @@ jobs:
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat metric_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then echo "::error::metric coverage gate failed — a metric_key is value-tested by no test and not in SKIP_TABLES/SKIP_LIST (or a skip is stale). See the report."; fi
           exit "$rc"
+
+  api-endpoint-coverage-gate:
+    name: API endpoint coverage gate
+    needs: e2e-api
+    if: ${{ !cancelled() && needs.e2e-api.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Checkout only for the gate script + the committed OpenAPI spec (the
+      # coverage universe — kept fresh by the openapi-specs drift gate).
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs-api
+          path: coverage-inputs
+      - name: Analyse endpoint coverage
+        run: |
+          python3 src/ingestion/tests/e2e/lib/api_coverage.py \
+            --observed coverage-inputs/observed_endpoints.json \
+            --spec docs/components/backend/analytics/openapi.json | tee api_coverage.md
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat api_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::API endpoint coverage gate failed — a spec operation is exercised by no test and not in SKIP_LIST (or a skip is stale). See the api/ contract tests (src/ingestion/tests/e2e/api/)."; fi
+          exit "$rc"
+
+  # Umbrella status check. The `main` ruleset ("Soft Protection") requires a
+  # check named "Run E2E suite" — the pre-split job name. This job re-supplies
+  # that context by aggregating the suite lanes into one pass/fail. It runs even
+  # when a dependency fails (`!cancelled()`) so a genuine failure is REPORTED:
+  # a *skipped* required check would otherwise be treated as passing. Green iff
+  # `build` and both lanes succeeded. (The coverage gates stay separate, as they
+  # were on main; fold them in here — or make them required directly — later.)
+  e2e-suite:
+    name: Run E2E suite
+    needs: [build, e2e-api, e2e-metrics]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the build and both suite lanes to have succeeded
+        run: |
+          echo "build=${{ needs.build.result }}"
+          echo "api=${{ needs.e2e-api.result }}"
+          echo "metrics=${{ needs.e2e-metrics.result }}"
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "true" ]; then
+            echo "::error::E2E suite did not fully pass — the build or a suite lane (api/metrics) failed, was cancelled, or was skipped."
+            exit 1
+          fi
+          echo "E2E suite passed: build + api + metrics all succeeded."

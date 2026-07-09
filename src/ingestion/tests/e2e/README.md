@@ -1,5 +1,21 @@
 # Bronze-to-API E2E Test Framework
 
+
+<!-- toc -->
+
+- [Prerequisites](#prerequisites)
+- [Run (recommended — dockerized)](#run-recommended--dockerized)
+- [Run (advanced — host-local)](#run-advanced--host-local)
+- [Layout](#layout)
+- [Metric coverage gate](#metric-coverage-gate)
+- [API endpoint coverage gate](#api-endpoint-coverage-gate)
+- [Ports (loopback only)](#ports-loopback-only)
+- [Notes for fixture authors](#notes-for-fixture-authors)
+- [`cases` / `expect` (declarative YAML rig)](#cases--expect-declarative-yaml-rig)
+  - [What is CEL](#what-is-cel)
+
+<!-- /toc -->
+
 Test framework that exercises the full data path:
 
 ```
@@ -22,14 +38,17 @@ Only one: **Docker Engine ≥ 24**. Everything else (Python 3.12, Rust matching 
 cd src/ingestion/tests/e2e
 
 ./e2e.sh build              # build the runner image (one-time, ~3-5 min cold)
-./e2e.sh test               # full suite
+./e2e.sh test               # full suite (api + metrics + meta)
+./e2e.sh test api/          # api suite: endpoint contract tests only (seconds)
+./e2e.sh test metrics/      # metrics suite: the yaml fixture rig
+./e2e.sh test meta/         # rig framework self-tests (local-only; CI skips them)
 ./e2e.sh test -k collab_emails_sent -v   # one test
 ./e2e.sh test -n auto       # ⚠️ parallel (pytest-xdist) — NOT supported yet: workers race on shared CH/MariaDB/dbt target
 ./e2e.sh shell              # interactive bash inside the runner
 ./e2e.sh down               # tear down compose stack + volumes
 ```
 
-The same image (and the same `./e2e.sh test` invocation) is used in CI — see `.github/workflows/e2e-bronze-to-api.yml`.
+The same image is used in CI, which builds it ONCE in a shared upstream `build` job and hands it to two independent lanes (`e2e-api`, `e2e-metrics`) as a saved image artifact — each lane loads the image, boots its own stack, runs its own suite (meta/ is local-only: it tests the harness, not the product), and uploads its own coverage artifact (`coverage-inputs-api` / `coverage-inputs-metrics`) — see `.github/workflows/e2e-bronze-to-api.yml`. The lanes share nothing at runtime (only the build is shared); each gate consumes only its own lane's artifact.
 
 First session bootstraps `cargo build --release -p analytics` (~3-5 min). Subsequent sessions reuse the named volume so cargo is incremental (~10s).
 
@@ -64,25 +83,27 @@ e2e/
 │   ├── analytics.py        # builds + spawns the analytics binary
 │   ├── worker.py               # WorkerContext (resolves pytest-xdist worker id)
 │   ├── metric_coverage.py      # metric-coverage gate: SKIP_TABLES + SKIP_LIST (--universe-file)
+│   ├── api_coverage.py         # endpoint-coverage report + httpx recording hook
 │   ├── collect_metrics.py      # script: snapshot the metric catalog → .artifacts/
 │   └── config.py               # session config (ports, random creds)
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
 ├── metrics/                      # <name>.test.yaml + schemas/ + templates/
-└── meta/                       # framework's own smoke tests
-    └── test_session_smoke.py
+└── meta/                       # the rig's own framework tests (dbt runner, expect engine, ref resolver)
 ```
 
 ## Metric coverage gate
 
-A job (`metric-coverage-gate`) in the **E2E — Bronze to API** workflow, *not* a pytest test. The `e2e` job runs the suite and, while analytics is up, snapshots the metric catalog (`POST /v1/catalog/get_metrics`) to `.artifacts/catalog_metrics.json` (uploaded as `coverage-inputs`); the gate job then checks every product `metric_key` the catalog exposes is value-asserted by a test or covered by a `SKIP_TABLES`/`SKIP_LIST` entry — pure Python, no Docker, no second app boot.
+A job (`metric-coverage-gate`) in the **E2E — Bronze to API** workflow, *not* a pytest test. The `e2e-metrics` lane runs the metrics/ suite and, while analytics is up, snapshots the metric catalog (`POST /v1/catalog/get_metrics`) to `.artifacts/catalog_metrics.json` (uploaded as `coverage-inputs-metrics`); the gate job then checks every product `metric_key` the catalog exposes is value-asserted by a test or covered by a `SKIP_TABLES`/`SKIP_LIST` entry — pure Python, no Docker, no second app boot.
 
 Locally, after a run:
 
 ```bash
-./e2e.sh test     # runs the suite + snapshots .artifacts/catalog_metrics.json
-./e2e.sh gates    # runs the metric-coverage gate against it (in the runner image; no DB)
+./e2e.sh test metrics/    # runs the metrics suite (emits both .artifacts files; only catalog_metrics.json feeds this gate)
+./e2e.sh gates metrics    # metric gate only, against .artifacts/ (in the runner image; no DB)
 ```
+
+`./e2e.sh gates` with no argument runs both gates (handy after running both suites locally; see [API endpoint coverage gate](#api-endpoint-coverage-gate) below for the api/-only equivalent). `gates api` / `gates metrics` run one gate against one artifact each — that per-lane shape is what mirrors the two independent CI jobs, each of which only ever needs its own lane's artifact.
 
 The verdict per **metric_key** (each individual number) is **binary**:
 
@@ -98,6 +119,21 @@ ANALYTICS_URL=http://localhost:18081 python3 lib/metric_coverage.py
 ```
 
 Coverage is **per metric_key**, so every number on a bullet is validated independently — one tested key of a metric does not cover the rest. Today: **44/96** value-tested; the rest are skip-listed with a reason (`reachable — …` entries are the backlog where fixtures already exist).
+
+## API endpoint coverage gate
+
+The suite records which analytics routes it exercises: an httpx response hook on the rig's single client chokepoint (`AnalyticsProcess.client()`) accumulates `(method, path) → {status codes}`, and `conftest.pytest_sessionfinish` dumps the ledger to `.artifacts/observed_endpoints.json` (shipped to CI inside the `coverage-inputs-api` artifact, produced by the `e2e-api` lane). The `api-endpoint-coverage-gate` job diffs it against the committed OpenAPI spec (`docs/components/backend/analytics/openapi.json` — kept accurate by the analytics OpenAPI drift gate: the `openapi_spec_matches_committed` golden test + the `openapi-specs` workflow) via [`lib/api_coverage.py`](lib/api_coverage.py). **Blocking is at the operation level**: the gate fails only when a documented operation is exercised by NO test — a new endpoint added to the spec without a contract test — or when a `SKIP_LIST` entry rots (now exercised, or gone from the spec). It does **not** fail on an individual unobserved status code.
+
+Locally, after a run:
+
+```bash
+./e2e.sh test api/    # runs the api/ suite (emits both .artifacts files; only observed_endpoints.json feeds this gate)
+./e2e.sh gates api    # endpoint gate only, against .artifacts/ (in the runner image; no DB)
+```
+
+Per-status-code coverage is **reported, not enforced**: the report renders an endpoints × registered-status-codes table (`✓` observed · `✗` declared but not yet observed · `·` excluded · blank = not declared) and an overall coverage percentage. A code is *coverable* — and so counts toward the percentage — only if a black-box rig can produce it: `coverable(op) = declared(op) − {codes ≥ 500} − UNIVERSAL_BOILERPLATE{401,429} − BLOCKED[op]`. `BLOCKED` absorbs the committed spec's `.standard_errors` over-declaration (#1669) plus pinned rig/product limits, and a `·` code that becomes observed (or a `BLOCKED` op dropped from the spec) is surfaced as a non-blocking advisory so the list stays honest.
+
+The [`api/`](api/) contract suite covers all 21 spec operations — one module per path group (`test_metrics.py`, `test_metric_thresholds.py`, `test_admin_thresholds.py`, `test_catalog.py`, `test_columns.py`, `test_persons.py`, `test_metric_results.py`), one test per (path, method, status-code) case, from self-cleaning fixtures (`api/conftest.py`) — so `SKIP_LIST` is empty and adding a spec operation without a test fails the gate as MISSING. Spec/product gaps are pinned by **strict xfails** rather than fixed here: #1663 (legacy threshold reads 500 once a row exists), #1664 (duplicate admin create answers 500 instead of the declared 409), and #1670 (off-schema legacy body answers a non-canonical 422, not the intended 400). `POST /v1/metric-results` — the unified-metric compute endpoint added by the `feat/unified-metrics` merge (#1656) — is covered on its deterministic error paths (400 empty/bad-period/unknown-key, 415 wrong content-type); its 200 happy-path needs seeded unified-metric observation data and shows as a reported `✗` gap until that fixture lands.
 
 ## Ports (loopback only)
 

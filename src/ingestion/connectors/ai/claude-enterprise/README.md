@@ -108,8 +108,8 @@ Routing is tag-driven via `dbt_select: "tag:claude-enterprise+"` in `descriptor.
 ## Validation
 
 ```bash
-cypilot validate --artifact docs/components/connectors/ai/claude-enterprise/specs/PRD.md
-cypilot validate --artifact docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md
+cfs validate --artifact docs/components/connectors/ai/claude-enterprise/specs/PRD.md
+cfs validate --artifact docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md
 ```
 
 ## Related

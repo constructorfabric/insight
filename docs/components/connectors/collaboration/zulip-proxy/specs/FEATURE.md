@@ -78,9 +78,9 @@ contribution.
 - **PRD**: [PRD.md](./PRD.md)
 - **Design**: [DESIGN.md](./DESIGN.md)
 - **Reproducibility log**: [../REPRODUCIBILITY-LOG.md](../REPRODUCIBILITY-LOG.md)
-- **Skill workflows**: `cypilot/.core/skills/connector/workflows/create.md`,
-  `cypilot/.core/skills/connector/workflows/test.md`,
-  `cypilot/.core/skills/connector/workflows/validate.md`
+- **Skill workflows**: `.cf-studio/.core/skills/connector/workflows/create.md`,
+  `.cf-studio/.core/skills/connector/workflows/test.md`,
+  `.cf-studio/.core/skills/connector/workflows/validate.md`
 - **Reference manifest** (incompatible 0.57.0): `zulip_proxy.yaml` (local workspace copy, not in repo)
 - **Closest existing connector for dbt patterns**: `src/ingestion/connectors/collaboration/zoom/`
 - **Dependencies**: `promote_bronze_to_rmt`, `identity_inputs_from_history`, `snapshot`,
@@ -278,14 +278,14 @@ model tests.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-zulip-proxy-bringup-artifacts-registered`
 
-PRD, DESIGN, and FEATURE are registered in `cypilot/config/artifacts.toml` under the
+PRD, DESIGN, and FEATURE are registered in `.cf-studio/config/artifacts.toml` under the
 `insightspec` system.
 
 ### All Validators Pass
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-zulip-proxy-bringup-validators-pass`
 
-`cpt validate` PASS for PRD, DESIGN, FEATURE. `/connector validate zulip-proxy` PASS. Both
+`cfs validate` PASS for PRD, DESIGN, FEATURE. `/connector validate zulip-proxy` PASS. Both
 `validate-strict` and `validate` PASS against the manifest. `/check-dbt-conventions` PASS.
 
 ### Live Smoke Tests Pass
@@ -312,7 +312,7 @@ off as the bring-up progresses:
   the Bearer token (in the K8s Secret) and the proxy URL.
 - [ ] `/check-dbt-conventions` passes for the connector's dbt models (engine, order_by,
   append-only sync, RMT promotion).
-- [ ] `cpt validate` passes for the PRD, DESIGN, and FEATURE artifacts.
+- [ ] `cfs validate` passes for the PRD, DESIGN, and FEATURE artifacts.
 - [ ] First-read on `messages` from empty state returns >0 records; resume-read from the
   persisted STATE returns a strict subset (usually 0) — proving the cursor advances.
 

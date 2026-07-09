@@ -23,6 +23,7 @@
   - [5.4 API Roundtrip](#54-api-roundtrip)
   - [5.5 Assertion](#55-assertion)
   - [5.6 Isolation](#56-isolation)
+  - [5.7 Coverage Enforcement](#57-coverage-enforcement)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -39,7 +40,8 @@
 
 ## Changelog
 
-- **v1.0** (current): Initial PRD. Establishes the Bronze-to-API E2E Test Framework as a developer-facing tool: each test is a folder of CSV fixtures (bronze inputs + expected API response) and the runner exercises the full data path bronze → dbt staging/silver → ClickHouse gold views (from migrations) → analytics HTTP response → CSV assert. Airbyte sync, Argo/Kestra orchestration, and the frontend are explicitly out of v1 scope. v1 ships pytest + local docker compose with one shared ClickHouse and one shared MariaDB per session.
+- **v1.1** (current): Adds `cpt-bronze-to-api-e2e-fr-coverage-gate` (§5.7) — every operation documented in the committed analytics OpenAPI spec must be exercised by the e2e suite and observed answering an expected status, enforced as a blocking CI coverage gate (the endpoint gate mirroring the already-blocking metric gate). This names an enforcement capability the suite already carries; the transformation path, scope, and every other FR are unchanged.
+- **v1.0**: Initial PRD. Establishes the Bronze-to-API E2E Test Framework as a developer-facing tool: each test is a folder of CSV fixtures (bronze inputs + expected API response) and the runner exercises the full data path bronze → dbt staging/silver → ClickHouse gold views (from migrations) → analytics HTTP response → CSV assert. Airbyte sync, Argo/Kestra orchestration, and the frontend are explicitly out of v1 scope. v1 ships pytest + local docker compose with one shared ClickHouse and one shared MariaDB per session.
 
 ## 1. Overview
 
@@ -183,7 +185,7 @@ The related "is the data correct?" question (whether a metric value is semantica
 - **Airbyte source connectors and sync correctness**: bronze is seeded by direct CSV INSERT, never through Airbyte. Airbyte connector bugs are out of this framework's coverage and belong to manual / staging tests.
 - **Argo / Kestra workflow orchestration**: the framework calls dbt directly. Workflow definitions are tested separately.
 - **Frontend rendering**: the framework asserts on the API JSON body. Frontend bullet rendering, threshold colors, etc. are out of scope and belong to frontend integration tests.
-- **identity-service deep paths**: `GET /v1/persons/{email}` (deprecated) and `POST /v1/profiles` flows that depend on the identity service are out of v1 — when a test needs identity data it MUST inject pre-resolved data directly into bronze or MariaDB.
+- **identity-service deep paths**: the real identity service and its deep flows (`POST /v1/profiles`, org-tree traversal) are out of v1 — the framework MUST NOT stand up the real service. `GET /v1/persons/{email}`'s 200/404 contract is covered by injecting a pre-resolved person through an in-process identity stub (`lib/identity_stub.py`), not the real service; other tests needing identity data inject pre-resolved rows directly into bronze or MariaDB.
 - **Multi-tenant fanout**: v1 runs single-tenant per test. Tenant-fanout scenarios (parallel tenants on the same gold view) belong to a follow-on FR after this framework stabilizes.
 - **Performance / load testing**: this framework asserts correctness, not throughput. Load tests live elsewhere.
 - **Connector descriptor validation**: validating that a connector YAML correctly declares its bronze schema is handled by the existing `source.sh validate` tool.
@@ -271,6 +273,17 @@ When tests run under `pytest-xdist`, the system **MUST** suffix every bronze sch
 
 **Rationale**: Without per-worker namespaces, parallel runs see each other's bronze data and tests flake.
 **Actors**: `cpt-bronze-to-api-e2e-actor-ci-pipeline`
+
+### 5.7 Coverage Enforcement
+
+#### Exercise and enforce every documented API operation
+
+- [ ] `p1` - **ID**: `cpt-bronze-to-api-e2e-fr-coverage-gate`
+
+Every operation documented in the committed analytics OpenAPI spec (`docs/components/backend/analytics/openapi.json`) **MUST** be exercised by the e2e suite, and each of its declared status codes **MUST** be observed by the suite — except a code the gate excludes as unreachable by a black-box rig: any server-fault code at or above 500 (never deterministically inducible), the universal boilerplate `{401, 429}` (auth is disabled and nothing rate-limits, so these are declared on every route but never emitted), and a per-operation `BLOCKED` set of declared codes a route provably cannot answer (over-declared spec boilerplate, or a pinned rig/product limitation). This **MUST** be enforced as a blocking CI gate (the endpoint coverage gate), mirroring the already-blocking metric-coverage gate: an operation added to the spec without a matching test — or a required declared code the suite never observes — **MUST** fail the gate.
+
+**Rationale**: Route reachability alone is not coverage — an operation touched only by requests that error, or that never exercises one of its other declared outcomes, is untested against its real contract. A per-status-code gate that blocks CI keeps the documented API surface and the e2e suite from silently drifting apart, the same way the metric-coverage gate keeps the metric catalog and the metric suite aligned.
+**Actors**: `cpt-bronze-to-api-e2e-actor-backend-developer`, `cpt-bronze-to-api-e2e-actor-ci-pipeline`
 
 ## 6. Non-Functional Requirements
 
@@ -445,4 +458,4 @@ On failure, the system **MUST** render the cell-precise diff in the pytest captu
 | Float comparison tolerance hides real regressions in aggregate metrics | False negatives — test passes when number is subtly wrong | Default tolerance `1e-6`; require per-test override only with a justification comment |
 | Fixture folder format drifts as the framework evolves; old fixtures stop running | Maintenance debt — every change forces a sweep of all fixtures | Version `spec.yaml` (`spec_version: 1`); the runner refuses unknown major versions; minor changes are additive |
 | Migrations require live MariaDB writes (e.g. seed inserts) that conflict with parallel workers | xdist flakes | All MariaDB writes go through a per-worker schema or per-row tenant prefix |
-| Identity-service dependency creeps in via gold views that join MariaDB | Out-of-scope coupling | Document in §4.2; framework MUST refuse to start if a fixture references a path that requires identity-service |
+| Identity-service dependency creeps in via gold views that join MariaDB | Out-of-scope coupling | Document in §4.2; framework MUST NOT depend on the real identity service. The one deliberate identity dependency — `GET /v1/persons/{email}` — is served by the in-process stub (`lib/identity_stub.py`), never the real service |

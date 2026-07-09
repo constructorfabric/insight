@@ -690,7 +690,7 @@ cpt-insightspec-feature-youtrack-bronze-manifest
 
 - Every `cpt-insightspec-fr-youtrack-*`, `-nfr-*`, `-principle-*`, `-constraint-*`, `-component-*`, `-seq-*`, and `-db-*` ID referenced in §2.1–§2.4 above is defined in [PRD.md](./PRD.md) §5 / §6, [DESIGN.md](./DESIGN.md) §2.1 / §2.2 / §3.2 / §3.6 / §3.7, or as an `ADR-*.md` file under [ADR/](./ADR/).
 - Bronze ADRs (3 files): [ADR-001 project-scoped custom fields](./ADR/ADR-001-project-scoped-custom-fields.md), [ADR-002 activitiesPage cursor pagination](./ADR/ADR-002-activitiespage-cursor-pagination.md), [ADR-003 no-whitelist full-ingestion](./ADR/ADR-003-no-whitelist-full-ingestion.md).
-- The cross-check: `cpt list-ids --artifact docs/components/connectors/task-tracking/youtrack/specs/PRD.md` and `... DESIGN.md` produce ID sets that strictly contain the Bronze IDs referenced here.
+- The cross-check: `cfs list-ids --artifact docs/components/connectors/task-tracking/youtrack/specs/PRD.md` and `... DESIGN.md` produce ID sets that strictly contain the Bronze IDs referenced here.
 - Implementation status reflected: every `[ ]` in §2.1–§2.4 has been flipped to `[x]` where this PR ships the implementation. `cpt-insightspec-{fr,component,dbtable}-youtrack-stream-issue-links` and related entries remain `[ ]` (deferred — `links_json` is captured but the flat projection is owned by feature 2.5).
 
 ### Silver / Enrich coverage (§2.5–§2.10) — FORWARD-LOOKING

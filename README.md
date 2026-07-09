@@ -18,7 +18,6 @@ This repository is the **monorepo** for the Insight product. It contains:
   - [`src/`](#src)
   - [`docs/`](#docs)
   - [`inbox/`](#inbox)
-  - [`cypilot/`](#cypilot)
 - [Connector Coverage](#connector-coverage)
 - [Key Concepts](#key-concepts)
 - [Quick Start](#quick-start)
@@ -188,10 +187,6 @@ Incoming documents pending triage and integration into `docs/`. Not yet canonica
 | `stats/backend/` | Draft ADRs | `docs/components/backend/specs/ADR/` |
 | `stats/frontend/` | Draft | `docs/components/frontend/specs/` |
 | `streams/` | Draft schemas | `docs/components/connectors/` — per-source stream definitions |
-
-### `cypilot/` (Legacy)
-
-This repo uses [Constructor Studio](https://github.com/constructorfabric/studio) — an AI agent framework for spec authoring, validation, and traceability. The active configuration lives in `.cf-studio/` (artifact registry, rules, kit bindings). The legacy `cypilot/` directory is retained during transition and will be removed in a future update. The engine itself lives in the upstream repo.
 
 ---
 
