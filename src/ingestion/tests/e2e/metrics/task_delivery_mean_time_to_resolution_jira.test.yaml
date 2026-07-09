@@ -1,61 +1,59 @@
 spec_version: 1
 description: >
-  Task Delivery · mean_time_to_resolution · JIRA, end-to-end from BRONZE only.
+  Task Delivery - mean_time_to_resolution - JIRA, IC Bullet Task Delivery (...0011),
+  department-of-5 distribution + 6 stats in a single custom window.
 
-  Metric: mean_time_to_resolution — IC Bullet Task Delivery (…0011). Days from
-  issue creation to its final close (lead time).
+  bronze -> silver -> gold: jira_issue (Closed) + jira_issue_history (single
+  In Progress -> Closed event) + jira_user; bamboohr employees give the
+  Engineering org_unit_id (the cohort). jira-enrich reconstructs the lead time
+  created->close per closed issue; the ...0011 query_ref takes the per-person mean
+  resolution days (value = the member's own), median/p25/p75/range = the department
+  distribution. range_max = cohort P95 (long-tail guard) = max on a 5-point ladder.
 
-  How it's computed (bronze → silver → gold):
-    • bronze: one Jira issue (with a creation timestamp) + its status changelog.
-    • silver: the changelog is reconstructed into a per-field event log; the
-      creation time and the final close event are derived per issue.
-    • gold:   per closed issue, lead_seconds = created → final_close
-      (`task_dev_seconds_per_issue.lead_seconds`) → days; the …0011 query_ref
-      takes the period MEDIAN of those per-issue days for the person.
-
-  One issue (ALICE), all drivers inline; templates only carry invariant scaffolding.
-  Status timeline (initial status reconstructs to "Open"):
-    created 2026-01-05 09:00  status "Open"        (synthetic_initial)
-    2026-01-07 09:00          → "In Progress"      (changelog)
-    2026-01-12 09:00          → "Closed"           (changelog, = final close)
-  lead_seconds = 2026-01-05 09:00 → 2026-01-12 09:00 = 7 d = 604800 s → 7.0 days.
-  Median over Alice's one closed issue = 7.0.
-
-  Only `value` is asserted (cohort median/range depend on unseeded HR org_unit).
+  Department: 5 Engineering members alice..erin of rank r in 1..5, each with ONE
+  closed issue whose lead time (created -> close) = r DAYS, all closing on
+  2026-12-25T09:00:00 -> per-person mttr = {1,2,3,4,5} days. The IC case requests
+  erin (5): value=5, median=3, range_min=1, range_max=5 (P95), p25=2, p75=4.
+  Empty window 2026-06 -> no items.
 
 bronze:
-  bronze_jira.jira_issue:
-    - $ref: templates/jira_task.yaml#/templates/jira_issue
-      id: MR-1
-      jira_id: MR-1
-      unique_key: jira-test-MR-1
-      id_readable: TSM-1
-      created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
-  bronze_jira.jira_issue_history:
-    - $ref: templates/jira_task.yaml#/templates/jira_history
-      id_readable: TSM-1
-      changelog_id: "41001"
-      unique_key: jira-test-TSM-1-41001
-      created_at: "2026-01-07T09:00:00.000+0000"
-      items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"In Progress","to":"3"}]'
-    - $ref: templates/jira_task.yaml#/templates/jira_history
-      id_readable: TSM-1
-      changelog_id: "41002"
-      unique_key: jira-test-TSM-1-41002
-      created_at: "2026-01-12T09:00:00.000+0000"
-      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_jira.jira_user:
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-alice-jira-acct, account_id: alice-jira-acct, email: alice@example.com, display_name: Alice Alpha }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-bob-jira-acct, account_id: bob-jira-acct, email: bob@example.com, display_name: Bob Beta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-carol-jira-acct, account_id: carol-jira-acct, email: carol@example.com, display_name: Carol Gamma }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-jira-acct, account_id: dave-jira-acct, email: dave@example.com, display_name: Dave Delta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-erin-jira-acct, account_id: erin-jira-acct, email: erin@example.com, display_name: Erin Epsilon }
+
   bronze_jira.jira_fields:
     - $ref: templates/jira_task.yaml#/templates/field_status
     - $ref: templates/jira_task.yaml#/templates/field_assignee
     - $ref: templates/jira_task.yaml#/templates/field_issuetype
-  bronze_jira.jira_user:
-    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+  bronze_jira.jira_issue:
+    # Each member closes on 2026-12-25T09:00; created = close minus r days -> lead = r days.
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: MRA-1, jira_id: MRA-1, unique_key: jira-test-MRA-1, id_readable: MRA1, created: "2026-12-24T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: MRB-1, jira_id: MRB-1, unique_key: jira-test-MRB-1, id_readable: MRB1, created: "2026-12-23T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: MRC-1, jira_id: MRC-1, unique_key: jira-test-MRC-1, id_readable: MRC1, created: "2026-12-22T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: MRD-1, jira_id: MRD-1, unique_key: jira-test-MRD-1, id_readable: MRD1, created: "2026-12-21T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: MRE-1, jira_id: MRE-1, unique_key: jira-test-MRE-1, id_readable: MRE1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}' }
+
+  bronze_jira.jira_issue_history:
+    # Single In Progress -> Closed at 2026-12-25T09:00 for every member.
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: MRA1, changelog_id: "52001", unique_key: jira-test-MRA1-52001, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: MRB1, changelog_id: "52002", unique_key: jira-test-MRB1-52002, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: MRC1, changelog_id: "52003", unique_key: jira-test-MRC1-52003, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: MRD1, changelog_id: "52004", unique_key: jira-test-MRD1-52004, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: MRE1, changelog_id: "52005", unique_key: jira-test-MRE1-52005, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
 
 cases:
-  # IC Bullet Task Delivery (…0011): value = the requested person's own value.
-  # Alice's single closed issue took 7 days create→close → mean_time_to_resolution = 7.
-  - name: mean_time_to_resolution — IC bullet, jira (alice 7d create→close)
+  - name: "mean_time_to_resolution — custom scope (department of 5)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -64,7 +62,7 @@ cases:
           - id: task_delivery
             metric_id: 00000000-0000-0000-0001-000000000011
             $top: 50
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-20' and metric_date le '2026-12-31'"
             $orderby: metric_key
     expect:
       - assert: "status == 200"
@@ -72,4 +70,22 @@ cases:
         assert: "result.status == 'ok'"
       - in: task_delivery
         find: { metric_key: mean_time_to_resolution }
-        equal: { value: 7 }
+        equal: { value: 5, median: 3, range_min: 1, range_max: 5, p25: 2, p75: 4 }
+
+  - name: "mean_time_to_resolution — empty window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        assert: "size(items) == 0"

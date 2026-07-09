@@ -1,78 +1,68 @@
 spec_version: 1
 description: >
-  Task Delivery · task_reopen_rate · JIRA — the <5-closes GATE branch (NULL).
+  Task Delivery - task_reopen_rate - JIRA, the <5-closes GATE branch (NULL),
+  department-of-5 distribution + 6 stats in a single custom window.
 
-  Metric: task_reopen_rate — IC Bullet Task Delivery (…0011). The companion spec
-  (task_delivery_task_reopen_rate_jira) proves the rate value at the gate boundary
-  (5 closes). THIS spec proves the suppression branch: with FEWER than 5 closes the
-  …0011 query_ref returns NULL, even though reopens exist — so a small, noisy
-  sample never shows a rate.
+  bronze -> silver -> gold: jira_issue (Closed) + jira_issue_history (close ->
+  reopen -> close) + jira_user; bamboohr employees give the Engineering
+  org_unit_id (the cohort). task_reopen_rate = 100 * reopens / closes, but it is
+  SUPPRESSED to NULL unless the person has >= 5 closes in the window (small-sample
+  gate). Here every member gets a single close-reopen-close issue = exactly 2 closes
+  and 1 reopen (2 < 5) -> rate NULL for ALL, so the cohort row is fully null.
 
-  How it's computed (bronze → silver → gold): close/reopen status transitions →
-  per-day +close / +reopen event counts → query_ref gates on Σcloses ≥ 5 and emits
-  NULL below that.
-
-  All drivers inline; templates only carry invariant scaffolding. Two issues for
-  ALICE (created 2026-01-05, issuetype Task), giving 3 closes (< 5) and 1 reopen:
-    RG-1 — In Progress → Closed                          → 1 close
-    RG-2 — In Progress → Closed → In Progress → Closed   → 2 closes, 1 reopen
-  Σcloses = 3 (< 5) → gate fails → task_reopen_rate = NULL (not 100·1/3).
-
-  Only `value` is asserted (cohort median/range depend on unseeded HR org_unit).
+  Department: 5 Engineering members alice..erin, each with ONE issue (snapshot
+  Closed) whose changelog is In Progress->Closed (12-22), Closed->In Progress
+  (12-24), In Progress->Closed (12-26). The IC case requests erin and asserts every
+  stat is null. Empty window 2026-06 -> no items.
 
 bronze:
-  bronze_jira.jira_issue:
-    - $ref: templates/jira_task.yaml#/templates/jira_issue
-      id: RG-1
-      jira_id: RG-1
-      unique_key: jira-test-RG-1
-      id_readable: TSG-1
-      created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
-    - $ref: templates/jira_task.yaml#/templates/jira_issue
-      id: RG-2
-      jira_id: RG-2
-      unique_key: jira-test-RG-2
-      id_readable: TSG-2
-      created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
-  bronze_jira.jira_issue_history:
-    # RG-1: single close.
-    - $ref: templates/jira_task.yaml#/templates/jira_history
-      id_readable: TSG-1
-      changelog_id: "48001"
-      unique_key: jira-test-TSG-1-48001
-      created_at: "2026-01-08T09:00:00.000+0000"
-      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
-    # RG-2: close 01-08, reopen 01-12, close again 01-16 → 2 closes, 1 reopen.
-    - $ref: templates/jira_task.yaml#/templates/jira_history
-      id_readable: TSG-2
-      changelog_id: "48002"
-      unique_key: jira-test-TSG-2-48002
-      created_at: "2026-01-08T09:00:00.000+0000"
-      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
-    - $ref: templates/jira_task.yaml#/templates/jira_history
-      id_readable: TSG-2
-      changelog_id: "48003"
-      unique_key: jira-test-TSG-2-48003
-      created_at: "2026-01-12T09:00:00.000+0000"
-      items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]'
-    - $ref: templates/jira_task.yaml#/templates/jira_history
-      id_readable: TSG-2
-      changelog_id: "48004"
-      unique_key: jira-test-TSG-2-48004
-      created_at: "2026-01-16T09:00:00.000+0000"
-      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_jira.jira_user:
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-alice-jira-acct, account_id: alice-jira-acct, email: alice@example.com, display_name: Alice Alpha }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-bob-jira-acct, account_id: bob-jira-acct, email: bob@example.com, display_name: Bob Beta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-carol-jira-acct, account_id: carol-jira-acct, email: carol@example.com, display_name: Carol Gamma }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-jira-acct, account_id: dave-jira-acct, email: dave@example.com, display_name: Dave Delta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-erin-jira-acct, account_id: erin-jira-acct, email: erin@example.com, display_name: Erin Epsilon }
+
   bronze_jira.jira_fields:
     - $ref: templates/jira_task.yaml#/templates/field_status
     - $ref: templates/jira_task.yaml#/templates/field_assignee
     - $ref: templates/jira_task.yaml#/templates/field_issuetype
-  bronze_jira.jira_user:
-    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+  bronze_jira.jira_issue:
+    # Each member: ONE issue, snapshot Closed.
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: RGA-1, jira_id: RGA-1, unique_key: jira-test-RGA-1, id_readable: RGA1, created: "2026-03-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: RGB-1, jira_id: RGB-1, unique_key: jira-test-RGB-1, id_readable: RGB1, created: "2026-03-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: RGC-1, jira_id: RGC-1, unique_key: jira-test-RGC-1, id_readable: RGC1, created: "2026-03-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: RGD-1, jira_id: RGD-1, unique_key: jira-test-RGD-1, id_readable: RGD1, created: "2026-03-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: RGE-1, jira_id: RGE-1, unique_key: jira-test-RGE-1, id_readable: RGE1, created: "2026-03-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}' }
+
+  bronze_jira.jira_issue_history:
+    # Per member: close (12-22) -> reopen (12-24) -> close (12-26) = 2 closes, 1 reopen (< 5-close gate).
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGA1, changelog_id: "58001", unique_key: jira-test-RGA1-58001, created_at: "2026-03-22T09:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGA1, changelog_id: "58002", unique_key: jira-test-RGA1-58002, created_at: "2026-03-24T09:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGA1, changelog_id: "58003", unique_key: jira-test-RGA1-58003, created_at: "2026-03-26T09:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGB1, changelog_id: "58004", unique_key: jira-test-RGB1-58004, created_at: "2026-03-22T09:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGB1, changelog_id: "58005", unique_key: jira-test-RGB1-58005, created_at: "2026-03-24T09:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGB1, changelog_id: "58006", unique_key: jira-test-RGB1-58006, created_at: "2026-03-26T09:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGC1, changelog_id: "58007", unique_key: jira-test-RGC1-58007, created_at: "2026-03-22T09:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGC1, changelog_id: "58008", unique_key: jira-test-RGC1-58008, created_at: "2026-03-24T09:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGC1, changelog_id: "58009", unique_key: jira-test-RGC1-58009, created_at: "2026-03-26T09:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGD1, changelog_id: "58010", unique_key: jira-test-RGD1-58010, created_at: "2026-03-22T09:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGD1, changelog_id: "58011", unique_key: jira-test-RGD1-58011, created_at: "2026-03-24T09:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGD1, changelog_id: "58012", unique_key: jira-test-RGD1-58012, created_at: "2026-03-26T09:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGE1, changelog_id: "58013", unique_key: jira-test-RGE1-58013, created_at: "2026-03-22T09:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGE1, changelog_id: "58014", unique_key: jira-test-RGE1-58014, created_at: "2026-03-24T09:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: RGE1, changelog_id: "58015", unique_key: jira-test-RGE1-58015, created_at: "2026-03-26T09:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
 
 cases:
-  # 3 closes (< 5) → gate suppresses the rate → value is NULL.
-  - name: task_reopen_rate — gate below 5 closes suppresses to null (alice 3 closes)
+  - name: "task_reopen_rate (gate) — custom scope (department of 5, all < 5 closes → NULL)"
     request:
       url: /v1/metrics/queries
       method: POST
@@ -81,7 +71,7 @@ cases:
           - id: task_delivery
             metric_id: 00000000-0000-0000-0001-000000000011
             $top: 50
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-03-20' and metric_date le '2026-03-31'"
             $orderby: metric_key
     expect:
       - assert: "status == 200"
@@ -89,4 +79,22 @@ cases:
         assert: "result.status == 'ok'"
       - in: task_delivery
         find: { metric_key: task_reopen_rate }
-        equal: { value: null }
+        equal: { value: null, median: null, range_min: null, range_max: null, p25: null, p75: null }
+
+  - name: "task_reopen_rate (gate) — empty window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        assert: "size(items) == 0"
