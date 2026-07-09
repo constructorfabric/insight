@@ -24,6 +24,27 @@ pub struct LoginState {
     pub return_to: String,
 }
 
+impl LoginState {
+    /// The HASH fields for `asm:login_state:{state}`.
+    fn to_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("pkce_verifier", self.pkce_verifier.clone()),
+            ("nonce", self.nonce.clone()),
+            ("return_to", self.return_to.clone()),
+        ]
+    }
+
+    /// Parse a login-state HASH map (missing fields become empty strings).
+    fn from_map(map: &HashMap<String, String>) -> Self {
+        let get = |k: &str| map.get(k).cloned().unwrap_or_default();
+        Self {
+            pkce_verifier: get("pkce_verifier"),
+            nonce: get("nonce"),
+            return_to: get("return_to"),
+        }
+    }
+}
+
 /// A session record — the `asm:session:{session_id}` HASH (DESIGN §3.7).
 #[derive(Debug, Clone)]
 pub struct SessionRecord {
@@ -196,14 +217,7 @@ impl SessionManager {
         let key = login_state_key(state);
         redis::pipe()
             .atomic()
-            .hset_multiple(
-                &key,
-                &[
-                    ("pkce_verifier", ls.pkce_verifier.as_str()),
-                    ("nonce", ls.nonce.as_str()),
-                    ("return_to", ls.return_to.as_str()),
-                ],
-            )
+            .hset_multiple(&key, &ls.to_fields())
             .ignore()
             .expire(&key, i64::try_from(ttl_seconds).unwrap_or(300))
             .ignore()
@@ -232,11 +246,7 @@ impl SessionManager {
         if map.is_empty() {
             return Ok(None);
         }
-        Ok(Some(LoginState {
-            pkce_verifier: map.get("pkce_verifier").cloned().unwrap_or_default(),
-            nonce: map.get("nonce").cloned().unwrap_or_default(),
-            return_to: map.get("return_to").cloned().unwrap_or_default(),
-        }))
+        Ok(Some(LoginState::from_map(&map)))
     }
 
     // ── Session lifecycle ──────────────────────────────────────────────────
