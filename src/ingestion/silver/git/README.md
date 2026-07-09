@@ -93,9 +93,10 @@ dbt run --select tag:silver
 
 The unified metrics runtime reads git observations from
 `insight.git_metric_observations` (`src/ingestion/gold/`), which consumes
-the class models plus the identity bridge `identity.git_actor_emails`
-(this directory; gold-tagged view — see its header for why). File
-classification for unified measures lives in the shared gold macro
+the class models directly. PR authors resolve to an email from the PR's
+own field or from the dominant email of its linked commits; PRs that
+resolve to no email are excluded (honest absence). File classification
+for unified measures lives in the shared gold macro
 `dbt/macros/git_file_category.sql` (`code | test | config | docs`),
 computed at read time so taxonomy changes apply retroactively.
 

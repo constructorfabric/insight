@@ -26,9 +26,8 @@
 --   Commits and file changes attribute by the commit author_email.
 --   Pull requests resolve in tiers, never guessing: the PR's own
 --   author_email when present; else the dominant author_email among the
---   PR's linked commits (tie -> unresolved); else the name bridge
---   (identity.git_actor_emails). Unresolved rows are excluded — honest
---   absence, not misattribution.
+--   PR's linked commits (tie -> unresolved). Rows that resolve to no
+--   email are excluded — honest absence, never a name-matched guess.
 --
 -- Dating:
 --   pr_created anchors at created_on. pr_merged and pr_cycle_hours anchor
@@ -145,7 +144,6 @@ pull_requests_source AS (
         multiIf(
             trimBoth(prs.author_email) != '', lower(trimBoth(prs.author_email)),
             pr_commit_emails.email IS NOT NULL AND pr_commit_emails.email != '', pr_commit_emails.email,
-            bridge.email IS NOT NULL AND bridge.email != '', bridge.email,
             CAST(NULL AS Nullable(String))
         ) AS entity_id,
         prs.state AS state,
@@ -178,10 +176,6 @@ pull_requests_source AS (
         AND pr_commit_emails.project_key = prs.project_key
         AND pr_commit_emails.repo_slug = prs.repo_slug
         AND pr_commit_emails.pr_id = prs.pr_id
-    LEFT JOIN {{ ref('git_actor_emails') }} AS bridge
-        ON bridge.tenant_id = prs.tenant_id
-        AND bridge.data_source = prs.data_source
-        AND bridge.actor_name = lower(trimBoth(prs.author_name))
     SETTINGS join_use_nulls = 1
 ),
 prs_created_source AS (

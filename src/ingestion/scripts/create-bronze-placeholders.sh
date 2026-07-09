@@ -57,7 +57,6 @@ run_ch <<'SQL'
 -- — the initdb script does not re-run on an existing volume.
 CREATE DATABASE IF NOT EXISTS insight;
 CREATE DATABASE IF NOT EXISTS silver;
-CREATE DATABASE IF NOT EXISTS identity;
 CREATE DATABASE IF NOT EXISTS bronze_jira;
 CREATE DATABASE IF NOT EXISTS bronze_m365;
 CREATE DATABASE IF NOT EXISTS bronze_zoom;
@@ -533,7 +532,6 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits (
     tenant_id         String,
     source_id         String  DEFAULT '',
     author_email      String,
-    author_name       String  DEFAULT '',
     date              Date,
     is_merge_commit   UInt8,
     file_path         String  DEFAULT '',
@@ -556,7 +554,6 @@ else
     echo "  Reconciling placeholder schema: silver.class_git_commits"
     run_ch <<'SQL'
 ALTER TABLE silver.class_git_commits ADD COLUMN IF NOT EXISTS source_id String DEFAULT '';
-ALTER TABLE silver.class_git_commits ADD COLUMN IF NOT EXISTS author_name String DEFAULT '';
 ALTER TABLE silver.class_git_commits ADD COLUMN IF NOT EXISTS data_source String DEFAULT '';
 SQL
   else
@@ -661,31 +658,6 @@ SQL
   else
     echo "  Skipping placeholder schema reconciliation: silver.class_git_file_changes is not a placeholder"
   fi
-fi
-
-# identity.identity_inputs — identity dbt model (union of connector
-# identity sources). The git actor-email bridge (gold-tagged view) reads
-# it at migrate time; column types mirror the dbt model output from
-# identity_inputs_from_history.sql (tenant/source ids are hashed UUIDs).
-# Dropped by drop_silver_placeholders_at_start once any
-# silver:identity_inputs staging materialises.
-if ! ch_table_exists identity identity_inputs; then
-  echo "  Creating placeholder: identity.identity_inputs"
-  run_ch <<'SQL'
-CREATE TABLE IF NOT EXISTS identity.identity_inputs (
-    unique_key          String,
-    insight_tenant_id   UUID,
-    insight_source_id   UUID,
-    insight_source_type String,
-    source_account_id   String,
-    value_type          String,
-    value               String,
-    value_field_name    String,
-    operation_type      String,
-    _synced_at          DateTime64(3),
-    _version            UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
-SQL
 fi
 
 # silver.class_task_daily — task-tracking dbt model.
