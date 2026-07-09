@@ -110,8 +110,8 @@ Silver-level `silver:class_*` tags will be added in a separate PR; this connecto
 ## Validation
 
 ```bash
-cypilot validate --artifact docs/components/connectors/ai/claude-admin/specs/PRD.md
-cypilot validate --artifact docs/components/connectors/ai/claude-admin/specs/DESIGN.md
+cfs validate --artifact docs/components/connectors/ai/claude-admin/specs/PRD.md
+cfs validate --artifact docs/components/connectors/ai/claude-admin/specs/DESIGN.md
 ```
 
 ## Related

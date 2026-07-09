@@ -1,5 +1,5 @@
 ---
-cypilot: true
+cf: true
 type: project-rule
 topic: conventions
 generated-by: auto-config

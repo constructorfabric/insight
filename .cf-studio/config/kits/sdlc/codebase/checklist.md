@@ -32,7 +32,7 @@ These checks are **Constructor Studio SDLC-specific** because they require Const
 ### SEM-CODE-001: Resolve Design Sources
 **Severity**: HIGH
 
-- [ ] Resolve Feature design via `@cpt-*` markers using the `cypilot where-defined` or `cypilot where-used` skill
+- [ ] Resolve Feature design via `@cpt-*` markers using the `cfs where-defined` or `cfs where-used` skill
 - [ ] If no `@cpt-*` markers exist, ask the user to provide the Feature design location before proceeding
 - [ ] If the user is unsure, search the repository for candidate feature designs and present options for user selection
 - [ ] Resolve Overall Design by following references from the Feature design (or ask the user for the design path)

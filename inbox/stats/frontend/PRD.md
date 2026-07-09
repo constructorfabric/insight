@@ -863,7 +863,7 @@ The system **MUST** classify and handle client-side data according to sensitivit
 
 ### 6.2 Explicitly Not Applicable Requirements
 
-The following quality characteristics from ISO/IEC 25010:2023 and Cypilot PRD checklist are **intentionally not applicable** to this frontend PRD:
+The following quality characteristics from ISO/IEC 25010:2023 and Constructor Studio PRD checklist are **intentionally not applicable** to this frontend PRD:
 
 #### Safety (SAFE)
 

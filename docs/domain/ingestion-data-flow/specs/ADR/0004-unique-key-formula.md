@@ -74,8 +74,8 @@ For records produced by the Rust enrich binary, the binary MUST compute `unique_
 
 ### Confirmation
 
-- `cpt validate` confirms producer code carries `@cpt-*` markers referencing this ADR (audit trail)
-- Cypilot skill `/check-dbt-conventions` reads connector configs and asserts the formula structure (LLM-based correctness check)
+- `cfs validate` confirms producer code carries `@cpt-*` markers referencing this ADR (audit trail)
+- Constructor Studio skill `/check-dbt-conventions` reads connector configs and asserts the formula structure (LLM-based correctness check)
 - Manual audit: existing audit (this session) confirmed 17 of 18 connectors compliant; the one outlier (`claude-admin`) is tracked as follow-up work
 
 ## Pros and Cons of the Options
