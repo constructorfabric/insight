@@ -9,7 +9,8 @@ format = "CFS"
 path = "config/kits/sdlc"
 version = "v1.2.1"
 source = "github:constructorfabric/studio-kit-sdlc"
-tool_risk_fingerprint = "3bdcd30d3029ad80e74c76eb0b57d80ad617a51191eb9d9307b2921c65f5dc16"
+install_mode = "copy"
+tracking = "tracked"
 
 [kits.sdlc.resources]
 [kits.sdlc.resources.adr_template]
@@ -183,48 +184,6 @@ user_modifiable = false
 generated_targets = ["installed"]
 origin = "legacy-workflow"
 
-[kits.sdlc.resources.scripts]
-path = "config/kits/sdlc/scripts"
-kind = "directory"
-public = false
-description = "Kit scripts and PR review prompts"
-
-[kits.sdlc.resources.constraints]
-path = "config/kits/sdlc/constraints.toml"
-kind = "constraints"
-public = false
-description = "Kit structural constraints (heading outlines, ID kinds, cross-references)"
-user_modifiable = false
-
-[kits.sdlc.resources.constraints.artifacts]
-[kits.sdlc.resources.constraints.artifacts.ADR]
-template = "adr_template"
-examples = "adr_example"
-
-[kits.sdlc.resources.constraints.artifacts.DECOMPOSITION]
-template = "decomposition_template"
-examples = "decomposition_example"
-
-[kits.sdlc.resources.constraints.artifacts.DESIGN]
-template = "design_template"
-examples = "design_example"
-
-[kits.sdlc.resources.constraints.artifacts.FEATURE]
-template = "feature_template"
-examples = "feature_example"
-
-[kits.sdlc.resources.constraints.artifacts.PRD]
-template = "prd_template"
-examples = "prd_example"
-
-[kits.sdlc.resources.agents]
-path = "config/kits/sdlc/AGENTS.md"
-kind = "rule"
-public = true
-description = "Kit AGENTS.md for agent integration entry points"
-user_modifiable = false
-generated_targets = ["installed"]
-
 [kits.sdlc.resources.workflow_doc_prd]
 path = "config/kits/sdlc/workflows/doc-prd.md"
 kind = "skill"
@@ -302,6 +261,48 @@ path = "config/kits/sdlc/scripts/change-impact-analysis.toml"
 kind = "script"
 public = false
 description = "Kit-owned thresholds for the change-impact-analysis workflow"
+
+[kits.sdlc.resources.scripts]
+path = "config/kits/sdlc/scripts"
+kind = "directory"
+public = false
+description = "Kit scripts and PR review prompts"
+
+[kits.sdlc.resources.constraints]
+path = "config/kits/sdlc/constraints.toml"
+kind = "constraints"
+public = false
+description = "Kit structural constraints (heading outlines, ID kinds, cross-references)"
+user_modifiable = false
+
+[kits.sdlc.resources.constraints.artifacts]
+[kits.sdlc.resources.constraints.artifacts.ADR]
+template = "adr_template"
+examples = "adr_example"
+
+[kits.sdlc.resources.constraints.artifacts.DECOMPOSITION]
+template = "decomposition_template"
+examples = "decomposition_example"
+
+[kits.sdlc.resources.constraints.artifacts.DESIGN]
+template = "design_template"
+examples = "design_example"
+
+[kits.sdlc.resources.constraints.artifacts.FEATURE]
+template = "feature_template"
+examples = "feature_example"
+
+[kits.sdlc.resources.constraints.artifacts.PRD]
+template = "prd_template"
+examples = "prd_example"
+
+[kits.sdlc.resources.agents]
+path = "config/kits/sdlc/AGENTS.md"
+kind = "rule"
+public = true
+description = "Kit AGENTS.md for agent integration entry points"
+user_modifiable = false
+generated_targets = ["installed"]
 
 [kits.sdlc.source_provenance]
 source_type = "github"

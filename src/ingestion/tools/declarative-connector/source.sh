@@ -218,7 +218,7 @@ case "${command}" in
   validate-strict)
     # Run the exact jsonschema check the Builder UI performs (no $ref resolution).
     # Logic lives in validate_strict.py (per the no-inline-Python rule in
-    # cypilot/config/rules/code-conventions.md §"No inline scripts"); this case
+    # .cf-studio/config/rules/code-conventions.md §"No inline scripts"); this case
     # just mounts the script + the connector dir and invokes it inside the
     # container which ships airbyte_cdk + pyyaml + jsonschema.
     docker run --rm \

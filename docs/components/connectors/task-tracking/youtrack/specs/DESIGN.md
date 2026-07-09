@@ -440,7 +440,7 @@ Does NOT contain custom Python code. Does NOT contain dbt logic. Does NOT contai
 
 - `src/ingestion/tools/declarative-connector/` — `source.sh validate-strict`, `validate`, `check`, `discover`, `read`. The connector cannot be edited safely without this toolkit.
 - `src/ingestion/silver/task-tracking/schema.yml` — Silver union contract. Future per-source staging models (DECOMPOSITION §2.5) must respect column names and types declared here.
-- `cypilot/config/rules/code-conventions.md` — no-inline-Python rule applies to any future Python helper.
+- `.cf-studio/config/rules/code-conventions.md` — no-inline-Python rule applies to any future Python helper.
 - `docs/domain/ingestion-data-flow/specs/` — Bronze engine + `unique_key` conventions.
 
 ### 3.5 External Dependencies

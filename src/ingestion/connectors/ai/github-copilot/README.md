@@ -113,8 +113,8 @@ Two Silver staging models are defined for this connector under the `tag:github-c
 ## Validation
 
 ```bash
-cypilot validate --artifact docs/components/connectors/ai/github-copilot/specs/PRD.md
-cypilot validate --artifact docs/components/connectors/ai/github-copilot/specs/DESIGN.md
+cfs validate --artifact docs/components/connectors/ai/github-copilot/specs/PRD.md
+cfs validate --artifact docs/components/connectors/ai/github-copilot/specs/DESIGN.md
 ```
 
 ## Related

@@ -64,13 +64,13 @@ For all other models (event/append semantics): use `RMT(_version)` + `incrementa
 - Good: write path stays cheap (append + RMT merge in background)
 - Good: cross-connector silver UNION ALL is collision-safe by construction (each connector's `unique_key` is globally unique within tenant)
 - Good: ORDER BY a single column gives compact primary index
-- Bad: consumers must remember to use `FINAL` or `argMax` (interim state between merges may show duplicates) — mitigated by documenting the contract in this ADR and `cypilot/config/rules/architecture.md`
-- Bad: no automatic enforcement of "engine = RMT, order_by = unique_key" — mitigated by Cypilot skill `/check-dbt-conventions` (LLM-based) and code review
+- Bad: consumers must remember to use `FINAL` or `argMax` (interim state between merges may show duplicates) — mitigated by documenting the contract in this ADR and `.cf-studio/config/rules/architecture.md`
+- Bad: no automatic enforcement of "engine = RMT, order_by = unique_key" — mitigated by Constructor Studio skill `/check-dbt-conventions` (LLM-based) and code review
 
 ### Confirmation
 
-- `cpt validate` confirms code markers reference this ADR/DESIGN ID (audit trail)
-- Cypilot skill `/check-dbt-conventions` reads every `.sql` model and asserts engine + order_by are correct (correctness check, LLM-based)
+- `cfs validate` confirms code markers reference this ADR/DESIGN ID (audit trail)
+- Constructor Studio skill `/check-dbt-conventions` reads every `.sql` model and asserts engine + order_by are correct (correctness check, LLM-based)
 - Visual / grep audit: `grep -r "engine=" src/ingestion/silver/ | grep -v ReplacingMergeTree` should return only commented-out exceptions
 
 ## Update (2026-06-03): silver moved to `delete+insert`
@@ -147,7 +147,7 @@ duplicates: `dbt run --full-refresh --select tag:silver`.
 
 The decision was reached after auditing all 34 silver and 60 connector staging models. Pre-decision state had: 19 silver `class_*` models on RMT(_version) without `unique_key` projection (composite ORDER BY); 5 silver views with no dedup at all; 2 silver tables with no engine declaration; staging Jira models all using composite ORDER BY despite bronze having `unique_key`.
 
-This ADR was implemented in the same session as it was authored — every silver model and every relevant staging model now follows pattern A. See `cypilot/config/rules/architecture.md` §"dbt Materialization Conventions" for the operational summary.
+This ADR was implemented in the same session as it was authored — every silver model and every relevant staging model now follows pattern A. See `.cf-studio/config/rules/architecture.md` §"dbt Materialization Conventions" for the operational summary.
 
 ## Traceability
 

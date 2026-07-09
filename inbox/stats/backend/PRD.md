@@ -601,7 +601,7 @@ The following GDPR compliance measures are implemented to ensure data protection
 
 ### 6.3 Explicitly Not Applicable Requirements
 
-The following quality characteristics from ISO/IEC 25010:2023 and Cypilot PRD checklist are **intentionally not applicable** to this backend PRD:
+The following quality characteristics from ISO/IEC 25010:2023 and Constructor Studio PRD checklist are **intentionally not applicable** to this backend PRD:
 
 #### Safety (SAFE)
 
