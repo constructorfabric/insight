@@ -933,11 +933,14 @@ mod tests {
     #[test]
     fn batched_placeholder_count_matches_params() {
         // Params are emitted in lockstep with SQL fragments; a drift between
-        // `?` order and the param vector silently binds wrong values.
-        let (sum, ratio) = (sum_metric(), ratio_metric());
+        // `?` order and the param vector silently binds wrong values. The mix
+        // interleaves a median column (2 params) between sum (2) and ratio
+        // (4) — the real git batch shape — so a per-computation param/`?`
+        // desync surfaces here, not just in single-computation batches.
+        let (sum, median, ratio) = (sum_metric(), median_metric(), ratio_metric());
         for query in [
-            compile_period_batch_query(&[&sum, &ratio], &request()),
-            compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit"),
+            compile_period_batch_query(&[&sum, &median, &ratio], &request()),
+            compile_peer_batch_query(&[&sum, &median, &ratio], &request(), "org_unit"),
         ] {
             assert_eq!(query.sql.matches('?').count(), query.params.len());
         }
