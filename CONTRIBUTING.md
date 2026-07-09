@@ -533,6 +533,12 @@ Compose stack doesn't ship Airbyte / Argo. Use the
 
 ## Code style and reviews
 
+- **Install the git hooks once: `./scripts/install-hooks.sh`.** The `pre-commit`
+  hook runs `cargo fmt --check` + `cargo clippy` on staged backend Rust changes
+  (the same checks CI's Rust job gates on), so a formatting/lint slip fails
+  locally instead of in CI. It no-ops when no Rust is staged; bypass a run with
+  `git commit --no-verify`. Symlinked, so it stays current; your own hooks
+  (e.g. a personal `prepare-commit-msg`) are left untouched.
 - Rust: `cargo fmt` + `cargo clippy --all-targets -- -D warnings`
 - C#: `dotnet format`
 - Frontend: `pnpm lint` + `pnpm tsc --noEmit`
