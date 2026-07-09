@@ -9,13 +9,12 @@ use toolkit_canonical_errors::CanonicalError;
 
 use super::AppState;
 use super::error::MetricError;
-use crate::domain::metric_definitions::MetricDefinition;
 use crate::domain::metric_results::{
-    BreakdownQueryRow, CompiledQuery, MetricResultViewDto, MetricResultsRequest,
-    MetricResultsResponse, PeerQueryRow, PeriodQueryRow, TimeseriesQueryRow,
-    ValidatedMetricResultsRequest, ValidatedMetricView, build_breakdown_view, build_metric_result,
-    build_peer_view, build_period_view, build_timeseries_view, compile_view_query,
-    enforce_row_limit, validate_request,
+    BatchItem, BreakdownQueryRow, CompiledQuery, MetricResultViewDto, MetricResultsRequest,
+    MetricResultsResponse, PeerWideRow, PeriodWideRow, PlannedQuery, TimeseriesQueryRow,
+    UnbatchedView, ValidatedMetricResultsRequest, build_breakdown_view, build_metric_result,
+    build_peer_view, build_period_view, build_timeseries_view, demux_peer_rows, demux_period_rows,
+    enforce_row_limit, plan_queries, validate_request,
 };
 use toolkit_security::SecurityContext;
 
@@ -32,7 +31,7 @@ pub async fn query_metric_results(
     Json(req): Json<MetricResultsRequest>,
 ) -> Result<Json<MetricResultsResponse>, CanonicalError> {
     let req = validate_request(&state.db, ctx.subject_tenant_id(), req).await?;
-    let tasks = compile_tasks(&req);
+    let planned = plan_queries(&req);
 
     let mut views_by_metric: Vec<Vec<Option<MetricResultViewDto>>> = req
         .metrics
@@ -41,13 +40,14 @@ pub async fn query_metric_results(
         .collect();
 
     // Consuming results as they complete bails on the first error; dropping
-    // the stream cancels the in-flight and queued view queries.
-    let mut results = stream::iter(tasks)
-        .map(|task| execute_task(&state, &req, task))
+    // the stream cancels the in-flight and queued queries.
+    let mut results = stream::iter(planned)
+        .map(|query| execute_planned(&state, &req, query))
         .buffer_unordered(QUERY_CONCURRENCY);
     while let Some(result) = results.next().await {
-        let result = result?;
-        views_by_metric[result.metric_index][result.view_index] = Some(result.view);
+        for view in result? {
+            views_by_metric[view.metric_index][view.view_index] = Some(view.view);
+        }
     }
 
     let mut metrics = Vec::with_capacity(req.metrics.len());
@@ -67,87 +67,97 @@ pub async fn query_metric_results(
     Ok(Json(response))
 }
 
-struct MetricViewTask {
-    metric_index: usize,
-    view_index: usize,
-    def: MetricDefinition,
-    view: ValidatedMetricView,
-    query: CompiledQuery,
-}
-
-struct MetricViewTaskResult {
+struct MetricViewResult {
     metric_index: usize,
     view_index: usize,
     view: MetricResultViewDto,
 }
 
-fn compile_tasks(req: &ValidatedMetricResultsRequest) -> Vec<MetricViewTask> {
-    req.metrics
-        .iter()
-        .enumerate()
-        .flat_map(|(metric_index, metric)| {
-            metric
-                .views
-                .iter()
-                .enumerate()
-                .map(move |(view_index, view)| MetricViewTask {
-                    metric_index,
-                    view_index,
-                    def: metric.def.clone(),
-                    view: view.clone(),
-                    query: compile_view_query(&metric.def, req, view),
-                })
-        })
-        .collect()
-}
-
-async fn execute_task(
+async fn execute_planned(
     state: &Arc<AppState>,
     req: &ValidatedMetricResultsRequest,
-    task: MetricViewTask,
-) -> Result<MetricViewTaskResult, CanonicalError> {
-    let MetricViewTask {
-        metric_index,
-        view_index,
-        def,
-        view,
-        query,
-    } = task;
+    planned: PlannedQuery,
+) -> Result<Vec<MetricViewResult>, CanonicalError> {
+    match planned {
+        PlannedQuery::PeriodBatch { items, query } => {
+            let comment = batch_log_comment("period", &items);
+            let rows = fetch_rows::<PeriodWideRow>(state, query, &comment).await?;
+            let rows_by_item = demux_period_rows(&items, rows)?;
+            Ok(items
+                .iter()
+                .zip(rows_by_item)
+                .map(|(item, rows)| view_result(item, build_period_view(&item.def, req, rows)))
+                .collect())
+        }
+        PlannedQuery::PeerBatch { items, query } => {
+            let comment = batch_log_comment("peer", &items);
+            let rows = fetch_rows::<PeerWideRow>(state, query, &comment).await?;
+            let rows_by_item = demux_peer_rows(&items, rows)?;
+            Ok(items
+                .iter()
+                .zip(rows_by_item)
+                .map(|(item, rows)| view_result(item, build_peer_view(rows)))
+                .collect())
+        }
+        PlannedQuery::Single {
+            metric_index,
+            view_index,
+            def,
+            view,
+            query,
+        } => {
+            let view = match view {
+                UnbatchedView::Timeseries { bucket, dimensions } => {
+                    let comment = format!("metric-results:timeseries:{}", def.key());
+                    let rows = fetch_rows::<TimeseriesQueryRow>(state, query, &comment).await?;
+                    build_timeseries_view(&def, req, bucket, &dimensions, rows)?
+                }
+                UnbatchedView::Breakdown { dimensions } => {
+                    let comment = format!("metric-results:breakdown:{}", def.key());
+                    let rows = fetch_rows::<BreakdownQueryRow>(state, query, &comment).await?;
+                    build_breakdown_view(&dimensions, rows)?
+                }
+            };
+            Ok(vec![MetricViewResult {
+                metric_index,
+                view_index,
+                view,
+            }])
+        }
+    }
+}
 
-    let view = match view {
-        ValidatedMetricView::Period => {
-            let rows = fetch_rows::<PeriodQueryRow>(state, query).await?;
-            build_period_view(&def, req, rows)
-        }
-        ValidatedMetricView::Peer { .. } => {
-            let rows = fetch_rows::<PeerQueryRow>(state, query).await?;
-            build_peer_view(rows)
-        }
-        ValidatedMetricView::Timeseries { bucket, dimensions } => {
-            let rows = fetch_rows::<TimeseriesQueryRow>(state, query).await?;
-            build_timeseries_view(&def, req, bucket, &dimensions, rows)?
-        }
-        ValidatedMetricView::Breakdown { dimensions } => {
-            let rows = fetch_rows::<BreakdownQueryRow>(state, query).await?;
-            build_breakdown_view(&dimensions, rows)?
-        }
-    };
+// Batching collapses the per-metric query_log signal; the log_comment keeps
+// per-query attribution measurable (`system.query_log.log_comment`).
+fn batch_log_comment(kind: &str, items: &[BatchItem]) -> String {
+    let keys = items
+        .iter()
+        .map(|item| item.def.key())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("metric-results:{kind}-batch:{keys}")
+}
 
-    Ok(MetricViewTaskResult {
-        metric_index,
-        view_index,
+fn view_result(item: &BatchItem, view: MetricResultViewDto) -> MetricViewResult {
+    MetricViewResult {
+        metric_index: item.metric_index,
+        view_index: item.view_index,
         view,
-    })
+    }
 }
 
 async fn fetch_rows<T>(
     state: &Arc<AppState>,
     query: CompiledQuery,
+    log_comment: &str,
 ) -> Result<Vec<T>, CanonicalError>
 where
     T: DeserializeOwned,
 {
-    let mut ch_query = state.ch.query(&query.sql);
+    let mut ch_query = state
+        .ch
+        .query(&query.sql)
+        .with_option("log_comment", log_comment);
     for param in &query.params {
         ch_query = ch_query.bind(param.as_str());
     }
