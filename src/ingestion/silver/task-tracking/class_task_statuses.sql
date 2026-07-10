@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('jira__task_statuses') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',
