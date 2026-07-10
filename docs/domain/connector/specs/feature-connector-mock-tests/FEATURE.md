@@ -29,7 +29,7 @@ date: 2026-07-09
   - [Schema Conformance Assertions](#schema-conformance-assertions)
   - [Determinism and Isolation](#determinism-and-isolation)
   - [Runner and CI Integration](#runner-and-ci-integration)
-  - [Reference Implementation (task-tracking/youtrack)](#reference-implementation-task-trackingyoutrack)
+  - [Reference Implementation (task-tracking/jira)](#reference-implementation-task-trackingjira)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
@@ -49,7 +49,7 @@ The tests verify the behavior that static validation cannot see and live smoke t
 - error-handler policy (retry on 429/5xx, ignored status codes produce no `ERROR` log);
 - `record_filter` and `AddFields` transformations — in particular the mandatory `tenant_id` / `source_id` / `unique_key` stamping from `insight_tenant_id` / `insight_source_id` config;
 - substream partitioning (one child request per parent partition);
-- record shape against the generated `schemas/<stream>.json`.
+- record shape against the stream schema (`schemas/<stream>.json` when generated, else the manifest inline schema).
 
 Airbyte's Connector Acceptance Tests (CAT) are deliberately **not** adopted: CAT requires a Docker image per connector and live sandbox credentials, which our Level 2 smoke ladder already covers with `source.sh`. Mock tests take CAT's role of protocol-behavior verification without the credential dependency.
 
@@ -106,7 +106,7 @@ Today a manifest change (pagination expression, cursor format, error handler, tr
 
 - A test config omits a field required by the manifest `spec` → source construction fails at test setup naming the field
 - The connector makes an HTTP request no fixture matches → `HttpMocker` fails the test with the unmatched request (no silent network fallthrough)
-- An emitted record violates `schemas/<stream>.json` → schema-conformance assertion fails naming the stream, field, and violation
+- An emitted record violates the stream schema → schema-conformance assertion fails naming the stream, field, and violation
 
 **Steps**:
 
@@ -197,7 +197,7 @@ A single installable package `src/ingestion/tests/connectors/` **MUST** provide:
 
 **Implements**: `cpt-insightspec-algo-cn-mock-source-build`, `cpt-insightspec-algo-cn-mock-read`
 
-**Touches**: `src/ingestion/tests/connectors/pyproject.toml`, `src/ingestion/tests/connectors/lib/*.py`
+**Touches**: `src/ingestion/tests/connectors/pyproject.toml`, `src/ingestion/tests/connectors/connector_tests/*.py`
 
 ### Per-Connector Test Layout
 
@@ -220,7 +220,7 @@ For every stream listed in `descriptor.yaml`, the suite **MUST** cover each matr
 | Case | Required when | Asserts |
 |---|---|---|
 | `full_refresh_single_page` | always | record count and key fields from one fixture page |
-| `schema_conformance` | always | every emitted record validates against `schemas/<stream>.json` |
+| `schema_conformance` | always | every emitted record validates against the stream schema |
 | `tenant_source_stamping` | always | `tenant_id`, `source_id`, `unique_key` equal the `insight_*` config-derived values |
 | `empty_page` | always | 0 records, no `ERROR` log |
 | `pagination_multi_page` | stream declares a paginator | all pages read; stop condition halts exactly at the last page |
@@ -240,13 +240,13 @@ A row skipped despite a satisfied precondition **MUST** carry an explicit skip r
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-cn-mock-schema-conformance`
 
-The harness **MUST** provide `assert_records_conform(records, pkg_path, stream)` validating every emitted record against the generated `schemas/<stream>.json`. A record field absent from the schema, or a type mismatch, **MUST** fail the test naming the stream, field, and offending value. This keeps `schemas/` (produced by `generate-schema.sh` from real data) authoritative and catches manifest↔schema drift before dbt sees it.
+The harness **MUST** provide `assert_records_conform(records, pkg_path, stream)` validating every emitted record against the stream schema, resolved as `schemas/<stream>.json` when generated, else the stream's InlineSchemaLoader schema from connector.yaml. A type mismatch **MUST** fail the test naming the stream, field, and offending value; in the default strict mode a record field absent from the schema fails too (manifest↔schema drift), with `strict=False` as the documented escape for streams that intentionally pass through undeclared source fields. This keeps schemas (produced from real data) authoritative and catches drift before dbt sees it.
 
 **Implements**: `cpt-insightspec-algo-cn-mock-read`
 
 **Principles**: `cpt-insightspec-principle-cn-schema-from-real-data`
 
-**Touches**: `src/ingestion/tests/connectors/lib/schema_assert.py`
+**Touches**: `src/ingestion/tests/connectors/connector_tests/schema_assert.py`
 
 ### Determinism and Isolation
 
@@ -260,25 +260,27 @@ Mock tests **MUST** be deterministic and offline: wall clock frozen via `freezeg
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-cn-mock-ci`
 
-`pytest src/ingestion/connectors/{category}/{name}/tests/` **MUST** run a single connector's suite; `pytest src/ingestion/connectors` **MUST** run all suites. The `/connector test <name>` skill command **MUST** run L0 (`validate-strict`, `validate`) followed by L1 (mock tests) and report per-level results. CI **MUST** run L1 for every connector whose package files changed in the PR (path-filtered) and **MUST** block merge on failure.
+`pytest src/ingestion/connectors/{category}/{name}/tests/` **MUST** run a single connector's suite; a bare `pytest` in the harness root **MUST** run the harness's own tests plus every nocode connector's suite (CDK connectors are excluded — they carry their own pyproject, CDK pin, and coverage component). The `/connector test <name>` skill command **MUST** run L0 (`validate-strict`, `validate`) followed by L1 (mock tests) and report per-level results.
+
+CI integration goes through the shared coverage gate (`scripts/ci/components.py` + `scripts/ci/coverage.py`): the harness is registered as a `lang: python` component (`cov_package: connector_tests`) whose `paths` include both the harness directory and each covered nocode connector package, so a manifest or suite change re-runs the component (longest-prefix match keeps nested components like `jira-enrich` with their own jobs). Line coverage measures the harness package — declarative manifests have no first-party lines; a connector's **behavioral** coverage is the stream coverage matrix (`cpt-insightspec-dod-cn-mock-coverage-matrix`). The component is subject to the standard gates (≥ 80% overall, ≥ 80% new-code) and **MUST** block merge on failure.
 
 **Implements**: `cpt-insightspec-dod-cn-test-ladder`
 
-**Touches**: `.claude/skills/connector/SKILL.md` counterpart in the kit, CI workflow files
+**Touches**: `.claude/skills/connector/SKILL.md`, `scripts/ci/components.py`
 
-### Reference Implementation (task-tracking/youtrack)
+### Reference Implementation (task-tracking/jira)
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-cn-mock-reference`
 
-The feature **MUST** ship one complete reference suite for `task-tracking/youtrack` covering every applicable matrix row for at least two streams — one plain paginated stream and one incremental or substream — including the `tenant_source_stamping` case asserting `unique_key = "{tenant}-{source}-{id}"`. The reference suite is the copy-from template for all subsequent connectors and is linked from the connector authoring guide.
+The feature **MUST** ship one complete reference suite for `task-tracking/jira` covering every applicable matrix row for at least two streams — one plain paginated stream (`jira_projects`) and one incremental substream (`jira_issue_keys`) — including the `tenant_source_stamping` case asserting `unique_key = "{tenant}-{source}-{id}"`. The reference suite is the copy-from template for all subsequent connectors and is linked from the connector authoring guide.
 
 **Implements**: `cpt-insightspec-flow-cn-mock-test-author-and-run`
 
-**Touches**: `src/ingestion/connectors/task-tracking/youtrack/tests/`
+**Touches**: `src/ingestion/connectors/task-tracking/jira/tests/`
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** a fresh checkout with no credentials and no Docker, **When** a developer runs `pytest src/ingestion/connectors/task-tracking/youtrack/tests/`, **Then** the reference suite passes in under a minute
+- [ ] **Given** a fresh checkout with no credentials and no Docker, **When** a developer runs `pytest src/ingestion/connectors/task-tracking/jira/tests/`, **Then** the reference suite passes in under a minute
 - [ ] **Given** the reference suite passes, **When** the paginator stop condition in `connector.yaml` is broken, **Then** `pagination_multi_page` fails with expected-vs-actual record counts
 - [ ] **Given** the reference suite passes, **When** the `AddFields` block stamping `tenant_id` is removed, **Then** `tenant_source_stamping` and `schema_conformance` fail naming the missing field
 - [ ] **Given** a test whose fixtures omit one endpoint, **When** the connector requests it, **Then** the test fails printing the unmatched request instead of touching the network

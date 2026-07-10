@@ -130,6 +130,18 @@ COMPONENTS = [
     {"name": "github-copilot", "lang": "python", "root": "src/ingestion/connectors/ai/github-copilot",
      "cov_package": "source_github_copilot",
      "paths": ["src/ingestion/connectors/ai/github-copilot"]},
+    # Mock-server test harness for NOCODE connectors (feature-connector-mock-
+    # tests). Line coverage measures the harness package itself — declarative
+    # YAML manifests have no first-party lines to cover; their behavior is
+    # exercised by the per-connector suites this component collects
+    # (src/ingestion/connectors/<cat>/<name>/tests for packages with a
+    # connector.yaml and no pyproject.toml). A nocode connector's dir is listed
+    # here so a manifest/suite change re-runs the harness; longest-prefix match
+    # keeps nested components (e.g. jira-enrich) with their own jobs.
+    {"name": "connector-mock-tests", "lang": "python", "root": "src/ingestion/tests/connectors",
+     "cov_package": "connector_tests",
+     "paths": ["src/ingestion/tests/connectors",
+               "src/ingestion/connectors/task-tracking/jira"]},
 ]
 
 

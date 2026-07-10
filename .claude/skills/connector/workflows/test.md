@@ -34,7 +34,8 @@ If fails: show error, suggest fix, STOP.
 L1 of the test ladder — see `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md`.
 
 ```bash
-pytest src/ingestion/connectors/CONNECTOR_PATH/tests/
+# one-time env: cd src/ingestion/tests/connectors && python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+src/ingestion/tests/connectors/.venv/bin/pytest src/ingestion/connectors/CONNECTOR_PATH/tests/
 ```
 
 - If the suite fails: fix the manifest (or the tests, if the behavior change is intended), STOP before live testing.

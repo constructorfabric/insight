@@ -796,12 +796,13 @@ Create `CONNECTOR_DIR/tests/`:
 
 ```
 tests/
+  conftest.py          # sys.path for local modules + `from connector_tests.plugin import *`
   config.py            # ConfigBuilder extending the shared base (always carries insight_tenant_id / insight_source_id)
   test_<stream>.py     # one module per stream
-  fixtures/*.json      # response bodies: shapes from real API, values synthetic
+  fixtures/*.json      # response bodies: shapes from real API, values synthetic (optional — small responses inline)
 ```
 
-Shared harness: `src/ingestion/tests/connectors/` (`get_source`, `read_stream`, `HttpMocker` re-exports, schema-conformance asserter). Reference suite to copy from: `src/ingestion/connectors/task-tracking/youtrack/tests/`.
+Shared harness: `src/ingestion/tests/connectors/` (`get_source`, `read_stream`, `HttpMocker` re-exports, schema-conformance asserter, the `http_mocker` pytest fixture). Reference suite to copy from: `src/ingestion/connectors/task-tracking/jira/tests/`.
 
 **Fixture rule**: take the response *shape* from the real payloads captured in the §5.6 read logs; replace every value (ids, emails, hostnames, tokens) with synthetic ones. NEVER commit real customer data.
 
@@ -818,34 +819,47 @@ For every stream, cover each row of the coverage matrix whose precondition the m
 
 A matrix row skipped despite a satisfied precondition MUST carry an explicit skip reason in the test module.
 
-Skeleton:
+Skeleton (`http_mocker` is a pytest fixture from the harness; on a passing test, every registered matcher must have been hit):
 
 ```python
+import json
 from freezegun import freeze_time
-from connector_tests import ConfigBuilder, read_stream, assert_records_conform
-from airbyte_cdk.test.mock_http import HttpMocker, HttpRequest, HttpResponse
+from config import MyConfigBuilder
+
+from connector_tests import (
+    ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse,
+    assert_records_conform, read_stream,
+)
 
 @freeze_time("2026-01-01T00:00:00Z")          # mandatory when the stream has a cursor or datetime params
-@HttpMocker()
 def test_users_full_refresh(http_mocker: HttpMocker):
-    config = ConfigBuilder().build()
+    config = MyConfigBuilder().build()
     http_mocker.get(
-        HttpRequest("https://api.example.com/v1/users", query_params={"page": "1"}),
-        HttpResponse(body=load_fixture("users.json"), status_code=200),
+        HttpRequest("https://api.example.com/v1/users", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"users": [{"id": "1", "email": "a@example.com"}]}), status_code=200),
     )
     output = read_stream("<category>/<name>", "users", config)
-    assert len(output.records) == 2
+    assert len(output.records) == 1
     rec = output.records[0].record.data
     assert rec["tenant_id"] == config["insight_tenant_id"]
     assert rec["unique_key"].startswith(f'{config["insight_tenant_id"]}-{config["insight_source_id"]}-')
     assert_records_conform(output.records, "<category>/<name>", "users")
 ```
 
-Run (deterministic — no credentials, no Docker, no network; an unmatched HTTP request fails the test):
+Gotchas:
+- Use exact `query_params` matchers when the request content IS the assertion (pagination offsets, resume-read cursor filters); `ANY_QUERY_PARAMS` otherwise. Matching is exact-equality, not subset.
+- CDK interpolation literal-evals rendered Jinja values: `{{ record['id'] }}` over a numeric-string id emits an **int** (schemas generated from real data reflect this — e.g. `jira_projects.project_id: number`).
+
+Run (deterministic — no credentials, no Docker, no network; an unmatched HTTP request fails the test). One-time venv setup, then pytest:
 
 ```bash
-pytest src/ingestion/connectors/<category>/<name>/tests/
+cd src/ingestion/tests/connectors && python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+.venv/bin/pytest ../../connectors/<category>/<name>/tests/    # one suite
+.venv/bin/pytest                                              # harness meta + all nocode suites
+.venv/bin/pytest --cov=connector_tests --cov-report term      # with the CI coverage measure
 ```
+
+Coverage counts toward the `connector-mock-tests` component (`scripts/ci/components.py`) via the shared 80% gate; when adding a suite for a connector not yet listed there, append the connector's package dir to that component's `paths`.
 
 Acceptance:
 - [ ] Every stream from `descriptor.yaml` has a `test_<stream>.py` covering all applicable matrix rows (or explicit skip reasons)

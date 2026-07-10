@@ -24,7 +24,8 @@ If either fails, fix the reported per-path errors before proceeding with the che
 Then run the mock-server test suite (L1 of the test ladder, `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md`):
 
 ```bash
-pytest src/ingestion/connectors/<category>/<name>/tests/
+# one-time env: cd src/ingestion/tests/connectors && python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+src/ingestion/tests/connectors/.venv/bin/pytest src/ingestion/connectors/<category>/<name>/tests/
 ```
 
 Must exit 0. If `tests/` does not exist, report it as a spec gap (connector predates the mock-test spec — see `connector-create.md` §5.7); do NOT silently skip.
