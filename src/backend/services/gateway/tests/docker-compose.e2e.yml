@@ -1,0 +1,87 @@
+# Gateway e2e stack (dev/CI ONLY) -- NGINX_BFF.md §D.
+#
+# The full edge: the real authenticator + fakeidp from steps 03-04 behind the
+# OpenResty gateway, with stub identity + echo upstream. Everything runs on one
+# compose network so DNS names resolve for both nginx upstreams and the Lua
+# cosocket (resolver 127.0.0.11), and the OIDC redirect flow works without URL
+# rewriting. Driven by run-e2e.sh; assertions run from the `driver` service
+# (on-network, so `gateway`/`fakeidp` resolve).
+name: insight-gw-e2e
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  identity-stub:
+    image: python:3.12-slim
+    volumes:
+      - ../../authenticator/tests/identity-stub.py:/identity-stub.py:ro
+    command: ["python", "/identity-stub.py", "0.0.0.0:8092"]
+
+  fakeidp:
+    build:
+      context: ../../..
+      dockerfile: services/fakeidp/Dockerfile
+    environment:
+      FAKEIDP_ISSUER: "http://fakeidp:8084"
+      FAKEIDP_BIND: "0.0.0.0:8084"
+      FAKEIDP_DEFAULT_AUD: "insight-authenticator"
+      FAKEIDP_DEV_USER_EMAIL: "dev@company.nonpresent"
+
+  authenticator:
+    build:
+      context: ../../..
+      dockerfile: services/authenticator/Dockerfile
+    depends_on:
+      redis: { condition: service_healthy }
+      fakeidp: { condition: service_started }
+      identity-stub: { condition: service_started }
+    environment:
+      APP__gears__authenticator__config__redis_url: "redis://redis:6379"
+      APP__gears__authenticator__config__signing_keys_path: "/keys"
+      APP__gears__authenticator__config__identity_url: "http://identity-stub:8092"
+      APP__gears__authenticator__config__gateway_issuer: "http://gateway:8080"
+      APP__gears__authenticator__config__redirect_uri: "http://gateway:8080/auth/callback"
+      APP__gears__authenticator__config__idp__issuer_url: "http://fakeidp:8084"
+      APP__gears__authenticator__config__idp__client_id: "insight-authenticator"
+      # Short exchange-cache window so the logout-revocation phase is fast.
+      APP__gears__authenticator__config__authz_cache_max_age_seconds: "3"
+    volumes:
+      - ./keys:/keys:ro
+
+  echo:
+    image: python:3.12-slim
+    volumes:
+      - ./echo-stub.py:/echo-stub.py:ro
+    command: ["python", "/echo-stub.py", "0.0.0.0:9090"]
+
+  gateway:
+    build:
+      context: ../../..
+      dockerfile: services/gateway/Dockerfile
+    depends_on:
+      authenticator: { condition: service_started }
+      echo: { condition: service_started }
+    volumes:
+      - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+    ports:
+      # Published for host-side readiness polling in run-e2e.sh; assertions run
+      # from the on-network driver, not this port.
+      - "${GW_E2E_PORT:-18080}:8080"
+
+  # On-network assertion driver; run explicitly by run-e2e.sh with a phase arg.
+  driver:
+    image: python:3.12-slim
+    profiles: ["driver"]
+    depends_on:
+      gateway: { condition: service_started }
+    volumes:
+      - ./assert.py:/assert.py:ro
+      - ./work:/work
+    entrypoint: ["python", "/assert.py"]

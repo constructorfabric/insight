@@ -66,6 +66,15 @@ COMPONENTS = [
     {"name": "fakeidp", "lang": "rust", "root": "src/backend",
      "package": "fakeidp",
      "paths": ["src/backend/services/fakeidp"]},
+    # routegen is the build-time gateway config compiler (gateway DESIGN
+    # DD-GW-02); fmt + clippy + its golden/rejection tests run here. cover=False:
+    # the emitter/validator logic is fully tested, but the thin CLI glue in
+    # main.rs is not, and would drag the crate under the gate. The gateway.yml
+    # workflow additionally runs nginx -t on the emitted config.
+    {"name": "routegen", "lang": "rust", "root": "src/backend",
+     "package": "routegen",
+     "cover": False,
+     "paths": ["src/backend/tools/routegen"]},
     # cover=False (mirrors api-gateway): the authenticator's security-critical
     # flow (OIDC login, sessions, cookie->JWT exchange) is proven by the e2e
     # login-loop, which drives the server as a SEPARATE process — so it can't

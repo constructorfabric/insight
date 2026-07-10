@@ -1,0 +1,115 @@
+name: Gateway — routegen, config, e2e
+
+# The gateway is generated, not hand-written (DD-GW-02): routes.yaml in git, the
+# nginx.conf compiled from it by routegen and committed next to it. This workflow
+# is the guard: routegen's own tests, an assertion that every committed config is
+# in sync with its routes.yaml, `nginx -t` on the real OpenResty image, and the
+# full §D e2e. Runs only when the gateway, the generator, or the compose config
+# changes.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/tools/routegen/**"
+      - "src/backend/services/gateway/**"
+      - "deploy/compose/gateway/**"
+      - ".github/workflows/gateway.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # routegen unit/golden tests + committed-config up-to-date assertion + nginx -t.
+  config:
+    name: routegen + nginx -t
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/backend -> target
+          key: routegen
+
+      - name: routegen fmt + clippy + tests
+        working-directory: src/backend
+        run: |
+          cargo fmt -p routegen -- --check
+          cargo clippy -p routegen --all-targets -- -D warnings
+          cargo test -p routegen
+
+      - name: Assert committed nginx.conf is in sync with routes.yaml
+        working-directory: src/backend
+        run: |
+          # k8s config (default settings)
+          cargo run -q -p routegen -- \
+            --routes services/gateway/routes.yaml \
+            --check services/gateway/helm/files/nginx.conf
+          # compose config (compose network settings)
+          cargo run -q -p routegen -- \
+            --routes ../../deploy/compose/gateway/routes.yaml \
+            --authenticator-url http://authenticator:8083 \
+            --front-url http://insight-front:80 \
+            --resolver 127.0.0.11 \
+            --check ../../deploy/compose/gateway/nginx.conf
+
+      - name: Build the OpenResty gateway image
+        working-directory: src/backend
+        run: docker build -f services/gateway/Dockerfile -t insight-gateway:ci .
+
+      - name: nginx -t on every committed config
+        run: |
+          set -euo pipefail
+          test_conf() { # path-to-nginx.conf
+            local conf="$1"
+            local add=()
+            while read -r h; do
+              [ -n "$h" ] && add+=(--add-host "$h:127.0.0.1")
+            done < <(grep -oE 'server [a-zA-Z0-9._-]+:[0-9]+;' "$conf" \
+                       | sed -E 's/server ([^:]+):.*/\1/' | sort -u)
+            echo "== nginx -t: $conf =="
+            docker run --rm "${add[@]}" \
+              -v "$PWD/$conf":/usr/local/openresty/nginx/conf/nginx.conf:ro \
+              insight-gateway:ci openresty -t
+          }
+          test_conf src/backend/services/gateway/helm/files/nginx.conf
+          test_conf deploy/compose/gateway/nginx.conf
+
+      - name: helm lint the gateway chart
+        run: helm lint src/backend/services/gateway/helm
+
+  # Full edge e2e: real authenticator + fakeidp behind the gateway (NGINX_BFF §D).
+  e2e:
+    name: e2e (5 scenarios)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/backend -> target
+          key: routegen-e2e
+
+      - name: Run the gateway e2e
+        run: src/backend/services/gateway/tests/run-e2e.sh

@@ -1,0 +1,31 @@
+# Gateway route table -- the operator-facing source of truth (gateway DESIGN 3.8).
+#
+# This is the ONLY hand-edited gateway config. `routegen` compiles it into the
+# full nginx.conf (helm/files/nginx.conf); a route change is a PR that re-runs
+# the configurator, and CI asserts the generated file stays in sync. Humans
+# never write a `location` block -- every /api route gets the full auth +
+# hygiene block emitted for it (DESIGN 3.9).
+#
+# Regenerate after editing:
+#   cargo run -p routegen -- \
+#     --routes src/backend/services/gateway/routes.yaml \
+#     -o src/backend/services/gateway/helm/files/nginx.conf
+version: 1
+defaults:
+  timeout_ms: 30000
+  strip_prefix: false
+  websocket: false
+  # Operator-extensible deny-list. The gateway-reserved set (Authorization,
+  # X-Correlation-Id, X-Forwarded-*, gateway cookies) is always stripped in
+  # addition; X-Tenant-ID is NOT reserved and passes through as the tenant
+  # selector the downstream middleware validates against the signed tenants[].
+  strip_request_headers:
+    - X-Real-IP
+    - Forwarded
+routes:
+  - prefix: /api/v1/analytics
+    upstream: http://analytics.insight.svc.cluster.local:8081
+    timeout_ms: 60000
+
+  - prefix: /api/v1/identity
+    upstream: http://identity.insight.svc.cluster.local:8082

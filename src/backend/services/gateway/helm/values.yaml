@@ -1,0 +1,50 @@
+# At least 2 replicas: the gateway is on the path of all traffic, and the
+# exchange cache is per pod (DESIGN 3.15).
+replicaCount: 2
+
+podAnnotations: {}
+
+image:
+  repository: ghcr.io/constructorfabric/insight-gateway
+  tag: ""                  # MUST be set by the operator. No `:latest` default.
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Optional override of the DNS resolver baked into the generated nginx.conf by
+# routegen (kube-dns / CoreDNS cluster IP). Cosockets do their own DNS, so a
+# resolver is mandatory (ADR-0001). Leave empty to keep the committed default
+# (10.96.0.10, kubeadm); set for clusters whose kube-dns differs (k3s uses
+# 10.43.0.10). This is the one deployment-specific value the chart patches into
+# the otherwise-committed config, so a cluster move is a values change, not a
+# routes.yaml regeneration.
+resolver: ""
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+# Liveness = static /healthz. Readiness = LOCAL only, deliberately NOT gated on
+# the authenticator (DESIGN 3.15): coupling a caching proxy's readiness to a
+# downstream dependency turns a transient auth blip into a fleet-wide outage.
+# The authenticator dependency is surfaced separately at /healthz/authenticator
+# for monitoring/alerting only, never the readiness gate.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 5

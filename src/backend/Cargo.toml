@@ -9,6 +9,9 @@ members = [
     # Dev/e2e-only fake OIDC provider (never shipped in a prod image). See
     # services/fakeidp/README.md and cf/NGINX_BFF.md §10 G6.
     "services/fakeidp",
+    # Build-time CLI: compiles the gateway routes.yaml into nginx.conf
+    # (gateway DESIGN DD-GW-02). Never shipped in a runtime image.
+    "tools/routegen",
 ]
 resolver = "3"
 

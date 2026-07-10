@@ -1,0 +1,20 @@
+{{- /*
+  The generated nginx.conf, shipped verbatim from the committed file the
+  configurator produced (DESIGN 3.15) -- humans never edit it, a route change is
+  a routes.yaml PR that re-runs routegen. The single deployment-specific knob is
+  the DNS resolver (ADR-0001): when `.Values.resolver` is set it is patched into
+  the one `resolver` line, so a cluster move needs no regeneration.
+*/}}
+{{- $conf := .Files.Get "files/nginx.conf" }}
+{{- if .Values.resolver }}
+{{- $conf = regexReplaceAll `resolver [0-9.]+ ipv6=off;` $conf (printf "resolver %s ipv6=off;" .Values.resolver) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "insight-gateway.fullname" . }}-nginx-config
+  labels:
+    {{- include "insight-gateway.labels" . | nindent 4 }}
+data:
+  nginx.conf: |
+{{ $conf | indent 4 }}

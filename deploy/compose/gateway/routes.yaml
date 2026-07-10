@@ -1,0 +1,23 @@
+# Gateway route table for the docker-compose dev stack. Same schema as the
+# k8s routes.yaml (src/backend/services/gateway/routes.yaml); only the upstream
+# authorities differ (compose service names instead of in-cluster DNS).
+#
+# Regenerate nginx.conf after editing:
+#   cargo run -p routegen --manifest-path src/backend/Cargo.toml -- \
+#     --routes deploy/compose/gateway/routes.yaml \
+#     --authenticator-url http://authenticator:8083 \
+#     --front-url http://insight-front:80 \
+#     --resolver 127.0.0.11 \
+#     -o deploy/compose/gateway/nginx.conf
+version: 1
+defaults:
+  strip_request_headers:
+    - X-Real-IP
+    - Forwarded
+routes:
+  - prefix: /api/v1/analytics
+    upstream: http://analytics:8081
+    timeout_ms: 60000
+
+  - prefix: /api/v1/identity
+    upstream: http://identity:8082
