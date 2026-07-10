@@ -7,6 +7,9 @@
 //! serves `/health`. The read endpoints (`GET /v1/persons/{email}`,
 //! `POST /v1/profiles`) land in the next steps.
 
+mod config;
+mod gear;
+
 // System gears — linked via inventory for the REST host and the (disabled) auth
 // pipeline. Same no-auth set as the analytics host.
 use api_gateway as _;

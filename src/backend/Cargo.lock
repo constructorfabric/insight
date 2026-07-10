@@ -3009,6 +3009,8 @@ name = "identity-resolution"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "axum",
  "cf-gears-api-gateway",
  "cf-gears-authn-resolver",
  "cf-gears-authz-resolver",
@@ -3020,7 +3022,9 @@ dependencies = [
  "cf-gears-toolkit",
  "cf-gears-types-registry",
  "clap",
+ "serde",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

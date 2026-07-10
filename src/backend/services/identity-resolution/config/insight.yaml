@@ -54,3 +54,10 @@ gears:
     config:
       vendor: "hyperspot"
       priority: 20
+
+  identity-resolution:
+    config:
+      # MariaDB connection URL. Injected per-deployment via env override
+      # APP__gears__identity-resolution__config__database_url. Left empty
+      # here so no credential is committed.
+      database_url: ""
