@@ -975,6 +975,31 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields (
 SQL
 fi
 
+# bronze_jira.jira_statuses — Jira status lookup (GET /rest/api/3/status).
+# jira__task_statuses.sql (silver:class_task_statuses) reads it to map
+# status_id -> status_category (done/in_progress/…) so gold detects closed
+# tasks by statusCategory, not display name (issue #1541). Columns mirror the
+# AddFields in connectors/task-tracking/jira/connector.yaml jira_statuses stream.
+if ! ch_table_exists bronze_jira jira_statuses; then
+  echo "  Creating placeholder: bronze_jira.jira_statuses"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_statuses (
+    unique_key String,
+    source_id String,
+    status_id String,
+    name String,
+    category_id Nullable(Int32),
+    category_name String,
+    category_key String,
+    collected_at String,
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+fi
+
 # bronze_jira.jira_worklogs — Jira worklog rows. jira__task_worklogs.sql
 # (tag silver:class_task_worklogs) reads these to build silver.class_task_worklogs,
 # the numerator behind worklog_logging_accuracy. Columns mirror what that staging
