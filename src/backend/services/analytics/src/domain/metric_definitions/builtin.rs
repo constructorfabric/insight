@@ -33,6 +33,7 @@ pub enum SeedComputation {
     Sum,
     Ratio { scale: f64 },
     Median,
+    DistinctCount,
 }
 
 impl SeedComputation {
@@ -41,12 +42,13 @@ impl SeedComputation {
             Self::Sum => MetricComputation::Sum,
             Self::Ratio { .. } => MetricComputation::Ratio,
             Self::Median => MetricComputation::Median,
+            Self::DistinctCount => MetricComputation::DistinctCount,
         }
     }
 
     pub fn scale(self) -> Option<f64> {
         match self {
-            Self::Sum | Self::Median => None,
+            Self::Sum | Self::Median | Self::DistinctCount => None,
             Self::Ratio { scale } => Some(scale),
         }
     }
@@ -127,6 +129,36 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
             "pr_change_size",
         ],
         dimensions: &["source", "category"],
+    },
+    BuiltinSource {
+        source: SourceSeed {
+            key: "collab",
+            kind: SourceKind::ManagedObservation,
+            source_ref: "collab_metric_observations",
+        },
+        measures: &[
+            "total_chat_messages",
+            "channel_posts",
+            "direct_and_group_messages",
+            "meeting_hours",
+            "meetings_attended",
+            "meetings_organized",
+            "adhoc_meetings_attended",
+            "scheduled_meetings_attended",
+            "emails_sent",
+            "emails_received",
+            "emails_read",
+            "files_engaged",
+            "files_shared_internal",
+            "files_shared_external",
+            "active_day",
+            "active_tool",
+            "chat_active_day",
+            "meeting_free_day",
+            "focus_hours",
+            "working_hours",
+        ],
+        dimensions: &["tool"],
     },
 ];
 
@@ -533,6 +565,389 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         }],
         dimensions: &["source"],
     },
+    // ─────────────────────────── collaboration ───────────────────────────
+    MetricSeed {
+        metric_key: "collab.messages_sent",
+        source_key: "collab",
+        label: "Messages Sent",
+        description: Some("Chat messages sent"),
+        explanation: Some(
+            "Chat messages a person sent, per messaging tool. Counts are not directly comparable across tools: Slack includes thread replies, and Microsoft 365 combines private-chat and channel messages.",
+        ),
+        unit: Some("messages"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "total_chat_messages",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.channel_posts",
+        source_key: "collab",
+        label: "Channel Posts",
+        description: Some("Messages posted to shared channels"),
+        explanation: Some("Messages a person posted to shared channels, per messaging tool."),
+        unit: Some("messages"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "channel_posts",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.dm_ratio",
+        source_key: "collab",
+        label: "DM Ratio",
+        description: Some("Share of messages sent in direct or group chats"),
+        explanation: Some(
+            "Direct and group-chat messages divided by all chat messages, per tool. A lower ratio means more communication happens in open channels. Tools that do not distinguish message types report no value.",
+        ),
+        unit: Some("%"),
+        format: MetricFormat::Percent,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 100.0 },
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "direct_and_group_messages",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "total_chat_messages",
+            },
+        ],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.msgs_per_active_day",
+        source_key: "collab",
+        label: "Messages per Active Day",
+        description: Some("Chat messages divided by chat-active days"),
+        explanation: Some(
+            "Chat messages sent divided by the number of days with chat messages, per tool. Across tools, each tool's active days count separately.",
+        ),
+        unit: Some("messages/day"),
+        format: MetricFormat::Decimal,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 1.0 },
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "total_chat_messages",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "chat_active_day",
+            },
+        ],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.active_days",
+        source_key: "collab",
+        label: "Active Days",
+        description: Some("Days with collaboration activity"),
+        explanation: Some(
+            "Distinct days on which a person took a deliberate collaboration action — sending a message, sending email, engaging or sharing a file, or attending a meeting — per tool. Passive activity such as receiving or reading email is excluded.",
+        ),
+        unit: Some("days"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::DistinctCount,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "active_day",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.emails_sent",
+        source_key: "collab",
+        label: "Emails Sent",
+        description: Some("Emails sent"),
+        explanation: Some("Emails a person sent."),
+        unit: Some("emails"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "emails_sent",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.emails_received",
+        source_key: "collab",
+        label: "Emails Received",
+        description: Some("Emails received"),
+        explanation: Some("Emails a person received."),
+        unit: Some("emails"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "emails_received",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.emails_read",
+        source_key: "collab",
+        label: "Emails Read",
+        description: Some("Emails read"),
+        explanation: Some("Emails a person read."),
+        unit: Some("emails"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "emails_read",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.files_engaged",
+        source_key: "collab",
+        label: "Files Engaged",
+        description: Some("Files viewed or edited"),
+        explanation: Some("Files a person viewed or edited."),
+        unit: Some("files"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "files_engaged",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.files_shared_internal",
+        source_key: "collab",
+        label: "Files Shared (Internal)",
+        description: Some("Files shared inside the organization"),
+        explanation: Some("Files a person shared with people inside the organization."),
+        unit: Some("files"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "files_shared_internal",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.files_shared_external",
+        source_key: "collab",
+        label: "Files Shared (External)",
+        description: Some("Files shared outside the organization"),
+        explanation: Some("Files a person shared with people outside the organization."),
+        unit: Some("files"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "files_shared_external",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.meeting_hours",
+        source_key: "collab",
+        label: "Meeting Hours",
+        description: Some("Hours spent in meetings"),
+        explanation: Some(
+            "Hours spent in meetings, per tool, taking the longest active modality (audio, video, or screen share) per meeting. Zoom reports modality durations as full-session estimates, so its figures may run higher than Microsoft Teams.",
+        ),
+        unit: Some("h"),
+        format: MetricFormat::Decimal,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "meeting_hours",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.meetings_count",
+        source_key: "collab",
+        label: "Meetings Attended",
+        description: Some("Distinct meetings attended"),
+        explanation: Some("Distinct meetings a person attended, per tool."),
+        unit: Some("meetings"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "meetings_attended",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.meeting_free_days",
+        source_key: "collab",
+        label: "Meeting-Free Days",
+        description: Some("Days with no meeting time"),
+        explanation: Some(
+            "Days on which a person had meeting records but no meeting time — a proxy for uninterrupted working days.",
+        ),
+        unit: Some("days"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "meeting_free_day",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "collab.focus_time_pct",
+        source_key: "collab",
+        label: "Focus Time",
+        description: Some("Share of the workday outside meetings"),
+        explanation: Some(
+            "Share of the workday not spent in meetings: meeting-free hours divided by scheduled working hours. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them.",
+        ),
+        unit: Some("%"),
+        format: MetricFormat::Percent,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 100.0 },
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "focus_hours",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "working_hours",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "collab.breadth",
+        source_key: "collab",
+        label: "Collaboration Breadth",
+        description: Some("Distinct collaboration tools used"),
+        explanation: Some(
+            "Distinct collaboration tools on which a person took a deliberate action in the period.",
+        ),
+        unit: Some("tools"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::Neutral,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::DistinctCount,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "active_tool",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "collab.meetings_organized",
+        source_key: "collab",
+        label: "Meetings Organized",
+        description: Some("Meetings organized"),
+        explanation: Some(
+            "Meetings a person organized, per tool. Reported only where the tool exposes organizer counts.",
+        ),
+        unit: Some("meetings"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::Neutral,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "meetings_organized",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.adhoc_meetings",
+        source_key: "collab",
+        label: "Ad-hoc Meetings",
+        description: Some("Unscheduled meetings attended"),
+        explanation: Some(
+            "Unscheduled meetings a person attended, per tool. Reported only where the tool distinguishes ad-hoc from scheduled meetings.",
+        ),
+        unit: Some("meetings"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::Neutral,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "adhoc_meetings_attended",
+        }],
+        dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "collab.scheduled_meetings",
+        source_key: "collab",
+        label: "Scheduled Meetings",
+        description: Some("Scheduled meetings attended"),
+        explanation: Some(
+            "Scheduled meetings a person attended, per tool. Reported only where the tool distinguishes ad-hoc from scheduled meetings.",
+        ),
+        unit: Some("meetings"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::Neutral,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "scheduled_meetings_attended",
+        }],
+        dimensions: &["tool"],
+    },
 ];
 
 #[cfg(test)]
@@ -679,6 +1094,22 @@ mod tests {
     fn median_metrics_have_single_value_role() {
         for metric in BUILTIN_METRICS {
             if metric.computation != SeedComputation::Median {
+                continue;
+            }
+            assert_eq!(metric.inputs.len(), 1, "{}", metric.metric_key);
+            assert_eq!(
+                metric.inputs[0].input_role,
+                MetricInputRole::Value,
+                "{}",
+                metric.metric_key
+            );
+        }
+    }
+
+    #[test]
+    fn distinct_count_metrics_have_single_value_role() {
+        for metric in BUILTIN_METRICS {
+            if metric.computation != SeedComputation::DistinctCount {
                 continue;
             }
             assert_eq!(metric.inputs.len(), 1, "{}", metric.metric_key);

@@ -85,6 +85,7 @@ pub enum ComputationDto {
     Sum,
     Ratio { scale: f64 },
     Median,
+    DistinctCount,
 }
 
 #[derive(Debug, Serialize)]

@@ -23,6 +23,7 @@ pub enum MetricComputation {
     Sum,
     Ratio,
     Median,
+    DistinctCount,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -106,6 +107,14 @@ pub enum ComputationSpec {
     Median {
         value: MetricInput,
     },
+    /// Count of distinct `subject_key` values over the entity's observations
+    /// (e.g. distinct active dates, distinct tools). The measure emits one row
+    /// per subject with the subject stamped on `subject_key`; the aggregate is
+    /// `uniqExact(subject_key)`. Zero-filled like `Sum` — no subjects is a
+    /// genuine zero, not unknown.
+    DistinctCount {
+        value: MetricInput,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -129,17 +138,21 @@ impl MetricDefinition {
             .find(|d| *d == dimension)
     }
 
-    // Only sums zero-fill: an absent entity genuinely summed to nothing.
-    // Ratios and medians of no observations are unknowable, not zero.
+    // Sums and distinct counts zero-fill: an absent entity genuinely summed
+    // to nothing / has zero distinct subjects. Ratios and medians of no
+    // observations are unknowable, not zero.
     pub fn is_zero_filled(&self) -> bool {
-        matches!(self.spec, ComputationSpec::Sum { .. })
+        matches!(
+            self.spec,
+            ComputationSpec::Sum { .. } | ComputationSpec::DistinctCount { .. }
+        )
     }
 
     pub fn observation_relation(&self) -> &ObservationRelation {
         match &self.spec {
-            ComputationSpec::Sum { value } | ComputationSpec::Median { value } => {
-                &value.observation_relation
-            }
+            ComputationSpec::Sum { value }
+            | ComputationSpec::Median { value }
+            | ComputationSpec::DistinctCount { value } => &value.observation_relation,
             ComputationSpec::Ratio { numerator, .. } => &numerator.observation_relation,
         }
     }
@@ -233,6 +246,7 @@ impl MetricComputation {
             Self::Sum => "sum",
             Self::Ratio => "ratio",
             Self::Median => "median",
+            Self::DistinctCount => "distinct_count",
         }
     }
 
@@ -241,6 +255,7 @@ impl MetricComputation {
             "sum" => Some(Self::Sum),
             "ratio" => Some(Self::Ratio),
             "median" => Some(Self::Median),
+            "distinct_count" => Some(Self::DistinctCount),
             _ => None,
         }
     }
@@ -319,6 +334,7 @@ mod tests {
             MetricComputation::Sum,
             MetricComputation::Ratio,
             MetricComputation::Median,
+            MetricComputation::DistinctCount,
         ] {
             assert_eq!(
                 MetricComputation::from_db(computation.as_db()),

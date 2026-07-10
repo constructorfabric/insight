@@ -50,6 +50,7 @@ mod m20260701_000001_devendor_email_labels;
 mod m20260702_000001_collab_messaging_queries;
 mod m20260702_000002_seed_collab_messaging_catalog;
 mod m20260709_000001_metric_median_computation;
+mod m20260710_000001_metric_distinct_count_computation;
 
 use sea_orm_migration::prelude::*;
 
@@ -109,6 +110,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260702_000001_collab_messaging_queries::Migration),
             Box::new(m20260702_000002_seed_collab_messaging_catalog::Migration),
             Box::new(m20260709_000001_metric_median_computation::Migration),
+            Box::new(m20260710_000001_metric_distinct_count_computation::Migration),
         ]
     }
 }
