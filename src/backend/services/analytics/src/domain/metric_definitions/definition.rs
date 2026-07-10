@@ -22,6 +22,7 @@ pub enum MetricFormat {
 pub enum MetricComputation {
     Sum,
     Ratio,
+    Median,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -55,10 +56,14 @@ impl SourceKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ObservationSource {
-    AiMetricObservations,
-}
+/// Warehouse relation an observation source reads from, stored as data in
+/// `metric_sources.source_ref` and validated on load. The compile-time gate
+/// is the shape of the name (`<family>_metric_observations` in the `insight`
+/// database); the runtime gate is the schema probe, which checks the actual
+/// columns before the source becomes available. Adding a source is therefore
+/// a dbt model plus registry seed rows — no code change here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservationRelation(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CohortSource {
@@ -95,12 +100,18 @@ pub enum ComputationSpec {
         denominator: MetricInput,
         scale: f64,
     },
+    /// Exact middle of per-event observation values. Median measures emit
+    /// one row per source event (multiple rows per entity/day are the
+    /// intended shape), so the aggregate is over events, not day totals.
+    Median {
+        value: MetricInput,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetricInput {
     pub role: MetricInputRole,
-    pub observation_source: ObservationSource,
+    pub observation_relation: ObservationRelation,
     pub source_key: String,
     pub measure_key: String,
 }
@@ -118,36 +129,53 @@ impl MetricDefinition {
             .find(|d| *d == dimension)
     }
 
+    // Only sums zero-fill: an absent entity genuinely summed to nothing.
+    // Ratios and medians of no observations are unknowable, not zero.
     pub fn is_zero_filled(&self) -> bool {
         matches!(self.spec, ComputationSpec::Sum { .. })
     }
 
-    pub fn observation_source(&self) -> ObservationSource {
+    pub fn observation_relation(&self) -> &ObservationRelation {
         match &self.spec {
-            ComputationSpec::Sum { value } => value.observation_source,
-            ComputationSpec::Ratio { numerator, .. } => numerator.observation_source,
+            ComputationSpec::Sum { value } | ComputationSpec::Median { value } => {
+                &value.observation_relation
+            }
+            ComputationSpec::Ratio { numerator, .. } => &numerator.observation_relation,
         }
     }
 }
 
-impl ObservationSource {
-    pub fn source_ref(self) -> &'static str {
-        match self {
-            Self::AiMetricObservations => "ai_metric_observations",
+impl ObservationRelation {
+    pub const DATABASE: &'static str = "insight";
+
+    /// Accepts exactly the managed-observation naming shape:
+    /// lowercase `snake_case` ending in `_metric_observations`, with a
+    /// non-empty family prefix. Anything else is a configuration error.
+    pub fn parse(value: &str) -> Option<Self> {
+        let family = value.strip_suffix("_metric_observations")?;
+        if family.is_empty() {
+            return None;
+        }
+        let mut chars = family.chars();
+        let starts_alpha = chars.next().is_some_and(|c| c.is_ascii_lowercase());
+        let rest_ok = family
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if starts_alpha && rest_ok {
+            Some(Self(value.to_owned()))
+        } else {
+            None
         }
     }
 
-    pub fn from_ref(value: &str) -> Option<Self> {
-        match value {
-            "ai_metric_observations" => Some(Self::AiMetricObservations),
-            _ => None,
-        }
+    pub fn table_ref(&self) -> (&'static str, &str) {
+        (Self::DATABASE, &self.0)
     }
 
-    pub fn table_ref(self) -> (&'static str, &'static str) {
-        match self {
-            Self::AiMetricObservations => ("insight", "ai_metric_observations"),
-        }
+    /// The stored relation name, as written to `metric_sources.source_ref`.
+    /// Used to group same-source metrics for batched queries.
+    pub fn source_ref(&self) -> &str {
+        &self.0
     }
 }
 
@@ -204,6 +232,7 @@ impl MetricComputation {
         match self {
             Self::Sum => "sum",
             Self::Ratio => "ratio",
+            Self::Median => "median",
         }
     }
 
@@ -211,6 +240,7 @@ impl MetricComputation {
         match value {
             "sum" => Some(Self::Sum),
             "ratio" => Some(Self::Ratio),
+            "median" => Some(Self::Median),
             _ => None,
         }
     }
@@ -240,6 +270,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn observation_relation_pins_the_naming_shape() {
+        for valid in [
+            "ai_metric_observations",
+            "git_metric_observations",
+            "task_tracking2_metric_observations",
+        ] {
+            let relation =
+                ObservationRelation::parse(valid).unwrap_or_else(|| panic!("{valid} must parse"));
+            assert_eq!(relation.table_ref(), ("insight", valid));
+        }
+        for invalid in [
+            "",
+            "_metric_observations",
+            "metric_observations",
+            "ai_metric_observations2",
+            "Ai_metric_observations",
+            "2ai_metric_observations",
+            "ai-metric_observations",
+            "insight.ai_metric_observations",
+            "ai_metric_observations; DROP TABLE x",
+        ] {
+            assert!(
+                ObservationRelation::parse(invalid).is_none(),
+                "{invalid:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn db_strings_round_trip() {
         for format in [
             MetricFormat::Integer,
@@ -256,7 +315,11 @@ mod tests {
         ] {
             assert_eq!(MetricDirection::from_db(direction.as_db()), Some(direction));
         }
-        for computation in [MetricComputation::Sum, MetricComputation::Ratio] {
+        for computation in [
+            MetricComputation::Sum,
+            MetricComputation::Ratio,
+            MetricComputation::Median,
+        ] {
             assert_eq!(
                 MetricComputation::from_db(computation.as_db()),
                 Some(computation)
@@ -269,10 +332,13 @@ mod tests {
         ] {
             assert_eq!(MetricInputRole::from_db(role.as_db()), Some(role));
         }
-        let source = ObservationSource::AiMetricObservations;
+        let relation = ObservationRelation::parse("ai_metric_observations")
+            .unwrap_or_else(|| panic!("builtin relation name must parse"));
+        let (_, table) = relation.table_ref();
         assert_eq!(
-            ObservationSource::from_ref(source.source_ref()),
-            Some(source)
+            ObservationRelation::parse(table).as_ref(),
+            Some(&relation),
+            "table name must round-trip through parse"
         );
         for kind in [
             SourceKind::ManagedObservation,

@@ -9,7 +9,7 @@ use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, Schem
 
 use crate::domain::metric_definitions::definition::{
     ComputationSpec, MetricBase, MetricComputation, MetricDefinition, MetricDirection,
-    MetricFormat, MetricInput, MetricInputRole, ObservationSource, SourceKind,
+    MetricFormat, MetricInput, MetricInputRole, ObservationRelation, SourceKind,
 };
 
 #[derive(Debug, FromQueryResult)]
@@ -266,10 +266,10 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
         // over Unavailable, which wins over Available.
         let role = MetricInputRole::from_db(&row.input_role);
         let kind = SourceKind::from_db(&row.source_kind);
-        let observation_source = ObservationSource::from_ref(&row.source_ref);
-        let parsed = match (role, kind, observation_source) {
-            (Some(role), Some(SourceKind::ManagedObservation), Some(observation_source)) => {
-                Some((role, observation_source))
+        let observation_relation = ObservationRelation::parse(&row.source_ref);
+        let parsed = match (role, kind, observation_relation) {
+            (Some(role), Some(SourceKind::ManagedObservation), Some(observation_relation)) => {
+                Some((role, observation_relation))
             }
             (Some(_), Some(SourceKind::CustomObservationSql), _) => {
                 if !matches!(entry, ClassifiedInputs::Corrupt) {
@@ -279,7 +279,7 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
             }
             _ => None,
         };
-        let Some((role, observation_source)) = parsed else {
+        let Some((role, observation_relation)) = parsed else {
             tracing::error!(
                 input_role = %row.input_role,
                 source_ref = %row.source_ref,
@@ -305,7 +305,7 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
         if let ClassifiedInputs::Available(inputs) = entry {
             inputs.push(MetricInput {
                 role,
-                observation_source,
+                observation_relation,
                 source_key: row.source_key,
                 measure_key: row.measure_key,
             });
@@ -434,7 +434,7 @@ fn build_definition(
         MetricComputation::Ratio => {
             let numerator = one_input(&row.metric_key, inputs, MetricInputRole::Numerator)?;
             let denominator = one_input(&row.metric_key, inputs, MetricInputRole::Denominator)?;
-            if numerator.observation_source != denominator.observation_source
+            if numerator.observation_relation != denominator.observation_relation
                 || numerator.source_key != denominator.source_key
             {
                 return Err(config_error(&format!(
@@ -451,6 +451,9 @@ fn build_definition(
                 scale,
             }
         }
+        MetricComputation::Median => ComputationSpec::Median {
+            value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+        },
     };
 
     Ok(MetricDefinition { base, spec })
@@ -898,7 +901,8 @@ mod tests {
     fn one_input_rejects_missing_and_duplicate_roles() {
         let input = MetricInput {
             role: MetricInputRole::Value,
-            observation_source: ObservationSource::AiMetricObservations,
+            observation_relation: ObservationRelation::parse("ai_metric_observations")
+                .unwrap_or_else(|| panic!("fixture relation must parse")),
             source_key: "ai_usage".to_owned(),
             measure_key: "accepted_lines".to_owned(),
         };

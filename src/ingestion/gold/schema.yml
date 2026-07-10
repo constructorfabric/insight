@@ -75,6 +75,90 @@ models:
           for the measure. Values and labels come straight from class-contract
           columns, which the silver contract guarantees non-null.
 
+  - name: git_metric_observations
+    description: >
+      Source measure observations for the unified metrics runtime, git
+      family. Day-grain measures emit one row per (tenant, entity, day,
+      measure, dimension tuple); event-grain measures (commit_change_size,
+      pr_cycle_hours, pr_change_size) intentionally emit one row per source
+      event, so multiple rows per that key are valid — they feed median
+      metrics, which aggregate over events at query time. The column set is
+      the same published contract the analytics service schema validator
+      probes (`OBSERVATION_COLUMNS`); changing it requires a coordinated
+      backend change.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['git']
+      - name: entity_type
+        description: "Measured entity type"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['person']
+      - name: entity_id
+        description: >
+          Normalized entity identifier: lowercased email from the commit
+          author or the pull-request identity resolution tiers (direct
+          email, PR-commit dominant email, name bridge). Rows that resolve
+          to no email are excluded upstream.
+        tests:
+          - not_null
+      - name: metric_date
+        description: >
+          Observation date: commit date for commit-derived measures,
+          created_on for pr_created/pr_change_size, close (merge) date for
+          pr_merged/pr_cycle_hours.
+        tests:
+          - not_null
+      - name: observed_at
+        description: >
+          Intra-day observation timestamp for future point-in-time
+          semantics. NULL for all git measures.
+      - name: measure_key
+        description: "Source measure key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - commit_count
+                  - commit_day
+                  - commit_change_size
+                  - code_lines_added
+                  - lines_added
+                  - pr_created
+                  - pr_created_merged
+                  - pr_merged
+                  - pr_cycle_hours
+                  - pr_change_size
+      - name: value
+        description: >
+          Measure value. Rows are emitted only when the source provides a
+          value, so value is never NULL; the column stays Nullable(Float64)
+          in the published contract.
+        tests:
+          - not_null
+      - name: subject_key
+        description: >
+          Distinct-count subject for future distinct-count semantics. NULL
+          for measures without distinct-count support.
+      - name: dimensions
+        description: >
+          Array(Tuple(key, value, label)). `source` carries the git source
+          discriminator with static product labels; `category` (file-change
+          measures) carries the source-agnostic file classification computed
+          by the shared gold macro.
+
   - name: metric_entity_cohorts_current
     description: >
       Current cohort membership per entity for peer comparison. One row per

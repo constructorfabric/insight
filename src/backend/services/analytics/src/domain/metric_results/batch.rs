@@ -8,8 +8,8 @@ use toolkit_canonical_errors::CanonicalError;
 use crate::domain::metric_definitions::MetricDefinition;
 
 use super::compiler::{
-    CompiledQuery, PeerQueryRow, PeriodQueryRow, compile_breakdown_query, compile_peer_batch_query,
-    compile_period_batch_query, compile_timeseries_query,
+    CompiledQuery, PeerQueryRow, PeriodQueryRow, compile_breakdown_query, compile_histogram_query,
+    compile_peer_batch_query, compile_period_batch_query, compile_timeseries_query,
 };
 use super::validation::{ValidatedMetricResultsRequest, ValidatedMetricView};
 use super::view::Bucket;
@@ -30,6 +30,9 @@ pub enum UnbatchedView {
     Breakdown {
         dimensions: Vec<String>,
     },
+    // Histogram bins one entity's own per-event values; it never batches with
+    // other metrics (per-entity bin membership is metric-specific).
+    Histogram,
 }
 
 #[derive(Debug)]
@@ -52,8 +55,8 @@ pub enum PlannedQuery {
 }
 
 pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
-    let mut period_groups: BTreeMap<&'static str, Vec<BatchItem>> = BTreeMap::new();
-    let mut peer_groups: BTreeMap<(&'static str, String), Vec<BatchItem>> = BTreeMap::new();
+    let mut period_groups: BTreeMap<String, Vec<BatchItem>> = BTreeMap::new();
+    let mut peer_groups: BTreeMap<(String, String), Vec<BatchItem>> = BTreeMap::new();
     let mut singles = Vec::new();
 
     for (metric_index, metric) in req.metrics.iter().enumerate() {
@@ -66,14 +69,14 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
             match view {
                 ValidatedMetricView::Period => {
                     period_groups
-                        .entry(metric.def.observation_source().source_ref())
+                        .entry(metric.def.observation_relation().source_ref().to_owned())
                         .or_default()
                         .push(item());
                 }
                 ValidatedMetricView::Peer { cohort_key } => {
                     peer_groups
                         .entry((
-                            metric.def.observation_source().source_ref(),
+                            metric.def.observation_relation().source_ref().to_owned(),
                             cohort_key.clone(),
                         ))
                         .or_default()
@@ -100,6 +103,15 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
                             dimensions: dimensions.clone(),
                         },
                         query: compile_breakdown_query(&metric.def, req, dimensions),
+                    });
+                }
+                ValidatedMetricView::Histogram => {
+                    singles.push(PlannedQuery::Single {
+                        metric_index,
+                        view_index,
+                        def: Box::new(metric.def.clone()),
+                        view: UnbatchedView::Histogram,
+                        query: compile_histogram_query(&metric.def, req),
                     });
                 }
             }
@@ -231,7 +243,7 @@ mod tests {
 
     use crate::domain::metric_definitions::definition::{
         ComputationSpec, MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
-        ObservationSource,
+        ObservationRelation,
     };
     use crate::domain::metric_results::validation::ValidatedMetricRequest;
 
@@ -252,7 +264,8 @@ mod tests {
             spec: ComputationSpec::Sum {
                 value: MetricInput {
                     role: MetricInputRole::Value,
-                    observation_source: ObservationSource::AiMetricObservations,
+                    observation_relation: ObservationRelation::parse("ai_metric_observations")
+                        .unwrap_or_else(|| panic!("fixture relation must parse")),
                     source_key: "ai_usage".to_owned(),
                     measure_key: format!("{key}_measure"),
                 },

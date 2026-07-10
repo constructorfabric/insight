@@ -5,15 +5,17 @@ use toolkit_canonical_errors::CanonicalError;
 use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition};
 
 use super::compiler::{
-    BreakdownQueryRow, PeerQueryRow, PeriodQueryRow, TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL,
-    UNKNOWN_DIMENSION_VALUE, dimension_aliases,
+    BreakdownQueryRow, HistogramQueryRow, PeerQueryRow, PeriodQueryRow, TimeseriesQueryRow,
+    UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE, dimension_aliases,
 };
 use super::dto::{
-    BreakdownValueDto, ComputationDto, MetricDimensionDto, MetricResultDto, MetricResultViewDto,
-    MetricResultsResponse, PeerValueDto, PeriodValueDto, TimeseriesDto, TimeseriesPointDto,
+    BreakdownValueDto, ComputationDto, HistogramBinDto, HistogramValueDto, MetricDimensionDto,
+    MetricResultDto, MetricResultViewDto, MetricResultsResponse, PeerValueDto, PeriodValueDto,
+    TimeseriesDto, TimeseriesPointDto,
 };
 use super::validation::{
-    ValidatedMetricResultsRequest, enumerate_buckets, metric_result_too_large, row_limit,
+    HISTOGRAM_BINS, ValidatedMetricResultsRequest, enumerate_buckets, metric_result_too_large,
+    row_limit,
 };
 use super::view::Bucket;
 
@@ -148,6 +150,70 @@ pub fn build_breakdown_view(
     })
 }
 
+/// Densifies histogram rows into the full fixed-bin shape. The SQL reports
+/// only observed (entity, bin) pairs plus each entity's exact bounds; edge
+/// math lives here alone so empty and observed bins can never disagree.
+/// Every requested entity is listed; no events → empty `bins` (honest
+/// absence, mirroring the period view's every-entity rule).
+pub fn build_histogram_view(
+    req: &ValidatedMetricResultsRequest,
+    rows: Vec<HistogramQueryRow>,
+) -> MetricResultViewDto {
+    struct EntityBins {
+        lo: f64,
+        hi: f64,
+        counts: HashMap<u32, u64>,
+    }
+
+    let mut by_entity: HashMap<String, EntityBins> = HashMap::new();
+    for row in rows {
+        let entry = by_entity.entry(row.entity_id).or_insert(EntityBins {
+            lo: row.entity_lo,
+            hi: row.entity_hi,
+            counts: HashMap::new(),
+        });
+        let count = entry.counts.entry(row.bin_idx).or_insert(0);
+        *count += row.bin_count.unwrap_or(0);
+    }
+
+    let bin_total = u32::try_from(HISTOGRAM_BINS).unwrap_or(u32::MAX);
+    let values = req
+        .entity_ids
+        .iter()
+        .map(|entity_id| {
+            let bins = match by_entity.get(entity_id) {
+                None => Vec::new(),
+                // Bounds satisfy hi >= lo by construction; a collapsed range
+                // (all values identical) renders as one [v, v] bin.
+                Some(entity) if entity.hi <= entity.lo => vec![HistogramBinDto {
+                    lo: entity.lo,
+                    hi: entity.hi,
+                    count: entity.counts.values().sum(),
+                }],
+                Some(entity) => {
+                    let width = (entity.hi - entity.lo) / f64::from(bin_total);
+                    (0..bin_total)
+                        .map(|idx| HistogramBinDto {
+                            lo: entity.lo + f64::from(idx) * width,
+                            hi: if idx == bin_total - 1 {
+                                entity.hi
+                            } else {
+                                entity.lo + f64::from(idx + 1) * width
+                            },
+                            count: entity.counts.get(&idx).copied().unwrap_or(0),
+                        })
+                        .collect()
+                }
+            };
+            HistogramValueDto {
+                entity_id: entity_id.clone(),
+                bins,
+            }
+        })
+        .collect();
+    MetricResultViewDto::Histogram { values }
+}
+
 pub fn build_metric_result(
     def: &MetricDefinition,
     views: Vec<MetricResultViewDto>,
@@ -155,6 +221,7 @@ pub fn build_metric_result(
     let computation = match &def.spec {
         ComputationSpec::Sum { .. } => ComputationDto::Sum,
         ComputationSpec::Ratio { scale, .. } => ComputationDto::Ratio { scale: *scale },
+        ComputationSpec::Median { .. } => ComputationDto::Median,
     };
     MetricResultDto {
         metric_key: def.base.key.clone(),
@@ -188,6 +255,9 @@ fn response_size(response: &MetricResultsResponse) -> usize {
             }
             MetricResultViewDto::Peer { values } => values.len(),
             MetricResultViewDto::Breakdown { values, .. } => values.len(),
+            MetricResultViewDto::Histogram { values } => {
+                values.iter().map(|value| value.bins.len()).sum()
+            }
         })
         .sum()
 }
@@ -233,7 +303,8 @@ mod tests {
     use serde_json::json;
 
     use crate::domain::metric_definitions::definition::{
-        MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationSource,
+        MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
+        ObservationRelation,
     };
     use crate::domain::metric_results::view::Bucket;
 
@@ -255,7 +326,8 @@ mod tests {
     fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
         MetricInput {
             role,
-            observation_source: ObservationSource::AiMetricObservations,
+            observation_relation: ObservationRelation::parse("ai_metric_observations")
+                .unwrap_or_else(|| panic!("fixture relation must parse")),
             source_key: "ai_usage".to_owned(),
             measure_key: measure_key.to_owned(),
         }
@@ -278,6 +350,31 @@ mod tests {
                 denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
                 scale: 100.0,
             },
+        }
+    }
+
+    fn median_metric() -> MetricDefinition {
+        MetricDefinition {
+            base: base(),
+            spec: ComputationSpec::Median {
+                value: input(MetricInputRole::Value, "pr_cycle_hours"),
+            },
+        }
+    }
+
+    fn histogram_row(
+        entity_id: &str,
+        bin_idx: u32,
+        lo: f64,
+        hi: f64,
+        count: u64,
+    ) -> HistogramQueryRow {
+        HistogramQueryRow {
+            entity_id: entity_id.to_owned(),
+            bin_idx,
+            entity_lo: lo,
+            entity_hi: hi,
+            bin_count: Some(count),
         }
     }
 
@@ -323,6 +420,63 @@ mod tests {
             panic!("expected period view");
         };
         assert_eq!(values[0].value, None);
+    }
+
+    #[test]
+    fn period_view_keeps_median_nulls() {
+        // A median of no events is unknowable, never zero.
+        let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-31");
+        let MetricResultViewDto::Period { values } =
+            build_period_view(&median_metric(), &req, Vec::new())
+        else {
+            panic!("expected period view");
+        };
+        assert_eq!(values[0].value, None);
+    }
+
+    #[test]
+    fn histogram_view_densifies_fixed_bins_and_lists_every_entity() {
+        let req = request(vec!["a@x.io", "b@x.io"], "2026-01-01", "2026-01-31");
+        // a@x.io observed bins 0 and 9 over range [0, 100].
+        let rows = vec![
+            histogram_row("a@x.io", 0, 0.0, 100.0, 3),
+            histogram_row("a@x.io", 9, 0.0, 100.0, 1),
+        ];
+        let MetricResultViewDto::Histogram { values } = build_histogram_view(&req, rows) else {
+            panic!("expected histogram view");
+        };
+        assert_eq!(values.len(), 2);
+
+        let a = &values[0];
+        assert_eq!(a.entity_id, "a@x.io");
+        assert_eq!(a.bins.len(), 10);
+        assert_eq!(a.bins[0].count, 3);
+        assert!((a.bins[0].lo - 0.0).abs() < f64::EPSILON);
+        assert!((a.bins[0].hi - 10.0).abs() < f64::EPSILON);
+        // Gap bins densify to zero with derived edges.
+        assert_eq!(a.bins[4].count, 0);
+        assert!((a.bins[4].lo - 40.0).abs() < f64::EPSILON);
+        // Last bin closes exactly at the entity max.
+        assert_eq!(a.bins[9].count, 1);
+        assert!((a.bins[9].hi - 100.0).abs() < f64::EPSILON);
+
+        // Entity with no events stays listed with honest empty bins.
+        let b = &values[1];
+        assert_eq!(b.entity_id, "b@x.io");
+        assert!(b.bins.is_empty());
+    }
+
+    #[test]
+    fn histogram_view_collapses_identical_values_to_single_bin() {
+        let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-31");
+        let rows = vec![histogram_row("a@x.io", 0, 7.5, 7.5, 4)];
+        let MetricResultViewDto::Histogram { values } = build_histogram_view(&req, rows) else {
+            panic!("expected histogram view");
+        };
+        assert_eq!(values[0].bins.len(), 1);
+        assert!((values[0].bins[0].lo - 7.5).abs() < f64::EPSILON);
+        assert!((values[0].bins[0].hi - 7.5).abs() < f64::EPSILON);
+        assert_eq!(values[0].bins[0].count, 4);
     }
 
     #[test]
@@ -440,6 +594,33 @@ mod tests {
         let ratio_json = serde_json::to_value(&ratio).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(ratio_json["computation"], "ratio");
         assert_eq!(ratio_json["scale"], 100.0);
+
+        let median = build_metric_result(&median_metric(), Vec::new());
+        let median_json = serde_json::to_value(&median).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(median_json["computation"], "median");
+        assert!(median_json.get("scale").is_none());
+    }
+
+    #[test]
+    fn histogram_wire_shape_uses_view_tag() {
+        let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-31");
+        let view = build_histogram_view(&req, vec![histogram_row("a@x.io", 0, 1.0, 1.0, 2)]);
+        let json = serde_json::to_value(&view).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(json["view"], "histogram");
+        assert_eq!(json["values"][0]["entity_id"], "a@x.io");
+        assert_eq!(json["values"][0]["bins"][0]["count"], 2);
+        assert_eq!(json["values"][0]["bins"][0]["lo"], 1.0);
+        assert_eq!(json["values"][0]["bins"][0]["hi"], 1.0);
+    }
+
+    #[test]
+    fn response_size_counts_histogram_bins() {
+        let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-31");
+        let view = build_histogram_view(&req, vec![histogram_row("a@x.io", 2, 0.0, 10.0, 1)]);
+        let response = MetricResultsResponse {
+            metrics: vec![build_metric_result(&median_metric(), vec![view])],
+        };
+        assert_eq!(response_size(&response), 10);
     }
 
     #[test]

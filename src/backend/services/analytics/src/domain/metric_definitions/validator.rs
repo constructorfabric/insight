@@ -4,7 +4,9 @@ use clickhouse::Row;
 use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 
-use crate::domain::metric_definitions::definition::{CohortSource, ObservationSource, SourceKind};
+use crate::domain::metric_definitions::definition::{
+    CohortSource, ObservationRelation, SourceKind,
+};
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::repository::{
     MetricDefinitionValidationSpec, all_managed_sources, managed_definition_validation_specs,
@@ -96,7 +98,7 @@ impl MetricDefinitionValidator {
             }
         }
 
-        let Some(source) = ObservationSource::from_ref(source_ref) else {
+        let Some(relation) = ObservationRelation::parse(source_ref) else {
             return ProbeOutcome::Definitive(ValidationState::Error(
                 MetricSchemaErrorCode::Unknown,
             ));
@@ -104,7 +106,7 @@ impl MetricDefinitionValidator {
         let cohort = CohortSource::MetricEntityCohortsCurrent;
 
         match self
-            .has_columns(source.table_ref(), OBSERVATION_COLUMNS)
+            .has_columns(relation.table_ref(), OBSERVATION_COLUMNS)
             .await
         {
             Ok(ColumnCheck::Present) => {}
@@ -128,7 +130,7 @@ impl MetricDefinitionValidator {
     }
 
     async fn validate_definitions_for_source(&self, source_id: uuid::Uuid, source_ref: &str) {
-        let Some(source) = ObservationSource::from_ref(source_ref) else {
+        let Some(relation) = ObservationRelation::parse(source_ref) else {
             return;
         };
         let specs = match managed_definition_validation_specs(&self.db, source_id).await {
@@ -140,7 +142,7 @@ impl MetricDefinitionValidator {
         };
 
         for spec in specs {
-            match self.validate_definition(source, &spec).await {
+            match self.validate_definition(&relation, &spec).await {
                 ProbeOutcome::Definitive(state) => {
                     let (status, error_code) = state.as_db();
                     if let Err(error) =
@@ -166,13 +168,13 @@ impl MetricDefinitionValidator {
 
     async fn validate_definition(
         &self,
-        source: ObservationSource,
+        relation: &ObservationRelation,
         spec: &MetricDefinitionValidationSpec,
     ) -> ProbeOutcome {
         let inputs = spec
             .inputs
             .iter()
-            .filter(|input| input.observation_source == source)
+            .filter(|input| &input.observation_relation == relation)
             .collect::<Vec<_>>();
         if inputs.is_empty() {
             return ProbeOutcome::Definitive(ValidationState::Error(
@@ -203,7 +205,7 @@ impl MetricDefinitionValidator {
             .collect::<BTreeSet<_>>();
 
         match self
-            .has_source_rows(source, source_key, spec.entity_type.as_str())
+            .has_source_rows(relation, source_key, spec.entity_type.as_str())
             .await
         {
             Ok(true) => {}
@@ -221,7 +223,7 @@ impl MetricDefinitionValidator {
         // the definition to unchecked, which stays runtime-available.
         let observed = match self
             .observed_measure_keys(
-                source,
+                relation,
                 source_key,
                 spec.entity_type.as_str(),
                 &measure_keys.iter().copied().collect::<Vec<_>>(),
@@ -241,7 +243,7 @@ impl MetricDefinitionValidator {
             .collect::<Vec<_>>();
 
         if let Some(outcome) = self
-            .check_dimension_coverage(source, source_key, spec, &observed_keys)
+            .check_dimension_coverage(relation, source_key, spec, &observed_keys)
             .await
         {
             return outcome;
@@ -266,7 +268,7 @@ impl MetricDefinitionValidator {
 
     async fn check_dimension_coverage(
         &self,
-        source: ObservationSource,
+        relation: &ObservationRelation,
         source_key: &str,
         spec: &MetricDefinitionValidationSpec,
         observed_keys: &[&str],
@@ -277,7 +279,7 @@ impl MetricDefinitionValidator {
         for dimension in &spec.dimensions {
             match self
                 .dimension_present_on_all_rows(
-                    source,
+                    relation,
                     source_key,
                     spec.entity_type.as_str(),
                     observed_keys.iter().copied(),
@@ -332,11 +334,11 @@ impl MetricDefinitionValidator {
 
     async fn has_source_rows(
         &self,
-        source: ObservationSource,
+        relation: &ObservationRelation,
         source_key: &str,
         entity_type: &str,
     ) -> Result<bool, clickhouse::error::Error> {
-        let (database, table) = source.table_ref();
+        let (database, table) = relation.table_ref();
         let sql = format!(
             "SELECT count() AS rows \
              FROM ( \
@@ -360,12 +362,12 @@ impl MetricDefinitionValidator {
 
     async fn observed_measure_keys(
         &self,
-        source: ObservationSource,
+        relation: &ObservationRelation,
         source_key: &str,
         entity_type: &str,
         measure_keys: &[&str],
     ) -> Result<BTreeSet<String>, clickhouse::error::Error> {
-        let (database, table) = source.table_ref();
+        let (database, table) = relation.table_ref();
         let placeholders = vec!["?"; measure_keys.len()].join(", ");
         let sql = format!(
             "SELECT measure_key \
@@ -386,7 +388,7 @@ impl MetricDefinitionValidator {
 
     async fn dimension_present_on_all_rows<'a>(
         &self,
-        source: ObservationSource,
+        relation: &ObservationRelation,
         source_key: &str,
         entity_type: &str,
         measure_keys: impl Iterator<Item = &'a str>,
@@ -394,7 +396,7 @@ impl MetricDefinitionValidator {
     ) -> Result<bool, clickhouse::error::Error> {
         let measure_keys = measure_keys.collect::<Vec<_>>();
         let rows = self
-            .dimension_coverage(source, source_key, entity_type, &measure_keys, dimension)
+            .dimension_coverage(relation, source_key, entity_type, &measure_keys, dimension)
             .await?;
         let by_measure = rows
             .into_iter()
@@ -410,13 +412,13 @@ impl MetricDefinitionValidator {
 
     async fn dimension_coverage(
         &self,
-        source: ObservationSource,
+        relation: &ObservationRelation,
         source_key: &str,
         entity_type: &str,
         measure_keys: &[&str],
         dimension: &str,
     ) -> Result<Vec<DimensionCoverageProbeRow>, clickhouse::error::Error> {
-        let (database, table) = source.table_ref();
+        let (database, table) = relation.table_ref();
         let placeholders = vec!["?"; measure_keys.len()].join(", ");
         let sql = format!(
             "SELECT \

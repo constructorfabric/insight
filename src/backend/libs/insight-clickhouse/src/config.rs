@@ -18,6 +18,12 @@ pub struct Config {
     /// Per-query timeout. Applied as `max_execution_time` setting.
     /// `None` means no timeout (`ClickHouse` server default).
     pub query_timeout: Option<Duration>,
+    /// Per-query thread cap. Applied as `max_threads` setting.
+    /// `None` means the `ClickHouse` server default.
+    pub query_max_threads: Option<u32>,
+    /// Per-query memory ceiling in bytes. Applied as `max_memory_usage`
+    /// setting. `None` means the `ClickHouse` server default.
+    pub query_max_memory_bytes: Option<u64>,
 }
 
 impl core::fmt::Debug for Config {
@@ -28,6 +34,8 @@ impl core::fmt::Debug for Config {
             .field("user", &self.user)
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .field("query_timeout", &self.query_timeout)
+            .field("query_max_threads", &self.query_max_threads)
+            .field("query_max_memory_bytes", &self.query_max_memory_bytes)
             .finish()
     }
 }
@@ -44,6 +52,8 @@ impl Config {
             user: None,
             password: None,
             query_timeout: Some(Duration::from_secs(30)),
+            query_max_threads: None,
+            query_max_memory_bytes: None,
         }
     }
 
@@ -66,6 +76,20 @@ impl Config {
     #[must_use]
     pub fn without_query_timeout(mut self) -> Self {
         self.query_timeout = None;
+        self
+    }
+
+    /// Sets the per-query thread cap.
+    #[must_use]
+    pub fn with_query_max_threads(mut self, max_threads: u32) -> Self {
+        self.query_max_threads = Some(max_threads);
+        self
+    }
+
+    /// Sets the per-query memory ceiling in bytes.
+    #[must_use]
+    pub fn with_query_max_memory_bytes(mut self, max_memory_bytes: u64) -> Self {
+        self.query_max_memory_bytes = Some(max_memory_bytes);
         self
     }
 }

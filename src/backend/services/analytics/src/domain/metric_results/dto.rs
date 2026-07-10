@@ -43,6 +43,7 @@ pub enum MetricViewRequest {
     Breakdown {
         dimensions: Vec<String>,
     },
+    Histogram,
 }
 
 impl MetricViewRequest {
@@ -52,6 +53,7 @@ impl MetricViewRequest {
             Self::Peer { .. } => MetricResultViewKind::Peer,
             Self::Timeseries { .. } => MetricResultViewKind::Timeseries,
             Self::Breakdown { .. } => MetricResultViewKind::Breakdown,
+            Self::Histogram => MetricResultViewKind::Histogram,
         }
     }
 }
@@ -82,6 +84,7 @@ pub struct MetricResultDto {
 pub enum ComputationDto {
     Sum,
     Ratio { scale: f64 },
+    Median,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,6 +104,24 @@ pub enum MetricResultViewDto {
         dimensions: Vec<String>,
         values: Vec<BreakdownValueDto>,
     },
+    Histogram {
+        values: Vec<HistogramValueDto>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+pub struct HistogramValueDto {
+    pub entity_id: String,
+    /// Empty when the entity has no events in the period — the entity is
+    /// still listed, mirroring the period view's every-requested-entity rule.
+    pub bins: Vec<HistogramBinDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HistogramBinDto {
+    pub lo: f64,
+    pub hi: f64,
+    pub count: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]

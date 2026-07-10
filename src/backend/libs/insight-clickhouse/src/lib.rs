@@ -76,6 +76,12 @@ impl Client {
         if let Some(timeout) = self.config.query_timeout {
             q = q.with_option("max_execution_time", timeout.as_secs().to_string());
         }
+        if let Some(max_threads) = self.config.query_max_threads {
+            q = q.with_option("max_threads", max_threads.to_string());
+        }
+        if let Some(max_memory_bytes) = self.config.query_max_memory_bytes {
+            q = q.with_option("max_memory_usage", max_memory_bytes.to_string());
+        }
         q
     }
 
@@ -155,6 +161,17 @@ mod tests {
         let client = Client::new(
             Config::new("http://localhost:8123", "insight")
                 .with_query_timeout(Duration::from_secs(5)),
+        );
+        let _q = client.query("SELECT 1");
+    }
+
+    #[test]
+    fn query_applies_thread_and_memory_bounds() {
+        // Both `Some` branches in `query` run.
+        let client = Client::new(
+            Config::new("http://localhost:8123", "insight")
+                .with_query_max_threads(4)
+                .with_query_max_memory_bytes(1_610_612_736),
         );
         let _q = client.query("SELECT 1");
     }

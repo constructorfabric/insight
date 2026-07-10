@@ -1,6 +1,5 @@
 use crate::domain::metric_definitions::definition::{
-    MetricComputation, MetricDirection, MetricFormat, MetricInputRole, ObservationSource,
-    SourceKind,
+    MetricComputation, MetricDirection, MetricFormat, MetricInputRole, SourceKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +32,7 @@ impl CohortKey {
 pub enum SeedComputation {
     Sum,
     Ratio { scale: f64 },
+    Median,
 }
 
 impl SeedComputation {
@@ -40,12 +40,13 @@ impl SeedComputation {
         match self {
             Self::Sum => MetricComputation::Sum,
             Self::Ratio { .. } => MetricComputation::Ratio,
+            Self::Median => MetricComputation::Median,
         }
     }
 
     pub fn scale(self) -> Option<f64> {
         match self {
-            Self::Sum => None,
+            Self::Sum | Self::Median => None,
             Self::Ratio { scale } => Some(scale),
         }
     }
@@ -54,7 +55,9 @@ impl SeedComputation {
 pub struct SourceSeed {
     pub key: &'static str,
     pub kind: SourceKind,
-    pub source_ref: ObservationSource,
+    /// Managed-observation relation name; must satisfy
+    /// `ObservationRelation::parse` (pinned by a registry test).
+    pub source_ref: &'static str,
 }
 
 pub struct BuiltinSource {
@@ -84,26 +87,48 @@ pub struct InputSeed {
     pub measure_key: &'static str,
 }
 
-pub const BUILTIN_SOURCES: &[BuiltinSource] = &[BuiltinSource {
-    source: SourceSeed {
-        key: "ai_usage",
-        kind: SourceKind::ManagedObservation,
-        source_ref: ObservationSource::AiMetricObservations,
+pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
+    BuiltinSource {
+        source: SourceSeed {
+            key: "ai_usage",
+            kind: SourceKind::ManagedObservation,
+            source_ref: "ai_metric_observations",
+        },
+        measures: &[
+            "accepted_lines",
+            "removed_lines",
+            "active_day",
+            "cost_usd",
+            "accepted_edit_actions",
+            "tool_use_offered",
+            "assistant_messages",
+            "assistant_actions",
+            "dev_conversations",
+            "chat_assistant_conversations",
+        ],
+        dimensions: &["tool", "surface"],
     },
-    measures: &[
-        "accepted_lines",
-        "removed_lines",
-        "active_day",
-        "cost_usd",
-        "accepted_edit_actions",
-        "tool_use_offered",
-        "assistant_messages",
-        "assistant_actions",
-        "dev_conversations",
-        "chat_assistant_conversations",
-    ],
-    dimensions: &["tool", "surface"],
-}];
+    BuiltinSource {
+        source: SourceSeed {
+            key: "git",
+            kind: SourceKind::ManagedObservation,
+            source_ref: "git_metric_observations",
+        },
+        measures: &[
+            "commit_count",
+            "commit_day",
+            "commit_change_size",
+            "code_lines_added",
+            "lines_added",
+            "pr_created",
+            "pr_created_merged",
+            "pr_merged",
+            "pr_cycle_hours",
+            "pr_change_size",
+        ],
+        dimensions: &["source", "category"],
+    },
+];
 
 pub const BUILTIN_METRICS: &[MetricSeed] = &[
     MetricSeed {
@@ -302,6 +327,212 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         }],
         dimensions: &["tool", "surface"],
     },
+    MetricSeed {
+        metric_key: "git.commits",
+        source_key: "git",
+        label: "Commits",
+        description: Some("Authored commits"),
+        explanation: Some(
+            "Distinct authored commits across connected git sources, excluding merge commits.",
+        ),
+        unit: Some("commits"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "commit_count",
+        }],
+        dimensions: &["source"],
+    },
+    MetricSeed {
+        metric_key: "git.code_lines",
+        source_key: "git",
+        label: "Code lines added",
+        description: Some("Lines added to code files"),
+        explanation: Some(
+            "Lines added to files classified as code — tests, configuration, and documentation excluded.",
+        ),
+        unit: Some("lines"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "code_lines_added",
+        }],
+        dimensions: &["source"],
+    },
+    MetricSeed {
+        metric_key: "git.lines_added",
+        source_key: "git",
+        label: "Lines added",
+        description: Some("All lines added, by file category"),
+        explanation: Some(
+            "Lines added across all files, split by file category: code, tests, configuration, documentation.",
+        ),
+        unit: Some("lines"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "lines_added",
+        }],
+        dimensions: &["category", "source"],
+    },
+    MetricSeed {
+        metric_key: "git.prs_created",
+        source_key: "git",
+        label: "Pull requests created",
+        description: Some("Authored pull requests"),
+        explanation: Some("Pull requests opened, dated by creation."),
+        unit: Some("PRs"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "pr_created",
+        }],
+        dimensions: &["source"],
+    },
+    MetricSeed {
+        metric_key: "git.prs_merged",
+        source_key: "git",
+        label: "Pull requests merged",
+        description: Some("Authored pull requests merged"),
+        explanation: Some("Authored pull requests that merged, dated by the merge."),
+        unit: Some("PRs"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "pr_merged",
+        }],
+        dimensions: &["source"],
+    },
+    MetricSeed {
+        metric_key: "git.merge_rate",
+        source_key: "git",
+        label: "PR merge rate",
+        description: Some("Share of created pull requests that merged"),
+        explanation: Some(
+            "Of the pull requests created in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.",
+        ),
+        unit: Some("percent"),
+        format: MetricFormat::Percent,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 100.0 },
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "pr_created_merged",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "pr_created",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "git.commits_per_active_day",
+        source_key: "git",
+        label: "Commits per active day",
+        description: Some("Commit cadence on days with commits"),
+        explanation: Some("Commits divided by the number of days with at least one commit."),
+        unit: None,
+        format: MetricFormat::Decimal,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 1.0 },
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "commit_count",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "commit_day",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "git.commit_size",
+        source_key: "git",
+        label: "Commit size",
+        description: Some("Typical diff size per commit"),
+        explanation: Some(
+            "Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.",
+        ),
+        unit: Some("lines"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Median,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "commit_change_size",
+        }],
+        dimensions: &["source"],
+    },
+    MetricSeed {
+        metric_key: "git.pr_size",
+        source_key: "git",
+        label: "PR size",
+        description: Some("Typical diff size per pull request"),
+        explanation: Some(
+            "Median diff size of authored pull requests (lines added plus removed). Smaller requests are easier to review. Sources that do not report line counts contribute no values.",
+        ),
+        unit: Some("lines"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Median,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "pr_change_size",
+        }],
+        dimensions: &["source"],
+    },
+    MetricSeed {
+        metric_key: "git.pr_cycle_time_h",
+        source_key: "git",
+        label: "PR cycle time",
+        description: Some("Typical hours from open to merge"),
+        explanation: Some(
+            "Median hours from opening a pull request to merging it, over requests merged in the period.",
+        ),
+        unit: Some("h"),
+        format: MetricFormat::Decimal,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Median,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "pr_cycle_hours",
+        }],
+        dimensions: &["source"],
+    },
 ];
 
 #[cfg(test)]
@@ -329,6 +560,19 @@ mod tests {
         for builtin_source in BUILTIN_SOURCES {
             assert!(is_snake_case(builtin_source.source.key));
             assert!(seen.insert(builtin_source.source.key));
+        }
+    }
+
+    #[test]
+    fn source_refs_parse_as_observation_relations() {
+        use crate::domain::metric_definitions::definition::ObservationRelation;
+        for builtin_source in BUILTIN_SOURCES {
+            assert!(
+                ObservationRelation::parse(builtin_source.source.source_ref).is_some(),
+                "builtin source {} declares an invalid observation relation {:?}",
+                builtin_source.source.key,
+                builtin_source.source.source_ref,
+            );
         }
     }
 
@@ -425,6 +669,22 @@ mod tests {
             );
             assert!(
                 has_role(MetricInputRole::Denominator),
+                "{}",
+                metric.metric_key
+            );
+        }
+    }
+
+    #[test]
+    fn median_metrics_have_single_value_role() {
+        for metric in BUILTIN_METRICS {
+            if metric.computation != SeedComputation::Median {
+                continue;
+            }
+            assert_eq!(metric.inputs.len(), 1, "{}", metric.metric_key);
+            assert_eq!(
+                metric.inputs[0].input_role,
+                MetricInputRole::Value,
                 "{}",
                 metric.metric_key
             );

@@ -12,6 +12,24 @@
     HAVING countIf(({{ value_expr }}) IS NOT NULL) > 0
 {% endmacro %}
 
+{# One row per source event, no aggregation: the observation shape for
+   median-computation metrics, which aggregate over events at query time.
+   Multiple rows per (entity, day, measure) are the intended grain; only
+   median/percentile-style metrics may bind these measures. #}
+{% macro event_measure(measure_key, relation, value_expr, dimensions_col, where=none) %}
+    SELECT
+        tenant_id,
+        entity_id,
+        metric_date,
+        '{{ measure_key }}' AS measure_key,
+        toNullable(toFloat64({{ value_expr }})) AS value,
+        {{ dimensions_col }} AS dimensions
+    FROM {{ relation }}
+    WHERE ({{ value_expr }}) IS NOT NULL
+    {% if where %}  AND ({{ where }})
+    {% endif %}
+{% endmacro %}
+
 {% macro presence_measure(measure_key, relations) %}
     SELECT
         tenant_id,
