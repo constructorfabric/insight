@@ -4,6 +4,8 @@
 //! use the toolkit `db` capability). The `identity` database is owned by the
 //! .NET service today; we read `persons` / `account_person_map` from it.
 
+pub mod entities;
+
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
 /// Connect to `MariaDB` and return a connection pool.
