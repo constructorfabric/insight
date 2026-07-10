@@ -15,4 +15,5 @@ pub enum MetricResultViewKind {
     Timeseries,
     Peer,
     Breakdown,
+    Histogram,
 }

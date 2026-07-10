@@ -85,7 +85,7 @@ async fn upsert_source(
             uuid_value(Uuid::now_v7()),
             Value::from(builtin_source.source.key),
             Value::from(builtin_source.source.kind.as_db()),
-            Value::from(builtin_source.source.source_ref.source_ref()),
+            Value::from(builtin_source.source.source_ref),
         ],
     ))
     .await?;

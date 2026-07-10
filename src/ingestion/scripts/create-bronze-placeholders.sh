@@ -530,10 +530,12 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits (
     project_key       String,
     repo_slug         String  DEFAULT '',
     tenant_id         String,
+    source_id         String  DEFAULT '',
     author_email      String,
     date              Date,
     is_merge_commit   UInt8,
     file_path         String  DEFAULT '',
+    data_source       String  DEFAULT '',
     -- Non-Nullable so `toFloat64(sum(c.lines_added + c.lines_removed))`
     -- in the git_bullet_rows view stays Float64 (the view's structure
     -- declares metric_value as Float64, not Nullable(Float64)).
@@ -542,6 +544,21 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits (
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
+else
+  class_git_commits_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='class_git_commits' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$class_git_commits_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.class_git_commits"
+    run_ch <<'SQL'
+ALTER TABLE silver.class_git_commits ADD COLUMN IF NOT EXISTS source_id String DEFAULT '';
+ALTER TABLE silver.class_git_commits ADD COLUMN IF NOT EXISTS data_source String DEFAULT '';
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.class_git_commits is not a placeholder"
+  fi
 fi
 
 # silver.class_git_pull_requests — git dbt model.
@@ -551,12 +568,17 @@ if ! ch_table_exists silver class_git_pull_requests; then
 CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     insight_tenant_id String,
     pr_id             String,
+    tenant_id         String  DEFAULT '',
+    source_id         String  DEFAULT '',
+    project_key       String  DEFAULT '',
+    repo_slug         String  DEFAULT '',
     author_email      String,
     author_name       String,
     state             String,
     created_on        DateTime,
     merged_on         Nullable(DateTime),
     closed_on         Nullable(DateTime),
+    data_source       String  DEFAULT '',
     -- Non-Nullable on purpose. The git_bullet_rows view's UNION branch
     -- for `pr_size` declares the column as Float64 (non-null); a
     -- Nullable placeholder makes the UNION type Nullable, which then
@@ -565,6 +587,43 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     lines_removed     Float64 DEFAULT 0,
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (pr_id) COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+else
+  class_git_prs_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='class_git_pull_requests' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$class_git_prs_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.class_git_pull_requests"
+    run_ch <<'SQL'
+ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS tenant_id String DEFAULT '';
+ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS source_id String DEFAULT '';
+ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS project_key String DEFAULT '';
+ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS repo_slug String DEFAULT '';
+ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS data_source String DEFAULT '';
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.class_git_pull_requests is not a placeholder"
+  fi
+fi
+
+# silver.class_git_pull_requests_commits — git dbt model. Links pull
+# requests to their commits; the unified git gold view resolves PR author
+# identity through it.
+if ! ch_table_exists silver class_git_pull_requests_commits; then
+  echo "  Creating placeholder: silver.class_git_pull_requests_commits"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests_commits (
+    tenant_id   String,
+    source_id   String DEFAULT '',
+    project_key String DEFAULT '',
+    repo_slug   String DEFAULT '',
+    pr_id       String,
+    commit_hash String,
+    data_source String DEFAULT '',
+    _version    UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (pr_id, commit_hash) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -578,12 +637,27 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes (
     project_key       String,
     repo_slug         String DEFAULT '',
     tenant_id         String,
+    source_id         String DEFAULT '',
     file_path         String,
     lines_added       Int64,
     lines_removed     Int64,
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash, file_path) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
+else
+  class_git_fc_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='class_git_file_changes' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$class_git_fc_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.class_git_file_changes"
+    run_ch <<'SQL'
+ALTER TABLE silver.class_git_file_changes ADD COLUMN IF NOT EXISTS source_id String DEFAULT '';
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.class_git_file_changes is not a placeholder"
+  fi
 fi
 
 # silver.class_task_daily — task-tracking dbt model.
