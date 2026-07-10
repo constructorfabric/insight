@@ -1,0 +1,60 @@
+# pre-commit framework config (https://pre-commit.com).
+# Install once:  pre-commit install
+#
+# Backend Rust: the same checks CI's "Rust" job gates on, so a fmt/clippy slip
+# fails locally instead of in CI. Both hooks only run when Rust (or a backend
+# Cargo manifest) is staged; skip one run with `SKIP=cargo-clippy git commit`
+# or all with `git commit --no-verify`.
+minimum_pre_commit_version: "3.2.0"
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: "v6.0.0"
+    hooks:
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-json
+      - id: check-xml
+      - id: check-executables-have-shebangs
+      - id: check-toml
+      - id: check-added-large-files
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt (backend)
+        language: system
+        entry: cargo fmt --manifest-path src/backend/Cargo.toml --all --check
+        files: '^src/backend/.*\.rs$'
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy (backend)
+        language: system
+        entry: cargo clippy --manifest-path src/backend/Cargo.toml --workspace --all-targets -- -D warnings
+        files: '^src/backend/(.*\.rs|(.*/)?Cargo\.(toml|lock))$'
+        pass_filenames: false
+
+  # Python: ruff lints + formats staged Python (it auto-discovers each file's
+  # nearest pyproject.toml [tool.ruff], falling back to ruff defaults).
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.21
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+  - repo: https://github.com/hadialqattan/pycln
+    rev: v2.6.0
+    hooks:
+      - id: pycln
+        language_version: python3.13
+        args: ["--all"]
+  # YAML formatting. Helm chart templates are Go-templated (not parseable YAML)
+  # and packaged subcharts are vendored, so they are excluded.
+  - repo: https://github.com/google/yamlfmt
+    rev: v0.21.0
+    hooks:
+      - id: yamlfmt
+        args: ["-formatter", "retain_line_breaks_single=true"]
+        exclude: |
+          (?x)^(
+            .*/helm/templates/.*|
+            charts/.*/templates/.*|
+            charts/.*/charts/.*
+          )
