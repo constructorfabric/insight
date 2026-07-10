@@ -83,33 +83,22 @@ label and varies per Jira language setting.
 > either for Jira; cross-source queries and YouTrack MUST use
 > `status_category`. Prefer `status_category` in new SQL.
 
-> ⚠️ **Implementation gap (2026-07, issue #1541).** The design below is the
-> intended target, but it is **not what runs today**. Neither
-> `silver.class_task_statuses` nor any `statusCategory` join exists in the
-> shipped pipeline. Deployed Gold determines closedness purely from the status
-> **display name**:
->
-> ```sql
-> -- what runs today (8+ sites), e.g. insight.jira_closed_tasks:
-> WHERE status_name IN ('Closed','Resolved','Verified')
-> ```
->
-> and `insight.task_issue_current_state.final_close_at` is computed the same
-> way (`value_displays[1] IN ('Closed','Resolved','Verified')`). This returns
-> **zero** closed tasks for default Jira Cloud team-managed projects (`Done`)
-> and every non-English instance (`Готово`), blanking the whole Task Delivery
-> panel. Closing #1541 means building `class_task_statuses` and replacing every
-> name-match site with a `status_category = 'done'` join — see "What must
-> change" below.
+> ✅ **Shipped (2026-07, issue #1541 / PR #1732).** Before the fix, Deployed Gold
+> determined closedness purely from the status **display name**
+> (`status_name IN ('Closed','Resolved','Verified')` at 8+ sites, incl.
+> `task_issue_current_state.final_close_at`), returning **zero** closed tasks for
+> default Jira Cloud (`Done`) and every non-English instance (`Готово`) — the
+> defect this design removes. The pipeline below is now built: `class_task_statuses`
+> exists and Gold detects "done" via a `status_category = 'done'` join.
 
-## What must change (issue #1541)
+## How it works (shipped in issue #1541)
 
-Three layered changes, data-source-first:
+Three layers, data-source-first:
 
-1. **Connector / Bronze.** Jira: flatten `statusCategory.key` → `category_key`
-   on the `jira_statuses` stream (today only `category_id` + `category_name`
-   are added — see `connector.yaml`). YouTrack: add `isResolved` to the State
-   `bundle(values(...))` selection so the state→done mapping is ingestible.
+1. **Connector / Bronze.** Jira: `jira_statuses` flattens `statusCategory.key` →
+   `category_key` (added in #1541, alongside `category_id` + `category_name`).
+   YouTrack: `isResolved` is included in the State `bundle(values(...))` selection
+   so the state→done mapping is ingestible.
 2. **Silver — reconcile here, so no divergence survives past Silver.** Two
    models:
    - `class_task_statuses` dimension: a per-source dbt projection tagged
@@ -119,22 +108,20 @@ Three layered changes, data-source-first:
      per-source projection emits the same `status_category` enum** (Jira from
      `statusCategory`, YouTrack from `isResolved`) — this is where sources are
      reconciled.
-   - `class_task_status_history`: `class_task_field_history` (`field_id=
-     'status'`) LEFT JOIN `class_task_statuses` on `status_id = value_ids[1]`,
-     carrying `status_category` + `is_closed` per status event. **The join is
-     materialized once, in Silver.** Unmapped `status_id → status_category =
-     'undefined'` (never a guessed label), guarded by a dbt test
-     (`assert_status_ids_mapped`) so a missing dimension row fails loudly
-     instead of silently zeroing closures.
-3. **Gold — read the reconciled Silver signal, contain no status logic.**
-   Replace every hardcoded `status_name IN ('Closed','Resolved','Verified')`
-   (the `jira_closed_tasks` view, the `task_issue_current_state` MV
-   `final_close_at`, `task_close_events_daily` / `task_reopen_events_daily`,
-   `stale_in_progress`) with a read of `class_task_status_history.status_category
-   = 'done'`. Gold performs **no** join and matches **no** label — it consumes
-   the already-reconciled column. (`task_issue_current_state` /
-   `task_status_intervals` build on `class_task_status_history` instead of
-   scanning `class_task_field_history` + name lists directly.)
+   - *(future refinement, NOT built in #1541)* `class_task_status_history`:
+     `class_task_field_history` (`field_id='status'`) LEFT JOIN
+     `class_task_statuses` on `status_id = value_ids[1]`, carrying
+     `status_category` + `is_closed` per event — would materialize the join in
+     Silver so Gold joins nothing. Tracked as a follow-up.
+3. **Gold — detect "done" by category, no name lists.** The migration
+   `20260708000000_task-delivery-status-category.sql` recreates
+   `task_issue_current_state` (adds `status_id` + `status_category`, close via a
+   `class_task_statuses` join on `value_ids[1]`), `task_status_intervals`
+   (carries `status_category`), `jira_closed_tasks`, `task_close_events_daily` /
+   `task_reopen_events_daily`, in-progress/dev seconds and
+   `task_delivery_bullet_rows` to filter on `status_category = 'done'` (and
+   `'in_progress'`). Unmapped `status_id` → `status_category` NULL/`undefined`
+   (never a guessed label). No status-name literal remains in Gold.
 
 ## Field inventory — what the existing silver exposes
 

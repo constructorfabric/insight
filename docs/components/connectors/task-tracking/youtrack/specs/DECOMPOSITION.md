@@ -331,7 +331,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - [ ] `p1` — cpt-insightspec-constraint-youtrack-ddl-owned-by-dbt
 
 - **Domain Model Entities**:
-  - ChangelogItem, IssueFieldSnapshot, TaskComment, TaskWorklog, TaskUser, TaskProject, TaskSprint, TaskFieldMetadata, TaskFieldHistory
+  - ChangelogItem, IssueFieldSnapshot, TaskComment, TaskWorklog, TaskUser, TaskProject, TaskSprint, TaskFieldMetadata, TaskStatus, TaskFieldHistory
 
 - **Design Components**:
   - [ ] `p1` — cpt-insightspec-component-youtrack-dbt-staging
@@ -353,6 +353,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_projects
   - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_sprints
   - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_field_metadata
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_statuses
   - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_field_history (view over Rust output)
 
 ---
