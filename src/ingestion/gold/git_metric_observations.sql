@@ -41,6 +41,18 @@
 -- propagates to file-change measures through the authorship join.
 -- `LIMIT 1 BY` collapses the same commit hash appearing in more than one
 -- repo of a source (forks), keeping commit_count a distinct-hash count.
+--
+-- Memory shape (this view executes live on every metric query, and its
+-- measure branches run concurrently within one query, so per-branch memory
+-- multiplies): FINAL is the cheapest dedup here — a streaming merge of
+-- sorted parts — and stays wherever dedup is needed. Version-ordered
+-- `ORDER BY .. LIMIT 1 BY` is not an alternative: it buffers a full sort
+-- of the read (measured ~2x the memory of FINAL at scale). The two reads
+-- that avoid FINAL do so because they need no dedup at all: the identity
+-- vote in pr_commit_emails aggregates by uniqExact, which duplicate row
+-- versions cannot inflate. file_changes pre-aggregates to commit x category
+-- grain before joining, so per-file rows and file_path strings never enter
+-- a join side or a measure aggregation.
 
 WITH
 commits_source AS (
@@ -79,8 +91,8 @@ file_changes_source AS (
         commits.tenant_id AS tenant_id,
         commits.entity_id AS entity_id,
         commits.metric_date AS metric_date,
-        {{ git_file_category('file_changes.file_path') }} AS category,
-        {{ git_file_category_label('category') }} AS category_label,
+        file_changes.category AS category,
+        {{ git_file_category_label('file_changes.category') }} AS category_label,
         file_changes.lines_added AS lines_added,
         commits.source_dimensions AS source_dimensions,
         CAST(
@@ -89,7 +101,21 @@ file_changes_source AS (
                 tuple('source', commits.source_value, commits.source_label)
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS category_source_dimensions
-    FROM {{ ref('class_git_file_changes') }} AS file_changes FINAL
+    FROM (
+        -- Aggregated to commit x category grain before the join, so per-file
+        -- rows and file_path strings never reach the join or the measure
+        -- aggregations.
+        SELECT
+            tenant_id,
+            source_id,
+            project_key,
+            repo_slug,
+            commit_hash,
+            {{ git_file_category('file_path') }} AS category,
+            sum(lines_added) AS lines_added
+        FROM {{ ref('class_git_file_changes') }} FINAL
+        GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash, category
+    ) AS file_changes
     INNER JOIN commits_source AS commits
         ON commits.tenant_id = file_changes.tenant_id
         AND commits.source_id = file_changes.source_id
@@ -122,8 +148,10 @@ pr_commit_emails AS (
                 PARTITION BY links.tenant_id, links.source_id,
                              links.project_key, links.repo_slug, links.pr_id
             ) AS max_count
-        FROM {{ ref('class_git_pull_requests_commits') }} AS links FINAL
-        INNER JOIN {{ ref('class_git_commits') }} AS commits FINAL
+        -- No dedup on either side: duplicate versions of a link or commit
+        -- row cannot inflate the uniqExact(commit_hash) vote below.
+        FROM {{ ref('class_git_pull_requests_commits') }} AS links
+        INNER JOIN {{ ref('class_git_commits') }} AS commits
             ON commits.tenant_id = links.tenant_id
             AND commits.source_id = links.source_id
             AND commits.project_key = links.project_key
