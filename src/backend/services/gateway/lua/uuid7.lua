@@ -4,6 +4,11 @@
 -- from a cached exchange response (an id from there would repeat for a whole
 -- cache window). Layout per RFC 9562: 48-bit big-endian unix-ms timestamp,
 -- version nibble 0111, variant bits 10, the rest random.
+--
+-- Why hand-rolled: no OpenResty/luarocks library ships UUIDv7 (RFC 9562, 2024).
+-- lua-resty-jit-uuid does v3/v4/v5 only; bungle/lua-resty-uuid is libuuid FFI
+-- (v1/v4). v4 would forfeit the time-ordering the DESIGN wants for correlation
+-- ids, so a focused ~40-line v7 generator is the right call.
 
 local resty_random = require("resty.random")
 

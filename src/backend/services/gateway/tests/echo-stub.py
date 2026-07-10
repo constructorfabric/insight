@@ -9,6 +9,7 @@ assert what the gateway forwarded upstream (the R3 poisoned-header proof):
 
 Bind address from argv[1] (default 0.0.0.0:9090).
 """
+
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,13 +19,15 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def _echo(self):
-        body = json.dumps({
-            "method": self.command,
-            "path": self.path,
-            # Header names are case-insensitive; report them lowercased so the
-            # e2e can assert without worrying about casing.
-            "headers": {k.lower(): v for k, v in self.headers.items()},
-        }).encode()
+        body = json.dumps(
+            {
+                "method": self.command,
+                "path": self.path,
+                # Header names are case-insensitive; report them lowercased so the
+                # e2e can assert without worrying about casing.
+                "headers": {k.lower(): v for k, v in self.headers.items()},
+            }
+        ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

@@ -11,7 +11,6 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
-BACKEND="$(cd ../../.. && pwd)"
 COMPOSE=(docker compose -f docker-compose.e2e.yml)
 GW_PORT="${GW_E2E_PORT:-18080}"
 
@@ -19,7 +18,7 @@ cleanup() {
   set +e
   "${COMPOSE[@]}" logs --no-color > /tmp/gw-e2e.log 2>&1
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1
-  rm -rf "$HERE/keys" "$HERE/work" "$HERE/nginx.conf"
+  rm -rf "$HERE/keys" "$HERE/work"
 }
 trap cleanup EXIT
 
@@ -28,20 +27,15 @@ mkdir -p "$HERE/keys" "$HERE/work"
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$HERE/keys/current.pem"
 chmod 644 "$HERE/keys/current.pem"   # readable by the container's uid 1000
 
-echo "==> generate the e2e nginx.conf (compose names, docker resolver)"
-( cd "$BACKEND" && cargo run -q -p routegen -- \
-    --routes services/gateway/tests/routes.e2e.yaml \
-    --authenticator-url http://authenticator:8083 \
-    --front-url http://echo:9090 \
-    --resolver 127.0.0.11 \
-    -o services/gateway/tests/nginx.conf )
+# nginx.conf is generated inside the gateway container at startup from the
+# mounted routes.e2e.yaml (routegen entrypoint) -- nothing to pre-generate here.
 
 echo "==> build + start the stack"
 "${COMPOSE[@]}" up -d --build redis identity-stub fakeidp authenticator echo gateway
 
 wait_http() { # url
   for _ in $(seq 1 60); do
-    if curl -fsS -o /dev/null "$1"; then return 0; fi
+    if curl -fs -o /dev/null "$1" 2>/dev/null; then return 0; fi
     sleep 1
   done
   echo "ERROR: not ready: $1" >&2
@@ -62,7 +56,9 @@ wait_status() { # url cookie expected
 
 echo "==> wait for gateway + authenticator readiness"
 wait_http "http://localhost:${GW_PORT}/healthz"
-wait_http "http://localhost:${GW_PORT}/.well-known/jwks.json"
+# /auth/login 302s to the IdP once the authenticator is reachable through the
+# gateway (JWKS is no longer fronted here -- it is served by the authenticator).
+wait_http "http://localhost:${GW_PORT}/auth/login"
 
 # --no-deps: `run` would otherwise restart the driver's transitive dependencies
 # (gateway -> authenticator, echo), reviving the very container a phase just
@@ -79,7 +75,7 @@ echo "==> scenario 3/4: authenticator down -> cache serves hits, cold cookie 503
 wait_status "http://localhost:${GW_PORT}/api/v1/analytics/x" "__Host-sid=cold-poll" 503
 driver authdown
 "${COMPOSE[@]}" start authenticator >/dev/null
-wait_http "http://localhost:${GW_PORT}/.well-known/jwks.json"
+wait_http "http://localhost:${GW_PORT}/auth/login"
 
 echo "==> scenario 3: logout revocation within the exchange-cache window"
 sleep 4   # > authz_cache_max_age_seconds (3) so the cached entry expires

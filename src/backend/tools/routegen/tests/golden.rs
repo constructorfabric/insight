@@ -67,6 +67,35 @@ fn every_api_location_has_the_hygiene_block() {
     assert!(conf.contains("add_header Strict-Transport-Security"));
 }
 
+#[test]
+fn real_ip_emitted_only_when_trusted_cidrs_configured() {
+    let yaml = fixture("sample.routes.yaml");
+    // Default (no trusted proxies) -> no real_ip block, no baked network.
+    let default = generate(&yaml, &Settings::default()).unwrap();
+    assert!(!default.contains("set_real_ip_from"));
+    assert!(!default.contains("real_ip_header"));
+    // Configured -> the trust chain is emitted.
+    let with_trust = generate(
+        &yaml,
+        &Settings {
+            set_real_ip_from: vec!["10.0.0.0/8".into(), "192.168.0.0/16".into()],
+            ..Settings::default()
+        },
+    )
+    .unwrap();
+    assert!(with_trust.contains("real_ip_header X-Forwarded-For;"));
+    assert!(with_trust.contains("set_real_ip_from 10.0.0.0/8;"));
+    assert!(with_trust.contains("set_real_ip_from 192.168.0.0/16;"));
+}
+
+#[test]
+fn jwks_is_not_fronted_by_the_gateway() {
+    // JWKS is public and served directly by the authenticator (the key issuer),
+    // never proxied through the edge.
+    let conf = generate(&fixture("sample.routes.yaml"), &Settings::default()).unwrap();
+    assert!(!conf.contains("jwks"), "gateway must not front JWKS");
+}
+
 fn reject(yaml: &str) -> String {
     let err = generate(yaml, &Settings::default())
         .expect_err("expected validation to reject this config");

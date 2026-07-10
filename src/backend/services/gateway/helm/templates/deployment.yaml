@@ -14,9 +14,10 @@ spec:
       labels:
         {{- include "insight-gateway.selectorLabels" . | nindent 8 }}
       annotations:
-        # Reloader v1: roll the pods when the generated config changes (DESIGN
-        # 3.13). A broken config never ships -- CI ran routegen + nginx -t.
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Roll the pods when the route table changes; the container regenerates
+        # nginx.conf from it on start (DESIGN 3.13). A broken table never ships
+        # -- the entrypoint runs `nginx -t` and fails the pod before serving.
+        checksum/routes: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -39,15 +40,32 @@ spec:
         - name: gateway
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # The Lua module ships in the image; only the generated nginx.conf is
-          # mounted from the ConfigMap (DESIGN 3.15).
+          # Deployment settings -> routegen flags at startup (entrypoint). The
+          # route table itself is the mounted ConfigMap; nothing is baked.
+          env:
+            - name: GATEWAY_ROUTES_FILE
+              value: /etc/gateway/routes.yaml
+            - name: GATEWAY_AUTHENTICATOR_URL
+              value: {{ required "gateway.authenticatorUrl is required" .Values.gateway.authenticatorUrl | quote }}
+            - name: GATEWAY_FRONT_URL
+              value: {{ required "gateway.frontUrl is required" .Values.gateway.frontUrl | quote }}
+            - name: GATEWAY_RESOLVER
+              value: {{ required "gateway.resolver is required (kube-dns/CoreDNS cluster IP)" .Values.gateway.resolver | quote }}
+            {{- with .Values.gateway.setRealIpFrom }}
+            - name: GATEWAY_SET_REAL_IP_FROM
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.gateway.jwtCacheSize }}
+            - name: GATEWAY_JWT_CACHE_SIZE
+              value: {{ . | quote }}
+            {{- end }}
           volumeMounts:
-            - name: nginx-config
-              mountPath: /usr/local/openresty/nginx/conf/nginx.conf
-              subPath: nginx.conf
+            - name: routes
+              mountPath: /etc/gateway
               readOnly: true
-            # Writable tmp for the pid file and nginx temp paths (the config
-            # points them under /tmp); everything else is stateless (DESIGN 3.7).
+            # Writable tmp: routegen writes nginx.conf here and nginx keeps its
+            # pid + temp paths here (the config points them at /tmp). Everything
+            # else is stateless (DESIGN 3.7).
             - name: tmp
               mountPath: /tmp
           ports:
@@ -70,8 +88,8 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
-        - name: nginx-config
+        - name: routes
           configMap:
-            name: {{ include "insight-gateway.fullname" . }}-nginx-config
+            name: {{ include "insight-gateway.fullname" . }}-routes
         - name: tmp
           emptyDir: {}

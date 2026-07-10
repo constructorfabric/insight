@@ -12,11 +12,13 @@ between them and shares the session cookie via /work/sid.txt:
   revoked       scenario 3: after logout + cache expiry, the cookie is rejected
   upstreamdown  scenario 4: exchange succeeds, dead upstream yields 502
 """
+
 import base64
 import json
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 GW = "http://gateway:8080"
 ROUTES = ["/api/v1/analytics", "/api/v1/identity"]
@@ -28,10 +30,10 @@ _failures = 0
 def check(name, ok, detail=""):
     global _failures
     if ok:
-        print(f"PASS: {name}")
+        print(f"PASS: {name}")  # noqa: T201 -- e2e driver: PASS/FAIL output is the point
     else:
         _failures += 1
-        print(f"FAIL: {name} {detail}")
+        print(f"FAIL: {name} {detail}")  # noqa: T201
 
 
 def req(url, headers=None, method="GET"):
@@ -43,6 +45,7 @@ def req(url, headers=None, method="GET"):
             return None
 
     opener = urllib.request.build_opener(NoRedirect)
+
     # HTTP header names are case-insensitive, but the casing on the wire varies
     # by source (Lua-set vs proxied-through), so normalize keys to lowercase.
     def lower(headers):
@@ -68,7 +71,7 @@ def login():
     for part in set_cookie.split(";"):
         part = part.strip()
         if part.startswith("__Host-sid="):
-            return part[len("__Host-sid="):]
+            return part[len("__Host-sid=") :]
     raise SystemExit(f"no __Host-sid in Set-Cookie: {set_cookie!r}")
 
 
@@ -80,29 +83,32 @@ def b64url_json(segment):
 def phase_core():
     # Scenario 1: no cookie -> 401 + WWW-Authenticate on EVERY configured route.
     for route in ROUTES:
-        status, h, _ = req(f"{GW}{route}/x")
+        status, h, body = req(f"{GW}{route}/x")
         check(f"no-cookie 401 on {route}", status == 401, f"got {status}")
         check(f"WWW-Authenticate on {route}", "www-authenticate" in h)
+    # Canonical problem-details body (toolkit Problem shape) on the 401.
+    prob = json.loads(body)
+    check("401 is application/problem+json", "problem+json" in h.get("content-type", ""))
+    check(
+        "401 type is canonical unauthenticated URN",
+        prob.get("type") == "gts://gts.cf.core.errors.err.v1~cf.core.err.unauthenticated.v1~",
+        prob.get("type"),
+    )
+    check("401 title/status canonical", prob.get("title") == "Unauthenticated" and prob.get("status") == 401, str(prob))
 
     # Scenario 2: login -> cookie -> /api 200 with a verifiable JWT injected, the
     # session cookie stripped, a forged inbound Authorization replaced, and a
     # unique UUIDv7 correlation id per request (R3 poisoned-header snapshot).
     sid = login()
-    with open(SID_FILE, "w") as f:
-        f.write(sid)
+    Path(SID_FILE).write_text(sid)
 
-    hdrs = {
-        "Cookie": f"__Host-sid={sid}; keep=1",
-        "Authorization": "Bearer FORGED",
-        "X-Correlation-Id": "forged-corr",
-    }
+    hdrs = {"Cookie": f"__Host-sid={sid}; keep=1", "Authorization": "Bearer FORGED", "X-Correlation-Id": "forged-corr"}
     status, _, body = req(f"{GW}/api/v1/analytics/data", headers=hdrs)
     check("authed request 200", status == 200, f"got {status}")
     echoed = json.loads(body)["headers"]
 
     auth = echoed.get("authorization", "")
-    check("forged Authorization replaced by Bearer JWT",
-          auth.startswith("Bearer ") and auth != "Bearer FORGED", auth)
+    check("forged Authorization replaced by Bearer JWT", auth.startswith("Bearer ") and auth != "Bearer FORGED", auth)
     jwt = auth.split(" ", 1)[1] if " " in auth else ""
     parts = jwt.split(".")
     check("injected JWT is well-formed (3 segments)", len(parts) == 3)
@@ -111,15 +117,19 @@ def phase_core():
         claims = b64url_json(parts[1])
         check("JWT alg is ES256", header.get("alg") == "ES256", str(header))
         check("JWT carries sub", "sub" in claims, str(claims))
-    check("__Host-sid stripped from upstream Cookie",
-          "__Host-sid" not in echoed.get("cookie", ""), echoed.get("cookie", ""))
+    check(
+        "__Host-sid stripped from upstream Cookie",
+        "__Host-sid" not in echoed.get("cookie", ""),
+        echoed.get("cookie", ""),
+    )
     check("non-gateway cookie preserved", "keep=1" in echoed.get("cookie", ""))
     corr = echoed.get("x-correlation-id", "")
     check("correlation id not the forged one", corr and corr != "forged-corr", corr)
 
-    # Verifiable: JWKS is served through the gateway (the downstream boundary).
-    status, _, body = req(f"{GW}/.well-known/jwks.json")
-    check("JWKS reachable via gateway", status == 200, f"got {status}")
+    # Verifiable: JWKS is served DIRECTLY by the authenticator (the key issuer),
+    # not fronted by the gateway. Downstream services fetch it there.
+    status, _, body = req("http://authenticator:8083/.well-known/jwks.json")
+    check("JWKS served by the authenticator", status == 200, f"got {status}")
     check("JWKS has keys", "keys" in json.loads(body))
 
     # Unique UUIDv7 per request.
@@ -139,18 +149,25 @@ def phase_core():
 def phase_authdown():
     # Scenario 3/4: with the authenticator stopped, a cached cookie is still
     # served from the per-pod lua_shared_dict, while a cold cookie fails closed.
-    sid = open(SID_FILE).read().strip()
+    sid = Path(SID_FILE).read_text().strip()
     status, _, _ = req(f"{GW}/api/v1/analytics/x", headers={"Cookie": f"__Host-sid={sid}"})
     check("cached cookie still 200 while authenticator down", status == 200, f"got {status}")
 
-    status, h, _ = req(f"{GW}/api/v1/analytics/x", headers={"Cookie": "__Host-sid=cold-never-seen"})
+    status, h, body = req(f"{GW}/api/v1/analytics/x", headers={"Cookie": "__Host-sid=cold-never-seen"})
     check("cold cookie -> 503 fail closed", status == 503, f"got {status}")
     check("503 carries Retry-After", "retry-after" in h)
+    prob = json.loads(body)
+    check(
+        "503 type is canonical service_unavailable URN",
+        prob.get("type") == "gts://gts.cf.core.errors.err.v1~cf.core.err.service_unavailable.v1~",
+        prob.get("type"),
+    )
+    check("503 context has retry_after_seconds", prob.get("context", {}).get("retry_after_seconds") == 5, str(prob))
 
 
 def phase_revoked():
     # Scenario 3: after logout and cache expiry, the session is rejected.
-    sid = open(SID_FILE).read().strip()
+    sid = Path(SID_FILE).read_text().strip()
     req(f"{GW}/auth/logout", headers={"Cookie": f"__Host-sid={sid}"}, method="POST")
     status, _, _ = req(f"{GW}/api/v1/analytics/x", headers={"Cookie": f"__Host-sid={sid}"})
     check("revoked session -> 401 within cache max-age", status == 401, f"got {status}")
@@ -163,15 +180,10 @@ def phase_upstreamdown():
     check("dead upstream -> 502", status == 502, f"got {status}")
 
 
-PHASES = {
-    "core": phase_core,
-    "authdown": phase_authdown,
-    "revoked": phase_revoked,
-    "upstreamdown": phase_upstreamdown,
-}
+PHASES = {"core": phase_core, "authdown": phase_authdown, "revoked": phase_revoked, "upstreamdown": phase_upstreamdown}
 
 if __name__ == "__main__":
     phase = sys.argv[1] if len(sys.argv) > 1 else "core"
     PHASES[phase]()
-    print(f"--- phase '{phase}': {'OK' if _failures == 0 else str(_failures) + ' FAILURES'} ---")
+    print(f"--- phase '{phase}': {'OK' if _failures == 0 else str(_failures) + ' FAILURES'} ---")  # noqa: T201
     sys.exit(1 if _failures else 0)

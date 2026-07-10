@@ -3,9 +3,20 @@
 # Build context: src/backend/
 # Usage: cd src/backend && docker build -f services/gateway/Dockerfile -t insight-gateway:dev .
 #
-# The Lua module ships in the image (DESIGN 3.15); the nginx.conf is baked as a
-# default but is overridden at runtime by the ConfigMap the configurator
-# generated in CI (k8s) or by a compose bind-mount.
+# The image ships the Lua module + the routegen binary + an entrypoint. It bakes
+# NO config: routes.yaml is mounted at runtime (ConfigMap in k8s, bind-mount in
+# compose) and compiled to nginx.conf on startup, with deployment settings from
+# the environment (DD-GW-02). Single source of truth, nothing committed.
+
+# Stage 1: build the routegen CLI. rust:alpine so the musl binary runs on the
+# openresty:alpine runtime without a glibc mismatch.
+FROM rust:1.95-alpine AS routegen
+RUN apk add --no-cache musl-dev
+WORKDIR /build
+COPY . .
+RUN cargo build --release -p routegen
+
+# Stage 2: OpenResty runtime.
 FROM openresty/openresty:1.27.1.2-alpine
 
 # lua-resty-http is NOT bundled in the base image (ADR-0001 "More Information").
@@ -14,14 +25,14 @@ RUN apk add --no-cache --virtual .opm-deps perl curl \
     && opm get ledgetech/lua-resty-http \
     && apk del .opm-deps
 
-# The static Lua module (access-phase exchange, uuid7, error shaping). This is
-# ALL the image ships (DESIGN 3.15): the nginx.conf is always mounted at runtime
-# -- a ConfigMap in k8s, a bind-mount in compose -- never baked. (It could not be
-# baked anyway: helm/ is dockerignored, and the generated config carries
-# in-cluster upstream names that would not resolve at build time.)
+# The static Lua module (access-phase exchange, uuid7, error shaping) + the
+# routegen binary + the startup entrypoint.
 COPY services/gateway/lua/ /etc/nginx/lua/
+COPY --from=routegen /build/target/release/routegen /usr/local/bin/routegen
+COPY services/gateway/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8080
 
 STOPSIGNAL SIGQUIT
-CMD ["openresty", "-g", "daemon off;"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -39,9 +39,9 @@ services:
       context: ../../..
       dockerfile: services/authenticator/Dockerfile
     depends_on:
-      redis: { condition: service_healthy }
-      fakeidp: { condition: service_started }
-      identity-stub: { condition: service_started }
+      redis: {condition: service_healthy}
+      fakeidp: {condition: service_started}
+      identity-stub: {condition: service_started}
     environment:
       APP__gears__authenticator__config__redis_url: "redis://redis:6379"
       APP__gears__authenticator__config__signing_keys_path: "/keys"
@@ -66,10 +66,15 @@ services:
       context: ../../..
       dockerfile: services/gateway/Dockerfile
     depends_on:
-      authenticator: { condition: service_started }
-      echo: { condition: service_started }
+      authenticator: {condition: service_started}
+      echo: {condition: service_started}
+    environment:
+      GATEWAY_AUTHENTICATOR_URL: "http://authenticator:8083"
+      GATEWAY_FRONT_URL: "http://echo:9090"
+      GATEWAY_RESOLVER: "127.0.0.11"
     volumes:
-      - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      # The container compiles this into nginx.conf at startup (routes -> echo).
+      - ./routes.e2e.yaml:/etc/gateway/routes.yaml:ro
     ports:
       # Published for host-side readiness polling in run-e2e.sh; assertions run
       # from the on-network driver, not this port.
@@ -80,7 +85,7 @@ services:
     image: python:3.12-slim
     profiles: ["driver"]
     depends_on:
-      gateway: { condition: service_started }
+      gateway: {condition: service_started}
     volumes:
       - ./assert.py:/assert.py:ro
       - ./work:/work

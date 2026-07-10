@@ -1,18 +1,18 @@
 name: Gateway — routegen, config, e2e
 
-# The gateway is generated, not hand-written (DD-GW-02): routes.yaml in git, the
-# nginx.conf compiled from it by routegen and committed next to it. This workflow
-# is the guard: routegen's own tests, an assertion that every committed config is
-# in sync with its routes.yaml, `nginx -t` on the real OpenResty image, and the
-# full §D e2e. Runs only when the gateway, the generator, or the compose config
-# changes.
+# The gateway is generated, not hand-written (DD-GW-02): routes.yaml is the
+# single source of truth (shipped as a ConfigMap / compose mount), and the
+# container compiles it into nginx.conf at startup with routegen. This workflow
+# is the guard: routegen's own tests, `nginx -t` on the real OpenResty image
+# (via the container's own generate-and-validate path), and the full end-to-end
+# suite (the five NGINX_BFF step-05 scenarios in run-e2e.sh). Runs only when the
+# gateway or the generator changes.
 on:
   pull_request:
     branches: [main]
     paths:
       - "src/backend/tools/routegen/**"
       - "src/backend/services/gateway/**"
-      - "deploy/compose/gateway/**"
       - ".github/workflows/gateway.yml"
   workflow_dispatch:
 
@@ -50,42 +50,28 @@ jobs:
           cargo clippy -p routegen --all-targets -- -D warnings
           cargo test -p routegen
 
-      - name: Assert committed nginx.conf is in sync with routes.yaml
-        working-directory: src/backend
-        run: |
-          # k8s config (default settings)
-          cargo run -q -p routegen -- \
-            --routes services/gateway/routes.yaml \
-            --check services/gateway/helm/files/nginx.conf
-          # compose config (compose network settings)
-          cargo run -q -p routegen -- \
-            --routes ../../deploy/compose/gateway/routes.yaml \
-            --authenticator-url http://authenticator:8083 \
-            --front-url http://insight-front:80 \
-            --resolver 127.0.0.11 \
-            --check ../../deploy/compose/gateway/nginx.conf
-
       - name: Build the OpenResty gateway image
         working-directory: src/backend
         run: docker build -f services/gateway/Dockerfile -t insight-gateway:ci .
 
-      - name: nginx -t on every committed config
+      - name: Generate + nginx -t via the container's own startup path
         run: |
-          set -euo pipefail
-          test_conf() { # path-to-nginx.conf
-            local conf="$1"
-            local add=()
-            while read -r h; do
-              [ -n "$h" ] && add+=(--add-host "$h:127.0.0.1")
-            done < <(grep -oE 'server [a-zA-Z0-9._-]+:[0-9]+;' "$conf" \
-                       | sed -E 's/server ([^:]+):.*/\1/' | sort -u)
-            echo "== nginx -t: $conf =="
-            docker run --rm "${add[@]}" \
-              -v "$PWD/$conf":/usr/local/openresty/nginx/conf/nginx.conf:ro \
-              insight-gateway:ci openresty -t
-          }
-          test_conf src/backend/services/gateway/helm/files/nginx.conf
-          test_conf deploy/compose/gateway/nginx.conf
+          # Exercise the real entrypoint (routegen -> nginx -t) against the
+          # committed routes.yaml. Upstream short-names are mapped to loopback so
+          # nginx can resolve them at config-load time; GATEWAY_VALIDATE_ONLY
+          # makes the container generate, validate, and exit without serving.
+          docker run --rm \
+            --add-host analytics:127.0.0.1 \
+            --add-host identity:127.0.0.1 \
+            --add-host authenticator:127.0.0.1 \
+            --add-host insight-front:127.0.0.1 \
+            -e GATEWAY_VALIDATE_ONLY=1 \
+            -e GATEWAY_AUTHENTICATOR_URL=http://authenticator:8083 \
+            -e GATEWAY_FRONT_URL=http://insight-front:8080 \
+            -e GATEWAY_RESOLVER=10.96.0.10 \
+            -e GATEWAY_SET_REAL_IP_FROM=10.0.0.0/8 \
+            -v "$PWD/src/backend/services/gateway/helm/files/routes.yaml":/etc/gateway/routes.yaml:ro \
+            insight-gateway:ci
 
       - name: helm lint the gateway chart
         run: helm lint src/backend/services/gateway/helm
