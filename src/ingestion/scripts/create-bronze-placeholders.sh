@@ -952,6 +952,31 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields (
 SQL
 fi
 
+# bronze_jira.jira_worklogs — Jira worklog rows. jira__task_worklogs.sql
+# (tag silver:class_task_worklogs) reads these to build silver.class_task_worklogs,
+# the numerator behind worklog_logging_accuracy. Columns mirror what that staging
+# model reads (worklog_id, author_account_id, started, time_spent_seconds, …).
+if ! ch_table_exists bronze_jira jira_worklogs; then
+  echo "  Creating placeholder: bronze_jira.jira_worklogs"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklogs (
+    unique_key String,
+    source_id String,
+    worklog_id String,
+    id_readable String,
+    author_account_id String,
+    started String,
+    time_spent_seconds Nullable(Int64),
+    comment Nullable(String),
+    collected_at String,
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+fi
+
 # bronze_m365 -- needed by gold-views teams_person_daily, files_person_daily, comms_daily.
 # Each table is checked and created independently so a partially-seeded
 # state (e.g. teams_activity exists, onedrive_activity does not) gets the

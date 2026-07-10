@@ -123,23 +123,43 @@ def refresh_intermediates(cfg: SessionConfig, *, timeout_s: float = 30.0) -> int
     if not views:
         return 0
 
+    in_list = ", ".join(f"'{v}'" for v in views)
+
+    # Capture each view's refresh_count BEFORE triggering. Between tests a view
+    # sits at status='Scheduled', last_refresh_result='Finished' from the PRIOR
+    # refresh, so a naive "status settled AND result=Finished" check matches that
+    # stale state and returns before the refresh we just asked for has run —
+    # leaving the MV holding the previous test's rows (a flaky cross-test bleed).
+    # refresh_count is monotonic per successful refresh, so we wait for it to
+    # advance past its pre-trigger value. (`SYSTEM WAIT VIEW` would be cleaner but
+    # only exists in CH 24.10+; prod is pinned to 24.8.)
+    before = {
+        v: int(cnt)
+        for (v, cnt) in ch.query(
+            cfg,
+            "SELECT concat(database, '.', view), refresh_count "
+            f"FROM system.view_refreshes WHERE concat(database, '.', view) IN ({in_list})",
+        )
+    }
+
     for view in views:
         LOG.debug("SYSTEM REFRESH VIEW %s", view)
         ch.execute(cfg, f"SYSTEM REFRESH VIEW {view}")
 
-    in_list = ", ".join(f"'{v}'" for v in views)
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         rows = ch.query(
             cfg,
-            "SELECT concat(database, '.', view), status, last_refresh_result "
+            "SELECT concat(database, '.', view), status, last_refresh_result, refresh_count "
             f"FROM system.view_refreshes WHERE concat(database, '.', view) IN ({in_list})",
         )
         all_done = (
             len(rows) == len(views)
             and all(
-                (status == "Scheduled" and result == "Finished") or status == "Finished"
-                for (_v, status, result) in rows
+                result == "Finished"
+                and status in ("Scheduled", "Finished")
+                and int(cnt) > before.get(v, 0)
+                for (v, status, result, cnt) in rows
             )
         )
         if all_done:
