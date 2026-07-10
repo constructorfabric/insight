@@ -18,7 +18,7 @@ dependencies = [
     # HttpMocker's transport backend — an optional extra of the CDK, required here.
     "requests-mock>=1.11",
     # airbyte-cdk 6.60.x itself pins jsonschema >=4.17.3,<4.18 — stay inside it.
-    "jsonschema>=4.17.3",
+    "jsonschema>=4.17.3,<4.18",
     "pyyaml>=6.0",
 ]
 

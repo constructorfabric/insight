@@ -45,6 +45,58 @@ def test_stream_schema_unknown_stream() -> None:
         stream_schema("task-tracking/jira", "no_such_stream")
 
 
+def test_connector_inventory_tracks_covered_and_missing() -> None:
+    from connector_tests.plugin import connector_inventory
+
+    rows = {r["connector"]: r for r in connector_inventory()}
+    jira = rows["task-tracking/jira"]
+    assert jira["type"] == "nocode"
+    assert jira["covered"], "the jira reference suite must be visible as covered"
+    gitlab = rows["git/gitlab"]
+    assert gitlab["type"] == "cdk"
+    assert any(
+        r["type"] == "nocode" and not r["covered"] for r in rows.values()
+    ), "connectors without a suite must be reported as missing"
+
+
+def test_terminal_summary_reports_coverage_table(monkeypatch, tmp_path) -> None:
+    """The end-of-run report (terminal + GitHub job summary) lists covered and
+    missing connectors. Called directly because pytest stops measuring coverage
+    before real terminal-summary hooks run."""
+    from connector_tests import plugin
+
+    class _Reporter:
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+
+        def section(self, title: str) -> None:
+            self.lines.append(title)
+
+        def line(self, text: str) -> None:
+            self.lines.append(text)
+
+    step_summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(step_summary))
+    monkeypatch.setattr(plugin, "_summary_emitted", False)
+    reporter = _Reporter()
+    try:
+        plugin.pytest_terminal_summary(reporter, 0, None)
+        # idempotence: a second registration (another conftest) emits nothing
+        before = len(reporter.lines)
+        plugin.pytest_terminal_summary(reporter, 0, None)
+        assert len(reporter.lines) == before
+    finally:
+        # let the real end-of-run hook still emit its report
+        monkeypatch.setattr(plugin, "_summary_emitted", False)
+
+    text = "\n".join(reporter.lines)
+    assert "task-tracking/jira" in text and "covered" in text
+    assert "MISSING" in text
+    md = step_summary.read_text()
+    assert "| `task-tracking/jira` | nocode | ✅ |" in md
+    assert "❌ missing" in md
+
+
 def test_assert_records_conform_flags_type_violation_and_undeclared_field() -> None:
     good = {"unique_key": "t-s-1", "tenant_id": "t", "source_id": "s", "key": "P1"}
     with pytest.raises(AssertionError, match="not declared"):

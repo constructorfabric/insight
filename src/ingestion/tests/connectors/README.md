@@ -10,7 +10,7 @@ protocol `read` as a black box.
 
 ## Layout
 
-```
+```text
 src/ingestion/tests/connectors/        # this package (the measured harness)
   connector_tests/                     #   get_source / read_stream / builders /
   meta/                                #   schema asserts; harness's own tests

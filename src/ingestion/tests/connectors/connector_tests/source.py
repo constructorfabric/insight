@@ -7,6 +7,7 @@ Implements `cpt-insightspec-algo-cn-mock-source-build` and
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,12 @@ def connector_dir(connector_path: str) -> Path:
     return pkg
 
 
+@lru_cache(maxsize=None)
 def load_manifest(connector_path: str) -> dict[str, Any]:
+    # Cached for the test-process lifetime: spec validation and schema asserts
+    # re-read the same manifest many times per suite. YamlDeclarativeSource
+    # still reads the file itself — deliberately, so the source consumes the
+    # same bytes Airbyte would.
     with open(connector_dir(connector_path) / "connector.yaml") as f:
         return yaml.safe_load(f)
 

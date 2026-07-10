@@ -28,7 +28,7 @@ Then run the mock-server test suite (L1 of the test ladder, `docs/domain/connect
 src/ingestion/tests/connectors/.venv/bin/pytest src/ingestion/connectors/<category>/<name>/tests/
 ```
 
-Must exit 0. If `tests/` does not exist, report it as a spec gap (connector predates the mock-test spec — see `connector-create.md` §5.7); do NOT silently skip.
+Must exit 0. If `tests/` does not exist, this check FAILS: report the connector as non-compliant with the mock-test spec (see `create.md` §5.7) — a missing suite is a validation failure to fix by authoring the suite, not a skippable gap.
 
 ## Step 2: Builder-UI compatibility checklist (manifest-only)
 

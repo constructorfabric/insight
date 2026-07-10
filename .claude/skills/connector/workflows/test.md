@@ -39,7 +39,7 @@ src/ingestion/tests/connectors/.venv/bin/pytest src/ingestion/connectors/CONNECT
 ```
 
 - If the suite fails: fix the manifest (or the tests, if the behavior change is intended), STOP before live testing.
-- If `tests/` does not exist: the connector predates the mock-test spec. Report the gap and offer to author the suite per create.md §5.7. Do NOT silently skip.
+- If `tests/` does not exist: the connector predates the mock-test spec. STOP — do NOT continue to Phase 4 silently. Report the gap and ask the user to choose: (a) author the suite now per create.md §5.7 (preferred), or (b) explicitly proceed to live testing without L1 (acceptable for legacy connectors only, with the gap recorded in the Phase 8 summary).
 
 ## Phase 4: Check Credentials
 
