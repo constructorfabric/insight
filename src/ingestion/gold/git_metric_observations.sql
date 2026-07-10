@@ -1,5 +1,7 @@
 {{ config(
-    materialized='view',
+    materialized='table',
+    engine='MergeTree',
+    order_by=['source_key', 'measure_key', 'entity_id', 'metric_date'],
     schema='insight',
     alias='git_metric_observations',
     tags=['gold']
@@ -11,7 +13,14 @@
 -- macros/metric_observation_measures.sql; file classification and the
 -- source-dimension display label come from macros/git_file_category.sql
 -- (static product vocabulary, computed here rather than in silver so
--- taxonomy/label changes apply retroactively on every read).
+-- taxonomy/label changes apply retroactively on the next build).
+--
+-- Materialized as a sorted table: the observation pipeline below (FINAL
+-- dedup, joins, ten measure branches) runs once per dbt build — which is
+-- also the only time the silver inputs can have changed — instead of once
+-- per metric query. The ordering key mirrors the runtime's filter shape
+-- (source_key, measure_key, entity_id, metric_date), so single-measure
+-- queries read index-pruned ranges rather than the whole relation.
 --
 -- Grain per measure:
 --   day-grain sums:  commit_count, code_lines_added, lines_added,
@@ -42,10 +51,9 @@
 -- `LIMIT 1 BY` collapses the same commit hash appearing in more than one
 -- repo of a source (forks), keeping commit_count a distinct-hash count.
 --
--- Memory shape (this view executes live on every metric query, and its
--- measure branches run concurrently within one query, so per-branch memory
--- multiplies): FINAL is the cheapest dedup here — a streaming merge of
--- sorted parts — and stays wherever dedup is needed. Version-ordered
+-- Memory shape (the measure branches run as concurrent pipelines within
+-- the build query): FINAL is the cheapest dedup here — a streaming merge
+-- of sorted parts — and stays wherever dedup is needed. Version-ordered
 -- `ORDER BY .. LIMIT 1 BY` is not an alternative: it buffers a full sort
 -- of the read (measured ~2x the memory of FINAL at scale). The two reads
 -- that avoid FINAL do so because they need no dedup at all: the identity
