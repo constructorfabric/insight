@@ -30,40 +30,11 @@ name: E2E — Bronze to API
 # Code:  src/ingestion/tests/e2e/
 
 on:
-  # PR-only (+ manual dispatch). Path-filtered so the ~30-min bronze→API stack
-  # (clickhouse + mariadb + dbt + pytest) only runs when a path the suite
-  # actually consumes changes — docs-only and other non-product PRs skip it
-  # entirely (no runner spins up).
-  #
-  # Paths whose *contents* the suite reads at build- or test-time
-  # (see src/ingestion/tests/e2e/lib/config.py + compose/):
-  #   src/backend/**   — analytics-api: compiled into the runner image
-  #                      (compose/docker-compose.runner.yml) + its dbt manifest
-  #                      dir (analytics_api_manifest_dir).
-  #   src/ingestion/** — dbt project (src/ingestion/dbt), CH/Maria migrations
-  #                      (src/ingestion/scripts/migrations), connectors' enrich
-  #                      binaries, silver defs, AND the e2e harness + fixtures
-  #                      (tests/e2e) itself.
-  #   src/frontend/**  — kept as a broad safety net by request; note the suite
-  #                      stops at the analytics-api HTTP layer and does NOT
-  #                      exercise frontend code, so a frontend-only PR gets no
-  #                      real signal from it.
-  # Deliberately NOT a trigger: deploy/** (the rig ships its own compose/seed
-  # under tests/e2e and never reads deploy/). Widen this list if the suite
-  # starts consuming new paths.
-  #
-  # NB: because of this filter the check does NOT run on every PR, so it is
-  # intentionally NOT a required status check — a path-filtered required check
-  # hangs on "Expected — Waiting for status" forever on PRs outside the filter.
-  # It's an advisory signal that runs (and must pass) on product-touching PRs.
-  # workflow_dispatch remains for manual reruns against main.
+  # PR-only (+ manual dispatch). Runs on every PR against main, regardless of
+  # which paths changed — no path filtering. workflow_dispatch remains for
+  # manual reruns against main.
   pull_request:
     branches: [main]
-    paths:
-      - "src/backend/**"
-      - "src/ingestion/**"
-      - "src/frontend/**"
-      - ".github/workflows/e2e-bronze-to-api.yml"
   workflow_dispatch:
 
 # A new push obsoletes any run still in flight for the same ref — cancel it so a

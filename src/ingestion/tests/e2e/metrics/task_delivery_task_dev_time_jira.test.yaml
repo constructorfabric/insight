@@ -1,0 +1,87 @@
+spec_version: 1
+description: >
+  Task Delivery - task_dev_time - JIRA, IC Bullet Task Delivery (...0011),
+  department-of-5 distribution + 6 stats in a single custom window.
+
+  bronze -> silver -> gold: jira_issue + jira_issue_history (In Progress -> Closed)
+  + jira_user; bamboohr employees give the Engineering org_unit_id (the cohort).
+  jira-enrich -> per-field event log -> status intervals; task_dev_seconds_per_issue
+  sums the seconds spent in dev-active statuses per closed issue -> hours. The
+  ...0011 query_ref takes the per-person MEDIAN of those hours (value = the member's
+  own), and median/p25/p75/range = the department distribution. For this metric
+  range_max is the cohort P95 (long-tail guard), which on a 5-point ladder = max.
+
+  Department: 5 Engineering members alice..erin of rank r in 1..5, each with ONE
+  closed issue that stays In Progress for exactly r hours on 2026-03-25 -> per-person
+  task_dev_time = {1,2,3,4,5} h. The IC case requests erin (5):
+    value=5, median=3, range_min=1, range_max=5 (P95), p25=2, p75=4.
+  Empty window 2026-06 -> no items.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+  bronze_jira.jira_user:
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-alice-jira-acct, account_id: alice-jira-acct, email: alice@example.com, display_name: Alice Alpha }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-bob-jira-acct, account_id: bob-jira-acct, email: bob@example.com, display_name: Bob Beta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-carol-jira-acct, account_id: carol-jira-acct, email: carol@example.com, display_name: Carol Gamma }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-jira-acct, account_id: dave-jira-acct, email: dave@example.com, display_name: Dave Delta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-erin-jira-acct, account_id: erin-jira-acct, email: erin@example.com, display_name: Erin Epsilon }
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+  bronze_jira.jira_issue:
+    # Each member: one issue created In Progress at 00:00, closed r hours later.
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: DVA-1, jira_id: DVA-1, unique_key: jira-test-DVA-1, id_readable: DVA1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: DVB-1, jira_id: DVB-1, unique_key: jira-test-DVB-1, id_readable: DVB1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: DVC-1, jira_id: DVC-1, unique_key: jira-test-DVC-1, id_readable: DVC1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: DVD-1, jira_id: DVD-1, unique_key: jira-test-DVD-1, id_readable: DVD1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: DVE-1, jira_id: DVE-1, unique_key: jira-test-DVE-1, id_readable: DVE1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}' }
+  bronze_jira.jira_issue_history:
+    # Close r hours after creation → In Progress interval = r hours (r = 1..5).
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: DVA1, changelog_id: "51001", unique_key: jira-test-DVA1-51001, created_at: "2026-03-25T01:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: DVB1, changelog_id: "51002", unique_key: jira-test-DVB1-51002, created_at: "2026-03-25T02:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: DVC1, changelog_id: "51003", unique_key: jira-test-DVC1-51003, created_at: "2026-03-25T03:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: DVD1, changelog_id: "51004", unique_key: jira-test-DVD1-51004, created_at: "2026-03-25T04:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: DVE1, changelog_id: "51005", unique_key: jira-test-DVE1-51005, created_at: "2026-03-25T05:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+
+cases:
+  - name: "task_dev_time — custom scope (department of 5)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-03-20' and metric_date le '2026-03-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: { metric_key: task_dev_time }
+        equal: { value: 5, median: 3, range_min: 1, range_max: 5, p25: 2, p75: 4 }
+  - name: "task_dev_time — empty window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        assert: "size(items) == 0"
