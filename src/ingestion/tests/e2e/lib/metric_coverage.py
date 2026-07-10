@@ -89,18 +89,10 @@ SKIP_LIST: list[tuple[str, str]] = [
     ("collab_person_counter_daily.messages_sent", "reachable — Teams/Zulip fixtures exist"),
     # task_delivery_bullet_rows — Jira fixtures exist (reachable backlog)
     ("task_delivery_bullet_rows.avg_slip", "reachable — Jira fixtures exist"),
-    ("task_delivery_bullet_rows.estimation_accuracy", "reachable — Jira fixtures exist"),
-    ("task_delivery_bullet_rows.flow_efficiency", "reachable — Jira fixtures exist"),
-    ("task_delivery_bullet_rows.mean_time_to_resolution", "reachable — Jira fixtures exist"),
     ("task_delivery_bullet_rows.on_time_delivery", "reachable — Jira fixtures exist"),
     ("task_delivery_bullet_rows.overrun_ratio", "reachable — Jira fixtures exist"),
-    ("task_delivery_bullet_rows.pickup_time", "reachable — Jira fixtures exist"),
     ("task_delivery_bullet_rows.scope_completion", "reachable — Jira fixtures exist"),
     ("task_delivery_bullet_rows.scope_creep", "reachable — Jira fixtures exist"),
-    ("task_delivery_bullet_rows.stale_in_progress", "reachable — Jira fixtures exist"),
-    ("task_delivery_bullet_rows.task_dev_time", "reachable — Jira fixtures exist"),
-    ("task_delivery_bullet_rows.task_reopen_rate", "reachable — Jira fixtures exist"),
-    ("task_delivery_bullet_rows.worklog_logging_accuracy", "reachable — Jira fixtures exist"),
 ]
 
 

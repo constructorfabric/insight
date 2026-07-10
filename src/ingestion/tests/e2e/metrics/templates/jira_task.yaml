@@ -152,6 +152,41 @@ templates:
     schema_type: date
     unique_key: jira-test-field-duedate
 
+  # Numeric time-tracking fields (drive estimation_accuracy). Jira tracks them in
+  # seconds; jira-enrich only sees them via the changelog (the issue snapshot does
+  # not carry timeoriginalestimate / timespent), so a test must set them there.
+  field_timeoriginalestimate:
+    $ref: "#/templates/jira_field"
+    field_id: timeoriginalestimate
+    name: Original Estimate
+    schema_type: number
+    unique_key: jira-test-field-timeoriginalestimate
+
+  field_timespent:
+    $ref: "#/templates/jira_field"
+    field_id: timespent
+    name: Time Spent
+    schema_type: number
+    unique_key: jira-test-field-timespent
+
+  # ── Worklogs (bronze_jira.jira_worklogs) ─────────────────────────────────
+  # jira__task_worklogs (silver:class_task_worklogs) reads these; the bullet view
+  # sums duration per (author, day) as the worklog_logging_accuracy numerator.
+  jira_worklog:
+    unique_key: null
+    source_id: jira-test
+    worklog_id: null
+    id_readable: null
+    author_account_id: alice-jira-acct
+    started: ""
+    time_spent_seconds: null
+    comment: ""
+    collected_at: "2026-01-15T18:00:00.000+0000"
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-15T18:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
   # ── Team-variant fixtures (…0003): bob + carol identities and per-assignee ──
   # closed-task / changelog bases. A test seeds N rows of each (with per-row
   # id / id_readable / changelog_id overrides) to give each person a distinct
