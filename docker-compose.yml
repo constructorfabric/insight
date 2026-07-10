@@ -373,18 +373,15 @@ services:
     ports:
       - "${FAKEIDP_PORT:-8084}:8084"
 
-  # ── Gateway (OpenResty edge: routing + cookie-to-JWT exchange) ─────────
+  # ── Gateway (OpenResty edge) ───────────────────────────────────────────
   #
-  # The nginx+auth gateway (step 05). Routes /api/v1/analytics -> analytics,
-  # /api/v1/identity -> identity, /auth/* -> authenticator, / -> insight-front.
-  # The image ships the Lua module + routegen + an entrypoint; it compiles the
-  # mounted routes.yaml into nginx.conf at startup, with the deployment settings
-  # below from the environment. Same routes.yaml the chart ships (single source).
+  # Compiles the mounted routes.yaml (same file the chart ships) into nginx.conf
+  # at startup; deployment settings come from the environment below.
   #
-  # Profile-gated (`gateway`) so it does not clash with the legacy api-gateway
-  # on 8080 during the transition (deleted in step 09). It proxies `/` to
-  # insight-front, whose name must resolve at nginx start, so bring it up
-  # alongside a frontend profile, e.g.:
+  # TODO(#1583 step 09 — Destroy): once the legacy api-gateway is deleted this
+  # takes 8080 unconditionally; drop the `gateway` profile and this note.
+  # Profile-gated for now to avoid the 8080 clash. `/` -> insight-front must
+  # resolve at nginx start, so bring up a frontend profile too, e.g.:
   #   docker compose --profile gateway --profile front-built up gateway insight-front-built
   gateway:
     !!merge <<: *backend-common

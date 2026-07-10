@@ -134,27 +134,13 @@ fn is_reserved_header(name: &str) -> bool {
     lower.starts_with(RESERVED_PREFIX) || RESERVED_HEADERS.contains(&lower.as_str())
 }
 
-/// RFC 7230 `token`: one or more `tchar`s.
+/// The non-alphanumeric `tchar`s allowed in an RFC 7230 `token`.
+const TCHAR_SYMBOLS: &[u8] = b"!#$%&'*+-.^_`|~";
+
+/// RFC 7230 `token`: one or more `tchar`s (alphanumerics plus [`TCHAR_SYMBOLS`]).
 fn is_valid_header_name(name: &str) -> bool {
     !name.is_empty()
-        && name.bytes().all(|b| {
-            b.is_ascii_alphanumeric()
-                || matches!(
-                    b,
-                    b'!' | b'#'
-                        | b'$'
-                        | b'%'
-                        | b'&'
-                        | b'\''
-                        | b'*'
-                        | b'+'
-                        | b'-'
-                        | b'.'
-                        | b'^'
-                        | b'_'
-                        | b'`'
-                        | b'|'
-                        | b'~'
-                )
-        })
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || TCHAR_SYMBOLS.contains(&b))
 }

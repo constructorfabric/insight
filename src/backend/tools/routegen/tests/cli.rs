@@ -24,7 +24,7 @@ fn routegen(args: &[&str]) -> std::process::Output {
 
 #[test]
 fn writes_a_valid_config_to_output() {
-    let routes = fixtures().join("sample.routes.yaml");
+    let routes = fixtures().join("full.routes.yaml");
     let out = tmp("out.conf");
     let o = routegen(&[
         "--routes",
@@ -50,7 +50,7 @@ fn writes_a_valid_config_to_output() {
 
 #[test]
 fn check_passes_when_in_sync() {
-    let routes = fixtures().join("sample.routes.yaml");
+    let routes = fixtures().join("full.routes.yaml");
     let out = tmp("insync.conf");
     // Generate, then assert --check against the same output is clean.
     assert!(
@@ -78,7 +78,7 @@ fn check_passes_when_in_sync() {
 
 #[test]
 fn check_fails_on_drift() {
-    let routes = fixtures().join("sample.routes.yaml");
+    let routes = fixtures().join("full.routes.yaml");
     let stale = tmp("stale.conf");
     fs::write(&stale, "# stale, not what routegen would emit\n").unwrap();
     let o = routegen(&[

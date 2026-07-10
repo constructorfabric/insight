@@ -35,10 +35,14 @@ pub struct Defaults {
     pub strip_request_headers: Vec<String>,
 }
 
+/// Default per-route upstream timeout when neither the route nor `defaults`
+/// sets one.
+pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+
 impl Default for Defaults {
     fn default() -> Self {
         Self {
-            timeout_ms: default_timeout_ms(),
+            timeout_ms: DEFAULT_TIMEOUT_MS,
             strip_prefix: false,
             websocket: false,
             strip_request_headers: Vec::new(),
@@ -46,8 +50,10 @@ impl Default for Defaults {
     }
 }
 
+// serde's `default = "..."` takes a function path, not a const, so this is a
+// thin wrapper around DEFAULT_TIMEOUT_MS for the `#[serde(default = ...)]` above.
 fn default_timeout_ms() -> u64 {
-    30_000
+    DEFAULT_TIMEOUT_MS
 }
 
 /// A single operator-defined route under `/api/`.

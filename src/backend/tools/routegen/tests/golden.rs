@@ -3,8 +3,8 @@
 //!
 //! Regenerate the golden files after an intentional emitter change:
 //! ```text
-//! cargo run -p routegen -- --routes tools/routegen/tests/fixtures/sample.routes.yaml \
-//!   -o tools/routegen/tests/fixtures/sample.nginx.conf
+//! cargo run -p routegen -- --routes tools/routegen/tests/fixtures/full.routes.yaml \
+//!   -o tools/routegen/tests/fixtures/full.nginx.conf
 //! cargo run -p routegen -- --routes tools/routegen/tests/fixtures/stripprefix.routes.yaml \
 //!   -o tools/routegen/tests/fixtures/stripprefix.nginx.conf
 //! ```
@@ -32,10 +32,11 @@ fn assert_golden(routes: &str, conf: &str) {
 }
 
 #[test]
-fn golden_sample() {
-    // The canonical DESIGN 3.8 table: per-route timeout, a websocket route with
-    // timeout_ms 0, an operator strip list, and a shared upstream.
-    assert_golden("sample.routes.yaml", "sample.nginx.conf");
+fn golden_full() {
+    // The canonical DESIGN 3.8 table exercising the full feature set: per-route
+    // timeout, a websocket route with timeout_ms 0, an operator strip list, and
+    // a shared upstream.
+    assert_golden("full.routes.yaml", "full.nginx.conf");
 }
 
 #[test]
@@ -50,8 +51,8 @@ fn golden_strip_prefix() {
 /// is stripped in Lua, a fresh correlation id, and gateway-authored forwarding.
 #[test]
 fn every_api_location_has_the_hygiene_block() {
-    let conf = generate(&fixture("sample.routes.yaml"), &Settings::default()).unwrap();
-    // One access_by_lua per /api route (3 routes in the sample).
+    let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
+    // One access_by_lua per /api route (3 routes in the fixture).
     assert_eq!(
         conf.matches("access_by_lua_block { require(\"gateway\").exchange() }")
             .count(),
@@ -69,7 +70,7 @@ fn every_api_location_has_the_hygiene_block() {
 
 #[test]
 fn real_ip_emitted_only_when_trusted_cidrs_configured() {
-    let yaml = fixture("sample.routes.yaml");
+    let yaml = fixture("full.routes.yaml");
     // Default (no trusted proxies) -> no real_ip block, no baked network.
     let default = generate(&yaml, &Settings::default()).unwrap();
     assert!(!default.contains("set_real_ip_from"));
@@ -92,7 +93,7 @@ fn real_ip_emitted_only_when_trusted_cidrs_configured() {
 fn jwks_is_not_fronted_by_the_gateway() {
     // JWKS is public and served directly by the authenticator (the key issuer),
     // never proxied through the edge.
-    let conf = generate(&fixture("sample.routes.yaml"), &Settings::default()).unwrap();
+    let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
     assert!(!conf.contains("jwks"), "gateway must not front JWKS");
 }
 
