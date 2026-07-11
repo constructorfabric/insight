@@ -96,7 +96,7 @@ The gateway is a **separate service, not bound to the ingress layer at all**. Th
 graph LR
     B[Browser] -->|HTTPS| ING["LB / ingress controller (any)<br/>TLS termination + host routing only"]
     ING --> GW["nginx gateway (Deployment)<br/>auth, paths, headers, HSTS"]
-    GW -->|/auth/*, exchange subrequest| AUTH[authenticator]
+    GW -->|/auth/*, access_by_lua exchange| AUTH[authenticator]
     GW -->|"Authorization: Bearer JWT"| DS[analytics-api / identity / ...]
     GW -->|/| SPA[insight-front static server]
 ```
@@ -199,7 +199,7 @@ The commodity edge: routing, proxying, streaming, WebSocket upgrades, timeouts, 
 ##### Responsibility scope
 Longest-prefix `location` matching; an access-phase Lua exchange on every `/api/` location; plain proxy for `/auth/` (with a coarse per-IP `limit_req` flood guard); SPA at `/`; `proxy_buffering off` where streaming matters; WebSocket upgrade pass-through (auth runs once at upgrade, JWT frozen for the socket's life); `/internal/` returns 404; HSTS on every response.
 
-`auth_request` semantics the design hangs on: subrequest 2xx = allow; 401/403 = deny with that status; anything else (authenticator unreachable) = fail closed. Subrequest response headers travel via `auth_request_set` (that is how the JWT arrives); the response body and any `Set-Cookie` are discarded -- fine, the design never sets cookies on `/api/*`. The subrequest is sent without the request body, so uploads are not buffered twice.
+Access-phase Lua exchange semantics the design hangs on: authenticator `200` = allow (JWT read from the `X-Gateway-Jwt` response header); `401` = deny with that status (never cached); anything else (authenticator unreachable / timeout / 5xx) = fail closed, shaped to a `503`. The Lua cosocket calls the authenticator without the request body, so uploads are not buffered twice; the response body and any `Set-Cookie` are discarded -- fine, the design never sets cookies on `/api/*`.
 
 ##### Responsibility boundaries
 Mints nothing, stores no sessions, verifies no signatures. Never reaches Redis or the IdP.

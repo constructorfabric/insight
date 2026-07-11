@@ -26,6 +26,8 @@ set -- --routes "$ROUTES" -o "$OUT"
 [ -n "${GATEWAY_LISTEN:-}" ]            && set -- "$@" --listen "$GATEWAY_LISTEN"
 [ -n "${GATEWAY_JWT_CACHE_SIZE:-}" ]    && set -- "$@" --jwt-cache-size "$GATEWAY_JWT_CACHE_SIZE"
 [ -n "${GATEWAY_AUTHZ_PATH:-}" ]        && set -- "$@" --authz-path "$GATEWAY_AUTHZ_PATH"
+[ -n "${GATEWAY_AUTHZ_CONNECT_TIMEOUT_MS:-}" ] && set -- "$@" --authz-connect-timeout-ms "$GATEWAY_AUTHZ_CONNECT_TIMEOUT_MS"
+[ -n "${GATEWAY_AUTHZ_READ_TIMEOUT_MS:-}" ]    && set -- "$@" --authz-read-timeout-ms "$GATEWAY_AUTHZ_READ_TIMEOUT_MS"
 
 # Trusted ingress CIDRs (comma-separated) -> one --set-real-ip-from each.
 if [ -n "${GATEWAY_SET_REAL_IP_FROM:-}" ]; then

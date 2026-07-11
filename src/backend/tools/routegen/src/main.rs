@@ -31,8 +31,8 @@ struct Cli {
     #[arg(long, conflicts_with = "output")]
     check: Option<PathBuf>,
 
-    /// Base URL of the authenticator (host:port used for the /auth + JWKS
-    /// upstream and the Lua exchange subrequest).
+    /// Base URL of the authenticator (host:port used for the /auth upstream and
+    /// the Lua exchange cosocket).
     #[arg(long, default_value_t = Settings::default().authenticator_url)]
     authenticator_url: String,
 

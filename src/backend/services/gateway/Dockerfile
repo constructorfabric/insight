@@ -32,6 +32,11 @@ COPY --from=routegen /build/target/release/routegen /usr/local/bin/routegen
 COPY services/gateway/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# Default to non-root, matching the k8s pod securityContext (runAsUser 1000) so
+# a bare `docker run` / compose without `user:` is not root either. The entrypoint
+# only writes /tmp (config, pid, temp paths) and reads the read-only routes mount.
+USER 1000
+
 EXPOSE 8080
 
 STOPSIGNAL SIGQUIT
