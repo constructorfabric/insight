@@ -1,6 +1,4 @@
-# At least 2 replicas: the gateway is on the path of all traffic, and the
-# exchange cache is per pod (DESIGN 3.15).
-replicaCount: 2
+replicaCount: 1
 
 podAnnotations: {}
 

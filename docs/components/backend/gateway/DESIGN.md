@@ -453,7 +453,7 @@ Edge observability is deliberately three sources (degraded against the deleted R
 
 - [ ] `p3` - **ID**: `cpt-insightspec-topology-gateway`
 
-One OpenResty Deployment (at least 2 replicas) behind the single ingress backend, per the edge chain fixed in 1.3:
+One OpenResty Deployment behind the single ingress backend, per the edge chain fixed in 1.3 (a single replica suffices; scale out horizontally as load requires -- the exchange cache is per pod, so replicas need no coherence machinery):
 
 - Image: OpenResty carrying the Lua module, the `routegen` binary, and an entrypoint; `routes.yaml` is mounted from the ConfigMap and compiled to `nginx.conf` on startup (nothing baked or committed). Deployment settings (authenticator URL, front URL, DNS resolver, trusted proxy CIDRs) arrive as env vars.
 - Config changes roll the pods (checksum-annotation); each pod regenerates + `nginx -t` on start (3.13).
