@@ -32,14 +32,14 @@ networks:
 
 # ─── Volumes (data + build artefacts) ─────────────────────────────────
 volumes:
-  mariadb-data:        {}
-  clickhouse-data:     {}
-  clickhouse-logs:     {}
-  redis-data:          {}
-  redpanda-data:       {}
+  mariadb-data: {}
+  clickhouse-data: {}
+  clickhouse-logs: {}
+  redis-data: {}
+  redpanda-data: {}
   # Cargo build cache. Lives in Docker so Mac/Windows hosts don't get
   # Linux-target object files polluting their native ./src/backend/target.
-  rust-target:         {}
+  rust-target: {}
   # Frontend dev mode: node_modules lives in a named volume so the host's
   # bind-mount of source doesn't clobber it and Mac perf stays sane.
   frontend-node-modules: {}
@@ -57,7 +57,7 @@ x-backend-env: &backend-env
   RUST_LOG: ${RUST_LOG:-info}
 
 x-backend-common: &backend-common
-  <<: *restart-policy
+  !!merge <<: *restart-policy
   init: true
   networks: [insight]
 
@@ -67,7 +67,7 @@ services:
   # ── Infra ─────────────────────────────────────────────────────────────
 
   mariadb:
-    <<: *restart-policy
+    !!merge <<: *restart-policy
     # Only started when MARIADB_EXTERNAL!=true (dev-compose.sh up adds the
     # `local-mariadb` profile in that case). For external MariaDB, point
     # MARIADB_HOST / MARIADB_INTERNAL_PORT at the real host and leave this
@@ -93,7 +93,7 @@ services:
       retries: 30
 
   clickhouse:
-    <<: *restart-policy
+    !!merge <<: *restart-policy
     # Only started when CLICKHOUSE_EXTERNAL!=true (dev-compose.sh up adds
     # the `local-clickhouse` profile in that case). For external
     # ClickHouse, point CLICKHOUSE_HOST / CLICKHOUSE_INTERNAL_HTTP_PORT at
@@ -108,7 +108,7 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-insight-local}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     ulimits:
-      nofile: { soft: 262144, hard: 262144 }
+      nofile: {soft: 262144, hard: 262144}
     ports:
       - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
@@ -125,7 +125,7 @@ services:
       retries: 30
 
   redis:
-    <<: *restart-policy
+    !!merge <<: *restart-policy
     image: redis:7-alpine
     container_name: insight-redis
     networks: [insight]
@@ -141,7 +141,7 @@ services:
       retries: 30
 
   redpanda:
-    <<: *restart-policy
+    !!merge <<: *restart-policy
     image: redpandadata/redpanda:v24.2.7
     container_name: insight-redpanda
     networks: [insight]
@@ -180,7 +180,7 @@ services:
   # override that drops `build:` and the bind-mount for affected services.
 
   api-gateway:
-    <<: *backend-common
+    !!merge <<: *backend-common
     image: ${API_GATEWAY_IMAGE:-insight-api-gateway:dev}
     container_name: insight-api-gateway
     build:
@@ -189,10 +189,10 @@ services:
     depends_on:
       # required: false → compose skips this dependency when mariadb's
       # `local-mariadb` profile isn't active (external MariaDB mode).
-      mariadb:    { condition: service_healthy, required: false }
-      identity:   { condition: service_started  }
+      mariadb: {condition: service_healthy, required: false}
+      identity: {condition: service_started}
     environment:
-      <<: *backend-env
+      !!merge <<: *backend-env
       # Service config is baked at /app/config/. Compose `command:` below
       # selects which one; see CONTRIBUTING.md for the OIDC swap.
     volumes:
@@ -209,7 +209,7 @@ services:
       # full image rebuild.
       - ./src/backend/services/api-gateway/config:/app/config:ro
     command:
-      - "/app/insight-api-gateway"   # <watched path>
+      - "/app/insight-api-gateway" # <watched path>
       - "--"
       - "/app/insight-api-gateway"
       - "-c"
@@ -219,7 +219,7 @@ services:
       - "${API_GATEWAY_PORT:-8080}:8080"
 
   analytics:
-    <<: *backend-common
+    !!merge <<: *backend-common
     image: ${ANALYTICS_IMAGE:-insight-analytics:dev}
     container_name: insight-analytics
     build:
@@ -228,23 +228,23 @@ services:
     depends_on:
       # required: false → compose skips this dependency when the local
       # profile isn't active (external MariaDB / ClickHouse modes).
-      mariadb:    { condition: service_healthy, required: false }
-      clickhouse: { condition: service_healthy, required: false }
-      redis:      { condition: service_healthy }
+      mariadb: {condition: service_healthy, required: false}
+      clickhouse: {condition: service_healthy, required: false}
+      redis: {condition: service_healthy}
     environment:
-      <<: *backend-env
+      !!merge <<: *backend-env
       # analytics runs on the gears-rust host: structural config
       # (gears list, api-gateway REST host w/ auth_disabled) lives in the
       # bind-mounted config/insight.yaml; these APP__gears__analytics__config__*
       # env vars (toolkit `Env::prefixed`, gear config key `analytics`)
       # override the deployment-specific leaf values.
-      APP__gears__analytics__config__database_url:       "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
-      APP__gears__analytics__config__clickhouse_url:     "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
+      APP__gears__analytics__config__database_url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
+      APP__gears__analytics__config__clickhouse_url: "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
       APP__gears__analytics__config__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
-      APP__gears__analytics__config__clickhouse_user:    "${CLICKHOUSE_USER:-insight}"
+      APP__gears__analytics__config__clickhouse_user: "${CLICKHOUSE_USER:-insight}"
       APP__gears__analytics__config__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
-      APP__gears__analytics__config__identity_url:       "http://identity:8082"
-      APP__gears__analytics__config__redis_url:          "redis://redis:6379"
+      APP__gears__analytics__config__identity_url: "http://identity:8082"
+      APP__gears__analytics__config__redis_url: "redis://redis:6379"
       APP__gears__analytics__config__metric_catalog__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
     volumes:
       - ./deploy/compose/build/analytics/analytics:/app/analytics:ro
@@ -252,7 +252,7 @@ services:
       # (mirrors api-gateway). watchexec restarts the binary on change.
       - ./src/backend/services/analytics/config:/app/config:ro
     command:
-      - "/app/analytics"   # <watched path>
+      - "/app/analytics" # <watched path>
       - "--"
       - "/app/analytics"
       - "-c"
@@ -262,7 +262,7 @@ services:
       - "${ANALYTICS_PORT:-8081}:8081"
 
   identity:
-    <<: *backend-common
+    !!merge <<: *backend-common
     image: ${IDENTITY_IMAGE:-insight-identity:dev}
     container_name: insight-identity
     build:
@@ -271,9 +271,9 @@ services:
     depends_on:
       # required: false → compose skips this dependency when mariadb's
       # `local-mariadb` profile isn't active (external MariaDB mode).
-      mariadb: { condition: service_healthy, required: false }
+      mariadb: {condition: service_healthy, required: false}
     environment:
-      <<: *backend-env
+      !!merge <<: *backend-env
       ASPNETCORE_URLS: "http://0.0.0.0:8082"
       IDENTITY__mariadb__url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/identity"
       IDENTITY__identity__bind_addr: "0.0.0.0:8082"
@@ -282,7 +282,7 @@ services:
       # The .NET publish dir is replaced wholesale, not just one binary.
       - ./deploy/compose/build/identity:/app:ro
     command:
-      - "/app/Insight.Identity.Api.dll"   # <watched path — the published DLL>
+      - "/app/Insight.Identity.Api.dll" # <watched path — the published DLL>
       - "--"
       - "dotnet"
       - "/app/Insight.Identity.Api.dll"
@@ -302,33 +302,33 @@ services:
   # person); an unknown person is denied (403). First-admin bootstrap / RBAC are
   # out of scope (a separate universe-admin initiative).
   authenticator:
-    <<: *backend-common
+    !!merge <<: *backend-common
     image: ${AUTHENTICATOR_IMAGE:-insight-authenticator:dev}
     container_name: insight-authenticator
     build:
       context: src/backend
       dockerfile: services/authenticator/Dockerfile
     depends_on:
-      redis:    { condition: service_healthy }
-      fakeidp:  { condition: service_started }
-      identity: { condition: service_started }
+      redis: {condition: service_healthy}
+      fakeidp: {condition: service_started}
+      identity: {condition: service_started}
     environment:
-      <<: *backend-env
-      APP__gears__authenticator__config__redis_url:         "redis://redis:6379"
+      !!merge <<: *backend-env
+      APP__gears__authenticator__config__redis_url: "redis://redis:6379"
       APP__gears__authenticator__config__signing_keys_path: "/app/keys"
-      APP__gears__authenticator__config__identity_url:      "${AUTHENTICATOR_IDENTITY_URL:-http://identity:8082}"
-      APP__gears__authenticator__config__gateway_issuer:    "${AUTHENTICATOR_GATEWAY_ISSUER:-http://localhost:8080}"
+      APP__gears__authenticator__config__identity_url: "${AUTHENTICATOR_IDENTITY_URL:-http://identity:8082}"
+      APP__gears__authenticator__config__gateway_issuer: "${AUTHENTICATOR_GATEWAY_ISSUER:-http://localhost:8080}"
       # OIDC: discovery/token/JWKS are fetched in-network at fakeidp:8084; the
       # browser-facing redirect_uri is host-visible (the SPA / e2e runs there).
-      APP__gears__authenticator__config__idp__issuer_url:    "${AUTHENTICATOR_OIDC_ISSUER:-http://fakeidp:8084}"
-      APP__gears__authenticator__config__idp__client_id:     "${OIDC_CLIENT_ID:-insight-authenticator}"
+      APP__gears__authenticator__config__idp__issuer_url: "${AUTHENTICATOR_OIDC_ISSUER:-http://fakeidp:8084}"
+      APP__gears__authenticator__config__idp__client_id: "${OIDC_CLIENT_ID:-insight-authenticator}"
       APP__gears__authenticator__config__idp__client_secret: "${OIDC_CLIENT_SECRET:-}"
-      APP__gears__authenticator__config__redirect_uri:       "${AUTHENTICATOR_REDIRECT_URI:-http://localhost:8083/auth/callback}"
+      APP__gears__authenticator__config__redirect_uri: "${AUTHENTICATOR_REDIRECT_URI:-http://localhost:8083/auth/callback}"
     volumes:
       - ./deploy/compose/build/authenticator/authenticator:/app/authenticator:ro
       - ./src/backend/services/authenticator/config:/app/config:ro
     command:
-      - "/app/authenticator"   # <watched path>
+      - "/app/authenticator" # <watched path>
       - "--"
       - "/app/authenticator"
       - "-c"
@@ -346,7 +346,7 @@ services:
   # self-contained. See src/backend/services/fakeidp/README.md and
   # cf/NGINX_BFF.md §10 G6. On the default profile — comes up with the stack.
   fakeidp:
-    <<: *backend-common
+    !!merge <<: *backend-common
     image: ${FAKEIDP_IMAGE:-insight-fakeidp:dev}
     container_name: insight-fakeidp
     build:
@@ -373,13 +373,45 @@ services:
     ports:
       - "${FAKEIDP_PORT:-8084}:8084"
 
+  # ── Gateway (OpenResty edge) ───────────────────────────────────────────
+  #
+  # Compiles the mounted routes.yaml (same file the chart ships) into nginx.conf
+  # at startup; deployment settings come from the environment below.
+  #
+  # TODO(#1583 step 09 — Destroy): once the legacy api-gateway is deleted this
+  # takes 8080 unconditionally; drop the `gateway` profile and this note.
+  # Profile-gated for now to avoid the 8080 clash. `/` -> insight-front must
+  # resolve at nginx start, so bring up a frontend profile too, e.g.:
+  #   docker compose --profile gateway --profile front-built up gateway insight-front-built
+  gateway:
+    !!merge <<: *backend-common
+    profiles: ["gateway"]
+    image: ${GATEWAY_IMAGE:-insight-gateway:dev}
+    container_name: insight-gateway
+    build:
+      context: src/backend
+      dockerfile: services/gateway/Dockerfile
+    depends_on:
+      authenticator: {condition: service_started}
+      analytics: {condition: service_started}
+      identity: {condition: service_started}
+    environment:
+      GATEWAY_AUTHENTICATOR_URL: "http://authenticator:8083"
+      GATEWAY_FRONT_URL: "http://insight-front:80"
+    volumes:
+      # Compose route table (docker service names). The k8s equivalent is the
+      # chart's templated gateway.routes values. Edit + restart to regenerate.
+      - ./deploy/compose/gateway/routes.yaml:/etc/gateway/routes.yaml:ro
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+
   # ── Frontend (one variant active per FRONTEND_MODE) ────────────────────
   #
   # The dev-compose.sh up script translates FRONTEND_MODE=dev|built|ghcr
   # into the matching --profile flag.
 
   insight-front-dev:
-    <<: *restart-policy
+    !!merge <<: *restart-policy
     profiles: ["front-dev"]
     image: node:24-bookworm-slim
     container_name: insight-front
@@ -411,7 +443,7 @@ services:
       - "${FRONTEND_PORT:-3000}:5173"
 
   insight-front-built:
-    <<: *restart-policy
+    !!merge <<: *restart-policy
     profiles: ["front-built"]
     image: nginx:1.27-alpine
     container_name: insight-front
@@ -430,7 +462,7 @@ services:
       - "${FRONTEND_PORT:-3000}:80"
 
   insight-front-ghcr:
-    <<: *restart-policy
+    !!merge <<: *restart-policy
     profiles: ["front-ghcr"]
     # Ghcr images are amd64-only for now (arm64 builds are tracked
     # separately). Pin the platform so Apple-silicon hosts pull the
@@ -547,23 +579,23 @@ services:
     depends_on:
       # required: false → seeding an external DB doesn't need the local
       # mariadb/clickhouse profiles to be active.
-      mariadb:    { condition: service_healthy, required: false }
-      clickhouse: { condition: service_healthy, required: false }
-      identity:   { condition: service_started }
+      mariadb: {condition: service_healthy, required: false}
+      clickhouse: {condition: service_healthy, required: false}
+      identity: {condition: service_started}
     environment:
       # Identity / persons anchor
       VITE_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-}"
-      TENANT_DEFAULT_ID:   "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
+      TENANT_DEFAULT_ID: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
       # MariaDB — falls back to the local docker service name/port; the
       # wizard rewrites these when external MariaDB is selected.
-      MARIADB_HOST:        "${MARIADB_HOST:-mariadb}"
-      MARIADB_PORT:        "${MARIADB_INTERNAL_PORT:-3306}"
-      MARIADB_USER:        "${MARIADB_USER:-insight}"
-      MARIADB_PASSWORD:    "${MARIADB_PASSWORD:-insight-local}"
+      MARIADB_HOST: "${MARIADB_HOST:-mariadb}"
+      MARIADB_PORT: "${MARIADB_INTERNAL_PORT:-3306}"
+      MARIADB_USER: "${MARIADB_USER:-insight}"
+      MARIADB_PASSWORD: "${MARIADB_PASSWORD:-insight-local}"
       # ClickHouse — same convention as MariaDB above.
-      CLICKHOUSE_HOST:     "${CLICKHOUSE_HOST:-clickhouse}"
+      CLICKHOUSE_HOST: "${CLICKHOUSE_HOST:-clickhouse}"
       CLICKHOUSE_HTTP_PORT: "${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
-      CLICKHOUSE_USER:     "${CLICKHOUSE_USER:-insight}"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER:-insight}"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-insight-local}"
     volumes:
       # Bind-mount the source so seed.py edits don't need a rebuild.

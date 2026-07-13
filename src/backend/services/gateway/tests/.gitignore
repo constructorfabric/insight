@@ -1,0 +1,4 @@
+# Generated / ephemeral e2e artifacts (produced by run-e2e.sh).
+nginx.conf
+keys/
+work/

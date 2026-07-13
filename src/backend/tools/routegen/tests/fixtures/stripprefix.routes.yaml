@@ -1,0 +1,11 @@
+version: 1
+defaults:
+  timeout_ms: 15000
+  strip_prefix: true
+routes:
+  - prefix: /api/edge
+    upstream: https://edge.svc:443
+  - prefix: /api/edge/v2
+    upstream: https://edge.svc:443
+    strip_prefix: false
+    timeout_ms: 5000
