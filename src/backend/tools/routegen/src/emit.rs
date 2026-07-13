@@ -397,7 +397,9 @@ fn emit_api_location(
     for header in &config.defaults.strip_request_headers {
         writeln!(c, "            proxy_set_header {header} \"\";")?;
     }
-    // 7. per-route timeouts + streaming
+    // 7. bounded connect (fail fast on a dead upstream -> 502/504, never hang) +
+    //    per-route read/send timeouts + streaming
+    c.push_str("            proxy_connect_timeout 5s;\n");
     let t = timeout_literal(route.timeout_ms);
     writeln!(c, "            proxy_read_timeout {t};")?;
     writeln!(c, "            proxy_send_timeout {t};")?;

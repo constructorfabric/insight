@@ -33,6 +33,10 @@ services:
       FAKEIDP_BIND: "0.0.0.0:8084"
       FAKEIDP_DEFAULT_AUD: "insight-authenticator"
       FAKEIDP_DEV_USER_EMAIL: "dev@company.nonpresent"
+    ports:
+      # Published so the host-side pytest can follow the OIDC redirect chain
+      # (rewriting the in-network hostnames to localhost).
+      - "${FAKEIDP_E2E_PORT:-18084}:8084"
 
   authenticator:
     build:
@@ -42,6 +46,9 @@ services:
       redis: {condition: service_healthy}
       fakeidp: {condition: service_started}
       identity-stub: {condition: service_started}
+    ports:
+      # Published so pytest can assert JWKS is served directly by the authenticator.
+      - "${AUTHENTICATOR_E2E_PORT:-18083}:8083"
     environment:
       APP__gears__authenticator__config__redis_url: "redis://redis:6379"
       APP__gears__authenticator__config__signing_keys_path: "/keys"
@@ -75,17 +82,4 @@ services:
       # The container compiles this into nginx.conf at startup (routes -> echo).
       - ./routes.e2e.yaml:/etc/gateway/routes.yaml:ro
     ports:
-      # Published for host-side readiness polling in run-e2e.sh; assertions run
-      # from the on-network driver, not this port.
       - "${GW_E2E_PORT:-18080}:8080"
-
-  # On-network assertion driver; run explicitly by run-e2e.sh with a phase arg.
-  driver:
-    image: python:3.12-slim
-    profiles: ["driver"]
-    depends_on:
-      gateway: {condition: service_started}
-    volumes:
-      - ./assert.py:/assert.py:ro
-      - ./work:/work
-    entrypoint: ["python", "/assert.py"]

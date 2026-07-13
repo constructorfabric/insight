@@ -75,7 +75,9 @@ jobs:
       - name: helm lint the gateway chart
         run: helm lint src/backend/services/gateway/helm
 
-  # Full edge e2e: real authenticator + fakeidp behind the gateway (NGINX_BFF §D).
+  # Full edge e2e: real authenticator + fakeidp behind the gateway (the five
+  # NGINX_BFF step-05 scenarios). No host Rust toolchain -- routegen and every
+  # service image are built inside Docker; the host only needs python + pytest.
   e2e:
     name: e2e (5 scenarios)
     runs-on: ubuntu-latest
@@ -84,17 +86,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
         with:
-          toolchain: "1.95.0"
+          python-version: "3.12"
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src/backend -> target
-          key: routegen-e2e
+      - name: Install pytest
+        run: python -m pip install pytest
 
       - name: Run the gateway e2e
         run: src/backend/services/gateway/tests/run-e2e.sh
