@@ -11,6 +11,7 @@ An **Insight Connector** is a complete pipeline package: Airbyte Connector + des
 | [`specs/DESIGN.md`](specs/DESIGN.md) | Connector specification: mandatory fields, manifest rules, CDK guide, schema, dbt, deployment |
 | [`specs/PRD.md`](specs/PRD.md) | Requirements: connector framework, Bronze/Silver rules, packaging, RLS |
 | [`specs/ADR/0001-connector-integration-protocol.md`](specs/ADR/0001-connector-integration-protocol.md) | Historical: stdout JSON protocol decision (superseded by Airbyte Protocol) |
+| [`specs/feature-connector-mock-tests/FEATURE.md`](specs/feature-connector-mock-tests/FEATURE.md) | Mock-server tests: credential-free pytest suites over `connector.yaml` via `airbyte_cdk.test` (HttpMocker), stream coverage matrix, CI gate |
 
 ## Implementation
 

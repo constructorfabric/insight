@@ -567,7 +567,7 @@ if ! ch_table_exists silver class_git_pull_requests; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     insight_tenant_id String,
-    pr_id             String,
+    pr_id             Int64,
     tenant_id         String  DEFAULT '',
     source_id         String  DEFAULT '',
     project_key       String  DEFAULT '',
@@ -619,7 +619,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests_commits (
     source_id   String DEFAULT '',
     project_key String DEFAULT '',
     repo_slug   String DEFAULT '',
-    pr_id       String,
+    pr_id       Int64,
     commit_hash String,
     data_source String DEFAULT '',
     _version    UInt64
@@ -928,7 +928,6 @@ fi
 if ! ch_table_exists bronze_jira jira_issue; then
   echo "  Creating placeholder: bronze_jira.jira_issue"
   run_ch <<'SQL'
-CREATE DATABASE IF NOT EXISTS bronze_jira;
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue (
     id String,
     source_id String,
@@ -1103,9 +1102,6 @@ fi
 # Each table is checked and created independently so a partially-seeded
 # state (e.g. teams_activity exists, onedrive_activity does not) gets the
 # missing ones repaired on a re-run.
-run_ch <<'SQL'
-CREATE DATABASE IF NOT EXISTS bronze_m365;
-SQL
 # NOTE: column set mirrors the real Airbyte M365 streams (verified against a
 # live dev sync) so the collaboration dbt staging models — which read
 # reportRefreshDate, the message/meeting counters, the ISO-8601 duration

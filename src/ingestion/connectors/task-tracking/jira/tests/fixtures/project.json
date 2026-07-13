@@ -1,0 +1,10 @@
+{
+  "id": "10001",
+  "key": "PROJ1",
+  "name": "Project PROJ1",
+  "projectTypeKey": "software",
+  "style": "classic",
+  "isPrivate": false,
+  "simplified": false,
+  "self": "https://jira.example.com/rest/api/3/project/10001"
+}

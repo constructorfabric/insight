@@ -1,5 +1,5 @@
 name: ms-entra
-version: '1.0'
+version: '1.0.0'
 schedule: 0 5 * * *
 dbt_select: tag:ms-entra+
 workflow: sync

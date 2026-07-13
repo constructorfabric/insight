@@ -21,6 +21,15 @@ Before the checklist review, always run the automated validators:
 
 If either fails, fix the reported per-path errors before proceeding with the checklist. See `src/ingestion/tools/declarative-connector/README.md` §"Debugging strict-validation errors".
 
+Then run the mock-server test suite (L1 of the test ladder, `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md`):
+
+```bash
+# one-time env: cd src/ingestion/tests/connectors && python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+src/ingestion/tests/connectors/.venv/bin/pytest src/ingestion/connectors/<category>/<name>/tests/
+```
+
+Must exit 0. If `tests/` does not exist, this check FAILS: report the connector as non-compliant with the mock-test spec (see `create.md` §5.7) — a missing suite is a validation failure to fix by authoring the suite, not a skippable gap.
+
 ## Step 2: Builder-UI compatibility checklist (manifest-only)
 
 If `validate-strict` passed, these are already satisfied automatically — but eyeball them when reviewing a PR to catch intent mistakes:
@@ -66,6 +75,7 @@ Read connector package files and verify each item:
 - [ ] `README.md` exists with prerequisites, K8s Secret fields, streams table, and multi-instance example
 - [ ] K8s Secret example in `secrets/connectors/<name>.yaml.example` with `insight_source_id` annotation
 - [ ] `dbt/` directory with at least one .sql model and schema.yml
+- [ ] `tests/` directory with `test_<stream>.py` per descriptor stream, `config.py`, and `fixtures/` (mock-server tests per `feature-connector-mock-tests`; fixtures contain NO real customer data)
 
 ### Manifest (nocode)
 - [ ] `version: 7.0.4` or compatible

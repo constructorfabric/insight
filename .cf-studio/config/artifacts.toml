@@ -383,6 +383,12 @@ path = "docs/domain/connector/specs/ADR/0003-connector-message-protocol.md"
 name = "ADR-0003: Connector Message Protocol"
 
 [[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md"
+name = "Connector Framework — Mock-Server Tests Feature"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "DECOMPOSITION"
 path = "docs/domain/ingestion/specs/DECOMPOSITION.md"
 name = "Ingestion Layer Decomposition"
