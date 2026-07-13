@@ -574,6 +574,8 @@ The main pass removes:
   • named volumes: mariadb-data, clickhouse-data, clickhouse-logs,
     redis-data, redpanda-data, rust-target, frontend-node-modules
   • host-side build artefacts under deploy/compose/build/
+  • the generated authenticator dev signing key
+    (deploy/compose/authenticator-dev-keys/)
   • generated deploy/compose/override.generated.yml
   • .env.compose
 
@@ -592,6 +594,7 @@ This will permanently remove the local Insight stack state:
   • named volumes (mariadb-data, clickhouse-data, redis-data,
     redpanda-data, rust-target, frontend-node-modules, ...)
   • deploy/compose/build/ artefacts
+  • deploy/compose/authenticator-dev-keys/ (dev signing key)
   • deploy/compose/override.generated.yml
   • .env.compose
 
@@ -627,6 +630,10 @@ EOF
   if [[ -d deploy/compose/build ]]; then
     echo "Removing deploy/compose/build/..."
     rm -rf deploy/compose/build/
+  fi
+  if [[ -d deploy/compose/authenticator-dev-keys ]]; then
+    echo "Removing deploy/compose/authenticator-dev-keys/ (dev signing key)..."
+    rm -rf deploy/compose/authenticator-dev-keys/
   fi
   if [[ -f "$override" ]]; then
     echo "Removing $override..."
