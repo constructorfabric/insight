@@ -231,3 +231,50 @@ templates:
     $ref: "#/templates/jira_history"
     created_at: "2026-01-15T14:00:00.000+0000"
     items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+
+  # ── Status lookup (bronze_jira.jira_statuses) — issue #1541 ──────────────
+  # Drives jira__task_statuses → silver.class_task_statuses, which gold uses to
+  # detect "done" by statusCategory instead of by the display name. Jira's
+  # statusCategory ids are fixed: new=2, indeterminate=4, done=3. The status
+  # transitions in the fixtures use ids 6 (Closed), 3 (In Progress), 1 (Open),
+  # so these three rows let close-detection resolve every seeded transition.
+  jira_status:
+    unique_key: null
+    source_id: jira-test
+    status_id: null
+    name: null
+    category_id: null
+    category_name: null
+    category_key: null
+    collected_at: "2026-01-15T18:00:00.000+0000"
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-15T18:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
+  status_open:
+    $ref: "#/templates/jira_status"
+    unique_key: jira-test-status-1
+    status_id: "1"
+    name: Open
+    category_id: 2
+    category_name: "To Do"
+    category_key: new
+
+  status_in_progress:
+    $ref: "#/templates/jira_status"
+    unique_key: jira-test-status-3
+    status_id: "3"
+    name: In Progress
+    category_id: 4
+    category_name: "In Progress"
+    category_key: indeterminate
+
+  status_closed:
+    $ref: "#/templates/jira_status"
+    unique_key: jira-test-status-6
+    status_id: "6"
+    name: Closed
+    category_id: 3
+    category_name: Done
+    category_key: done

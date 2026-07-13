@@ -1,0 +1,22 @@
+# Reusable JSON schema for bronze_jira.jira_statuses (the status lookup from
+# GET /rest/api/3/status). Columns mirror the AddFields in
+# connectors/task-tracking/jira/connector.yaml (jira_statuses stream) that
+# jira__task_statuses.sql reads to build silver.class_task_statuses (issue #1541).
+schemas:
+  bronze_jira.jira_statuses:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      unique_key: { type: string }
+      source_id: { type: string }
+      status_id: { type: string }
+      name: { type: string }
+      category_id: { type: integer }
+      category_name: { type: string }
+      category_key: { type: string }
+      collected_at: { type: string }
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }

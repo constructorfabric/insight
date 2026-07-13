@@ -187,6 +187,16 @@ This connector emits Bronze tables only. All transformations into the `class_tas
 
 **Rationale**: A clear ownership boundary between Bronze ingestion and Silver staging prevents one PR from accidentally shipping incomplete Silver work.
 
+#### Unified Status Category from State Resolution
+
+- [ ] `p1` - **ID**: `cpt-insightspec-principle-youtrack-status-category`
+
+YouTrack has **no global status table and no Jira-style `statusCategory`**. "Done"/closedness is signalled two ways, both locale-independent: the State-bundle value's boolean `isResolved`, and the issue-level `resolved` timestamp (`youtrack_issue.resolved`). This connector must surface `isResolved` so the future Silver staging (§2.5) can populate the source-neutral `class_task_statuses.status_category` (`done` / `in_progress` / `new`) that the class DESIGN defines (`cpt-insightspec-principle-tt-silver-status-category`, `cpt-insightspec-dbtable-tt-silver-statuses`) — the same axis Jira derives from `statusCategory`. The YouTrack→unified mapping (`isResolved` → `status_category`) is applied inside the `youtrack__task_statuses` projection and reconciled with Jira in the shared `silver.class_task_status_history` model (`cpt-insightspec-dbtable-tt-silver-status-history`), so downstream Gold sees one already-reconciled `status_category` with no per-source branch.
+
+**Bronze prerequisite**: the `youtrack_project_custom_fields` stream must include `isResolved` inside the State field's `bundle(values(...))` selection (see `cpt-insightspec-component-youtrack-stream-project-custom-fields`) so that each State-bundle value carries its resolved flag. Today the selection is `bundle(id,values(id,name,description,archived,color(...),ordinal))` — `isResolved` is **not** requested and must be added. The issue-level `youtrack_issue.resolved` timestamp (already ingested) is the corroborating fallback.
+
+**Rationale**: Detecting closedness by status display name (`Fixed`, `Done`, `Готово`, custom) is locale- and workflow-fragile and is exactly the defect tracked in issue #1541 for Jira. YouTrack already provides a clean boolean signal; surfacing it at Bronze keeps close-detection uniform across sources and out of localized labels.
+
 ### 2.2 Constraints
 
 #### No-Whitelist Full-Ingestion Scope
@@ -420,6 +430,8 @@ Does NOT contain custom Python code. Does NOT contain dbt logic. Does NOT contai
 **Why this component exists**: Project-scoped custom-field registry feeds `class_task_field_metadata` (future scope).
 
 **Responsibility scope**: `GET /api/admin/projects/{youtrack_id}/customFields?fields=id,field(id,name,localizedName,fieldType(id,valueType,isMultiValue)),bundle(id,values(id,name,description,archived,color(id,presentation),ordinal)),canBeEmpty,ordinal,emptyFieldText,isPublic`, offset pagination, substream of `youtrack_projects` keyed on `project.id` (renamed to `project_id` in emitted rows).
+
+**Status-category requirement (issue #1541)**: for State-type custom fields the `bundle(values(...))` selection **must add `isResolved`** — i.e. `bundle(id,values(id,name,...,ordinal,isResolved))`. `isResolved` is the per-state done-signal that the Silver `class_task_statuses` projection maps to the unified `status_category` (see `cpt-insightspec-principle-youtrack-status-category`). Without it the State bundle values reach Bronze with no resolved flag and closedness can only be inferred from the issue-level `youtrack_issue.resolved` timestamp.
 
 ### 3.3 API Contracts
 
