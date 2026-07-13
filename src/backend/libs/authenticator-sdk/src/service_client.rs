@@ -11,17 +11,24 @@
 //! process; only the short-lived assertion travels, and only public keys live
 //! in the authenticator's registry.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::HashMap;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
 /// Default lifetime of a minted client assertion (seconds). Well within the
 /// authenticator's 60 s cap, with room for a little clock skew.
 const DEFAULT_ASSERTION_TTL_SECONDS: u64 = 30;
+
+/// Connect timeout for the token endpoint — bound so a hung authenticator can
+/// never wedge a caller.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Overall request timeout for the token exchange.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A token fetched from the authenticator: the raw JWT and its lifetime.
 #[derive(Debug, Clone)]
@@ -51,19 +58,26 @@ struct AssertionClaims<'a> {
     exp: u64,
 }
 
-/// A cached bearer value and the time at which it should be refreshed.
+/// A cached bearer value with its refresh and hard-expiry times.
+#[derive(Clone)]
 struct Cached {
     /// The full `Bearer <jwt>` header value.
     bearer: String,
     /// Epoch second at/after which `bearer()` re-fetches (4/5 of the TTL).
     refresh_at: u64,
+    /// Epoch second at which the token truly expires — after this it must not
+    /// be served even as a stale fallback.
+    expires_at: u64,
 }
 
-/// Mints assertions, fetches + caches a service token, and hands out a bearer.
+/// Mints assertions, fetches + caches service tokens, and hands out bearers.
 ///
-/// Construct once per (service, key) and share it (`Arc`) — it is internally
-/// synchronized and the cache is shared across callers, so concurrent
-/// `bearer()` calls collapse onto a single in-flight fetch.
+/// Construct once per (service, key) and share it (`Arc`). The cache is a
+/// read-mostly `RwLock` keyed by tenant scope: `bearer()` takes only a short
+/// read lock to check the cache, releases it, does the network fetch with **no
+/// lock held**, then takes a brief write lock to store. Concurrent refreshes
+/// may each fetch (no single-flight) — an acceptable trade for never blocking a
+/// caller behind another's HTTP round-trip.
 pub struct ServiceTokenClient {
     service: String,
     /// Token endpoint URL; also the `aud` the assertion is minted for.
@@ -71,7 +85,9 @@ pub struct ServiceTokenClient {
     encoding: EncodingKey,
     assertion_ttl_seconds: u64,
     http: reqwest::Client,
-    cache: Mutex<Option<Cached>>,
+    /// Cache keyed by the (sorted) requested tenant scope. Service tokens are
+    /// always tenant-scoped, so there is one entry per tenant set in use.
+    cache: RwLock<HashMap<Vec<String>, Cached>>,
 }
 
 impl ServiceTokenClient {
@@ -93,16 +109,20 @@ impl ServiceTokenClient {
         let encoding = EncodingKey::from_ec_pem(private_key_pem.as_bytes()).map_err(|e| {
             CanonicalError::internal(format!("invalid service private key PEM: {e}")).create()
         })?;
-        let http = reqwest::Client::builder().build().map_err(|e| {
-            CanonicalError::internal(format!("build service-token HTTP client: {e}")).create()
-        })?;
+        let http = reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .map_err(|e| {
+                CanonicalError::internal(format!("build service-token HTTP client: {e}")).create()
+            })?;
         Ok(Self {
             service: service.into(),
             endpoint: endpoint.into(),
             encoding,
             assertion_ttl_seconds: DEFAULT_ASSERTION_TTL_SECONDS,
             http,
-            cache: Mutex::new(None),
+            cache: RwLock::new(HashMap::new()),
         })
     }
 
@@ -213,33 +233,68 @@ impl ServiceTokenClient {
         })
     }
 
-    /// The cross-tenant service bearer, ready for an `Authorization` header
-    /// (`"Bearer <jwt>"`). Served from cache until 4/5 of its TTL has elapsed,
-    /// then re-fetched ahead of expiry. Concurrent callers share one fetch.
+    /// A service bearer for `tenants`, ready for an `Authorization` header
+    /// (`"Bearer <jwt>"`). Service tokens are always tenant-scoped, so a tenant
+    /// must be named (the endpoint rejects an empty scope). Served from a
+    /// per-scope cache until 4/5 of the TTL has elapsed, then re-fetched ahead
+    /// of expiry; if the refresh fails but the cached token has not truly
+    /// expired, the stale-but-valid token is served (resilience across a short
+    /// authenticator outage).
+    ///
+    /// The lock is held only to read and to write the cache — never across the
+    /// network fetch.
     ///
     /// # Errors
-    /// As [`fetch`](Self::fetch), when a refresh is needed and fails.
-    pub async fn bearer(&self) -> Result<String, CanonicalError> {
-        let mut cache = self.cache.lock().await;
+    /// As [`fetch`](Self::fetch), when a refresh is needed and both the fetch
+    /// and the stale fallback are unavailable.
+    pub async fn bearer(&self, tenants: &[String]) -> Result<String, CanonicalError> {
+        let key = cache_key(tenants);
         let now = now_secs();
-        if let Some(c) = cache.as_ref()
-            && now < c.refresh_at
+
+        // Fast path: short read lock, then release before any await.
         {
-            return Ok(c.bearer.clone());
+            let cache = self.cache.read().await;
+            if let Some(c) = cache.get(&key)
+                && now < c.refresh_at
+            {
+                return Ok(c.bearer.clone());
+            }
         }
 
-        let token = self.fetch(&[]).await?;
-        let bearer = format!("Bearer {}", token.access_token);
-        // Reissue ahead of expiry: refresh once 4/5 of the lifetime has passed,
-        // leaving the last fifth as travel margin. A zero/short TTL degrades to
-        // fetch-every-call, which is safe (just chattier).
-        let refresh_at = now + token.expires_in.saturating_mul(4) / 5;
-        *cache = Some(Cached {
-            bearer: bearer.clone(),
-            refresh_at,
-        });
-        Ok(bearer)
+        // Refresh with no lock held.
+        match self.fetch(tenants).await {
+            Ok(token) => {
+                let bearer = format!("Bearer {}", token.access_token);
+                // Reissue ahead of expiry: refresh once 4/5 of the lifetime has
+                // passed, leaving the last fifth as travel margin.
+                let entry = Cached {
+                    bearer: bearer.clone(),
+                    refresh_at: now + token.expires_in.saturating_mul(4) / 5,
+                    expires_at: now + token.expires_in,
+                };
+                self.cache.write().await.insert(key, entry);
+                Ok(bearer)
+            }
+            Err(e) => {
+                // Serve stale-but-valid on a refresh failure.
+                let cache = self.cache.read().await;
+                if let Some(c) = cache.get(&key)
+                    && now < c.expires_at
+                {
+                    return Ok(c.bearer.clone());
+                }
+                Err(e)
+            }
+        }
     }
+}
+
+/// Cache key for a tenant scope: the ids sorted so `[a,b]` and `[b,a]` share
+/// one entry.
+fn cache_key(tenants: &[String]) -> Vec<String> {
+    let mut key = tenants.to_vec();
+    key.sort();
+    key
 }
 
 fn now_secs() -> u64 {

@@ -34,13 +34,17 @@ reqwest.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-# Test-double-only deps (kept out of the shared [workspace.dependencies]
-# table on purpose — nothing in production links these).
-jsonwebtoken = "9"
+# JWT + YAML come from the shared [workspace.dependencies] table so the whole
+# tree compiles one jsonwebtoken version + crypto provider (a mismatched v9
+# here would pull a second copy in). fakeidp signs RS256 id_tokens — supported
+# by the workspace aws_lc_rs provider.
+jsonwebtoken = { workspace = true }
+serde_yaml = { workspace = true }
+# Test-double-only deps (kept out of the shared table on purpose — nothing in
+# production links these).
 rsa = { version = "0.9", features = ["pem"] }
 sha2 = "0.10"
 base64 = "0.22"
-serde_yaml = "0.9"
 rand = "0.8"
 
 [dev-dependencies]

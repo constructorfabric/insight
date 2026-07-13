@@ -79,6 +79,14 @@ reqwest = { version = "0.12", features = ["json"] }
 # Caching
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 
+# JWT (gateway-JWT mint/verify, RFC 7523 assertions, fakeidp id_tokens).
+# One version + one crypto provider (aws_lc_rs) across the workspace: v10 needs
+# exactly one provider process-wide under feature unification, else it panics.
+jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+
+# YAML (route configs, fakeidp users, test fixtures).
+serde_yaml = "0.9"
+
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 

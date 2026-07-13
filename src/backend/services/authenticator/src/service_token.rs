@@ -6,14 +6,18 @@
 //! a short-lived JWT signed by the service's private key, verified here against
 //! a gitops-reviewable **registry** of public keys. Out comes a **normal
 //! gateway JWT** (`sub = service:<name>`, `sid = service:<name>`, `roles`
-//! including `"service"`, optional `tenants`), signed with the same ES256 key
-//! and published in the same JWKS — so a downstream service keeps exactly one
-//! verification path for user and service traffic.
+//! including `"service"`), signed with the same ES256 key and published in the
+//! same JWKS — so a downstream service keeps exactly one verification path for
+//! user and service traffic.
+//!
+//! Service tokens are **always tenant-scoped** (tenant isolation): the request
+//! must name at least one tenant (`tenants=[...]`), else it is rejected 400.
+//! There is no cross-tenant service token and no per-service opt-in flag.
 //!
 //! The endpoint lives on its own axum server bound to `token_bind_addr`
 //! (suggested 8093), NOT on the main REST host: the token surface must never
 //! share the browser/gateway port (§11.8). It carries only `POST /internal/token`
-//! and its own `/ready`, and is deliberately absent from the public OpenAPI
+//! and its own `/health`, and is deliberately absent from the public OpenAPI
 //! document. Graceful shutdown rides the toolkit's cancellation token.
 
 use std::collections::HashMap;
@@ -28,7 +32,7 @@ use axum::{Form, Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
@@ -42,7 +46,7 @@ use crate::jwt::GatewayClaims;
 const ASSERTION_TYPE: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 /// The role every service token carries, so downstream can authorize
-/// cross-tenant service work off a single well-known role (§10 G1).
+/// machine callers off a single well-known role (§10 G1).
 const SERVICE_ROLE: &str = "service";
 
 // ── Service registry (parsed at boot) ─────────────────────────────────────
@@ -54,8 +58,6 @@ struct RegistryEntry {
     keys: Vec<DecodingKey>,
     /// Roles to bake into the issued token (`"service"` is always added).
     roles: Vec<String>,
-    /// Whether this service may request a tenant-scoped token.
-    tenant_scoped_allowed: bool,
 }
 
 /// The parsed service registry — name -> public identity. Built from
@@ -66,28 +68,50 @@ pub struct ServiceRegistry {
 }
 
 impl ServiceRegistry {
-    /// Parse every registry entry's PEM public keys into ES256 verifiers.
+    /// Parse every registry entry's public keys (inline `public_keys` and any
+    /// `public_key_paths`, resolved against `public_key_dir`) into ES256
+    /// verifiers, so a bad or missing PEM fails the gear at boot rather than on
+    /// the first token request.
     ///
     /// # Errors
-    /// Fails when a `public_keys` PEM is not a valid EC public key.
+    /// Fails when a key file cannot be read or a PEM is not a valid EC public key.
     pub fn build(cfg: &ServiceTokensConfig) -> anyhow::Result<Self> {
+        let key_dir = std::path::Path::new(&cfg.public_key_dir);
         let mut entries = HashMap::with_capacity(cfg.services.len());
         for (name, entry) in &cfg.services {
-            let mut keys = Vec::with_capacity(entry.public_keys.len());
+            let mut keys =
+                Vec::with_capacity(entry.public_keys.len() + entry.public_key_paths.len());
             for (i, pem) in entry.public_keys.iter().enumerate() {
-                let key = DecodingKey::from_ec_pem(pem.as_bytes()).with_context(|| {
+                keys.push(parse_ec_public_key(pem).with_context(|| {
                     format!(
                         "service_tokens.services.{name}.public_keys[{i}]: invalid EC public key PEM"
                     )
+                })?);
+            }
+            for (i, rel) in entry.public_key_paths.iter().enumerate() {
+                let path = if cfg.public_key_dir.is_empty() {
+                    std::path::PathBuf::from(rel)
+                } else {
+                    key_dir.join(rel)
+                };
+                let pem = std::fs::read_to_string(&path).with_context(|| {
+                    format!(
+                        "service_tokens.services.{name}.public_key_paths[{i}]: read {}",
+                        path.display()
+                    )
                 })?;
-                keys.push(key);
+                keys.push(parse_ec_public_key(&pem).with_context(|| {
+                    format!(
+                        "service_tokens.services.{name}.public_key_paths[{i}] ({}): invalid EC public key PEM",
+                        path.display()
+                    )
+                })?);
             }
             entries.insert(
                 name.clone(),
                 RegistryEntry {
                     keys,
                     roles: entry.roles.clone(),
-                    tenant_scoped_allowed: entry.tenant_scoped_allowed,
                 },
             );
         }
@@ -97,6 +121,11 @@ impl ServiceRegistry {
     fn get(&self, service: &str) -> Option<&RegistryEntry> {
         self.entries.get(service)
     }
+}
+
+/// Parse an SPKI EC public-key PEM into an ES256 verifier.
+fn parse_ec_public_key(pem: &str) -> anyhow::Result<DecodingKey> {
+    DecodingKey::from_ec_pem(pem.as_bytes()).context("parse EC public key PEM")
 }
 
 // ── Assertion verification (pure, unit-tested) ─────────────────────────────
@@ -144,7 +173,10 @@ fn verify_assertion(
     let mut validation = Validation::new(Algorithm::ES256);
     validation.set_audience(&[expected_aud]);
     validation.set_issuer(&[iss.as_str()]);
-    validation.set_required_spec_claims(&["iss", "sub", "aud", "exp", "iat", "jti"]);
+    // `iat`/`jti` presence is enforced by the non-Option fields on
+    // AssertionClaims (deserialization fails without them), so they need not be
+    // repeated here — this list is the reserved-claim presence check.
+    validation.set_required_spec_claims(&["iss", "sub", "aud", "exp"]);
     validation.validate_exp = true;
     validation.leeway = leeway_seconds;
 
@@ -181,7 +213,8 @@ fn unverified_claim(jwt: &str, field: &str) -> Option<String> {
 
 /// Build the gateway JWT claims for a service token (§10 G1 / §3.8):
 /// `sub = sid = service:<name>`, `roles` from the registry with `"service"`
-/// guaranteed, `tenants` only when a scope was requested and allowed.
+/// guaranteed, and the requested `tenants` (always present — service tokens are
+/// tenant-scoped by design; the handler rejects a request that names none).
 fn build_service_claims(
     cfg: &AuthenticatorConfig,
     service: &str,
@@ -222,6 +255,14 @@ fn parse_tenants(raw: Option<&str>) -> Vec<String> {
 }
 
 // ── HTTP layer (the second listener) ───────────────────────────────────────
+
+/// `POST /internal/token` success body (OAuth2 `client_credentials` shape).
+#[derive(Debug, Serialize)]
+struct TokenResponse {
+    access_token: String,
+    token_type: &'static str,
+    expires_in: u64,
+}
 
 /// `POST /internal/token` request body (form-encoded, RFC 7523 shape).
 #[derive(Debug, Default, Deserialize)]
@@ -264,6 +305,19 @@ async fn token_handler(
     let Some(assertion) = req.client_assertion.as_deref().filter(|a| !a.is_empty()) else {
         return bad_request("client_assertion", "missing assertion", "MISSING");
     };
+
+    // Tenant isolation: service tokens are always tenant-scoped. A request that
+    // names no tenant is rejected up front (400) — before the assertion is
+    // verified or its jti consumed — so the caller can fix and retry. Where the
+    // service gets its tenant is the service's concern.
+    let requested_tenants = parse_tenants(req.tenants.as_deref());
+    if requested_tenants.is_empty() {
+        return bad_request(
+            "tenants",
+            "a service token must name a tenant",
+            "TENANT_REQUIRED",
+        );
+    }
 
     // Verify signature + claims against the registry.
     let verified = match verify_assertion(
@@ -308,17 +362,6 @@ async fn token_handler(
         return unauthenticated("unknown_service");
     };
 
-    // Tenant scope policy: a scope request from a service not allowed one is
-    // refused (403), never silently dropped.
-    let requested_tenants = parse_tenants(req.tenants.as_deref());
-    if !requested_tenants.is_empty() && !entry.tenant_scoped_allowed {
-        tracing::warn!(service = %verified.service, "service-token tenant scope refused");
-        return ServiceTokenError::permission_denied()
-            .with_reason("tenant_scope_not_allowed")
-            .create()
-            .into_response();
-    }
-
     let claims = build_service_claims(
         &state.cfg,
         &verified.service,
@@ -347,25 +390,26 @@ async fn token_handler(
         "service token issued"
     );
 
-    Json(serde_json::json!({
-        "access_token": jwt,
-        "token_type": "Bearer",
-        "expires_in": st.token_ttl_seconds,
-    }))
+    Json(TokenResponse {
+        access_token: jwt,
+        token_type: "Bearer",
+        expires_in: st.token_ttl_seconds,
+    })
     .into_response()
 }
 
-/// Readiness of the token listener (liveness of the socket; the gear only
-/// binds it once Redis + keys are up, so a reachable `/ready` implies both).
-async fn ready_handler() -> Response {
-    (StatusCode::OK, "ready").into_response()
+/// Health of the token listener (liveness of the socket; the gear only binds it
+/// once Redis + keys are up, so a reachable `/health` implies both). Uses the
+/// same `/health` path the main host + k8s probes use, for one convention.
+async fn health_handler() -> Response {
+    (StatusCode::OK, "ok").into_response()
 }
 
 /// The token listener's router: exactly the two endpoints it owns.
 fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/internal/token", post(token_handler))
-        .route("/ready", get(ready_handler))
+        .route("/health", get(health_handler))
         .with_state(state)
 }
 
@@ -446,14 +490,14 @@ mod tests {
         (priv_pem, pub_pem)
     }
 
-    fn registry(service: &str, pub_pem: &str, tenant_scoped: bool) -> ServiceRegistry {
+    fn registry(service: &str, pub_pem: &str) -> ServiceRegistry {
         let mut services = HashMap::new();
         services.insert(
             service.to_owned(),
             crate::config::ServiceRegistryEntry {
                 public_keys: vec![pub_pem.to_owned()],
+                public_key_paths: vec![],
                 roles: vec!["service".to_owned()],
-                tenant_scoped_allowed: tenant_scoped,
             },
         );
         let cfg = ServiceTokensConfig {
@@ -486,7 +530,7 @@ mod tests {
     #[test]
     fn verifies_a_valid_assertion() {
         let (priv_pem, pub_pem) = keypair();
-        let reg = registry("testclient", &pub_pem, true);
+        let reg = registry("testclient", &pub_pem);
         let a = sign(&priv_pem, &assertion("testclient", 30));
         let v = verify_assertion(&reg, AUD, 60, 30, &a).unwrap();
         assert_eq!(v.service, "testclient");
@@ -497,7 +541,7 @@ mod tests {
     fn rejects_wrong_key() {
         let (_priv_pem, pub_pem) = keypair();
         let (attacker_priv, _) = keypair();
-        let reg = registry("testclient", &pub_pem, true);
+        let reg = registry("testclient", &pub_pem);
         // Signed by a key the registry does not hold.
         let a = sign(&attacker_priv, &assertion("testclient", 30));
         assert_eq!(
@@ -509,7 +553,7 @@ mod tests {
     #[test]
     fn rejects_unknown_service() {
         let (priv_pem, pub_pem) = keypair();
-        let reg = registry("testclient", &pub_pem, true);
+        let reg = registry("testclient", &pub_pem);
         let a = sign(&priv_pem, &assertion("someone-else", 30));
         assert_eq!(
             verify_assertion(&reg, AUD, 60, 30, &a).unwrap_err(),
@@ -520,7 +564,7 @@ mod tests {
     #[test]
     fn rejects_wrong_audience() {
         let (priv_pem, pub_pem) = keypair();
-        let reg = registry("testclient", &pub_pem, true);
+        let reg = registry("testclient", &pub_pem);
         let mut a = assertion("testclient", 30);
         a.aud = "http://evil.example/token".to_owned();
         let signed = sign(&priv_pem, &a);
@@ -533,7 +577,7 @@ mod tests {
     #[test]
     fn rejects_expired_assertion() {
         let (priv_pem, pub_pem) = keypair();
-        let reg = registry("testclient", &pub_pem, true);
+        let reg = registry("testclient", &pub_pem);
         // exp 120 s in the past, well beyond the 5 s leeway.
         let a = sign(&priv_pem, &assertion("testclient", -120));
         assert_eq!(
@@ -545,7 +589,7 @@ mod tests {
     #[test]
     fn rejects_overlong_lifetime() {
         let (priv_pem, pub_pem) = keypair();
-        let reg = registry("testclient", &pub_pem, true);
+        let reg = registry("testclient", &pub_pem);
         let now = now_secs();
         let a = sign(
             &priv_pem,
@@ -567,7 +611,7 @@ mod tests {
     #[test]
     fn rejects_sub_iss_mismatch() {
         let (priv_pem, pub_pem) = keypair();
-        let reg = registry("testclient", &pub_pem, true);
+        let reg = registry("testclient", &pub_pem);
         let now = now_secs();
         // iss is the registered service, but sub disagrees.
         let a = sign(

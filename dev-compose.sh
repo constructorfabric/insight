@@ -142,6 +142,25 @@ ensure_authenticator_dev_key() {
     return 1
   fi
   chmod 600 "$key"
+  ensure_service_token_dev_key "$dir"
+}
+
+# Generate the dev-only service-token keypair (registry entry `testclient`).
+# The authenticator reads only the public half (mounted, referenced by
+# public_key_paths); the private half is for a calling service / manual testing.
+# Never committed (same gitignored dir as the signing key).
+ensure_service_token_dev_key() {
+  local dir="$1"
+  local key="$dir/testclient.key.pem"
+  local pub="$dir/testclient.pub.pem"
+  [[ -f "$pub" ]] && return 0
+  echo "=== Generating dev service-token keypair for the authenticator ($pub) ==="
+  if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$key" 2>/dev/null; then
+    echo "WARN: openssl unavailable — service tokens will not work without $pub" >&2
+    return 1
+  fi
+  openssl pkey -in "$key" -pubout -out "$pub" 2>/dev/null
+  chmod 600 "$key"
 }
 
 cmd_up() {

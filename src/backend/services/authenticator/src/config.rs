@@ -65,15 +65,19 @@ impl Default for IdpConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct ServiceRegistryEntry {
-    /// SPKI PEM public key(s) the service signs its RFC 7523 assertions with.
-    /// Two keys are allowed at once so a rotation overlaps `previous`+`next`.
+    /// Inline SPKI PEM public key(s) the service signs its RFC 7523 assertions
+    /// with. Two keys are allowed at once so a rotation overlaps `previous`+
+    /// `next`. Prod/gitops uses this (public keys are not secrets, fine to
+    /// commit in a chart ConfigMap).
     pub public_keys: Vec<String>,
+    /// Public-key PEM file path(s), resolved against `public_key_dir` when
+    /// relative. Dev/e2e uses this so no key material is committed — the
+    /// keypair is generated at bring-up (like the gateway signing key) and the
+    /// public half is mounted here. Merged with `public_keys`.
+    pub public_key_paths: Vec<String>,
     /// Roles baked into the issued gateway JWT. `"service"` is always added by
     /// the issuer, so an entry may leave this empty for a plain service token.
     pub roles: Vec<String>,
-    /// Whether this service may request a tenant-scoped token (`tenants=[t]`).
-    /// A tenant request from a service without this flag is refused (403).
-    pub tenant_scoped_allowed: bool,
 }
 
 /// Service-token issuance settings (§10 G1, §10 G4, DESIGN §3.9). The token
@@ -98,6 +102,10 @@ pub struct ServiceTokensConfig {
     /// Extra clock-skew grace (seconds) added to the replay-guard TTL so a
     /// still-valid assertion cannot be replayed within its own lifetime.
     pub clock_skew_leeway_seconds: u64,
+    /// Directory that relative `public_key_paths` resolve against. Env-
+    /// overridable (like `signing_keys_path`) so dev/e2e can point it at a
+    /// generated key dir without committing paths.
+    pub public_key_dir: String,
     /// The registry: service name -> its public identity. Empty by default;
     /// dev/compose seed a `testclient` entry, prod ships real ones via gitops.
     pub services: HashMap<String, ServiceRegistryEntry>,
@@ -111,6 +119,7 @@ impl Default for ServiceTokensConfig {
             assertion_max_lifetime_seconds: 60,
             token_ttl_seconds: 300,
             clock_skew_leeway_seconds: 30,
+            public_key_dir: String::new(),
             services: HashMap::new(),
         }
     }
@@ -263,6 +272,11 @@ impl AuthenticatorConfig {
             !st.token_bind_addr.trim().is_empty(),
             "service_tokens.token_bind_addr is required (empty)"
         );
+        anyhow::ensure!(
+            st.token_bind_addr != self.bind_addr,
+            "service_tokens.token_bind_addr ({}) must differ from bind_addr",
+            st.token_bind_addr
+        );
         if !st.services.is_empty() {
             anyhow::ensure!(
                 !st.audience.trim().is_empty(),
@@ -274,8 +288,8 @@ impl AuthenticatorConfig {
             );
             for (name, entry) in &st.services {
                 anyhow::ensure!(
-                    !entry.public_keys.is_empty(),
-                    "service_tokens.services.{name} has no public_keys"
+                    !entry.public_keys.is_empty() || !entry.public_key_paths.is_empty(),
+                    "service_tokens.services.{name} has no public_keys or public_key_paths"
                 );
             }
         }
@@ -304,30 +318,42 @@ mod tests {
     }
 
     /// The dev `config/insight.yaml` must deserialize into the config struct
-    /// (guards `deny_unknown_fields`, YAML indentation, and the block-scalar
-    /// PEMs) and its registry entries must parse as EC public keys. A mistake
-    /// here would otherwise only surface at container boot.
+    /// (guards `deny_unknown_fields` and YAML indentation) and its registry must
+    /// build once its `public_key_paths` resolve. No key material is committed,
+    /// so the test generates a keypair into a temp `public_key_dir` (exactly
+    /// what run-e2e.sh / dev-compose.sh do at bring-up) before building. A
+    /// mistake here would otherwise only surface at container boot.
     #[test]
-    fn dev_config_service_tokens_deserialize_and_parse() {
+    fn dev_config_service_tokens_deserialize_and_build() {
+        use p256::SecretKey;
+        use p256::elliptic_curve::Generate as _;
+        use p256::pkcs8::{EncodePublicKey as _, LineEnding};
+
         let raw = include_str!("../config/insight.yaml");
         let host: Host = serde_yaml::from_str(raw).expect("dev config deserializes");
-        let st = host.gears.authenticator.config.service_tokens;
+        let mut st = host.gears.authenticator.config.service_tokens;
 
         assert_eq!(st.token_bind_addr, "0.0.0.0:8093");
         assert!(st.audience.contains("/internal/token"));
         let testclient = st.services.get("testclient").expect("testclient entry");
-        assert!(testclient.tenant_scoped_allowed);
-        let noscope = st.services.get("svc-noscope").expect("svc-noscope entry");
-        assert!(!noscope.tenant_scoped_allowed);
-        for (name, entry) in &st.services {
-            assert!(
-                entry.public_keys[0].contains("BEGIN PUBLIC KEY"),
-                "{name} public key looks malformed"
-            );
-        }
+        assert_eq!(testclient.public_key_paths, vec!["testclient.pub.pem"]);
+        assert!(
+            testclient.public_keys.is_empty(),
+            "no key material should be committed inline in the dev config"
+        );
 
-        // The checked-in PEMs must parse as EC verifiers (fail-fast at boot).
+        // Generate the referenced public key into a temp dir, as bring-up does.
+        let dir = std::env::temp_dir().join(format!("authn-svc-key-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pub_pem = SecretKey::generate()
+            .public_key()
+            .to_public_key_pem(LineEnding::LF)
+            .unwrap();
+        std::fs::write(dir.join("testclient.pub.pem"), &pub_pem).unwrap();
+        st.public_key_dir = dir.to_string_lossy().into_owned();
+
         crate::service_token::ServiceRegistry::build(&st)
-            .expect("dev registry public keys parse as EC keys");
+            .expect("dev registry builds once public_key_paths resolve");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -3,12 +3,12 @@
 //! with the dev `testclient` registry). `run-e2e.sh` brings it up and runs it.
 //!
 //! It drives the whole flow through the SDK `ServiceTokenClient`:
-//!   1. obtain a service token and verify it against the published JWKS
-//!      (`sub = sid = service:testclient`, `roles` includes `service`);
+//!   1. obtain a tenant-scoped service token and verify it against the JWKS
+//!      (`sub = sid = service:testclient`, `roles` includes `service`,
+//!      `tenants = [tenant-a]`);
 //!   2. a replayed assertion is rejected (single-use `jti`);
 //!   3. an assertion signed with a key the registry does not hold is rejected;
-//!   4. a tenant-scoped request is honored for `testclient`
-//!      (`tenant_scoped_allowed: true`) and refused for `svc-noscope`.
+//!   4. a request that names no tenant is rejected (tenant isolation).
 //!
 //! ```text
 //! AUTH_BASE=http://localhost:8083 TOKEN_ENDPOINT=http://localhost:8093/internal/token \
@@ -33,14 +33,11 @@ fn token_endpoint() -> String {
     env("TOKEN_ENDPOINT", "http://localhost:8093/internal/token")
 }
 
-/// The checked-in dev private key matching the `testclient` registry entry.
+/// Path to the generated dev private key matching the `testclient` registry
+/// entry. run-e2e.sh generates the keypair and exports `SVC_KEY` (no key
+/// material is committed).
 fn testclient_key_path() -> String {
-    std::env::var("SVC_KEY").unwrap_or_else(|_| {
-        format!(
-            "{}/dev/service-tokens/testclient.key.pem",
-            env!("CARGO_MANIFEST_DIR")
-        )
-    })
+    std::env::var("SVC_KEY").expect("SVC_KEY must point at the generated testclient private key")
 }
 
 #[derive(Deserialize)]
@@ -96,9 +93,13 @@ async fn service_token_full_loop() {
     let endpoint = token_endpoint();
     let client =
         ServiceTokenClient::from_key_file("testclient", testclient_key_path(), &endpoint).unwrap();
+    let tenant = vec!["tenant-a".to_owned()];
 
-    // 1. Obtain a service token and verify it against the JWKS.
-    let bearer = client.bearer().await.expect("bearer() should mint a token");
+    // 1. Obtain a (tenant-scoped) service token and verify it against the JWKS.
+    let bearer = client
+        .bearer(&tenant)
+        .await
+        .expect("bearer() should mint a tenant-scoped token");
     let jwt = bearer
         .strip_prefix("Bearer ")
         .expect("bearer() returns a Bearer value");
@@ -111,19 +112,19 @@ async fn service_token_full_loop() {
         "service role always present, got {:?}",
         claims.roles
     );
-    assert!(
-        claims.tenants.is_empty(),
-        "cross-tenant token carries no tenants"
+    assert_eq!(
+        claims.tenants, tenant,
+        "the requested tenant is carried in the token"
     );
 
     // 2. Replay: the same assertion must be accepted once, then rejected.
     let assertion = client.make_assertion().unwrap();
     client
-        .post(&assertion, &[])
+        .post(&assertion, &tenant)
         .await
         .expect("first use of an assertion succeeds");
     assert!(
-        client.post(&assertion, &[]).await.is_err(),
+        client.post(&assertion, &tenant).await.is_err(),
         "a replayed assertion must be rejected"
     );
 
@@ -133,35 +134,14 @@ async fn service_token_full_loop() {
     let impostor = ServiceTokenClient::from_key_pem("testclient", &wrong_priv, &endpoint).unwrap();
     let forged = impostor.make_assertion().unwrap();
     assert!(
-        impostor.post(&forged, &[]).await.is_err(),
+        impostor.post(&forged, &tenant).await.is_err(),
         "an assertion signed with an unregistered key must be rejected"
     );
 
-    // 4a. Tenant-scoped request honored for a service allowed one.
-    let scoped = client
-        .fetch(&["tenant-a".to_owned()])
-        .await
-        .expect("tenant-scoped request honored for testclient");
-    let scoped_claims = verify_against_jwks(&scoped.access_token).await;
-    assert_eq!(
-        scoped_claims.tenants,
-        vec!["tenant-a".to_owned()],
-        "the requested tenant is carried in the token"
-    );
-
-    // 4b. Tenant-scoped request refused for a service not allowed one.
-    //     svc-noscope shares testclient's dev key but has tenant_scoped_allowed=false.
-    let noscope =
-        ServiceTokenClient::from_key_file("svc-noscope", testclient_key_path(), &endpoint).unwrap();
-    // A plain (cross-tenant) token is fine for svc-noscope...
-    noscope
-        .bearer()
-        .await
-        .expect("svc-noscope may obtain a cross-tenant token");
-    // ...but a tenant-scoped request is refused.
+    // 4. Tenant isolation: a request that names no tenant is refused (400).
     assert!(
-        noscope.fetch(&["tenant-a".to_owned()]).await.is_err(),
-        "a tenant scope must be refused for a service without tenant_scoped_allowed"
+        client.fetch(&[]).await.is_err(),
+        "a service token must name a tenant; an unscoped request is rejected"
     );
 }
 

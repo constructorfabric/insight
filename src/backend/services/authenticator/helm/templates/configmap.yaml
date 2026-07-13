@@ -83,6 +83,9 @@ data:
             {{- with .Values.serviceTokens.audience }}
             audience: {{ . | quote }}
             {{- end }}
+            {{- with .Values.serviceTokens.publicKeyDir }}
+            public_key_dir: {{ . | quote }}
+            {{- end }}
             {{- with .Values.serviceTokens.services }}
             services:
               {{- toYaml . | nindent 14 }}

@@ -25,7 +25,11 @@ serviceTokens:
   audience: ""
   assertionMaxLifetimeSeconds: 60
   tokenTtlSeconds: 300
-  # name -> { public_keys: [<PEM>...], roles: [...], tenant_scoped_allowed: bool }
+  # Directory that relative `public_key_paths` resolve against (leave empty to
+  # use absolute paths or inline `public_keys`).
+  publicKeyDir: ""
+  # name -> { public_keys: [<inline PEM>...] | public_key_paths: [<file>...], roles: [...] }
+  # Service tokens are always tenant-scoped; there is no per-service tenant flag.
   services: {}
 
 resources:
@@ -91,16 +95,13 @@ networkPolicy:
   # same-namespace pods only (the default NetworkPolicy scope).
   gatewayNamespaceSelector: {}
 
-  # G4 layer 2 for the TOKEN port: /internal/token must be reachable by the
-  # app-namespace service pods that need service tokens (analytics, seeds, the
-  # future permissions service) — a wider scope than the main port, which is
-  # fine because the endpoint demands a valid RFC 7523 assertion (layer 3).
-  # This policy is defense-in-depth, not the authentication.
+  # Access to the token port is disabled by default; enable it in your gitops
+  # config. It restricts /internal/token to the app-namespace service pods that
+  # need service tokens. Defense-in-depth only: the endpoint still demands a
+  # valid RFC 7523 assertion regardless of network position.
   tokenPort:
     enabled: false
-    # Which pods may reach the token port. Empty {} = every pod in the
-    # authenticator's namespace (the app namespace). Narrow it with a label
-    # selector (e.g. app.kubernetes.io/part-of: insight) if desired.
+    # Which pods may reach the token port. Empty {} = every pod in the namespace.
     clientPodSelector: {}
     # Optional namespace selector for cross-namespace callers.
     clientNamespaceSelector: {}
