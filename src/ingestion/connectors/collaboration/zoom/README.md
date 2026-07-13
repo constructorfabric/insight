@@ -25,7 +25,6 @@ stringData:
   zoom_account_id: ""       # Zoom account ID
   zoom_client_id: ""        # OAuth app client ID
   zoom_client_secret: ""    # OAuth app client secret
-  zoom_start_date: "2026-01-01"  # Earliest date for incremental sync (YYYY-MM-DD)
 ```
 
 ### Fields
@@ -35,7 +34,11 @@ stringData:
 | `zoom_account_id` | Yes | Zoom Server-to-Server OAuth account ID |
 | `zoom_client_id` | Yes | OAuth app client ID |
 | `zoom_client_secret` | Yes | OAuth app client secret (sensitive) |
-| `zoom_start_date` | Yes | Earliest date for incremental sync (YYYY-MM-DD) |
+
+There is no start-date knob: the `meetings` stream reads the Zoom Dashboard API
+(`/v2/metrics/*`), which only serves data for the last six months. The first
+sync automatically backfills from `now - 150 days` (a safety margin inside that
+window); later syncs continue incrementally from saved state.
 
 ### Automatically injected
 

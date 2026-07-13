@@ -105,7 +105,10 @@ streams:
             http_method: POST
             url: https://zoom.us/oauth/token
             request_body:
-              $ref: "#/definitions/linked/HttpRequester/request_body"
+              type: RequestBodyUrlEncodedForm
+              value:
+                grant_type: account_credentials
+                account_id: "{{ config['zoom_account_id'] }}"
           expiration_duration: PT1H
           session_token_path:
             - access_token
@@ -113,10 +116,51 @@ streams:
             type: Bearer
         http_method: GET
         error_handler:
-          $ref: "#/definitions/linked/HttpRequester/error_handler"
+          type: CompositeErrorHandler
+          error_handlers:
+            - type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: RATE_LIMITED
+                  http_codes:
+                    - 429
+              backoff_strategies:
+                - type: WaitTimeFromHeader
+                  header: Retry-After
+            - type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: RATE_LIMITED
+                  http_codes:
+                    - 503
+              backoff_strategies:
+                - type: WaitTimeFromHeader
+                  header: Retry-After
+            - type: DefaultErrorHandler
+              max_retries: 5
+              response_filters:
+                - type: HttpResponseFilter
+                  action: RETRY
+                  http_codes:
+                    - 500
+                    - 502
+                    - 504
+              backoff_strategies:
+                - type: ExponentialBackoffStrategy
+                  factor: 5
         url: https://api.zoom.us/v2/users
       paginator:
-        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: next_page_token
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('next_page_token') }}"
+        stop_condition:
+          type: StopCondition
+          condition: "{{ not response.get('next_page_token') }}"
       record_selector:
         type: RecordSelector
         extractor:
@@ -267,7 +311,10 @@ streams:
             http_method: POST
             url: https://zoom.us/oauth/token
             request_body:
-              $ref: "#/definitions/linked/HttpRequester/request_body"
+              type: RequestBodyUrlEncodedForm
+              value:
+                grant_type: account_credentials
+                account_id: "{{ config['zoom_account_id'] }}"
           expiration_duration: PT1H
           session_token_path:
             - access_token
@@ -336,7 +383,7 @@ streams:
         - "%Y-%m-%dT%H:%M:%S%z"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config['zoom_start_date'] }}"
+        datetime: "{{ (now_utc() - duration('P150D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       end_datetime:
         type: MinMaxDatetime
@@ -522,13 +569,155 @@ streams:
             parent_key: uuid
             partition_field: meeting_uuid
             stream:
-              $ref: "#/streams/1"
+              type: DeclarativeStream
+              name: _meetings
+              primary_key:
+                - uuid
+              retriever:
+                type: SimpleRetriever
+                decoder:
+                  type: JsonDecoder
+                requester:
+                  type: HttpRequester
+                  authenticator:
+                    type: SessionTokenAuthenticator
+                    login_requester:
+                      type: HttpRequester
+                      authenticator:
+                        type: BasicHttpAuthenticator
+                        username: "{{ config['zoom_client_id'] }}"
+                        password: "{{ config['zoom_client_secret'] }}"
+                      http_method: POST
+                      url: https://zoom.us/oauth/token
+                      request_body:
+                        type: RequestBodyUrlEncodedForm
+                        value:
+                          grant_type: account_credentials
+                          account_id: "{{ config['zoom_account_id'] }}"
+                    expiration_duration: PT1H
+                    session_token_path:
+                      - access_token
+                    request_authentication:
+                      type: Bearer
+                  http_method: GET
+                  error_handler:
+                    type: CompositeErrorHandler
+                    error_handlers:
+                      - type: DefaultErrorHandler
+                        response_filters:
+                          - type: HttpResponseFilter
+                            action: RATE_LIMITED
+                            http_codes:
+                              - 429
+                        backoff_strategies:
+                          - type: WaitTimeFromHeader
+                            header: Retry-After
+                      - type: DefaultErrorHandler
+                        response_filters:
+                          - type: HttpResponseFilter
+                            action: RATE_LIMITED
+                            http_codes:
+                              - 503
+                        backoff_strategies:
+                          - type: WaitTimeFromHeader
+                            header: Retry-After
+                      - type: DefaultErrorHandler
+                        max_retries: 5
+                        response_filters:
+                          - type: HttpResponseFilter
+                            action: RETRY
+                            http_codes:
+                              - 500
+                              - 502
+                              - 504
+                        backoff_strategies:
+                          - type: ExponentialBackoffStrategy
+                            factor: 5
+                  request_parameters:
+                    $ref: "#/definitions/linked/HttpRequester/request_parameters"
+                  url: https://api.zoom.us/v2/metrics/meetings
+                paginator:
+                  type: DefaultPaginator
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: next_page_token
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ response.get('next_page_token') }}"
+                  stop_condition:
+                    type: StopCondition
+                    condition: "{{ not response.get('next_page_token') }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - meetings
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: end_time
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%SZ"
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: >-
+                    {{ (now_utc() - duration('P150D')).strftime('%Y-%m-%d') }}
+                  datetime_format: "%Y-%m-%d"
+                end_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+                  datetime_format: "%Y-%m-%d"
+                datetime_format: "%Y-%m-%d"
+                start_time_option:
+                  type: RequestOption
+                  field_name: from
+                  inject_into: request_parameter
+                end_time_option:
+                  type: RequestOption
+                  field_name: to
+                  inject_into: request_parameter
+                lookback_window: P7D
+                step: P30D
+                cursor_granularity: P1D
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    uuid:
+                      type:
+                        - string
+                        - "null"
+                    end_time:
+                      type: string
+                  additionalProperties: true
       decoder:
         type: JsonDecoder
       requester:
         type: HttpRequester
         authenticator:
-          $ref: "#/definitions/linked/HttpRequester/authenticator"
+          type: SessionTokenAuthenticator
+          login_requester:
+            type: HttpRequester
+            authenticator:
+              type: BasicHttpAuthenticator
+              username: "{{ config['zoom_client_id'] }}"
+              password: "{{ config['zoom_client_secret'] }}"
+            http_method: POST
+            url: https://zoom.us/oauth/token
+            request_body:
+              type: RequestBodyUrlEncodedForm
+              value:
+                grant_type: account_credentials
+                account_id: "{{ config['zoom_account_id'] }}"
+          expiration_duration: PT1H
+          session_token_path:
+            - access_token
+          request_authentication:
+            type: Bearer
         http_method: GET
         error_handler:
           type: CompositeErrorHandler
@@ -859,7 +1048,6 @@ spec:
       - zoom_account_id
       - zoom_client_id
       - zoom_client_secret
-      - zoom_start_date
     properties:
       insight_tenant_id:
         type: string
@@ -886,14 +1074,6 @@ spec:
         title: Zoom Client Secret
         airbyte_secret: true
         order: 4
-      zoom_start_date:
-        type: string
-        description: >-
-          Earliest date to request during initial sync or best-effort historical
-          backfill.
-        title: Start Date
-        format: date
-        order: 5
       page_size:
         type: integer
         description: Requested page size for paginated Zoom endpoints.
@@ -901,7 +1081,7 @@ spec:
         default: 100
         minimum: 1
         maximum: 300
-        order: 6
+        order: 5
     additionalProperties: true
 
 metadata:
