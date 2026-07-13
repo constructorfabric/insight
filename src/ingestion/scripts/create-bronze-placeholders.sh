@@ -567,7 +567,7 @@ if ! ch_table_exists silver class_git_pull_requests; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     insight_tenant_id String,
-    pr_id             String,
+    pr_id             Int64,
     tenant_id         String  DEFAULT '',
     source_id         String  DEFAULT '',
     project_key       String  DEFAULT '',
@@ -619,7 +619,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests_commits (
     source_id   String DEFAULT '',
     project_key String DEFAULT '',
     repo_slug   String DEFAULT '',
-    pr_id       String,
+    pr_id       Int64,
     commit_hash String,
     data_source String DEFAULT '',
     _version    UInt64
