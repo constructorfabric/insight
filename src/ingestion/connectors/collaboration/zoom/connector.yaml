@@ -570,7 +570,12 @@ streams:
           - type: ParentStreamConfig
             parent_key: uuid
             partition_field: meeting_uuid
-            incremental_dependency: true
+            # NOTE: incremental_dependency is deliberately NOT set. It only has
+            # an effect when the substream itself is incremental (the parent
+            # cursor piggybacks on the child state); participants is
+            # full-refresh, so the CDK emits no child state at all — verified
+            # by tests/test_participants.py. Partition enumeration is instead
+            # bounded by the parent's now-150d window.
             stream:
               type: DeclarativeStream
               name: _meetings

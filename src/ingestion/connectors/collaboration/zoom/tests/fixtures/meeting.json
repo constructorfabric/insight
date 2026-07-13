@@ -1,0 +1,19 @@
+{
+  "uuid": "mtg-uuid-1==",
+  "id": 88011122233,
+  "topic": "Weekly Sync",
+  "host": "Alice Example",
+  "email": "alice@example.com",
+  "user_type": "Licensed",
+  "start_time": "2026-06-15T10:00:00Z",
+  "end_time": "2026-06-15T10:30:00Z",
+  "duration": "30:00",
+  "participants": 2,
+  "has_pstn": false,
+  "has_voip": true,
+  "has_3rd_party_audio": false,
+  "has_video": false,
+  "has_screen_share": false,
+  "has_recording": false,
+  "has_sip": false
+}
