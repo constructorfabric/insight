@@ -29,8 +29,31 @@ pub async fn resolve_profile(
     CanonicalJson(cmd): CanonicalJson<ResolveProfileCommand>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
+    let value_type = cmd.value_type.trim();
 
-    let person_ids = match cmd.value_type.trim() {
+    // Request validation (mirrors the .NET `ResolveProfileCommandValidator`).
+    if cmd.value.trim().is_empty() {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("value", "value must not be empty", "INVALID")
+            .create());
+    }
+    if cmd.value.chars().count() > 320 {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("value", "value must be at most 320 characters", "INVALID")
+            .create());
+    }
+    if value_type == "email" && (cmd.insight_source_type.is_some() || cmd.insight_source_id.is_some())
+    {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation(
+                "insight_source_type",
+                "insight_source_type / insight_source_id must be null for value_type='email'",
+                "INVALID",
+            )
+            .create());
+    }
+
+    let person_ids = match value_type {
         "email" => persons_repo::resolve_person_ids_by_email(&state.db, tenant, &cmd.value)
             .await
             .map_err(|e| {

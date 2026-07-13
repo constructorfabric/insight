@@ -103,7 +103,9 @@ pub async fn resolve_person_ids_by_source_id(
             tenant_id.as_bytes().to_vec().into(),
             source_type.to_owned().into(),
             source_id.as_bytes().to_vec().into(),
-            value.trim().to_owned().into(),
+            // Source-native ids are matched as-is (the .NET service trims only
+            // email, not the id path).
+            value.to_owned().into(),
         ],
     );
 

@@ -31,9 +31,9 @@ pub struct ResolveProfileCommand {
 pub struct ProfileResponse {
     pub person_id: Uuid,
     pub insight_tenant_id: Uuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // `email` and `display_name` are always present in JSON (null when absent),
+    // matching the .NET contract (no `[JsonIgnore]` on these two).
     pub email: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_name: Option<String>,
@@ -70,7 +70,11 @@ pub fn assemble_profile(
     let mut latest: HashMap<String, persons::Model> = HashMap::new();
     for obs in observations {
         match latest.get(&obs.value_type) {
-            Some(prev) if prev.created_at >= obs.created_at => {}
+            // Keep the current winner unless the new row is strictly newer.
+            // Tie-break on `id` (matches the .NET `created_at DESC, id DESC`), so
+            // the result is deterministic even when `created_at` values are equal
+            // (common under batch backfill) and independent of DB row order.
+            Some(prev) if (prev.created_at, prev.id) >= (obs.created_at, obs.id) => {}
             _ => {
                 latest.insert(obs.value_type.clone(), obs);
             }
@@ -191,6 +195,23 @@ mod tests {
         assert_eq!(profile.status.as_deref(), Some("Active"));
         assert_eq!(profile.username.as_deref(), Some("asmith"));
         assert_eq!(profile.employee_id.as_deref(), Some("E1"));
+        Ok(())
+    }
+
+    #[test]
+    fn equal_created_at_breaks_tie_by_id_deterministically() -> anyhow::Result<()> {
+        let t: DateTime = "2026-01-01T00:00:00".parse()?;
+        let mut low = obs("email", "low-id@example.com", t);
+        low.id = 10;
+        let mut high = obs("email", "high-id@example.com", t);
+        high.id = 20;
+
+        // Highest id wins on equal created_at — regardless of input row order.
+        let a = assemble_profile(Uuid::from_u128(1), Uuid::from_u128(2), vec![low.clone(), high.clone()]);
+        let b = assemble_profile(Uuid::from_u128(1), Uuid::from_u128(2), vec![high, low]);
+
+        assert_eq!(a.email.as_deref(), Some("high-id@example.com"));
+        assert_eq!(b.email.as_deref(), Some("high-id@example.com"));
         Ok(())
     }
 }
