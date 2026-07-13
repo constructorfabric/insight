@@ -799,12 +799,12 @@ tests/
   conftest.py          # sys.path for local modules + `from connector_tests.plugin import *`
   config.py            # ConfigBuilder extending the shared base (always carries insight_tenant_id / insight_source_id)
   test_<stream>.py     # one module per stream
-  fixtures/*.json      # response bodies: shapes from real API, values synthetic (optional — small responses inline)
+  fixtures/*.json      # response bodies: shapes from real API, values synthetic (MANDATORY — same approach for big and small responses)
 ```
 
 Shared harness: `src/ingestion/tests/connectors/` (`get_source`, `read_stream`, `HttpMocker` re-exports, schema-conformance asserter, the `http_mocker` pytest fixture). Reference suite to copy from: `src/ingestion/connectors/task-tracking/jira/tests/`.
 
-**Fixture rule**: take the response *shape* from the real payloads captured in the §5.6 read logs; replace every value (ids, emails, hostnames, tokens) with synthetic ones. NEVER commit real customer data.
+**Fixture rules**: every response body lives in `fixtures/*.json` — no inline bodies, regardless of size; tests load them with `load_fixture(__file__, "name.json", **overrides)` and override only the fields the case exercises. Take the response *shape* from the real payloads captured in the §5.6 read logs; replace every value (ids, emails, hostnames, tokens) with synthetic ones. NEVER commit real customer data.
 
 For every stream, cover each row of the coverage matrix whose precondition the manifest satisfies (full matrix in the spec, §"Stream Coverage Matrix"):
 
@@ -828,15 +828,16 @@ from config import MyConfigBuilder
 
 from connector_tests import (
     ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse,
-    assert_records_conform, read_stream,
+    assert_records_conform, load_fixture, read_stream,
 )
 
 @freeze_time("2026-01-01T00:00:00Z")          # mandatory when the stream has a cursor or datetime params
 def test_users_full_refresh(http_mocker: HttpMocker):
     config = MyConfigBuilder().build()
+    user = load_fixture(__file__, "user.json", id="2", email="b@example.com")  # record from fixtures/, case fields overridden
     http_mocker.get(
         HttpRequest("https://api.example.com/v1/users", query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps({"users": [{"id": "1", "email": "a@example.com"}]}), status_code=200),
+        HttpResponse(body=json.dumps({"users": [user]}), status_code=200),
     )
     output = read_stream("<category>/<name>", "users", config)
     assert len(output.records) == 1

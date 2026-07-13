@@ -29,6 +29,7 @@ from connector_tests import (
     HttpMocker,
     HttpRequest,
     HttpResponse,
+    load_fixture,
     read_stream,
 )
 
@@ -44,12 +45,13 @@ _WINDOW_END = "2026-07-01 00:00"
 
 def _projects_response(keys: list[str]) -> HttpResponse:
     values = [
-        {
-            "id": str(10000 + i),
-            "key": key,
-            "name": f"Project {key}",
-            "insight": {"lastIssueUpdateTime": "2026-06-20T09:00:00.000+0000"},
-        }
+        load_fixture(
+            __file__,
+            "discovery_project.json",
+            id=str(10000 + i),
+            key=key,
+            name=f"Project {key}",
+        )
         for i, key in enumerate(keys)
     ]
     return HttpResponse(body=json.dumps({"values": values, "isLast": True}), status_code=200)
@@ -72,7 +74,7 @@ def _jql_params(project: str, start: str, end: str, page_token: str | None = Non
 def _issues_response(issues: list[tuple[str, str, str]], next_token: str | None = None) -> HttpResponse:
     body = {
         "issues": [
-            {"id": iid, "key": key, "fields": {"updated": updated}}
+            load_fixture(__file__, "issue.json", id=iid, key=key, fields={"updated": updated})
             for iid, key, updated in issues
         ]
     }

@@ -331,7 +331,7 @@ jobs:
           # without tests; treat as success. Capture rc via `|| rc=$?` so the
           # runner's default `set -e` shell can't abort before we inspect it.
           rc=0
-          "$PY" -m pytest \
+          "$PY" -m pytest ${{ matrix.entry.pytest_args }} \
             --cov="${{ matrix.entry.cov_package }}" \
             --cov-report "xml:$GITHUB_WORKSPACE/coverage/python-${{ matrix.entry.name }}.cobertura.xml" || rc=$?
           if [ "$rc" -eq 5 ]; then

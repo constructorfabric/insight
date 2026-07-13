@@ -22,6 +22,7 @@ from connector_tests import (
     HttpRequest,
     HttpResponse,
     assert_records_conform,
+    load_fixture,
     read_stream,
 )
 
@@ -31,17 +32,15 @@ _SEARCH_URL = f"{JIRA_URL}/rest/api/3/project/search"
 
 
 def _project(pid: int, key: str) -> dict:
-    """One API project record using only schema-declared source fields."""
-    return {
-        "id": str(pid),
-        "key": key,
-        "name": f"Project {key}",
-        "projectTypeKey": "software",
-        "style": "classic",
-        "isPrivate": False,
-        "simplified": False,
-        "self": f"{JIRA_URL}/rest/api/3/project/{pid}",
-    }
+    """The fixtures/project.json record with only the case-relevant overrides."""
+    return load_fixture(
+        __file__,
+        "project.json",
+        id=str(pid),
+        key=key,
+        name=f"Project {key}",
+        self=f"{JIRA_URL}/rest/api/3/project/{pid}",
+    )
 
 
 def _page(records: list[dict], *, is_last: bool = True) -> HttpResponse:

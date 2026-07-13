@@ -45,6 +45,22 @@ def test_stream_schema_unknown_stream() -> None:
         stream_schema("task-tracking/jira", "no_such_stream")
 
 
+def test_load_fixture_overrides_and_errors(tmp_path) -> None:
+    from connector_tests import load_fixture
+
+    jira_tests = str(
+        connector_dir("task-tracking/jira") / "tests" / "test_jira_projects.py"
+    )
+    base = load_fixture(jira_tests, "project.json")
+    assert base["key"] == "PROJ1"
+    # overrides may use any record field name, including `name`
+    over = load_fixture(jira_tests, "project.json", key="PROJ2", name="Project PROJ2")
+    assert (over["key"], over["name"]) == ("PROJ2", "Project PROJ2")
+    assert base["key"] == "PROJ1", "overrides must not mutate the cached/base data"
+    with pytest.raises(FileNotFoundError):
+        load_fixture(jira_tests, "no_such.json")
+
+
 def test_connector_inventory_tracks_covered_and_missing() -> None:
     from connector_tests.plugin import connector_inventory
 

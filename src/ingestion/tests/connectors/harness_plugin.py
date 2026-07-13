@@ -35,8 +35,25 @@ def nocode_suite_dirs() -> list[Path]:
     return suites
 
 
+def pytest_addoption(parser):
+    group = parser.getgroup("connector-tests")
+    group.addoption(
+        "--meta-only", action="store_true", default=False,
+        help="collect only the harness's own unit tests (meta/)",
+    )
+    group.addoption(
+        "--suites-only", action="store_true", default=False,
+        help="collect only the nocode connectors' mock suites",
+    )
+
+
 def pytest_load_initial_conftests(early_config, parser, args):
-    if getattr(early_config.known_args_namespace, "file_or_dir", None):
+    ns = early_config.known_args_namespace
+    if getattr(ns, "file_or_dir", None):
         return  # explicit paths given — collect only those
-    injected = [str(_HARNESS_ROOT / "meta")] + [str(p) for p in nocode_suite_dirs()]
+    injected = []
+    if not getattr(ns, "suites_only", False):
+        injected.append(str(_HARNESS_ROOT / "meta"))
+    if not getattr(ns, "meta_only", False):
+        injected.extend(str(p) for p in nocode_suite_dirs())
     args.extend(injected)
