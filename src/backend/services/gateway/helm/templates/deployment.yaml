@@ -46,11 +46,9 @@ spec:
             - name: GATEWAY_ROUTES_FILE
               value: /etc/gateway/routes.yaml
             - name: GATEWAY_AUTHENTICATOR_URL
-              value: {{ required "gateway.authenticatorUrl is required" .Values.gateway.authenticatorUrl | quote }}
+              value: {{ printf "http://%s.%s.svc.%s:%v" .Values.gateway.authenticator.service .Release.Namespace .Values.gateway.clusterDomain .Values.gateway.authenticator.port | quote }}
             - name: GATEWAY_FRONT_URL
-              value: {{ required "gateway.frontUrl is required" .Values.gateway.frontUrl | quote }}
-            - name: GATEWAY_RESOLVER
-              value: {{ required "gateway.resolver is required (kube-dns/CoreDNS cluster IP)" .Values.gateway.resolver | quote }}
+              value: {{ printf "http://%s.%s.svc.%s:%v" .Values.gateway.front.service .Release.Namespace .Values.gateway.clusterDomain .Values.gateway.front.port | quote }}
             {{- with .Values.gateway.setRealIpFrom }}
             - name: GATEWAY_SET_REAL_IP_FROM
               value: {{ join "," . | quote }}

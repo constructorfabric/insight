@@ -15,20 +15,21 @@ service:
 # entrypoint feeds them to routegen at startup (the route table itself is the
 # mounted ConfigMap). Nothing is baked into the image.
 gateway:
-  # Authenticator base URL for the /auth proxy and the Lua exchange cosocket.
-  # Use the FQDN: the cosocket's DNS (lua-resty-http) does NOT apply the k8s
-  # search domain, unlike nginx's own upstream resolution.
-  authenticatorUrl: http://authenticator.insight.svc.cluster.local:8083
-  # insight-front SPA server.
-  frontUrl: http://insight-front.insight.svc.cluster.local:8080
-  # kube-dns / CoreDNS cluster IP -- mandatory for the Lua cosocket (ADR-0001).
-  # kubeadm defaults to 10.96.0.10; k3s uses 10.43.0.10.
-  resolver: 10.96.0.10
+  # The gateway's upstreams, addressed by k8s service DNS. deployment.yaml
+  # assembles the FQDN URL as http://<service>.<Release.Namespace>.svc.<clusterDomain>:<port>
+  # (an FQDN is required -- the cosocket's DNS does not apply the search domain).
+  clusterDomain: cluster.local
+  authenticator:
+    service: authenticator
+    port: 8083
+  front:
+    service: insight-front
+    port: 8080
   # Trusted ingress-hop CIDRs for X-Forwarded-For (set_real_ip_from). Empty =
-  # no client-IP trust (safe default). Set to the ingress/pod network in
-  # clusters that terminate TLS in front of the gateway (G8).
+  # no client-IP trust; set to the ingress/pod network where TLS terminates in
+  # front of the gateway (G8).
   setRealIpFrom: []
-  # Optional: size of the lua_shared_dict exchange cache (routegen default 64m).
+  # lua_shared_dict exchange-cache size (empty = routegen default 64m).
   jwtCacheSize: ""
 
 resources:

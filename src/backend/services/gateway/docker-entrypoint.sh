@@ -22,7 +22,6 @@ fi
 set -- --routes "$ROUTES" -o "$OUT"
 [ -n "${GATEWAY_AUTHENTICATOR_URL:-}" ] && set -- "$@" --authenticator-url "$GATEWAY_AUTHENTICATOR_URL"
 [ -n "${GATEWAY_FRONT_URL:-}" ]         && set -- "$@" --front-url "$GATEWAY_FRONT_URL"
-[ -n "${GATEWAY_RESOLVER:-}" ]          && set -- "$@" --resolver "$GATEWAY_RESOLVER"
 [ -n "${GATEWAY_LISTEN:-}" ]            && set -- "$@" --listen "$GATEWAY_LISTEN"
 [ -n "${GATEWAY_JWT_CACHE_SIZE:-}" ]    && set -- "$@" --jwt-cache-size "$GATEWAY_JWT_CACHE_SIZE"
 [ -n "${GATEWAY_AUTHZ_PATH:-}" ]        && set -- "$@" --authz-path "$GATEWAY_AUTHZ_PATH"

@@ -44,11 +44,6 @@ struct Cli {
     #[arg(long, default_value_t = Settings::default().front_url)]
     front_url: String,
 
-    /// DNS resolver IP for Lua cosockets (kube-dns/CoreDNS cluster IP
-    /// in-cluster; 127.0.0.11 in docker compose).
-    #[arg(long, default_value_t = Settings::default().resolver)]
-    resolver: String,
-
     /// Size of the `lua_shared_dict` exchange cache.
     #[arg(long, default_value_t = Settings::default().jwt_cache_size)]
     jwt_cache_size: String,
@@ -78,7 +73,6 @@ impl Cli {
             authenticator_url: self.authenticator_url.clone(),
             authz_path: self.authz_path.clone(),
             front_url: self.front_url.clone(),
-            resolver: self.resolver.clone(),
             jwt_cache_size: self.jwt_cache_size.clone(),
             authz_connect_timeout_ms: self.authz_connect_timeout_ms,
             authz_read_timeout_ms: self.authz_read_timeout_ms,

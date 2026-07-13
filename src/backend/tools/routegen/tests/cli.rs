@@ -31,9 +31,6 @@ fn writes_a_valid_config_to_output() {
         routes.to_str().unwrap(),
         "-o",
         out.to_str().unwrap(),
-        // exercise a couple of settings flags too
-        "--resolver",
-        "10.43.0.10",
         "--set-real-ip-from",
         "10.0.0.0/8",
     ]);
@@ -43,7 +40,7 @@ fn writes_a_valid_config_to_output() {
         String::from_utf8_lossy(&o.stderr)
     );
     let conf = fs::read_to_string(&out).unwrap();
-    assert!(conf.contains("resolver 10.43.0.10 ipv6=off;"));
+    assert!(conf.contains("resolver local=on ipv6=off;"));
     assert!(conf.contains("set_real_ip_from 10.0.0.0/8;"));
     assert!(conf.contains("access_by_lua_block"));
 }

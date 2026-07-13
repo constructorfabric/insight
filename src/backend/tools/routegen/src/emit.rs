@@ -13,17 +13,15 @@ use url::Url;
 
 use crate::schema::{ResolvedRoute, RouteConfig};
 
-/// Deployment knobs that are not part of the route table itself. Defaults are
-/// the in-cluster values; the CLI overrides them (compose points the resolver
-/// and upstream authorities at the compose network). The committed golden
-/// config is generated with these defaults, and CI asserts it stays in sync.
+/// Deployment settings that are not part of the route table itself (upstream
+/// authorities, timeouts, trusted proxies). The CLI fills them from env at
+/// container startup; defaults are the in-cluster values.
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub listen: u16,
     pub authenticator_url: String,
     pub authz_path: String,
     pub front_url: String,
-    pub resolver: String,
     pub jwt_cache_size: String,
     pub authz_connect_timeout_ms: u32,
     pub authz_read_timeout_ms: u32,
@@ -40,10 +38,6 @@ impl Default for Settings {
             authenticator_url: "http://authenticator.insight.svc.cluster.local:8083".to_owned(),
             authz_path: "/internal/authz".to_owned(),
             front_url: "http://insight-front.insight.svc.cluster.local:8080".to_owned(),
-            // kube-dns / CoreDNS ClusterIP. Cosockets do their own DNS, so a
-            // `resolver` is mandatory (ADR-0001). kubeadm defaults to
-            // 10.96.0.10; k3s and others override via the CLI flag.
-            resolver: "10.96.0.10".to_owned(),
             jwt_cache_size: "64m".to_owned(),
             authz_connect_timeout_ms: 2000,
             authz_read_timeout_ms: 2000,
@@ -226,8 +220,9 @@ fn emit_http_runtime(c: &mut String, settings: &Settings, authz_url: &str) -> an
         "    lua_shared_dict jwt_cache {};",
         settings.jwt_cache_size
     )?;
-    c.push_str("    # cosockets resolve DNS themselves -- a resolver is mandatory (ADR-0001).\n");
-    writeln!(c, "    resolver {} ipv6=off;", settings.resolver)?;
+    // local=on reads nameservers from /etc/resolv.conf -- one config for
+    // in-cluster (kube-dns) and compose (docker DNS), no per-cluster address.
+    c.push_str("    resolver local=on ipv6=off;\n");
     c.push('\n');
     c.push_str("    init_by_lua_block {\n");
     c.push_str("        require(\"gateway\").init({\n");

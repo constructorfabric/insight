@@ -398,7 +398,6 @@ services:
     environment:
       GATEWAY_AUTHENTICATOR_URL: "http://authenticator:8083"
       GATEWAY_FRONT_URL: "http://insight-front:80"
-      GATEWAY_RESOLVER: "127.0.0.11" # docker embedded DNS
     volumes:
       # The single route table (also shipped as the chart ConfigMap). Edit it and
       # restart the container to re-generate nginx.conf.

@@ -71,7 +71,6 @@ services:
     environment:
       GATEWAY_AUTHENTICATOR_URL: "http://authenticator:8083"
       GATEWAY_FRONT_URL: "http://echo:9090"
-      GATEWAY_RESOLVER: "127.0.0.11"
     volumes:
       # The container compiles this into nginx.conf at startup (routes -> echo).
       - ./routes.e2e.yaml:/etc/gateway/routes.yaml:ro

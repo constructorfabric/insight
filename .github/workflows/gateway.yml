@@ -68,7 +68,6 @@ jobs:
             -e GATEWAY_VALIDATE_ONLY=1 \
             -e GATEWAY_AUTHENTICATOR_URL=http://authenticator:8083 \
             -e GATEWAY_FRONT_URL=http://insight-front:8080 \
-            -e GATEWAY_RESOLVER=10.96.0.10 \
             -e GATEWAY_SET_REAL_IP_FROM=10.0.0.0/8 \
             -v "$PWD/src/backend/services/gateway/helm/files/routes.yaml":/etc/gateway/routes.yaml:ro \
             insight-gateway:ci
