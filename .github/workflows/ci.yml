@@ -331,7 +331,7 @@ jobs:
           # without tests; treat as success. Capture rc via `|| rc=$?` so the
           # runner's default `set -e` shell can't abort before we inspect it.
           rc=0
-          "$PY" -m pytest \
+          "$PY" -m pytest ${{ matrix.entry.pytest_args }} \
             --cov="${{ matrix.entry.cov_package }}" \
             --cov-report "xml:$GITHUB_WORKSPACE/coverage/python-${{ matrix.entry.name }}.cobertura.xml" || rc=$?
           if [ "$rc" -eq 5 ]; then
@@ -409,11 +409,12 @@ jobs:
           FULL: ${{ github.event.inputs.full }}
         run: |
           # Only components that actually produce coverage are "required" —
-          # rust entries may be lint-only and dotnet entries test-only
-          # (cover=false, e.g. identity), so filter both out.
+          # rust entries may be lint-only, dotnet entries test-only (identity),
+          # and python entries may measure lines that bucket to another
+          # component (connector-mock-tests); cover=false filters all of these.
           required=$(jq -rn \
             --argjson r "$RUST_CHANGED" --argjson d "$DOTNET_CHANGED" --argjson p "$PYTHON_CHANGED" \
-            '[($r[] | select(.cover)), ($d[] | select(.cover)), $p[]] | map(.name) | join(",")')
+            '[($r[] | select(.cover)), ($d[] | select(.cover)), ($p[] | select(.cover))] | map(.name) | join(",")')
           echo "required components: ${required:-<none>}"
           # A full/baseline run measures overall coverage; skip the new-code gate
           # (there is no meaningful "patch" for a manual all-components run).

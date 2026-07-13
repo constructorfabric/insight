@@ -130,6 +130,32 @@ COMPONENTS = [
     {"name": "github-copilot", "lang": "python", "root": "src/ingestion/connectors/ai/github-copilot",
      "cov_package": "source_github_copilot",
      "paths": ["src/ingestion/connectors/ai/github-copilot"]},
+    # Mock-server test rig for NOCODE connectors (feature-connector-mock-tests),
+    # split into two CI jobs for clean results (review ask): the harness's own
+    # unit tests (meta/) and the per-connector mock suites. Both measure the
+    # connector_tests package; the harness component owns its paths, so at the
+    # gate both jobs' Cobertura reports merge into connector-tests-harness
+    # (max hits per line) while connector-mock-tests gates on test results only.
+    # `triggered_by` keeps them mutually in the matrix: a harness change must
+    # re-run the suites that consume it, and a suite change alone must not
+    # leave the merged coverage judged without the meta tests' share.
+    # Line coverage measures the harness — declarative YAML manifests have no
+    # first-party lines; a connector's behavioral coverage is the spec's stream
+    # matrix. Longest-prefix match keeps nested components (jira-enrich) apart.
+    {"name": "connector-tests-harness", "lang": "python", "root": "src/ingestion/tests/connectors",
+     "cov_package": "connector_tests", "pytest_args": "--meta-only",
+     "triggered_by": ["connector-mock-tests"],
+     "paths": ["src/ingestion/tests/connectors"]},
+    # cover=False (mirrors the rust/dotnet flag): the suites job still runs and
+    # uploads its Cobertura — those lines merge into connector-tests-harness at
+    # the gate — but every file it measures lives under the harness paths, so
+    # this component itself never has measured lines and must not be in the
+    # gate's --require set (it would always look like a missing report).
+    {"name": "connector-mock-tests", "lang": "python", "root": "src/ingestion/tests/connectors",
+     "cov_package": "connector_tests", "pytest_args": "--suites-only",
+     "cover": False,
+     "triggered_by": ["connector-tests-harness"],
+     "paths": ["src/ingestion/connectors/task-tracking/jira"]},
 ]
 
 

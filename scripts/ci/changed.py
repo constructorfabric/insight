@@ -53,6 +53,11 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True,
         entry["cover"] = comp.get("cover", True)
     elif comp["lang"] == "python":
         entry["cov_package"] = comp.get("cov_package", "")
+        entry["pytest_args"] = comp.get("pytest_args", "")
+        # False ⇒ tests run and the report is still uploaded (it may merge into
+        # another component's coverage), but the gate must not require this
+        # component to have measured lines of its own (connector-mock-tests).
+        entry["cover"] = comp.get("cover", True)
     return entry
 
 
@@ -81,6 +86,15 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
                 fanout_lint = True  # a shared lib/plugin changed → re-lint dependents
         elif path.startswith(BACKEND_RUST_ROOT + "/") and path.endswith(_SHARED_RUST_SUFFIXES):
             fanout_lint = True  # workspace-level Rust file (clippy.toml, Cargo.*, …)
+
+    # Registry-declared co-triggering: a component with `triggered_by` joins the
+    # matrix whenever any of the named components changed (e.g. the connector
+    # mock suites re-run on a harness change and vice versa). Evaluated against
+    # a snapshot so the result is independent of registry order.
+    directly_changed = frozenset(changed)
+    for comp in components:
+        if any(t in directly_changed for t in comp.get("triggered_by", ())):
+            changed.add(comp["name"])
 
     result: dict[str, list] = {lang: [] for lang in ("rust", "dotnet", "python")}
     for comp in components:  # registry order → deterministic matrix
