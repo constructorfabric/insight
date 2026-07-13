@@ -54,6 +54,10 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True,
     elif comp["lang"] == "python":
         entry["cov_package"] = comp.get("cov_package", "")
         entry["pytest_args"] = comp.get("pytest_args", "")
+        # False ⇒ tests run and the report is still uploaded (it may merge into
+        # another component's coverage), but the gate must not require this
+        # component to have measured lines of its own (connector-mock-tests).
+        entry["cover"] = comp.get("cover", True)
     return entry
 
 

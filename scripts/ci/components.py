@@ -146,8 +146,14 @@ COMPONENTS = [
      "cov_package": "connector_tests", "pytest_args": "--meta-only",
      "triggered_by": ["connector-mock-tests"],
      "paths": ["src/ingestion/tests/connectors"]},
+    # cover=False (mirrors the rust/dotnet flag): the suites job still runs and
+    # uploads its Cobertura — those lines merge into connector-tests-harness at
+    # the gate — but every file it measures lives under the harness paths, so
+    # this component itself never has measured lines and must not be in the
+    # gate's --require set (it would always look like a missing report).
     {"name": "connector-mock-tests", "lang": "python", "root": "src/ingestion/tests/connectors",
      "cov_package": "connector_tests", "pytest_args": "--suites-only",
+     "cover": False,
      "triggered_by": ["connector-tests-harness"],
      "paths": ["src/ingestion/connectors/task-tracking/jira"]},
 ]
