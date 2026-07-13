@@ -76,14 +76,12 @@ SKIP_TABLES: dict[str, str] = {
 }
 
 SKIP_LIST: list[tuple[str, str]] = [
-    # collab_bullet_rows — Slack has no connector; Zoom fixtures exist (reachable)
+    # collab_bullet_rows — Slack has no connector
     ("collab_bullet_rows.slack_active_days", "needs Slack connector"),
     ("collab_bullet_rows.slack_channel_posts", "needs Slack connector"),
     ("collab_bullet_rows.slack_messages_sent", "needs Slack connector"),
     ("collab_bullet_rows.slack_msgs_per_active_day", "needs Slack connector"),
     ("collab_bullet_rows.slack_dm_ratio", "needs Slack connector"),
-    ("collab_bullet_rows.zoom_meeting_hours", "reachable — Zoom fixtures exist"),
-    ("collab_bullet_rows.zoom_meetings", "reachable — Zoom fixtures exist"),
     # collab_person_counter_daily — collaboration messaging (M365 Teams / Zulip)
     ("collab_person_counter_daily.channel_posts", "reachable — Teams/Zulip fixtures exist"),
     ("collab_person_counter_daily.messages_sent", "reachable — Teams/Zulip fixtures exist"),
