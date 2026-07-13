@@ -88,3 +88,18 @@ dbt run --select tag:silver
   staging currently lacks the signals they need (`reviewed_at` NULL,
   `commit_order` zero). Both return once the Bitbucket Cloud stream-expansion
   PR lands.
+
+## Unified metrics
+
+The unified metrics runtime reads git observations from
+`insight.git_metric_observations` (`src/ingestion/gold/`), which consumes
+the class models directly. PR authors resolve to an email from the PR's
+own field or from the dominant email of its linked commits; PRs that
+resolve to no email are excluded (honest absence). File classification
+for unified measures lives in the shared gold macro
+`dbt/macros/git_file_category.sql` (`code | test | config | docs`),
+computed at read time so taxonomy changes apply retroactively.
+
+`fct_git_*` and `mtr_git_*` serve the legacy `insight.*` views
+(`git_bullet_rows`, `ic_kpis`, `ic_chart_loc`) only and are scheduled for
+removal with them; new metric work targets the gold observation model.

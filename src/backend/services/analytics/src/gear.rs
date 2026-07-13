@@ -117,9 +117,18 @@ impl Gear for AnalyticsApiGear {
         let catalog_reader =
             CatalogReader::new(catalog_cache.clone(), ThresholdResolver::new(db.clone()));
 
-        // Connect to ClickHouse.
+        // Connect to ClickHouse. Observation views execute live and their
+        // union branches run as parallel pipelines, so per-query memory
+        // scales with thread count: four threads measured at the same
+        // latency as unbounded parallelism with ~40% less peak memory on
+        // the widest observation view. The memory ceiling makes a
+        // pathological query fail alone with a typed error instead of
+        // pushing the shared server tracker over its limit and killing
+        // every in-flight query on the instance.
         let mut ch_config =
-            insight_clickhouse::Config::new(&cfg.clickhouse_url, &cfg.clickhouse_database);
+            insight_clickhouse::Config::new(&cfg.clickhouse_url, &cfg.clickhouse_database)
+                .with_query_max_threads(4)
+                .with_query_max_memory_bytes(1_610_612_736);
         if let (Some(user), Some(password)) = (&cfg.clickhouse_user, &cfg.clickhouse_password) {
             ch_config = ch_config.with_auth(user, password);
         }

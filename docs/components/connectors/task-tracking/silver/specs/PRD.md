@@ -240,6 +240,16 @@ The system **MUST** classify the type of identifier stored in field values: opaq
 
 **Actors**: `cpt-insightspec-actor-tt-silver-data-analyst`
 
+#### Status Category Unification
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-tt-silver-status-category`
+
+The system **MUST** expose, per source status, a **source-neutral lifecycle category** (`new` / `in_progress` / `done` / `undefined`) in a status dimension keyed by `status_id`, so consumers can detect a "done"/closed task without matching localized status display names.
+
+**Rationale**: A status *display name* is not a lifecycle signal — it varies by workflow, project template, and locale (`Done`, `Готово`, custom names). Detecting closedness by hardcoded English names (`Closed`/`Resolved`/`Verified`) reports zero completed tasks for default Jira Cloud team-managed projects and every non-English instance (issue #1541). The category signal already exists at the source (Jira `statusCategory`, YouTrack `isResolved`) and must be surfaced through Silver rather than reconstructed downstream.
+
+**Actors**: `cpt-insightspec-actor-tt-silver-data-analyst`, `cpt-insightspec-actor-tt-silver-data-engineer`
+
 #### Delta Preservation
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-tt-silver-delta-preservation`

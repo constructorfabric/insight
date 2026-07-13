@@ -1,0 +1,15 @@
+fix = true
+line-length = 120
+lint.extend-select = ["ASYNC", "EXE", "FA", "I", "PIE", "PTH", "RSE", "SLOT", "T10", "T20", "TID", "UP"]
+# unsafe-fixes = true
+lint.extend-safe-fixes = ["UP006", "UP007", "UP038", "UP035"]
+target-version = "py312"
+
+[format]
+skip-magic-trailing-comma = true
+
+[lint.flake8-type-checking]
+strict = true
+
+[lint.isort]
+split-on-trailing-comma = false

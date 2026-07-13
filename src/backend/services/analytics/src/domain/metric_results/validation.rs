@@ -6,7 +6,7 @@ use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
 use crate::api::error::MetricError;
-use crate::domain::metric_definitions::{MetricDefinition, load_definitions};
+use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition, load_definitions};
 
 use super::dto::{MetricResultsRequest, MetricViewRequest};
 use super::view::Bucket;
@@ -15,6 +15,12 @@ const ROW_LIMIT: usize = 5000;
 const MAX_METRICS: usize = 50;
 const MAX_ENTITY_IDS: usize = 1000;
 const MAX_PERIOD_DAYS: i64 = 400;
+
+/// Server-owned histogram resolution: fixed-width bins over each entity's
+/// own exact [min, max]. A fixed count keeps responses deterministic and
+/// the projected-row math trivial; the choice of range strategy lives in
+/// the compiler's bounds CTE and can evolve without touching the wire.
+pub(crate) const HISTOGRAM_BINS: usize = 10;
 
 #[derive(Debug)]
 pub struct ValidatedMetricResultsRequest {
@@ -44,6 +50,7 @@ pub enum ValidatedMetricView {
     Breakdown {
         dimensions: Vec<String>,
     },
+    Histogram,
 }
 
 struct RequestShape {
@@ -251,6 +258,20 @@ fn validate_view(
                 dimensions: validate_dimensions(def, "metrics.views.dimensions", dimensions)?,
             })
         }
+        MetricViewRequest::Histogram => {
+            // Histograms bin per-event observation values; only median
+            // metrics have event-grain observations to bin.
+            if !matches!(def.spec, ComputationSpec::Median { .. }) {
+                return invalid(
+                    "metrics.views",
+                    format!(
+                        "metric {} does not support the histogram view; it requires a median computation",
+                        def.key()
+                    ),
+                );
+            }
+            Ok(ValidatedMetricView::Histogram)
+        }
     }
 }
 
@@ -350,6 +371,10 @@ fn validate_projected_row_limit(req: &ValidatedMetricResultsRequest) -> Result<(
                             .saturating_mul(enumerate_buckets(req.from, req.to, *bucket).len()),
                     );
                 }
+                ValidatedMetricView::Histogram => {
+                    projected = projected
+                        .saturating_add(req.entity_ids.len().saturating_mul(HISTOGRAM_BINS));
+                }
                 ValidatedMetricView::Breakdown { .. } => {}
             }
         }
@@ -399,7 +424,7 @@ mod tests {
     use super::*;
     use crate::domain::metric_definitions::definition::{
         ComputationSpec, MetricBase, MetricDefinition, MetricDirection, MetricFormat, MetricInput,
-        MetricInputRole, ObservationSource,
+        MetricInputRole, ObservationRelation,
     };
 
     fn shape_request(
@@ -444,12 +469,41 @@ mod tests {
             spec: ComputationSpec::Sum {
                 value: MetricInput {
                     role: MetricInputRole::Value,
-                    observation_source: ObservationSource::AiMetricObservations,
+                    observation_relation: ObservationRelation::parse("ai_metric_observations")
+                        .unwrap_or_else(|| panic!("fixture relation must parse")),
                     source_key: "ai_usage".to_owned(),
                     measure_key: "accepted_lines".to_owned(),
                 },
             },
         }
+    }
+
+    fn fixture_input(measure_key: &str, role: MetricInputRole) -> MetricInput {
+        MetricInput {
+            role,
+            observation_relation: ObservationRelation::parse("ai_metric_observations")
+                .unwrap_or_else(|| panic!("fixture relation must parse")),
+            source_key: "ai_usage".to_owned(),
+            measure_key: measure_key.to_owned(),
+        }
+    }
+
+    fn ratio_definition() -> MetricDefinition {
+        let mut def = sum_definition(vec![]);
+        def.spec = ComputationSpec::Ratio {
+            numerator: fixture_input("accepted_edit_actions", MetricInputRole::Numerator),
+            denominator: fixture_input("tool_use_offered", MetricInputRole::Denominator),
+            scale: 100.0,
+        };
+        def
+    }
+
+    fn median_definition() -> MetricDefinition {
+        let mut def = sum_definition(vec![]);
+        def.spec = ComputationSpec::Median {
+            value: fixture_input("pr_cycle_hours", MetricInputRole::Value),
+        };
+        def
     }
 
     fn day(value: &str) -> NaiveDate {
@@ -617,6 +671,18 @@ mod tests {
     }
 
     #[test]
+    fn validate_view_gates_histogram_on_median_computation() {
+        // Histograms bin per-event values; sum/ratio observations are
+        // day-aggregated, so binning them would present aggregates as events.
+        assert!(validate_view(&sum_definition(vec![]), MetricViewRequest::Histogram).is_err());
+        assert!(validate_view(&ratio_definition(), MetricViewRequest::Histogram).is_err());
+        assert!(matches!(
+            validate_view(&median_definition(), MetricViewRequest::Histogram),
+            Ok(ValidatedMetricView::Histogram)
+        ));
+    }
+
+    #[test]
     fn enumerate_day_buckets_counts_days() {
         let buckets = enumerate_buckets(day("2026-01-30"), day("2026-02-02"), Bucket::Day);
         assert_eq!(
@@ -657,6 +723,22 @@ mod tests {
                     bucket: Bucket::Day,
                     dimensions: vec![],
                 }],
+            }],
+        };
+        assert!(validate_projected_row_limit(&validated).is_err());
+    }
+
+    #[test]
+    fn projected_row_limit_counts_histogram_bins() {
+        // 501 entities × 10 bins > 5000 projected rows.
+        let validated = ValidatedMetricResultsRequest {
+            entity_type: "person".to_owned(),
+            entity_ids: (0..501).map(|i| format!("p{i}@x.io")).collect(),
+            from: day("2026-01-01"),
+            to: day("2026-01-31"),
+            metrics: vec![ValidatedMetricRequest {
+                def: median_definition(),
+                views: vec![ValidatedMetricView::Histogram],
             }],
         };
         assert!(validate_projected_row_limit(&validated).is_err());

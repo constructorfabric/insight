@@ -86,3 +86,19 @@ models:
       - name: sprint_id
         tests:
           - not_null
+
+  - name: class_task_statuses
+    description: "Unified, source-neutral status dimension. Maps each source status id to the reconciled lifecycle `status_category` (new/in_progress/done/undefined). Jira derives it from statusCategory; YouTrack from the State bundle `isResolved` flag. Gold detects a closed task via `status_category='done'` — never a localized status name (issue #1541)."
+    columns:
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: status_id
+        tests:
+          - not_null
+      - name: status_category
+        description: "Reconciled lifecycle: new | in_progress | done | undefined."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['new', 'in_progress', 'done', 'undefined']

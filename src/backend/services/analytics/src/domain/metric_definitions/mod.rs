@@ -7,7 +7,7 @@ pub mod validator;
 
 pub use definition::{
     CohortSource, ComputationSpec, MetricDefinition, MetricDirection, MetricFormat,
-    ObservationSource,
+    ObservationRelation,
 };
 pub use repository::load_definitions;
 pub use seeds::reconcile_builtin_definitions;
