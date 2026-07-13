@@ -59,5 +59,9 @@ models:
     description: "Per-source staging projection of Jira sprints. Unioned into silver.class_task_sprints."
   - name: jira__task_field_metadata
     description: "Per-source staging projection of Jira field catalog. Unioned into silver.class_task_field_metadata."
+  - name: jira__task_statuses
+    description: "Per-source status dimension: Jira status_id → status_category (via statusCategory). Unioned into silver.class_task_statuses. See issue #1541."
   - name: jira__task_field_history
     description: "Thin view over the Rust-written staging.jira__task_field_history, so dbt can union it into silver.class_task_field_history."
+  - name: jira__identity_inputs
+    description: "Identity-resolution inputs from the Jira user profile history (email, display_name, id binding). Unioned into silver.identity_inputs via the silver:identity_inputs tag."

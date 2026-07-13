@@ -7579,6 +7579,10 @@ streams:
             value: "{{ (record.get('statusCategory') or {}).get('name') }}"
           - type: AddedFieldDefinition
             path:
+              - category_key
+            value: "{{ (record.get('statusCategory') or {}).get('key') }}"
+          - type: AddedFieldDefinition
+            path:
               - collected_at
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
     schema_loader:
@@ -7673,6 +7677,10 @@ streams:
               - number
               - "null"
           category_name:
+            type:
+              - string
+              - "null"
+          category_key:
             type:
               - string
               - "null"

@@ -80,7 +80,7 @@ Incremental processing is cursorless: the output table itself is the cursor. Per
 |-------|---------------|------------|
 | Orchestration | Scheduling + DAG | Argo Workflows |
 | Bronze | Raw Jira data | ClickHouse (Airbyte output) |
-| dbt Step 1 | Supporting silver tables + field_metadata + DDL | dbt-clickhouse |
+| dbt Step 1 | Supporting silver tables + field_metadata + **status dimension** + DDL | dbt-clickhouse |
 | Enrich | `task_tracker_field_history` materialization | Rust binary (this design) |
 | dbt Step 2 | Identity resolution | dbt-clickhouse |
 
@@ -433,6 +433,21 @@ ORDER BY e.id_readable, e.created_at, e.changelog_id, e.field_id;
 **ID**: `cpt-insightspec-dbtable-jira-enrich-bronze-issue`
 
 Snapshot of current issue state. Used for reverse-apply when an issue is first ingested into `field_history`.
+
+#### Table: `silver.class_task_statuses` (dbt-produced, NOT touched by enrich)
+
+**ID**: `cpt-insightspec-dbtable-jira-enrich-statuses`
+
+The status dimension is **out of the enrich binary's scope** — it is a pure dbt Step 1 model, mirroring `class_task_field_metadata`. Documented here because it closes the loop on how the status events that enrich emits become closed-task signals in Gold (issue #1541).
+
+- **Producer**: a per-source staging model `jira__task_statuses` tagged `silver:class_task_statuses`, unioned into `silver.class_task_statuses` (the source-neutral dimension, `cpt-insightspec-dbtable-tt-silver-statuses`).
+- **Bronze input**: `bronze_jira.jira_statuses` (from `GET /rest/api/3/status`).
+- **Join key**: `class_task_statuses.status_id = task_tracker_field_history.value_ids[1]` for `field_id='status'`. Enrich already writes the source status id into `value_ids[1]` (and the label into `value_displays[1]`), so no enrich change is required — the id is already there.
+- **Mapping**: `statusCategory.key` → unified `status_category` (`new`/`indeterminate`/`done`/`undefined` → `new`/`in_progress`/`done`/`undefined`); `category_id = 3` is the numeric fallback for `done`.
+
+**Connector (Bronze).** The `jira_statuses` stream in `connector.yaml` flattens `category_id`, `category_name`, and — added in #1541 — `statusCategory.key` → `category_key` (the stable, locale-independent enum). `jira__task_statuses` maps `category_key` to `status_category`, falling back to the numeric `category_id` when the key is absent.
+
+**Where the join happens (shipped in #1541).** The Jira→unified mapping (`statusCategory.key` → `status_category`, e.g. `indeterminate` → `in_progress`) is applied inside the `jira__task_statuses` projection. Gold then joins `silver.class_task_statuses` on `value_ids[1]` (in `task_issue_current_state` / `task_status_intervals`) to attach `status_category`, so no Jira-specific status logic remains in Gold — it reads `status_category = 'done'`. (A future Silver `class_task_status_history` model, `cpt-insightspec-dbtable-tt-silver-status-history`, would move that join out of Gold entirely.)
 
 ### 3.8 Deployment Topology
 

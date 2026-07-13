@@ -300,7 +300,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 - [ ] `p1` - **ID**: `cpt-insightspec-feature-youtrack-dbt-staging`
 
-- **Purpose**: Project the Bronze streams into the shape the silver `class_task_*` union models expect. Produce `youtrack__changelog_items.sql` (normalizes activitiesPage events — the enrich input), `youtrack__issue_field_snapshot.sql` (current state materialization), and seven `youtrack__task_*.sql` files (one per `class_task_*` tag: comments, worklogs, users, projects, sprints, field_metadata, field_history). A thin view `youtrack__task_field_history.sql` re-exposes the Rust-owned staging table into the dbt graph.
+- **Purpose**: Project the Bronze streams into the shape the silver `class_task_*` union models expect. Produce `youtrack__changelog_items.sql` (normalizes activitiesPage events — the enrich input), `youtrack__issue_field_snapshot.sql` (current state materialization), and eight `youtrack__task_*.sql` files (one per `class_task_*` tag: comments, worklogs, users, projects, sprints, field_metadata, statuses, field_history). A thin view `youtrack__task_field_history.sql` re-exposes the Rust-owned staging table into the dbt graph.
 
 - **Depends On**: cpt-insightspec-feature-youtrack-bronze-issues, cpt-insightspec-feature-youtrack-custom-fields
 
@@ -308,6 +308,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - `src/ingestion/connectors/task-tracking/youtrack/dbt/youtrack__changelog_items.sql` — flatten `youtrack_issue_history.activities[]`; emit one row per (issue_id, activity_id, field_id, added_item, removed_item) respecting v2 `applyBackward` semantics. `materialized='table'`, tagged `youtrack`.
   - `youtrack__issue_field_snapshot.sql` — current per-issue × per-field value from `youtrack_issue.customFields[]` + built-in fields (summary, description, resolved, reporter). `materialized='table'`, tagged `youtrack`.
   - `youtrack__task_comments.sql`, `_worklogs.sql`, `_users.sql`, `_projects.sql`, `_sprints.sql`, `_field_metadata.sql` — projections tagged `silver:class_task_*` and `youtrack`.
+  - `youtrack__task_statuses.sql` — status dimension tagged `silver:class_task_statuses` and `youtrack`. Projects the State custom field's `bundle.values[]` (from `youtrack_project_custom_fields`) into `status_id → status_name, status_category`, mapping `isResolved = true` → `status_category = 'done'` (see `cpt-insightspec-principle-youtrack-status-category`, issue #1541). Requires `isResolved` in the Bronze `bundle(values(...))` selection (feature 2.4).
   - `youtrack__task_field_history.sql` — thin view over Rust-written `staging.youtrack__task_field_history`, tagged `silver:class_task_field_history` and `youtrack`.
   - `dbt/schema.yml` — add `sources.bronze_youtrack.tables` entries for every Bronze stream from features 2.2–2.4; add models with tests (`unique` on `unique_key`, `not_null` on identity columns).
   - `descriptor.yaml` — set `dbt_select: tag:youtrack`.
@@ -330,7 +331,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - [ ] `p1` — cpt-insightspec-constraint-youtrack-ddl-owned-by-dbt
 
 - **Domain Model Entities**:
-  - ChangelogItem, IssueFieldSnapshot, TaskComment, TaskWorklog, TaskUser, TaskProject, TaskSprint, TaskFieldMetadata, TaskFieldHistory
+  - ChangelogItem, IssueFieldSnapshot, TaskComment, TaskWorklog, TaskUser, TaskProject, TaskSprint, TaskFieldMetadata, TaskStatus, TaskFieldHistory
 
 - **Design Components**:
   - [ ] `p1` — cpt-insightspec-component-youtrack-dbt-staging
@@ -352,6 +353,7 @@ The YouTrack task-tracker work is decomposed into ten features that together del
   - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_projects
   - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_sprints
   - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_field_metadata
+  - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_statuses
   - [ ] `p1` — cpt-insightspec-dbtable-youtrack-youtrack__task_field_history (view over Rust output)
 
 ---

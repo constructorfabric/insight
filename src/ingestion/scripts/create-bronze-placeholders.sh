@@ -731,6 +731,29 @@ CREATE TABLE IF NOT EXISTS silver.class_task_users (
 SQL
 fi
 
+# silver.class_task_statuses — task-tracking status dimension (issue #1541).
+# Referenced by the task-delivery gold migration
+# (20260708000000_task-delivery-status-category.sql) which JOINs it to derive
+# `status_category` (done/in_progress) for close-detection. Must exist before
+# that migration's CREATE ... LEFT JOIN silver.class_task_statuses.
+if ! ch_table_exists silver class_task_statuses; then
+  echo "  Creating placeholder: silver.class_task_statuses"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_task_statuses (
+    insight_source_id String,
+    data_source       String,
+    status_id         String,
+    status_name       Nullable(String),
+    category_id       Nullable(Int32),
+    category_key      Nullable(String),
+    status_category   String,
+    collected_at      DateTime64(3),
+    unique_key        String,
+    _version          UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
 # silver.class_task_worklogs — task-tracking worklog rows. Referenced by
 # `views-from-silver.sql` for time-spent aggregations
 # (author_email/author_id, work_date, duration_seconds/worklog_seconds).
@@ -1018,6 +1041,31 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields (
     schema_type String,
     schema_items String,
     schema_custom String,
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+fi
+
+# bronze_jira.jira_statuses — Jira status lookup (GET /rest/api/3/status).
+# jira__task_statuses.sql (silver:class_task_statuses) reads it to map
+# status_id -> status_category (done/in_progress/…) so gold detects closed
+# tasks by statusCategory, not display name (issue #1541). Columns mirror the
+# AddFields in connectors/task-tracking/jira/connector.yaml jira_statuses stream.
+if ! ch_table_exists bronze_jira jira_statuses; then
+  echo "  Creating placeholder: bronze_jira.jira_statuses"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_statuses (
+    unique_key String,
+    source_id String,
+    status_id String,
+    name String,
+    category_id Nullable(Int32),
+    category_name String,
+    category_key String,
+    collected_at String,
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
