@@ -19,14 +19,21 @@ RUN cargo build --release -p routegen
 # Stage 2: OpenResty runtime.
 FROM openresty/openresty:1.27.1.2-alpine
 
-# lua-resty-http is NOT bundled in the base image (ADR-0001 "More Information").
-# opm needs perl + curl to fetch it; they are build-only, so drop them after.
-RUN apk add --no-cache --virtual .opm-deps perl curl \
+# Runtime deps not bundled in the base image:
+#   - lua-resty-http (ADR-0001): the access-phase exchange cosocket.
+#   - lua-resty-uuid + libuuid (>= 2.41 for uuid_generate_time_v7): UUIDv7
+#     correlation ids. Alpine ships only libuuid.so.1, but the FFI loader wants
+#     libuuid.so, so symlink it.
+# opm needs perl + curl to fetch the modules; those are build-only, dropped after.
+RUN apk add --no-cache libuuid \
+    && apk add --no-cache --virtual .opm-deps perl curl \
     && opm get ledgetech/lua-resty-http \
-    && apk del .opm-deps
+    && opm get bungle/lua-resty-uuid \
+    && apk del .opm-deps \
+    && ln -sf /usr/lib/libuuid.so.1 /usr/lib/libuuid.so
 
-# The static Lua module (access-phase exchange, uuid7, error shaping) + the
-# routegen binary + the startup entrypoint.
+# The static Lua module (access-phase exchange, error shaping) + the routegen
+# binary + the startup entrypoint.
 COPY services/gateway/lua/ /etc/nginx/lua/
 COPY --from=routegen /build/target/release/routegen /usr/local/bin/routegen
 COPY services/gateway/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

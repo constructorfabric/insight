@@ -10,7 +10,7 @@
 -- why the http block carries a `resolver` (cosockets do their own DNS).
 
 local http = require("resty.http")
-local uuid7 = require("uuid7")
+local uuid = require("resty.uuid")
 local errors = require("errors")
 
 local _M = {}
@@ -136,7 +136,7 @@ function _M.exchange()
         ngx.req.clear_header("Cookie")
     end
 
-    local corr = uuid7.generate()
+    local corr = uuid.generate_time_v7()
     ngx.req.set_header("X-Correlation-Id", corr)
     ngx.var.correlation_id = corr
 

@@ -15,6 +15,7 @@ between them and shares the session cookie via /work/sid.txt:
 
 import base64
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -125,6 +126,11 @@ def phase_core():
     check("non-gateway cookie preserved", "keep=1" in echoed.get("cookie", ""))
     corr = echoed.get("x-correlation-id", "")
     check("correlation id not the forged one", corr and corr != "forged-corr", corr)
+    check(
+        "correlation id is a UUIDv7",
+        re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", corr) is not None,
+        corr,
+    )
 
     # Verifiable: JWKS is served DIRECTLY by the authenticator (the key issuer),
     # not fronted by the gateway. Downstream services fetch it there.
