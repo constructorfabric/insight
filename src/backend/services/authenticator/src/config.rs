@@ -8,6 +8,8 @@
 //! Every field carries the spec default, so an operator gets a holding config
 //! by touching nothing but the connection strings and OIDC client secret.
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 /// Policy for IdPs that issue no refresh token (some withhold `offline_access`).
@@ -51,6 +53,65 @@ impl Default for IdpConfig {
             refresh_safety_margin_seconds: 60,
             refresh_concurrency: 128,
             no_refresh_token_policy: NoRefreshTokenPolicy::Strict,
+        }
+    }
+}
+
+/// A service-registry entry: the public identity of one calling service
+/// (DESIGN §3.9 / DD-AUTH-05). Public keys are **not** secrets, so the whole
+/// registry lives in gitops-reviewable config: onboarding a service is a PR
+/// adding its public key; rotation ships key `n+1` alongside `n` (list both),
+/// then removes `n` in a later PR.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServiceRegistryEntry {
+    /// SPKI PEM public key(s) the service signs its RFC 7523 assertions with.
+    /// Two keys are allowed at once so a rotation overlaps `previous`+`next`.
+    pub public_keys: Vec<String>,
+    /// Roles baked into the issued gateway JWT. `"service"` is always added by
+    /// the issuer, so an entry may leave this empty for a plain service token.
+    pub roles: Vec<String>,
+    /// Whether this service may request a tenant-scoped token (`tenants=[t]`).
+    /// A tenant request from a service without this flag is refused (403).
+    pub tenant_scoped_allowed: bool,
+}
+
+/// Service-token issuance settings (§10 G1, §10 G4, DESIGN §3.9). The token
+/// endpoint runs on its own listener (`token_bind_addr`) so it never shares the
+/// main port with the browser/gateway surface (§11.8).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServiceTokensConfig {
+    /// Bind address of the dedicated second listener (`POST /internal/token`
+    /// + `/ready` only). Suggested 8093; must differ from the main `bind_addr`.
+    pub token_bind_addr: String,
+    /// Expected `aud` of the client assertion — the authenticator token
+    /// endpoint URL the calling service is configured with. Must be non-empty
+    /// whenever `services` is non-empty (checked in `validate`).
+    pub audience: String,
+    /// Maximum accepted assertion lifetime (`exp - iat`), in seconds. RFC 7523
+    /// assertions are single-use and short-lived; the spec caps this at 60 s.
+    pub assertion_max_lifetime_seconds: u64,
+    /// TTL of the issued gateway JWT (service tokens), in seconds. Defaults to
+    /// the same 300 s as user tokens so downstream sees one lifetime shape.
+    pub token_ttl_seconds: u64,
+    /// Extra clock-skew grace (seconds) added to the replay-guard TTL so a
+    /// still-valid assertion cannot be replayed within its own lifetime.
+    pub clock_skew_leeway_seconds: u64,
+    /// The registry: service name -> its public identity. Empty by default;
+    /// dev/compose seed a `testclient` entry, prod ships real ones via gitops.
+    pub services: HashMap<String, ServiceRegistryEntry>,
+}
+
+impl Default for ServiceTokensConfig {
+    fn default() -> Self {
+        Self {
+            token_bind_addr: "0.0.0.0:8093".to_owned(),
+            audience: String::new(),
+            assertion_max_lifetime_seconds: 60,
+            token_ttl_seconds: 300,
+            clock_skew_leeway_seconds: 30,
+            services: HashMap::new(),
         }
     }
 }
@@ -121,6 +182,9 @@ pub struct AuthenticatorConfig {
 
     /// The nested IdP settings.
     pub idp: IdpConfig,
+
+    /// Service-token issuance (§10 G1): the second listener + registry.
+    pub service_tokens: ServiceTokensConfig,
 }
 
 impl Default for AuthenticatorConfig {
@@ -151,6 +215,7 @@ impl Default for AuthenticatorConfig {
             identity_url: String::new(),
             bind_addr: "0.0.0.0:8083".to_owned(),
             idp: IdpConfig::default(),
+            service_tokens: ServiceTokensConfig::default(),
         }
     }
 }
@@ -189,6 +254,80 @@ impl AuthenticatorConfig {
         ] {
             anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
         }
+
+        // Service tokens: if any service is registered, the token endpoint must
+        // know the `aud` it expects on assertions (its own URL). A registry
+        // entry with zero public keys can never authenticate — reject it early.
+        let st = &self.service_tokens;
+        anyhow::ensure!(
+            !st.token_bind_addr.trim().is_empty(),
+            "service_tokens.token_bind_addr is required (empty)"
+        );
+        if !st.services.is_empty() {
+            anyhow::ensure!(
+                !st.audience.trim().is_empty(),
+                "service_tokens.audience is required when services are registered"
+            );
+            anyhow::ensure!(
+                st.assertion_max_lifetime_seconds > 0,
+                "service_tokens.assertion_max_lifetime_seconds must be > 0"
+            );
+            for (name, entry) in &st.services {
+                anyhow::ensure!(
+                    !entry.public_keys.is_empty(),
+                    "service_tokens.services.{name} has no public_keys"
+                );
+            }
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// The `gears.authenticator.config` slice of the checked-in dev config —
+    /// just enough to deserialize into [`AuthenticatorConfig`].
+    #[derive(serde::Deserialize)]
+    struct Host {
+        gears: Gears,
+    }
+    #[derive(serde::Deserialize)]
+    struct Gears {
+        authenticator: GearSection,
+    }
+    #[derive(serde::Deserialize)]
+    struct GearSection {
+        config: AuthenticatorConfig,
+    }
+
+    /// The dev `config/insight.yaml` must deserialize into the config struct
+    /// (guards `deny_unknown_fields`, YAML indentation, and the block-scalar
+    /// PEMs) and its registry entries must parse as EC public keys. A mistake
+    /// here would otherwise only surface at container boot.
+    #[test]
+    fn dev_config_service_tokens_deserialize_and_parse() {
+        let raw = include_str!("../config/insight.yaml");
+        let host: Host = serde_yaml::from_str(raw).expect("dev config deserializes");
+        let st = host.gears.authenticator.config.service_tokens;
+
+        assert_eq!(st.token_bind_addr, "0.0.0.0:8093");
+        assert!(st.audience.contains("/internal/token"));
+        let testclient = st.services.get("testclient").expect("testclient entry");
+        assert!(testclient.tenant_scoped_allowed);
+        let noscope = st.services.get("svc-noscope").expect("svc-noscope entry");
+        assert!(!noscope.tenant_scoped_allowed);
+        for (name, entry) in &st.services {
+            assert!(
+                entry.public_keys[0].contains("BEGIN PUBLIC KEY"),
+                "{name} public key looks malformed"
+            );
+        }
+
+        // The checked-in PEMs must parse as EC verifiers (fail-fast at boot).
+        crate::service_token::ServiceRegistry::build(&st)
+            .expect("dev registry public keys parse as EC keys");
     }
 }

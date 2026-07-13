@@ -324,6 +324,11 @@ services:
       APP__gears__authenticator__config__idp__client_id: "${OIDC_CLIENT_ID:-insight-authenticator}"
       APP__gears__authenticator__config__idp__client_secret: "${OIDC_CLIENT_SECRET:-}"
       APP__gears__authenticator__config__redirect_uri: "${AUTHENTICATOR_REDIRECT_URI:-http://localhost:8083/auth/callback}"
+      # Service tokens (step 06). The token endpoint runs on its own listener
+      # (8093); the registry (dev testclient) lives in the mounted config. The
+      # assertion audience is the in-network token endpoint URL — the value a
+      # compose-resident caller (step 07) signs its assertion for.
+      APP__gears__authenticator__config__service_tokens__audience: "${AUTHENTICATOR_TOKEN_AUDIENCE:-http://authenticator:8093/internal/token}"
     volumes:
       - ./deploy/compose/build/authenticator/authenticator:/app/authenticator:ro
       - ./src/backend/services/authenticator/config:/app/config:ro
@@ -337,6 +342,9 @@ services:
       - "run"
     ports:
       - "${AUTHENTICATOR_PORT:-8083}:8083"
+      # Service-token listener (§10 G4 second listener). Exposed for local
+      # testing; cluster-internal in k8s (its own Service + NetworkPolicy).
+      - "${AUTHENTICATOR_TOKEN_PORT:-8093}:8093"
 
   # ── Fake IdP (dev/e2e ONLY — never shipped to production) ──────────────
   #

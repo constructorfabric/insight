@@ -4,12 +4,29 @@ podAnnotations: {}
 
 image:
   repository: ghcr.io/constructorfabric/insight-authenticator
-  tag: ""                  # MUST be set by the operator. No `:latest` default.
+  tag: "" # MUST be set by the operator. No `:latest` default.
   pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
   port: 8083
+  # Service-token listener (§10 G4 second listener): POST /internal/token only.
+  # Exposed as a second port on the same Service; network-scoped separately
+  # from the main port (see networkPolicy.tokenPort below).
+  tokenPort: 8093
+
+# Service tokens (§10 G1 / DD-AUTH-05). The registry holds only PUBLIC keys, so
+# it is gitops-reviewable config: onboarding a service is a PR adding its key.
+# `audience` is the token endpoint URL callers sign assertions for — typically
+# `http://<release>-authenticator.<ns>.svc:<tokenPort>/internal/token`.
+# `services` is empty by default; real entries land here via gitops. The dev
+# `testclient` lives only in the compose config, never in this chart.
+serviceTokens:
+  audience: ""
+  assertionMaxLifetimeSeconds: 60
+  tokenTtlSeconds: 300
+  # name -> { public_keys: [<PEM>...], roles: [...], tenant_scoped_allowed: bool }
+  services: {}
 
 resources:
   requests:
@@ -73,3 +90,17 @@ networkPolicy:
   # Optional: also require the gateway to live in a labelled namespace. Empty =
   # same-namespace pods only (the default NetworkPolicy scope).
   gatewayNamespaceSelector: {}
+
+  # G4 layer 2 for the TOKEN port: /internal/token must be reachable by the
+  # app-namespace service pods that need service tokens (analytics, seeds, the
+  # future permissions service) — a wider scope than the main port, which is
+  # fine because the endpoint demands a valid RFC 7523 assertion (layer 3).
+  # This policy is defense-in-depth, not the authentication.
+  tokenPort:
+    enabled: false
+    # Which pods may reach the token port. Empty {} = every pod in the
+    # authenticator's namespace (the app namespace). Narrow it with a label
+    # selector (e.g. app.kubernetes.io/part-of: insight) if desired.
+    clientPodSelector: {}
+    # Optional namespace selector for cross-namespace callers.
+    clientNamespaceSelector: {}

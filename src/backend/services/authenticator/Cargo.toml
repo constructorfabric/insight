@@ -74,3 +74,6 @@ rand = "0.8"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+# Parse the checked-in dev config in a test so a YAML/PEM mistake in the
+# service-token registry fails fast, not only at container boot.
+serde_yaml = "0.9"

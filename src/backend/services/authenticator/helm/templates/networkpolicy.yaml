@@ -37,3 +37,39 @@ spec:
         - port: {{ .Values.service.port }}
           protocol: TCP
 {{- end }}
+{{- if .Values.networkPolicy.tokenPort.enabled }}
+---
+{{- /*
+  G4 layer 2, token port (NGINX_BFF.md §10 G4): /internal/token is reached by
+  the app-namespace service pods that need service tokens (analytics, seeds, the
+  future permissions service) -- a deliberately wider scope than the main port.
+  This is defense-in-depth: the endpoint still demands a valid RFC 7523
+  assertion regardless of network position (layer 3). Empty clientPodSelector
+  ({}) admits every pod in the namespace.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "insight-authenticator.fullname" . }}-allow-token-clients
+  labels:
+    {{- include "insight-authenticator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "insight-authenticator.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.tokenPort.clientPodSelector | nindent 14 }}
+          {{- with .Values.networkPolicy.tokenPort.clientNamespaceSelector }}
+          namespaceSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+      ports:
+        - port: {{ .Values.service.tokenPort }}
+          protocol: TCP
+{{- end }}

@@ -164,6 +164,9 @@ fn sid_index_key(iss: &str, idp_sid: &str) -> String {
 fn login_state_key(state: &str) -> String {
     format!("asm:login_state:{state}")
 }
+fn service_jti_key(service: &str, jti: &str) -> String {
+    format!("asm:svc_jti:{service}:{jti}")
+}
 const REFRESH_DUE_KEY: &str = "asm:idp_refresh_due";
 
 /// The Session Manager. Cheap to clone (the connection manager is `Arc`-backed).
@@ -247,6 +250,34 @@ impl SessionManager {
             return Ok(None);
         }
         Ok(Some(LoginState::from_map(&map)))
+    }
+
+    // ── Service-token assertion replay guard ───────────────────────────────
+
+    /// One-shot replay guard for an RFC 7523 client assertion `jti`
+    /// (`asm:svc_jti:{service}:{jti}`), mirroring the back-channel `logout_jti`
+    /// pattern: `SET NX EX`. Returns `true` when this `jti` was seen for the
+    /// first time (the caller may proceed), `false` when it is a replay.
+    ///
+    /// # Errors
+    /// Fails on a Redis error (the handler then fails closed).
+    pub async fn guard_service_jti(
+        &self,
+        service: &str,
+        jti: &str,
+        ttl_seconds: u64,
+    ) -> anyhow::Result<bool> {
+        let mut conn = self.conn.clone();
+        let set: Option<String> = redis::cmd("SET")
+            .arg(service_jti_key(service, jti))
+            .arg("1")
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl_seconds.max(1))
+            .query_async(&mut conn)
+            .await
+            .context("guard service-token jti (NX EX)")?;
+        Ok(set.is_some())
     }
 
     // ── Session lifecycle ──────────────────────────────────────────────────

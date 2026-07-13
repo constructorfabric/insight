@@ -55,6 +55,10 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+            # Service-token listener (§10 G4 second listener).
+            - name: token
+              containerPort: {{ .Values.service.tokenPort }}
+              protocol: TCP
           envFrom:
             # Operator MUST pre-create this Secret (umbrella does it
             # automatically as `insight-authenticator-config`). Provides the

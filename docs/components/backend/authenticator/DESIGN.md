@@ -782,7 +782,11 @@ graph LR
 
 #### Key: `asm:logout_jti:{iss}:{jti}`
 
-**Type**: Redis STRING presence flag, `SET NX`. Replay guard for back-channel logout tokens. **TTL**: `(iat + max_clock_skew + grace) - now`. The same pattern guards `/internal/token` assertion `jti`s.
+**Type**: Redis STRING presence flag, `SET NX`. Replay guard for back-channel logout tokens. **TTL**: `(iat + max_clock_skew + grace) - now`. The same pattern guards `/internal/token` assertion `jti`s (next key).
+
+#### Key: `asm:svc_jti:{service}:{jti}`
+
+**Type**: Redis STRING presence flag, `SET NX EX`. One-shot replay guard for RFC 7523 service-token client assertions (DD-AUTH-05): the token issuer sets it the first time a `jti` is seen for a service and rejects any later reuse. **TTL**: the assertion's remaining lifetime plus `service_tokens.clock_skew_leeway_seconds`, so an assertion cannot be replayed within its own validity window and the key expires once it no longer could be accepted.
 
 #### Key: `asm:idp_refresh_due`
 
@@ -803,7 +807,7 @@ Technical specification of `cpt-insightspec-contract-auth-gateway-jwt` ([PRD sec
 | `sub` | String | Internal **person_id**; `service:<name>` for service tokens |
 | `tenants` | Array of String | All tenant memberships (1..N), resolved at login. The JWT is the only tenant **authority**; per-request **selection** is an unsigned attribute (`X-Tenant-ID` or path segment) that downstream validates against this signed set: selector missing when needed = 400; selector not in the set = 403. An unsigned header can no longer grant anything -- the worst it can do is pick among tenants the JWT already granted |
 | `roles` | Array of String | Default from config (`["user"]`); the permissions service's login-time answer later replaces the values, never the shape. Service tokens carry `["service", ...]` per the registry |
-| `sid` | String | **Stable** session id (UUIDv7) -- survives cookie rotations; one id from login to logout for tracing, audit, and the JWT/session linkage |
+| `sid` | String | **Stable** session id (UUIDv7) -- survives cookie rotations; one id from login to logout for tracing, audit, and the JWT/session linkage. **Service tokens** have no session, so `sid = service:<name>` (equal to `sub`): a non-empty, stable value that keeps the claim shape fixed (never optional) and correlates a service's issuance in audit/trace |
 | `iss` | String | Gateway host issuer URL |
 | `aud` | String | `internal-services` |
 | `iat` / `exp` | Int | `exp = iat + 60..300 s` (default TTL 300 s) |
@@ -836,6 +840,40 @@ All tunable via Helm values; defaults chosen so everything holds without touchin
 Inherited from the deleted BFF spec unchanged: `authenticator.refresh_grace_ms` (default `250`) -- the TTL applied to the superseded token mapping on rotation; plus the CSRF origin allowlist, back-channel clock-skew tolerance, layer-2 rate-limit knobs, and OIDC client settings (`issuer_url`, `client_id`, `client_secret`).
 
 The config struct mirrors this table 1:1 and deserializes from the gear's config section with `APP__gears__authenticator__config__<field>` env overrides -- the layering the toolkit host already owns (and why the dash-free gear name matters).
+
+#### Service-token settings and registry format (`service_tokens.*`)
+
+Service tokens (DD-AUTH-05) are configured under a nested `service_tokens` section. The registry holds only **public** keys -- not secrets -- so the whole section is gitops-reviewable config (a ConfigMap in the chart, the mounted YAML in compose), never a Secret. Onboarding a service is a PR adding its public key; rotation lists key `n+1` alongside `n`, then drops `n` in a later PR.
+
+| Value | Default | Meaning |
+|---|---|---|
+| `service_tokens.token_bind_addr` | `0.0.0.0:8093` | Bind address of the dedicated second listener (`POST /internal/token` + `/ready` only, §11.8). Must differ from the main `bind_addr`. |
+| `service_tokens.audience` | *(empty; required when services registered)* | Expected `aud` of the client assertion -- the authenticator token endpoint URL the caller is configured with (e.g. `http://<release>-authenticator.<ns>.svc:8093/internal/token`). |
+| `service_tokens.assertion_max_lifetime_seconds` | `60` | Cap on the assertion's `exp - iat`; RFC 7523 assertions are short-lived and single-use. |
+| `service_tokens.token_ttl_seconds` | `300` | TTL of the issued gateway JWT, matching user tokens so downstream sees one lifetime shape. |
+| `service_tokens.clock_skew_leeway_seconds` | `30` | Extra grace on assertion `exp` validation and on the replay-guard TTL. |
+| `service_tokens.services` | `{}` | The registry: service name -> entry (below). |
+
+Each registry entry:
+
+```yaml
+service_tokens:
+  token_bind_addr: "0.0.0.0:8093"
+  audience: "http://authenticator:8093/internal/token"
+  assertion_max_lifetime_seconds: 60
+  token_ttl_seconds: 300
+  services:
+    <service-name>:
+      public_keys:            # 1..2 SPKI PEM EC public keys (two during rotation)
+        - |
+          -----BEGIN PUBLIC KEY-----
+          ...
+          -----END PUBLIC KEY-----
+      roles: ["service"]      # baked into the token; "service" is always added
+      tenant_scoped_allowed: false   # may this service request tenants=[t]?
+```
+
+Validation at boot: every registered entry must carry at least one `public_keys` PEM (parsed into a verifier -- a malformed key fails the gear at boot, not on the first request), and `audience` must be non-empty whenever `services` is non-empty. The assertion `jti` replay guard reuses the `logout_jti` `SET NX EX` pattern under `asm:svc_jti:{service}:{jti}` (see 3.7). Dev/compose seed a `testclient` (and a `svc-noscope` with `tenant_scoped_allowed: false`) wired to a checked-in, clearly test-only keypair; no real registry entry ships in the chart by default.
 
 ### 3.10 Gear Anatomy
 

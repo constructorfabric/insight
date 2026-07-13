@@ -21,6 +21,7 @@ use crate::identity::{IdentityPersonResolver, PersonResolver};
 use crate::jwt::KeyStore;
 use crate::local_client::LocalClient;
 use crate::oidc::OidcClient;
+use crate::service_token::{self, ServiceRegistry};
 use crate::session::SessionManager;
 
 /// The authenticator gear. Capabilities: `rest` (the API surface) and
@@ -71,6 +72,15 @@ impl Gear for AuthenticatorGear {
         let resolver: Arc<dyn PersonResolver> =
             Arc::new(IdentityPersonResolver::new(&cfg.identity_url));
 
+        // Parse the service-token registry (DD-AUTH-05). Fails closed at boot
+        // on a malformed public key rather than on the first token request.
+        let service_registry = ServiceRegistry::build(&cfg.service_tokens)?;
+        tracing::info!(
+            services = cfg.service_tokens.services.len(),
+            token_bind = %cfg.service_tokens.token_bind_addr,
+            "service-token registry loaded"
+        );
+
         // Register the inter-gear client contract in the hub (DESIGN §3.10).
         ctx.client_hub()
             .register::<dyn AuthenticatorClientV1>(Arc::new(LocalClient::new(sessions.clone())));
@@ -81,6 +91,7 @@ impl Gear for AuthenticatorGear {
             keystore,
             oidc,
             resolver,
+            service_registry,
         });
         self.state
             .set(state)
@@ -108,13 +119,19 @@ impl RestApiCapability for AuthenticatorGear {
 
 #[async_trait]
 impl RunnableCapability for AuthenticatorGear {
-    async fn start(&self, _cancel: CancellationToken) -> anyhow::Result<()> {
+    async fn start(&self, cancel: CancellationToken) -> anyhow::Result<()> {
         // `start` must return promptly — the host awaits it before starting the
-        // next gear (including the api-gateway HTTP server). Step 04 has no
-        // background workers, so there is nothing to spawn; the IdP refresher
-        // (G5) and janitor land in steps 06/10 and will `tokio::spawn` here and
-        // return, holding the `cancel` token for graceful shutdown.
-        tracing::info!("authenticator runnable: no background workers yet (steps 06/10)");
+        // next gear (including the api-gateway HTTP server). We bind the
+        // service-token listener here (surfacing a bad bind at boot) and spawn
+        // its server, holding `cancel` for graceful shutdown. The IdP refresher
+        // (G5) and janitor land in step 10 and will spawn here the same way.
+        let state = self
+            .state
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("authenticator gear not initialized"))?
+            .clone();
+        service_token::spawn(state, cancel).await?;
+        tracing::info!("authenticator runnable: service-token listener started (step 06)");
         Ok(())
     }
 

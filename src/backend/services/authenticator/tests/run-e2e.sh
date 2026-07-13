@@ -12,9 +12,10 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-cd "$HERE/../../../.."   # -> src/backend
+cd "$HERE/../../.."   # -> src/backend (the cargo workspace root)
 
 AUTH_PORT=8083
+TOKEN_PORT=8093
 IDP_PORT=8084
 IDENTITY_PORT=8092
 REDIS_CT=authenticator-e2e-redis
@@ -82,5 +83,13 @@ fi
 echo "==> run the login loop"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \
   cargo test -p authenticator --test e2e_login_loop -- --ignored --nocapture
+
+echo "==> run the service-token loop (step 06)"
+# The token listener binds 8093 (config service_tokens.token_bind_addr); the dev
+# `testclient` registry entry in config/insight.yaml trusts the checked-in
+# dev/service-tokens/testclient key, and audience is http://localhost:8093/...
+AUTH_BASE="http://localhost:$AUTH_PORT" \
+  TOKEN_ENDPOINT="http://localhost:$TOKEN_PORT/internal/token" \
+  cargo test -p authenticator --test e2e_service_token -- --ignored --nocapture
 
 echo "==> PASS"
