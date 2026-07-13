@@ -213,7 +213,9 @@ services:
       - "--"
       - "/app/insight-api-gateway"
       - "-c"
-      - "/app/config/no-auth.yaml"
+      # Auth mode: dev-compose.sh sets API_GATEWAY_CONFIG from AUTH_MODE
+      # (off -> no-auth.yaml, oidc -> insight.yaml). Defaults to no-auth.
+      - "${API_GATEWAY_CONFIG:-/app/config/no-auth.yaml}"
       - "run"
     ports:
       - "${API_GATEWAY_PORT:-8080}:8080"
@@ -327,6 +329,7 @@ services:
     volumes:
       - ./deploy/compose/build/authenticator/authenticator:/app/authenticator:ro
       - ./src/backend/services/authenticator/config:/app/config:ro
+      - ./deploy/compose/authenticator-dev-keys:/app/keys:ro
     command:
       - "/app/authenticator"   # <watched path>
       - "--"

@@ -105,6 +105,9 @@ Options:
   --build-only=svc1,svc2    Build only these; everything else from ghcr.
   --frontend-mode=MODE      Override FRONTEND_MODE for this run.
                             (dev | built | ghcr)
+  --auth=MODE               Override AUTH_MODE for this run (off | oidc).
+                            off = no-auth gateway + FE dev-impersonation;
+                            oidc = auth-enforced gateway + OIDC login.
   --no-frontend             Don't start any frontend variant.
   --skip-build              Don't rebuild artefacts — reuse what's
                             already in deploy/compose/build/.
@@ -127,7 +130,10 @@ ensure_authenticator_dev_key() {
   [[ -f "$key" ]] && return 0
   mkdir -p "$dir"
   echo "=== Generating dev ES256 signing key for the authenticator ($key) ==="
-  if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$key" 2>/dev/null; then
+  # ec_param_enc:named_curve is REQUIRED: LibreSSL (macOS default openssl)
+  # otherwise emits explicit EC parameters, which the authenticator's p256
+  # PKCS#8 loader rejects ("expected OBJECT IDENTIFIER, got SEQUENCE").
+  if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve -out "$key" 2>/dev/null; then
     echo "WARN: openssl unavailable — the authenticator will fail to start without $key" >&2
     return 1
   fi
@@ -139,6 +145,7 @@ cmd_up() {
   local from_ghcr_csv=""
   local build_only_csv=""
   local frontend_mode_override=""
+  local auth_mode_override=""
   local skip_build=false
   local no_frontend=false
 
@@ -152,6 +159,8 @@ cmd_up() {
       --build-only)      build_only_csv="$2"; shift 2 ;;
       --frontend-mode=*) frontend_mode_override="${1#*=}"; shift ;;
       --frontend-mode)   frontend_mode_override="$2"; shift 2 ;;
+      --auth=*)          auth_mode_override="${1#*=}"; shift ;;
+      --auth)            auth_mode_override="$2"; shift 2 ;;
       --skip-build)      skip_build=true; shift ;;
       --no-frontend)     no_frontend=true; shift ;;
       --start-airbyte|--start-argo)
@@ -178,6 +187,35 @@ cmd_up() {
 
   [[ -n "$frontend_mode_override" ]] && FRONTEND_MODE="$frontend_mode_override"
   FRONTEND_MODE="${FRONTEND_MODE:-dev}"
+
+  # ── Auth mode: single switch that derives the gateway config + FE login.
+  #   off  = gateway no-auth.yaml + FE dev-impersonation (VITE_DEV_USER_EMAIL).
+  #   oidc = gateway insight.yaml (auth enforced) + FE real OIDC via authenticator.
+  # These exports drive docker-compose's ${API_GATEWAY_CONFIG}, ${OIDC_ISSUER},
+  # ${OIDC_CLIENT_ID}, and ${VITE_DEV_USER_EMAIL}, and enforce that
+  # dev-impersonation and OIDC never coexist (one XOR the other).
+  [[ -n "$auth_mode_override" ]] && AUTH_MODE="$auth_mode_override"
+  AUTH_MODE="${AUTH_MODE:-off}"
+  case "$AUTH_MODE" in
+    off)
+      export API_GATEWAY_CONFIG="/app/config/no-auth.yaml"
+      export OIDC_ISSUER="" OIDC_CLIENT_ID=""
+      export VITE_DEV_USER_EMAIL="${VITE_DEV_USER_EMAIL:-dev@company.nonpresent}"
+      ;;
+    oidc)
+      export API_GATEWAY_CONFIG="/app/config/insight.yaml"
+      export OIDC_ISSUER="${OIDC_ISSUER:-http://localhost:8083}"
+      export OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-insight-authenticator}"
+      export VITE_DEV_USER_EMAIL=""
+      echo "NOTE: AUTH_MODE=oidc — /auth/callback still 500s until the" >&2
+      echo "      authenticator->Identity caller-id fix lands; add" >&2
+      echo "      '127.0.0.1 fakeidp' to /etc/hosts for browser login." >&2
+      ;;
+    *)
+      echo "ERROR: AUTH_MODE must be off|oidc (got: $AUTH_MODE)" >&2
+      return 1
+      ;;
+  esac
 
   # ── Resolve which services go to ghcr ────────────────────────────
   local all_backend="api-gateway analytics identity"
@@ -260,7 +298,10 @@ YML
   # ── Build phase ──────────────────────────────────────────────────
   if [[ "$skip_build" != "true" ]]; then
     echo "=== Building artefacts (skip with --skip-build) ==="
-    local rust_bins=""
+    # authenticator is always built from source (no ghcr flip for it) and its
+    # binary is bind-mounted as a file — omit it and compose auto-creates the
+    # mount source as an empty directory, failing container init.
+    local rust_bins="authenticator"
     contains "$ghcr_list" api-gateway || rust_bins="$rust_bins insight-api-gateway"
     contains "$ghcr_list" analytics   || rust_bins="$rust_bins analytics"
     rust_bins=$(trim "$rust_bins")
@@ -275,9 +316,10 @@ YML
           apt-get update && apt-get install -y --no-install-recommends \
             protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
           cargo build --release$bin_flags
-          mkdir -p /out/api-gateway /out/analytics
+          mkdir -p /out/api-gateway /out/analytics /out/authenticator
           [ -f /target/release/insight-api-gateway ] && install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway || true
           [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
+          [ -f /target/release/authenticator ]       && install -m 0755 /target/release/authenticator       /out/authenticator/authenticator || true
         "
     fi
     if ! contains "$ghcr_list" identity; then
@@ -395,9 +437,10 @@ pick it up via ENABLE_AUTO_RELOAD.
 Targets:
   api-gateway        Rust gateway binary only.
   analytics          Rust analytics binary only.
+  authenticator      Rust authenticator binary only.
   identity           .NET 9 publish output.
   frontend           pnpm build → dist/.
-  rust               Both Rust services.
+  rust               All three Rust services.
   all                Everything (Rust + .NET + frontend).
 EOF
 }
@@ -423,20 +466,22 @@ cmd_build() {
       apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
       cargo build --release$bin_flags
-      mkdir -p /out/api-gateway /out/analytics
+      mkdir -p /out/api-gateway /out/analytics /out/authenticator
       [ -f /target/release/insight-api-gateway ] && install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway || true
       [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
+      [ -f /target/release/authenticator ]       && install -m 0755 /target/release/authenticator       /out/authenticator/authenticator || true
     "
   }
 
   case "$target" in
-    api-gateway) build_rust_bins insight-api-gateway ;;
-    analytics)   build_rust_bins analytics ;;
-    rust)        build_rust_bins insight-api-gateway analytics ;;
+    api-gateway)   build_rust_bins insight-api-gateway ;;
+    analytics)     build_rust_bins analytics ;;
+    authenticator) build_rust_bins authenticator ;;
+    rust)          build_rust_bins insight-api-gateway analytics authenticator ;;
     identity)    "${compose_cmd[@]}" run --rm build-dotnet ;;
     frontend)    "${compose_cmd[@]}" run --rm build-frontend ;;
     all)
-      build_rust_bins insight-api-gateway analytics
+      build_rust_bins insight-api-gateway analytics authenticator
       "${compose_cmd[@]}" run --rm build-dotnet
       "${compose_cmd[@]}" run --rm build-frontend
       ;;
