@@ -25,12 +25,11 @@ use crate::infra::db::persons_repo;
 pub struct ResolveProfileCommand {
     pub value_type: String,
     pub value: String,
-    // Consumed by the value_type='id' path (next step).
+    /// Required when `value_type = "id"` — the source instance to scope to.
     #[serde(default)]
-    #[allow(dead_code)]
     pub insight_source_type: Option<String>,
+    /// Required when `value_type = "id"`.
     #[serde(default)]
-    #[allow(dead_code)]
     pub insight_source_id: Option<Uuid>,
 }
 
@@ -66,13 +65,36 @@ pub async fn resolve_profile(
                 CanonicalError::internal("profile resolution failed").create()
             })?,
         "id" => {
-            return Err(ProfileError::invalid_argument()
-                .with_field_violation(
-                    "value_type",
-                    "value_type='id' is not implemented yet",
-                    "UNIMPLEMENTED",
-                )
-                .create());
+            let source_type = cmd.insight_source_type.as_deref().ok_or_else(|| {
+                ProfileError::invalid_argument()
+                    .with_field_violation(
+                        "insight_source_type",
+                        "insight_source_type is required for value_type='id'",
+                        "REQUIRED",
+                    )
+                    .create()
+            })?;
+            let source_id = cmd.insight_source_id.ok_or_else(|| {
+                ProfileError::invalid_argument()
+                    .with_field_violation(
+                        "insight_source_id",
+                        "insight_source_id is required for value_type='id'",
+                        "REQUIRED",
+                    )
+                    .create()
+            })?;
+            persons_repo::resolve_person_ids_by_source_id(
+                &state.db,
+                tenant,
+                source_type,
+                source_id,
+                &cmd.value,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "resolve by source id failed");
+                CanonicalError::internal("profile resolution failed").create()
+            })?
         }
         _ => {
             return Err(ProfileError::invalid_argument()

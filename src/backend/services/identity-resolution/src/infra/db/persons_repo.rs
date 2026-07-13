@@ -6,7 +6,7 @@
 //! SeaORM's `Statement` and read columns off the `QueryResult`. Running the same
 //! SQL as the .NET service keeps resolution behaviour identical.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use uuid::Uuid;
 
 /// Resolve the set of `person_id`s whose CURRENT email (latest observation per
@@ -53,7 +53,61 @@ pub async fn resolve_person_ids_by_email(
     );
 
     let rows = db.query_all(stmt).await?;
+    person_ids_from_rows(rows)
+}
 
+/// Resolve the set of `person_id`s whose CURRENT `value_type='id'` observation
+/// on the given source instance (`source_type` + `source_id`) equals `value`.
+/// Source-instance scoped, ported from .NET `Sql.Profiles.cs::ResolvePersonIdsBySourceId`.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn resolve_person_ids_by_source_id(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    source_type: &str,
+    source_id: Uuid,
+    value: &str,
+) -> anyhow::Result<Vec<Uuid>> {
+    const SQL: &str = r"
+        WITH ranked AS (
+            SELECT
+                person_id,
+                value_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY insight_tenant_id, person_id, insight_source_type, insight_source_id, value_type
+                    ORDER BY created_at DESC, id DESC
+                ) AS rn
+            FROM persons
+            WHERE insight_tenant_id   = ?
+              AND insight_source_type = ?
+              AND insight_source_id   = ?
+              AND value_type          = 'id'
+        )
+        SELECT DISTINCT person_id
+        FROM ranked
+        WHERE rn = 1
+          AND value_id = ?
+    ";
+
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            tenant_id.as_bytes().to_vec().into(),
+            source_type.to_owned().into(),
+            source_id.as_bytes().to_vec().into(),
+            value.trim().to_owned().into(),
+        ],
+    );
+
+    let rows = db.query_all(stmt).await?;
+    person_ids_from_rows(rows)
+}
+
+/// Read the `person_id` (`binary(16)`) column off each result row into a `Uuid`.
+fn person_ids_from_rows(rows: Vec<QueryResult>) -> anyhow::Result<Vec<Uuid>> {
     let mut person_ids = Vec::with_capacity(rows.len());
     for row in rows {
         let bytes: Vec<u8> = row.try_get("", "person_id")?;
