@@ -457,6 +457,7 @@ write_compose() {
   update_env_var "$env_file" VITE_DEV_USER_EMAIL           "$DEV_USER_EMAIL"
   update_env_var "$env_file" FRONTEND_MODE                 "$fe_mode"
   update_env_var "$env_file" INSIGHT_FRONT_PATH            "$fe_path"
+  update_env_var "$env_file" AUTH_MODE                     "off"
 
   # SEEDED_LOCAL_* gates the first-run auto-seed in dev-compose.sh.
   if [[ "$MARIADB_EXTERNAL" == "true" && "$seed_external" != "true" ]]; then
