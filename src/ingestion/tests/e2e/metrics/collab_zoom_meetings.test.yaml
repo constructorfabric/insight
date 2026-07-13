@@ -1,0 +1,100 @@
+spec_version: 1
+description: >
+  Metric: zoom_meetings — IC Bullet Collaboration (…0012), PR #1746.
+  How it's computed (bronze → silver → gold):
+    • bronze: Zoom participant sessions (one row per person per session) + the
+              Zoom meeting-session report (one row per session uuid, carrying the
+              reusable Meeting ID)
+    • silver: participant sessions deduped, then counted as DISTINCT logical
+              meetings per person/day — consecutive sessions of the SAME Zoom
+              Meeting ID with an end→start gap ≤ 5 min are stitched into ONE
+              logical meeting (a host-drop rejoin is not a second meeting)
+    • gold:   value = the requested member's per-person SUM of distinct meetings
+              over the window, Zoom rows only (Teams meetings land in
+              teams_meetings, not here). median/p25/p75/range = the distribution
+              of those per-person SUMs across the member's DEPARTMENT (org_unit_id).
+
+  Department: 5 Engineering members with distinct-meeting counts {1,2,3,4,5} on
+  2026-12-25 — alice 1 meeting (+ an exact duplicate row that must dedup); bob
+  2 = one meeting he dropped from and rejoined 2 min later (two sessions of
+  Meeting ID 88011, stitched to ONE) plus one ordinary meeting; carol/dave/erin
+  3/4/5 ordinary distinct meetings (no meeting-report rows — the count falls
+  back to one-session-one-meeting). The IC case requests erin (5), so value = 5;
+  the department of 5 yields median 3, p25 2, p75 4, range [1,5].
+  NOTE: the session-stitching report is only read for rows extracted within the
+  last 90 days of REAL now() — the seeded meeting rows pin _airbyte_extracted_at
+  next to the meeting date (2026-12-25), which satisfies that until ~2027-03.
+  Cases: custom scope (single window over the department) · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  # bob's Meeting ID 88011 ran as two sessions 2 min apart → ONE logical meeting.
+  bronze_zoom.meetings:
+    - { $ref: templates/zoom.yaml#/templates/zoom_meeting, _airbyte_extracted_at: "2026-12-25T15:00:00", unique_key: zm-88011-s1, id: "88011", uuid: "zm-b1a==", start_time: "2026-12-25T10:00:00Z", end_time: "2026-12-25T10:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/zoom_meeting, _airbyte_extracted_at: "2026-12-25T15:00:00", unique_key: zm-88011-s2, id: "88011", uuid: "zm-b1b==", start_time: "2026-12-25T10:32:00Z", end_time: "2026-12-25T11:00:00Z" }
+
+  bronze_zoom.participants:
+    # ── alice: 1 meeting (+ verbatim re-emit duplicate → must NOT count as 2)
+    - { $ref: templates/zoom.yaml#/templates/alice_zoom, unique_key: zm-alice-1, meeting_uuid: "zm-a1==", participant_uuid: "zm-a1-p1", join_time: "2026-12-25T10:00:00Z", leave_time: "2026-12-25T10:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/alice_zoom, unique_key: zm-alice-1, meeting_uuid: "zm-a1==", participant_uuid: "zm-a1-p1", join_time: "2026-12-25T10:00:00Z", leave_time: "2026-12-25T10:30:00Z" }
+    # ── bob: 2 = stitched rejoin (sessions zm-b1a== + zm-b1b== of Meeting 88011 → 1) + one ordinary meeting
+    - { $ref: templates/zoom.yaml#/templates/bob_zoom, unique_key: zm-bob-1, meeting_uuid: "zm-b1a==", participant_uuid: "zm-b1-p1", join_time: "2026-12-25T10:00:00Z", leave_time: "2026-12-25T10:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/bob_zoom, unique_key: zm-bob-2, meeting_uuid: "zm-b1b==", participant_uuid: "zm-b1-p2", join_time: "2026-12-25T10:32:00Z", leave_time: "2026-12-25T11:00:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/bob_zoom, unique_key: zm-bob-3, meeting_uuid: "zm-b2==",  participant_uuid: "zm-b2-p1", join_time: "2026-12-25T13:00:00Z", leave_time: "2026-12-25T13:30:00Z" }
+    # ── carol: 3 distinct meetings
+    - { $ref: templates/zoom.yaml#/templates/carol_zoom, unique_key: zm-carol-1, meeting_uuid: "zm-c1==", participant_uuid: "zm-c1-p1", join_time: "2026-12-25T09:00:00Z", leave_time: "2026-12-25T09:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/carol_zoom, unique_key: zm-carol-2, meeting_uuid: "zm-c2==", participant_uuid: "zm-c2-p1", join_time: "2026-12-25T11:00:00Z", leave_time: "2026-12-25T11:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/carol_zoom, unique_key: zm-carol-3, meeting_uuid: "zm-c3==", participant_uuid: "zm-c3-p1", join_time: "2026-12-25T14:00:00Z", leave_time: "2026-12-25T14:30:00Z" }
+    # ── dave: 4 distinct meetings
+    - { $ref: templates/zoom.yaml#/templates/dave_zoom, unique_key: zm-dave-1, meeting_uuid: "zm-d1==", participant_uuid: "zm-d1-p1", join_time: "2026-12-25T09:00:00Z", leave_time: "2026-12-25T09:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/dave_zoom, unique_key: zm-dave-2, meeting_uuid: "zm-d2==", participant_uuid: "zm-d2-p1", join_time: "2026-12-25T10:00:00Z", leave_time: "2026-12-25T10:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/dave_zoom, unique_key: zm-dave-3, meeting_uuid: "zm-d3==", participant_uuid: "zm-d3-p1", join_time: "2026-12-25T11:00:00Z", leave_time: "2026-12-25T11:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/dave_zoom, unique_key: zm-dave-4, meeting_uuid: "zm-d4==", participant_uuid: "zm-d4-p1", join_time: "2026-12-25T12:00:00Z", leave_time: "2026-12-25T12:30:00Z" }
+    # ── erin: 5 distinct meetings
+    - { $ref: templates/zoom.yaml#/templates/erin_zoom, unique_key: zm-erin-1, meeting_uuid: "zm-e1==", participant_uuid: "zm-e1-p1", join_time: "2026-12-25T09:00:00Z", leave_time: "2026-12-25T09:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/erin_zoom, unique_key: zm-erin-2, meeting_uuid: "zm-e2==", participant_uuid: "zm-e2-p1", join_time: "2026-12-25T10:00:00Z", leave_time: "2026-12-25T10:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/erin_zoom, unique_key: zm-erin-3, meeting_uuid: "zm-e3==", participant_uuid: "zm-e3-p1", join_time: "2026-12-25T11:00:00Z", leave_time: "2026-12-25T11:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/erin_zoom, unique_key: zm-erin-4, meeting_uuid: "zm-e4==", participant_uuid: "zm-e4-p1", join_time: "2026-12-25T12:00:00Z", leave_time: "2026-12-25T12:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/erin_zoom, unique_key: zm-erin-5, meeting_uuid: "zm-e5==", participant_uuid: "zm-e5-p1", join_time: "2026-12-25T13:00:00Z", leave_time: "2026-12-25T13:30:00Z" }
+
+cases:
+  # dept {1,2,3,4,5}; erin value 5. p25=2 median=3 p75=4 range=[1,5]
+  - name: "zoom_meetings — custom scope (department of 5, stitched rejoin counts once)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: zoom_meetings }
+        equal: { value: 5, median: 3, range_min: 1, range_max: 5, p25: 2, p75: 4 }
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "zoom_meetings — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"

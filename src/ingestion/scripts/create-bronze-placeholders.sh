@@ -1179,12 +1179,21 @@ SQL
 fi
 
 # bronze_zoom — needed by gold-views comms_daily, zoom_person_daily
+#
+# Key shape mirrors the PROMOTED table (`promote_bronze_to_rmt(order_by='unique_key')`
+# in zoom__bronze_promoted.sql): ORDER BY unique_key, allow_nullable_key. The
+# previous placeholder ordered by `email`, which silently collapsed every
+# participant row of one person into a single row on RMT merge — deployed
+# tables were unaffected (Airbyte + the promote macro produce the unique_key
+# shape), but the e2e rig runs on the placeholder and could not seed more than
+# one meeting per person.
 if ! ch_table_exists bronze_zoom participants; then
   echo "  Creating placeholder: bronze_zoom.participants"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_zoom.participants (
     tenant_id String,
     source_id String,
+    unique_key Nullable(String),
     email String,
     user_name Nullable(String),
     meeting_uuid String,
@@ -1200,13 +1209,15 @@ CREATE TABLE IF NOT EXISTS bronze_zoom.participants (
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
-) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY email;
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
 SQL
 else
   echo "  Reconciling placeholder schema: bronze_zoom.participants"
   run_ch <<'SQL'
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS tenant_id String;
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS source_id String;
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS unique_key Nullable(String);
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS user_name Nullable(String);
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS participant_uuid String;
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS camera Nullable(String);
@@ -1219,14 +1230,17 @@ fi
 
 # bronze_zoom.meetings — read by zoom__meeting_sessions (session stitching).
 # The meeting-hours path computes duration from participants join/leave, so this
-# table may be empty in tests; it only needs to EXIST so the sessions model builds
-# (the participant→session LEFT JOIN then falls back to meeting_uuid).
+# table may be empty in tests; it needs to EXIST so the sessions model builds
+# (the participant→session LEFT JOIN then falls back to meeting_uuid), and it is
+# seeded by session-stitching e2e fixtures. Key shape mirrors the promoted table
+# (ORDER BY unique_key), same as participants above.
 if ! ch_table_exists bronze_zoom meetings; then
   echo "  Creating placeholder: bronze_zoom.meetings"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_zoom.meetings (
     tenant_id String,
     source_id String,
+    unique_key Nullable(String),
     id Nullable(String),
     uuid String,
     start_time Nullable(String),
@@ -1237,7 +1251,13 @@ CREATE TABLE IF NOT EXISTS bronze_zoom.meetings (
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
-) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY uuid;
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
+SQL
+else
+  echo "  Reconciling placeholder schema: bronze_zoom.meetings"
+  run_ch <<'SQL'
+ALTER TABLE bronze_zoom.meetings ADD COLUMN IF NOT EXISTS unique_key Nullable(String);
 SQL
 fi
 

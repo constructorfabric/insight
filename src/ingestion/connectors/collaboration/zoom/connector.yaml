@@ -148,6 +148,8 @@ streams:
               backoff_strategies:
                 - type: ExponentialBackoffStrategy
                   factor: 5
+        request_parameters:
+          page_size: "{{ config['page_size'] }}"
         url: https://api.zoom.us/v2/users
       paginator:
         type: DefaultPaginator
@@ -568,6 +570,7 @@ streams:
           - type: ParentStreamConfig
             parent_key: uuid
             partition_field: meeting_uuid
+            incremental_dependency: true
             stream:
               type: DeclarativeStream
               name: _meetings

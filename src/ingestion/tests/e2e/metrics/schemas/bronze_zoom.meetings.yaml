@@ -1,0 +1,24 @@
+# Reusable JSON schema for bronze_zoom.meetings (the columns zoom__meeting_sessions
+# reads for session stitching). `id` is the reusable Zoom Meeting ID; `uuid` is the
+# per-session UUID — consecutive sessions of the same `id` whose gap is ≤ 5 min are
+# stitched into one logical meeting. `unique_key` is the connector-computed row key
+# the table is ORDER BY'd on (distinct per seeded row).
+schemas:
+  bronze_zoom.meetings:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: string }
+      source_id: { type: string }
+      unique_key: { type: [string, "null"] }
+      id: { type: [string, "null"] }
+      uuid: { type: string }
+      start_time: { type: [string, "null"] }
+      end_time: { type: [string, "null"] }
+      has_video: { type: [boolean, "null"] }
+      has_screen_share: { type: [boolean, "null"] }

@@ -1,0 +1,81 @@
+spec_version: 1
+description: >
+  Metric: zoom_meeting_hours — IC Bullet Collaboration (…0012), PR #1746.
+  How it's computed (bronze → silver → gold):
+    • bronze: Zoom participant sessions (join/leave per person per meeting)
+    • silver: sessions deduped (a re-synced duplicate row must not double), then
+              summed to per-person/day durations; video counts only when the
+              participant used a camera, screen-share only when they shared
+    • gold:   per day take the longest single modality (audio vs video vs screen)
+              — for Zoom these coincide because the whole session length is
+              attributed to a modality the participant used; value = the requested
+              member's per-person SUM of those hours over the window, Zoom rows
+              only (Teams hours land in teams_/meeting_hours, not here).
+              median/p25/p75/range = the distribution of those per-person SUMs
+              across the member's DEPARTMENT (org_unit_id).
+
+  Department: 5 Engineering members with Zoom hours {1,2,3,4,5} on 2026-12-25 —
+  alice 1×1h (+ an exact duplicate row that must dedup), bob 0.5h+1.5h across TWO
+  meetings (sums to 2), carol 3h with a camera on (video == audio → longest
+  modality still 3), dave 4h with desktop share (same, 4), erin 5h audio-only.
+  The IC case requests erin (5), so value = 5; the department of 5 yields
+  median 3, p25 2, p75 4, range [1,5].
+  Cases: custom scope (single window over the department) · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_zoom.participants:
+    # ── alice: 1h (one meeting; the duplicate is a verbatim Airbyte re-emit → must NOT double)
+    - { $ref: templates/zoom.yaml#/templates/alice_zoom, unique_key: zmh-alice-1, meeting_uuid: "zmh-a1==", participant_uuid: "zmh-a1-p1", join_time: "2026-12-25T10:00:00Z", leave_time: "2026-12-25T11:00:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/alice_zoom, unique_key: zmh-alice-1, meeting_uuid: "zmh-a1==", participant_uuid: "zmh-a1-p1", join_time: "2026-12-25T10:00:00Z", leave_time: "2026-12-25T11:00:00Z" }
+    # ── bob: 0.5h + 1.5h across two meetings → 2h (per-day SUM across meetings)
+    - { $ref: templates/zoom.yaml#/templates/bob_zoom, unique_key: zmh-bob-1, meeting_uuid: "zmh-b1==", participant_uuid: "zmh-b1-p1", join_time: "2026-12-25T10:00:00Z", leave_time: "2026-12-25T10:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/bob_zoom, unique_key: zmh-bob-2, meeting_uuid: "zmh-b2==", participant_uuid: "zmh-b2-p1", join_time: "2026-12-25T13:00:00Z", leave_time: "2026-12-25T14:30:00Z" }
+    # ── carol: 3h with camera on (video == audio; longest modality still 3h)
+    - { $ref: templates/zoom.yaml#/templates/carol_zoom, unique_key: zmh-carol-1, meeting_uuid: "zmh-c1==", participant_uuid: "zmh-c1-p1", join_time: "2026-12-25T09:00:00Z", leave_time: "2026-12-25T12:00:00Z", camera: "FaceTime HD Camera" }
+    # ── dave: 4h with desktop share (screen == audio; longest modality still 4h)
+    - { $ref: templates/zoom.yaml#/templates/dave_zoom, unique_key: zmh-dave-1, meeting_uuid: "zmh-d1==", participant_uuid: "zmh-d1-p1", join_time: "2026-12-25T09:00:00Z", leave_time: "2026-12-25T13:00:00Z", share_desktop: true }
+    # ── erin: 5h audio-only
+    - { $ref: templates/zoom.yaml#/templates/erin_zoom, unique_key: zmh-erin-1, meeting_uuid: "zmh-e1==", participant_uuid: "zmh-e1-p1", join_time: "2026-12-25T09:00:00Z", leave_time: "2026-12-25T14:00:00Z" }
+
+cases:
+  # dept {1,2,3,4,5}; erin value 5. p25=2 median=3 p75=4 range=[1,5]
+  - name: "zoom_meeting_hours — custom scope (department of 5)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: zoom_meeting_hours }
+        equal: { value: 5, median: 3, range_min: 1, range_max: 5, p25: 2, p75: 4 }
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "zoom_meeting_hours — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"
