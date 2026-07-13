@@ -16,15 +16,7 @@ from __future__ import annotations
 import json
 
 from config import API_URL, ZoomConfigBuilder, mock_token
-
-from connector_tests import (
-    HttpMocker,
-    HttpRequest,
-    HttpResponse,
-    assert_records_conform,
-    load_fixture,
-    read_stream,
-)
+from connector_tests import HttpMocker, HttpRequest, HttpResponse, assert_records_conform, load_fixture, read_stream
 
 _STREAM = "users"
 _CONNECTOR = "collaboration/zoom"
@@ -61,37 +53,26 @@ def test_full_refresh_single_page(http_mocker: HttpMocker) -> None:
 
     assert len(output.records) == 2
     assert not output.errors
-    assert sorted(r.record.data["email"] for r in output.records) == [
-        "alice@example.com",
-        "bob@example.com",
-    ]
+    assert sorted(r.record.data["email"] for r in output.records) == ["alice@example.com", "bob@example.com"]
 
 
 def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
-    http_mocker.get(
-        HttpRequest(_USERS_URL, query_params=_params()),
-        _page([_user("usr-1", "alice@example.com")]),
-    )
+    http_mocker.get(HttpRequest(_USERS_URL, query_params=_params()), _page([_user("usr-1", "alice@example.com")]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
     rec = output.records[0].record.data
     assert rec["tenant_id"] == config["insight_tenant_id"]
     assert rec["source_id"] == config["insight_source_id"]
-    assert rec["unique_key"] == (
-        f"{config['insight_tenant_id']}-{config['insight_source_id']}-usr-1"
-    )
+    assert rec["unique_key"] == (f"{config['insight_tenant_id']}-{config['insight_source_id']}-usr-1")
 
 
 def test_schema_conformance(http_mocker: HttpMocker) -> None:
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
-    http_mocker.get(
-        HttpRequest(_USERS_URL, query_params=_params()),
-        _page([_user("usr-1", "alice@example.com")]),
-    )
+    http_mocker.get(HttpRequest(_USERS_URL, query_params=_params()), _page([_user("usr-1", "alice@example.com")]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
@@ -108,8 +89,7 @@ def test_pagination_multi_page(http_mocker: HttpMocker) -> None:
         _page([_user("usr-1", "alice@example.com")], next_token="tok-2"),
     )
     http_mocker.get(
-        HttpRequest(_USERS_URL, query_params=_params(page_token="tok-2")),
-        _page([_user("usr-2", "bob@example.com")]),
+        HttpRequest(_USERS_URL, query_params=_params(page_token="tok-2")), _page([_user("usr-2", "bob@example.com")])
     )
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -138,9 +118,7 @@ def test_error_retry_429(http_mocker: HttpMocker) -> None:
         HttpRequest(_USERS_URL, query_params=_params()),
         [
             HttpResponse(
-                body=json.dumps({"code": 429, "message": "rate limited"}),
-                status_code=429,
-                headers={"Retry-After": "0"},
+                body=json.dumps({"code": 429, "message": "rate limited"}), status_code=429, headers={"Retry-After": "0"}
             ),
             _page([_user("usr-1", "alice@example.com")]),
         ],

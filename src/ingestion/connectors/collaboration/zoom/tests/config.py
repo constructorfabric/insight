@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from connector_tests import HttpRequest, HttpResponse, ConfigBuilder
+from connector_tests import ConfigBuilder, HttpRequest, HttpResponse
 
 API_URL = "https://api.zoom.us/v2"
 TOKEN_URL = "https://zoom.us/oauth/token"
@@ -29,10 +29,7 @@ MEETING_SLICES = [
 # synchronous path (SubstreamPartitionRouter.read_only_records), whose slice
 # generator does NOT absorb the remainder into the last slice — it emits the
 # plain step layout with a 1-day tail. Same window pin, different tail shape.
-PARENT_MEETING_SLICES = MEETING_SLICES[:-1] + [
-    ("2026-06-01", "2026-06-30"),
-    ("2026-07-01", "2026-07-01"),
-]
+PARENT_MEETING_SLICES = MEETING_SLICES[:-1] + [("2026-06-01", "2026-06-30"), ("2026-07-01", "2026-07-01")]
 
 
 def metrics_params(from_date: str, to_date: str, page_token: str | None = None) -> dict:
@@ -50,10 +47,7 @@ def mock_meeting_slices(http_mocker, non_empty: dict, slices=MEETING_SLICES) -> 
     for from_date, to_date in slices:
         http_mocker.get(
             HttpRequest(METRICS_URL, query_params=metrics_params(from_date, to_date)),
-            non_empty.get(
-                from_date,
-                HttpResponse(body=json.dumps({"meetings": []}), status_code=200),
-            ),
+            non_empty.get(from_date, HttpResponse(body=json.dumps({"meetings": []}), status_code=200)),
         )
 
 
@@ -79,14 +73,9 @@ def mock_token(http_mocker) -> None:
     compares the form body byte-exact, so this also pins the
     account_credentials grant the manifest declares."""
     http_mocker.post(
-        HttpRequest(
-            TOKEN_URL,
-            body="grant_type=account_credentials&account_id=test-account",
-        ),
+        HttpRequest(TOKEN_URL, body="grant_type=account_credentials&account_id=test-account"),
         HttpResponse(
-            body=json.dumps(
-                {"access_token": "test-bearer", "token_type": "bearer", "expires_in": 3600}
-            ),
+            body=json.dumps({"access_token": "test-bearer", "token_type": "bearer", "expires_in": 3600}),
             status_code=200,
         ),
     )
