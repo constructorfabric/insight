@@ -399,9 +399,9 @@ services:
       GATEWAY_AUTHENTICATOR_URL: "http://authenticator:8083"
       GATEWAY_FRONT_URL: "http://insight-front:80"
     volumes:
-      # The single route table (also shipped as the chart ConfigMap). Edit it and
-      # restart the container to re-generate nginx.conf.
-      - ./src/backend/services/gateway/helm/files/routes.yaml:/etc/gateway/routes.yaml:ro
+      # Compose route table (docker service names). The k8s equivalent is the
+      # chart's templated gateway.routes values. Edit + restart to regenerate.
+      - ./deploy/compose/gateway/routes.yaml:/etc/gateway/routes.yaml:ro
     ports:
       - "${GATEWAY_PORT:-8080}:8080"
 

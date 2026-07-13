@@ -11,20 +11,32 @@ service:
   type: ClusterIP
   port: 8080
 
-# Deployment-specific settings, passed to the container as env vars; the
-# entrypoint feeds them to routegen at startup (the route table itself is the
-# mounted ConfigMap). Nothing is baked into the image.
+# Gateway upstreams + route table. Every URL is a Helm template rendered with
+# `tpl` (configmap.yaml / deployment.yaml), so `{{ .Release.Name }}` resolves to
+# the real service names and there are no hardcoded hosts. Override any URL with
+# a literal (no template syntax) to point at an external service.
 gateway:
-  # The gateway's upstreams, addressed by k8s service DNS. deployment.yaml
-  # assembles the FQDN URL as http://<service>.<Release.Namespace>.svc.<clusterDomain>:<port>
-  # (an FQDN is required -- the cosocket's DNS does not apply the search domain).
+  # DNS domain for the authenticator FQDN. The Lua exchange cosocket needs a
+  # fully-qualified name -- unlike nginx upstreams it does not apply the k8s
+  # search domain.
   clusterDomain: cluster.local
-  authenticator:
-    service: authenticator
-    port: 8083
-  front:
-    service: insight-front
-    port: 8080
+
+  # Cookie-to-JWT exchange target (FQDN, for the cosocket) and the SPA upstream.
+  authenticatorUrl: 'http://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.{{ .Values.gateway.clusterDomain }}:8083'
+  frontUrl: 'http://{{ .Release.Name }}-frontend:80'
+
+  # Route table -> rendered into the ConfigMap's routes.yaml (via `tpl`) and
+  # compiled by routegen at startup. Upstreams are nginx upstream blocks
+  # (short names resolve via the k8s search domain).
+  defaults:
+    stripRequestHeaders: [X-Real-IP, Forwarded]
+  routes:
+    - prefix: /api/v1/analytics
+      upstream: 'http://{{ .Release.Name }}-analytics:8081'
+      timeoutMs: 60000
+    - prefix: /api/v1/identity
+      upstream: 'http://{{ .Release.Name }}-identity:8082'
+
   # Trusted ingress-hop CIDRs for X-Forwarded-For (set_real_ip_from). Empty =
   # no client-IP trust; set to the ingress/pod network where TLS terminates in
   # front of the gateway (G8).

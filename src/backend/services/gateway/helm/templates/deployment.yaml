@@ -46,9 +46,9 @@ spec:
             - name: GATEWAY_ROUTES_FILE
               value: /etc/gateway/routes.yaml
             - name: GATEWAY_AUTHENTICATOR_URL
-              value: {{ printf "http://%s.%s.svc.%s:%v" .Values.gateway.authenticator.service .Release.Namespace .Values.gateway.clusterDomain .Values.gateway.authenticator.port | quote }}
+              value: {{ tpl .Values.gateway.authenticatorUrl . | quote }}
             - name: GATEWAY_FRONT_URL
-              value: {{ printf "http://%s.%s.svc.%s:%v" .Values.gateway.front.service .Release.Namespace .Values.gateway.clusterDomain .Values.gateway.front.port | quote }}
+              value: {{ tpl .Values.gateway.frontUrl . | quote }}
             {{- with .Values.gateway.setRealIpFrom }}
             - name: GATEWAY_SET_REAL_IP_FROM
               value: {{ join "," . | quote }}

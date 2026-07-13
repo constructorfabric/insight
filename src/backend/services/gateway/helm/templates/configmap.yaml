@@ -1,8 +1,8 @@
 {{- /*
-  The reviewable route table, shipped verbatim from the committed routes.yaml
-  (DD-GW-02). The gateway container compiles it into nginx.conf at startup via
-  routegen; deployment-specific settings come from env (see deployment.yaml).
-  Editing routes is a PR to this file -- reviewable in gitops.
+  The reviewable route table, built from .Values.gateway.routes and rendered
+  with `tpl` so `{{ .Release.Name }}` in each upstream resolves to the real
+  service. The gateway container compiles this into nginx.conf at startup via
+  routegen; editing routes is a values change, reviewable in gitops (DD-GW-02).
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -12,4 +12,23 @@ metadata:
     {{- include "insight-gateway.labels" . | nindent 4 }}
 data:
   routes.yaml: |
-{{ .Files.Get "files/routes.yaml" | indent 4 }}
+    version: 1
+    defaults:
+      strip_request_headers:
+        {{- range .Values.gateway.defaults.stripRequestHeaders }}
+        - {{ . }}
+        {{- end }}
+    routes:
+      {{- range .Values.gateway.routes }}
+      - prefix: {{ .prefix }}
+        upstream: {{ tpl .upstream $ | quote }}
+        {{- with .timeoutMs }}
+        timeout_ms: {{ . }}
+        {{- end }}
+        {{- with .stripPrefix }}
+        strip_prefix: {{ . }}
+        {{- end }}
+        {{- with .websocket }}
+        websocket: {{ . }}
+        {{- end }}
+      {{- end }}

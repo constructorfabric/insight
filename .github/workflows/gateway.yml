@@ -57,7 +57,7 @@ jobs:
       - name: Generate + nginx -t via the container's own startup path
         run: |
           # Exercise the real entrypoint (routegen -> nginx -t) against the
-          # committed routes.yaml. Upstream short-names are mapped to loopback so
+          # compose route table. Upstream short-names are mapped to loopback so
           # nginx can resolve them at config-load time; GATEWAY_VALIDATE_ONLY
           # makes the container generate, validate, and exit without serving.
           docker run --rm \
@@ -69,11 +69,27 @@ jobs:
             -e GATEWAY_AUTHENTICATOR_URL=http://authenticator:8083 \
             -e GATEWAY_FRONT_URL=http://insight-front:8080 \
             -e GATEWAY_SET_REAL_IP_FROM=10.0.0.0/8 \
-            -v "$PWD/src/backend/services/gateway/helm/files/routes.yaml":/etc/gateway/routes.yaml:ro \
+            -v "$PWD/deploy/compose/gateway/routes.yaml":/etc/gateway/routes.yaml:ro \
             insight-gateway:ci
 
-      - name: helm lint the gateway chart
-        run: helm lint src/backend/services/gateway/helm
+      - name: helm lint + assert the chart's rendered routes.yaml compiles
+        run: |
+          helm lint src/backend/services/gateway/helm
+          # Render the templated route table (helm template fails on a bad tpl)
+          # and run it through routegen to catch a bad routes value before a pod.
+          helm template insight src/backend/services/gateway/helm \
+            --set image.repository=x --set image.tag=t --namespace insight \
+            --show-only templates/configmap.yaml \
+            | sed -n '/routes.yaml: |/,$p' | tail -n +2 | sed 's/^    //' > rendered-routes.yaml
+          cat rendered-routes.yaml
+          docker run --rm \
+            --add-host insight-analytics:127.0.0.1 --add-host insight-identity:127.0.0.1 \
+            --add-host insight-authenticator:127.0.0.1 --add-host insight-frontend:127.0.0.1 \
+            -e GATEWAY_VALIDATE_ONLY=1 \
+            -e GATEWAY_AUTHENTICATOR_URL=http://insight-authenticator:8083 \
+            -e GATEWAY_FRONT_URL=http://insight-frontend:80 \
+            -v "$PWD/rendered-routes.yaml":/etc/gateway/routes.yaml:ro \
+            insight-gateway:ci
 
   # Full edge e2e: real authenticator + fakeidp behind the gateway (the five
   # NGINX_BFF step-05 scenarios). No host Rust toolchain -- routegen and every
