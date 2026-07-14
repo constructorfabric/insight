@@ -126,6 +126,15 @@ _SESSION_START_TRUNCATE = [
     # Zoom feeds class_collab_meeting_activity (cross-source meeting_hours).
     ("staging", "zoom__collab_meeting_activity"),
     ("staging", "zoom__meeting_sessions"),
+    # bronze_zoom.meetings is READ (via `+zoom__collab_meeting_activity` pulling
+    # zoom__meeting_sessions) by every test that seeds only participants — so it
+    # is neither seed-truncated by those tests nor ledger-truncated between them
+    # (derive_selectors records only models sourced from SEEDED tables). A prior
+    # session's leftover rows get re-appended into zoom__meeting_sessions on
+    # every such build, tripping its `unique` dbt test on the second one. Bronze
+    # participants added for symmetry.
+    ("bronze_zoom", "meetings"),
+    ("bronze_zoom", "participants"),
     # Task-tracking: the bullet/MV chain reads class_task_* even when a fixture
     # seeds only one connector, and the enrich path writes staging.jira__task_*.
     # Reset them once at session start so warm re-runs are deterministic (CI is

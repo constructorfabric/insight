@@ -15,14 +15,13 @@ description: >
   The IC case requests erin (5), so value = 5; the department of 5 yields
   median 3, p25 2, p75 4, range [1,5].
 
-  Zoom note: the Zoom side is intentionally NOT used to vary per-person counts.
-  bronze_zoom.participants is ReplacingMergeTree ORDER BY email, so EVERY
-  participant row for one email collapses to a single bronze row on RMT merge —
-  a person can contribute at most ONE distinct Zoom meeting per day regardless of
-  how many participant rows are seeded. This fixture is therefore Teams-only —
-  each member's value is exactly meetingsAttendedCount. (Teams+Zoom cross-source
-  additivity is not asserted in the single-scope suite; it would be its own
-  fixture if reintroduced.)
+  Zoom note: this fixture stays Teams-only — each member's value is exactly
+  meetingsAttendedCount. Teams+Zoom cross-source additivity has its own fixture
+  (collab_meetings_count_zoom_cross.test.yaml), and the Zoom-only count path is
+  pinned by collab_zoom_meetings.test.yaml. (The historical blocker — the
+  bronze_zoom.participants placeholder was RMT ORDER BY email, collapsing all of
+  a person's rows on merge — is fixed: the placeholder now mirrors the promoted
+  table, ORDER BY unique_key.)
   Cases: custom scope (single window over the department) · empty window.
 
 bronze:

@@ -27,6 +27,9 @@ COPY services/api-gateway/Cargo.toml ./services/api-gateway/Cargo.toml
 COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
 COPY services/authenticator/Cargo.toml ./services/authenticator/Cargo.toml
 COPY services/fakeidp/Cargo.toml ./services/fakeidp/Cargo.toml
+# routegen is a workspace member (build-time CLI); cargo must load its manifest
+# to resolve the workspace even though this image never builds it.
+COPY tools/routegen/Cargo.toml ./tools/routegen/Cargo.toml
 
 RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
     mkdir -p libs/authenticator-sdk/src && echo "" > libs/authenticator-sdk/src/lib.rs && \
@@ -35,7 +38,8 @@ RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/sr
     mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs && \
     mkdir -p services/authenticator/src && echo "fn main() {}" > services/authenticator/src/main.rs && \
     mkdir -p services/fakeidp/src && echo "fn main() {}" > services/fakeidp/src/main.rs && \
-    echo "" > services/fakeidp/src/lib.rs
+    echo "" > services/fakeidp/src/lib.rs && \
+    mkdir -p tools/routegen/src && echo "fn main() {}" > tools/routegen/src/main.rs
 
 RUN cargo build --release --bin fakeidp 2>/dev/null || true
 
