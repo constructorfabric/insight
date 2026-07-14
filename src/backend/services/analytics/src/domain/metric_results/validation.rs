@@ -454,6 +454,7 @@ mod tests {
 
     fn sum_definition(dimensions: Vec<&str>) -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: MetricBase {
                 key: "ai.accepted_lines".to_owned(),
                 label: "AI-added lines".to_owned(),

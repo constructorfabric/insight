@@ -1,5 +1,5 @@
 use crate::domain::metric_definitions::definition::{
-    MetricComputation, MetricDirection, MetricFormat, MetricInputRole, SourceKind,
+    MetricComputation, MetricDirection, MetricFormat, MetricInputRole, SourceKind, ValueTransform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +79,9 @@ pub struct MetricSeed {
     pub direction: MetricDirection,
     pub entity_type: EntityType,
     pub computation: SeedComputation,
+    /// Post-aggregation shaping (affine + clamp) applied by the compiler to
+    /// every computed value; None = identity.
+    pub transform: Option<ValueTransform>,
     pub peer_cohort_key: Option<CohortKey>,
     pub inputs: &'static [InputSeed],
     pub dimensions: &'static [&'static str],
@@ -175,6 +178,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -193,6 +197,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -213,6 +218,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -233,6 +239,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -251,6 +258,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -269,6 +277,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -295,6 +304,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -313,6 +323,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -333,6 +344,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -353,6 +365,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -373,6 +386,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -393,6 +407,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -413,6 +428,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -431,6 +447,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -449,6 +466,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -469,6 +487,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -493,6 +512,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 1.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -519,6 +539,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Median,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -539,6 +560,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Median,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -559,6 +581,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Median,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -580,6 +603,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -600,6 +624,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -620,6 +645,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -646,6 +672,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 1.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -672,6 +699,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::DistinctCount,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -690,6 +718,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -708,6 +737,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -726,6 +756,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -744,6 +775,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -762,6 +794,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -780,6 +813,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -800,6 +834,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -820,6 +855,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -838,6 +874,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -858,6 +895,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -878,6 +916,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -904,6 +943,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::Neutral,
         entity_type: EntityType::Person,
         computation: SeedComputation::DistinctCount,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -924,6 +964,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::Neutral,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -944,6 +985,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::Neutral,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -964,6 +1006,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::Neutral,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
