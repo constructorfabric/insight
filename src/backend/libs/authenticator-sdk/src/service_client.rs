@@ -249,13 +249,12 @@ impl ServiceTokenClient {
     /// and the stale fallback are unavailable.
     pub async fn bearer(&self, tenants: &[String]) -> Result<String, CanonicalError> {
         let key = cache_key(tenants);
-        let now = now_secs();
 
         // Fast path: short read lock, then release before any await.
         {
             let cache = self.cache.read().await;
             if let Some(c) = cache.get(&key)
-                && now < c.refresh_at
+                && now_secs() < c.refresh_at
             {
                 return Ok(c.bearer.clone());
             }
@@ -265,12 +264,16 @@ impl ServiceTokenClient {
         match self.fetch(tenants).await {
             Ok(token) => {
                 let bearer = format!("Bearer {}", token.access_token);
-                // Reissue ahead of expiry: refresh once 4/5 of the lifetime has
-                // passed, leaving the last fifth as travel margin.
+                // Anchor the cache times to when the token was RECEIVED, not to
+                // before the fetch — the round-trip can take up to the request
+                // timeout, and using a pre-fetch `now` would expire the entry
+                // early. Reissue once 4/5 of the lifetime has passed, leaving
+                // the last fifth as travel margin.
+                let received_at = now_secs();
                 let entry = Cached {
                     bearer: bearer.clone(),
-                    refresh_at: now + token.expires_in.saturating_mul(4) / 5,
-                    expires_at: now + token.expires_in,
+                    refresh_at: received_at + token.expires_in.saturating_mul(4) / 5,
+                    expires_at: received_at + token.expires_in,
                 };
                 self.cache.write().await.insert(key, entry);
                 Ok(bearer)
@@ -279,7 +282,7 @@ impl ServiceTokenClient {
                 // Serve stale-but-valid on a refresh failure.
                 let cache = self.cache.read().await;
                 if let Some(c) = cache.get(&key)
-                    && now < c.expires_at
+                    && now_secs() < c.expires_at
                 {
                     return Ok(c.bearer.clone());
                 }
