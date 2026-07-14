@@ -94,7 +94,7 @@ def _ch_client() -> clickhouse_connect.driver.client.Client:
     )
 
 
-def apply_placeholders() -> None:
+def apply_create_bronze_placeholders() -> None:
     """CREATE DATABASE + bronze/silver placeholder tables.
 
     Runs the ingestion repo's create-bronze-placeholders.sh — the exact
@@ -169,21 +169,22 @@ def run() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     # 1. Real deploy mechanism: create the placeholder tables.
-    apply_placeholders()
+    apply_create_bronze_placeholders()
     client = _ch_client()
     try:
         LOG.info("ClickHouse version: %s", client.server_version)
-        # 2. Seed silver rows into those tables.
+        # 2. Seed silver rows into the created tables.
         generate_rows(client)
         # 3. Real deploy mechanism: migrations + gold (incl. dbt gold build
-        #    over the now-seeded silver). Creates the task refreshable MVs
-        #    but intentionally does NOT populate them (SYSTEM REFRESH is
-        #    synchronous — see apply-ch-migrations.sh / refresh-task-views.sh).
+        #    over the now-seeded silver). Runs AFTER seeding so the one
+        #    materialized gold model (git_metric_observations, a table) and
+        #    the migration views all reflect real rows.
         apply_ch_migrations()
-        # 4. Post-deploy: populate the task refreshable MVs from seeded
-        #    silver — the Python analog of scripts/post-deploy/
-        #    refresh-task-views.sh (the seed image has clickhouse-connect,
-        #    not clickhouse-client). Must run AFTER step 3 creates the MVs.
+        # 4. Populate the task refreshable MVs from seeded silver — DDL was
+        #    created in step 3; SYSTEM REFRESH must run once the rows exist.
+        #    Python analog of scripts/post-deploy/refresh-task-views.sh (that
+        #    script needs clickhouse-client, which the seed image omits to
+        #    stay lean — the two SYSTEM REFRESH statements are identical).
         task.refresh_dependent_mvs(client)
         LOG.info("task refreshable MVs refreshed")
     finally:
