@@ -127,6 +127,8 @@ streams:
               backoff_strategies:
                 - type: WaitTimeFromHeader
                   header: Retry-After
+                - type: ExponentialBackoffStrategy
+                  factor: 10
             - type: DefaultErrorHandler
               response_filters:
                 - type: HttpResponseFilter
@@ -292,8 +294,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: meetings
     retriever:
@@ -335,6 +336,8 @@ streams:
               backoff_strategies:
                 - type: WaitTimeFromHeader
                   header: Retry-After
+                - type: ExponentialBackoffStrategy
+                  factor: 10
             - type: DefaultErrorHandler
               response_filters:
                 - type: HttpResponseFilter
@@ -558,8 +561,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['uuid'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['uuid'] }}
   - type: DeclarativeStream
     name: participants
     retriever:
@@ -570,12 +572,16 @@ streams:
           - type: ParentStreamConfig
             parent_key: uuid
             partition_field: meeting_uuid
-            # NOTE: incremental_dependency is deliberately NOT set. It only has
-            # an effect when the substream itself is incremental (the parent
-            # cursor piggybacks on the child state); participants is
-            # full-refresh, so the CDK emits no child state at all — verified
-            # by tests/test_participants.py. Partition enumeration is instead
-            # bounded by the parent's now-150d window.
+            # Persist the _meetings parent cursor inside the participants
+            # state (parent_state) so each sync enumerates only meetings newer
+            # than the saved cursor (minus the parent's P7D lookback) instead
+            # of re-fanning out over the full now-150d window (~25k Heavy
+            # requests — exhausts Zoom's 60k/day Dashboard-API quota; the
+            # 2026-07-14 dev-vhc 429 incident). Requires the substream itself
+            # to be incremental: the parent cursor piggybacks on the child
+            # state message, a full-refresh child persists nothing — verified
+            # by tests/test_participants.py.
+            incremental_dependency: true
             stream:
               type: DeclarativeStream
               name: _meetings
@@ -620,6 +626,8 @@ streams:
                         backoff_strategies:
                           - type: WaitTimeFromHeader
                             header: Retry-After
+                          - type: ExponentialBackoffStrategy
+                            factor: 10
                       - type: DefaultErrorHandler
                         response_filters:
                           - type: HttpResponseFilter
@@ -745,6 +753,8 @@ streams:
               backoff_strategies:
                 - type: WaitTimeFromHeader
                   header: Retry-After
+                - type: ExponentialBackoffStrategy
+                  factor: 10
             - type: DefaultErrorHandler
               response_filters:
                 - type: HttpResponseFilter
@@ -769,9 +779,7 @@ streams:
         request_parameters:
           $ref: "#/definitions/linked/HttpRequester/request_parameters"
         url: >-
-          https://api.zoom.us/v2/metrics/meetings/{{
-          stream_partition.meeting_uuid | replace('/', '%2F') | replace('+',
-          '%2B') | replace('=', '%3D') }}/participants
+          https://api.zoom.us/v2/metrics/meetings/{{ stream_partition.meeting_uuid | replace('/', '%2F') | replace('+', '%2B') | replace('=', '%3D') }}/participants
       paginator:
         type: DefaultPaginator
         page_token_option:
@@ -790,6 +798,25 @@ streams:
           type: DpathExtractor
           field_path:
             - participants
+    # Formal cursor: the endpoint accepts no time filters (no request options
+    # injected) and nothing is filtered client-side — every enumerated
+    # meeting's participants are always fully emitted. The cursor exists so
+    # the stream is stateful, which is what lets incremental_dependency (on
+    # the parent config above) persist the _meetings cursor as parent_state.
+    # Duplicates from the parent's P7D lookback re-enumeration are deduped at
+    # read time downstream (bronze is append-only ReplacingMergeTree).
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: join_time
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: >-
+          {{ (now_utc() - duration('P150D')).strftime('%Y-%m-%d') }}
+        datetime_format: "%Y-%m-%d"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
     primary_key: unique_key
     schema_loader:
       type: InlineSchemaLoader
@@ -1041,9 +1068,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ stream_partition.meeting_uuid }}-{{
-              record['participant_uuid'] }}-{{ record['join_time'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.meeting_uuid }}-{{ record['participant_uuid'] }}-{{ record['join_time'] }}
 
 spec:
   type: Spec
