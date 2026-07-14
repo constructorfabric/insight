@@ -400,15 +400,11 @@ cmd_urls() {
       *) echo "ERROR: unknown arg: $1" >&2; return 2 ;;
     esac
   done
-  env_file="$(resolve_env_file "$env_file")"
-  if [[ ! -f "$env_file" ]]; then
-    echo "ERROR: $env_file not found — run ./dev-compose.sh up first." >&2
-    return 1
-  fi
+  env_file="$(resolve_env_file "$env_file")" || return $?
   set -a; source "$env_file"; set +a
-  local frontend_up=true
-  [[ "${FRONTEND_MODE:-dev}" == "none" ]] && frontend_up=false
-  report_service_urls "$frontend_up"
+  # FRONTEND_MODE is always dev|built|ghcr (cmd_up enforces it), so the
+  # frontend is assumed up; report_service_urls defaults to showing it.
+  report_service_urls
 }
 
 # ──────────────────────────────────────────────────────────────────────

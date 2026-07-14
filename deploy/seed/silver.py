@@ -62,7 +62,8 @@ def _ingestion_scripts_dir() -> Path:
     mounted = Path("/ingestion/scripts")
     if mounted.is_dir():
         return mounted
-    return Path(__file__).resolve().parent.parent / "src/ingestion/scripts"
+    # parents[2] = repo root (silver.py -> seed -> deploy -> root).
+    return Path(__file__).resolve().parents[2] / "src/ingestion/scripts"
 
 
 def _script_env() -> dict[str, str]:
