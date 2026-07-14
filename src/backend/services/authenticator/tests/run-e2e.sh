@@ -31,14 +31,16 @@ cleanup() {
 trap cleanup EXIT
 
 echo "==> dev ES256 signing key"
+# ec_param_enc:named_curve: LibreSSL (macOS) otherwise emits explicit EC params
+# the authenticator's p256 loader rejects.
 KEYS_DIR="$(mktemp -d)"
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$KEYS_DIR/current.pem"
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve -out "$KEYS_DIR/current.pem"
 
 echo "==> dev service-token keypair (testclient) — generated, never committed"
 # The registry (config/insight.yaml) references public_key_paths: [testclient.pub.pem]
 # resolved against public_key_dir; the client signs assertions with the private half.
 SVC_KEYS_DIR="$(mktemp -d)"
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$SVC_KEYS_DIR/testclient.key.pem"
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve -out "$SVC_KEYS_DIR/testclient.key.pem"
 openssl pkey -in "$SVC_KEYS_DIR/testclient.key.pem" -pubout -out "$SVC_KEYS_DIR/testclient.pub.pem"
 
 echo "==> Redis"

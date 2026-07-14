@@ -155,7 +155,8 @@ ensure_service_token_dev_key() {
   local pub="$dir/testclient.pub.pem"
   [[ -f "$pub" ]] && return 0
   echo "=== Generating dev service-token keypair for the authenticator ($pub) ==="
-  if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$key" 2>/dev/null; then
+  # ec_param_enc:named_curve for the same LibreSSL reason as the signing key above.
+  if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve -out "$key" 2>/dev/null; then
     echo "WARN: openssl unavailable — service tokens will not work without $pub" >&2
     return 1
   fi
