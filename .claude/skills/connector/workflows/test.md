@@ -29,7 +29,19 @@ ls src/ingestion/connections/*.yaml
 Expected: `Manifest is valid`
 If fails: show error, suggest fix, STOP.
 
-## Phase 3: Check Credentials
+## Phase 3: Run Mock-Server Tests (no credentials)
+
+L1 of the test ladder — see `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md`.
+
+```bash
+# one-time env: cd src/ingestion/tests/connectors && python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+src/ingestion/tests/connectors/.venv/bin/pytest src/ingestion/connectors/CONNECTOR_PATH/tests/
+```
+
+- If the suite fails: fix the manifest (or the tests, if the behavior change is intended), STOP before live testing.
+- If `tests/` does not exist: the connector predates the mock-test spec. STOP — do NOT continue to Phase 4 silently. Report the gap and ask the user to choose: (a) author the suite now per create.md §5.7 (preferred), or (b) explicitly proceed to live testing without L1 (acceptable for legacy connectors only, with the gap recorded in the Phase 8 summary).
+
+## Phase 4: Check Credentials
 
 ```bash
 ./tools/declarative-connector/source.sh check CONNECTOR_PATH <tenant>
@@ -38,7 +50,7 @@ If fails: show error, suggest fix, STOP.
 Expected: `CONNECTION_STATUS: SUCCEEDED`
 If fails: check credentials in tenant yaml, show error.
 
-## Phase 4: Discover Streams
+## Phase 5: Discover Streams
 
 ```bash
 ./tools/declarative-connector/source.sh discover CONNECTOR_PATH <tenant>
@@ -51,7 +63,7 @@ Discovered N streams:
   stream_name_2: M fields
 ```
 
-## Phase 5: Read Data
+## Phase 6: Read Data
 
 ```bash
 # Generate catalog if missing
@@ -80,7 +92,7 @@ Stream: email_activity (N records)
   Fields: tenant_id, source_id, unique_key, userPrincipalName, sendCount, ...
 ```
 
-## Phase 6: Verify Schema Completeness
+## Phase 7: Verify Schema Completeness
 
 After discover, verify that ALL cursor fields exist in the schema:
 - For each stream with `incremental_sync`, check that `cursor_field` is in the stream's `json_schema.properties`
@@ -97,11 +109,12 @@ After discover, verify that ALL cursor fields exist in the schema:
 
 This prevents ClickHouse destination NPE on deploy.
 
-## Phase 7: Summary
+## Phase 8: Summary
 
 ```
 === Test Results ===
   Validate:  PASS
+  Mock tests: PASS (N tests) | MISSING (suite not written yet — see create.md §5.7)
   Check:     PASS
   Discover:  PASS (N streams)
   Read:      PASS (N records)

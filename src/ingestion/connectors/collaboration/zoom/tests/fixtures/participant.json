@@ -1,0 +1,23 @@
+{
+  "id": "p-reg-1",
+  "participant_uuid": "part-uuid-1",
+  "user_id": "16778240",
+  "user_name": "Alice Example",
+  "email": "alice@example.com",
+  "device": "Mac",
+  "ip_address": "10.0.0.1",
+  "location": "Berlin (DE)",
+  "network_type": "Wifi",
+  "microphone": "MacBook Pro Microphone",
+  "speaker": "MacBook Pro Speakers",
+  "camera": null,
+  "data_center": "Frankfurt",
+  "connection_type": "UDP",
+  "join_time": "2026-06-15T10:00:05Z",
+  "leave_time": "2026-06-15T10:29:55Z",
+  "share_application": false,
+  "share_desktop": false,
+  "share_whiteboard": false,
+  "recording": false,
+  "status": "in_meeting"
+}

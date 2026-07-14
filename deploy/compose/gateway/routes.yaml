@@ -1,0 +1,16 @@
+# Gateway route table for the docker-compose dev stack. Same schema as the
+# chart's gateway.routes values, but with compose service names (docker DNS
+# resolves them) instead of Helm-templated k8s names -- compose has no Helm to
+# render {{ .Release.Name }}. The gateway container compiles this into nginx.conf
+# at startup.
+version: 1
+defaults:
+  strip_request_headers:
+    - X-Real-IP
+    - Forwarded
+routes:
+  - prefix: /api/v1/analytics
+    upstream: http://analytics:8081
+    timeout_ms: 60000
+  - prefix: /api/v1/identity
+    upstream: http://identity:8082

@@ -27,3 +27,31 @@ sources:
       - name: youtrack_comments
       - name: youtrack_worklogs
       - name: youtrack_project_custom_fields
+
+models:
+  # Per-source staging projections tagged `silver:class_task_*`, unioned into the
+  # shared silver tables via `union_by_tag`. These are the pure-dbt models (no
+  # enrich). `class_task_field_history` is NOT here — it requires the YouTrack
+  # enrich binary (activities replay), delivered separately (DECOMPOSITION §2.6).
+  - name: youtrack__task_projects
+    description: "Per-source projection of YouTrack projects. Unioned into silver.class_task_projects. project_type/style NULL (no YouTrack equivalent)."
+  - name: youtrack__task_users
+    description: "Per-source projection of YouTrack users. Unioned into silver.class_task_users."
+  - name: youtrack__task_sprints
+    description: "Per-source projection of YouTrack sprints (agile-board sprints). Unioned into silver.class_task_sprints. project_key/complete_date NULL; state derived from archived."
+  - name: youtrack__task_comments
+    description: "Per-source projection of YouTrack comments. Unioned into silver.class_task_comments. id_readable resolved via join to youtrack_issue."
+  - name: youtrack__task_worklogs
+    description: "Per-source projection of YouTrack worklogs. Unioned into silver.class_task_worklogs. duration_seconds = minutes*60; id_readable via join to youtrack_issue."
+  - name: youtrack__task_field_metadata
+    description: "Per-source projection of YouTrack project-scoped custom-field catalog. Unioned into silver.class_task_field_metadata."
+  - name: youtrack__task_statuses
+    description: "Per-source status dimension: YouTrack State-bundle values → status_category (isResolved→done). Unioned into silver.class_task_statuses. See issue #1541."
+
+  # Profile / identity trio (mirrors jira + bamboohr): snapshot → fields_history → identity_inputs.
+  - name: youtrack__users_snapshot
+    description: "SCD2 snapshot of the YouTrack user directory (appends a version on tracked-field change). Feeds the fields-history / identity-inputs chain."
+  - name: youtrack__users_fields_history
+    description: "Field-level change log of the YouTrack user profile, derived from youtrack__users_snapshot. Input to youtrack__identity_inputs."
+  - name: youtrack__identity_inputs
+    description: "Identity-resolution inputs from the YouTrack user profile history (email, display_name, id binding). Unioned into silver.identity_inputs via the silver:identity_inputs tag."

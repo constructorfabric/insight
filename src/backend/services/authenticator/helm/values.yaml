@@ -58,3 +58,18 @@ readinessProbe:
     port: http
   initialDelaySeconds: 5
   periodSeconds: 5
+
+# G4 layer 2 (NGINX_BFF.md §10 G4): restrict the authenticator main port
+# (sessions, JWKS, /internal/authz) to the gateway pods only. Cross-chart
+# dependency -- `gatewayPodSelector` must match the insight-gateway chart's pod
+# labels (it sets app.kubernetes.io/name: gateway). Disabled by default: enable
+# in clusters with a NetworkPolicy-enforcing CNI, once the gateway is deployed.
+# This is defense-in-depth; /internal/authz still requires a live session cookie
+# regardless of network position (layer 3).
+networkPolicy:
+  enabled: false
+  gatewayPodSelector:
+    app.kubernetes.io/name: gateway
+  # Optional: also require the gateway to live in a labelled namespace. Empty =
+  # same-namespace pods only (the default NetworkPolicy scope).
+  gatewayNamespaceSelector: {}

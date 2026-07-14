@@ -14,6 +14,7 @@ Manages the full lifecycle of Insight Connectors: creation, testing, schema gene
 
 Before executing any workflow, read the connector specification:
 - **DESIGN**: `docs/domain/connector/specs/DESIGN.md` — mandatory fields, manifest rules, package structure
+- **TESTS**: `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md` — test ladder (L0 static → L1 mock → L2 live smoke), coverage matrix, harness
 - **README**: `src/ingestion/README.md` — commands, project structure
 
 ## Command Routing
@@ -23,7 +24,7 @@ Parse the user's command and route to the appropriate workflow:
 | Command | Workflow | Description |
 |---------|----------|-------------|
 | `/connector create <name>` | [create.md](workflows/create.md) | Create new connector package |
-| `/connector test <name>` | [test.md](workflows/test.md) | Test connector (check, discover, read) |
+| `/connector test <name>` | [test.md](workflows/test.md) | Test connector (mock tests, check, discover, read) |
 | `/connector schema <name>` | [schema.md](workflows/schema.md) | Generate JSON schema from real data |
 | `/connector validate <name>` | [validate.md](workflows/validate.md) | Validate package against spec |
 | `/connector build <name>` | Direct | Build CDK connector (Docker → registry/Kind → Airbyte definition) |

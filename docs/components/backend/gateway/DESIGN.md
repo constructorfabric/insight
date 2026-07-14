@@ -96,7 +96,7 @@ The gateway is a **separate service, not bound to the ingress layer at all**. Th
 graph LR
     B[Browser] -->|HTTPS| ING["LB / ingress controller (any)<br/>TLS termination + host routing only"]
     ING --> GW["nginx gateway (Deployment)<br/>auth, paths, headers, HSTS"]
-    GW -->|/auth/*, JWKS, subrequests| AUTH[authenticator]
+    GW -->|/auth/*, access_by_lua exchange| AUTH[authenticator]
     GW -->|"Authorization: Bearer JWT"| DS[analytics-api / identity / ...]
     GW -->|/| SPA[insight-front static server]
 ```
@@ -114,7 +114,7 @@ graph LR
 
 - [ ] `p2` - **ID**: `cpt-insightspec-principle-gateway-generated-config`
 
-Every `location` block -- including the unauthenticated ones (`/auth/`, JWKS, the SPA shell) -- is emitted by the configurator from `routes.yaml`. There is no location to forget the auth or hygiene directives in, because there is no hand-written location.
+Every `location` block -- including the unauthenticated ones (`/auth/`, the SPA shell) -- is emitted by the configurator from `routes.yaml`. There is no location to forget the auth or hygiene directives in, because there is no hand-written location.
 
 #### Auth at the edge is UX and efficiency, not the boundary
 
@@ -140,7 +140,7 @@ The shipped image is OpenResty; every plain-nginx directive runs unchanged under
 
 - [ ] `p2` - **ID**: `cpt-insightspec-constraint-gateway-api-prefix`
 
-Operator-defined routes must carry the `/api/` prefix (configurator-enforced). The non-`/api/` surface (`/auth/`, `/.well-known/jwks.json`, `/`, `/healthz`) is fixed and generated, never operator-extensible.
+Operator-defined routes must carry the `/api/` prefix (configurator-enforced). The non-`/api/` surface (`/auth/`, `/`, `/healthz`) is fixed and generated, never operator-extensible.
 
 ## 3. Technical Architecture
 
@@ -150,8 +150,8 @@ The gateway holds no business entities. The objects it owns are configuration an
 
 | Entity | Purpose | Storage |
 |--------|---------|--------|
-| `routes.yaml` | Reviewable route table -- the operator-facing source of truth | Git (chart repo) |
-| Generated `nginx.conf` | Compiled routing + hygiene configuration | ConfigMap, produced by the configurator in CI |
+| `routes.yaml` | Reviewable route table -- the operator-facing source of truth | Git + ConfigMap (the single artifact shipped) |
+| Generated `nginx.conf` | Compiled routing + hygiene configuration | Ephemeral: produced by the configurator in the container at startup, written to `tmpfs` |
 | Exchange-cache entry | Session token to JWT, one cache window | `lua_shared_dict` (per pod, fixed shm, LRU) |
 | Correlation id | Per-request UUIDv7 | Request-scoped, never stored |
 
@@ -161,22 +161,15 @@ It reads nothing else: no Redis, no database, no K8s API.
 
 ```mermaid
 graph LR
-    subgraph CI["CI / chart build"]
-        RY[routes.yaml in git]
-        CFG[route configurator CLI]
-        RY --> CFG
-        CFG -->|validated nginx.conf| CM[ConfigMap]
+    RY[routes.yaml in git] --> CM[ConfigMap]
+
+    subgraph Pod["gateway pod (OpenResty image: routegen + Lua + entrypoint)"]
+        CM --> ENT[entrypoint<br/>routegen routes.yaml -> nginx.conf, nginx -t]
+        ENT --> NG[nginx core<br/>locations + proxying]
+        NG --- LUA[Lua module<br/>exchange cache + corr-id + error shaping]
     end
 
-    subgraph Pod["gateway pod (OpenResty)"]
-        NG[nginx core<br/>locations + proxying]
-        LUA[Lua module<br/>exchange cache + corr-id + error shaping]
-        REL[reloader sidecar<br/>nginx -t && reload]
-    end
-
-    CM --> REL --> NG
-    NG --- LUA
-    NG -->|auth_request /_gw_auth| AUTH[authenticator /internal/authz]
+    NG -->|access_by_lua -> /internal/authz| AUTH[authenticator]
     LUA -.lua_shared_dict.-> NG
 ```
 
@@ -188,10 +181,10 @@ graph LR
 Hand-written nginx config and syntax-only `nginx -t` validation are how auth and hygiene directives get forgotten. The configurator makes route validation semantic and location emission mechanical.
 
 ##### Responsibility scope
-A small Rust CLI: `routes.yaml` in, complete validated `nginx.conf` out. Enforces the schema rules (3.8) before nginx ever sees the config; emits the full hygiene block (3.9) into every generated location; emits the fixed unauthenticated surface. Golden-file snapshot tests pin the emitted config; runs in CI, so invalid YAML fails the pipeline, never the pod.
+A small Rust CLI: `routes.yaml` in, complete validated `nginx.conf` out. Enforces the schema rules (3.8) before nginx ever sees the config; emits the full hygiene block (3.9) into every generated location; emits the fixed unauthenticated surface. Golden-file snapshot tests pin the emitted config. It ships in the gateway image and runs once at container startup (the entrypoint compiles the mounted `routes.yaml`, then `nginx -t`); CI runs its tests and the same generate-and-validate path, so an invalid table fails CI and refuses to start a pod.
 
 ##### Responsibility boundaries
-Does not run in the pod or watch anything at runtime. Does not decide routing policy -- `routes.yaml` (reviewed in git) does.
+Runs once at startup, not as a runtime watcher. Does not decide routing policy -- `routes.yaml` (reviewed in git, shipped as a ConfigMap) does.
 
 ##### Related components (by ID)
 - `cpt-insightspec-component-gateway-nginx-core` -- consumes the generated config.
@@ -204,9 +197,9 @@ Does not run in the pod or watch anything at runtime. Does not decide routing po
 The commodity edge: routing, proxying, streaming, WebSocket upgrades, timeouts, rate limiting -- the code nobody should hand-write in Rust.
 
 ##### Responsibility scope
-Longest-prefix `location` matching; `auth_request` on every `/api/` location; plain proxy for `/auth/` and JWKS (with a coarse per-IP `limit_req` flood guard on `/auth/`); SPA at `/`; `proxy_buffering off` where streaming matters; WebSocket upgrade pass-through (auth runs once at upgrade, JWT frozen for the socket's life); `/internal/` returns 404; HSTS on every response.
+Longest-prefix `location` matching; an access-phase Lua exchange on every `/api/` location; plain proxy for `/auth/` (with a coarse per-IP `limit_req` flood guard); SPA at `/`; `proxy_buffering off` where streaming matters; WebSocket upgrade pass-through (auth runs once at upgrade, JWT frozen for the socket's life); `/internal/` returns 404; HSTS on every response.
 
-`auth_request` semantics the design hangs on: subrequest 2xx = allow; 401/403 = deny with that status; anything else (authenticator unreachable) = fail closed. Subrequest response headers travel via `auth_request_set` (that is how the JWT arrives); the response body and any `Set-Cookie` are discarded -- fine, the design never sets cookies on `/api/*`. The subrequest is sent without the request body, so uploads are not buffered twice.
+Access-phase Lua exchange semantics the design hangs on: authenticator `200` = allow (JWT read from the `X-Gateway-Jwt` response header); `401` = deny with that status (never cached); anything else (authenticator unreachable / timeout / 5xx) = fail closed, shaped to a `503`. The Lua cosocket calls the authenticator without the request body, so uploads are not buffered twice; the response body and any `Set-Cookie` are discarded -- fine, the design never sets cookies on `/api/*`.
 
 ##### Responsibility boundaries
 Mints nothing, stores no sessions, verifies no signatures. Never reaches Redis or the IdP.
@@ -235,28 +228,28 @@ Never learns the Redis schema or exchange semantics beyond the HTTP contract (th
 
 - [ ] `p2` - **ID**: `cpt-insightspec-interface-gateway-edge`
 
-- **Contracts**: consumes `cpt-insightspec-contract-auth-authz-exchange` (see 3.10); transports `cpt-insightspec-contract-auth-gateway-jwt` (injects, never inspects); fronts the URL of `cpt-insightspec-contract-auth-jwks-url`
+- **Contracts**: consumes `cpt-insightspec-contract-auth-authz-exchange` (see 3.10); transports `cpt-insightspec-contract-auth-gateway-jwt` (injects, never inspects). JWKS (`cpt-insightspec-contract-auth-jwks-url`) is served by the authenticator directly, not fronted here
 - **Technology**: HTTP/1.1 + WebSocket reverse proxy (OpenResty)
-- **Location**: generated `nginx.conf` (ConfigMap); the operator-facing contract is `routes.yaml` (3.8)
+- **Location**: `nginx.conf` generated at startup from the `routes.yaml` ConfigMap; the operator-facing contract is `routes.yaml` (3.8)
 
 **Endpoints Overview**:
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
 | ANY | `/` | SPA shell, proxied to insight-front | stable |
-| ANY | `/auth/*` | Plain proxy to the authenticator (no `auth_request` -- it IS the auth); coarse `limit_req` | stable |
-| GET | `/.well-known/jwks.json` | Proxy to the authenticator | stable |
-| ANY | `/api/**` | `auth_request` exchange, hygiene block, proxy to the routed upstream | stable |
+| ANY | `/auth/*` | Plain proxy to the authenticator (no exchange -- it IS the auth); coarse `limit_req` | stable |
+| ANY | `/api/**` | Access-phase Lua exchange, hygiene block, proxy to the routed upstream | stable |
 | GET | `/healthz` | Static liveness + local readiness (no dependency gating) | stable |
-| GET | `/healthz/authenticator` | Dependency health (probes authenticator `/ready`); for monitoring/alerting only, never the readiness gate | stable |
 | ANY | `/internal/*` | 404, always | stable |
+
+JWKS is deliberately **not** an edge endpoint: it is public, read-only, and consumed by downstream services, which fetch it directly from the authenticator (the key issuer), not through the gateway -- so downstream JWT verification does not depend on the edge being up.
 
 ### 3.4 Internal Dependencies
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|----------|
-| Authenticator | `GET /internal/authz` subrequest (`cpt-insightspec-contract-auth-authz-exchange`) | Cookie-to-JWT exchange; surfaced as a separate dependency health signal, not wired to the readiness gate (3.15) |
-| Authenticator | `/auth/*` + JWKS plain proxy | Login surface and key distribution |
+| Authenticator | `GET /internal/authz` access-phase Lua call (`cpt-insightspec-contract-auth-authz-exchange`) | Cookie-to-JWT exchange; the authenticator's health is its own k8s probe, not gated into the gateway's readiness (3.15) |
+| Authenticator | `/auth/*` plain proxy | Login surface (JWKS is fetched from the authenticator directly, not via the gateway) |
 | insight-front | HTTP (static) | SPA shell at `/` |
 | Downstream services | HTTP upstreams from `routes.yaml` | Routed business APIs |
 
@@ -434,19 +427,19 @@ Based on the decision document's failure analysis; upstream errors keep their ow
 | Route not matched under `/api/` | 404 (no upstream call) |
 | `/internal/*` from outside | 404, always |
 | Invalid generated config at reload | `nginx -t` refuses; old workers keep serving (last-good-config) |
-| Authenticator unreachable fleet-wide | gateway pods stay Ready (local readiness); each `/api/*` cache miss fails closed with a shaped 503 while cache hits, `/auth/*`, JWKS, and the SPA keep serving; a separate dependency health check flips for alerting (see 3.15) |
+| Authenticator unreachable fleet-wide | gateway pods stay Ready (local readiness); each `/api/*` cache miss fails closed with a shaped 503 while cache hits, `/auth/*`, and the SPA keep serving (see 3.15) |
 
 ### 3.13 Reload Procedure
 
 Route changes are a deploy-time pipeline, not a runtime watcher:
 
-1. Edit `routes.yaml` in git; review the PR (reviewability carried over from the deleted Router's ConfigMap decision).
-2. CI runs the configurator: semantic validation, `nginx.conf` generation, golden-file snapshot diff, `nginx -t` as smoke test.
-3. The chart ships the generated config in the ConfigMap.
-4. In the pod, the reloader sidecar (or a checksum-annotation pod roll) runs `nginx -t && nginx -s reload`. A broken config is refused and the old workers keep serving -- the "keep last good table" behavior the deleted Router spec demanded, minus the custom watcher code.
-5. Reload closes old-worker connections after `worker_shutdown_timeout` -- blunter than the deleted spec's per-route WebSocket sweep (all old-worker sockets, not per-route); acceptable, clients reconnect.
+1. Edit `routes.yaml` in git; review the PR. It is shipped verbatim as the ConfigMap -- the single reviewable artifact (reviewability carried over from the deleted Router's ConfigMap decision).
+2. CI runs the configurator's own tests and validates the emitted config with `nginx -t` on the real image (via the container's generate-and-validate path); an invalid table fails CI, never a pod.
+3. The chart ships `routes.yaml` in the ConfigMap; the container compiles it into `nginx.conf` at startup (routegen entrypoint), running `nginx -t` before it serves -- a broken table refuses to start rather than serving stale.
+4. A route change rolls the pods (checksum-annotation on the ConfigMap). Each new pod regenerates and validates its config on start; a bad table is caught by `nginx -t` at startup, and the old pods keep serving until the new ones pass readiness -- the "keep last good table" behavior the deleted Router spec demanded, minus the custom watcher code.
+5. Rolling pods drains old connections on termination (`terminationGracePeriodSeconds`) -- blunter than the deleted spec's per-route WebSocket sweep; acceptable, clients reconnect.
 
-Config-reload audit events are emitted from CI/CD rather than a runtime watcher.
+Config-change audit events are emitted from CI/CD (the routes.yaml PR) rather than a runtime watcher.
 
 ### 3.14 Observability
 
@@ -460,12 +453,12 @@ Edge observability is deliberately three sources (degraded against the deleted R
 
 - [ ] `p3` - **ID**: `cpt-insightspec-topology-gateway`
 
-One OpenResty Deployment (at least 2 replicas) behind the single ingress backend, per the edge chain fixed in 1.3:
+One OpenResty Deployment behind the single ingress backend, per the edge chain fixed in 1.3 (a single replica suffices; scale out horizontally as load requires -- the exchange cache is per pod, so replicas need no coherence machinery):
 
-- Image: OpenResty; config mounted from the ConfigMap the configurator generated in CI; the Lua module ships in the image.
-- Reloader sidecar (or checksum-annotation pod roll) applies config changes with `nginx -t && nginx -s reload` (3.13).
-- Probes: liveness = static `/healthz`; **readiness = local only** (nginx workers accepting connections + a valid config loaded). Readiness is deliberately **not** gated on the authenticator: coupling a caching reverse proxy's readiness to a downstream dependency turns a transient auth blip into a fleet-wide outage -- every pod drops from the Service endpoints at once, draining the very exchange cache meant to absorb the blip and taking down cache hits, `/auth/*` login, JWKS, and SPA delivery along with it. The gateway already degrades gracefully per request (cache hits keep serving; each `/api/*` cache miss fails closed with a shaped 503 + `Retry-After`), so a Ready-but-degraded pod is strictly better than a NotReady one. The authenticator dependency is exposed as a **separate** health check (e.g. `/healthz/authenticator`, probing the authenticator `/ready`) consumed by monitoring/alerting only -- never by the readiness gate.
-- No volumes, no Redis, no K8s API access -- mounted files only; pods are disposable (3.7).
+- Image: OpenResty carrying the Lua module, the `routegen` binary, and an entrypoint; `routes.yaml` is mounted from the ConfigMap and compiled to `nginx.conf` on startup (nothing baked or committed). Deployment settings (authenticator URL, front URL, DNS resolver, trusted proxy CIDRs) arrive as env vars.
+- Config changes roll the pods (checksum-annotation); each pod regenerates + `nginx -t` on start (3.13).
+- Probes: liveness = static `/healthz`; **readiness = local only** (nginx workers accepting connections + a valid config loaded). Readiness is deliberately **not** gated on the authenticator: coupling a caching reverse proxy's readiness to a downstream dependency turns a transient auth blip into a fleet-wide outage -- every pod drops from the Service endpoints at once, draining the very exchange cache meant to absorb the blip and taking down cache hits, `/auth/*` login, and SPA delivery along with it. The gateway already degrades gracefully per request (cache hits keep serving; each `/api/*` cache miss fails closed with a shaped 503 + `Retry-After`), so a Ready-but-degraded pod is strictly better than a NotReady one. The authenticator runs its own k8s liveness/readiness probes (it is a separate Deployment) -- the gateway does not re-expose a dependency-health endpoint.
+- A writable `tmpfs` (`/tmp`) for the generated config, pid, and nginx temp paths; otherwise no volumes, no Redis, no K8s API access -- pods are disposable (3.7).
 
 ## 4. Design Decisions
 

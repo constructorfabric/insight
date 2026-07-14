@@ -1,0 +1,14 @@
+# e2e route table: both API routes point at the echo upstream so the driver can
+# inspect exactly what the gateway forwarded (R3 poisoned-header proof). The
+# nginx.conf is generated from this by run-e2e.sh (compose upstream names,
+# resolver 127.0.0.11).
+version: 1
+defaults:
+  strip_request_headers:
+    - X-Real-IP
+    - Forwarded
+routes:
+  - prefix: /api/v1/analytics
+    upstream: http://echo:9090
+  - prefix: /api/v1/identity
+    upstream: http://echo:9090

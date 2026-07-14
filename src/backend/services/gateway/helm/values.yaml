@@ -1,0 +1,72 @@
+replicaCount: 1
+
+podAnnotations: {}
+
+image:
+  repository: ghcr.io/constructorfabric/insight-gateway
+  tag: "" # MUST be set by the operator. No `:latest` default.
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Gateway upstreams + route table. Every URL is a Helm template rendered with
+# `tpl` (configmap.yaml / deployment.yaml), so `{{ .Release.Name }}` resolves to
+# the real service names and there are no hardcoded hosts. Override any URL with
+# a literal (no template syntax) to point at an external service.
+gateway:
+  # DNS domain for the authenticator FQDN. The Lua exchange cosocket needs a
+  # fully-qualified name -- unlike nginx upstreams it does not apply the k8s
+  # search domain.
+  clusterDomain: cluster.local
+
+  # Cookie-to-JWT exchange target (FQDN, for the cosocket) and the SPA upstream.
+  authenticatorUrl: 'http://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.{{ .Values.gateway.clusterDomain }}:8083'
+  frontUrl: 'http://{{ .Release.Name }}-frontend:80'
+
+  # Route table -> rendered into the ConfigMap's routes.yaml (via `tpl`) and
+  # compiled by routegen at startup. Upstreams are nginx upstream blocks
+  # (short names resolve via the k8s search domain).
+  defaults:
+    stripRequestHeaders: [X-Real-IP, Forwarded]
+  routes:
+    - prefix: /api/v1/analytics
+      upstream: 'http://{{ .Release.Name }}-analytics:8081'
+      timeoutMs: 60000
+    - prefix: /api/v1/identity
+      upstream: 'http://{{ .Release.Name }}-identity:8082'
+
+  # Trusted ingress-hop CIDRs for X-Forwarded-For (set_real_ip_from). Empty =
+  # no client-IP trust; set to the ingress/pod network where TLS terminates in
+  # front of the gateway (G8).
+  setRealIpFrom: []
+  # lua_shared_dict exchange-cache size (empty = routegen default 64m).
+  jwtCacheSize: ""
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+# Liveness = static /healthz. Readiness = LOCAL only, deliberately NOT gated on
+# the authenticator (DESIGN 3.15): coupling a caching proxy's readiness to a
+# downstream dependency turns a transient auth blip into a fleet-wide outage.
+# The authenticator dependency is surfaced separately at /healthz/authenticator
+# for monitoring/alerting only, never the readiness gate.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 5
