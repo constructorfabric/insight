@@ -59,6 +59,9 @@ services:
       APP__gears__authenticator__config__idp__client_id: "insight-authenticator"
       # Short exchange-cache window so the logout-revocation phase is fast.
       APP__gears__authenticator__config__authz_cache_max_age_seconds: "3"
+      # Resolve the baked dev `testclient` registry entry's public_key_paths
+      # against the mounted keys dir (conftest generates testclient.pub.pem).
+      APP__gears__authenticator__config__service_tokens__public_key_dir: "/keys"
     volumes:
       - ./keys:/keys:ro
 
