@@ -88,9 +88,15 @@ def _supervisor_email(roster: Sequence[Person], p: Person) -> str | None:
 def seed_class_people(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
+    tenant_uuid: str,
 ) -> int:
     truncate(client, "silver", "class_people")
-    cols = ["unique_key", "email", "department_name", "_version"]
+    # workspace_id carries the tenant: metric_entity_cohorts_current filters
+    # `workspace_id IS NOT NULL AND workspace_id != ''` and selects it AS
+    # tenant_id, so an empty value drops every person from the cohort view.
+    # It MUST equal the tenant_uuid the git/ai generators use, or the
+    # observation↔cohort join yields nothing.
+    cols = ["unique_key", "email", "department_name", "workspace_id", "_version"]
     # Constant `_version` — every other generator emits version=1 too.
     # `int(time.time())` would make re-runs emit "newer" rows on every
     # invocation, defeating the deterministic-reseed contract baked into
@@ -103,6 +109,7 @@ def seed_class_people(
             deterministic_uuid("class_people", p.email),
             p.email.lower(),
             dept,
+            tenant_uuid,
             version,
         ))
     return bulk_insert(client, "silver", "class_people", cols, rows)
@@ -154,8 +161,9 @@ def seed_bamboohr_employees(
 def generate(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
+    tenant_uuid: str,
 ) -> dict[str, int]:
     return {
-        "silver.class_people":           seed_class_people(client, roster),
+        "silver.class_people":           seed_class_people(client, roster, tenant_uuid),
         "bronze_bamboohr.employees":     seed_bamboohr_employees(client, roster),
     }

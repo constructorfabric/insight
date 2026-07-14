@@ -1,30 +1,41 @@
 """
-ClickHouse silver-layer schema bootstrap + sample-data generation.
+ClickHouse silver-layer sample-data generation.
 
-Three responsibilities, run in order on every `silver` subcommand. All
-three are idempotent — re-running converges on the same end state.
+Table + gold-layer setup uses the SAME mechanism as a real deployment —
+the seed does not reimplement any DDL. It runs the exact two scripts the
+k8s clickhouse-migrate Hook Job runs, from the ingestion tree bind-mounted
+at /ingestion (docker-compose.yml `seed-sample.volumes`):
 
-1. Create the bronze + silver placeholder tables that the gold-view
-   migrations reference, by running the same
-   `insight/src/ingestion/scripts/create-bronze-placeholders.sh` the
-   k8s clickhouse-migrate Hook Job runs. One source of truth — the
-   script only needs bash + curl + CLICKHOUSE_URL/USER/PASSWORD (it
-   talks plain HTTP via lib/ch-exec.sh, no k8s coupling).
+1. `create-bronze-placeholders.sh` — CREATE DATABASE + bronze/silver
+   placeholder tables (CREATE TABLE IF NOT EXISTS; each silver placeholder
+   carries the INSIGHT_PLACEHOLDER_v1 marker). This gives the generators
+   real tables to write into.
 
-2. Apply the gold-view migrations from
-   `insight/src/ingestion/scripts/migrations/*.sql` in lexicographic
-   order. Migrations are `DROP VIEW IF EXISTS` + `CREATE VIEW`.
+2. Generate per-team activity rows via `generators/*.py` INTO those silver
+   tables. Volumes scale by team profile + persona; per-day caps live in
+   each generator module.
 
-3. Generate per-team activity rows via `generators/*.py`. Volumes scale
-   by team profile + persona; per-day caps live in each generator
-   module.
+3. `apply-ch-migrations.sh` — applies migrations/*.sql (gold VIEWs), the
+   staging label repair, and `dbt run --select tag:gold` to build the
+   dbt-owned gold models. Run AFTER seeding so the one materialized gold
+   model (`insight.git_metric_observations`, materialized='table') is built
+   over real seeded silver instead of empty placeholders. The migration
+   views and the two view-materialized gold models are read-time, so their
+   order relative to seeding does not matter; the table model's does.
+
+   Re-running create-bronze-placeholders.sh from inside this script is a
+   no-op on the seeded tables (IF NOT EXISTS, no DROP/TRUNCATE), and the
+   dbt on-run-start `drop_silver_placeholders_at_start` hook does NOT fire
+   because `--select tag:gold` never materializes a staging model (the
+   hook's required second factor) — so the seeded rows survive.
+
+All steps are idempotent — re-running converges on the same end state.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import re
 import subprocess
 from pathlib import Path
 
@@ -37,21 +48,37 @@ LOG = logging.getLogger("seed.silver")
 
 DEFAULT_DAYS = 60
 
+
 def _ingestion_scripts_dir() -> Path:
     """Locate src/ingestion/scripts — no env knobs needed.
 
-    In the seed-sample container the dir is bind-mounted at
-    /ingestion-scripts (docker-compose.yml `seed-sample.volumes`).
-    Host runs resolve it relative to this file: deploy/seed lives in
-    the same repo as src/ingestion, two levels below the root.
-
-    Both schema inputs live under it: create-bronze-placeholders.sh
-    (+ its lib/) and migrations/*.sql.
+    In the seed-sample container the whole ingestion tree is bind-mounted
+    at /ingestion (docker-compose.yml `seed-sample.volumes`), mirroring the
+    toolbox image layout the scripts resolve their relative paths against
+    (apply-ch-migrations.sh cd's into ../dbt). Host runs resolve it relative
+    to this file: deploy/seed lives in the same repo as src/ingestion, two
+    levels below the root.
     """
-    mounted = Path("/ingestion-scripts")
+    mounted = Path("/ingestion/scripts")
     if mounted.is_dir():
         return mounted
+    # parents[2] = repo root (silver.py -> seed -> deploy -> root).
     return Path(__file__).resolve().parents[2] / "src/ingestion/scripts"
+
+
+def _script_env() -> dict[str, str]:
+    """Env for the ingestion shell scripts (create-bronze-placeholders.sh,
+    apply-ch-migrations.sh) — CLICKHOUSE_URL/USER/PASSWORD/DATABASE per
+    lib/ch-exec.sh + apply-ch-migrations.sh's own asserts."""
+    host = os.environ.get("CLICKHOUSE_HOST", "clickhouse")
+    port = os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")
+    return {
+        **os.environ,
+        "CLICKHOUSE_URL": f"http://{host}:{port}",
+        "CLICKHOUSE_USER": os.environ.get("CLICKHOUSE_USER", "insight"),
+        "CLICKHOUSE_PASSWORD": os.environ.get("CLICKHOUSE_PASSWORD", "insight-local"),
+        "CLICKHOUSE_DATABASE": os.environ.get("CLICKHOUSE_DATABASE", "insight"),
+    }
 
 
 def _ch_client() -> clickhouse_connect.driver.client.Client:
@@ -59,89 +86,51 @@ def _ch_client() -> clickhouse_connect.driver.client.Client:
     port = int(os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"))
     user = os.environ.get("CLICKHOUSE_USER", "insight")
     pwd = os.environ.get("CLICKHOUSE_PASSWORD", "insight-local")
-    # CRITICAL: analytics queries with join_use_nulls=1, so views must
-    # be CREATED with the same setting — otherwise the view's declared
-    # column types disagree with what the query sees at runtime
-    # ("Nullable column having not Nullable type in structure").
+    # Views (gold) are created by apply-ch-migrations.sh, not this client;
+    # the compose CH ships join_use_nulls=1 as a profile default
+    # (deploy/compose/clickhouse-user-defaults.xml) so those CREATE VIEWs
+    # type-check server-side. This client only INSERTs silver rows.
     return clickhouse_connect.get_client(
         host=host, port=port, username=user, password=pwd,
-        settings={"join_use_nulls": 1},
     )
 
 
-_FULL_LINE_COMMENT = re.compile(r"^\s*--.*$", re.MULTILINE)
-
-
-def _split_statements(sql: str) -> list[str]:
-    """Split a multi-statement SQL block on `;` boundaries.
-
-    Mirrors the init.sh sed pass that drops full-line `--` comments
-    before piping into clickhouse-client. We do the same so a migration
-    starting with a 20-line preamble doesn't choke the parser. Inline
-    `-- foo` after SQL is left alone — those rarely break CH.
-    """
-    cleaned = _FULL_LINE_COMMENT.sub("", sql)
-    return [stmt.strip() for stmt in cleaned.split(";") if stmt.strip()]
-
-
-def _apply_sql_file(client: clickhouse_connect.driver.client.Client, path: Path) -> int:
-    """Apply one SQL file. Returns the number of statements executed."""
-    sql = path.read_text(encoding="utf-8")
-    statements = _split_statements(sql)
-    for stmt in statements:
-        client.command(stmt)
-    return len(statements)
-
-
-def apply_placeholders() -> None:
+def apply_create_bronze_placeholders() -> None:
     """CREATE DATABASE + bronze/silver placeholder tables.
 
-    Delegates to the ingestion repo's create-bronze-placeholders.sh —
-    the exact script the k8s clickhouse-migrate Hook Job runs — so the
-    placeholder DDL has a single source of truth and cannot drift.
+    Runs the ingestion repo's create-bronze-placeholders.sh — the exact
+    script the k8s clickhouse-migrate Hook Job runs — so placeholder DDL
+    has a single source of truth and cannot drift.
     """
     script = _ingestion_scripts_dir() / "create-bronze-placeholders.sh"
     if not script.is_file():
         raise FileNotFoundError(
-            f"placeholders script not found at {script}. "
-            "In compose, the seed-sample container must mount "
-            "/ingestion-scripts; on a host run, deploy/seed must sit "
-            "inside the insight repo next to src/ingestion."
+            f"placeholders script not found at {script}. In compose, the "
+            "seed-sample container must mount /ingestion; on a host run, "
+            "deploy/seed must sit inside the insight repo next to src/ingestion."
         )
-    host = os.environ.get("CLICKHOUSE_HOST", "clickhouse")
-    port = os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")
-    env = {
-        **os.environ,
-        "CLICKHOUSE_URL": f"http://{host}:{port}",
-        "CLICKHOUSE_USER": os.environ.get("CLICKHOUSE_USER", "insight"),
-        "CLICKHOUSE_PASSWORD": os.environ.get(
-            "CLICKHOUSE_PASSWORD", "insight-local"
-        ),
-    }
-    subprocess.run(["bash", str(script)], env=env, check=True)
+    subprocess.run(["bash", str(script)], env=_script_env(), check=True)
     LOG.info("placeholders: %s applied", script.name)
 
 
-def apply_migrations(client: clickhouse_connect.driver.client.Client) -> int:
-    """Apply gold-view migrations in lexicographic order."""
-    migrations_dir = _ingestion_scripts_dir() / "migrations"
-    if not migrations_dir.is_dir():
+def apply_ch_migrations() -> None:
+    """Apply gold-view migrations + build dbt-owned gold models.
+
+    Runs the ingestion repo's apply-ch-migrations.sh — the exact script the
+    k8s clickhouse-migrate Hook Job runs. It re-creates placeholders (no-op
+    here), applies migrations/*.sql, repairs staging labels, and runs
+    `dbt run --select tag:gold`. Must run AFTER seeding so the materialized
+    gold model reflects seeded silver (see module docstring).
+    """
+    script = _ingestion_scripts_dir() / "apply-ch-migrations.sh"
+    if not script.is_file():
         raise FileNotFoundError(
-            f"migrations dir not found at {migrations_dir}. "
-            "In compose, the seed-sample container must mount "
-            "/ingestion-scripts; on a host run, deploy/seed must sit "
-            "inside the insight repo next to src/ingestion."
+            f"migrations script not found at {script}. In compose, the "
+            "seed-sample container must mount /ingestion; on a host run, "
+            "deploy/seed must sit inside the insight repo next to src/ingestion."
         )
-    migrations = sorted(migrations_dir.glob("*.sql"))
-    if not migrations:
-        raise FileNotFoundError(f"no *.sql migrations under {migrations_dir}")
-    total = 0
-    for m in migrations:
-        n = _apply_sql_file(client, m)
-        LOG.info("migration %s: %d statements", m.name, n)
-        total += n
-    LOG.info("migrations: %d files applied, %d statements total", len(migrations), total)
-    return total
+    subprocess.run(["bash", str(script)], env=_script_env(), check=True)
+    LOG.info("migrations + gold: %s applied", script.name)
 
 
 def generate_rows(
@@ -160,7 +149,7 @@ def generate_rows(
     )
 
     totals: dict[str, int] = {}
-    totals.update(people.generate(client, roster))
+    totals.update(people.generate(client, roster, tenant_uuid))
     totals.update(git.generate(client, roster, tenant_uuid, days))
     totals.update(crm.generate(client, roster, tenant_uuid, days))
     totals.update(collab.generate(client, roster, tenant_uuid, days))
@@ -180,15 +169,28 @@ def run() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    apply_placeholders()
+    # 1. Real deploy mechanism: create the placeholder tables.
+    apply_create_bronze_placeholders()
     client = _ch_client()
     try:
         LOG.info("ClickHouse version: %s", client.server_version)
-        apply_migrations(client)
+        # 2. Seed silver rows into the created tables.
         generate_rows(client)
-        LOG.info("DONE: silver schema + gold views + sample rows in place.")
+        # 3. Real deploy mechanism: migrations + gold (incl. dbt gold build
+        #    over the now-seeded silver). Runs AFTER seeding so the one
+        #    materialized gold model (git_metric_observations, a table) and
+        #    the migration views all reflect real rows.
+        apply_ch_migrations()
+        # 4. Populate the task refreshable MVs from seeded silver — DDL was
+        #    created in step 3; SYSTEM REFRESH must run once the rows exist.
+        #    Python analog of scripts/post-deploy/refresh-task-views.sh (that
+        #    script needs clickhouse-client, which the seed image omits to
+        #    stay lean — the two SYSTEM REFRESH statements are identical).
+        task.refresh_dependent_mvs(client)
+        LOG.info("task refreshable MVs refreshed")
     finally:
         client.close()
+    LOG.info("DONE: silver rows seeded + gold layer built via deploy scripts.")
 
 
 if __name__ == "__main__":

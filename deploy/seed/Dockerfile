@@ -4,7 +4,10 @@
 # bind-mounted at runtime so iterating on seed.py doesn't trigger an
 # image rebuild.
 
-FROM python:3.13-slim
+# Pinned to 3.12 to match src/ingestion/tools/toolbox/Dockerfile (the
+# deploy dbt-run image) — apply-ch-migrations.sh runs dbt here, and
+# dbt-clickhouse is validated against 3.12 on that image.
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -13,11 +16,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# curl: needed by src/ingestion/scripts/create-bronze-placeholders.sh
-# (bind-mounted at /ingestion-scripts), which silver.py runs to create
-# the placeholder tables — same script as the k8s clickhouse-migrate Job.
+# curl: needed by src/ingestion/scripts/{create-bronze-placeholders,
+# apply-ch-migrations}.sh (bind-mounted at /ingestion), which silver.py runs
+# to create the placeholder tables + build the gold layer — the same scripts
+# the k8s clickhouse-migrate Hook Job runs.
+# bash: the scripts use bashisms (process substitution, [[ ]]); slim ships dash.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl bash \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

@@ -11,11 +11,23 @@
      of 'join_use_nulls' setting."
   Setting join_use_nulls=1 as the profile default means views are both
   CREATEd and queried under the same regime.
+
+  allow_experimental_refreshable_materialized_view=1: the task-delivery
+  migrations (e.g. 20260429000000_task-delivery-silver-rewrite.sql) create
+  refreshable MATERIALIZED VIEWs. They enable the flag with a leading
+  `SET allow_experimental_refreshable_materialized_view = 1;`, but the
+  deploy migration runner (scripts/lib/ch-exec.sh `run_ch`) sends each
+  `;`-separated statement as a SEPARATE, stateless HTTP request, so the
+  SET does not persist to the later CREATE. Production ClickHouse allows
+  refreshable MVs at the server level; enabling it here as a profile
+  default gives the compose CH the same regime so the real deploy scripts
+  (apply-ch-migrations.sh) run unchanged.
 -->
 <clickhouse>
   <profiles>
     <default>
       <join_use_nulls>1</join_use_nulls>
+      <allow_experimental_refreshable_materialized_view>1</allow_experimental_refreshable_materialized_view>
     </default>
   </profiles>
 </clickhouse>
