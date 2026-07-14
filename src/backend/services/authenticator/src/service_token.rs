@@ -419,6 +419,16 @@ fn router(state: Arc<AppState>) -> Router {
 ///
 /// # Errors
 /// Fails when `token_bind_addr` cannot be bound.
+// TODO(#1583): split the public and private surfaces into two containers
+// (sidecar) instead of one process with two listeners. The token endpoint is a
+// hand-rolled axum server here only because the toolkit REST host binds a
+// single address and OperationBuilder/OpenAPI target that one port (§11.8). A
+// clean split — the public gear (/auth/*, /internal/authz, JWKS) in one
+// container and a private service-token gear in a sidecar — would let each run
+// on the toolkit host with OperationBuilder + generated OpenAPI, gain a true
+// separate failure domain, and be network-scoped at the pod boundary rather
+// than per-port. Deferred: not worth a second image + shared-state (registry,
+// signing keys, Redis) wiring until there is a service-token consumer (step 07).
 pub async fn spawn(state: Arc<AppState>, cancel: CancellationToken) -> anyhow::Result<()> {
     let addr = state.cfg.service_tokens.token_bind_addr.clone();
     let listener = tokio::net::TcpListener::bind(&addr)
