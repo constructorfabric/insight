@@ -1,2 +1,7 @@
 PyMySQL==1.2.0
 clickhouse-connect==1.2.0
+# apply-ch-migrations.sh runs `dbt run --select tag:gold` to build the
+# dbt-owned gold models (same mechanism as the k8s clickhouse-migrate Job /
+# toolbox image). Unpinned to match src/ingestion/tools/toolbox/Dockerfile.
+# dbt-core pulls in PyYAML, which the script's profiles.yml generator imports.
+dbt-clickhouse

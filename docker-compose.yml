@@ -598,10 +598,20 @@ services:
       CLICKHOUSE_HTTP_PORT: "${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
       CLICKHOUSE_USER: "${CLICKHOUSE_USER:-insight}"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-insight-local}"
+      CLICKHOUSE_DATABASE: "${CLICKHOUSE_DATABASE:-insight}"
+      # apply-ch-migrations.sh runs `dbt run` from /ingestion/dbt. The
+      # ingestion tree is bind-mounted read-only (below), so redirect dbt's
+      # writable outputs (target/, logs/) to a writable scratch dir.
+      DBT_TARGET_PATH: "/tmp/dbt-target"
+      DBT_LOG_PATH: "/tmp/dbt-logs"
     volumes:
       # Bind-mount the source so seed.py edits don't need a rebuild.
       - ./deploy/seed:/app:ro
-      # Schema inputs: create-bronze-placeholders.sh + lib/ch-exec.sh
-      # (the same placeholder DDL the k8s clickhouse-migrate Hook Job
-      # applies) and the gold-view migrations/*.sql.
-      - ./src/ingestion/scripts:/ingestion-scripts:ro
+      # Schema + gold inputs: the SAME scripts the k8s clickhouse-migrate
+      # Hook Job runs — create-bronze-placeholders.sh (+ lib/ch-exec.sh),
+      # apply-ch-migrations.sh, migrations/*.sql — plus the full dbt project
+      # (dbt/, silver/, gold/, connectors/ referenced by dbt model-paths)
+      # so `dbt run --select tag:gold` can build the dbt-owned gold models.
+      # Mounted at /ingestion to match the toolbox image layout the scripts
+      # resolve paths against.
+      - ./src/ingestion:/ingestion:ro

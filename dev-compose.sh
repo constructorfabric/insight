@@ -341,10 +341,70 @@ YML
     echo
   fi
 
-  echo "Stop: ./dev-compose.sh down"
+  local frontend_up=true
+  [[ "$no_frontend" == "true" ]] && frontend_up=false
+  report_service_urls "$frontend_up"
+  echo
+
+  echo "Service URLs: ./dev-compose.sh urls"
+  echo "Stop:        ./dev-compose.sh down"
   echo "Rebuild one: ./dev-compose.sh build <service>"
   echo "Re-seed:     ./dev-compose.sh seed"
   echo "Wipe state:  ./dev-compose.sh prune"
+}
+
+# ──────────────────────────────────────────────────────────────────────
+# Service access report
+# ──────────────────────────────────────────────────────────────────────
+
+# Print how to reach every exposed service on the host, honouring the
+# configurable ports (and defaults) from .env.compose / docker-compose.yml.
+# Callers must have sourced the env file first. Local-only DBs are shown
+# unless pointed at an external host; the frontend line is gated by the
+# caller (arg 1 = "true" when a front-* profile is active).
+report_service_urls() {
+  local frontend_up="${1:-true}"
+  local h="localhost"
+  echo "=== Service URLs (exposed host ports) ==="
+  if [[ "$frontend_up" == "true" ]]; then
+    printf '  %-18s %s\n' "Frontend UI"   "http://$h:${FRONTEND_PORT:-3000}"
+  fi
+  printf '  %-18s %s\n' "API Gateway"     "http://$h:${API_GATEWAY_PORT:-8080}"
+  printf '  %-18s %s\n' "Analytics API"   "http://$h:${ANALYTICS_PORT:-8081}"
+  printf '  %-18s %s\n' "Identity API"    "http://$h:${IDENTITY_PORT:-8082}"
+  printf '  %-18s %s\n' "Authenticator"   "http://$h:${AUTHENTICATOR_PORT:-8083}"
+  printf '  %-18s %s\n' "Fake IdP"        "http://$h:${FAKEIDP_PORT:-8084}"
+  if [[ "${CLICKHOUSE_EXTERNAL:-false}" != "true" ]]; then
+    printf '  %-18s %s\n' "ClickHouse HTTP" \
+      "http://$h:${CLICKHOUSE_HTTP_PORT:-8123}  (native $h:${CLICKHOUSE_NATIVE_PORT:-9000}, user ${CLICKHOUSE_USER:-insight})"
+  fi
+  if [[ "${MARIADB_EXTERNAL:-false}" != "true" ]]; then
+    printf '  %-18s %s\n' "MariaDB"        "$h:${MARIADB_PORT:-3306}  (user ${MARIADB_USER:-insight})"
+  fi
+  printf '  %-18s %s\n' "Redis"           "$h:${REDIS_PORT:-6379}"
+  printf '  %-18s %s\n' "Redpanda Kafka"  \
+    "$h:${REDPANDA_KAFKA_PORT:-19092}  (admin $h:${REDPANDA_ADMIN_PORT:-19644}, schema $h:${REDPANDA_SCHEMA_PORT:-18081})"
+}
+
+# ──────────────────────────────────────────────────────────────────────
+# urls
+# ──────────────────────────────────────────────────────────────────────
+
+cmd_urls() {
+  local env_file=".env.compose"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --env-file=*) env_file="${1#*=}"; shift ;;
+      --env-file)   env_file="$2"; shift 2 ;;
+      -h|--help)    echo "usage: dev-compose.sh urls [--env-file FILE]"; return 0 ;;
+      *) echo "ERROR: unknown arg: $1" >&2; return 2 ;;
+    esac
+  done
+  env_file="$(resolve_env_file "$env_file")" || return $?
+  set -a; source "$env_file"; set +a
+  # FRONTEND_MODE is always dev|built|ghcr (cmd_up enforces it), so the
+  # frontend is assumed up; report_service_urls defaults to showing it.
+  report_service_urls
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -646,6 +706,7 @@ Subcommands:
   down    Stop everything. --volumes to wipe data.
   build   Rebuild one host-side artefact.
   seed    Populate the demo dataset (identity / silver / all).
+  urls    Print how to reach each service (exposed host ports).
   prune   Destructive wipe of containers, volumes, build/, override,
           and .env.compose. Asks for confirmation.
   help    Print this message.
@@ -662,6 +723,7 @@ main() {
     down)  cmd_down  "$@" ;;
     build) cmd_build "$@" ;;
     seed)  cmd_seed  "$@" ;;
+    urls)  cmd_urls  "$@" ;;
     prune) cmd_prune "$@" ;;
     help|-h|--help) usage ;;
     *) echo "ERROR: unknown subcommand: $sub" >&2; usage; return 2 ;;
