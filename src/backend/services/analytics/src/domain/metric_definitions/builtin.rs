@@ -1153,7 +1153,10 @@ mod tests {
     #[test]
     fn presentation_complete_formats_carry_no_unit() {
         for metric in BUILTIN_METRICS {
-            if !matches!(metric.format, MetricFormat::Percent | MetricFormat::Currency) {
+            if !matches!(
+                metric.format,
+                MetricFormat::Percent | MetricFormat::Currency
+            ) {
                 continue;
             }
             assert!(
