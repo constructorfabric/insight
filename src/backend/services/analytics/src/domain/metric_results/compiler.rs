@@ -1087,7 +1087,11 @@ mod tests {
                 .contains("100 * sumIfOrNull(value, source_key = ?")
         );
         for query in [&ts, &bd] {
-            assert!(query.sql.contains("100 * sumIfOrNull(value, measure_key = ?"));
+            assert!(
+                query
+                    .sql
+                    .contains("100 * sumIfOrNull(value, measure_key = ?")
+            );
             assert!(query.sql.contains("nullIf(sumIf(value, measure_key = ?"));
         }
     }
@@ -1100,7 +1104,8 @@ mod tests {
                 .contains("uniqExactIf(subject_key, subject_key IS NOT NULL)")
         );
         assert!(ts.sql.contains("GROUP BY entity_id, bucket_start"));
-        let bd = compile_breakdown_query(&distinct_count_metric(), &request(), &["tool".to_owned()]);
+        let bd =
+            compile_breakdown_query(&distinct_count_metric(), &request(), &["tool".to_owned()]);
         assert!(
             bd.sql
                 .contains("uniqExactIf(subject_key, subject_key IS NOT NULL)")
