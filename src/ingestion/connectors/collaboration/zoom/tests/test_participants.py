@@ -8,15 +8,34 @@ uuid URL-escaped in the path (`/`→%2F, `+`→%2B, `=`→%3D). AddFields stamps
 tenant_id / source_id / meeting_uuid (from the partition) / unique_key =
 "{tenant}-{source}-{meeting_uuid}-{participant_uuid}-{join_time}".
 
+How the sync works, for readers new to Airbyte substreams: `participants` has
+no meeting list of its own — before it can fetch anything it must learn which
+meetings exist. It does that through a private copy of the meetings stream
+(`_meetings`, defined inline in connector.yaml) that it reads itself; the
+top-level `meetings` stream from the catalog is a separate instance and shares
+nothing with it. Every meeting the private parent returns becomes one
+"partition" = one HTTP request to /metrics/meetings/{uuid}/participants.
+
+Those per-meeting requests are the expensive part: they count against Zoom's
+Dashboard-API "Heavy" quota (60 000 requests per day for the whole account).
+If the parent is re-read over its full 150-day window every sync, one sync
+costs ~25k requests on a busy account and two syncs a day exhaust the quota
+(this happened on dev-vhc, 2026-07-14). The fix asserted by the last two
+tests: remember between syncs how far the parent has been read (its
+`end_time` cursor), and on the next sync ask the API only for meetings newer
+than that. The remembering is awkward in Airbyte because state belongs to
+catalog streams and the private parent is not one — its cursor can only be
+saved inside the participants stream's own state, in a `parent_state` field,
+and the CDK only writes that field when participants itself is incremental.
+Hence the "formal" join_time cursor on participants: it filters nothing and
+gates nothing; its sole purpose is to make participants emit a real state
+message that `parent_state` can ride along in (`incremental_dependency: true`
+on the ParentStreamConfig is what turns that on).
+
 Coverage matrix rows: substream_partition (one child request per parent
 partition, uuid escaping), transformations + tenant_source_stamping,
-schema_conformance, pagination_multi_page, incremental_state — the stream
-carries a formal join_time cursor (no request options, no client-side
-filtering) purely so that `incremental_dependency: true` can persist the
-parent cursor as `parent_state`; the resume test pins that a second sync
-enumerates only meetings newer than the saved parent cursor minus its P7D
-lookback (the Zoom Heavy-quota fix: ~hundreds of requests per sync instead of
-re-fanning out over the full 150-day window).
+schema_conformance, pagination_multi_page, incremental_state (the two
+parent-state tests above).
 """
 
 from __future__ import annotations
@@ -148,11 +167,19 @@ def test_pagination_multi_page(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_NOW)
 def test_parent_state_persisted_in_child_state(http_mocker: HttpMocker) -> None:
-    """The child's cursor is a formality; what matters is that its state
-    message carries `parent_state` with the `_meetings` cursor (the max observed
-    end_time record value). A full-refresh child persists nothing — that
-    no-op was pinned by this suite before the cursor existed — so this assert
-    is what keeps the Heavy-quota fix from silently regressing."""
+    """After a sync, the connector's final state message must record how far
+    the private `_meetings` parent was read.
+
+    Scenario: one sync over one meeting (ends 2026-06-15T10:30:00Z, one
+    participant). The state emitted at the end must contain
+    `parent_state._meetings.end_time == that end_time` — this is the value the
+    next sync resumes the meeting enumeration from (see the resume test
+    below), and it is exactly what was NOT saved before the fix: without a
+    cursor on participants the CDK emitted only a "this stream has no cursor"
+    placeholder and no parent_state, so every sync re-listed all 150 days of
+    meetings. If this assert starts failing (placeholder state is back, or
+    parent_state is empty), the quota fix has regressed and nightly syncs are
+    ~25k requests again."""
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
     _mock_parent(http_mocker, [_meeting("mtg-uuid-1==", "2026-06-15T10:30:00Z")])
@@ -172,13 +199,28 @@ def test_parent_state_persisted_in_child_state(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_NOW)
 def test_resume_enumerates_parent_from_saved_cursor(http_mocker: HttpMocker) -> None:
-    """Second sync, given the first sync's state: the parent must be requested
-    from the saved cursor minus its P7D lookback (exact from/to matcher — a
-    regression back to the full now-150d fan-out would issue requests no
-    matcher accepts), and participants are fetched only for the meetings that
-    enumeration returns. The emitted record's join_time predates the first
-    sync's records: nothing is filtered client-side — the child cursor gates
-    no data, only carries state."""
+    """A second sync must ask the API only for meetings newer than the saved
+    cursor — not re-list the whole 150-day window.
+
+    Sync 1 sees one meeting ending 2026-06-16T10:30:00Z and saves that as the
+    parent cursor. Sync 2 is then started with sync 1's state, and three
+    things are pinned:
+
+    1. The meeting-list request must be `from=2026-06-09&to=<today>` — the
+       saved cursor date minus the parent's 7-day lookback (the lookback
+       re-covers meetings that were still running or landed late around the
+       last sync; the resulting duplicate participant rows are removed
+       downstream at read time). The mock server only answers this exact
+       from/to pair, so a regression back to "always start 150 days ago"
+       makes requests nothing answers and fails the test.
+    2. Participant requests are made only for the meetings that narrowed
+       listing returned (here: the one new meeting) — that is the whole point
+       of the fix, request count follows the meeting listing.
+    3. The new meeting's participant joined at 09:00 on June 10 — EARLIER
+       than everything sync 1 saw. It must still be emitted: the join_time
+       cursor on participants only carries state and must never be used to
+       drop records (a real risk: meetings overlap in time, so "older than
+       the newest thing seen so far" does not mean "already synced")."""
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
     _mock_parent(http_mocker, [_meeting("mtg-uuid-1==", "2026-06-16T10:30:00Z")])
