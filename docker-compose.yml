@@ -327,6 +327,7 @@ services:
     volumes:
       - ./deploy/compose/build/authenticator/authenticator:/app/authenticator:ro
       - ./src/backend/services/authenticator/config:/app/config:ro
+      - ./deploy/compose/authenticator-dev-keys:/app/keys:ro
     command:
       - "/app/authenticator" # <watched path>
       - "--"
