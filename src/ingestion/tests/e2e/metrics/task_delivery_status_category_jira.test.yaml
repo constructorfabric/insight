@@ -1,0 +1,131 @@
+spec_version: 1
+description: >
+  Task Delivery - tasks_completed - JIRA - close-detection by statusCategory,
+  NOT by status display name (issue #1541).
+
+  Regression guard for the fix that replaced the hardcoded
+  `status_name IN ('Closed','Resolved','Verified')` with a join to
+  silver.class_task_statuses on status_category = 'done'.
+
+  Alice closes THREE issues on 2026-12-25, each ending in a different status:
+    A → "Done"    (statusCategory done, id 100)  → COUNTED
+    B → "Готово"  (statusCategory done, id 101)  → COUNTED   (non-English name)
+    C → "Closed"  (statusCategory indeterminate, id 103) → NOT counted
+
+  Expected tasks_completed = 2 (A + B).
+    * The OLD name-based logic would score 1 — it matches only "Closed" (C) and
+      misses "Done"/"Готово". So this fixture FAILS on the pre-#1541 code.
+    * A naive "count every transition" would score 3.
+  Only category-based detection yields 2, proving closedness is driven by
+  statusCategory and is locale- / display-name-independent.
+
+  The custom window 2026-12-20..12-31 captures all three close events.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+
+  bronze_jira.jira_user:
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-alice-jira-acct, account_id: alice-jira-acct, email: alice@example.com, display_name: Alice Alpha }
+
+  # Status lookup — the crux. "Done"/"Готово" carry statusCategory done; the
+  # decoy "Closed" carries indeterminate (id 4) so a name match would wrongly
+  # count it. In Progress (id 3) is the pre-transition status for all three.
+  bronze_jira.jira_statuses:
+    - { $ref: templates/jira_task.yaml#/templates/status_in_progress }
+    - { $ref: templates/jira_task.yaml#/templates/jira_status, unique_key: jira-test-status-100, status_id: "100", name: Done,    category_id: 3, category_name: Done,          category_key: done }
+    - { $ref: templates/jira_task.yaml#/templates/jira_status, unique_key: jira-test-status-101, status_id: "101", name: "Готово", category_id: 3, category_name: Done,          category_key: done }
+    - { $ref: templates/jira_task.yaml#/templates/jira_status, unique_key: jira-test-status-103, status_id: "103", name: Closed,  category_id: 4, category_name: "In Progress", category_key: indeterminate }
+
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+
+  bronze_jira.jira_issue:
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: SC-A
+      jira_id: SC-A
+      unique_key: jira-test-SC-A
+      id_readable: SCA
+      created: "2026-12-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"100","name":"Done"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: SC-B
+      jira_id: SC-B
+      unique_key: jira-test-SC-B
+      id_readable: SCB
+      created: "2026-12-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"101","name":"Готово"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: SC-C
+      jira_id: SC-C
+      unique_key: jira-test-SC-C
+      id_readable: SCC
+      created: "2026-12-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"103","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+  bronze_jira.jira_issue_history:
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: SCA
+      changelog_id: "60000"
+      unique_key: jira-test-SCA-60000
+      created_at: "2026-12-25T14:00:00.000+0000"
+      author_account_id: alice-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Done","to":"100"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: SCB
+      changelog_id: "60001"
+      unique_key: jira-test-SCB-60001
+      created_at: "2026-12-25T14:00:00.000+0000"
+      author_account_id: alice-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Готово","to":"101"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: SCC
+      changelog_id: "60002"
+      unique_key: jira-test-SCC-60002
+      created_at: "2026-12-25T14:00:00.000+0000"
+      author_account_id: alice-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"103"}]'
+
+cases:
+  - name: "tasks_completed counts done-category statuses regardless of name (#1541)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-12-20' and metric_date le '2026-12-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      # Done + Готово (statusCategory done) counted; "Closed" (indeterminate) excluded.
+      # Department = alice alone, so the distribution is the single value {2} and
+      # every bullet stat collapses to 2 (the no-unasserted-stat gate requires all
+      # returned stats to be checked).
+      - in: task_delivery
+        find: { metric_key: tasks_completed }
+        equal: { value: 2, median: 2, p25: 2, p75: 2, range_min: 2, range_max: 2 }
+
+  - name: "the indeterminate decoy alone yields no completion (empty window before close)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        assert: "size(items) == 0"

@@ -1,0 +1,24 @@
+version: 1
+defaults:
+  timeout_ms: 30000
+  strip_prefix: false
+  websocket: false
+  # Operator-extensible deny-list. The gateway-reserved set (Authorization,
+  # X-Correlation-Id, X-Forwarded-*, gateway cookies) is always stripped in
+  # addition; X-Tenant-ID is NOT reserved and passes through.
+  strip_request_headers:
+    - X-Real-IP
+    - Forwarded
+routes:
+  - prefix: /api/v1/analytics
+    upstream: http://analytics.insight.svc.cluster.local:8081
+    timeout_ms: 60000
+    strip_prefix: false
+
+  - prefix: /api/v1/identity
+    upstream: http://identity.insight.svc.cluster.local:8082
+
+  - prefix: /api/v1/stream
+    upstream: http://analytics.insight.svc.cluster.local:8081
+    websocket: true
+    timeout_ms: 0

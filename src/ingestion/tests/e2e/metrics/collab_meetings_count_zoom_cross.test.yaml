@@ -1,0 +1,80 @@
+spec_version: 1
+description: >
+  Metric: meetings_count, Teams+Zoom cross-source additivity — IC Bullet
+  Collaboration (…0012), PR #1746. The base Teams-only fixture is
+  collab_meetings_count.test.yaml; this one proves the Zoom leg is ADDED.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report (meetings attended) + Zoom participant
+              sessions per person
+    • silver: Teams deduped to meetings-attended per person/day; Zoom counted as
+              distinct meetings per person/day
+    • gold:   value = the requested member's per-person SUM of meetings attended
+              over the window across BOTH sources (Teams + Zoom additive).
+              median/p25/p75/range = the distribution of those per-person SUMs
+              across the member's DEPARTMENT (org_unit_id).
+
+  Department: 5 Engineering members, each with Teams meetings {1,2,3,4,5} PLUS
+  one Zoom meeting on the same day (2026-12-25) → totals {2,3,4,5,6}. The IC
+  case requests erin (5+1=6), so value = 6; the department of 5 yields median 4,
+  p25 3, p75 5, range [2,6] — distinguishable from the Teams-only distribution
+  {1,2,3,4,5} (median 3), so a dropped Zoom leg fails every asserted field.
+  Cases: custom scope (single window over the department) · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_m365.teams_activity:
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: mcx-alice-20261225, meetingsAttendedCount: 1 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: bob@example.com,   reportRefreshDate: "2026-12-25", unique_key: mcx-bob-20261225,   meetingsAttendedCount: 2 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: mcx-carol-20261225, meetingsAttendedCount: 3 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: mcx-dave-20261225,  meetingsAttendedCount: 4 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com,  reportRefreshDate: "2026-12-25", unique_key: mcx-erin-20261225,  meetingsAttendedCount: 5 }
+
+  bronze_zoom.participants:
+    # one Zoom meeting each, same day as the Teams counts → strictly additive
+    - { $ref: templates/zoom.yaml#/templates/alice_zoom, unique_key: mcx-z-alice-1, meeting_uuid: "mcx-a1==", participant_uuid: "mcx-a1-p1", join_time: "2026-12-25T15:00:00Z", leave_time: "2026-12-25T15:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/bob_zoom,   unique_key: mcx-z-bob-1,   meeting_uuid: "mcx-b1==", participant_uuid: "mcx-b1-p1", join_time: "2026-12-25T15:00:00Z", leave_time: "2026-12-25T15:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/carol_zoom, unique_key: mcx-z-carol-1, meeting_uuid: "mcx-c1==", participant_uuid: "mcx-c1-p1", join_time: "2026-12-25T15:00:00Z", leave_time: "2026-12-25T15:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/dave_zoom,  unique_key: mcx-z-dave-1,  meeting_uuid: "mcx-d1==", participant_uuid: "mcx-d1-p1", join_time: "2026-12-25T15:00:00Z", leave_time: "2026-12-25T15:30:00Z" }
+    - { $ref: templates/zoom.yaml#/templates/erin_zoom,  unique_key: mcx-z-erin-1,  meeting_uuid: "mcx-e1==", participant_uuid: "mcx-e1-p1", join_time: "2026-12-25T15:00:00Z", leave_time: "2026-12-25T15:30:00Z" }
+
+cases:
+  # dept {2,3,4,5,6}; erin value 6. p25=3 median=4 p75=5 range=[2,6]
+  - name: "meetings_count — Teams+Zoom additive (department of 5)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-01' and metric_date le '2026-12-31'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        find: { metric_key: meetings_count }
+        equal: { value: 6, median: 4, range_min: 2, range_max: 6, p25: 3, p75: 5 }
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: "meetings_count cross-source — EMPTY window (no data → no items)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: collaboration
+            metric_id: 00000000-0000-0000-0001-000000000012
+            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: collaboration
+        assert: "result.status == 'ok'"
+      - in: collaboration
+        assert: "size(items) == 0"

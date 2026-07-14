@@ -567,7 +567,7 @@ if ! ch_table_exists silver class_git_pull_requests; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     insight_tenant_id String,
-    pr_id             String,
+    pr_id             Int64,
     tenant_id         String  DEFAULT '',
     source_id         String  DEFAULT '',
     project_key       String  DEFAULT '',
@@ -619,7 +619,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests_commits (
     source_id   String DEFAULT '',
     project_key String DEFAULT '',
     repo_slug   String DEFAULT '',
-    pr_id       String,
+    pr_id       Int64,
     commit_hash String,
     data_source String DEFAULT '',
     _version    UInt64
@@ -725,6 +725,29 @@ CREATE TABLE IF NOT EXISTS silver.class_task_users (
     insight_source_id String,
     user_id           String,
     email             Nullable(String),
+    unique_key        String,
+    _version          UInt64
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+SQL
+fi
+
+# silver.class_task_statuses — task-tracking status dimension (issue #1541).
+# Referenced by the task-delivery gold migration
+# (20260708000000_task-delivery-status-category.sql) which JOINs it to derive
+# `status_category` (done/in_progress) for close-detection. Must exist before
+# that migration's CREATE ... LEFT JOIN silver.class_task_statuses.
+if ! ch_table_exists silver class_task_statuses; then
+  echo "  Creating placeholder: silver.class_task_statuses"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_task_statuses (
+    insight_source_id String,
+    data_source       String,
+    status_id         String,
+    status_name       Nullable(String),
+    category_id       Nullable(Int32),
+    category_key      Nullable(String),
+    status_category   String,
+    collected_at      DateTime64(3),
     unique_key        String,
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
@@ -905,7 +928,6 @@ fi
 if ! ch_table_exists bronze_jira jira_issue; then
   echo "  Creating placeholder: bronze_jira.jira_issue"
   run_ch <<'SQL'
-CREATE DATABASE IF NOT EXISTS bronze_jira;
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue (
     id String,
     source_id String,
@@ -1026,6 +1048,31 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields (
 SQL
 fi
 
+# bronze_jira.jira_statuses — Jira status lookup (GET /rest/api/3/status).
+# jira__task_statuses.sql (silver:class_task_statuses) reads it to map
+# status_id -> status_category (done/in_progress/…) so gold detects closed
+# tasks by statusCategory, not display name (issue #1541). Columns mirror the
+# AddFields in connectors/task-tracking/jira/connector.yaml jira_statuses stream.
+if ! ch_table_exists bronze_jira jira_statuses; then
+  echo "  Creating placeholder: bronze_jira.jira_statuses"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_statuses (
+    unique_key String,
+    source_id String,
+    status_id String,
+    name String,
+    category_id Nullable(Int32),
+    category_name String,
+    category_key String,
+    collected_at String,
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+fi
+
 # bronze_jira.jira_worklogs — Jira worklog rows. jira__task_worklogs.sql
 # (tag silver:class_task_worklogs) reads these to build silver.class_task_worklogs,
 # the numerator behind worklog_logging_accuracy. Columns mirror what that staging
@@ -1055,9 +1102,6 @@ fi
 # Each table is checked and created independently so a partially-seeded
 # state (e.g. teams_activity exists, onedrive_activity does not) gets the
 # missing ones repaired on a re-run.
-run_ch <<'SQL'
-CREATE DATABASE IF NOT EXISTS bronze_m365;
-SQL
 # NOTE: column set mirrors the real Airbyte M365 streams (verified against a
 # live dev sync) so the collaboration dbt staging models — which read
 # reportRefreshDate, the message/meeting counters, the ISO-8601 duration
@@ -1179,12 +1223,21 @@ SQL
 fi
 
 # bronze_zoom — needed by gold-views comms_daily, zoom_person_daily
+#
+# Key shape mirrors the PROMOTED table (`promote_bronze_to_rmt(order_by='unique_key')`
+# in zoom__bronze_promoted.sql): ORDER BY unique_key, allow_nullable_key. The
+# previous placeholder ordered by `email`, which silently collapsed every
+# participant row of one person into a single row on RMT merge — deployed
+# tables were unaffected (Airbyte + the promote macro produce the unique_key
+# shape), but the e2e rig runs on the placeholder and could not seed more than
+# one meeting per person.
 if ! ch_table_exists bronze_zoom participants; then
   echo "  Creating placeholder: bronze_zoom.participants"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_zoom.participants (
     tenant_id String,
     source_id String,
+    unique_key Nullable(String),
     email String,
     user_name Nullable(String),
     meeting_uuid String,
@@ -1200,13 +1253,15 @@ CREATE TABLE IF NOT EXISTS bronze_zoom.participants (
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
-) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY email;
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
 SQL
 else
   echo "  Reconciling placeholder schema: bronze_zoom.participants"
   run_ch <<'SQL'
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS tenant_id String;
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS source_id String;
+ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS unique_key Nullable(String);
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS user_name Nullable(String);
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS participant_uuid String;
 ALTER TABLE bronze_zoom.participants ADD COLUMN IF NOT EXISTS camera Nullable(String);
@@ -1219,14 +1274,17 @@ fi
 
 # bronze_zoom.meetings — read by zoom__meeting_sessions (session stitching).
 # The meeting-hours path computes duration from participants join/leave, so this
-# table may be empty in tests; it only needs to EXIST so the sessions model builds
-# (the participant→session LEFT JOIN then falls back to meeting_uuid).
+# table may be empty in tests; it needs to EXIST so the sessions model builds
+# (the participant→session LEFT JOIN then falls back to meeting_uuid), and it is
+# seeded by session-stitching e2e fixtures. Key shape mirrors the promoted table
+# (ORDER BY unique_key), same as participants above.
 if ! ch_table_exists bronze_zoom meetings; then
   echo "  Creating placeholder: bronze_zoom.meetings"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_zoom.meetings (
     tenant_id String,
     source_id String,
+    unique_key Nullable(String),
     id Nullable(String),
     uuid String,
     start_time Nullable(String),
@@ -1237,7 +1295,13 @@ CREATE TABLE IF NOT EXISTS bronze_zoom.meetings (
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
-) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY uuid;
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key
+  SETTINGS allow_nullable_key = 1;
+SQL
+else
+  echo "  Reconciling placeholder schema: bronze_zoom.meetings"
+  run_ch <<'SQL'
+ALTER TABLE bronze_zoom.meetings ADD COLUMN IF NOT EXISTS unique_key Nullable(String);
 SQL
 fi
 

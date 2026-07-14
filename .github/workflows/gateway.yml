@@ -1,0 +1,113 @@
+name: Gateway — routegen, config, e2e
+
+# The gateway is generated, not hand-written (DD-GW-02): routes.yaml is the
+# single source of truth (shipped as a ConfigMap / compose mount), and the
+# container compiles it into nginx.conf at startup with routegen. This workflow
+# is the guard: routegen's own tests, `nginx -t` on the real OpenResty image
+# (via the container's own generate-and-validate path), and the full end-to-end
+# suite (the five NGINX_BFF step-05 scenarios in run-e2e.sh). Runs only when the
+# gateway or the generator changes.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/tools/routegen/**"
+      - "src/backend/services/gateway/**"
+      - ".github/workflows/gateway.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # routegen unit/golden tests + committed-config up-to-date assertion + nginx -t.
+  config:
+    name: routegen + nginx -t
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/backend -> target
+          key: routegen
+
+      - name: routegen fmt + clippy + tests
+        working-directory: src/backend
+        run: |
+          cargo fmt -p routegen -- --check
+          cargo clippy -p routegen --all-targets -- -D warnings
+          cargo test -p routegen
+
+      - name: Build the OpenResty gateway image
+        working-directory: src/backend
+        run: docker build -f services/gateway/Dockerfile -t insight-gateway:ci .
+
+      - name: Generate + nginx -t via the container's own startup path
+        run: |
+          # Exercise the real entrypoint (routegen -> nginx -t) against the
+          # compose route table. Upstream short-names are mapped to loopback so
+          # nginx can resolve them at config-load time; GATEWAY_VALIDATE_ONLY
+          # makes the container generate, validate, and exit without serving.
+          docker run --rm \
+            --add-host analytics:127.0.0.1 \
+            --add-host identity:127.0.0.1 \
+            --add-host authenticator:127.0.0.1 \
+            --add-host insight-front:127.0.0.1 \
+            -e GATEWAY_VALIDATE_ONLY=1 \
+            -e GATEWAY_AUTHENTICATOR_URL=http://authenticator:8083 \
+            -e GATEWAY_FRONT_URL=http://insight-front:8080 \
+            -e GATEWAY_SET_REAL_IP_FROM=10.0.0.0/8 \
+            -v "$PWD/deploy/compose/gateway/routes.yaml":/etc/gateway/routes.yaml:ro \
+            insight-gateway:ci
+
+      - name: helm lint + assert the chart's rendered routes.yaml compiles
+        run: |
+          helm lint src/backend/services/gateway/helm
+          # Render the templated route table (helm template fails on a bad tpl)
+          # and run it through routegen to catch a bad routes value before a pod.
+          helm template insight src/backend/services/gateway/helm \
+            --set image.repository=x --set image.tag=t --namespace insight \
+            --show-only templates/configmap.yaml \
+            | sed -n '/routes.yaml: |/,$p' | tail -n +2 | sed 's/^    //' > rendered-routes.yaml
+          cat rendered-routes.yaml
+          docker run --rm \
+            --add-host insight-analytics:127.0.0.1 --add-host insight-identity:127.0.0.1 \
+            --add-host insight-authenticator:127.0.0.1 --add-host insight-frontend:127.0.0.1 \
+            -e GATEWAY_VALIDATE_ONLY=1 \
+            -e GATEWAY_AUTHENTICATOR_URL=http://insight-authenticator:8083 \
+            -e GATEWAY_FRONT_URL=http://insight-frontend:80 \
+            -v "$PWD/rendered-routes.yaml":/etc/gateway/routes.yaml:ro \
+            insight-gateway:ci
+
+  # Full edge e2e: real authenticator + fakeidp behind the gateway (the five
+  # NGINX_BFF step-05 scenarios). No host Rust toolchain -- routegen and every
+  # service image are built inside Docker; the host only needs python + pytest.
+  e2e:
+    name: e2e (5 scenarios)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: python -m pip install pytest
+
+      - name: Run the gateway e2e
+        run: src/backend/services/gateway/tests/run-e2e.sh

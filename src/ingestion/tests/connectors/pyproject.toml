@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insight-connector-tests"
+version = "0.1.0"
+description = "Mock-server test harness for Insight nocode (declarative-YAML) connectors"
+readme = "README.md"
+# airbyte-cdk 6.60.x supports 3.10-3.12; CI runs 3.12.
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    # Pinned to the line matching the `version:` header of the nocode connector
+    # manifests (currently 6.60.9). Bump in lockstep with manifest version bumps.
+    "airbyte-cdk>=6.60.9,<6.61",
+    "pytest>=8.0",
+    "freezegun>=1.5",
+    # HttpMocker's transport backend — an optional extra of the CDK, required here.
+    "requests-mock>=1.11",
+    # airbyte-cdk 6.60.x itself pins jsonschema >=4.17.3,<4.18 — stay inside it.
+    "jsonschema>=4.17.3,<4.18",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest-cov>=5.0",
+]
+
+[tool.pytest.ini_options]
+# Collection is owned by harness_plugin (root-level module, loaded early via
+# -p): a bare `pytest` run collects the harness's `meta/` tests plus every
+# NOCODE connector's mock suite (connector.yaml present, no pyproject.toml).
+# CDK (Python) connectors are excluded — they have their own coverage
+# components and airbyte-cdk pins. Fixtures/hooks live in connector_tests.plugin
+# (loaded from conftest files, measured by coverage).
+addopts = "-p harness_plugin --import-mode=importlib"
+filterwarnings = [
+    "ignore:This class is experimental*",
+]
+
+[tool.setuptools.packages.find]
+include = ["connector_tests*"]
