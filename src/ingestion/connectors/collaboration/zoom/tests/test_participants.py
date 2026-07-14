@@ -10,9 +10,13 @@ tenant_id / source_id / meeting_uuid (from the partition) / unique_key =
 
 Coverage matrix rows: substream_partition (one child request per parent
 partition, uuid escaping), transformations + tenant_source_stamping,
-schema_conformance, pagination_multi_page. incremental_state is N/A — the
-stream is full-refresh; test_full_refresh_substream_emits_no_cursor_state pins
-that contract (and documents why incremental_dependency is absent).
+schema_conformance, pagination_multi_page, incremental_state — the stream
+carries a formal join_time cursor (no request options, no client-side
+filtering) purely so that `incremental_dependency: true` can persist the
+parent cursor as `parent_state`; the resume test pins that a second sync
+enumerates only meetings newer than the saved parent cursor minus its P7D
+lookback (the Zoom Heavy-quota fix: ~hundreds of requests per sync instead of
+re-fanning out over the full 150-day window).
 """
 
 from __future__ import annotations
@@ -20,7 +24,15 @@ from __future__ import annotations
 import json
 
 import freezegun
-from config import FROZEN_NOW, METRICS_URL, PARENT_MEETING_SLICES, ZoomConfigBuilder, mock_meeting_slices, mock_token
+from config import (
+    FROZEN_NOW,
+    METRICS_URL,
+    PARENT_MEETING_SLICES,
+    ZoomConfigBuilder,
+    metrics_params,
+    mock_meeting_slices,
+    mock_token,
+)
 from connector_tests import HttpMocker, HttpRequest, HttpResponse, assert_records_conform, load_fixture, read_stream
 
 _STREAM = "participants"
@@ -135,13 +147,12 @@ def test_pagination_multi_page(http_mocker: HttpMocker) -> None:
 
 
 @freezegun.freeze_time(_NOW)
-def test_full_refresh_substream_emits_no_cursor_state(http_mocker: HttpMocker) -> None:
-    """participants is a full-refresh substream: the CDK emits only the
-    no-cursor sentinel state, and in particular NO parent_state — this is why
-    `incremental_dependency` is deliberately absent from the ParentStreamConfig
-    (it only piggybacks the parent cursor on an incremental child's state; on a
-    full-refresh child it is a silent no-op — this test found that). Freshness
-    is instead bounded by the parent's now-150d slicing, re-read each sync."""
+def test_parent_state_persisted_in_child_state(http_mocker: HttpMocker) -> None:
+    """The child's cursor is a formality; what matters is that its state
+    message carries `parent_state` with the `_meetings` cursor (the max observed
+    end_time record value). A full-refresh child persists nothing — that
+    no-op was pinned by this suite before the cursor existed — so this assert
+    is what keeps the Heavy-quota fix from silently regressing."""
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
     _mock_parent(http_mocker, [_meeting("mtg-uuid-1==", "2026-06-15T10:30:00Z")])
@@ -154,5 +165,47 @@ def test_full_refresh_substream_emits_no_cursor_state(http_mocker: HttpMocker) -
 
     assert output.state_messages, "read must close with a state message"
     final_state = output.state_messages[-1].state.stream.stream_state.__dict__
-    assert final_state.get("__ab_no_cursor_state_message") is True
-    assert "parent_state" not in final_state
+    assert "__ab_no_cursor_state_message" not in final_state
+    parent_state = final_state.get("parent_state")
+    assert parent_state == {"_meetings": {"end_time": "2026-06-15T10:30:00Z"}}, parent_state
+
+
+@freezegun.freeze_time(_NOW)
+def test_resume_enumerates_parent_from_saved_cursor(http_mocker: HttpMocker) -> None:
+    """Second sync, given the first sync's state: the parent must be requested
+    from the saved cursor minus its P7D lookback (exact from/to matcher — a
+    regression back to the full now-150d fan-out would issue requests no
+    matcher accepts), and participants are fetched only for the meetings that
+    enumeration returns. The emitted record's join_time predates the first
+    sync's records: nothing is filtered client-side — the child cursor gates
+    no data, only carries state."""
+    config = ZoomConfigBuilder().build()
+    mock_token(http_mocker)
+    _mock_parent(http_mocker, [_meeting("mtg-uuid-1==", "2026-06-16T10:30:00Z")])
+    http_mocker.get(
+        HttpRequest(_participants_url("mtg-uuid-1%3D%3D"), query_params=_CHILD_PARAMS),
+        _participants_page([_participant("part-1", "alice@example.com", join_time="2026-06-16T10:00:05Z")]),
+    )
+
+    first = read_stream(_CONNECTOR, _STREAM, config)
+    state = [m.state for m in first.state_messages][-1:]
+
+    # Resume: parent cursor 2026-06-16 minus lookback P7D -> from=2026-06-09.
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        mock_token(resume_mocker)
+        resume_mocker.get(
+            HttpRequest(METRICS_URL, query_params=metrics_params("2026-06-09", "2026-07-01")),
+            _meetings_page([_meeting("mtg-new==", "2026-06-20T10:30:00Z")]),
+        )
+        resume_mocker.get(
+            HttpRequest(_participants_url("mtg-new%3D%3D"), query_params=_CHILD_PARAMS),
+            _participants_page([_participant("part-2", "bob@example.com", join_time="2026-06-10T09:00:00Z")]),
+        )
+
+        second = read_stream(_CONNECTOR, _STREAM, config, state=state)
+
+        assert not second.errors
+        assert [r.record.data["participant_uuid"] for r in second.records] == ["part-2"]
+        final_state = second.state_messages[-1].state.stream.stream_state.__dict__
+        assert final_state.get("parent_state") == {"_meetings": {"end_time": "2026-06-20T10:30:00Z"}}
