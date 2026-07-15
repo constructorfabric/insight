@@ -92,3 +92,24 @@ gears:
         issuer_url: ""
         client_id: ""
         client_secret: ""
+      # Service tokens (§10 G1 / DD-AUTH-05). The token endpoint runs on its own
+      # listener (token_bind_addr) so it never shares the main port. Service
+      # tokens are always tenant-scoped; the caller names the tenant.
+      #
+      # `testclient` is DEV/TEST ONLY. No key material is committed: dev-compose
+      # and run-e2e generate a throwaway keypair (like the gateway signing key)
+      # and drop its public half in public_key_dir; the private half is handed
+      # to the calling client. Real services land their public key via a gitops
+      # PR (chart ConfigMap uses inline public_keys), never this test entry.
+      service_tokens:
+        token_bind_addr: "0.0.0.0:8093"
+        audience: "http://localhost:8093/internal/token"
+        assertion_max_lifetime_seconds: 60
+        token_ttl_seconds: 300
+        # Set via env in dev/e2e to the generated-key dir (see run-e2e.sh /
+        # dev-compose.sh): APP__gears__authenticator__config__service_tokens__public_key_dir
+        public_key_dir: ""
+        services:
+          testclient:
+            public_key_paths: ["testclient.pub.pem"]
+            roles: ["service"]

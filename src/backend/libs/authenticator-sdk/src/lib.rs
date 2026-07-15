@@ -15,6 +15,10 @@
 
 #![allow(clippy::doc_markdown)]
 
+pub mod service_client;
+
+pub use service_client::{FetchedToken, ServiceTokenClient};
+
 use async_trait::async_trait;
 use toolkit_canonical_errors::CanonicalError;
 

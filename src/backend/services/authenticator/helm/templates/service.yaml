@@ -11,5 +11,11 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    # Service-token listener (§10 G4). Second port on the same Service; scoped
+    # separately by NetworkPolicy (token-port ingress from app service pods).
+    - port: {{ .Values.service.tokenPort }}
+      targetPort: token
+      protocol: TCP
+      name: token
   selector:
     {{- include "insight-authenticator.selectorLabels" . | nindent 4 }}

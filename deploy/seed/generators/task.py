@@ -127,6 +127,22 @@ _ISSUE_TYPES = ("Bug", "Task", "Story", "Improvement")
 _PRIORITIES = ("Highest", "High", "Medium", "Medium", "Low")
 _CLOSE_STATUSES = ("Closed", "Resolved", "Verified")
 
+# Status dimension. The task_issue_current_state MV resolves a status to a
+# lifecycle category by joining class_task_statuses on
+# (insight_source_id, status_id), and gold detects a closed task via
+# status_category = 'done' (never a localized name — see issue #1541). So
+# status field-history events MUST carry a status_id (value_ids[1]) that
+# matches a class_task_statuses row, and that dimension must be seeded.
+# status_category values are the reconciled set: new / in_progress / done.
+_STATUS_DIM = {
+    # status_name: (status_id, status_category)
+    "To Do":    ("1",     "new"),
+    "Closed":   ("6",     "done"),
+    "Resolved": ("5",     "done"),
+    "Verified": ("10001", "done"),
+}
+_STATUS_CATEGORY_ID = {"new": 2, "in_progress": 4, "done": 3, "undefined": 1}
+
 # Per-team data_source for task-tracking rows. Support uses the
 # `zendesk-placeholder` marker — there's no real Zendesk connector in
 # the repo so this keeps the per-team distinction visible without
@@ -226,7 +242,7 @@ def seed_task_field_history(
                 due_date = (created_day + _dt.timedelta(days=rng.randint(7, 30))).isoformat()
                 # 7 synthetic_initial rows.
                 base_fields = [
-                    ("status", "Status", None, "To Do"),
+                    ("status", "Status", _STATUS_DIM["To Do"][0], "To Do"),
                     ("assignee", "Assignee", p.email, p.email),
                     ("issuetype", "Issue Type", None, issue_type),
                     ("priority", "Priority", None, priority),
@@ -260,11 +276,40 @@ def seed_task_field_history(
                             data_source=data_source, issue_id=issue_id,
                             event_at=close_at, event_kind="changelog",
                             field_id="status", field_name="Status",
-                            value_id=None, value_display=close_status,
+                            value_id=_STATUS_DIM[close_status][0],
+                            value_display=close_status,
                             author_id=p.email, seq=100,
                         ))
 
     return bulk_insert(client, "silver", "class_task_field_history", cols, rows)
+
+
+def seed_class_task_statuses(
+    client: clickhouse_connect.driver.client.Client,
+    roster: Sequence[Person],
+) -> int:
+    """Status dimension: one row per (source, status) mapping a status_id to
+    its lifecycle status_category. task_issue_current_state joins this on
+    (insight_source_id, status_id); without it status_category is NULL and
+    jira_closed_tasks (which filters status_category = 'done') is empty."""
+    truncate(client, "silver", "class_task_statuses")
+    cols = [
+        "insight_source_id", "data_source", "status_id", "status_name",
+        "category_id", "category_key", "status_category", "collected_at",
+        "unique_key", "_version",
+    ]
+    now = _dt.datetime.now(_dt.UTC).replace(tzinfo=None)
+    rows: list[tuple[object, ...]] = []
+    for p in _task_persons(roster):
+        src_id = deterministic_uuid("task.source", p.uuid)
+        data_source = _task_data_source(p.team)
+        for name, (status_id, category) in _STATUS_DIM.items():
+            rows.append((
+                src_id, data_source, status_id, name,
+                _STATUS_CATEGORY_ID[category], category, category, now,
+                deterministic_uuid("task.status", src_id, status_id), 1,
+            ))
+    return bulk_insert(client, "silver", "class_task_statuses", cols, rows)
 
 
 # Refreshable materialized views that derive from class_task_field_history.
@@ -296,6 +341,10 @@ def generate(
         "silver.class_task_worklogs":      seed_task_worklogs(client, roster, tenant_uuid, days),
         "silver.class_task_users":         seed_task_users(client, roster, tenant_uuid),
         "silver.class_task_field_history": seed_task_field_history(client, roster, tenant_uuid, days),
+        "silver.class_task_statuses":      seed_class_task_statuses(client, roster),
     }
-    refresh_dependent_mvs(client)
+    # NOTE: the refreshable MVs these rows feed (see refresh_dependent_mvs)
+    # are created by apply-ch-migrations.sh, which the orchestrator runs
+    # AFTER seeding — so the refresh is triggered by silver.run() once the
+    # migrations exist, not here. See silver.py.
     return totals

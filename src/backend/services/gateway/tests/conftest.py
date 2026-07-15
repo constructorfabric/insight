@@ -102,21 +102,48 @@ def stack():
     """Build + start the compose stack for the whole session; tear down after."""
     keys = HERE / "keys"
     keys.mkdir(exist_ok=True)
+
+    def _genpkey(out: str) -> None:
+        subprocess.run(
+            [
+                "openssl",
+                "genpkey",
+                "-algorithm",
+                "EC",
+                "-pkeyopt",
+                "ec_paramgen_curve:P-256",
+                "-pkeyopt",
+                "ec_param_enc:named_curve",
+                "-out",
+                str(keys / out),
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    # ES256 gateway signing key.
+    _genpkey("current.pem")
+    (keys / "current.pem").chmod(0o644)
+    # Service-token registry key: the baked config/insight.yaml carries a dev
+    # `testclient` entry (public_key_paths: [testclient.pub.pem], resolved
+    # against public_key_dir=/keys in the e2e compose), so the authenticator
+    # needs the public half present to build the registry and boot. This e2e
+    # does not exercise service tokens; it just satisfies that dev entry.
+    _genpkey("testclient.key.pem")
     subprocess.run(
         [
             "openssl",
-            "genpkey",
-            "-algorithm",
-            "EC",
-            "-pkeyopt",
-            "ec_paramgen_curve:P-256",
+            "pkey",
+            "-in",
+            str(keys / "testclient.key.pem"),
+            "-pubout",
             "-out",
-            str(keys / "current.pem"),
+            str(keys / "testclient.pub.pem"),
         ],
         check=True,
         capture_output=True,
     )
-    (keys / "current.pem").chmod(0o644)
+    (keys / "testclient.pub.pem").chmod(0o644)
     try:
         _compose("up", "-d", "--build", *CORE_SERVICES)
         _wait_http(f"{GW}/healthz", want={200})
@@ -125,7 +152,7 @@ def stack():
     finally:
         _compose("logs", "--no-color", check=False)
         _compose("down", "-v", "--remove-orphans", check=False)
-        for leftover in ("current.pem",):
+        for leftover in ("current.pem", "testclient.key.pem", "testclient.pub.pem"):
             (keys / leftover).unlink(missing_ok=True)
         keys.rmdir()
 

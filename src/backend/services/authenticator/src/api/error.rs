@@ -12,3 +12,8 @@ pub struct PersonError;
 /// OIDC handshake failures (state/nonce/exchange/id_token validation).
 #[resource_error("gts.cf.insight.authenticator.oidc.v1~")]
 pub struct OidcError;
+
+/// Service-token issuance failures (`POST /internal/token`): unknown/invalid
+/// client assertion, replay, or a refused tenant scope.
+#[resource_error("gts.cf.insight.authenticator.service_token.v1~")]
+pub struct ServiceTokenError;

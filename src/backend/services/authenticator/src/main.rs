@@ -29,6 +29,7 @@ mod identity;
 mod jwt;
 mod local_client;
 mod oidc;
+mod service_token;
 mod session;
 
 // System gears — linked via inventory for the REST host + auth pipeline.

@@ -8,6 +8,8 @@
 //! Every field carries the spec default, so an operator gets a holding config
 //! by touching nothing but the connection strings and OIDC client secret.
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 /// Policy for IdPs that issue no refresh token (some withhold `offline_access`).
@@ -51,6 +53,74 @@ impl Default for IdpConfig {
             refresh_safety_margin_seconds: 60,
             refresh_concurrency: 128,
             no_refresh_token_policy: NoRefreshTokenPolicy::Strict,
+        }
+    }
+}
+
+/// A service-registry entry: the public identity of one calling service
+/// (DESIGN §3.9 / DD-AUTH-05). Public keys are **not** secrets, so the whole
+/// registry lives in gitops-reviewable config: onboarding a service is a PR
+/// adding its public key; rotation ships key `n+1` alongside `n` (list both),
+/// then removes `n` in a later PR.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServiceRegistryEntry {
+    /// Inline SPKI PEM public key(s) the service signs its RFC 7523 assertions
+    /// with. Two keys are allowed at once so a rotation overlaps `previous`+
+    /// `next`. Prod/gitops uses this (public keys are not secrets, fine to
+    /// commit in a chart ConfigMap).
+    pub public_keys: Vec<String>,
+    /// Public-key PEM file path(s), resolved against `public_key_dir` when
+    /// relative. Dev/e2e uses this so no key material is committed — the
+    /// keypair is generated at bring-up (like the gateway signing key) and the
+    /// public half is mounted here. Merged with `public_keys`.
+    pub public_key_paths: Vec<String>,
+    /// Roles baked into the issued gateway JWT. `"service"` is always added by
+    /// the issuer, so an entry may leave this empty for a plain service token.
+    pub roles: Vec<String>,
+}
+
+/// Service-token issuance settings (§10 G1, §10 G4, DESIGN §3.9). The token
+/// endpoint runs on its own listener (`token_bind_addr`) so it never shares the
+/// main port with the browser/gateway surface (§11.8).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServiceTokensConfig {
+    /// Bind address of the dedicated second listener (`POST /internal/token`
+    /// + `/ready` only). Suggested 8093; must differ from the main `bind_addr`.
+    pub token_bind_addr: String,
+    /// Expected `aud` of the client assertion — the authenticator token
+    /// endpoint URL the calling service is configured with. Must be non-empty
+    /// whenever `services` is non-empty (checked in `validate`).
+    pub audience: String,
+    /// Maximum accepted assertion lifetime (`exp - iat`), in seconds. RFC 7523
+    /// assertions are single-use and short-lived; the spec caps this at 60 s.
+    pub assertion_max_lifetime_seconds: u64,
+    /// TTL of the issued gateway JWT (service tokens), in seconds. Defaults to
+    /// the same 300 s as user tokens so downstream sees one lifetime shape.
+    pub token_ttl_seconds: u64,
+    /// Extra clock-skew grace (seconds) added to the replay-guard TTL so a
+    /// still-valid assertion cannot be replayed within its own lifetime.
+    pub clock_skew_leeway_seconds: u64,
+    /// Directory that relative `public_key_paths` resolve against. Env-
+    /// overridable (like `signing_keys_path`) so dev/e2e can point it at a
+    /// generated key dir without committing paths.
+    pub public_key_dir: String,
+    /// The registry: service name -> its public identity. Empty by default;
+    /// dev/compose seed a `testclient` entry, prod ships real ones via gitops.
+    pub services: HashMap<String, ServiceRegistryEntry>,
+}
+
+impl Default for ServiceTokensConfig {
+    fn default() -> Self {
+        Self {
+            token_bind_addr: "0.0.0.0:8093".to_owned(),
+            audience: String::new(),
+            assertion_max_lifetime_seconds: 60,
+            token_ttl_seconds: 300,
+            clock_skew_leeway_seconds: 30,
+            public_key_dir: String::new(),
+            services: HashMap::new(),
         }
     }
 }
@@ -121,6 +191,9 @@ pub struct AuthenticatorConfig {
 
     /// The nested IdP settings.
     pub idp: IdpConfig,
+
+    /// Service-token issuance (§10 G1): the second listener + registry.
+    pub service_tokens: ServiceTokensConfig,
 }
 
 impl Default for AuthenticatorConfig {
@@ -151,6 +224,7 @@ impl Default for AuthenticatorConfig {
             identity_url: String::new(),
             bind_addr: "0.0.0.0:8083".to_owned(),
             idp: IdpConfig::default(),
+            service_tokens: ServiceTokensConfig::default(),
         }
     }
 }
@@ -189,6 +263,97 @@ impl AuthenticatorConfig {
         ] {
             anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
         }
+
+        // Service tokens: if any service is registered, the token endpoint must
+        // know the `aud` it expects on assertions (its own URL). A registry
+        // entry with zero public keys can never authenticate — reject it early.
+        let st = &self.service_tokens;
+        anyhow::ensure!(
+            !st.token_bind_addr.trim().is_empty(),
+            "service_tokens.token_bind_addr is required (empty)"
+        );
+        anyhow::ensure!(
+            st.token_bind_addr != self.bind_addr,
+            "service_tokens.token_bind_addr ({}) must differ from bind_addr",
+            st.token_bind_addr
+        );
+        if !st.services.is_empty() {
+            anyhow::ensure!(
+                !st.audience.trim().is_empty(),
+                "service_tokens.audience is required when services are registered"
+            );
+            anyhow::ensure!(
+                st.assertion_max_lifetime_seconds > 0,
+                "service_tokens.assertion_max_lifetime_seconds must be > 0"
+            );
+            for (name, entry) in &st.services {
+                anyhow::ensure!(
+                    !entry.public_keys.is_empty() || !entry.public_key_paths.is_empty(),
+                    "service_tokens.services.{name} has no public_keys or public_key_paths"
+                );
+            }
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// The `gears.authenticator.config` slice of the checked-in dev config —
+    /// just enough to deserialize into [`AuthenticatorConfig`].
+    #[derive(serde::Deserialize)]
+    struct Host {
+        gears: Gears,
+    }
+    #[derive(serde::Deserialize)]
+    struct Gears {
+        authenticator: GearSection,
+    }
+    #[derive(serde::Deserialize)]
+    struct GearSection {
+        config: AuthenticatorConfig,
+    }
+
+    /// The dev `config/insight.yaml` must deserialize into the config struct
+    /// (guards `deny_unknown_fields` and YAML indentation) and its registry must
+    /// build once its `public_key_paths` resolve. No key material is committed,
+    /// so the test generates a keypair into a temp `public_key_dir` (exactly
+    /// what run-e2e.sh / dev-compose.sh do at bring-up) before building. A
+    /// mistake here would otherwise only surface at container boot.
+    #[test]
+    fn dev_config_service_tokens_deserialize_and_build() {
+        use p256::SecretKey;
+        use p256::elliptic_curve::Generate as _;
+        use p256::pkcs8::{EncodePublicKey as _, LineEnding};
+
+        let raw = include_str!("../config/insight.yaml");
+        let host: Host = serde_yaml::from_str(raw).expect("dev config deserializes");
+        let mut st = host.gears.authenticator.config.service_tokens;
+
+        assert_eq!(st.token_bind_addr, "0.0.0.0:8093");
+        assert!(st.audience.contains("/internal/token"));
+        let testclient = st.services.get("testclient").expect("testclient entry");
+        assert_eq!(testclient.public_key_paths, vec!["testclient.pub.pem"]);
+        assert!(
+            testclient.public_keys.is_empty(),
+            "no key material should be committed inline in the dev config"
+        );
+
+        // Generate the referenced public key into a temp dir, as bring-up does.
+        let dir = std::env::temp_dir().join(format!("authn-svc-key-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pub_pem = SecretKey::generate()
+            .public_key()
+            .to_public_key_pem(LineEnding::LF)
+            .unwrap();
+        std::fs::write(dir.join("testclient.pub.pem"), &pub_pem).unwrap();
+        st.public_key_dir = dir.to_string_lossy().into_owned();
+
+        crate::service_token::ServiceRegistry::build(&st)
+            .expect("dev registry builds once public_key_paths resolve");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

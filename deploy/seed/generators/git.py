@@ -15,6 +15,7 @@ from generators.base import (
     bulk_insert,
     clamp,
     days_window,
+    deterministic_int,
     deterministic_uuid,
     persona_multiplier,
     poisson,
@@ -53,7 +54,7 @@ def seed_class_git_commits(
     cols = [
         "insight_tenant_id", "commit_hash", "project_key", "repo_slug",
         "tenant_id", "author_email", "date", "is_merge_commit",
-        "file_path", "lines_added", "lines_removed", "_version",
+        "file_path", "lines_added", "lines_removed", "data_source", "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -73,7 +74,7 @@ def seed_class_git_commits(
                 rows.append((
                     tenant_uuid, sha.replace("-", ""), "insight", "insight/insight",
                     tenant_uuid, p.email, d, is_merge,
-                    "src/main.rs", added, removed, version,
+                    "src/main.rs", added, removed, "insight_github", version,
                 ))
     return bulk_insert(client, "silver", "class_git_commits", cols, rows)
 
@@ -88,7 +89,7 @@ def seed_class_git_pull_requests(
     cols = [
         "insight_tenant_id", "pr_id", "author_email", "author_name",
         "state", "created_on", "merged_on", "closed_on",
-        "lines_added", "lines_removed", "_version",
+        "lines_added", "lines_removed", "tenant_id", "data_source", "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -101,7 +102,7 @@ def seed_class_git_pull_requests(
             mean = 0.8 * persona * weight * weekday_multiplier(d)
             n_prs = min(poisson(rng, mean), PRS_CAP)
             for i in range(n_prs):
-                pr_id = deterministic_uuid("git.pr", p.uuid, d.isoformat(), str(i))[:36]
+                pr_id = deterministic_int("git.pr", p.uuid, d.isoformat(), str(i))
                 created = _dt.datetime.combine(
                     d, _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59), tzinfo=_dt.UTC),
                 )
@@ -111,7 +112,9 @@ def seed_class_git_pull_requests(
                     if merged_in_h is not None
                     else None
                 )
-                state = "merged" if merged_on else "open"
+                # Uppercase to match the gold model's state filters
+                # (git_metric_observations: prs.state = 'MERGED').
+                state = "MERGED" if merged_on else "OPEN"
                 merged_naive = None if merged_on is None else merged_on.replace(tzinfo=None)
                 pr_added = float(rng.randint(20, 350))
                 pr_removed = float(rng.randint(0, 180))
@@ -120,6 +123,7 @@ def seed_class_git_pull_requests(
                     state, created.replace(tzinfo=None),
                     merged_naive, merged_naive,   # closed_on tracks merged_on for merged PRs
                     pr_added, pr_removed,
+                    tenant_uuid, "insight_github",
                     version,
                 ))
     return bulk_insert(client, "silver", "class_git_pull_requests", cols, rows)

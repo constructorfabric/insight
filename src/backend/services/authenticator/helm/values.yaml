@@ -4,12 +4,33 @@ podAnnotations: {}
 
 image:
   repository: ghcr.io/constructorfabric/insight-authenticator
-  tag: ""                  # MUST be set by the operator. No `:latest` default.
+  tag: "" # MUST be set by the operator. No `:latest` default.
   pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
   port: 8083
+  # Service-token listener (§10 G4 second listener): POST /internal/token only.
+  # Exposed as a second port on the same Service; network-scoped separately
+  # from the main port (see networkPolicy.tokenPort below).
+  tokenPort: 8093
+
+# Service tokens (§10 G1 / DD-AUTH-05). The registry holds only PUBLIC keys, so
+# it is gitops-reviewable config: onboarding a service is a PR adding its key.
+# `audience` is the token endpoint URL callers sign assertions for — typically
+# `http://<release>-authenticator.<ns>.svc:<tokenPort>/internal/token`.
+# `services` is empty by default; real entries land here via gitops. The dev
+# `testclient` lives only in the compose config, never in this chart.
+serviceTokens:
+  audience: ""
+  assertionMaxLifetimeSeconds: 60
+  tokenTtlSeconds: 300
+  # Directory that relative `public_key_paths` resolve against (leave empty to
+  # use absolute paths or inline `public_keys`).
+  publicKeyDir: ""
+  # name -> { public_keys: [<inline PEM>...] | public_key_paths: [<file>...], roles: [...] }
+  # Service tokens are always tenant-scoped; there is no per-service tenant flag.
+  services: {}
 
 resources:
   requests:
@@ -73,3 +94,14 @@ networkPolicy:
   # Optional: also require the gateway to live in a labelled namespace. Empty =
   # same-namespace pods only (the default NetworkPolicy scope).
   gatewayNamespaceSelector: {}
+
+  # Access to the token port is disabled by default; enable it in your gitops
+  # config. It restricts /internal/token to the app-namespace service pods that
+  # need service tokens. Defense-in-depth only: the endpoint still demands a
+  # valid RFC 7523 assertion regardless of network position.
+  tokenPort:
+    enabled: false
+    # Which pods may reach the token port. Empty {} = every pod in the namespace.
+    clientPodSelector: {}
+    # Optional namespace selector for cross-namespace callers.
+    clientNamespaceSelector: {}

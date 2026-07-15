@@ -12,9 +12,10 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-cd "$HERE/../../../.."   # -> src/backend
+cd "$HERE/../../.."   # -> src/backend (the cargo workspace root)
 
 AUTH_PORT=8083
+TOKEN_PORT=8093
 IDP_PORT=8084
 IDENTITY_PORT=8092
 REDIS_CT=authenticator-e2e-redis
@@ -25,12 +26,22 @@ cleanup() {
   for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null; done
   docker rm -f "$REDIS_CT" >/dev/null 2>&1
   [[ -n "${KEYS_DIR:-}" ]] && rm -rf "$KEYS_DIR"
+  [[ -n "${SVC_KEYS_DIR:-}" ]] && rm -rf "$SVC_KEYS_DIR"
 }
 trap cleanup EXIT
 
 echo "==> dev ES256 signing key"
+# ec_param_enc:named_curve: LibreSSL (macOS) otherwise emits explicit EC params
+# the authenticator's p256 loader rejects.
 KEYS_DIR="$(mktemp -d)"
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$KEYS_DIR/current.pem"
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve -out "$KEYS_DIR/current.pem"
+
+echo "==> dev service-token keypair (testclient) — generated, never committed"
+# The registry (config/insight.yaml) references public_key_paths: [testclient.pub.pem]
+# resolved against public_key_dir; the client signs assertions with the private half.
+SVC_KEYS_DIR="$(mktemp -d)"
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve -out "$SVC_KEYS_DIR/testclient.key.pem"
+openssl pkey -in "$SVC_KEYS_DIR/testclient.key.pem" -pubout -out "$SVC_KEYS_DIR/testclient.pub.pem"
 
 echo "==> Redis"
 docker rm -f "$REDIS_CT" >/dev/null 2>&1 || true
@@ -69,6 +80,7 @@ APP__gears__authenticator__config__gateway_issuer=http://localhost:8080 \
 APP__gears__authenticator__config__idp__issuer_url="http://localhost:$IDP_PORT" \
 APP__gears__authenticator__config__idp__client_id=insight-authenticator \
 APP__gears__authenticator__config__redirect_uri="http://localhost:$AUTH_PORT/auth/callback" \
+APP__gears__authenticator__config__service_tokens__public_key_dir="$SVC_KEYS_DIR" \
   ./target/release/authenticator -c services/authenticator/config/insight.yaml run \
   >/tmp/authenticator-e2e-auth.log 2>&1 &
 pids+=($!)
@@ -82,5 +94,14 @@ fi
 echo "==> run the login loop"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \
   cargo test -p authenticator --test e2e_login_loop -- --ignored --nocapture
+
+echo "==> run the service-token loop (step 06)"
+# The token listener binds 8093 (config service_tokens.token_bind_addr); the dev
+# `testclient` registry entry resolves public_key_paths against the generated
+# SVC_KEYS_DIR set above, and the client signs with the matching private key.
+AUTH_BASE="http://localhost:$AUTH_PORT" \
+  TOKEN_ENDPOINT="http://localhost:$TOKEN_PORT/internal/token" \
+  SVC_KEY="$SVC_KEYS_DIR/testclient.key.pem" \
+  cargo test -p authenticator --test e2e_service_token -- --ignored --nocapture
 
 echo "==> PASS"

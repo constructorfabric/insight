@@ -87,6 +87,12 @@ def deterministic_uuid(*parts: str) -> str:
     return f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:]}"
 
 
+def deterministic_int(*parts: str) -> int:
+    """Build a stable positive Int64 from input parts. For integer id columns."""
+    digest = hashlib.blake2b("|".join(parts).encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big") & 0x7FFFFFFFFFFFFFFF
+
+
 # ─── Insert helpers ──────────────────────────────────────────────────────
 
 

@@ -74,3 +74,19 @@ data:
       authenticator:
         config:
           signing_keys_path: {{ .Values.signingKeysPath | quote }}
+          # Service tokens (§10 G1). The registry is gitops-reviewable config
+          # (public keys are not secrets) rendered from .Values.serviceTokens.
+          service_tokens:
+            token_bind_addr: "0.0.0.0:{{ .Values.service.tokenPort }}"
+            assertion_max_lifetime_seconds: {{ .Values.serviceTokens.assertionMaxLifetimeSeconds }}
+            token_ttl_seconds: {{ .Values.serviceTokens.tokenTtlSeconds }}
+            {{- with .Values.serviceTokens.audience }}
+            audience: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.serviceTokens.publicKeyDir }}
+            public_key_dir: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.serviceTokens.services }}
+            services:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}

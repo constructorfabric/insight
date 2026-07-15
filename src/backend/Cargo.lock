@@ -300,7 +300,7 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
- "jsonwebtoken 10.4.0",
+ "jsonwebtoken",
  "openidconnect",
  "p256 0.14.0",
  "rand 0.8.6",
@@ -308,6 +308,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "time",
@@ -327,6 +328,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit-canonical-errors",
+ "jsonwebtoken",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -1029,7 +1036,7 @@ dependencies = [
  "cf-gears-toolkit-http",
  "cf-gears-toolkit-utils",
  "http",
- "jsonwebtoken 10.4.0",
+ "jsonwebtoken",
  "rand 0.10.1",
  "serde",
  "serde_json",
@@ -2143,7 +2150,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
- "jsonwebtoken 9.3.1",
+ "jsonwebtoken",
  "rand 0.8.6",
  "reqwest",
  "rsa",
@@ -3205,21 +3212,6 @@ dependencies = [
  "serde_json",
  "unicode-general-category",
  "uuid-simd",
-]
-
-[[package]]
-name = "jsonwebtoken"
-version = "9.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
-dependencies = [
- "base64 0.22.1",
- "js-sys",
- "pem",
- "ring",
- "serde",
- "serde_json",
- "simple_asn1",
 ]
 
 [[package]]

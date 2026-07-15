@@ -40,6 +40,15 @@ There is no start-date knob: the `meetings` stream reads the Zoom Dashboard API
 sync automatically backfills from `now - 150 days` (a safety margin inside that
 window); later syncs continue incrementally from saved state.
 
+The same applies to `participants`: its private `_meetings` parent cursor is
+persisted in the substream state (`incremental_dependency` + a formal
+`join_time` cursor that filters nothing), so each sync fans out one
+`/metrics/meetings/{uuid}/participants` request per meeting **newer than the
+saved cursor minus 7 days** — not per meeting of the whole 150-day window.
+This keeps the sync well inside the Zoom Dashboard-API "Heavy" quota
+(60k requests/day per account); the full fan-out is ~25k requests on a busy
+account and exhausted the quota when run repeatedly (dev-vhc, 2026-07-14).
+
 ### Automatically injected
 
 | Field | Source |

@@ -237,7 +237,7 @@ The authenticator is an idiomatic gears-rust gear built on the published `cf-gea
 | `SidIndex` | Map (OIDC issuer, OIDC sid) to local sessions | Redis SET `asm:sid_index:{iss}:{idp_sid}` |
 | `LoginState` | Per-login transient state (PKCE verifier, nonce) | Redis HASH `asm:login_state:{state}`, TTL 5 min |
 | `IdpRefreshSchedule` | Sessions due for IdP token refresh, scored by due time | Redis ZSET `asm:idp_refresh_due` |
-| `ServiceRegistryEntry` | Service name, public key(s), allowed roles, tenant-scoping permission | Gitops-reviewable config (mounted) |
+| `ServiceRegistryEntry` | Service name, public key(s) (inline or by file path), allowed roles | Gitops-reviewable config (mounted) |
 | `SigningKey` | Current + previous JWT signing keys | Mounted K8s Secret, in-process cache |
 
 Relationships:
@@ -375,7 +375,7 @@ Does not verify inbound JWTs (the host's auth pipeline does, for the admin surfa
 No-user workloads need signed identity without a secret in transit.
 
 ##### Responsibility scope
-`POST /internal/token` on the second listener: validate the RFC 7523 assertion (signature against the registry's public keys, `aud`, `exp` at most 60 s), replay-guard `jti` (`SET NX`, same pattern as `asm:logout_jti`), audit, and mint `sub = service:<name>` with registry-allowed roles and optional per-request tenant scoping.
+`POST /internal/token` on the second listener: validate the RFC 7523 assertion (signature against the registry's public keys, `aud`, `exp` at most 60 s), require a tenant scope (reject `400` if none), replay-guard `jti` (`SET NX`, same pattern as `asm:logout_jti`), audit, and mint `sub = service:<name>` with registry roles and the requested `tenants`.
 
 ##### Responsibility boundaries
 Does not manage the registry (gitops does). Does not issue user tokens.
@@ -687,14 +687,15 @@ sequenceDiagram
     participant R as Redis
 
     S->>S: sign assertion: iss=sub=service, aud=authenticator,<br/>jti, exp <= 60s (private key)
-    S->>B: POST /internal/token (assertion)
+    S->>B: POST /internal/token (assertion + tenants=[t])
     B->>B: verify signature against registry public keys
+    Note over B: reject 400 if no tenant named (tenant isolation)
     B->>R: SET jti NX (replay guard)
-    B-->>S: gateway JWT: sub=service:name, roles per registry,<br/>optional tenants:[t], TTL 300s, same key + JWKS
-    S->>S: cache, re-request before expiry
+    B-->>S: gateway JWT: sub=sid=service:name, roles per registry,<br/>tenants:[t] (required), TTL 300s, same key + JWKS
+    S->>S: cache per tenant, re-request before expiry
 ```
 
-**Description**: One verification path downstream; onboarding and rotation are gitops PRs against the registry.
+**Description**: One verification path downstream; onboarding and rotation are gitops PRs against the registry. Service tokens are always tenant-scoped (DD-AUTH-05).
 
 ### 3.7 Database schemas & tables
 
@@ -782,7 +783,11 @@ graph LR
 
 #### Key: `asm:logout_jti:{iss}:{jti}`
 
-**Type**: Redis STRING presence flag, `SET NX`. Replay guard for back-channel logout tokens. **TTL**: `(iat + max_clock_skew + grace) - now`. The same pattern guards `/internal/token` assertion `jti`s.
+**Type**: Redis STRING presence flag, `SET NX`. Replay guard for back-channel logout tokens. **TTL**: `(iat + max_clock_skew + grace) - now`. The same pattern guards `/internal/token` assertion `jti`s (next key).
+
+#### Key: `asm:svc_jti:{service}:{jti}`
+
+**Type**: Redis STRING presence flag, `SET NX EX`. One-shot replay guard for RFC 7523 service-token client assertions (DD-AUTH-05): the token issuer sets it the first time a `jti` is seen for a service and rejects any later reuse. **TTL**: the assertion's remaining lifetime plus `service_tokens.clock_skew_leeway_seconds`, so an assertion cannot be replayed within its own validity window and the key expires once it no longer could be accepted.
 
 #### Key: `asm:idp_refresh_due`
 
@@ -801,9 +806,9 @@ Technical specification of `cpt-insightspec-contract-auth-gateway-jwt` ([PRD sec
 | Claim | Type | Value |
 |---|---|---|
 | `sub` | String | Internal **person_id**; `service:<name>` for service tokens |
-| `tenants` | Array of String | All tenant memberships (1..N), resolved at login. The JWT is the only tenant **authority**; per-request **selection** is an unsigned attribute (`X-Tenant-ID` or path segment) that downstream validates against this signed set: selector missing when needed = 400; selector not in the set = 403. An unsigned header can no longer grant anything -- the worst it can do is pick among tenants the JWT already granted |
+| `tenants` | Array of String | For a user token: all tenant memberships (1..N), resolved at login. For a **service token**: the tenant(s) the caller requested -- always present, since service tokens are mandatorily tenant-scoped (DD-AUTH-05). The JWT is the only tenant **authority**; per-request **selection** is an unsigned attribute (`X-Tenant-ID` or path segment) that downstream validates against this signed set: selector missing when needed = 400; selector not in the set = 403. An unsigned header can no longer grant anything -- the worst it can do is pick among tenants the JWT already granted |
 | `roles` | Array of String | Default from config (`["user"]`); the permissions service's login-time answer later replaces the values, never the shape. Service tokens carry `["service", ...]` per the registry |
-| `sid` | String | **Stable** session id (UUIDv7) -- survives cookie rotations; one id from login to logout for tracing, audit, and the JWT/session linkage |
+| `sid` | String | **Stable** session id (UUIDv7) -- survives cookie rotations; one id from login to logout for tracing, audit, and the JWT/session linkage. **Service tokens** have no session, so `sid = service:<name>` (equal to `sub`): a non-empty, stable value that keeps the claim shape fixed (never optional) and correlates a service's issuance in audit/trace |
 | `iss` | String | Gateway host issuer URL |
 | `aud` | String | `internal-services` |
 | `iat` / `exp` | Int | `exp = iat + 60..300 s` (default TTL 300 s) |
@@ -836,6 +841,43 @@ All tunable via Helm values; defaults chosen so everything holds without touchin
 Inherited from the deleted BFF spec unchanged: `authenticator.refresh_grace_ms` (default `250`) -- the TTL applied to the superseded token mapping on rotation; plus the CSRF origin allowlist, back-channel clock-skew tolerance, layer-2 rate-limit knobs, and OIDC client settings (`issuer_url`, `client_id`, `client_secret`).
 
 The config struct mirrors this table 1:1 and deserializes from the gear's config section with `APP__gears__authenticator__config__<field>` env overrides -- the layering the toolkit host already owns (and why the dash-free gear name matters).
+
+#### Service-token settings and registry format (`service_tokens.*`)
+
+Service tokens (DD-AUTH-05) are configured under a nested `service_tokens` section. The registry holds only **public** keys -- not secrets -- so the whole section is gitops-reviewable config (a ConfigMap in the chart, the mounted YAML in compose), never a Secret. Onboarding a service is a PR adding its public key; rotation lists key `n+1` alongside `n`, then drops `n` in a later PR.
+
+| Value | Default | Meaning |
+|---|---|---|
+| `service_tokens.token_bind_addr` | `0.0.0.0:8093` | Bind address of the dedicated second listener (`POST /internal/token` + `/ready` only, §11.8). Must differ from the main `bind_addr`. |
+| `service_tokens.audience` | *(empty; required when services registered)* | Expected `aud` of the client assertion -- the authenticator token endpoint URL the caller is configured with (e.g. `http://<release>-authenticator.<ns>.svc:8093/internal/token`). |
+| `service_tokens.assertion_max_lifetime_seconds` | `60` | Cap on the assertion's `exp - iat`; RFC 7523 assertions are short-lived and single-use. |
+| `service_tokens.token_ttl_seconds` | `300` | TTL of the issued gateway JWT, matching user tokens so downstream sees one lifetime shape. |
+| `service_tokens.clock_skew_leeway_seconds` | `30` | Extra grace on assertion `exp` validation and on the replay-guard TTL. |
+| `service_tokens.public_key_dir` | *(empty)* | Directory that relative `public_key_paths` resolve against. Env-overridable so dev/e2e can point it at a generated-key dir without committing key material. |
+| `service_tokens.services` | `{}` | The registry: service name -> entry (below). |
+
+Each registry entry names the service's public key(s) either **inline** (`public_keys`, used by prod/gitops -- public keys are not secrets) or by **file** (`public_key_paths`, resolved against `public_key_dir`, used by dev/e2e so no key material is committed); the two are merged. There is **no per-service tenant flag** -- service tokens are always tenant-scoped (see DD-AUTH-05):
+
+```yaml
+service_tokens:
+  token_bind_addr: "0.0.0.0:8093"
+  audience: "http://authenticator:8093/internal/token"
+  assertion_max_lifetime_seconds: 60
+  token_ttl_seconds: 300
+  public_key_dir: "/app/keys"          # for relative public_key_paths (dev/e2e)
+  services:
+    <service-name>:
+      # one of (merged): inline PEMs, or file paths under public_key_dir
+      public_keys:            # 1..2 SPKI PEM EC public keys (two during rotation)
+        - |
+          -----BEGIN PUBLIC KEY-----
+          ...
+          -----END PUBLIC KEY-----
+      # public_key_paths: ["<service>.pub.pem"]
+      roles: ["service"]      # baked into the token; "service" is always added
+```
+
+Validation at boot: every registered entry must carry at least one key (inline or by path) -- each is parsed into a verifier, so a malformed or missing key fails the gear at boot, not on the first request -- and `audience` must be non-empty whenever `services` is non-empty, and `token_bind_addr` must differ from the main `bind_addr`. The assertion `jti` replay guard reuses the `logout_jti` `SET NX EX` pattern under `asm:svc_jti:{service}:{jti}` (see 3.7). Dev/compose seed a single `testclient` entry via `public_key_paths`; the keypair is **generated at bring-up** (like the gateway signing key) and never committed. No real registry entry ships in the chart by default.
 
 ### 3.10 Gear Anatomy
 
@@ -967,15 +1009,16 @@ Recorded here so the decisions survive the deleted tree; rationale as originally
 
 ### DD-AUTH-05: Service Tokens via RFC 7523 Assertions and a Public-Key Registry
 
-**Decision**: `POST /internal/token` accepts `private_key_jwt` assertions verified against a gitops-reviewable registry (service name, public keys, allowed roles, tenant-scoping); output is a normal gateway JWT with `sub = service:<name>`.
+**Decision**: `POST /internal/token` accepts `private_key_jwt` assertions verified against a gitops-reviewable registry (service name, public keys, roles); output is a normal gateway JWT with `sub = service:<name>`. **Service tokens are always tenant-scoped**: the request must name a tenant (`tenants=[...]`); one that names none is rejected `400 tenant_required`. There is no cross-tenant service token and no per-service tenant flag.
 
 **Why**:
 - Against static client secrets: no secret in transit, rotation is a reviewable PR shipping key n+1 alongside n.
 - Against K8s ServiceAccount projected tokens: those bind auth to k8s (compose/e2e need a parallel mechanism) and couple the authenticator to the apiserver -- a good v2 convenience layer, wrong base.
 - Against mTLS/SPIFFE: strongest story, but drags in cert infra or a mesh for a handful of services.
 - One verification path downstream; the permissions service's authenticated path to session-revoke falls out for free (its registry entry grants the revoke role).
+- **Mandatory tenant** enforces tenant isolation for machine work: every service token is scoped to the tenant it acts on, so a downstream service sees the same `tenants[]` authority contract for user and service traffic. This **supersedes NGINX_BFF.md §10 G1's "no tenants claim = cross-tenant service work"** -- where a service legitimately needs to fan out across tenants, it requests one token per tenant. Where the service gets its tenant is the service's concern.
 
-**Consequences**: Dev keypairs are checked into dev config; the flow is identical outside k8s. Assertion `jti` replay uses the existing `SET NX` pattern.
+**Consequences**: No key material is committed -- dev/e2e generate a throwaway keypair at bring-up (like the gateway signing key) and reference its public half via `public_key_paths`; the flow is identical outside k8s. Assertion `jti` replay uses the existing `SET NX` pattern. A future genuinely cross-tenant service (should one arise) would need an explicit new decision, not a silent unscoped token.
 
 ### DD-AUTH-06: Two Listeners for Two Internal Surfaces
 

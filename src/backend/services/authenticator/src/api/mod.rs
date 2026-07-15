@@ -14,15 +14,19 @@ use crate::config::AuthenticatorConfig;
 use crate::identity::PersonResolver;
 use crate::jwt::KeyStore;
 use crate::oidc::OidcClient;
+use crate::service_token::ServiceRegistry;
 use crate::session::SessionManager;
 
-/// Shared application state, attached to every route as an `Extension`.
+/// Shared application state, attached to every route as an `Extension` (main
+/// listener) and shared with the service-token listener via `Arc`.
 pub struct AppState {
     pub cfg: AuthenticatorConfig,
     pub sessions: SessionManager,
     pub keystore: Arc<KeyStore>,
     pub oidc: OidcClient,
     pub resolver: Arc<dyn PersonResolver>,
+    /// Parsed service-token registry (DD-AUTH-05); used by the token listener.
+    pub service_registry: ServiceRegistry,
 }
 
 /// Register the authenticator routes onto the host router. The `Extension`

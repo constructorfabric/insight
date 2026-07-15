@@ -16,7 +16,7 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true }
-serde_yaml = "0.9"
+serde_yaml = { workspace = true }
 url = "2.5"
 clap = { workspace = true }
 anyhow = { workspace = true }
