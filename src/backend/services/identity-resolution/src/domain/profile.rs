@@ -270,8 +270,11 @@ pub fn latest_values(observations: Vec<persons::Model>) -> HashMap<String, Strin
     latest
         .into_iter()
         .filter_map(|(k, m)| {
-            let trimmed = m.value_effective?.trim().to_owned();
-            (!trimmed.is_empty()).then_some((k, trimmed))
+            // Keep the raw value; trim is only the emptiness test. .NET does not
+            // trim (NullIfBlank / GetValueOrDefault return the value verbatim),
+            // so leading/trailing whitespace in source data must survive.
+            let value = m.value_effective?;
+            (!value.trim().is_empty()).then_some((k, value))
         })
         .collect()
 }
@@ -621,6 +624,26 @@ mod tests {
         );
         assert_eq!(profile.subordinates.len(), 1);
         assert_eq!(profile.subordinates[0].person_id, Uuid::from_u128(30));
+        Ok(())
+    }
+
+    #[test]
+    fn values_are_not_trimmed_only_dropped_when_blank() -> anyhow::Result<()> {
+        let t: DateTime = "2026-01-01T00:00:00".parse()?;
+        let profile = assemble_profile(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            vec![
+                obs("department", " Engineering ", t), // whitespace preserved
+                obs("division", "   ", t),             // blank → dropped
+            ],
+            vec![],
+            None,
+            Vec::new(),
+        );
+        // .NET returns the value verbatim (no TRIM); only blank collapses to None.
+        assert_eq!(profile.department.as_deref(), Some(" Engineering "));
+        assert_eq!(profile.division, None);
         Ok(())
     }
 }
