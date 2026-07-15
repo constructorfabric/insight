@@ -93,6 +93,11 @@ pub struct PersonResponse {
     pub parent_email: Option<String>,
     pub parent_id: Option<String>,
     pub parent_person_id: Option<Uuid>,
+    // `no_recursion`: this field makes `PersonResponse` self-referential; without
+    // it utoipa's schema generation recurses forever and overflows the stack at
+    // route registration. Affects only the OpenAPI schema (emits a `$ref`), not
+    // the serialized JSON — the response still carries the full nested tree.
+    #[schema(no_recursion)]
     pub subordinates: Vec<PersonResponse>,
 }
 
