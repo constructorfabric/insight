@@ -2,5 +2,5 @@ apiVersion: v2
 name: insight-identity
 description: Identity Resolution — .NET 9 person-lookup API over MariaDB persons table
 version: 0.1.0
-appVersion: "2026.07.15.13.32-f21a526"
+appVersion: "2026.07.15.18.21-2235ed4"
 type: application
