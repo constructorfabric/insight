@@ -51,3 +51,24 @@
         {%- endfor %}
     )
 {% endmacro %}
+
+{# One row per source row stamped with the subject to count, feeding
+   distinct-count metrics (`uniqExact(subject_key)` at query time). `value` is
+   a constant 1 so the same measure also sums to a per-group row count where a
+   ratio binds it as a denominator; `subject_key` carries the counted subject
+   (a date for active days, a tool for breadth). Callers MUST dedup the source
+   relation to one row per intended subject — this macro does not group.
+   Carries the `subject_key` column the other measure macros omit, so
+   distinct-count measures live in their own UNION branch. #}
+{% macro distinct_measure(measure_key, relation, subject_key_expr, dimensions_col) %}
+    SELECT
+        tenant_id,
+        entity_id,
+        metric_date,
+        '{{ measure_key }}' AS measure_key,
+        toNullable(toFloat64(1)) AS value,
+        toNullable(toString({{ subject_key_expr }})) AS subject_key,
+        {{ dimensions_col }} AS dimensions
+    FROM {{ relation }}
+    WHERE ({{ subject_key_expr }}) IS NOT NULL
+{% endmacro %}

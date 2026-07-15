@@ -140,7 +140,7 @@ pub(crate) fn compile_timeseries_query(
             SELECT
                 entity_id,
                 toString({bucket}) AS bucket_start{dim_select},
-                {scale} * sumIf(value, measure_key = ? AND value IS NOT NULL)
+                {scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL)
                     / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0) AS value
             FROM {observation_table}
             WHERE {metric_where}
@@ -158,6 +158,21 @@ pub(crate) fn compile_timeseries_query(
                 entity_id,
                 toString({bucket}) AS bucket_start{dim_select},
                 quantileExactIf(0.5)(value, value IS NOT NULL) AS value
+            FROM {observation_table}
+            WHERE {metric_where}
+              AND entity_id IN ({entities})
+            GROUP BY {group}
+            ORDER BY entity_id, bucket_start
+            LIMIT {limit}
+            ",
+            metric_where = metric_where(def),
+        ),
+        ComputationSpec::DistinctCount { .. } => format!(
+            r"
+            SELECT
+                entity_id,
+                toString({bucket}) AS bucket_start{dim_select},
+                toFloat64(uniqExactIf(subject_key, subject_key IS NOT NULL)) AS value
             FROM {observation_table}
             WHERE {metric_where}
               AND entity_id IN ({entities})
@@ -206,7 +221,7 @@ pub(crate) fn compile_breakdown_query(
             r"
             SELECT
                 entity_id{dim_select},
-                {scale} * sumIf(value, measure_key = ? AND value IS NOT NULL)
+                {scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL)
                     / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0) AS value
             FROM {observation_table}
             WHERE {metric_where}
@@ -223,6 +238,20 @@ pub(crate) fn compile_breakdown_query(
             SELECT
                 entity_id{dim_select},
                 quantileExactIf(0.5)(value, value IS NOT NULL) AS value
+            FROM {observation_table}
+            WHERE {metric_where}
+              AND entity_id IN ({entities})
+            GROUP BY {group}
+            ORDER BY entity_id
+            LIMIT {limit}
+            ",
+            metric_where = metric_where(def),
+        ),
+        ComputationSpec::DistinctCount { .. } => format!(
+            r"
+            SELECT
+                entity_id{dim_select},
+                toFloat64(uniqExactIf(subject_key, subject_key IS NOT NULL)) AS value
             FROM {observation_table}
             WHERE {metric_where}
               AND entity_id IN ({entities})
@@ -447,13 +476,17 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
         } => {
             // Ratio inputs share one source (enforced at definition load:
             // "ratio inputs must share one source"), so the numerator's
-            // source_key scopes both halves.
+            // source_key scopes both halves. The numerator is OrNull: a tool
+            // that reports the denominator but never the numerator measure
+            // must read NULL (unknown split), not a fabricated 0. The
+            // denominator needs no OrNull — no rows sum to 0 and nullIf
+            // already turns that into NULL.
             params.push(numerator.source_key.clone());
             params.push(numerator.measure_key.clone());
             params.push(numerator.source_key.clone());
             params.push(denominator.measure_key.clone());
             format!(
-                "{scale} * sumIf(value, source_key = ? AND measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, source_key = ? AND measure_key = ? AND value IS NOT NULL), 0)"
+                "{scale} * sumIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, source_key = ? AND measure_key = ? AND value IS NOT NULL), 0)"
             )
         }
         ComputationSpec::Median { value } => {
@@ -463,6 +496,20 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             params.push(value.source_key.clone());
             params.push(value.measure_key.clone());
             "quantileExactIfOrNull(0.5)(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
+                .to_owned()
+        }
+        ComputationSpec::DistinctCount { value } => {
+            // OrNull like sum: an entity present via another measure but with
+            // no rows for this one comes back NULL, not 0, so it never enters
+            // a peer pool as a fabricated observation. The builder zero-fills
+            // distinct counts (0 distinct subjects is a genuine zero) exactly
+            // as it does sums. Counts distinct `subject_key`, not `value`.
+            params.push(value.source_key.clone());
+            params.push(value.measure_key.clone());
+            // toFloat64 so the wide column is Float64, not a JSON-quoted
+            // UInt64 (uniqExact's native type) the f64 row decoder rejects.
+            // OrNull is preserved through the cast (NULL stays NULL).
+            "toFloat64(uniqExactIfOrNull(subject_key, source_key = ? AND measure_key = ? AND subject_key IS NOT NULL))"
                 .to_owned()
         }
     }
@@ -490,7 +537,9 @@ fn shared_observation_where(
 fn measure_pairs(defs: &[&MetricDefinition]) -> BTreeSet<(String, String)> {
     defs.iter()
         .flat_map(|def| match &def.spec {
-            ComputationSpec::Sum { value } | ComputationSpec::Median { value } => {
+            ComputationSpec::Sum { value }
+            | ComputationSpec::Median { value }
+            | ComputationSpec::DistinctCount { value } => {
                 vec![(value.source_key.clone(), value.measure_key.clone())]
             }
             ComputationSpec::Ratio {
@@ -523,7 +572,9 @@ fn batch_observation_table(defs: &[&MetricDefinition]) -> String {
 // place once the platform defines that mapping.
 fn metric_where(def: &MetricDefinition) -> &'static str {
     match &def.spec {
-        ComputationSpec::Sum { .. } | ComputationSpec::Median { .. } => {
+        ComputationSpec::Sum { .. }
+        | ComputationSpec::Median { .. }
+        | ComputationSpec::DistinctCount { .. } => {
             "source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key = ?"
         }
         ComputationSpec::Ratio { .. } => {
@@ -534,7 +585,9 @@ fn metric_where(def: &MetricDefinition) -> &'static str {
 
 fn metric_params(def: &MetricDefinition, req: &ValidatedMetricResultsRequest) -> Vec<String> {
     match &def.spec {
-        ComputationSpec::Sum { value } | ComputationSpec::Median { value } => vec![
+        ComputationSpec::Sum { value }
+        | ComputationSpec::Median { value }
+        | ComputationSpec::DistinctCount { value } => vec![
             value.source_key.clone(),
             req.entity_type.clone(),
             req.from.to_string(),
@@ -693,6 +746,15 @@ mod tests {
             base: base(vec!["source"]),
             spec: ComputationSpec::Median {
                 value: input(MetricInputRole::Value, "pr_cycle_hours"),
+            },
+        }
+    }
+
+    fn distinct_count_metric() -> MetricDefinition {
+        MetricDefinition {
+            base: base(vec!["tool"]),
+            spec: ComputationSpec::DistinctCount {
+                value: input(MetricInputRole::Value, "active_day"),
             },
         }
     }
@@ -941,10 +1003,15 @@ mod tests {
         // interleaves a median column (2 params) between sum (2) and ratio
         // (4) — the real git batch shape — so a per-computation param/`?`
         // desync surfaces here, not just in single-computation batches.
-        let (sum, median, ratio) = (sum_metric(), median_metric(), ratio_metric());
+        let (sum, median, ratio, distinct) = (
+            sum_metric(),
+            median_metric(),
+            ratio_metric(),
+            distinct_count_metric(),
+        );
         for query in [
-            compile_period_batch_query(&[&sum, &median, &ratio], &request()),
-            compile_peer_batch_query(&[&sum, &median, &ratio], &request(), "org_unit"),
+            compile_period_batch_query(&[&sum, &median, &ratio, &distinct], &request()),
+            compile_peer_batch_query(&[&sum, &median, &ratio, &distinct], &request(), "org_unit"),
         ] {
             assert_eq!(query.sql.matches('?').count(), query.params.len());
         }
@@ -982,6 +1049,66 @@ mod tests {
         assert!(
             bd.sql
                 .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
+        );
+    }
+
+    #[test]
+    fn distinct_count_batches_as_a_uniq_ornull_column() {
+        // A distinct-count metric joins the period/peer batch as one wide
+        // column counting distinct subject_key. OrNull so an entity present
+        // via another measure but with no rows here comes back NULL, not 0 —
+        // the builder zero-fills distinct counts like sums. Lockstep holds.
+        for query in [
+            compile_period_batch_query(&[&distinct_count_metric()], &request()),
+            compile_peer_batch_query(&[&distinct_count_metric()], &request(), "org_unit"),
+        ] {
+            assert!(
+                query
+                    .sql
+                    .contains("uniqExactIfOrNull(subject_key, source_key = ? AND measure_key = ?"),
+                "distinct count must batch as an OrNull uniqExact column over subject_key"
+            );
+            assert_eq!(query.sql.matches('?').count(), query.params.len());
+        }
+    }
+
+    #[test]
+    fn ratio_numerator_never_fabricates_zero() {
+        // A tool that reports the denominator measure but never the numerator
+        // (e.g. a chat source with totals but no DM split) must read NULL,
+        // not 0%: the numerator aggregates OrNull in every query shape, while
+        // the denominator relies on nullIf alone.
+        let batched = compile_period_batch_query(&[&ratio_metric()], &request());
+        let ts = compile_timeseries_query(&ratio_metric(), &request(), Bucket::Week, &[]);
+        let bd = compile_breakdown_query(&ratio_metric(), &request(), &["tool".to_owned()]);
+        assert!(
+            batched
+                .sql
+                .contains("100 * sumIfOrNull(value, source_key = ?")
+        );
+        for query in [&ts, &bd] {
+            assert!(
+                query
+                    .sql
+                    .contains("100 * sumIfOrNull(value, measure_key = ?")
+            );
+            assert!(query.sql.contains("nullIf(sumIf(value, measure_key = ?"));
+        }
+    }
+
+    #[test]
+    fn distinct_count_single_views_count_distinct_subject_key() {
+        let ts = compile_timeseries_query(&distinct_count_metric(), &request(), Bucket::Week, &[]);
+        assert!(
+            ts.sql
+                .contains("uniqExactIf(subject_key, subject_key IS NOT NULL)")
+        );
+        assert!(ts.sql.contains("GROUP BY entity_id, bucket_start"));
+        let bd =
+            compile_breakdown_query(&distinct_count_metric(), &request(), &["tool".to_owned()]);
+        assert!(
+            bd.sql
+                .contains("uniqExactIf(subject_key, subject_key IS NOT NULL)")
         );
     }
 

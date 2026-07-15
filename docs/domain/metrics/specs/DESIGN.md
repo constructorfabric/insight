@@ -46,7 +46,8 @@ Rules:
 - `measure_key` identifies the source measure.
 - `entity_type` and `entity_id` identify the measured entity.
 - `observed_at` is reserved for future point-in-time semantics.
-- `subject_key` is reserved for future distinct-count semantics.
+- `subject_key` carries the counted subject for distinct-count measures (a
+  date, a tool) and is NULL on every other measure's rows.
 - A row is emitted only when the source provides a value; `value` is never
   NULL (the column stays nullable in the contract).
 - Dimension values and labels come from class-contract columns declared by
@@ -97,6 +98,7 @@ The computation vocabulary is closed and fully executable:
 sum
 ratio
 median
+distinct_count
 ```
 
 Semantics:
@@ -108,6 +110,13 @@ Semantics:
   `event_measure` shape macro; multiple rows per (entity, day, measure) are
   the intended grain. A median over no rows is NULL — medians are never
   zero-filled.
+- `distinct_count`: exact count of distinct `subject_key` values
+  (`uniqExact`) over the entity's observations — distinct active dates,
+  distinct tools. No `scale`. Distinct-count measures emit one row per
+  subject via the `distinct_measure` shape macro, stamping the subject on
+  `subject_key`; `value` carries a constant 1 so the same measure can also
+  serve as a sum-computation row count (e.g. a ratio denominator). Zero
+  distinct subjects is a genuine zero — distinct counts zero-fill like sums.
 
 Ratios use:
 
@@ -115,23 +124,28 @@ Ratios use:
 sum(numerator) / nullIf(sum(denominator), 0) * scale
 ```
 
-They are not averages of row-level ratios.
+They are not averages of row-level ratios. A ratio whose numerator measure
+has no rows at all is NULL, not zero: a source that reports the denominator
+but never the numerator (a chat tool with totals but no message-type split)
+has not measured the split, and rendering it as 0% would fabricate an
+observation.
 
 Ratio numerator and denominator inputs must resolve to measures of the same
 source. Cross-source ratios are a configuration error.
 
 Row granularity is a property of the measure's shape macro: `sum_measure`
 and `presence_measure` emit day-aggregated rows; `event_measure` emits one
-row per source event for median inputs. Binding an event-grain measure to a
-`sum` metric (or vice versa) is a configuration error in the registry
-review, not detectable at runtime.
+row per source event for median inputs; `distinct_measure` emits one row
+per counted subject for distinct-count inputs. Binding a measure to a
+computation whose grain it does not carry is a configuration error in the
+registry review, not detectable at runtime.
 
-Extending the vocabulary (anticipated kinds: count-distinct over
-`subject_key`, further distribution statistics, point-in-time gauges over
-`observed_at`, derived expressions over other metrics) is one coordinated
-change: a `ComputationSpec` variant, a compiler arm, the `computation_type`
-DB enum, a shape macro if the observation shape is new, and the response
-`computation` tag. Nothing is stored before it executes.
+Extending the vocabulary (anticipated kinds: further distribution
+statistics, point-in-time gauges over `observed_at`, derived expressions
+over other metrics) is one coordinated change: a `ComputationSpec` variant,
+a compiler arm, the `computation_type` DB enum, a shape macro if the
+observation shape is new, and the response `computation` tag. Nothing is
+stored before it executes.
 
 ## Storage Model
 
@@ -173,6 +187,17 @@ is_enabled
 schema_status
 schema_error_code
 ```
+
+`unit` is a display suffix for formats that do not fully determine
+presentation on their own (e.g. `"lines"`, `"days"`, `"h"`). `percent` and
+`currency` are presentation-complete — the frontend renders `%` or a
+currency symbol from `format` alone and never consults `unit` for these two
+formats — so `unit` must be `None` for any metric with one of those two
+formats. Pinned by a builtin registry test
+(`presentation_complete_formats_carry_no_unit`); a future format-as-union
+refactor (folding unit into format-specific variants) would make this
+invalid by construction, but is not warranted while the registry test
+enforces it and only builtins populate the table.
 
 `metric_definition_inputs` maps input roles to source measures:
 
@@ -307,6 +332,19 @@ Execution rules:
   data never measured. A source for which covered-but-inactive genuinely
   means zero can emit explicit zero observations — the coverage knowledge
   lives in the connector, not the runtime.
+- Peer measurability is therefore an emission decision each gold view makes
+  per measure, and it has exactly two defensible gates. Value-gated
+  emission (a row whenever the source reports the person, zeros included)
+  puts measured zeros in peer pools — right when zero is a behavioral
+  outcome of an engaged person (a quiet email week, a calendar with
+  meetings every day). Engagement-gated emission (rows only on deliberate
+  activity) keeps pools to engaged users — right when zero means
+  non-engagement (rostered but absent accounts), which would otherwise drag
+  medians toward zero and rank people who are not participating. Activity
+  metrics (active days, distinct tools) are engagement-gated; volume and
+  outcome metrics are value-gated. Changing a measure's gate re-ranks every
+  peer standing on that metric: it must be an explicit decision, never a
+  side effect of a connector reshaping what it emits.
 - Target entities missing cohort membership are omitted from peer values.
 - Target entities without observed values get a null `target_value`.
 - Null values are excluded from peer percentiles and `n`.

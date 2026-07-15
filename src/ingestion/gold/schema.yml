@@ -159,6 +159,100 @@ models:
           measures) carries the source-agnostic file classification computed
           by the shared gold macro.
 
+  - name: collab_metric_observations
+    description: >
+      Source measure observations for the unified metrics runtime,
+      collaboration family. Day-grain sum and presence measures emit one row
+      per (tenant, entity, day, measure, dimension tuple). Distinct-count
+      measures (active_day, active_modality) stamp the counted subject on
+      subject_key and emit one row per (entity, day, subject); the runtime
+      aggregates them with uniqExact(subject_key). The column set is the same
+      published contract the analytics service schema validator probes
+      (`OBSERVATION_COLUMNS`); changing it requires a coordinated backend
+      change.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['collab']
+      - name: entity_type
+        description: "Measured entity type"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['person']
+      - name: entity_id
+        description: >
+          Normalized entity identifier: the class person_key (lowercased
+          email, falling back to lowercased user id where a source has no
+          email). Rows with an empty person_key are excluded upstream.
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Observation date (activity date per source)."
+        tests:
+          - not_null
+      - name: observed_at
+        description: >
+          Intra-day observation timestamp for future point-in-time
+          semantics. NULL for all collaboration measures.
+      - name: measure_key
+        description: "Source measure key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - total_chat_messages
+                  - channel_posts
+                  - direct_and_group_messages
+                  - emails_sent
+                  - emails_received
+                  - emails_read
+                  - files_engaged
+                  - files_shared_internal
+                  - files_shared_external
+                  - files_shared
+                  - meeting_hours
+                  - meetings_attended
+                  - meetings_organized
+                  - adhoc_meetings_attended
+                  - scheduled_meetings_attended
+                  - focus_hours
+                  - working_hours
+                  - chat_active_day
+                  - meeting_free_day
+                  - active_day
+                  - active_modality
+      - name: value
+        description: >
+          Measure value. Rows are emitted only when the source provides a
+          value, so value is never NULL; the column stays Nullable(Float64)
+          in the published contract. Distinct-count measures carry a constant
+          1 here and the counted subject on subject_key.
+        tests:
+          - not_null
+      - name: subject_key
+        description: >
+          Distinct-count subject: the date for active_day, the modality for
+          active_modality. NULL for sum and presence measures.
+      - name: dimensions
+        description: >
+          Array(Tuple(key, value, label)). `tool` carries the collaboration
+          tool discriminator (data_source with the insight_ prefix stripped)
+          with static product labels; `scope` (files_shared only) carries the
+          recipient scope (internal/external). Empty for whole-person
+          measures (focus_hours, working_hours, meeting_free_day,
+          active_modality).
+
   - name: metric_entity_cohorts_current
     description: >
       Current cohort membership per entity for peer comparison. One row per

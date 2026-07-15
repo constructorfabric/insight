@@ -454,6 +454,9 @@ fn build_definition(
         MetricComputation::Median => ComputationSpec::Median {
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
         },
+        MetricComputation::DistinctCount => ComputationSpec::DistinctCount {
+            value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+        },
     };
 
     Ok(MetricDefinition { base, spec })

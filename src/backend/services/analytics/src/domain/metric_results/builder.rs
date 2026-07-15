@@ -222,6 +222,7 @@ pub fn build_metric_result(
         ComputationSpec::Sum { .. } => ComputationDto::Sum,
         ComputationSpec::Ratio { scale, .. } => ComputationDto::Ratio { scale: *scale },
         ComputationSpec::Median { .. } => ComputationDto::Median,
+        ComputationSpec::DistinctCount { .. } => ComputationDto::DistinctCount,
     };
     MetricResultDto {
         metric_key: def.base.key.clone(),
@@ -362,6 +363,15 @@ mod tests {
         }
     }
 
+    fn distinct_count_metric() -> MetricDefinition {
+        MetricDefinition {
+            base: base(),
+            spec: ComputationSpec::DistinctCount {
+                value: input(MetricInputRole::Value, "active_day"),
+            },
+        }
+    }
+
     fn histogram_row(
         entity_id: &str,
         bin_idx: u32,
@@ -432,6 +442,18 @@ mod tests {
             panic!("expected period view");
         };
         assert_eq!(values[0].value, None);
+    }
+
+    #[test]
+    fn period_view_zero_fills_distinct_count() {
+        // Zero distinct subjects is a genuine zero, like a sum of nothing.
+        let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-31");
+        let MetricResultViewDto::Period { values } =
+            build_period_view(&distinct_count_metric(), &req, Vec::new())
+        else {
+            panic!("expected period view");
+        };
+        assert_eq!(values[0].value, Some(0.0));
     }
 
     #[test]
@@ -599,6 +621,11 @@ mod tests {
         let median_json = serde_json::to_value(&median).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(median_json["computation"], "median");
         assert!(median_json.get("scale").is_none());
+
+        let distinct = build_metric_result(&distinct_count_metric(), Vec::new());
+        let distinct_json = serde_json::to_value(&distinct).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(distinct_json["computation"], "distinct_count");
+        assert!(distinct_json.get("scale").is_none());
     }
 
     #[test]
