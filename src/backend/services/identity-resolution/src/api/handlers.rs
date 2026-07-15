@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::Extension;
+use axum::extract::{Extension, Path};
 use axum::response::IntoResponse;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use super::AppState;
 use super::canonical_json::CanonicalJson;
-use super::error::ProfileError;
+use super::error::{PersonError, ProfileError};
 use crate::domain::profile::{
     ParentProjection, PersonResponse, ResolveProfileCommand, assemble_person, assemble_profile,
     latest_values,
@@ -72,6 +72,49 @@ pub async fn resolve_profile(
             .with_reason("AMBIGUOUS_PROFILE")
             .create()),
     }
+}
+
+/// `GET /v1/persons/{email}` — deprecated person lookup (successor:
+/// `POST /v1/profiles`). Resolves the email to a single person and returns the
+/// org tree as a `PersonResponse`. Emits RFC 8594 deprecation headers.
+///
+/// Like `POST /v1/profiles`, this does not yet enforce the caller gate or the
+/// visibility check the .NET endpoint applies (deferred — see the PR's open
+/// questions #3 / visibility subsystem).
+pub async fn get_person_by_email(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Path(email): Path<String>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    let tenant = ctx.subject_tenant_id();
+
+    let person_id = persons_repo::resolve_person_id_by_email(&state.db, tenant, &email)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "resolve person id by email failed");
+            CanonicalError::internal("person lookup failed").create()
+        })?
+        .ok_or_else(|| {
+            PersonError::not_found("person not found")
+                .with_resource(email.clone())
+                .create()
+        })?;
+
+    let mut visited = HashSet::new();
+    let person = hydrate_person(&state, tenant, person_id, 0, &mut visited)
+        .await?
+        .ok_or_else(|| {
+            PersonError::not_found("person not found")
+                .with_resource(email)
+                .create()
+        })?;
+
+    // RFC 8594: point callers at the successor endpoint on every success.
+    let headers = [
+        ("deprecation", "true"),
+        ("link", "</v1/profiles>; rel=\"successor-version\""),
+    ];
+    Ok((headers, Json(person)))
 }
 
 /// Validate the request and resolve it to candidate `person_id`s.
@@ -241,7 +284,7 @@ fn hydrate_children<'a>(
     visited: &'a mut HashSet<Uuid>,
 ) -> Pin<Box<dyn Future<Output = Result<Vec<PersonResponse>, CanonicalError>> + Send + 'a>> {
     Box::pin(async move {
-        if depth >= state.config.max_depth {
+        if !state.config.expand_subordinates || depth >= state.config.max_depth {
             return Ok(Vec::new());
         }
         let source_type = &state.config.org_chart_source_type;

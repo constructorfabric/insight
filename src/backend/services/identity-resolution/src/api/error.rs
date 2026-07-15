@@ -8,3 +8,6 @@ use toolkit_canonical_errors::resource_error;
 
 #[resource_error("gts.cf.insight.identity_resolution.profile.v1~")]
 pub struct ProfileError;
+
+#[resource_error("gts.cf.insight.identity_resolution.person.v1~")]
+pub struct PersonError;

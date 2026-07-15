@@ -121,6 +121,7 @@ pub struct ParentProjection {
 // Marker traits the toolkit `OperationBuilder` requires (alongside `ToSchema`).
 impl toolkit::api::api_dto::RequestApiDto for ResolveProfileCommand {}
 impl toolkit::api::api_dto::ResponseApiDto for ProfileResponse {}
+impl toolkit::api::api_dto::ResponseApiDto for PersonResponse {}
 
 /// Collapse a person's observations to the current value per attribute — the
 /// latest by `created_at` (per the .NET `ProfileAssembler`, ADR-0003) — and map

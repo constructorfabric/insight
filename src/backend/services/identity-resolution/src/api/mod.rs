@@ -46,7 +46,7 @@ pub fn register_routes(
 /// Declare each operation via the toolkit `OperationBuilder` (records the route
 /// + its OpenAPI spec + auth/error metadata).
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
-    OperationBuilder::post("/v1/profiles")
+    let router = OperationBuilder::post("/v1/profiles")
         .operation_id("identity_resolution.profiles.resolve")
         .summary("Resolve a profile by email or source-native id")
         .authenticated()
@@ -59,5 +59,21 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(handlers::resolve_profile)
+        .register(router, openapi);
+
+    // Deprecated: successor is POST /v1/profiles. Kept for existing callers
+    // (authenticator, analytics) until they migrate; emits RFC 8594 headers.
+    OperationBuilder::get("/v1/persons/{email}")
+        .operation_id("identity_resolution.persons.get")
+        .summary("Resolve a person by email (deprecated; use POST /v1/profiles)")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<profile::PersonResponse>(
+            openapi,
+            StatusCode::OK,
+            "Resolved person",
+        )
+        .standard_errors(openapi)
+        .handler(handlers::get_person_by_email)
         .register(router, openapi)
 }
