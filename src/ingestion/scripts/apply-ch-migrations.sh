@@ -142,6 +142,25 @@ heal_crm_table silver class_crm_contacts
 heal_crm_table silver class_crm_deals
 heal_crm_table silver class_crm_users
 
+# Same positional invariant: the task-users staging views gained tenant_id
+# mid-SELECT (after unique_key) for the task observation attribution, and
+# class_task_users inherits its column order from that union. Pre-existing
+# tables lack the column; existing rows heal to NULL tenant and converge on
+# the next sync (bronze jira_user is full_refresh + overwrite, so every row
+# re-emits with a fresh _version). Staging needs no heal — both members are
+# views, recreated on every run.
+heal_task_users_table() {
+  local db="$1" table="$2"
+  ch_table_is_real "$db" "$table" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key;
+ALTER TABLE ${db}.${table} MODIFY COLUMN tenant_id Nullable(String) AFTER unique_key;
+SQL
+}
+
+heal_task_users_table silver class_task_users
+
 echo "=== Building gold models (dbt run --select tag:gold) ==="
 # Gold views are dbt-owned but must exist at DEPLOY time, not first-sync
 # time: the analytics service marks metric definitions schema-error while
