@@ -11,11 +11,11 @@ This directory contains **user-editable** configuration files.
 
 ## Directories
 
-- `kits/{slug}/blueprints/` — editable copies of kit blueprints.
-  Modify these to customize generated artifacts, then run `cfs generate-resources`.
+- `kits/{slug}/` — kit files (SKILL.md, AGENTS.md, artifacts/, codebase/, workflows/, scripts/).
+  These are updated via `cfs update` or `cfs kit update`.
 
 ## Tips
 
 - `AGENTS.md` and `SKILL.md` start empty. Add any project-specific rules or
-  skill instructions here — they will be picked up alongside the generated ones.
-- Changes to blueprints take effect after running `cfs generate-resources`.
+  skill instructions here — they will be picked up alongside the kit ones.
+- Kit files can be edited directly; `cfs kit update` shows a diff for changes.

@@ -107,7 +107,6 @@ coverage-raw/
 .agents/skills/cf-write-docs/SKILL.md
 .agents/skills/cf-write-skills/SKILL.md
 .agents/skills/cf/SKILL.md
-.agents/skills/cypilot/SKILL.md
 .claude/agents/cf-analyze-planner.md
 .claude/agents/cf-brainstorm-expert.md
 .claude/agents/cf-brainstorm-facilitator.md
@@ -176,7 +175,6 @@ coverage-raw/
 .claude/skills/cf-sdlc-pr-review/SKILL.md
 .claude/skills/cf-sdlc-pr-status/SKILL.md
 .claude/skills/cf-sdlc-reverse-engineer/SKILL.md
-.claude/skills/cf-sdlc-sdlc/SKILL.md
 .claude/skills/cf-studio/SKILL.md
 .claude/skills/cf-workspace/SKILL.md
 .claude/skills/cf-write-docs/SKILL.md
