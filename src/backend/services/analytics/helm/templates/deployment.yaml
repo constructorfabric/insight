@@ -48,10 +48,20 @@ spec:
               mountPath: /app/config/analytics.yaml
               subPath: analytics.yaml
               readOnly: true
+            {{- if .Values.gateway.caCertSecret }}
+            # Discovery-issuer CA for the oidc-authn-plugin's https JWKS fetch.
+            - name: authn-ca
+              mountPath: /etc/insight/authn-ca
+              readOnly: true
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+          # Gateway-JWT verification (NGINX_BFF R1): the plugin's verification
+          # config is nested/list-shaped and rendered into the ConfigMap from
+          # `.Values.gateway.*` (issuer / discoveryUrl / audience / caCertPaths),
+          # so there are no APP__ env overrides for it here.
           envFrom:
             # Operator MUST pre-create this Secret (umbrella does it
             # automatically as `insight-analytics-config`). Provides the
@@ -90,3 +100,11 @@ spec:
         - name: analytics-config
           configMap:
             name: {{ include "insight-analytics.fullname" . }}-gears-config
+        {{- if .Values.gateway.caCertSecret }}
+        - name: authn-ca
+          secret:
+            secretName: {{ .Values.gateway.caCertSecret | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}

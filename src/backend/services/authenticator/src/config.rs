@@ -161,7 +161,9 @@ pub struct AuthenticatorConfig {
     // ── OIDC handshake ───────────────────────────────────────────────────
     /// The registered redirect URI for the code flow (`{public}/auth/callback`).
     pub redirect_uri: String,
-    /// Requested OIDC scopes.
+    /// Requested OIDC scopes. Accepts a YAML list or a space/comma-delimited
+    /// string, so a single env override (`APP__…__oidc_scopes`) can set it.
+    #[serde(deserialize_with = "de_scopes")]
     pub oidc_scopes: Vec<String>,
     /// Where to send the browser after a successful login when the request
     /// named no (or an unsafe) `return_to`. A site-relative path.
@@ -196,6 +198,26 @@ pub struct AuthenticatorConfig {
     pub service_tokens: ServiceTokensConfig,
 }
 
+/// Deserialize `oidc_scopes` from either a YAML list (`["openid","email"]`) or a
+/// space/comma-delimited string (`"openid email offline_access"`), so it round-trips
+/// through a single env var (`APP__…__oidc_scopes`) — env layers can't express a list.
+fn de_scopes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ListOrStr {
+        List(Vec<String>),
+        Str(String),
+    }
+    Ok(match ListOrStr::deserialize(d)? {
+        ListOrStr::List(v) => v,
+        ListOrStr::Str(s) => s
+            .split([' ', ','])
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    })
+}
+
 impl Default for AuthenticatorConfig {
     fn default() -> Self {
         Self {
@@ -211,11 +233,12 @@ impl Default for AuthenticatorConfig {
             gateway_issuer: String::new(),
             jwt_audience: "internal-services".to_owned(),
             redirect_uri: String::new(),
+            // offline_access omitted: survives-logout token, wrong for a BFF.
+            // Add via oidc_scopes for an IdP that needs it (Entra); see insight.yaml.
             oidc_scopes: vec![
                 "openid".to_owned(),
                 "email".to_owned(),
                 "profile".to_owned(),
-                "offline_access".to_owned(),
             ],
             default_return_to: "/".to_owned(),
             csrf_origins: Vec::new(),

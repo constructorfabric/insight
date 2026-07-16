@@ -40,10 +40,6 @@ from pathlib import Path
 
 import yaml
 
-# The tenant header the API requires (mirrors lib.config.TENANT_HEADER). Any
-# non-nil tenant resolves the middleware; the catalog rows are tenant-NULL
-# (global), so `get_metrics` returns them for any resolved tenant.
-TENANT_HEADER = "X-Insight-Tenant-Id"
 DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 # lib/metric_coverage.py -> lib/ -> e2e/
@@ -114,8 +110,7 @@ def resolve_skips(universe: dict[str, str]) -> tuple[dict[str, str], set[str]]:
             raise ValueError(f"duplicate metric_key in SKIP_LIST: {key}")
         if _vector(key) in SKIP_TABLES:
             raise ValueError(
-                f"SKIP_LIST key {key} is already covered by SKIP_TABLES[{_vector(key)!r}] — "
-                f"drop the per-key entry."
+                f"SKIP_LIST key {key} is already covered by SKIP_TABLES[{_vector(key)!r}] — drop the per-key entry."
             )
         explicit[key] = reason
     resolved = dict(explicit)
@@ -134,17 +129,19 @@ def _universe_from_body(body: object) -> dict[str, str]:
     return {str(m["metric_key"]): str(m.get("label", "")) for m in metrics}
 
 
-def universe_from_url(base_url: str, tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, str]:
+def universe_from_url(base_url: str, bearer: str | None = None) -> dict[str, str]:
     """`{metric_key: label}` from `POST {base_url}/v1/catalog/get_metrics` — the
     enabled product metric_keys (dotted `<table>.<column>`).
 
-    Sourced from the API (not a raw `metric_catalog` SELECT) so the gate checks
-    the contract consumers see; the endpoint already returns exactly the enabled
-    catalog rows.
+    Dev-only fallback (the CI gate reads the collected artifact via
+    `universe_from_file`). Analytics is auth-enabled, so a live read needs a
+    signed gateway JWT (`ANALYTICS_BEARER`); the catalog rows are tenant-NULL
+    (global) so any valid token's tenant sees them.
     """
     import httpx  # local import: keeps the pure logic importable without httpx
 
-    with httpx.Client(base_url=base_url, timeout=30.0, headers={TENANT_HEADER: tenant_id}) as c:
+    headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
+    with httpx.Client(base_url=base_url, timeout=30.0, headers=headers) as c:
         resp = c.post("/v1/catalog/get_metrics", json={})
         resp.raise_for_status()
         body = resp.json()
@@ -236,11 +233,7 @@ class CoverageReport:
     @property
     def passed(self) -> bool:
         return not (
-            self.uncovered
-            or self.redundant_skips
-            or self.stale_skips
-            or self.stale_tables
-            or self.unknown_asserted
+            self.uncovered or self.redundant_skips or self.stale_skips or self.stale_tables or self.unknown_asserted
         )
 
     def files_for(self, full_key: str) -> set[str]:
@@ -252,10 +245,7 @@ def build_report(universe: dict[str, str], metrics_dir: Path = METRICS_DIR) -> C
     metric_keys the API serves); asserted + skips are local to the rig."""
     resolved, explicit = resolve_skips(universe)
     return CoverageReport(
-        universe=universe,
-        asserted=asserted_keys_from_tests(metrics_dir),
-        skips=resolved,
-        explicit_skips=explicit,
+        universe=universe, asserted=asserted_keys_from_tests(metrics_dir), skips=resolved, explicit_skips=explicit
     )
 
 
@@ -270,14 +260,10 @@ def gate_violations(r: CoverageReport) -> list[str]:
         )
     for k in sorted(r.redundant_skips):
         files = ", ".join(sorted(r.files_for(k)))
-        out.append(
-            f"FAIL `{k}` — skip-listed but now value-tested by [{files}]. Remove its entry "
-            f"from {_WHERE}."
-        )
+        out.append(f"FAIL `{k}` — skip-listed but now value-tested by [{files}]. Remove its entry from {_WHERE}.")
     for k in sorted(r.stale_skips):
         out.append(
-            f"FAIL `{k}` — skip-listed but no longer a catalog metric_key (removed/renamed). "
-            f"Remove it from {_WHERE}."
+            f"FAIL `{k}` — skip-listed but no longer a catalog metric_key (removed/renamed). Remove it from {_WHERE}."
         )
     for t in sorted(r.stale_tables):
         out.append(
@@ -342,9 +328,7 @@ def _skips_by_reason(r: CoverageReport) -> list[tuple[str, int]]:
 def render_markdown(r: CoverageReport) -> str:
     """Markdown report: a per-vector summary + the reachable backlog up top, then
     the full per-key detail (collapsed), then a skip-list-hygiene footer."""
-    cov, skp, tot, miss = (
-        len(r.covered), len(r.skipped_active), len(r.universe), len(r.uncovered),
-    )
+    cov, skp, tot, miss = (len(r.covered), len(r.skipped_active), len(r.universe), len(r.uncovered))
     out = [
         "# Metric coverage — by metric_key",
         "",
@@ -355,9 +339,13 @@ def render_markdown(r: CoverageReport) -> str:
 
     # ── Per-vector summary ───────────────────────────────────────────────────
     tables = _by_table(r.universe)
-    out += ["", "## Coverage by vector", "",
-            "| vector | tested | skipped | missing | coverage |",
-            "|---|--:|--:|--:|--:|"]
+    out += [
+        "",
+        "## Coverage by vector",
+        "",
+        "| vector | tested | skipped | missing | coverage |",
+        "|---|--:|--:|--:|--:|",
+    ]
     for t in sorted(tables, key=lambda x: (-sum(1 for k in tables[x] if k in r.covered), x)):
         keys = tables[t]
         c = sum(1 for k in keys if k in r.covered)
@@ -376,20 +364,27 @@ def render_markdown(r: CoverageReport) -> str:
     # ── Reachable backlog (fixtures exist — just write the assertion) ─────────
     backlog = sorted(k for k in r.skipped_active if _is_reachable(r.skips[k]))
     if backlog:
-        out += ["", f"## Reachable now — backlog ({len(backlog)})",
-                "_Fixtures already exist; each just needs a `find:`+`equal` assertion in a test._",
-                ""]
+        out += [
+            "",
+            f"## Reachable now — backlog ({len(backlog)})",
+            "_Fixtures already exist; each just needs a `find:`+`equal` assertion in a test._",
+            "",
+        ]
         for k in backlog:
             out.append(f"- **{r.universe[k] or suffix(k)}** — `{suffix(k)}` ({_vector_name(_vector(k))})")
 
     # ── Full per-key detail (collapsed) ──────────────────────────────────────
-    out += ["", "<details><summary>Per-key detail (all "
-            f"{tot})</summary>", ""]
+    out += ["", f"<details><summary>Per-key detail (all {tot})</summary>", ""]
     for t in sorted(tables):
         keys = sorted(tables[t])
         c = sum(1 for k in keys if k in r.covered)
-        out += ["", f"### {_vector_name(t)} (`{t}`) — {c}/{len(keys)}", "",
-                "| status | metric | key | detail |", "|---|---|---|---|"]
+        out += [
+            "",
+            f"### {_vector_name(t)} (`{t}`) — {c}/{len(keys)}",
+            "",
+            "| status | metric | key | detail |",
+            "|---|---|---|---|",
+        ]
         for k in keys:
             col, label = suffix(k), (r.universe[k] or suffix(k))
             if k in r.uncovered:
@@ -403,11 +398,15 @@ def render_markdown(r: CoverageReport) -> str:
     # ── Skip-list hygiene (these also fail the gate) ─────────────────────────
     hygiene: list[str] = []
     for k in sorted(r.redundant_skips):
-        hygiene.append(f"- `{k}` skip-listed but now tested by [{', '.join(sorted(r.files_for(k)))}]; remove from SKIP_LIST.")
+        hygiene.append(
+            f"- `{k}` skip-listed but now tested by [{', '.join(sorted(r.files_for(k)))}]; remove from SKIP_LIST."
+        )
     for k in sorted(r.stale_skips):
         hygiene.append(f"- `{k}` skip-listed but no longer in the catalog; remove from SKIP_LIST.")
     for bare in sorted(r.unknown_asserted):
-        hygiene.append(f"- `{bare}` asserted by [{', '.join(sorted(r.asserted[bare]))}] is not a catalog metric_key (typo/unseeded).")
+        hygiene.append(
+            f"- `{bare}` asserted by [{', '.join(sorted(r.asserted[bare]))}] is not a catalog metric_key (typo/unseeded)."
+        )
     if hygiene:
         out += ["", "## Skip-list issues (also fail the gate)", *hygiene]
     return "\n".join(out) + "\n"
@@ -425,8 +424,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Metric-coverage gate (by metric_key).")
     p.add_argument(
         "--universe-file",
-        help="catalog_metrics.json (a saved POST /v1/catalog/get_metrics response); "
-        "default: fetch from $ANALYTICS_URL",
+        help="catalog_metrics.json (a saved POST /v1/catalog/get_metrics response); default: fetch from $ANALYTICS_URL",
     )
     args = p.parse_args(argv)
 
@@ -435,23 +433,23 @@ def main(argv: list[str] | None = None) -> int:
     else:
         url = os.environ.get("ANALYTICS_URL")
         if not url:
-            print(
+            print(  # noqa: T201
                 "metric coverage: pass --universe-file <catalog_metrics.json> or set "
                 "ANALYTICS_URL to a running analytics.",
                 file=sys.stderr,
             )
             return 2
-        universe = universe_from_url(url, os.environ.get("ANALYTICS_TENANT_ID", DEFAULT_TENANT_ID))
+        universe = universe_from_url(url, os.environ.get("ANALYTICS_BEARER"))
 
     report = build_report(universe)
     if not report.universe:
-        print(
+        print(  # noqa: T201
             "metric coverage: empty universe — the catalog isn't seeded (live) or the "
             "collected catalog_metrics.json is empty.",
             file=sys.stderr,
         )
         return 1
-    print(render_markdown(report))
+    print(render_markdown(report))  # noqa: T201
     return 0 if report.passed else 1
 
 

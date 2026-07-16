@@ -1,0 +1,35 @@
+{{- if .Values.ingress.enabled }}
+# Cluster ingress -> Keycloak, served under the /kc prefix. Keycloak serves its
+# OIDC routes under /kc natively (start-dev --http-relative-path=/kc) and its
+# discovery document emits absolute URLs off KC_HOSTNAME (= .Values.hostname), so
+# NO rewrite is needed (unlike fakeidp, which serves at root). The browser AND
+# the authenticator pod both reach it at `<ingress-lb-ip>/kc`, which must equal
+# `.Values.hostname`.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "insight-keycloak.fullname" . }}
+  labels:
+    {{- include "insight-keycloak.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  rules:
+    - {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: /kc
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "insight-keycloak.fullname" . }}
+                port:
+                  name: http
+{{- end }}

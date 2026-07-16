@@ -159,7 +159,21 @@ impl OidcClient {
             .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier.to_owned()))
             .request_async(&self.http)
             .await
-            .context("code exchange")?;
+            // Surface the IdP's OAuth error + description (ServerResponse), not a
+            // bare "code exchange", so the failure is diagnosable.
+            .map_err(|e| {
+                use openidconnect::RequestTokenError::ServerResponse;
+                match &e {
+                    ServerResponse(r) => anyhow::anyhow!(
+                        "idp token endpoint rejected the code: {}{}",
+                        r.error(),
+                        r.error_description()
+                            .map(|d| format!(" — {d}"))
+                            .unwrap_or_default(),
+                    ),
+                    _ => anyhow::anyhow!("code exchange transport/parse error: {e}"),
+                }
+            })?;
 
         let id_token = token.id_token().context("token response has no id_token")?;
         let claims = id_token

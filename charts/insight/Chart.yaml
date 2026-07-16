@@ -5,7 +5,8 @@
 ## Emits almost nothing on its own — it orchestrates subcharts.
 ##
 ## What is INCLUDED here:
-##   - Application: api-gateway, analytics, identity, frontend
+##   - Edge / auth: gateway (nginx+auth), authenticator, fakeidp (dev only)
+##   - Application: analytics, identity, frontend
 ##
 ## What is NOT included (deployed separately):
 ##   - L2 infra (ClickHouse, MariaDB, Redis, Redpanda) — deployed as
@@ -24,8 +25,8 @@ type: application
 # version    — packaging version of the chart. Bump on EVERY chart change.
 # appVersion — product version. Matches the image tag of all insight-* images.
 # Release pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
-version: 0.3.63
-appVersion: "2026.07.21.17.03-635dadd"
+version: 0.4.0
+appVersion: "2026.07.22.04.24-923600f"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/constructorfabric/insight
 sources:
@@ -54,16 +55,38 @@ maintainers:
 dependencies:
   # ─── Application services ──────────────────────────────────────────────
   # All aliases are camelCase so values.yaml stays clean.
-  # Service names inside the cluster stay kebab-case: `insight-api-gateway`.
+  # Service names inside the cluster stay kebab-case: `insight-gateway`.
   #
   # No `condition:` on app services: the umbrella is a single deployable
   # unit and every app service is mandatory (Constructor Platform /
   # SRE requirement). The gateway is the only entrance; the rest of the
   # services are reachable only through it.
-  - name: insight-api-gateway
-    alias: apiGateway
+  # nginx+auth edge (NGINX_BFF, EPIC #1583). The `gateway` (OpenResty) is the
+  # single entrance: auth_request -> authenticator, gateway-JWT injection, and
+  # fan-out to the app services + SPA. The `authenticator` runs OIDC login +
+  # Redis sessions + the cookie->ES256 gateway-JWT exchange (with an authn-tls
+  # sidecar so downstream verifiers resolve the JWKS over https). `fakeidp` is
+  # the dev/e2e OIDC provider (local only; never a real environment).
+  - name: insight-gateway
+    alias: gateway
     version: "0.1.0"
-    repository: "file://../../src/backend/services/api-gateway/helm"
+    repository: "file://../../src/backend/services/gateway/helm"
+  - name: insight-authenticator
+    alias: authenticator
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/authenticator/helm"
+  - name: insight-fakeidp
+    alias: fakeidp
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/fakeidp/helm"
+    condition: fakeidp.deploy
+  # keycloak — the real-OIDC dev/e2e IdP (heavier counterpart to fakeidp; local
+  # k8s uses it, CI/compose default to fakeidp). LOCAL/CI only; off by default.
+  - name: insight-keycloak
+    alias: keycloak
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/keycloak/helm"
+    condition: keycloak.deploy
   - name: insight-analytics
     alias: analytics
     version: "0.2.0"
@@ -76,7 +99,11 @@ dependencies:
     version: "0.1.0"
     repository: "file://../../src/backend/services/identity/helm"
     condition: identity.deploy
+  # Frontend SPA. Conditional: the gateway serves it at "/", but the backend
+  # (/api/*) is fully usable without it (the gateway's front upstream resolves
+  # lazily), so a backend-only bring-up can run frontend.deploy=false.
   - name: insight-frontend
     alias: frontend
     version: "0.1.0"
     repository: "file://../../src/frontend/helm"
+    condition: frontend.deploy

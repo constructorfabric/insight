@@ -1,0 +1,6 @@
+apiVersion: v2
+name: insight-fakeidp
+description: Insight fake OIDC provider — LOCAL/CI IdP for the nginx+auth stack (never for production)
+version: 0.1.0
+appVersion: "0.1.0"
+type: application

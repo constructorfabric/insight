@@ -12,6 +12,13 @@ identity:
   expand_subordinates: true
   max_subordinate_depth: 16
   org_chart_source_type: "bamboohr"
+  # Gateway-JWT verification (NGINX_BFF R1). Required at startup — a request
+  # without a valid gateway JWT gets 401; there is no disable knob. Set per
+  # deployment via IDENTITY__auth_gateway_issuer / IDENTITY__auth_gateway_jwks_url:
+  #   auth_gateway_issuer   = the authenticator's gateway_issuer (the token `iss`)
+  #   auth_gateway_jwks_url = network-reachable JWKS endpoint (GATEWAY_JWKS_URL)
+  auth_gateway_issuer: ""
+  auth_gateway_jwks_url: ""
 
 Serilog:
   MinimumLevel:

@@ -48,6 +48,8 @@ const ASSERTION_TYPE: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-be
 /// The role every service token carries, so downstream can authorize
 /// machine callers off a single well-known role (§10 G1).
 const SERVICE_ROLE: &str = "service";
+/// `sub_type` claim value marking a service-principal token.
+const SERVICE_SUBJECT_TYPE: &str = "service";
 
 // ── Service registry (parsed at boot) ─────────────────────────────────────
 
@@ -211,10 +213,13 @@ fn unverified_claim(jwt: &str, field: &str) -> Option<String> {
     value.get(field)?.as_str().map(ToOwned::to_owned)
 }
 
-/// Build the gateway JWT claims for a service token (§10 G1 / §3.8):
-/// `sub = sid = service:<name>`, `roles` from the registry with `"service"`
-/// guaranteed, and the requested `tenants` (always present — service tokens are
-/// tenant-scoped by design; the handler rejects a request that names none).
+/// Build the gateway JWT claims for a service token (§10 G1 / §3.8).
+///
+/// `sub` is a stable per-service UUID (RFC 4122 v5 over the service name — a
+/// clean UUID, not a `service:<name>` string), `sub_type = "service"` marks it
+/// so downstream maps it as a service principal, `roles` come from the registry
+/// with `"service"` guaranteed, and `tenant_id` is the requested tenant (service
+/// tokens are tenant-scoped — the handler rejects a request that names none).
 fn build_service_claims(
     cfg: &AuthenticatorConfig,
     service: &str,
@@ -226,13 +231,17 @@ fn build_service_claims(
     if !roles.iter().any(|r| r == SERVICE_ROLE) {
         roles.push(SERVICE_ROLE.to_owned());
     }
+    let subject = Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        format!("service:{service}").as_bytes(),
+    );
     GatewayClaims {
-        sub: format!("service:{service}"),
-        tenants: tenants.to_vec(),
+        sub: subject.to_string(),
+        tenant_id: tenants.first().cloned().unwrap_or_default(),
         roles,
-        // sid choice (DESIGN §3.8): service tokens have no session, so `sid`
-        // carries `service:<name>` — a stable, non-empty value that keeps the
-        // claim shape fixed and correlates a service's issuance in audit/trace.
+        sub_type: SERVICE_SUBJECT_TYPE.to_owned(),
+        // `sid` correlates a service's issuance in audit/trace; service tokens
+        // have no session, so it carries `service:<name>`.
         sid: format!("service:{service}"),
         iss: cfg.gateway_issuer.clone(),
         aud: cfg.jwt_audience.clone(),
@@ -281,6 +290,9 @@ struct TokenRequest {
 /// Handle a service-token request: validate the grant shape, verify the
 /// assertion, replay-guard its `jti`, apply the tenant-scope policy, then mint
 /// and return a normal gateway JWT.
+// Linear request handler (parse → verify → replay-guard → tenant policy → mint);
+// splitting it would scatter the flow without making it clearer.
+#[allow(clippy::too_many_lines)]
 async fn token_handler(
     State(state): State<Arc<AppState>>,
     Form(req): Form<TokenRequest>,
@@ -316,6 +328,15 @@ async fn token_handler(
             "tenants",
             "a service token must name a tenant",
             "TENANT_REQUIRED",
+        );
+    }
+    // Single-tenant on the wire: a token carries exactly one `tenant_id`. Reject
+    // a request that names more than one rather than silently taking the first.
+    if requested_tenants.len() > 1 {
+        return bad_request(
+            "tenants",
+            "a service token must name exactly one tenant",
+            "MULTIPLE_TENANTS",
         );
     }
 
@@ -386,7 +407,7 @@ async fn token_handler(
         service = %verified.service,
         jti = %verified.jti,
         roles = ?claims.roles,
-        tenants = ?claims.tenants,
+        tenant_id = %claims.tenant_id,
         "service token issued"
     );
 
@@ -649,10 +670,15 @@ mod tests {
             ..Default::default()
         };
         let claims = build_service_claims(&cfg, "seeder", &[], &[], 1_000);
-        assert_eq!(claims.sub, "service:seeder");
+        // `sub` is a clean per-service UUIDv5 (deterministic), not `service:<name>`.
+        assert_eq!(
+            claims.sub,
+            Uuid::new_v5(&Uuid::NAMESPACE_URL, b"service:seeder").to_string()
+        );
+        assert_eq!(claims.sub_type, "service");
         assert_eq!(claims.sid, "service:seeder");
         assert!(claims.roles.contains(&"service".to_owned()));
-        assert!(claims.tenants.is_empty());
+        assert_eq!(claims.tenant_id, "");
         assert_eq!(claims.exp, 1_000 + cfg.service_tokens.token_ttl_seconds);
     }
 
@@ -671,7 +697,7 @@ mod tests {
             1,
             "service role must not be duplicated"
         );
-        assert_eq!(claims.tenants, vec!["t-1"]);
+        assert_eq!(claims.tenant_id, "t-1");
     }
 
     #[test]

@@ -34,6 +34,8 @@ echo "==> dev ES256 signing key"
 # ec_param_enc:named_curve: LibreSSL (macOS) otherwise emits explicit EC params
 # the authenticator's p256 loader rejects.
 KEYS_DIR="$(mktemp -d)"
+# ES256 gateway signing key (§9.6). Named-curve P-256 (see the LibreSSL note
+# above). The service-token client key below is also EC.
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve -out "$KEYS_DIR/current.pem"
 
 echo "==> dev service-token keypair (testclient) — generated, never committed"

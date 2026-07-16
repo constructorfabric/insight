@@ -10,6 +10,7 @@ Output: {"rust": [<entry>...], "dotnet": [...], "python": [...]}
         (a crate may be lint-only); dotnet carries solution + cover (a component
         may be test-only, e.g. identity); python carries cov_package.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,7 +18,7 @@ import json
 import subprocess
 import sys
 
-from components import ROOT, COMPARE_BRANCH, COMPONENTS, component_for
+from components import COMPARE_BRANCH, COMPONENTS, ROOT, component_for
 
 # The src/backend Cargo workspace. fmt+clippy run per crate in the rust matrix,
 # but linting has cross-crate reach: a change to a workspace-level Rust file
@@ -29,8 +30,7 @@ _SHARED_RUST_SUFFIXES = (".rs", ".toml", ".lock")
 _SHARED_BACKEND_DIRS = ("src/backend/libs/", "src/backend/plugins/")
 
 
-def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True,
-                  test: bool = False) -> dict:
+def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True, test: bool = False) -> dict:
     """The fields a producer CI job needs for one component. Rust entries also
     carry lint/cover/test flags (a rust crate may appear lint-only; a changed
     crate with cover=false still runs plain `cargo test`)."""
@@ -67,8 +67,7 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
     coverage is strictly per-changed-crate, while a shared backend Rust change
     fans lint (only) out to every backend crate."""
     out = subprocess.run(
-        ["git", "diff", "--name-only", f"{compare_branch}...HEAD"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        ["git", "diff", "--name-only", f"{compare_branch}...HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout
     by_name = {c["name"]: c for c in components}
     changed: set[str] = set()
@@ -81,8 +80,11 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
         if name:
             changed.add(name)
             comp = by_name[name]
-            if (comp["lang"] == "rust" and comp.get("root") == BACKEND_RUST_ROOT
-                    and path.startswith(_SHARED_BACKEND_DIRS)):
+            if (
+                comp["lang"] == "rust"
+                and comp.get("root") == BACKEND_RUST_ROOT
+                and path.startswith(_SHARED_BACKEND_DIRS)
+            ):
                 fanout_lint = True  # a shared lib/plugin changed → re-lint dependents
         elif path.startswith(BACKEND_RUST_ROOT + "/") and path.endswith(_SHARED_RUST_SUFFIXES):
             fanout_lint = True  # workspace-level Rust file (clippy.toml, Cargo.*, …)
@@ -102,13 +104,12 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
         if lang == "rust":
             is_backend = comp.get("root") == BACKEND_RUST_ROOT
             # cover=False in the registry ⇒ plain tests + lint still run on
-            # change, but no Cobertura is produced or gated (api-gateway — no
-            # unit tests yet; 0% would hard-fail the overall gate).
+            # change, but no Cobertura is produced or gated (authenticator — no
+            # in-process tests yet; 0% would hard-fail the overall gate).
             cover = name in changed and comp.get("cover", True)
             lint = name in changed or (fanout_lint and is_backend)
             if lint or cover:
-                result["rust"].append(_matrix_entry(
-                    comp, lint=lint, cover=cover, test=name in changed))
+                result["rust"].append(_matrix_entry(comp, lint=lint, cover=cover, test=name in changed))
         elif name in changed:  # dotnet / python: in the matrix iff changed
             result[lang].append(_matrix_entry(comp))
     return result
@@ -120,8 +121,7 @@ def all_components(components: list[dict]) -> dict[str, list]:
     result: dict[str, list] = {lang: [] for lang in ("rust", "dotnet", "python")}
     for comp in components:
         if comp["lang"] == "rust":
-            result["rust"].append(_matrix_entry(
-                comp, lint=True, cover=comp.get("cover", True), test=True))
+            result["rust"].append(_matrix_entry(comp, lint=True, cover=comp.get("cover", True), test=True))
         else:
             result[comp["lang"]].append(_matrix_entry(comp))
     return result
@@ -129,11 +129,10 @@ def all_components(components: list[dict]) -> dict[str, list]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Emit the CI component matrix as JSON.")
-    ap.add_argument("--all", action="store_true",
-                    help="emit ALL components, ignoring the diff (manual full run)")
+    ap.add_argument("--all", action="store_true", help="emit ALL components, ignoring the diff (manual full run)")
     args = ap.parse_args()
     matrix = all_components(COMPONENTS) if args.all else changed_components(COMPARE_BRANCH, COMPONENTS)
-    print(json.dumps(matrix))
+    print(json.dumps(matrix))  # noqa: T201  — this IS the script's CI output
     return 0
 
 

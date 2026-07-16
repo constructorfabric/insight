@@ -75,7 +75,7 @@ struct Jwk {
 #[derive(Deserialize)]
 struct Claims {
     sub: String,
-    tenants: Vec<String>,
+    tenant_id: String,
     roles: Vec<String>,
     sid: String,
     aud: String,
@@ -178,7 +178,7 @@ async fn full_login_exchange_logout_loop() {
         "default role present"
     );
     assert!(!claims.sid.is_empty(), "stable sid present");
-    let _ = &claims.tenants; // present (may be empty in a keyless local run)
+    let _ = &claims.tenant_id; // present (may be empty in a keyless local run)
 
     // 6. /auth/me returns the session summary.
     let me = http
