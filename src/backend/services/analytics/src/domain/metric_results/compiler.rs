@@ -214,16 +214,22 @@ pub(crate) fn compile_histogram_query(
     let limit = query_row_limit();
     let sql = format!(
         r"
-        WITH events AS (
+        WITH raw_events AS (
             SELECT
                 entity_id,
-                assumeNotNull({event_value}) AS value,
-                min(value) OVER (PARTITION BY entity_id) AS entity_lo,
-                max(value) OVER (PARTITION BY entity_id) AS entity_hi
+                assumeNotNull({event_value}) AS event_value
             FROM {observation_table}
             WHERE {metric_where}
               AND entity_id IN ({entities})
               AND value IS NOT NULL
+        ),
+        events AS (
+            SELECT
+                entity_id,
+                event_value,
+                min(event_value) OVER (PARTITION BY entity_id) AS entity_lo,
+                max(event_value) OVER (PARTITION BY entity_id) AS entity_hi
+            FROM raw_events
         )
         SELECT
             events.entity_id AS entity_id,
@@ -231,7 +237,7 @@ pub(crate) fn compile_histogram_query(
                 events.entity_hi = events.entity_lo,
                 0,
                 toUInt32(least({max_bin}, toInt64(floor(
-                    (events.value - events.entity_lo) * {bins} / (events.entity_hi - events.entity_lo)
+                    (events.event_value - events.entity_lo) * {bins} / (events.entity_hi - events.entity_lo)
                 ))))
             ) AS bin_idx,
             any(events.entity_lo) AS entity_lo,
@@ -1112,12 +1118,12 @@ mod tests {
         assert!(
             query
                 .sql
-                .contains("min(value) OVER (PARTITION BY entity_id) AS entity_lo")
+                .contains("min(event_value) OVER (PARTITION BY entity_id) AS entity_lo")
         );
         assert!(
             query
                 .sql
-                .contains("max(value) OVER (PARTITION BY entity_id) AS entity_hi")
+                .contains("max(event_value) OVER (PARTITION BY entity_id) AS entity_hi")
         );
         assert!(query.sql.contains("least(9,"));
         assert!(query.sql.contains("* 10 /"));
@@ -1149,6 +1155,30 @@ mod tests {
             );
             assert_eq!(query.sql.matches('?').count(), query.params.len());
         }
+        // The histogram bins the transformed event value under its own alias
+        // (never the raw `value` column), so lo/hi and bin math run on the
+        // transformed distribution. Histogram is median-only, so it takes a
+        // median def rather than the ratio above.
+        let mut median = median_metric();
+        median.transform = Some(ValueTransform {
+            clamp_max: Some(100.0),
+            ..ValueTransform::default()
+        });
+        let hist = compile_histogram_query(&median, &request());
+        assert!(
+            hist.sql
+                .contains("if((value) IS NULL, NULL, least(100.0, value))")
+                && hist.sql.contains("AS event_value"),
+            "histogram must transform into a distinct event_value alias: {}",
+            hist.sql
+        );
+        assert!(
+            hist.sql.contains("min(event_value) OVER")
+                && hist.sql.contains("max(event_value) OVER"),
+            "histogram lo/hi must derive from the transformed alias: {}",
+            hist.sql
+        );
+        assert_eq!(hist.sql.matches('?').count(), hist.params.len());
         let period = compile_period_batch_query(&[&def], &request());
         assert!(
             period
