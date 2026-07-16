@@ -338,6 +338,43 @@ models:
           Array(Tuple(key, value, label)). Empty for every task measure — the
           family carries no breakdown dimension.
 
+  - name: task_issue_state
+    description: >
+      Per-issue lifecycle state for the task-delivery observation pipeline:
+      one row per assignee-resolved issue with tenant/email attribution, the
+      current status category, the close time, and the scalar fields the
+      observation measures read. Materialized so the field-history pivot runs
+      once per build instead of once per measure branch.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: entity_id
+        description: "Lowercased assignee email"
+        tests:
+          - not_null
+      - name: issue_id
+        description: "Source issue identifier; unique per insight_source_id"
+        tests:
+          - not_null
+
+  - name: task_status_intervals
+    description: >
+      Per-issue status spans for the task-delivery observation pipeline: each
+      status event paired with the next; the last span ends at the close for
+      currently-done issues and stays live to build time otherwise. Feeds dev
+      time, close/reopen transitions, and per-day in-progress splitting.
+    columns:
+      - name: issue_id
+        description: "Source issue identifier"
+        tests:
+          - not_null
+      - name: interval_start
+        description: "Span start (status event time)"
+        tests:
+          - not_null
+
   - name: metric_entity_cohorts_current
     description: >
       Current cohort membership per entity for peer comparison. One row per

@@ -4,30 +4,31 @@
     order_by=['source_key', 'measure_key', 'entity_id', 'metric_date'],
     schema='insight',
     alias='task_metric_observations',
-    tags=['gold']
+    tags=['gold'],
+    query_settings={
+        'max_memory_usage': 1610612736,
+        'max_threads': 4,
+        'max_bytes_before_external_group_by': 805306368,
+        'max_bytes_before_external_sort': 805306368
+    }
 ) }}
 
 -- Source measure observations for the unified metrics runtime, task-delivery
--- family. Reads the task class contracts only; no vendor-specific columns or
--- status display names appear inline. Every measure is emitted through the
--- shape macros in macros/metric_observation_measures.sql.
+-- family. Every measure is emitted through the shape macros in
+-- macros/metric_observation_measures.sql.
 --
--- Materialized as a sorted table: the per-issue reconstruction below (status
--- pivot, interval building, transition pairing) runs once per dbt build — the
--- only time the silver inputs can have changed — instead of once per metric
--- query. The ordering key mirrors the runtime's filter shape.
+-- The per-issue reconstruction lives in two materialized stages —
+-- task_issue_state (pivot + attribution + close) and task_status_intervals
+-- (status spans) — because ClickHouse re-inlines every WITH reference: each
+-- measure branch below re-evaluates its source CTE, and re-running the
+-- field-history pivot per branch multiplied the build's reads by orders of
+-- magnitude. With the stages as tables, a branch re-scan costs a small sorted
+-- read. This model derives day-grain facts and emits observations; the
+-- ordering key mirrors the runtime's filter shape.
 --
--- Lifecycle is derived from the source-neutral class_task_statuses.status_category
--- ('done' = closed, 'in_progress' = dev-active), joined on the status id in
--- class_task_field_history.value_ids[1]. Never match status display names —
--- default/localized/custom workflows would report zero.
---
--- Attribution: every observation keys on the assignee's (or worklog author's)
--- email via class_task_users, and only email-shaped keys pass. Task connectors
--- key events by opaque account id; accounts that do not resolve to an email
--- (Jira Cloud privacy) are excluded as unmatchable rather than carried as dead
--- entities, and the tenant rides in on the same user row (the class event log
--- itself carries no tenant). Cohorts and API requests address people by email.
+-- Lifecycle, attribution, and the FINAL-dedup rules are documented on the
+-- stage models; worklogs are attributed here via class_task_users (only
+-- email-shaped keys pass, tenant rides on the user row).
 --
 -- Grain per measure:
 --   per closed issue (event, for medians): dev_time_hours, resolution_days,
@@ -51,14 +52,10 @@
 --
 -- No distinct-count measure, so every row carries subject_key = NULL and the
 -- model is a single UNION branch (matching git / ai).
---
--- All class reads keep FINAL: the ReplacingMergeTree parts are not
--- duplicate-immune and argMax / interval math over a stale row version would
--- skew the reconstruction.
 
 WITH
--- Identity + tenant anchor. Every attributed row resolves an account id to a
--- lowercased email here; the tenant is carried on the same user row.
+-- Identity + tenant anchor for worklog attribution. Issue attribution is
+-- already resolved on task_issue_state.
 task_users AS (
     SELECT
         tenant_id,
@@ -68,125 +65,13 @@ task_users AS (
     FROM {{ ref('class_task_users') }} FINAL
     WHERE email LIKE '%@%'
 ),
--- Per-issue scalar pivot: current status id, assignee, type, due date, and the
--- estimate/spent fields, plus created (first synthetic_initial) and the last
--- status-change time (for staleness).
-issue_pivot AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        argMaxIf(value_ids[1], (event_at, _version),
-                 field_id = 'status' AND delta_action = 'set')               AS status_id,
-        argMaxIf(value_ids[1], (event_at, _version),
-                 field_id = 'assignee' AND delta_action = 'set')             AS assignee_account_id,
-        argMaxIf(value_displays[1], (event_at, _version),
-                 field_id = 'issuetype' AND delta_action = 'set')            AS issue_type,
-        argMaxIf(value_displays[1], (event_at, _version),
-                 field_id = 'duedate' AND delta_action = 'set')              AS due_date_str,
-        toFloat64OrNull(argMaxIf(value_displays[1], (event_at, _version),
-                 field_id = 'timeoriginalestimate' AND delta_action = 'set')) AS time_estimate_seconds,
-        toFloat64OrNull(argMaxIf(value_displays[1], (event_at, _version),
-                 field_id = 'timespent' AND delta_action = 'set'))           AS time_spent_seconds,
-        minIf(event_at, event_kind = 'synthetic_initial')                    AS created_at,
-        maxIf(event_at, field_id = 'status' AND delta_action = 'set')        AS last_status_event_at
-    FROM {{ ref('class_task_field_history') }} FINAL
-    WHERE field_id IN ('status', 'assignee', 'issuetype', 'duedate',
-                       'timeoriginalestimate', 'timespent')
-       OR event_kind = 'synthetic_initial'
-    GROUP BY insight_source_id, issue_id
-),
--- Close time: the last transition into a done-category status.
-issue_close AS (
-    SELECT
-        fh.insight_source_id                                                 AS insight_source_id,
-        fh.issue_id                                                          AS issue_id,
-        maxIf(fh.event_at, st.status_category = 'done')                      AS final_close_at
-    FROM {{ ref('class_task_field_history') }} AS fh FINAL
-    LEFT JOIN {{ ref('class_task_statuses') }} AS st FINAL
-        ON st.insight_source_id = fh.insight_source_id
-        AND st.status_id = fh.value_ids[1]
-    WHERE fh.field_id = 'status' AND fh.delta_action = 'set'
-    GROUP BY fh.insight_source_id, fh.issue_id
-),
--- One row per assignee-resolved issue: state + tenant/email + current category.
--- INNER JOIN on the user drops issues whose assignee has no email (unmatchable).
 issue_state AS (
-    SELECT
-        u.tenant_id                                                          AS tenant_id,
-        u.email                                                              AS entity_id,
-        p.insight_source_id                                                  AS insight_source_id,
-        p.issue_id                                                           AS issue_id,
-        cur.status_category                                                  AS status_category,
-        p.issue_type                                                         AS issue_type,
-        p.due_date_str                                                       AS due_date_str,
-        p.time_estimate_seconds                                              AS time_estimate_seconds,
-        p.time_spent_seconds                                                 AS time_spent_seconds,
-        p.created_at                                                         AS created_at,
-        c.final_close_at                                                     AS final_close_at,
-        p.last_status_event_at                                               AS last_status_event_at
-    FROM issue_pivot AS p
-    INNER JOIN task_users AS u
-        ON u.insight_source_id = p.insight_source_id
-        AND u.user_id = p.assignee_account_id
-    LEFT JOIN issue_close AS c
-        ON c.insight_source_id = p.insight_source_id AND c.issue_id = p.issue_id
-    LEFT JOIN {{ ref('class_task_statuses') }} AS cur FINAL
-        ON cur.insight_source_id = p.insight_source_id AND cur.status_id = p.status_id
-),
--- Per-issue status spans: pair each status event with the next. The last span
--- ends per CURRENT state: a currently-done issue ends at its close, anything
--- else (never closed, or closed-then-reopened) stays live to now(). Keying the
--- tail on final_close_at alone would hand a reopened issue's current span an
--- end before its start — the row filter below would then drop it, hiding the
--- reopen from the transition CTEs and freezing its in-progress accrual.
--- Carries the reconciled category.
-status_events AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        arraySort(x -> x.1, groupArray((event_at, value_ids[1]))) AS evs
-    FROM {{ ref('class_task_field_history') }} FINAL
-    WHERE field_id = 'status' AND delta_action = 'set'
-    GROUP BY insight_source_id, issue_id
+    SELECT *
+    FROM {{ ref('task_issue_state') }}
 ),
 status_intervals AS (
-    SELECT
-        iv.insight_source_id                                                 AS insight_source_id,
-        iv.issue_id                                                          AS issue_id,
-        iv.interval_start                                                    AS interval_start,
-        iv.interval_end                                                      AS interval_end,
-        st.status_category                                                   AS status_category,
-        iv.duration_seconds                                                  AS duration_seconds
-    FROM (
-        SELECT
-            e.insight_source_id                                              AS insight_source_id,
-            e.issue_id                                                       AS issue_id,
-            arrayJoin(arrayMap(
-                i -> (
-                    (e.evs[i]).1,
-                    if(i = length(e.evs),
-                       if(s.status_category = 'done',
-                          ifNull(s.final_close_at, (e.evs[i]).1),
-                          now()),
-                       (e.evs[i + 1]).1),
-                    (e.evs[i]).2
-                ),
-                range(1, length(e.evs) + 1)
-            ))                                                               AS row,
-            row.1                                                            AS interval_start,
-            row.2                                                            AS interval_end,
-            row.3                                                            AS status_id,
-            toFloat64(greatest(toInt64(0), dateDiff('second', row.1, row.2))) AS duration_seconds,
-            s.created_at                                                     AS issue_created_at
-        FROM status_events AS e
-        INNER JOIN issue_state AS s
-            ON s.insight_source_id = e.insight_source_id AND s.issue_id = e.issue_id
-    ) AS iv
-    LEFT JOIN {{ ref('class_task_statuses') }} AS st FINAL
-        ON st.insight_source_id = iv.insight_source_id AND st.status_id = iv.status_id
-    WHERE iv.interval_start >= ifNull(iv.issue_created_at, toDateTime('1970-01-02'))
-      AND iv.interval_end >= iv.interval_start
-      AND iv.interval_end <= now() + INTERVAL 1 DAY
+    SELECT *
+    FROM {{ ref('task_status_intervals') }}
 ),
 -- Per closed issue: dev-active seconds (Σ in-progress spans), lead (created →
 -- close), pickup (created → first in-progress). Only spans that started
@@ -208,9 +93,7 @@ issue_facts AS (
         -- ever-closed issue. Carry the current category to gate the former.
         any(s.status_category) = 'done'                                      AS is_done,
         toDate(s.final_close_at)                                             AS close_date,
-        if(any(s.due_date_str) IS NOT NULL AND any(s.due_date_str) != '',
-           toDate(parseDateTimeBestEffortOrNull(any(s.due_date_str))),
-           CAST(NULL AS Nullable(Date)))                                     AS due_date,
+        any(s.due_date)                                                      AS due_date,
         any(s.time_estimate_seconds)                                         AS time_estimate_seconds,
         any(s.time_spent_seconds)                                            AS time_spent_seconds,
         sumIf(i.duration_seconds, i.interval_start < s.final_close_at)      AS dev_seconds,
