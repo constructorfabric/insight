@@ -144,6 +144,25 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_email_activity (
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
+else
+  # Reconcile a pre-existing PLACEHOLDER (warm cluster / re-deploy / warm e2e
+  # ClickHouse) to the tenant_id column contract — a bare CREATE ... IF NOT
+  # EXISTS never adds the column to an already-created table. Guarded on the
+  # marker so a real dbt-built table (which already has tenant_id) is left
+  # untouched. Idempotent: ADD COLUMN IF NOT EXISTS.
+  class_collab_email_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='class_collab_email_activity' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$class_collab_email_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.class_collab_email_activity"
+    run_ch <<'SQL'
+ALTER TABLE silver.class_collab_email_activity ADD COLUMN IF NOT EXISTS tenant_id String;
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.class_collab_email_activity is not a placeholder"
+  fi
 fi
 
 # silver.class_collab_meeting_activity — collaboration dbt model.
@@ -173,6 +192,26 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_meeting_activity (
     _version                       UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
+else
+  # Reconcile a pre-existing PLACEHOLDER to the current column contract —
+  # tenant_id plus the meeting counts collab_metric_observations reads. See
+  # the class_collab_email_activity note above. Idempotent + marker-guarded.
+  class_collab_meeting_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='class_collab_meeting_activity' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$class_collab_meeting_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.class_collab_meeting_activity"
+    run_ch <<'SQL'
+ALTER TABLE silver.class_collab_meeting_activity ADD COLUMN IF NOT EXISTS tenant_id String;
+ALTER TABLE silver.class_collab_meeting_activity ADD COLUMN IF NOT EXISTS meetings_organized Float64;
+ALTER TABLE silver.class_collab_meeting_activity ADD COLUMN IF NOT EXISTS adhoc_meetings_attended Float64;
+ALTER TABLE silver.class_collab_meeting_activity ADD COLUMN IF NOT EXISTS scheduled_meetings_attended Float64;
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.class_collab_meeting_activity is not a placeholder"
+  fi
 fi
 
 # silver.class_collab_chat_activity — collaboration dbt model.
@@ -202,6 +241,26 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_chat_activity (
 -- without it ReplacingMergeTree collapses them.
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
+else
+  # Reconcile a pre-existing PLACEHOLDER to the current column contract —
+  # tenant_id plus direct_and_group_messages (#266). The apply-ch-migrations.sh
+  # heal only ALTERs a REAL table (it skips placeholders), so the placeholder
+  # itself must be reconciled here. See the class_collab_email_activity note
+  # above. Idempotent + marker-guarded.
+  class_collab_chat_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='class_collab_chat_activity' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$class_collab_chat_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.class_collab_chat_activity"
+    run_ch <<'SQL'
+ALTER TABLE silver.class_collab_chat_activity ADD COLUMN IF NOT EXISTS tenant_id String;
+ALTER TABLE silver.class_collab_chat_activity ADD COLUMN IF NOT EXISTS direct_and_group_messages Nullable(Int64);
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.class_collab_chat_activity is not a placeholder"
+  fi
 fi
 
 # silver.class_collab_document_activity — collaboration dbt model.
@@ -223,6 +282,22 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_document_activity (
     _version                 UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date, data_source) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
+else
+  # Reconcile a pre-existing PLACEHOLDER to the tenant_id column contract.
+  # See the class_collab_email_activity note above. Idempotent + marker-guarded.
+  class_collab_document_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='class_collab_document_activity' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$class_collab_document_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.class_collab_document_activity"
+    run_ch <<'SQL'
+ALTER TABLE silver.class_collab_document_activity ADD COLUMN IF NOT EXISTS tenant_id String;
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.class_collab_document_activity is not a placeholder"
+  fi
 fi
 
 # silver.class_ai_dev_usage — AI dbt model. Aggregates Cursor + Claude
