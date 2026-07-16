@@ -1,0 +1,54 @@
+[package]
+name = "identity-resolution"
+version = "0.1.0"
+description = "Identity Resolution — read API (Rust port of the .NET identity service)"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# ToolKit host runtime. This service runs as a gears-rust host: routes are
+# served by the `api-gateway` system gear (the REST host) under
+# `toolkit::bootstrap::run_server`. Same no-auth system-gear set as `analytics`
+# — the platform api-gateway is the sole authenticator and proxies to us.
+toolkit = { workspace = true, features = ["bootstrap"] }
+
+# System gears linked for the REST host + (disabled) auth pipeline. Discovered
+# at link time via inventory; mirrors the analytics host's no-auth set.
+api_gateway = { workspace = true }
+authn-resolver = { workspace = true }
+authz-resolver = { workspace = true }
+tenant-resolver = { workspace = true }
+single-tenant-tr-plugin = { workspace = true }
+static-authz-plugin = { workspace = true }
+grpc_hub = { workspace = true }
+gear_orchestrator = { workspace = true }
+types_registry = { workspace = true }
+
+anyhow = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+
+# Domain gear: config deserialization, async trait impls, HTTP router type,
+# and logging. (DB/serde-heavy deps — sea-orm, uuid — land with the DB step.)
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+tracing = { workspace = true }
+
+# MariaDB via SeaORM — connection pool + entities + raw resolve queries.
+sea-orm = { workspace = true }
+# UUIDs: person_id / tenant / source ids (binary(16) in the DB).
+uuid = { workspace = true }
+
+# HTTP surface: tenant SecurityContext, RFC-9457 canonical errors, OpenAPI schemas.
+toolkit-security = { workspace = true }
+toolkit-canonical-errors = { workspace = true }
+# utoipa pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
+utoipa = { version = "5.5", features = ["chrono", "uuid"] }
