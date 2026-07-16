@@ -1,0 +1,71 @@
+# Insight Identity Resolution — gears-rust host config.
+#
+# Usage: identity-resolution --config config/insight.yaml
+#
+# The `api-gateway` system gear is the REST host with auth DISABLED — the
+# platform api-gateway is the sole authenticator and proxies to us. Same
+# no-auth system-gear set as the analytics host. NO domain gear yet
+# (iteration-1 scaffold): the host boots and serves /health only.
+
+server:
+  home_dir: "~/.insight"
+
+logging:
+  default:
+    console_level: info
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "0.0.0.0:8083"
+      enable_docs: true
+      cors_enabled: true
+      openapi:
+        title: "Insight Identity Resolution API"
+        version: "0.1.0"
+        description: "Identity Resolution read API (Rust port) — auth disabled"
+      auth_disabled: true
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/identity-resolution-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "hyperspot"
+
+  authz-resolver:
+    config:
+      vendor: "hyperspot"
+
+  static-authz-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "hyperspot"
+
+  single-tenant-tr-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 20
+
+  identity-resolution:
+    config:
+      # MariaDB connection URL. Injected per-deployment via env override
+      # APP__gears__identity-resolution__config__database_url. Left empty
+      # here so no credential is committed.
+      database_url: ""
+      # Source instance whose org_chart edges drive the parent/supervisor +
+      # subordinates tree on the lookup endpoints (mirrors .NET AppOptions).
+      org_chart_source_type: "bamboohr"
+      # Kill switch for the recursive subordinates walk. Set to false to skip
+      # the (potentially large, N+1) subtree expansion on POST /v1/profiles.
+      expand_subordinates: true
+      # Hard cap on org-tree recursion depth (cycle-safe).
+      max_depth: 16

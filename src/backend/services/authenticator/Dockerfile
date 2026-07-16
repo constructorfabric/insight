@@ -23,6 +23,9 @@ COPY plugins/oidc-authn-plugin/Cargo.toml ./plugins/oidc-authn-plugin/Cargo.toml
 COPY services/api-gateway/Cargo.toml ./services/api-gateway/Cargo.toml
 COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
 COPY services/authenticator/Cargo.toml ./services/authenticator/Cargo.toml
+# identity-resolution is a workspace member; cargo must load its manifest to
+# resolve the workspace even though this image never builds or ships it.
+COPY services/identity-resolution/Cargo.toml ./services/identity-resolution/Cargo.toml
 COPY services/fakeidp/Cargo.toml ./services/fakeidp/Cargo.toml
 # routegen is a workspace member (build-time CLI); cargo must load its manifest
 # to resolve the workspace even though this image never builds it.
@@ -34,6 +37,7 @@ RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/sr
     mkdir -p services/api-gateway/src && echo "fn main() {}" > services/api-gateway/src/main.rs && \
     mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs && \
     mkdir -p services/authenticator/src && echo "fn main() {}" > services/authenticator/src/main.rs && \
+    mkdir -p services/identity-resolution/src && echo "fn main() {}" > services/identity-resolution/src/main.rs && \
     mkdir -p services/fakeidp/src && echo "fn main() {}" > services/fakeidp/src/main.rs && \
     echo "" > services/fakeidp/src/lib.rs && \
     mkdir -p tools/routegen/src && echo "fn main() {}" > tools/routegen/src/main.rs
