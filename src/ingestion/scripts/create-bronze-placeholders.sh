@@ -129,6 +129,11 @@ if ! ch_table_exists silver class_collab_email_activity; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_collab_email_activity (
     insight_tenant_id String,
+    -- `tenant_id` is the column the real dbt model emits (connectors SELECT
+    -- `tenant_id`); the gold model collab_metric_observations reads it. The
+    -- placeholder must carry it too or the deploy-time gold build fails with
+    -- UNKNOWN_IDENTIFIER. Mirrors the class_git_* placeholders (both cols).
+    tenant_id         String,
     email             String,
     person_key        String,
     date              Date,
@@ -147,11 +152,19 @@ if ! ch_table_exists silver class_collab_meeting_activity; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_collab_meeting_activity (
     insight_tenant_id              String,
+    -- `tenant_id` (real dbt/connector column, read by gold) — see the
+    -- class_collab_email_activity note above. meetings_organized /
+    -- adhoc_meetings_attended / scheduled_meetings_attended are likewise
+    -- selected by collab_metric_observations and must exist here.
+    tenant_id                      String,
     email                          String,
     person_key                     String,
     date                           Date,
     data_source                    String,
     meetings_attended              Float64,
+    meetings_organized             Float64,
+    adhoc_meetings_attended        Float64,
+    scheduled_meetings_attended    Float64,
     calls_count                    Float64,
     participants                   Float64,
     audio_duration_seconds         Float64,
@@ -168,6 +181,12 @@ if ! ch_table_exists silver class_collab_chat_activity; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_collab_chat_activity (
     insight_tenant_id             String,
+    -- `tenant_id` (real dbt/connector column, read by gold) — see the
+    -- class_collab_email_activity note above. `direct_and_group_messages`
+    -- (#266) is also selected by collab_metric_observations; the
+    -- apply-ch-migrations.sh heal only ADDs it to a REAL table, never to a
+    -- placeholder, so a fresh deploy needs it declared here.
+    tenant_id                     String,
     email                         String,
     person_key                    String,
     date                          Date,
@@ -176,6 +195,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_chat_activity (
     channel_messages_posted_count Float64,
     channel_posts                 Float64,
     channel_replies               Float64,
+    direct_and_group_messages     Nullable(Int64),
     _version                      UInt64
 -- `data_source` in the sort key: the compose seed writes one row per
 -- source (insight_m365 + insight_slack) for the same (email, date);
@@ -190,6 +210,9 @@ if ! ch_table_exists silver class_collab_document_activity; then
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_collab_document_activity (
     insight_tenant_id        String,
+    -- `tenant_id` (real dbt/connector column, read by gold) — see the
+    -- class_collab_email_activity note above.
+    tenant_id                String,
     email                    String,
     person_key               String,
     date                     Date,

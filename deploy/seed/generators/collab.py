@@ -72,10 +72,22 @@ def seed_meeting_activity(
 ) -> int:
     truncate(client, "silver", "class_collab_meeting_activity")
     cols = [
-        "insight_tenant_id", "email", "person_key", "date", "data_source",
-        "meetings_attended", "calls_count", "participants",
-        "audio_duration_seconds", "video_duration_seconds",
-        "screen_share_duration_seconds", "_version",
+        # `tenant_id` mirrors `insight_tenant_id`: the real dbt model /
+        # connectors emit `tenant_id`, and gold (collab_metric_observations)
+        # reads it. Same dual-column pattern the git seed uses.
+        "insight_tenant_id",
+        "tenant_id",
+        "email",
+        "person_key",
+        "date",
+        "data_source",
+        "meetings_attended",
+        "calls_count",
+        "participants",
+        "audio_duration_seconds",
+        "video_duration_seconds",
+        "screen_share_duration_seconds",
+        "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -93,12 +105,23 @@ def seed_meeting_activity(
                 audio_s = total_min * 60.0
                 video_s = audio_s * 0.7
                 share_s = audio_s * 0.2
-                rows.append((
-                    tenant_uuid, p.email, p.email, d, source,
-                    float(n_meets), 0.0,
-                    float(n_meets * rng.randint(2, 8)),
-                    audio_s, video_s, share_s, version,
-                ))
+                rows.append(
+                    (
+                        tenant_uuid,
+                        tenant_uuid,
+                        p.email,
+                        p.email,
+                        d,
+                        source,
+                        float(n_meets),
+                        0.0,
+                        float(n_meets * rng.randint(2, 8)),
+                        audio_s,
+                        video_s,
+                        share_s,
+                        version,
+                    )
+                )
     return bulk_insert(client, "silver", "class_collab_meeting_activity", cols, rows)
 
 
@@ -110,9 +133,16 @@ def seed_chat_activity(
 ) -> int:
     truncate(client, "silver", "class_collab_chat_activity")
     cols = [
-        "insight_tenant_id", "email", "person_key", "date", "data_source",
-        "total_chat_messages", "channel_messages_posted_count",
-        "channel_posts", "_version",
+        "insight_tenant_id",
+        "tenant_id",
+        "email",
+        "person_key",
+        "date",
+        "data_source",
+        "total_chat_messages",
+        "channel_messages_posted_count",
+        "channel_posts",
+        "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -126,10 +156,20 @@ def seed_chat_activity(
                 if n_chat == 0:
                     continue
                 channel = int(n_chat * rng.uniform(0.4, 0.7))
-                rows.append((
-                    tenant_uuid, p.email, p.email, d, source,
-                    float(n_chat), float(channel), float(channel), version,
-                ))
+                rows.append(
+                    (
+                        tenant_uuid,
+                        tenant_uuid,
+                        p.email,
+                        p.email,
+                        d,
+                        source,
+                        float(n_chat),
+                        float(channel),
+                        float(channel),
+                        version,
+                    )
+                )
     return bulk_insert(client, "silver", "class_collab_chat_activity", cols, rows)
 
 
@@ -141,8 +181,16 @@ def seed_email_activity(
 ) -> int:
     truncate(client, "silver", "class_collab_email_activity")
     cols = [
-        "insight_tenant_id", "email", "person_key", "date", "data_source",
-        "sent_count", "received_count", "read_count", "_version",
+        "insight_tenant_id",
+        "tenant_id",
+        "email",
+        "person_key",
+        "date",
+        "data_source",
+        "sent_count",
+        "received_count",
+        "read_count",
+        "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -157,10 +205,20 @@ def seed_email_activity(
                 read = int(received * rng.uniform(0.7, 0.95))
                 if sent == 0 and received == 0:
                     continue
-                rows.append((
-                    tenant_uuid, p.email, p.email, d, source,
-                    float(sent), float(received), float(read), version,
-                ))
+                rows.append(
+                    (
+                        tenant_uuid,
+                        tenant_uuid,
+                        p.email,
+                        p.email,
+                        d,
+                        source,
+                        float(sent),
+                        float(received),
+                        float(read),
+                        version,
+                    )
+                )
     return bulk_insert(client, "silver", "class_collab_email_activity", cols, rows)
 
 
@@ -171,7 +229,11 @@ def generate(
     days: int,
 ) -> dict[str, int]:
     return {
-        "silver.class_collab_meeting_activity":  seed_meeting_activity(client, roster, tenant_uuid, days),
-        "silver.class_collab_chat_activity":     seed_chat_activity(client, roster, tenant_uuid, days),
-        "silver.class_collab_email_activity":    seed_email_activity(client, roster, tenant_uuid, days),
+        "silver.class_collab_meeting_activity": seed_meeting_activity(
+            client, roster, tenant_uuid, days
+        ),
+        "silver.class_collab_chat_activity": seed_chat_activity(client, roster, tenant_uuid, days),
+        "silver.class_collab_email_activity": seed_email_activity(
+            client, roster, tenant_uuid, days
+        ),
     }
