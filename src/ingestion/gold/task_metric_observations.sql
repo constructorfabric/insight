@@ -133,8 +133,13 @@ issue_state AS (
     LEFT JOIN {{ ref('class_task_statuses') }} AS cur FINAL
         ON cur.insight_source_id = p.insight_source_id AND cur.status_id = p.status_id
 ),
--- Per-issue status spans: pair each status event with the next (last span ends
--- at close, or now for still-open issues). Carries the reconciled category.
+-- Per-issue status spans: pair each status event with the next. The last span
+-- ends per CURRENT state: a currently-done issue ends at its close, anything
+-- else (never closed, or closed-then-reopened) stays live to now(). Keying the
+-- tail on final_close_at alone would hand a reopened issue's current span an
+-- end before its start — the row filter below would then drop it, hiding the
+-- reopen from the transition CTEs and freezing its in-progress accrual.
+-- Carries the reconciled category.
 status_events AS (
     SELECT
         insight_source_id,
@@ -159,7 +164,11 @@ status_intervals AS (
             arrayJoin(arrayMap(
                 i -> (
                     (e.evs[i]).1,
-                    if(i = length(e.evs), ifNull(s.final_close_at, now()), (e.evs[i + 1]).1),
+                    if(i = length(e.evs),
+                       if(s.status_category = 'done',
+                          ifNull(s.final_close_at, (e.evs[i]).1),
+                          now()),
+                       (e.evs[i + 1]).1),
                     (e.evs[i]).2
                 ),
                 range(1, length(e.evs) + 1)
@@ -180,8 +189,11 @@ status_intervals AS (
       AND iv.interval_end <= now() + INTERVAL 1 DAY
 ),
 -- Per closed issue: dev-active seconds (Σ in-progress spans), lead (created →
--- close), pickup (created → first in-progress). Carries the state a day-grain
--- sum needs, and a precomputed due date so the value expressions stay simple.
+-- close), pickup (created → first in-progress). Only spans that started
+-- before the close count — a reopened issue's live rework belongs to its
+-- NEXT close (final_close_at advances when it re-closes), never retroactively
+-- to a close already reported. Carries the state a day-grain sum needs, and a
+-- precomputed due date so the value expressions stay simple.
 -- metric_date = close date.
 issue_facts AS (
     SELECT
@@ -201,15 +213,17 @@ issue_facts AS (
            CAST(NULL AS Nullable(Date)))                                     AS due_date,
         any(s.time_estimate_seconds)                                         AS time_estimate_seconds,
         any(s.time_spent_seconds)                                            AS time_spent_seconds,
-        sum(i.duration_seconds)                                              AS dev_seconds,
+        sumIf(i.duration_seconds, i.interval_start < s.final_close_at)      AS dev_seconds,
         if(any(s.created_at) IS NULL,
            CAST(NULL AS Nullable(Float64)),
            toFloat64(greatest(toInt64(0),
                dateDiff('second', any(s.created_at), any(s.final_close_at))))) AS lead_seconds,
-        if(any(s.created_at) IS NULL OR min(i.interval_start) IS NULL,
+        if(any(s.created_at) IS NULL
+               OR minIf(i.interval_start, i.interval_start < s.final_close_at) IS NULL,
            CAST(NULL AS Nullable(Float64)),
            toFloat64(greatest(toInt64(0),
-               dateDiff('second', any(s.created_at), min(i.interval_start))))) AS pickup_seconds,
+               dateDiff('second', any(s.created_at),
+                        minIf(i.interval_start, i.interval_start < s.final_close_at))))) AS pickup_seconds,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM issue_state AS s
     LEFT JOIN status_intervals AS i
@@ -220,16 +234,17 @@ issue_facts AS (
     GROUP BY s.tenant_id, s.entity_id, s.issue_id, toDate(s.final_close_at)
 ),
 -- Day-grain estimation accuracy inputs: pct compares the day's average
--- original estimate to average time spent over estimate-carrying closed
--- issues (current-status done). Days whose pct falls outside (0, 200] carry
+-- original estimate to average time spent over the same set — closed issues
+-- (current-status done) that carry both a positive estimate and logged time,
+-- so both averages span identical issues. Days whose pct falls outside (0, 200] carry
 -- no observation — wildly blown estimates read as unknowable, not as signal.
 estimation_day AS (
     SELECT
         tenant_id,
         entity_id,
         metric_date,
-        100 * avgIf(time_estimate_seconds, is_done AND ifNull(time_estimate_seconds, 0) > 0)
-            / nullIf(avgIf(time_spent_seconds, is_done AND ifNull(time_estimate_seconds, 0) > 0), 0)
+        100 * avgIf(time_estimate_seconds, is_done AND ifNull(time_estimate_seconds, 0) > 0 AND time_spent_seconds IS NOT NULL)
+            / nullIf(avgIf(time_spent_seconds, is_done AND ifNull(time_estimate_seconds, 0) > 0 AND time_spent_seconds IS NOT NULL), 0)
             AS estimation_pct,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM issue_facts
