@@ -13,10 +13,46 @@
 
 use std::collections::HashMap;
 
+use async_trait::async_trait;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, Value};
 use uuid::Uuid;
 
 use crate::domain::seed::{SeedObservationRow, SourceAccountKey, normalize_email};
+use crate::domain::seed_service::SeedStore;
+
+/// MariaDB-backed [`SeedStore`] — wraps a connection so the persons-seed service
+/// can be driven against the real DB (or a fake in tests).
+pub struct MariaDbSeedStore<'a> {
+    db: &'a DatabaseConnection,
+}
+
+impl<'a> MariaDbSeedStore<'a> {
+    #[must_use]
+    pub fn new(db: &'a DatabaseConnection) -> Self {
+        Self { db }
+    }
+}
+
+#[async_trait]
+impl SeedStore for MariaDbSeedStore<'_> {
+    async fn known_account_bindings(
+        &self,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<HashMap<SourceAccountKey, Uuid>> {
+        known_account_bindings(self.db, tenant_id).await
+    }
+
+    async fn latest_email_to_person(
+        &self,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<HashMap<String, Uuid>> {
+        latest_email_to_person(self.db, tenant_id).await
+    }
+
+    async fn apply(&self, tenant_id: Uuid, rows: &[SeedObservationRow]) -> anyhow::Result<u64> {
+        apply(self.db, tenant_id, rows).await
+    }
+}
 
 /// Current `source_account_id → person_id` bindings for the tenant — the latest
 /// `value_type='id'` observation per account. Feeds the known-account branch of
