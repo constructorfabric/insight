@@ -39,7 +39,12 @@ pub trait SeedStore {
         tenant_id: Uuid,
     ) -> anyhow::Result<HashMap<String, Uuid>>;
 
-    async fn apply(&self, tenant_id: Uuid, rows: &[SeedObservationRow]) -> anyhow::Result<u64>;
+    async fn apply(
+        &self,
+        tenant_id: Uuid,
+        author_person_id: Uuid,
+        rows: &[SeedObservationRow],
+    ) -> anyhow::Result<u64>;
 }
 
 /// Outcome of one persons-seed run (feeds the operation status). Mirrors the
@@ -87,7 +92,9 @@ where
 
     // 3. Materialize the resolved observations and apply them.
     let observation_rows = assignments_to_rows(&outcome.assignments, author_person_id);
-    let observations_inserted = store.apply(tenant_id, &observation_rows).await?;
+    let observations_inserted = store
+        .apply(tenant_id, author_person_id, &observation_rows)
+        .await?;
 
     Ok(SeedSummary {
         accounts_read,
@@ -133,7 +140,12 @@ mod tests {
         ) -> anyhow::Result<HashMap<String, Uuid>> {
             Ok(self.emails.clone())
         }
-        async fn apply(&self, _tenant: Uuid, rows: &[SeedObservationRow]) -> anyhow::Result<u64> {
+        async fn apply(
+            &self,
+            _tenant: Uuid,
+            _author: Uuid,
+            rows: &[SeedObservationRow],
+        ) -> anyhow::Result<u64> {
             Ok(rows.len() as u64) // net-inserted (no dedup in the fake)
         }
     }

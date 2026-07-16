@@ -49,8 +49,13 @@ impl SeedStore for MariaDbSeedStore<'_> {
         latest_email_to_person(self.db, tenant_id).await
     }
 
-    async fn apply(&self, tenant_id: Uuid, rows: &[SeedObservationRow]) -> anyhow::Result<u64> {
-        apply(self.db, tenant_id, rows).await
+    async fn apply(
+        &self,
+        tenant_id: Uuid,
+        author_person_id: Uuid,
+        rows: &[SeedObservationRow],
+    ) -> anyhow::Result<u64> {
+        apply(self.db, tenant_id, author_person_id, rows).await
     }
 }
 
@@ -160,16 +165,22 @@ pub async fn latest_email_to_person(
 }
 
 /// Apply a seed's resolved observations: `INSERT IGNORE` each into `persons`,
-/// then rebuild the tenant's `account_person_map` — all in one transaction, so
-/// the log and the derived cache are never left cross-inconsistent. Returns the
-/// number of observation rows actually inserted (duplicates are ignored).
+/// then rebuild the tenant's `account_person_map` and `org_chart` — all in one
+/// transaction, so the log and the derived caches are never left
+/// cross-inconsistent. `author_person_id` stamps the computed `org_chart`
+/// no-parent rows (the seed operation's author). Returns the number of
+/// observation rows actually inserted (duplicates are ignored).
 ///
 /// # Errors
 ///
 /// Returns an error if any statement fails; the transaction is rolled back.
+// The length is dominated by the verbatim org_chart CTE string constant, not
+// control flow — keeping the SQL inline (co-located, greppable) over hoisting it.
+#[allow(clippy::too_many_lines)]
 pub async fn apply(
     db: &DatabaseConnection,
     tenant_id: Uuid,
+    author_person_id: Uuid,
     rows: &[SeedObservationRow],
 ) -> anyhow::Result<u64> {
     // Idempotent insert — uq_person_observation dedups a re-emitted identical
@@ -205,8 +216,226 @@ pub async fn apply(
           AND value_id IS NOT NULL
           AND insight_tenant_id = ?
     ";
+    const DELETE_ORG_CHART: &str = "DELETE FROM org_chart WHERE insight_tenant_id = ?";
+    // Ported verbatim from Sql.PersonsSeed.cs::InsertOrgChartForTenant. The `?`
+    // markers bind, in order: `insight_tenant_id` SIX times (state_log,
+    // default_active, pe_periods, email_to_person, existing_edges,
+    // source_member_latest_active), then `author_person_id` once (the Path-B
+    // no-parent rows). Keep this order in lock-step with the params vec below.
+    const INSERT_ORG_CHART: &str = r"
+        INSERT INTO org_chart
+            (insight_tenant_id, insight_source_type, insight_source_id,
+             child_person_id, parent_person_id,
+             author_person_id, reason, valid_from, valid_to)
+        WITH
+        state_log AS (
+            SELECT
+                insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                created_at, id,
+                CASE
+                    WHEN value_full_text IN ('Inactive', 'Terminated', 'inactive', 'terminated')
+                        THEN 0 ELSE 1
+                END AS is_active,
+                LAG(CASE
+                    WHEN value_full_text IN ('Inactive', 'Terminated', 'inactive', 'terminated')
+                        THEN 0 ELSE 1
+                END) OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, person_id
+                    ORDER BY created_at, id
+                ) AS prev_is_active
+            FROM persons
+            WHERE value_type = 'status'
+              AND value_full_text IS NOT NULL
+              AND insight_tenant_id = ?
+        ),
+        state_transitions AS (
+            SELECT
+                insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                created_at, id, is_active,
+                LEAD(created_at) OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, person_id
+                    ORDER BY created_at, id
+                ) AS next_transition_at
+            FROM state_log
+            WHERE prev_is_active IS NULL OR prev_is_active <> is_active
+        ),
+        active_intervals AS (
+            SELECT
+                insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                created_at         AS interval_start,
+                next_transition_at AS interval_end
+            FROM state_transitions
+            WHERE is_active = 1
+        ),
+        default_active AS (
+            SELECT DISTINCT
+                pe.insight_tenant_id, pe.insight_source_type, pe.insight_source_id, pe.person_id,
+                CAST('1970-01-01 00:00:00.000000' AS DATETIME(6)) AS interval_start,
+                CAST(NULL AS DATETIME(6)) AS interval_end
+            FROM persons pe
+            WHERE pe.value_type = 'parent_email'
+              AND pe.value_id IS NOT NULL
+              AND pe.insight_tenant_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM persons s
+                  WHERE s.insight_tenant_id   = pe.insight_tenant_id
+                    AND s.insight_source_type = pe.insight_source_type
+                    AND s.insight_source_id   = pe.insight_source_id
+                    AND s.person_id           = pe.person_id
+                    AND s.value_type          = 'status'
+              )
+        ),
+        all_active AS (
+            SELECT * FROM active_intervals
+            UNION ALL
+            SELECT * FROM default_active
+        ),
+        pe_periods AS (
+            SELECT
+                pe.insight_tenant_id, pe.insight_source_type, pe.insight_source_id,
+                pe.person_id AS child_person_id,
+                pe.value_id AS parent_email,
+                pe.author_person_id, pe.reason,
+                pe.created_at AS pe_from,
+                LEAD(pe.created_at) OVER (
+                    PARTITION BY pe.insight_tenant_id, pe.insight_source_type,
+                                 pe.insight_source_id, pe.person_id
+                    ORDER BY pe.created_at, pe.id
+                ) AS pe_to
+            FROM persons pe
+            WHERE pe.value_type = 'parent_email'
+              AND pe.value_id IS NOT NULL
+              AND pe.insight_tenant_id = ?
+        ),
+        email_to_person AS (
+            SELECT
+                p.insight_tenant_id, p.value_id, p.person_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p.insight_tenant_id, p.value_id
+                    ORDER BY p.created_at DESC, p.id DESC
+                ) AS rn
+            FROM persons p
+            WHERE p.value_type = 'email'
+              AND p.value_id IS NOT NULL
+              AND p.insight_tenant_id = ?
+        ),
+        existing_edges AS (
+            SELECT
+                insight_tenant_id, insight_source_type, insight_source_id,
+                person_id                                       AS child_person_id,
+                UNHEX(REPLACE(value_id, '-', ''))               AS parent_person_id,
+                author_person_id, reason,
+                created_at                                      AS valid_from,
+                LEAD(created_at) OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type,
+                                 insight_source_id, person_id
+                    ORDER BY created_at
+                )                                               AS valid_to
+            FROM persons
+            WHERE value_type = 'parent_person_id'
+              AND value_id IS NOT NULL
+              AND insight_tenant_id = ?
+              AND value_id REGEXP '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+              AND HEX(person_id) <> REPLACE(value_id, '-', '')
+
+            UNION ALL
+
+            SELECT
+                pe.insight_tenant_id, pe.insight_source_type, pe.insight_source_id,
+                pe.child_person_id,
+                parent.person_id                                AS parent_person_id,
+                pe.author_person_id, pe.reason,
+                GREATEST(pe.pe_from, ai.interval_start)         AS valid_from,
+                CASE
+                    WHEN pe.pe_to IS NULL AND ai.interval_end IS NULL THEN NULL
+                    WHEN pe.pe_to        IS NULL                      THEN ai.interval_end
+                    WHEN ai.interval_end IS NULL                      THEN pe.pe_to
+                    ELSE LEAST(pe.pe_to, ai.interval_end)
+                END                                             AS valid_to
+            FROM pe_periods pe
+            INNER JOIN email_to_person parent
+                ON parent.insight_tenant_id = pe.insight_tenant_id
+               AND parent.value_id          = pe.parent_email
+               AND parent.rn                = 1
+            INNER JOIN all_active ai
+                ON ai.insight_tenant_id   = pe.insight_tenant_id
+               AND ai.insight_source_type = pe.insight_source_type
+               AND ai.insight_source_id   = pe.insight_source_id
+               AND ai.person_id           = pe.child_person_id
+               AND ai.interval_start < COALESCE(pe.pe_to, '9999-12-31 23:59:59.999999')
+               AND COALESCE(ai.interval_end, '9999-12-31 23:59:59.999999') > pe.pe_from
+            WHERE parent.person_id <> pe.child_person_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM persons ppi
+                  WHERE ppi.insight_tenant_id   = pe.insight_tenant_id
+                    AND ppi.person_id           = pe.child_person_id
+                    AND ppi.insight_source_type = pe.insight_source_type
+                    AND ppi.insight_source_id   = pe.insight_source_id
+                    AND ppi.value_type          = 'parent_person_id'
+                    AND ppi.value_id IS NOT NULL
+              )
+        ),
+        source_member_latest_active AS (
+            -- Path B (#344): one current-state row per (tenant, source, person)
+            -- who is no one's child. author = the seed author, not the source row.
+            SELECT
+                m.insight_tenant_id, m.insight_source_type, m.insight_source_id, m.person_id,
+                m.first_obs,
+                latest.interval_end
+            FROM (
+                SELECT
+                    insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                    MIN(created_at) AS first_obs,
+                    MAX(CASE WHEN value_type = 'status' THEN 1 ELSE 0 END) AS has_status
+                FROM persons
+                WHERE insight_tenant_id = ?
+                GROUP BY insight_tenant_id, insight_source_type, insight_source_id, person_id
+            ) m
+            LEFT JOIN (
+                SELECT
+                    insight_tenant_id, insight_source_type, insight_source_id, person_id,
+                    interval_end,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY insight_tenant_id, insight_source_type,
+                                     insight_source_id, person_id
+                        ORDER BY interval_start DESC,
+                                 COALESCE(interval_end, '9999-12-31 23:59:59.999999') DESC
+                    ) AS rn
+                FROM active_intervals
+            ) latest
+                ON latest.insight_tenant_id   = m.insight_tenant_id
+               AND latest.insight_source_type = m.insight_source_type
+               AND latest.insight_source_id   = m.insight_source_id
+               AND latest.person_id           = m.person_id
+               AND latest.rn                  = 1
+            WHERE m.has_status = 0
+               OR latest.person_id IS NOT NULL
+        )
+
+        SELECT * FROM existing_edges
+
+        UNION ALL
+
+        SELECT
+            sm.insight_tenant_id, sm.insight_source_type, sm.insight_source_id,
+            sm.person_id                                    AS child_person_id,
+            CAST(NULL AS BINARY(16))                        AS parent_person_id,
+            ?                                               AS author_person_id,
+            ''                                              AS reason,
+            sm.first_obs                                    AS valid_from,
+            sm.interval_end                                 AS valid_to
+        FROM source_member_latest_active sm
+        WHERE NOT EXISTS (
+              SELECT 1 FROM existing_edges e
+              WHERE e.insight_tenant_id   = sm.insight_tenant_id
+                AND e.insight_source_type = sm.insight_source_type
+                AND e.insight_source_id   = sm.insight_source_id
+                AND e.child_person_id     = sm.person_id
+          )
+    ";
 
     let tenant_bytes = tenant_id.as_bytes().to_vec();
+    let author_bytes = author_person_id.as_bytes().to_vec();
     let txn = db.begin().await?;
 
     let mut inserted = 0u64;
@@ -244,7 +473,30 @@ pub async fn apply(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::MySql,
         INSERT_APM,
-        [tenant_bytes.into()],
+        [tenant_bytes.clone().into()],
+    ))
+    .await?;
+
+    // Rebuild org_chart for the tenant. The CTE binds the tenant six times, then
+    // the author once — same order as INSERT_ORG_CHART's `?` markers.
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::MySql,
+        DELETE_ORG_CHART,
+        [tenant_bytes.clone().into()],
+    ))
+    .await?;
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::MySql,
+        INSERT_ORG_CHART,
+        [
+            tenant_bytes.clone().into(),
+            tenant_bytes.clone().into(),
+            tenant_bytes.clone().into(),
+            tenant_bytes.clone().into(),
+            tenant_bytes.clone().into(),
+            tenant_bytes.into(),
+            author_bytes.into(),
+        ],
     ))
     .await?;
 
