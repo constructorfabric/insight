@@ -60,12 +60,14 @@ issue_pivot AS (
        OR event_kind = 'synthetic_initial'
     GROUP BY insight_source_id, issue_id
 ),
--- Close time: the last transition into a done-category status.
+-- Close time: the last transition into a done-category status. OrNull so a
+-- never-closed issue is NULL, not the epoch default of the non-Nullable
+-- event_at — `final_close_at IS NOT NULL` gates the closed-issue measures.
 issue_close AS (
     SELECT
         fh.insight_source_id                                                 AS insight_source_id,
         fh.issue_id                                                          AS issue_id,
-        maxIf(fh.event_at, st.status_category = 'done')                      AS final_close_at
+        maxIfOrNull(fh.event_at, st.status_category = 'done')                AS final_close_at
     FROM {{ ref('class_task_field_history') }} AS fh FINAL
     LEFT JOIN {{ ref('class_task_statuses') }} AS st FINAL
         ON st.insight_source_id = fh.insight_source_id
