@@ -13,27 +13,10 @@
 
 use std::collections::HashMap;
 
-use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, Value};
 use uuid::Uuid;
 
-use crate::domain::seed::{SourceAccountKey, normalize_email};
-
-/// One resolved observation to append to `persons` (already stamped with the
-/// `person_id` the resolver assigned).
-#[derive(Debug, Clone)]
-pub struct SeedObservationRow {
-    pub value_type: String,
-    pub source_type: String,
-    pub source_id: Uuid,
-    pub value_id: Option<String>,
-    pub value_full_text: Option<String>,
-    pub value: Option<String>,
-    pub person_id: Uuid,
-    pub author_person_id: Uuid,
-    pub reason: Option<String>,
-    pub created_at: DateTime,
-}
+use crate::domain::seed::{SeedObservationRow, SourceAccountKey, normalize_email};
 
 /// Current `source_account_id → person_id` bindings for the tenant — the latest
 /// `value_type='id'` observation per account. Feeds the known-account branch of
