@@ -75,12 +75,9 @@ pub enum CohortSource {
 pub struct MetricDefinition {
     pub base: MetricBase,
     pub spec: ComputationSpec,
-    /// Post-aggregation transform applied to every computed value (period,
-    /// peer pool entries, timeseries points, breakdown values, histogram
-    /// events): `clamp(multiplier * x + offset)`. The aggregation vocabulary
-    /// stays a closed algebra; bounded index metrics (efficiency clamps,
-    /// accuracy folds) express their final shaping here instead of growing
-    /// bespoke computation variants. NULL values pass through untouched.
+    /// Post-aggregation `clamp(multiplier * x + offset)` applied to every
+    /// computed value (period, peer, timeseries, breakdown, histogram);
+    /// NULLs pass through untouched.
     pub transform: Option<ValueTransform>,
 }
 
@@ -103,12 +100,9 @@ impl ValueTransform {
             && self.clamp_max.is_none()
     }
 
-    /// Wraps a SQL value expression. NULL must stay NULL: arithmetic
-    /// propagates it, but ClickHouse least/greatest IGNORE NULL arguments
-    /// from 24.12 on — an unguarded clamp would resurrect an honest-null
-    /// value as the clamp bound (and hand it to peer pools). The clamp is
-    /// therefore wrapped in an explicit NULL guard; ClickHouse computes the
-    /// duplicated aggregate expression once (common subexpression).
+    /// Wraps a SQL value expression in an explicit NULL guard: ClickHouse
+    /// least/greatest IGNORE NULL arguments (24.12+), so an unguarded clamp
+    /// would resurrect an honest-null value as the clamp bound.
     pub fn wrap_sql(&self, expr: &str) -> String {
         let mut out = expr.to_owned();
         if let Some(multiplier) = self.multiplier {

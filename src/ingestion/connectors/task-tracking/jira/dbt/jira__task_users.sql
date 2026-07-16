@@ -6,12 +6,9 @@
     tags=['jira', 'silver:class_task_users']
 ) }}
 
--- Per-source staging model; unioned into `silver.class_task_users` via `union_by_tag`.
--- Anchor for identity resolution.
---
--- View, not table: bronze `jira_user` is MergeTree (full_refresh + overwrite),
--- so the current state of bronze is the current state of staging.
--- `_version` is `_airbyte_extracted_at` — deterministic and monotonic.
+-- Per-source staging view; unioned into `silver.class_task_users` via
+-- `union_by_tag`. Bronze `jira_user` is MergeTree (full_refresh + overwrite),
+-- so a view over it is always current.
 
 SELECT
     u.unique_key                                AS unique_key,
@@ -29,4 +26,3 @@ SELECT
     toDateTime64(u._airbyte_extracted_at, 3)    AS collected_at,
     toUnixTimestamp64Milli(u._airbyte_extracted_at) AS _version
 FROM {{ source('bronze_jira', 'jira_user') }} u
--- `jira_user` bronze = MergeTree (full_refresh + overwrite), FINAL not supported and not needed.

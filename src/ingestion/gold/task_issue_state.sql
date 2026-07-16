@@ -13,26 +13,17 @@
     }
 ) }}
 
--- Per-issue lifecycle state for the task-delivery observation pipeline: one
--- row per assignee-resolved issue carrying tenant/email attribution, the
--- current status category, the close time, and the scalar fields the
--- downstream measures read. Materialized so the field-history pivot (two
--- scans plus joins) runs exactly once per build — the observation model's
--- measure branches re-reference this state per ClickHouse's WITH inlining,
--- and re-evaluating the pivot per branch multiplied the build's reads by
--- orders of magnitude.
+-- One row per assignee-resolved issue: attribution, current status category,
+-- close time, and the scalar fields the observation measures read.
+-- Materialized so the field-history pivot runs once per build instead of once
+-- per measure branch (ClickHouse re-inlines every WITH reference).
 --
--- Lifecycle is derived from the source-neutral class_task_statuses
--- status_category ('done' = closed) joined on the status id in
--- class_task_field_history.value_ids[1]. Never match status display names.
---
--- Attribution: assignee account id resolves to a lowercased email via
--- class_task_users; only email-shaped keys pass (Jira Cloud privacy hides
--- the rest — excluded as unmatchable, not carried as dead entities). The
--- tenant rides in on the same user row.
---
--- All class reads keep FINAL: the ReplacingMergeTree parts are not
--- duplicate-immune and argMax over a stale row version would skew the pivot.
+-- Lifecycle comes from class_task_statuses.status_category ('done' = closed)
+-- joined on the status id — never match status display names. Attribution:
+-- assignee account id → lowercased email via class_task_users; only
+-- email-shaped keys pass (unresolvable accounts are excluded, not carried).
+-- Class reads keep FINAL: RMT parts are not duplicate-immune and argMax over
+-- a stale version would skew the pivot.
 
 WITH
 task_users AS (
@@ -44,9 +35,7 @@ task_users AS (
     FROM {{ ref('class_task_users') }} FINAL
     WHERE email LIKE '%@%'
 ),
--- Per-issue scalar pivot: current status id, assignee, type, due date, and the
--- estimate/spent fields, plus created (first synthetic_initial) and the last
--- status-change time (for staleness).
+-- Per-issue scalar pivot; created = first synthetic_initial event.
 issue_pivot AS (
     SELECT
         insight_source_id,

@@ -13,21 +13,15 @@
     }
 ) }}
 
--- Per-issue status spans for the task-delivery observation pipeline: each
--- status event paired with the next. The last span ends per CURRENT state —
--- a currently-done issue ends at its close, anything else (never closed, or
--- closed-then-reopened) stays live to build time. Keying the tail on the
--- close time alone would hand a reopened issue's current span an end before
--- its start; the row filter below would then drop it, hiding the reopen from
--- transition detection and freezing its in-progress accrual.
+-- Per-issue status spans: each status event paired with the next. The last
+-- span ends per CURRENT state — at the close for currently-done issues, live
+-- to build time otherwise. Keying the tail on the close time alone would end
+-- a reopened issue's current span before it starts; the row filter below
+-- would then drop it, hiding the reopen from transition detection and
+-- freezing its in-progress accrual.
 --
--- Materialized so the event-array reconstruction runs exactly once per build;
--- the observation model derives dev time, transitions, and per-day in-progress
--- splits from these spans, and ClickHouse re-inlines every WITH reference.
---
--- The class read keeps FINAL: the ReplacingMergeTree parts are not
--- duplicate-immune and interval math over a stale row version would skew
--- the spans.
+-- Materialized once per build (ClickHouse re-inlines every WITH reference);
+-- the class read keeps FINAL (RMT parts are not duplicate-immune).
 
 WITH
 status_events AS (

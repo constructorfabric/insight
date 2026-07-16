@@ -13,49 +13,21 @@
     }
 ) }}
 
--- Source measure observations for the unified metrics runtime, task-delivery
--- family. Every measure is emitted through the shape macros in
--- macros/metric_observation_measures.sql.
+-- Task-delivery measure observations for the unified metrics runtime; every
+-- measure is emitted through macros/metric_observation_measures.sql.
 --
--- The per-issue reconstruction lives in two materialized stages —
--- task_issue_state (pivot + attribution + close) and task_status_intervals
--- (status spans) — because ClickHouse re-inlines every WITH reference: each
--- measure branch below re-evaluates its source CTE, and re-running the
--- field-history pivot per branch multiplied the build's reads by orders of
--- magnitude. With the stages as tables, a branch re-scan costs a small sorted
--- read. This model derives day-grain facts and emits observations; the
--- ordering key mirrors the runtime's filter shape.
+-- The per-issue reconstruction is materialized upstream (task_issue_state,
+-- task_status_intervals): ClickHouse re-inlines every WITH reference, so the
+-- measure branches would otherwise re-run it once per branch.
 --
--- Lifecycle, attribution, and the FINAL-dedup rules are documented on the
--- stage models; worklogs are attributed here via class_task_users (only
--- email-shaped keys pass, tenant rides on the user row).
---
--- Grain per measure:
---   per closed issue (event, for medians): dev_time_hours, resolution_days,
---                    pickup_days
---   day-grain sums (per assignee, close date): tasks_closed, bugs_fixed,
---                    due_date_on_time, due_date_with_due, slip_days_total,
---                    late_count, flow_dev_seconds, flow_lead_seconds
---   day-grain estimation fold inputs: estimation_error_pct (|100 - pct| where
---                    pct = 100 * avg estimate / avg spent over that day's
---                    estimate-carrying closes, kept only for 0 < pct <= 200)
---                    and estimation_samples (1 per qualifying day) — the
---                    registry folds them to 100 - avg error, clamped [0, 100]
---   day-grain sums (per assignee, transition date): close_events,
---                    reopened_within_14d (a close counts as reopened when the
---                    next reopen transition lands within 14 days)
---   day-grain sums (per worklog author / dev-active day): worklog_seconds,
---                    in_progress_seconds (both gated to days with in-progress
---                    time, so the accuracy ratio never counts logging on days
---                    with no tracked development)
---   snapshot (build date): stale_in_progress (open issues idle > 14 days)
---
--- No distinct-count measure, so every row carries subject_key = NULL and the
--- model is a single UNION branch (matching git / ai).
+-- Grain: event rows per closed issue for the median metrics (dev_time_hours,
+-- resolution_days, pickup_days); day-grain sums for everything else;
+-- stale_in_progress is a build-date snapshot. No distinct-count measure, so
+-- subject_key is always NULL.
 
 WITH
--- Identity + tenant anchor for worklog attribution. Issue attribution is
--- already resolved on task_issue_state.
+-- Worklog attribution (account id → lowercased email, tenant on the same
+-- row); issue attribution is already resolved on task_issue_state.
 task_users AS (
     SELECT
         tenant_id,
@@ -73,13 +45,9 @@ status_intervals AS (
     SELECT *
     FROM {{ ref('task_status_intervals') }}
 ),
--- Per closed issue: dev-active seconds (Σ in-progress spans), lead (created →
--- close), pickup (created → first in-progress). Only spans that started
--- before the close count — a reopened issue's live rework belongs to its
--- NEXT close (final_close_at advances when it re-closes), never retroactively
--- to a close already reported. Carries the state a day-grain sum needs, and a
--- precomputed due date so the value expressions stay simple.
--- metric_date = close date.
+-- Per closed issue (metric_date = close date): dev seconds, lead, pickup.
+-- Only spans started before the close count — live rework on a reopened
+-- issue belongs to its next close, never retroactively to one reported.
 issue_facts AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
@@ -87,10 +55,8 @@ issue_facts AS (
         toDate(s.final_close_at)                                             AS metric_date,
         s.issue_id                                                           AS issue_id,
         any(s.issue_type)                                                    AS issue_type,
-        -- Count / due-date / estimation measures are defined over issues whose
-        -- CURRENT status is done (an issue closed then reopened is not a
-        -- present close); duration measures below are defined over every
-        -- ever-closed issue. Carry the current category to gate the former.
+        -- Gates count/due-date/estimation measures to CURRENT-status-done
+        -- issues; duration measures cover every ever-closed issue.
         any(s.status_category) = 'done'                                      AS is_done,
         toDate(s.final_close_at)                                             AS close_date,
         any(s.due_date)                                                      AS due_date,
@@ -116,11 +82,9 @@ issue_facts AS (
     WHERE s.final_close_at IS NOT NULL
     GROUP BY s.tenant_id, s.entity_id, s.issue_id, toDate(s.final_close_at)
 ),
--- Day-grain estimation accuracy inputs: pct compares the day's average
--- original estimate to average time spent over the same set — closed issues
--- (current-status done) that carry both a positive estimate and logged time,
--- so both averages span identical issues. Days whose pct falls outside (0, 200] carry
--- no observation — wildly blown estimates read as unknowable, not as signal.
+-- Day-grain estimation pct: avg estimate / avg spent, both averages pinned to
+-- the SAME set (done, positive estimate, logged time). pct outside (0, 200]
+-- emits nothing — blown estimates read as unknowable, not as signal.
 estimation_day AS (
     SELECT
         tenant_id,
@@ -133,9 +97,8 @@ estimation_day AS (
     FROM issue_facts
     GROUP BY tenant_id, entity_id, metric_date
 ),
--- Close / reopen transitions from the status spans. A reopen is a transition
--- out of a done category; a close is a transition into one. For each close,
--- the first reopen after it decides reopened-within-14d (spec definition).
+-- A close is a transition into a done category, a reopen out of one; the
+-- first reopen after a close decides reopened-within-14d.
 transitions AS (
     SELECT
         insight_source_id,
@@ -174,8 +137,8 @@ close_reopen AS (
         ON r.insight_source_id = c.insight_source_id AND r.issue_id = c.issue_id
     GROUP BY s.tenant_id, s.entity_id, c.issue_id, c.close_at
 ),
--- Seconds in an in-progress span per (assignee, calendar day), splitting each
--- span across the days it covers. Denominator for worklog accuracy.
+-- In-progress seconds per (assignee, calendar day); worklog-accuracy
+-- denominator.
 in_progress_per_day AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
@@ -206,9 +169,8 @@ worklog_per_day AS (
     WHERE w.work_date IS NOT NULL
     GROUP BY u.tenant_id, u.email, toDate(w.work_date)
 ),
--- Worklog is only comparable on days with tracked development, so both sides
--- of the ratio are gated to days with in-progress time (matches the legacy
--- accuracy definition).
+-- Both sides of the accuracy ratio are gated to days with in-progress time —
+-- logging on a day with no tracked development is not comparable.
 worklog_flow AS (
     SELECT
         coalesce(ip.tenant_id, wl.tenant_id)                                 AS tenant_id,

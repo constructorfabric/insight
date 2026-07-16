@@ -285,10 +285,8 @@ pub(crate) fn compile_peer_batch_query(
     for (item_index, def) in defs.iter().enumerate() {
         let value = period_alias(item_index);
         let aliases = peer_aliases(item_index);
-        // The transform applies here, before the percentile pass: peer pools
-        // must rank the shaped values (a clamped ratio's cohort max is the
-        // clamp, not the raw artifact). The alias is a single column
-        // reference, so the NULL-guarded clamp duplicates no placeholders.
+        // Transform before the percentile pass — peer pools must rank the
+        // shaped values, not the raw artifact.
         let carried_value = transformed(def, format!("metric_values.{value}"));
         let _ = write!(
             carried,
@@ -1155,10 +1153,8 @@ mod tests {
             );
             assert_eq!(query.sql.matches('?').count(), query.params.len());
         }
-        // The histogram bins the transformed event value under its own alias
-        // (never the raw `value` column), so lo/hi and bin math run on the
-        // transformed distribution. Histogram is median-only, so it takes a
-        // median def rather than the ratio above.
+        // Histogram (median-only, hence its own def) must bin the transformed
+        // event value under its own alias, never the raw `value` column.
         let mut median = median_metric();
         median.transform = Some(ValueTransform {
             clamp_max: Some(100.0),
