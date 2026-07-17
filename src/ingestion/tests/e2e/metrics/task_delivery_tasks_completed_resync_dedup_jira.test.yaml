@@ -113,7 +113,7 @@ cases:
         assert: "result.status == 'ok'"
       - in: task_delivery
         find: {metric_key: tasks_completed}
-        equal: {value: 3, median: 3, range_min: 3, range_max: 3}
+        equal: {value: 3, median: 3, range_min: 3, range_max: 3, p25: 3, p75: 3}
 
   - name: "DDP-1 day (12-21) — later extraction closed it → counted"
     request:
@@ -132,7 +132,7 @@ cases:
         assert: "result.status == 'ok'"
       - in: task_delivery
         find: {metric_key: tasks_completed}
-        equal: {value: 1}
+        equal: {value: 1, median: 1, range_min: 1, range_max: 1, p25: 1, p75: 1}
 
   - name: "DDP-2 day (12-22) — identical duplicate rows count once, not twice"
     request:
@@ -151,7 +151,7 @@ cases:
         assert: "result.status == 'ok'"
       - in: task_delivery
         find: {metric_key: tasks_completed}
-        equal: {value: 1}
+        equal: {value: 1, median: 1, range_min: 1, range_max: 1, p25: 1, p75: 1}
 
   - name: "DDP-3 day (12-23) — max extracted_at wins over insert order → counted"
     request:
@@ -170,7 +170,7 @@ cases:
         assert: "result.status == 'ok'"
       - in: task_delivery
         find: {metric_key: tasks_completed}
-        equal: {value: 1}
+        equal: {value: 1, median: 1, range_min: 1, range_max: 1, p25: 1, p75: 1}
 
   - name: "DDP-4 day (12-24) — re-opened by the latest extraction → no close, no items"
     request:
