@@ -21,14 +21,14 @@ The stack must be up first (`./dev-compose.sh up`). Then:
 ```bash
 cd insight/deploy/seed
 python3 -m venv .venv                              # one-time
-.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pip install -e '.[dev]'
 
 .venv/bin/ruff check .
 .venv/bin/mypy .
 ```
 
-Pinned dep versions live in `requirements.txt` / `requirements-dev.txt`.
-Re-resolve via `.venv/bin/pip install --upgrade <pkgs>` + `pip freeze`.
+Deps live in `pyproject.toml`: `[project.dependencies]` for runtime,
+`[project.optional-dependencies].dev` for the tooling (ruff, mypy, stubs).
 
 ## Layout
 
@@ -39,6 +39,4 @@ Re-resolve via `.venv/bin/pip install --upgrade <pkgs>` + `pip freeze`.
 | `identity.py` | MariaDB seed: persons, org_chart, account_person_map. |
 | `silver.py` | ClickHouse silver seed — Phase 2 placeholder. |
 | `Dockerfile` | One-shot image for the compose `seed-sample` service. |
-| `requirements.txt` | Pinned runtime deps. |
-| `requirements-dev.txt` | Pinned dev deps (ruff, mypy, stubs). |
-| `pyproject.toml` | ruff + mypy config. |
+| `pyproject.toml` | Package metadata, deps (runtime + dev), ruff + mypy config. |
