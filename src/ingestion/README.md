@@ -169,7 +169,7 @@ Common flags: `--dry-run` (preview only), `--connector <name>` (limit scope), `-
 ./reconcile-connectors.sh                      # apply
 
 # Build/rebuild a CDK connector image (Airbyte registration is handled by reconcile)
-./reconcile-connectors/lib/cdk-build.sh git/github
+./reconcile-connectors/lib/cdk-build.sh git/gitlab
 ./reconcile-connectors.sh --connector github
 
 # After changing connector credentials (rotate K8s Secret), the cfg-hash tag drifts
