@@ -147,7 +147,7 @@ connectors:
         #     salesforce_instance_url:
         #       value: https://mycompany.my.salesforce.com
         #     salesforce_start_date:
-        value: "2024-01-01"
+        #       value: "2024-01-01"
   bitbucket-cloud:
     path: git/bitbucket-cloud
     config:

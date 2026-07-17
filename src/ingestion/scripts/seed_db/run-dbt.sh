@@ -27,13 +27,13 @@ ingestion:
       type: clickhouse
       host: ${CLICKHOUSE_HOST}
       port: ${CLICKHOUSE_PORT}
-      schema: default
+      schema: silver
       user: ${CLICKHOUSE_USER}
       password: "{{ env_var('CLICKHOUSE_PASSWORD') }}"
       secure: ${SECURE}
-      engine: "ReplacingMergeTree(_version)"
-      settings:
-        allow_nullable_key: 1
+      send_receive_timeout: 1500
+      query_limit: 0
+      connect_timeout: 30
 EOF
 
 cd "${DBT_DIR}"
