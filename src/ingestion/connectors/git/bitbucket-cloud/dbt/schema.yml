@@ -25,8 +25,56 @@ models:
   - name: bitbucket_cloud__repository_branches
     description: "Bitbucket Cloud branches -> staging, feeds class_git_repository_branches"
 
+  # CONTRACT must match the `class_git_commits` silver contract exactly — name,
+  # order and data_type. Enforced by scripts/check_silver_contract_parity.py in
+  # CI: you cannot add/reorder/retype a column here without doing the same in the
+  # silver contract (and therefore every other connector feeding this class).
   - name: bitbucket_cloud__commits
     description: "Bitbucket Cloud commits -> staging, feeds class_git_commits"
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: tenant_id
+        data_type: String
+      - name: source_id
+        data_type: String
+      - name: unique_key
+        data_type: String
+      - name: project_key
+        data_type: String
+      - name: repo_slug
+        data_type: String
+      - name: commit_hash
+        data_type: String
+      - name: branch
+        data_type: String
+      - name: author_name
+        data_type: String
+      - name: author_email
+        data_type: String
+      - name: committer_name
+        data_type: String
+      - name: committer_email
+        data_type: String
+      - name: message
+        data_type: String
+      - name: date
+        data_type: Nullable(DateTime)
+      - name: files_changed
+        data_type: Int64
+      - name: lines_added
+        data_type: Int64
+      - name: lines_removed
+        data_type: Int64
+      - name: is_merge_commit
+        data_type: UInt8
+      - name: data_source
+        data_type: String
+      - name: _version
+        data_type: Int64
+      - name: _airbyte_extracted_at
+        data_type: DateTime64(3)
 
   - name: bitbucket_cloud__file_changes
     description: "Bitbucket Cloud file changes -> staging, feeds class_git_file_changes"
