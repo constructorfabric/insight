@@ -2,5 +2,5 @@ apiVersion: v2
 name: insight-api-gateway
 description: Insight API Gateway with OIDC authentication
 version: 0.1.0
-appVersion: "2026.07.17.10.17-55cc1eb"
+appVersion: "2026.07.17.12.14-96a3da1"
 type: application

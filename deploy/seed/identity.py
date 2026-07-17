@@ -97,6 +97,51 @@ def seed_persons(
     return cur.rowcount
 
 
+def seed_person_names(
+    cur: pymysql.cursors.Cursor,
+    tenant_uuid: str,
+    roster: Iterable[Person],
+) -> int:
+    """Insert display_name / first_name / last_name observations per person.
+
+    The identity service routes these value_types into `value_full_text`
+    (not `value_id`); see seed-persons-from-identity-input.py's
+    VALUE_TYPES_FOR_VALUE_FULL_TEXT. Without them the persons API returns
+    empty names and the UI falls back to email. INSERT IGNORE absorbs
+    re-runs (unique key includes value_type).
+    """
+    sql = """
+        INSERT IGNORE INTO persons (
+            value_type, insight_source_type, insight_source_id,
+            insight_tenant_id, value_full_text,
+            person_id, author_person_id, reason
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s
+        )
+    """
+    rows: list[tuple[object, ...]] = []
+    for p in roster:
+        for value_type, value in (
+            ("display_name", p.display_name),
+            ("first_name", p.first_name),
+            ("last_name", p.last_name),
+        ):
+            if not value:
+                continue
+            rows.append((
+                value_type,
+                DEV_SEED_SOURCE_TYPE,
+                _bin(DEV_SEED_SOURCE_ID),
+                _bin(tenant_uuid),
+                value,
+                _bin(p.uuid),
+                _bin(AUTHOR_PERSON_UUID),
+                "seed.py demo names",
+            ))
+    cur.executemany(sql, rows)
+    return cur.rowcount
+
+
 def seed_org_chart(
     cur: pymysql.cursors.Cursor,
     tenant_uuid: str,
@@ -187,12 +232,14 @@ def run() -> None:
     with _connect() as conn:
         cur = conn.cursor()
         n_persons = seed_persons(cur, tenant, roster)
+        n_names = seed_person_names(cur, tenant, roster)
         n_org = seed_org_chart(cur, tenant, roster)
         n_acct = seed_account_person_map(cur, tenant, roster)
 
     LOG.info(
-        "DONE: persons=%d (new), org_chart=%d (new), account_person_map=%d (new)",
-        n_persons, n_org, n_acct,
+        "DONE: persons=%d (new), names=%d (new), org_chart=%d (new), "
+        "account_person_map=%d (new)",
+        n_persons, n_names, n_org, n_acct,
     )
 
 

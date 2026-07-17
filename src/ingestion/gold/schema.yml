@@ -375,6 +375,76 @@ models:
         tests:
           - not_null
 
+  - name: wiki_metric_observations
+    description: >
+      Source measure observations for the unified metrics runtime, wiki
+      family. Day-grain sums over the wiki class contracts: page creation
+      from the page snapshot, edit sessions and distinct pages edited from
+      the per-author activity rollup, and comments received attributed to
+      the page author. No event or distinct-count measures, so subject_key
+      is NULL on every row and the model is a single value UNION branch.
+      The column set is the same published contract the analytics service
+      schema validator probes (`OBSERVATION_COLUMNS`); changing it requires
+      a coordinated backend change.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['wiki']
+      - name: entity_type
+        description: "Measured entity type"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['person']
+      - name: entity_id
+        description: >
+          Normalized entity identifier: the author's lowercased email as
+          resolved in the wiki staging models. Accounts that do not resolve
+          to an email are excluded upstream.
+        tests:
+          - not_null
+      - name: metric_date
+        description: >
+          Observation date: page creation date for pages_created, edit day
+          for edits/pages_edited, comment day for comments.
+        tests:
+          - not_null
+      - name: observed_at
+        description: "Reserved for point-in-time semantics. NULL for all wiki measures."
+      - name: measure_key
+        description: "Source measure key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - pages_created
+                  - edits
+                  - pages_edited
+                  - comments
+      - name: value
+        description: >
+          Measure value. Rows are emitted only when the source provides a
+          value, so value is never NULL; the column stays Nullable(Float64)
+          in the published contract.
+        tests:
+          - not_null
+      - name: subject_key
+        description: "Unused by this family (no distinct-count measure); always NULL."
+      - name: dimensions
+        description: >
+          Array(Tuple(key, value, label)). Empty for every wiki measure — the
+          family carries no breakdown dimension.
+
   - name: metric_entity_cohorts_current
     description: >
       Current cohort membership per entity for peer comparison. One row per
