@@ -57,19 +57,34 @@ jobs:
 
       - name: Summarize findings in the job summary
         if: always()
-        # Null-guarded append (repo convention, cf. e2e-bronze-to-api.yml). Counts SARIF
-        # results with the stdlib json module (no jq dependency).
+        # Null-guarded append (repo convention, cf. e2e-bronze-to-api.yml). Renders a
+        # severity + per-rule breakdown from the SARIF using the stdlib (no jq dependency).
         run: |
-          if [ -f semgrep.sarif ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-            count=$(python3 -c "import json; d=json.load(open('semgrep.sarif')); print(sum(len(r.get('results', [])) for r in d.get('runs', [])))" 2>/dev/null || echo "?")
-            {
-              echo "## Semgrep SAST (report-only)"
-              echo ""
-              echo "**${count}** finding(s) from \`p/default\` — see the **Security → Code scanning** tab for details."
-              echo ""
-              echo "_Report-only: this check never blocks. It becomes blocking when \`--error\` is added and the baseline is clean (#1797)._"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          [ -f semgrep.sarif ] || exit 0
+          [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
+          python3 - semgrep.sarif "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys, collections
+          d = json.load(open(sys.argv[1]))
+          out = open(sys.argv[2], "a")
+          res = [x for r in d.get("runs", []) for x in r.get("results", [])]
+          total = len(res)
+          sev = collections.Counter((x.get("level") or "warning") for x in res)
+          rules = collections.Counter(x.get("ruleId", "?").split(".")[-1] for x in res)
+          w = out.write
+          w("## Semgrep SAST (report-only)\n\n")
+          w(f"**{total}** finding(s) from `p/default` (secrets excluded — TruffleHog owns those). "
+            "This check does **not** block; full details in **Security -> Code scanning**.\n\n")
+          if total:
+              w("| Severity | Count |\n|---|---:|\n")
+              for s in ("error", "warning", "note"):
+                  if sev.get(s):
+                      w(f"| {s} | {sev[s]} |\n")
+              w("\n<details><summary>Findings by rule</summary>\n\n| Count | Rule |\n|---:|---|\n")
+              for rid, n in rules.most_common():
+                  w(f"| {n} | `{rid}` |\n")
+              w("\n</details>\n")
+          w("\n_Report-only: becomes blocking when `--error` is added and the baseline is clean (#1797)._\n")
+          PY
 
       - name: Upload SARIF to GitHub Code Scanning
         # Skip on fork PRs: they receive a read-only token and cannot upload to Code Scanning,
