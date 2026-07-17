@@ -192,6 +192,15 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
         ],
         dimensions: &[],
     },
+    BuiltinSource {
+        source: SourceSeed {
+            key: "wiki",
+            kind: SourceKind::ManagedObservation,
+            source_ref: "wiki_metric_observations",
+        },
+        measures: &["pages_created", "edits", "pages_edited", "comments"],
+        dimensions: &[],
+    },
 ];
 
 pub const BUILTIN_METRICS: &[MetricSeed] = &[
@@ -1380,6 +1389,96 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
             measure_key: "stale_in_progress",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "wiki.pages_created",
+        source_key: "wiki",
+        label: "Pages created",
+        description: Some("Wiki pages authored"),
+        explanation: Some(
+            "Wiki pages the person created during the period, counted on the \
+             page's creation date.",
+        ),
+        unit: Some("pages"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "pages_created",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "wiki.edits",
+        source_key: "wiki",
+        label: "Page edits",
+        description: Some("Wiki edit sessions"),
+        explanation: Some(
+            "Logical wiki edits the person made during the period. Consecutive \
+             saves of the same page within a short window count as one edit, so \
+             autosaves do not inflate the number.",
+        ),
+        unit: Some("edits"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "edits",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "wiki.pages_edited",
+        source_key: "wiki",
+        label: "Pages edited",
+        description: Some("Distinct wiki pages edited"),
+        explanation: Some(
+            "Distinct wiki pages the person edited during the period, counted \
+             per day the page was touched.",
+        ),
+        unit: Some("pages"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "pages_edited",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "wiki.comments",
+        source_key: "wiki",
+        label: "Comments received",
+        description: Some("Comments on the person's wiki pages"),
+        explanation: Some(
+            "Comments and replies other people left on wiki pages the person \
+             authored — a signal of how much their documentation is read and \
+             discussed.",
+        ),
+        unit: Some("comments"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "comments",
         }],
         dimensions: &[],
     },
