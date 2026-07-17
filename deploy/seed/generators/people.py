@@ -63,7 +63,14 @@ _JOB_TITLES = {
 
 
 def _display_name(p: Person) -> str:
-    """Synthesize a display name from the email's local part."""
+    """Person's real name, or a synthesized one from the email's local part.
+
+    The roster now carries first/last names (profiles.py), so prefer those —
+    this feeds bronze_bamboohr.employees.displayName, which the analytics
+    `insight.team_member` view surfaces in the UI's Team Members table.
+    """
+    if p.display_name:
+        return p.display_name
     local = p.email.split("@", 1)[0]
     return local.replace("_", " ").replace(".", " ").title()
 
