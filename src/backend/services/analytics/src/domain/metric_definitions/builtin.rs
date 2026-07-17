@@ -1,5 +1,5 @@
 use crate::domain::metric_definitions::definition::{
-    MetricComputation, MetricDirection, MetricFormat, MetricInputRole, SourceKind,
+    MetricComputation, MetricDirection, MetricFormat, MetricInputRole, SourceKind, ValueTransform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +79,9 @@ pub struct MetricSeed {
     pub direction: MetricDirection,
     pub entity_type: EntityType,
     pub computation: SeedComputation,
+    /// Post-aggregation shaping (affine + clamp) applied by the compiler to
+    /// every computed value; None = identity.
+    pub transform: Option<ValueTransform>,
     pub peer_cohort_key: Option<CohortKey>,
     pub inputs: &'static [InputSeed],
     pub dimensions: &'static [&'static str],
@@ -161,6 +164,34 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
         ],
         dimensions: &["tool", "scope"],
     },
+    BuiltinSource {
+        source: SourceSeed {
+            key: "task",
+            kind: SourceKind::ManagedObservation,
+            source_ref: "task_metric_observations",
+        },
+        measures: &[
+            "tasks_closed",
+            "bugs_fixed",
+            "due_date_on_time",
+            "due_date_with_due",
+            "slip_days_total",
+            "late_count",
+            "estimation_error_pct",
+            "estimation_samples",
+            "flow_dev_seconds",
+            "flow_lead_seconds",
+            "close_events",
+            "reopened_within_14d",
+            "worklog_seconds",
+            "in_progress_seconds",
+            "stale_in_progress",
+            "dev_time_hours",
+            "resolution_days",
+            "pickup_days",
+        ],
+        dimensions: &[],
+    },
 ];
 
 pub const BUILTIN_METRICS: &[MetricSeed] = &[
@@ -175,6 +206,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -193,6 +225,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -213,6 +246,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -233,6 +267,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -251,6 +286,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -269,6 +305,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -295,6 +332,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -313,6 +351,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -333,6 +372,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -353,6 +393,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -373,6 +414,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -393,6 +435,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -413,6 +456,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -431,6 +475,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -449,6 +494,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -469,6 +515,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -493,6 +540,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 1.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -519,6 +567,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Median,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -539,6 +588,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Median,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -559,6 +609,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Median,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -580,6 +631,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -600,6 +652,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -620,6 +673,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -646,6 +700,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 1.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -672,6 +727,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::DistinctCount,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -690,6 +746,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -708,6 +765,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -726,6 +784,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -744,6 +803,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -762,6 +822,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -780,6 +841,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -800,6 +862,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -820,6 +883,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::LowerIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -838,6 +902,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -858,6 +923,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -878,6 +944,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::HigherIsBetter,
         entity_type: EntityType::Person,
         computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[
             InputSeed {
@@ -904,6 +971,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::Neutral,
         entity_type: EntityType::Person,
         computation: SeedComputation::DistinctCount,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -924,6 +992,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::Neutral,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -944,6 +1013,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::Neutral,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
@@ -964,12 +1034,354 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         direction: MetricDirection::Neutral,
         entity_type: EntityType::Person,
         computation: SeedComputation::Sum,
+        transform: None,
         peer_cohort_key: Some(CohortKey::OrgUnit),
         inputs: &[InputSeed {
             input_role: MetricInputRole::Value,
             measure_key: "scheduled_meetings_attended",
         }],
         dimensions: &["tool"],
+    },
+    MetricSeed {
+        metric_key: "tasks.closed",
+        source_key: "task",
+        label: "Tasks closed",
+        description: Some("Tasks moved to a closed status"),
+        explanation: Some("Tasks a person moved into a closed status during the period."),
+        unit: Some("tasks"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "tasks_closed",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.bugs_fixed",
+        source_key: "task",
+        label: "Bugs fixed",
+        description: Some("Bug-type tasks closed"),
+        explanation: Some("Bug-type tasks a person closed during the period."),
+        unit: Some("tasks"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "bugs_fixed",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.dev_time",
+        source_key: "task",
+        label: "Development time",
+        description: Some("Time a task spends in active development"),
+        explanation: Some(
+            "Median time closed tasks spent in in-progress statuses, from first pickup to close.",
+        ),
+        unit: Some("h"),
+        format: MetricFormat::Decimal,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Median,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "dev_time_hours",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.resolution_time",
+        source_key: "task",
+        label: "Time to resolution",
+        description: Some("Task lifetime from creation to close"),
+        explanation: Some("Median time from task creation to close."),
+        unit: Some("d"),
+        format: MetricFormat::Decimal,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Median,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "resolution_days",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.pickup_time",
+        source_key: "task",
+        label: "Pickup time",
+        description: Some("Wait before work starts on a task"),
+        explanation: Some(
+            "Median time from task creation to first entering an in-progress status.",
+        ),
+        unit: Some("d"),
+        format: MetricFormat::Decimal,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Median,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "pickup_days",
+        }],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.flow_efficiency",
+        source_key: "task",
+        label: "Flow efficiency",
+        description: Some("Active development share of task lifetime"),
+        explanation: Some(
+            "Time in active development as a share of total task lifetime, across closed tasks.",
+        ),
+        unit: None,
+        format: MetricFormat::Percent,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: Some(ValueTransform {
+            multiplier: None,
+            offset: None,
+            clamp_min: None,
+            clamp_max: Some(100.0),
+        }),
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "flow_dev_seconds",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "flow_lead_seconds",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.reopen_rate",
+        source_key: "task",
+        label: "Reopen rate",
+        description: Some("Closed tasks reopened shortly after"),
+        explanation: Some("Share of task closes followed by a reopen within 14 days."),
+        unit: None,
+        format: MetricFormat::Percent,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "reopened_within_14d",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "close_events",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.due_date_compliance",
+        source_key: "task",
+        label: "Due date compliance",
+        description: Some("On-time share of tasks with a due date"),
+        explanation: Some("Share of tasks that had a due date and were closed on or before it."),
+        unit: None,
+        format: MetricFormat::Percent,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "due_date_on_time",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "due_date_with_due",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.on_time_delivery",
+        source_key: "task",
+        label: "On-time delivery",
+        description: Some("On-time share of all closed tasks"),
+        explanation: Some(
+            "Share of all closed tasks that were closed on or before their due date.",
+        ),
+        unit: None,
+        format: MetricFormat::Percent,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "due_date_on_time",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "tasks_closed",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.avg_slip",
+        source_key: "task",
+        label: "Average slip",
+        description: Some("How late overdue tasks close"),
+        explanation: Some("Average days past the due date for tasks closed late."),
+        unit: Some("d"),
+        format: MetricFormat::Decimal,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 1.0 },
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "slip_days_total",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "late_count",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.estimation_accuracy",
+        source_key: "task",
+        label: "Estimation accuracy",
+        description: Some("How close estimates land to time spent"),
+        explanation: Some(
+            "100 minus the average deviation between original estimates and time spent, over days whose estimated work stayed within twice the estimate. 100 means estimates matched reality; over- and under-estimation count equally.",
+        ),
+        unit: None,
+        format: MetricFormat::Percent,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 1.0 },
+        transform: Some(ValueTransform {
+            multiplier: Some(-1.0),
+            offset: Some(100.0),
+            clamp_min: Some(0.0),
+            clamp_max: Some(100.0),
+        }),
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "estimation_error_pct",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "estimation_samples",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.worklog_accuracy",
+        source_key: "task",
+        label: "Worklog accuracy",
+        description: Some("Logged time versus tracked development"),
+        explanation: Some(
+            "Logged work time as a share of time tasks spent in in-progress statuses.",
+        ),
+        unit: None,
+        format: MetricFormat::Percent,
+        direction: MetricDirection::HigherIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: Some(ValueTransform {
+            multiplier: None,
+            offset: None,
+            clamp_min: None,
+            clamp_max: Some(100.0),
+        }),
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "worklog_seconds",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "in_progress_seconds",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.bugs_ratio",
+        source_key: "task",
+        label: "Bug ratio",
+        description: Some("Bugs as a share of closed tasks"),
+        explanation: Some("Bug-type tasks as a share of all closed tasks."),
+        unit: None,
+        format: MetricFormat::Percent,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Ratio { scale: 100.0 },
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[
+            InputSeed {
+                input_role: MetricInputRole::Numerator,
+                measure_key: "bugs_fixed",
+            },
+            InputSeed {
+                input_role: MetricInputRole::Denominator,
+                measure_key: "tasks_closed",
+            },
+        ],
+        dimensions: &[],
+    },
+    MetricSeed {
+        metric_key: "tasks.stale_in_progress",
+        source_key: "task",
+        label: "Stale in progress",
+        description: Some("Open tasks idle for over two weeks"),
+        explanation: Some("Open tasks with no status change in more than 14 days."),
+        unit: Some("tasks"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::LowerIsBetter,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "stale_in_progress",
+        }],
+        dimensions: &[],
     },
 ];
 

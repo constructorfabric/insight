@@ -249,6 +249,7 @@ mod tests {
 
     fn def(key: &str, cohort_key: Option<&str>) -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: MetricBase {
                 key: key.to_owned(),
                 label: key.to_owned(),

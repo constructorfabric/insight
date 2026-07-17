@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('jira__task_statuses') }}
+-- depends_on: {{ ref('youtrack__task_statuses') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',

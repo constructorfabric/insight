@@ -9,7 +9,7 @@ use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, Schem
 
 use crate::domain::metric_definitions::definition::{
     ComputationSpec, MetricBase, MetricComputation, MetricDefinition, MetricDirection,
-    MetricFormat, MetricInput, MetricInputRole, ObservationRelation, SourceKind,
+    MetricFormat, MetricInput, MetricInputRole, ObservationRelation, SourceKind, ValueTransform,
 };
 
 #[derive(Debug, FromQueryResult)]
@@ -26,6 +26,10 @@ struct DefinitionRow {
     entity_type: String,
     computation_type: String,
     scale: Option<f64>,
+    transform_multiplier: Option<f64>,
+    transform_offset: Option<f64>,
+    transform_clamp_min: Option<f64>,
+    transform_clamp_max: Option<f64>,
     peer_cohort_key: Option<String>,
     definition_enabled: bool,
     definition_schema_status: String,
@@ -194,6 +198,10 @@ async fn fetch_definition_rows(
             d.entity_type AS entity_type, \
             d.computation_type AS computation_type, \
             CAST(d.scale AS DOUBLE) AS scale, \
+            CAST(d.transform_multiplier AS DOUBLE) AS transform_multiplier, \
+            CAST(d.transform_offset AS DOUBLE) AS transform_offset, \
+            CAST(d.transform_clamp_min AS DOUBLE) AS transform_clamp_min, \
+            CAST(d.transform_clamp_max AS DOUBLE) AS transform_clamp_max, \
             d.peer_cohort_key AS peer_cohort_key, \
             d.is_enabled AS definition_enabled, \
             d.schema_status AS definition_schema_status \
@@ -459,7 +467,19 @@ fn build_definition(
         },
     };
 
-    Ok(MetricDefinition { base, spec })
+    let transform = ValueTransform {
+        multiplier: row.transform_multiplier,
+        offset: row.transform_offset,
+        clamp_min: row.transform_clamp_min,
+        clamp_max: row.transform_clamp_max,
+    };
+    let transform = (!transform.is_identity()).then_some(transform);
+
+    Ok(MetricDefinition {
+        base,
+        spec,
+        transform,
+    })
 }
 
 fn build_base(
@@ -667,6 +687,10 @@ mod tests {
             entity_type: "person".to_owned(),
             computation_type: "sum".to_owned(),
             scale: None,
+            transform_multiplier: None,
+            transform_offset: None,
+            transform_clamp_min: None,
+            transform_clamp_max: None,
             peer_cohort_key: Some("org_unit".to_owned()),
             definition_enabled: enabled,
             definition_schema_status: schema_status.to_owned(),

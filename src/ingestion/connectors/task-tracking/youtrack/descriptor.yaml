@@ -10,10 +10,10 @@ schedule: "0 3 * * *"
 workflow: sync
 
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
-# package, not by this connector. This PR ships Bronze source declarations in
-# dbt/schema.yml only; the connector's dbt step is a deliberate no-op until
-# DECOMPOSITION §2.5 (per-source staging projections tagged `silver:class_task_*`)
-# lands. At that point flip dbt_select to `tag:youtrack`.
+# package, not by this connector. The pipeline ignores dbt_select for
+# non-jira connectors and derives the scope from the connector name
+# (`tag:youtrack+`), which reaches the staging projections, the class_task_*
+# silver models, and the gold task-delivery chain via their dependency edges.
 dbt_select: ""
 
 connection:

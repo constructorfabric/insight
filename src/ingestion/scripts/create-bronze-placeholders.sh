@@ -808,12 +808,15 @@ fi
 
 # silver.class_task_users — task-tracking user directory (anchor for identity
 # resolution). Referenced by `views-from-silver.sql` LEFT JOIN to look up
-# `email` by `(insight_source_id, user_id)` for the assignee_email column.
+# `email` by `(insight_source_id, user_id)` for the assignee_email column, and
+# by the gold task observation chain (tenant + email attribution), which
+# builds against this placeholder on a fresh instance's first deploy.
 if ! ch_table_exists silver class_task_users; then
   echo "  Creating placeholder: silver.class_task_users"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS silver.class_task_users (
     insight_tenant_id String,
+    tenant_id         Nullable(String),
     insight_source_id String,
     user_id           String,
     email             Nullable(String),
@@ -821,6 +824,25 @@ CREATE TABLE IF NOT EXISTS silver.class_task_users (
     _version          UInt64
 ) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
+else
+  # Reconcile a pre-existing PLACEHOLDER to the tenant_id column contract —
+  # a bare CREATE ... IF NOT EXISTS never adds the column to an
+  # already-created table, and the deploy-time gold build reads it. Guarded
+  # on the marker so a real dbt-built table (healed separately) is left
+  # untouched. Idempotent: ADD COLUMN IF NOT EXISTS.
+  class_task_users_placeholder_count="$(
+    printf "SELECT count() FROM system.tables WHERE database='silver' AND name='class_task_users' AND comment='INSIGHT_PLACEHOLDER_v1'" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  if [[ "$class_task_users_placeholder_count" == "1" ]]; then
+    echo "  Reconciling placeholder schema: silver.class_task_users"
+    run_ch <<'SQL'
+ALTER TABLE silver.class_task_users ADD COLUMN IF NOT EXISTS tenant_id Nullable(String);
+SQL
+  else
+    echo "  Skipping placeholder schema reconciliation: silver.class_task_users is not a placeholder"
+  fi
 fi
 
 # silver.class_task_statuses — task-tracking status dimension (issue #1541).

@@ -253,6 +253,128 @@ models:
           measures (focus_hours, working_hours, meeting_free_day,
           active_modality).
 
+  - name: task_metric_observations
+    description: >
+      Source measure observations for the unified metrics runtime, task-delivery
+      family. Reconstructs per-issue lifecycle (status pivot, spans, close/reopen
+      transitions) from the task class contracts. Day-grain sum measures emit one
+      row per (tenant, entity, day, measure); event measures (dev_time_hours,
+      resolution_days, pickup_days) emit one row per closed issue for query-time
+      median. No distinct-count measure, so subject_key is NULL on every row. The
+      column set is the same published contract the analytics service schema
+      validator probes (`OBSERVATION_COLUMNS`); changing it requires a
+      coordinated backend change.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['task']
+      - name: entity_type
+        description: "Measured entity type"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['person']
+      - name: entity_id
+        description: >
+          Normalized entity identifier: the assignee's (or worklog author's)
+          lowercased email, resolved through class_task_users. Accounts that do
+          not resolve to an email are excluded upstream.
+        tests:
+          - not_null
+      - name: metric_date
+        description: >
+          Observation date: close date for closed-issue measures, transition
+          date for close/reopen measures, calendar day for worklog measures, and
+          the build date for the stale_in_progress snapshot.
+        tests:
+          - not_null
+      - name: observed_at
+        description: "Reserved for point-in-time semantics. NULL for all task measures."
+      - name: measure_key
+        description: "Source measure key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - tasks_closed
+                  - bugs_fixed
+                  - due_date_on_time
+                  - due_date_with_due
+                  - slip_days_total
+                  - late_count
+                  - estimation_error_pct
+                  - estimation_samples
+                  - flow_dev_seconds
+                  - flow_lead_seconds
+                  - close_events
+                  - reopened_within_14d
+                  - worklog_seconds
+                  - in_progress_seconds
+                  - stale_in_progress
+                  - dev_time_hours
+                  - resolution_days
+                  - pickup_days
+      - name: value
+        description: >
+          Measure value. Rows are emitted only when the source provides a value,
+          so value is never NULL; the column stays Nullable(Float64) in the
+          published contract.
+        tests:
+          - not_null
+      - name: subject_key
+        description: "Unused by this family (no distinct-count measure); always NULL."
+      - name: dimensions
+        description: >
+          Array(Tuple(key, value, label)). Empty for every task measure — the
+          family carries no breakdown dimension.
+
+  - name: task_issue_state
+    description: >
+      Per-issue lifecycle state for the task-delivery observation pipeline:
+      one row per assignee-resolved issue with tenant/email attribution, the
+      current status category, the close time, and the scalar fields the
+      observation measures read. Materialized so the field-history pivot runs
+      once per build instead of once per measure branch.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: entity_id
+        description: "Lowercased assignee email"
+        tests:
+          - not_null
+      - name: issue_id
+        description: "Source issue identifier; unique per insight_source_id"
+        tests:
+          - not_null
+
+  - name: task_status_intervals
+    description: >
+      Per-issue status spans for the task-delivery observation pipeline: each
+      status event paired with the next; the last span ends at the close for
+      currently-done issues and stays live to build time otherwise. Feeds dev
+      time, close/reopen transitions, and per-day in-progress splitting.
+    columns:
+      - name: issue_id
+        description: "Source issue identifier"
+        tests:
+          - not_null
+      - name: interval_start
+        description: "Span start (status event time)"
+        tests:
+          - not_null
+
   - name: metric_entity_cohorts_current
     description: >
       Current cohort membership per entity for peer comparison. One row per

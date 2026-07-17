@@ -87,7 +87,7 @@ pub(crate) fn compile_period_batch_query(
     let entities = placeholders(req.entity_ids.len());
     let observation_table = batch_observation_table(defs);
     let limit = query_row_limit();
-    let sql = format!(
+    let inner = format!(
         r"
         SELECT
             entity_id{selects}
@@ -98,6 +98,7 @@ pub(crate) fn compile_period_batch_query(
         LIMIT {limit}
         "
     );
+    let sql = transformed_batch(defs, inner, period_alias);
     CompiledQuery { sql, params }
 }
 
@@ -119,70 +120,23 @@ pub(crate) fn compile_timeseries_query(
     };
     let observation_table = observation_table(def.observation_relation());
     let limit = query_row_limit();
-    let sql = match &def.spec {
-        ComputationSpec::Sum { .. } => format!(
-            r"
-            SELECT
-                entity_id,
-                toString({bucket}) AS bucket_start{dim_select},
-                sumIf(value, value IS NOT NULL) AS value
-            FROM {observation_table}
-            WHERE {metric_where}
-              AND entity_id IN ({entities})
-            GROUP BY {group}
-            ORDER BY entity_id, bucket_start
-            LIMIT {limit}
-            ",
-            metric_where = metric_where(def),
-        ),
-        ComputationSpec::Ratio { scale, .. } => format!(
-            r"
-            SELECT
-                entity_id,
-                toString({bucket}) AS bucket_start{dim_select},
-                {scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL)
-                    / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0) AS value
-            FROM {observation_table}
-            WHERE {metric_where}
-              AND entity_id IN ({entities})
-            GROUP BY {group}
-            ORDER BY entity_id, bucket_start
-            LIMIT {limit}
-            ",
-            metric_where = metric_where(def),
-            scale = scale,
-        ),
-        ComputationSpec::Median { .. } => format!(
-            r"
-            SELECT
-                entity_id,
-                toString({bucket}) AS bucket_start{dim_select},
-                quantileExactIf(0.5)(value, value IS NOT NULL) AS value
-            FROM {observation_table}
-            WHERE {metric_where}
-              AND entity_id IN ({entities})
-            GROUP BY {group}
-            ORDER BY entity_id, bucket_start
-            LIMIT {limit}
-            ",
-            metric_where = metric_where(def),
-        ),
-        ComputationSpec::DistinctCount { .. } => format!(
-            r"
-            SELECT
-                entity_id,
-                toString({bucket}) AS bucket_start{dim_select},
-                toFloat64(uniqExactIf(subject_key, subject_key IS NOT NULL)) AS value
-            FROM {observation_table}
-            WHERE {metric_where}
-              AND entity_id IN ({entities})
-            GROUP BY {group}
-            ORDER BY entity_id, bucket_start
-            LIMIT {limit}
-            ",
-            metric_where = metric_where(def),
-        ),
-    };
+    let value_expr = grouped_value_expr(def);
+    let inner = format!(
+        r"
+        SELECT
+            entity_id,
+            toString({bucket}) AS bucket_start{dim_select},
+            {value_expr} AS value
+        FROM {observation_table}
+        WHERE {metric_where}
+          AND entity_id IN ({entities})
+        GROUP BY {group}
+        ORDER BY entity_id, bucket_start
+        LIMIT {limit}
+        ",
+        metric_where = metric_where(def),
+    );
+    let sql = transformed_single(def, inner);
     CompiledQuery { sql, params }
 }
 
@@ -202,67 +156,42 @@ pub(crate) fn compile_breakdown_query(
     };
     let observation_table = observation_table(def.observation_relation());
     let limit = query_row_limit();
-    let sql = match &def.spec {
-        ComputationSpec::Sum { .. } => format!(
-            r"
-            SELECT
-                entity_id{dim_select},
-                sumIf(value, value IS NOT NULL) AS value
-            FROM {observation_table}
-            WHERE {metric_where}
-              AND entity_id IN ({entities})
-            GROUP BY {group}
-            ORDER BY entity_id
-            LIMIT {limit}
-            ",
-            metric_where = metric_where(def),
-        ),
-        ComputationSpec::Ratio { scale, .. } => format!(
-            r"
-            SELECT
-                entity_id{dim_select},
-                {scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL)
-                    / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0) AS value
-            FROM {observation_table}
-            WHERE {metric_where}
-              AND entity_id IN ({entities})
-            GROUP BY {group}
-            ORDER BY entity_id
-            LIMIT {limit}
-            ",
-            metric_where = metric_where(def),
-            scale = scale,
-        ),
-        ComputationSpec::Median { .. } => format!(
-            r"
-            SELECT
-                entity_id{dim_select},
-                quantileExactIf(0.5)(value, value IS NOT NULL) AS value
-            FROM {observation_table}
-            WHERE {metric_where}
-              AND entity_id IN ({entities})
-            GROUP BY {group}
-            ORDER BY entity_id
-            LIMIT {limit}
-            ",
-            metric_where = metric_where(def),
-        ),
-        ComputationSpec::DistinctCount { .. } => format!(
-            r"
-            SELECT
-                entity_id{dim_select},
-                toFloat64(uniqExactIf(subject_key, subject_key IS NOT NULL)) AS value
-            FROM {observation_table}
-            WHERE {metric_where}
-              AND entity_id IN ({entities})
-            GROUP BY {group}
-            ORDER BY entity_id
-            LIMIT {limit}
-            ",
-            metric_where = metric_where(def),
-        ),
-    };
+    let value_expr = grouped_value_expr(def);
+    let inner = format!(
+        r"
+        SELECT
+            entity_id{dim_select},
+            {value_expr} AS value
+        FROM {observation_table}
+        WHERE {metric_where}
+          AND entity_id IN ({entities})
+        GROUP BY {group}
+        ORDER BY entity_id
+        LIMIT {limit}
+        ",
+        metric_where = metric_where(def),
+    );
+    let sql = transformed_single(def, inner);
     CompiledQuery { sql, params }
+}
+
+// The per-group aggregate for single-metric queries (timeseries/breakdown),
+// scoped by metric_where so no source/measure predicates repeat here. The
+// ratio arm keeps its two SELECT placeholders, which metric_params leads
+// with (SELECT binds before WHERE in text order).
+fn grouped_value_expr(def: &MetricDefinition) -> String {
+    match &def.spec {
+        ComputationSpec::Sum { .. } => "sumIf(value, value IS NOT NULL)".to_owned(),
+        ComputationSpec::Ratio { scale, .. } => format!(
+            "{scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0)"
+        ),
+        ComputationSpec::Median { .. } => {
+            "quantileExactIf(0.5)(value, value IS NOT NULL)".to_owned()
+        }
+        ComputationSpec::DistinctCount { .. } => {
+            "toFloat64(uniqExactIf(subject_key, subject_key IS NOT NULL))".to_owned()
+        }
+    }
 }
 
 // Deterministic fixed-width binning over each entity's exact [min, max]:
@@ -285,16 +214,22 @@ pub(crate) fn compile_histogram_query(
     let limit = query_row_limit();
     let sql = format!(
         r"
-        WITH events AS (
+        WITH raw_events AS (
             SELECT
                 entity_id,
-                assumeNotNull(value) AS value,
-                min(value) OVER (PARTITION BY entity_id) AS entity_lo,
-                max(value) OVER (PARTITION BY entity_id) AS entity_hi
+                assumeNotNull({event_value}) AS event_value
             FROM {observation_table}
             WHERE {metric_where}
               AND entity_id IN ({entities})
               AND value IS NOT NULL
+        ),
+        events AS (
+            SELECT
+                entity_id,
+                event_value,
+                min(event_value) OVER (PARTITION BY entity_id) AS entity_lo,
+                max(event_value) OVER (PARTITION BY entity_id) AS entity_hi
+            FROM raw_events
         )
         SELECT
             events.entity_id AS entity_id,
@@ -302,7 +237,7 @@ pub(crate) fn compile_histogram_query(
                 events.entity_hi = events.entity_lo,
                 0,
                 toUInt32(least({max_bin}, toInt64(floor(
-                    (events.value - events.entity_lo) * {bins} / (events.entity_hi - events.entity_lo)
+                    (events.event_value - events.entity_lo) * {bins} / (events.entity_hi - events.entity_lo)
                 ))))
             ) AS bin_idx,
             any(events.entity_lo) AS entity_lo,
@@ -314,6 +249,7 @@ pub(crate) fn compile_histogram_query(
         LIMIT {limit}
         ",
         metric_where = metric_where(def),
+        event_value = transformed(def, "value".to_owned()),
     );
     CompiledQuery { sql, params }
 }
@@ -346,13 +282,16 @@ pub(crate) fn compile_peer_batch_query(
     let mut carried = String::new();
     let mut stats_selects = String::new();
     let mut target_group = String::new();
-    for (item_index, _) in defs.iter().enumerate() {
+    for (item_index, def) in defs.iter().enumerate() {
         let value = period_alias(item_index);
         let aliases = peer_aliases(item_index);
+        // Transform before the percentile pass — peer pools must rank the
+        // shaped values, not the raw artifact.
+        let carried_value = transformed(def, format!("metric_values.{value}"));
         let _ = write!(
             carried,
             ",
-                metric_values.{value} AS {value}"
+                {carried_value} AS {value}"
         );
         let observed = format!("peer.{value} IS NOT NULL");
         let pool = format!("uniqExactIf(peer.entity_id, {observed})");
@@ -513,6 +452,60 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
                 .to_owned()
         }
     }
+}
+
+// Applies the definition's post-aggregation transform to a computed value
+// expression. Identity when the definition has none. Callers must pass an
+// expression that is safe to repeat in SQL text (a column or alias
+// reference, never one containing `?` placeholders) — the NULL-guarded
+// clamp references it more than once.
+fn transformed(def: &MetricDefinition, expr: String) -> String {
+    match &def.transform {
+        Some(transform) => transform.wrap_sql(&expr),
+        None => expr,
+    }
+}
+
+// Wraps a single-metric query in a transform projection stage. The raw
+// aggregate stays in the inner query (its placeholders bind once); the
+// transform references only the `value` alias.
+fn transformed_single(def: &MetricDefinition, inner: String) -> String {
+    if def.transform.is_none() {
+        return inner;
+    }
+    let value = transformed(def, "value".to_owned());
+    format!(
+        r"
+        SELECT
+            * EXCEPT (value),
+            {value} AS value
+        FROM ({inner})
+        "
+    )
+}
+
+// Batch variant: re-projects each transformed item column by alias.
+fn transformed_batch(
+    defs: &[&MetricDefinition],
+    inner: String,
+    alias: fn(usize) -> String,
+) -> String {
+    if defs.iter().all(|def| def.transform.is_none()) {
+        return inner;
+    }
+    let mut selects = String::new();
+    for (item_index, def) in defs.iter().enumerate() {
+        let value = alias(item_index);
+        let expr = transformed(def, value.clone());
+        let _ = write!(selects, ", {expr} AS {value}");
+    }
+    format!(
+        r"
+        SELECT
+            entity_id{selects}
+        FROM ({inner})
+        "
+    )
 }
 
 fn shared_observation_where(
@@ -710,6 +703,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::metric_definitions::definition::ValueTransform;
     use chrono::NaiveDate;
 
     use crate::domain::metric_definitions::definition::{
@@ -743,6 +737,7 @@ mod tests {
 
     fn median_metric() -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: base(vec!["source"]),
             spec: ComputationSpec::Median {
                 value: input(MetricInputRole::Value, "pr_cycle_hours"),
@@ -752,6 +747,7 @@ mod tests {
 
     fn distinct_count_metric() -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: base(vec!["tool"]),
             spec: ComputationSpec::DistinctCount {
                 value: input(MetricInputRole::Value, "active_day"),
@@ -761,6 +757,7 @@ mod tests {
 
     fn sum_metric() -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: base(vec!["tool"]),
             spec: ComputationSpec::Sum {
                 value: input(MetricInputRole::Value, "accepted_lines"),
@@ -770,6 +767,7 @@ mod tests {
 
     fn ratio_metric() -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: base(vec!["tool"]),
             spec: ComputationSpec::Ratio {
                 numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
@@ -1118,12 +1116,12 @@ mod tests {
         assert!(
             query
                 .sql
-                .contains("min(value) OVER (PARTITION BY entity_id) AS entity_lo")
+                .contains("min(event_value) OVER (PARTITION BY entity_id) AS entity_lo")
         );
         assert!(
             query
                 .sql
-                .contains("max(value) OVER (PARTITION BY entity_id) AS entity_hi")
+                .contains("max(event_value) OVER (PARTITION BY entity_id) AS entity_hi")
         );
         assert!(query.sql.contains("least(9,"));
         assert!(query.sql.contains("* 10 /"));
@@ -1134,5 +1132,64 @@ mod tests {
         // Deterministic arithmetic only — never the adaptive aggregate.
         assert!(!query.sql.contains("histogram("));
         assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
+    fn transform_wraps_every_query_shape() {
+        let mut def = ratio_metric();
+        def.transform = Some(ValueTransform {
+            clamp_max: Some(100.0),
+            ..ValueTransform::default()
+        });
+        let ts = compile_timeseries_query(&def, &request(), Bucket::Day, &[]);
+        let bd = compile_breakdown_query(&def, &request(), &[]);
+        for query in [&ts, &bd] {
+            assert!(
+                query
+                    .sql
+                    .contains("if((value) IS NULL, NULL, least(100.0, value)) AS value"),
+                "transform must re-project the value alias: {}",
+                query.sql
+            );
+            assert_eq!(query.sql.matches('?').count(), query.params.len());
+        }
+        // Histogram (median-only, hence its own def) must bin the transformed
+        // event value under its own alias, never the raw `value` column.
+        let mut median = median_metric();
+        median.transform = Some(ValueTransform {
+            clamp_max: Some(100.0),
+            ..ValueTransform::default()
+        });
+        let hist = compile_histogram_query(&median, &request());
+        assert!(
+            hist.sql
+                .contains("if((value) IS NULL, NULL, least(100.0, value))")
+                && hist.sql.contains("AS event_value"),
+            "histogram must transform into a distinct event_value alias: {}",
+            hist.sql
+        );
+        assert!(
+            hist.sql.contains("min(event_value) OVER")
+                && hist.sql.contains("max(event_value) OVER"),
+            "histogram lo/hi must derive from the transformed alias: {}",
+            hist.sql
+        );
+        assert_eq!(hist.sql.matches('?').count(), hist.params.len());
+        let period = compile_period_batch_query(&[&def], &request());
+        assert!(
+            period
+                .sql
+                .contains("if((m0) IS NULL, NULL, least(100.0, m0))"),
+            "batch transform must wrap the item alias: {}",
+            period.sql
+        );
+        assert_eq!(period.sql.matches('?').count(), period.params.len());
+        let peer = compile_peer_batch_query(&[&def], &request(), "org_unit");
+        assert!(
+            peer.sql.contains("if((metric_values.m0) IS NULL, NULL,"),
+            "peer carry must transform before percentiles: {}",
+            peer.sql
+        );
+        assert_eq!(peer.sql.matches('?').count(), peer.params.len());
     }
 }

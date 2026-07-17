@@ -13,6 +13,7 @@
 
 SELECT
     u.unique_key                                            AS unique_key,
+    u.tenant_id                                             AS tenant_id,
     u.source_id                                             AS insight_source_id,
     CAST('youtrack' AS String)                              AS data_source,
     toString(u.user_id)                                     AS user_id,

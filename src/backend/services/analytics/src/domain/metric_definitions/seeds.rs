@@ -97,8 +97,9 @@ async fn upsert_metric(db: &DatabaseConnection, metric: &MetricSeed) -> Result<(
         db.get_database_backend(),
         "INSERT INTO metric_definitions \
             (id, tenant_id, metric_key, label, description, explanation, unit, format, direction, entity_type, \
-             computation_type, scale, peer_cohort_key, origin, is_enabled) \
-         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'builtin', TRUE) \
+             computation_type, scale, transform_multiplier, transform_offset, transform_clamp_min, \
+             transform_clamp_max, peer_cohort_key, origin, is_enabled) \
+         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'builtin', TRUE) \
          ON DUPLICATE KEY UPDATE \
             label = VALUES(label), \
             description = VALUES(description), \
@@ -109,6 +110,10 @@ async fn upsert_metric(db: &DatabaseConnection, metric: &MetricSeed) -> Result<(
             entity_type = VALUES(entity_type), \
             computation_type = VALUES(computation_type), \
             scale = VALUES(scale), \
+            transform_multiplier = VALUES(transform_multiplier), \
+            transform_offset = VALUES(transform_offset), \
+            transform_clamp_min = VALUES(transform_clamp_min), \
+            transform_clamp_max = VALUES(transform_clamp_max), \
             peer_cohort_key = VALUES(peer_cohort_key), \
             origin = VALUES(origin), \
             is_enabled = VALUES(is_enabled)",
@@ -127,6 +132,10 @@ async fn upsert_metric(db: &DatabaseConnection, metric: &MetricSeed) -> Result<(
                 Some(scale) => Value::from(scale),
                 None => Value::Double(None),
             },
+            nullable_f64(metric.transform.and_then(|t| t.multiplier)),
+            nullable_f64(metric.transform.and_then(|t| t.offset)),
+            nullable_f64(metric.transform.and_then(|t| t.clamp_min)),
+            nullable_f64(metric.transform.and_then(|t| t.clamp_max)),
             nullable_str(metric.peer_cohort_key.map(CohortKey::as_db)),
         ],
     ))
@@ -346,5 +355,12 @@ fn nullable_str(value: Option<&str>) -> Value {
     match value {
         Some(value) => Value::from(value),
         None => Value::String(None),
+    }
+}
+
+fn nullable_f64(value: Option<f64>) -> Value {
+    match value {
+        Some(value) => Value::from(value),
+        None => Value::Double(None),
     }
 }

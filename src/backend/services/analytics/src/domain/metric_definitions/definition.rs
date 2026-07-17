@@ -75,6 +75,66 @@ pub enum CohortSource {
 pub struct MetricDefinition {
     pub base: MetricBase,
     pub spec: ComputationSpec,
+    /// Post-aggregation `clamp(multiplier * x + offset)` applied to every
+    /// computed value (period, peer, timeseries, breakdown, histogram);
+    /// NULLs pass through untouched.
+    pub transform: Option<ValueTransform>,
+}
+
+/// Affine + clamp shaping for a computed metric value:
+/// `y = clamp(clamp_min, clamp_max, multiplier * x + offset)`.
+/// Absent fields are identity (multiplier 1, offset 0, no bound).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ValueTransform {
+    pub multiplier: Option<f64>,
+    pub offset: Option<f64>,
+    pub clamp_min: Option<f64>,
+    pub clamp_max: Option<f64>,
+}
+
+impl ValueTransform {
+    pub fn is_identity(&self) -> bool {
+        self.multiplier.is_none()
+            && self.offset.is_none()
+            && self.clamp_min.is_none()
+            && self.clamp_max.is_none()
+    }
+
+    /// Wraps a SQL value expression in an explicit NULL guard: ClickHouse
+    /// least/greatest IGNORE NULL arguments (24.12+), so an unguarded clamp
+    /// would resurrect an honest-null value as the clamp bound.
+    pub fn wrap_sql(&self, expr: &str) -> String {
+        let mut out = expr.to_owned();
+        if let Some(multiplier) = self.multiplier {
+            out = format!("{multiplier:?} * ({out})");
+        }
+        if let Some(offset) = self.offset {
+            out = format!("({offset:?} + {out})");
+        }
+        if self.clamp_min.is_none() && self.clamp_max.is_none() {
+            return out;
+        }
+        let mut clamped = out.clone();
+        if let Some(clamp_min) = self.clamp_min {
+            clamped = format!("greatest({clamp_min:?}, {clamped})");
+        }
+        if let Some(clamp_max) = self.clamp_max {
+            clamped = format!("least({clamp_max:?}, {clamped})");
+        }
+        format!("if(({out}) IS NULL, NULL, {clamped})")
+    }
+
+    /// Rust-side application, for values the builder fabricates (zero-fill).
+    pub fn apply(&self, value: f64) -> f64 {
+        let mut out = self.multiplier.unwrap_or(1.0) * value + self.offset.unwrap_or(0.0);
+        if let Some(clamp_min) = self.clamp_min {
+            out = out.max(clamp_min);
+        }
+        if let Some(clamp_max) = self.clamp_max {
+            out = out.min(clamp_max);
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -362,5 +422,35 @@ mod tests {
         ] {
             assert_eq!(SourceKind::from_db(kind.as_db()), Some(kind));
         }
+    }
+
+    #[test]
+    fn transform_wraps_sql_inside_out_and_applies_identically() {
+        let fold = ValueTransform {
+            multiplier: Some(-1.0),
+            offset: Some(100.0),
+            clamp_min: Some(0.0),
+            clamp_max: Some(100.0),
+        };
+        assert_eq!(
+            fold.wrap_sql("x"),
+            "if(((100.0 + -1.0 * (x))) IS NULL, NULL, least(100.0, greatest(0.0, (100.0 + -1.0 * (x)))))"
+        );
+        assert_eq!(Some(fold.apply(30.0)), Some(70.0));
+        assert_eq!(Some(fold.apply(250.0)), Some(0.0));
+        assert_eq!(Some(fold.apply(-50.0)), Some(100.0));
+
+        let clamp = ValueTransform {
+            clamp_max: Some(100.0),
+            ..ValueTransform::default()
+        };
+        assert_eq!(
+            clamp.wrap_sql("y"),
+            "if((y) IS NULL, NULL, least(100.0, y))"
+        );
+        assert_eq!(Some(clamp.apply(720_000.0)), Some(100.0));
+        assert_eq!(Some(clamp.apply(42.0)), Some(42.0));
+        assert!(ValueTransform::default().is_identity());
+        assert!(!clamp.is_identity());
     }
 }

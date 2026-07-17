@@ -27,10 +27,12 @@ images:
     image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.06.29.14.26-b6e6238"
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
 # package, not by this connector. The pipeline runs the jira-rust path:
-# dbt(tag:jira) → tt-enrich-jira-run → dbt(tag:silver,tag:jira+). This
-# selector is the third step — only silver models that union jira staging
-# (class_task_*), not the full silver layer. See DESIGN §1.1 and §3.2.
-dbt_select: "tag:silver,tag:jira+"
+# dbt(tag:jira) → tt-enrich-jira-run → dbt(<selector below>). The selector is
+# the third step: the silver models that union jira staging (class_task_*)
+# plus the gold task-delivery chain downstream of them (space = union of the
+# two intersections) — not the full silver or gold layers. See DESIGN §1.1
+# and §3.2.
+dbt_select: "tag:silver,tag:jira+ tag:gold,tag:jira+"
 connection:
   namespace: bronze_jira
 secret:

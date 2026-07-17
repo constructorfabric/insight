@@ -43,7 +43,7 @@ pub fn build_period_view(
                 .flatten()
                 .or_else(|| {
                     if def.is_zero_filled() {
-                        Some(0.0)
+                        Some(zero_fill_value(def))
                     } else {
                         None
                     }
@@ -88,7 +88,7 @@ pub fn build_timeseries_view(
                     bucket_start: bucket.clone(),
                     value: points_by_bucket.get(bucket).copied().flatten().or_else(|| {
                         if def.is_zero_filled() {
-                            Some(0.0)
+                            Some(zero_fill_value(def))
                         } else {
                             None
                         }
@@ -237,6 +237,16 @@ pub fn build_metric_result(
     }
 }
 
+// The fabricated zero for absent zero-filled entities, shaped by the
+// definition's transform so a clamped or folded metric zero-fills to the
+// value an actual all-zero aggregation would produce.
+fn zero_fill_value(def: &MetricDefinition) -> f64 {
+    match &def.transform {
+        Some(transform) => transform.apply(0.0),
+        None => 0.0,
+    }
+}
+
 pub fn enforce_row_limit(response: &MetricResultsResponse) -> Result<(), CanonicalError> {
     if response_size(response) > row_limit() {
         return Err(metric_result_too_large());
@@ -300,6 +310,7 @@ fn json_string(value: Option<&serde_json::Value>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::metric_definitions::definition::ValueTransform;
     use chrono::NaiveDate;
     use serde_json::json;
 
@@ -336,6 +347,7 @@ mod tests {
 
     fn sum_metric() -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: base(),
             spec: ComputationSpec::Sum {
                 value: input(MetricInputRole::Value, "accepted_lines"),
@@ -345,6 +357,7 @@ mod tests {
 
     fn ratio_metric() -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: base(),
             spec: ComputationSpec::Ratio {
                 numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
@@ -356,6 +369,7 @@ mod tests {
 
     fn median_metric() -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: base(),
             spec: ComputationSpec::Median {
                 value: input(MetricInputRole::Value, "pr_cycle_hours"),
@@ -365,6 +379,7 @@ mod tests {
 
     fn distinct_count_metric() -> MetricDefinition {
         MetricDefinition {
+            transform: None,
             base: base(),
             spec: ComputationSpec::DistinctCount {
                 value: input(MetricInputRole::Value, "active_day"),
@@ -661,5 +676,21 @@ mod tests {
             metrics: vec![build_metric_result(&sum_metric(), vec![view])],
         };
         assert_eq!(response_size(&response), 10);
+    }
+
+    #[test]
+    fn zero_fill_applies_the_transform() {
+        let mut def = sum_metric();
+        def.transform = Some(ValueTransform {
+            multiplier: Some(-1.0),
+            offset: Some(100.0),
+            clamp_min: Some(0.0),
+            clamp_max: Some(100.0),
+        });
+        let req = request(vec!["absent@x.io"], "2026-01-01", "2026-01-31");
+        let MetricResultViewDto::Period { values } = build_period_view(&def, &req, vec![]) else {
+            panic!("expected period view");
+        };
+        assert_eq!(values[0].value, Some(100.0));
     }
 }
