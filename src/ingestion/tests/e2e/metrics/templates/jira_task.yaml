@@ -35,6 +35,7 @@ templates:
   jira_user:
     unique_key: null
     source_id: jira-test
+    tenant_id: "00000000-0000-0000-0000-000000000000"
     account_id: null
     email: null
     display_name: null

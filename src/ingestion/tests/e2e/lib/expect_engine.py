@@ -1,198 +1,181 @@
-"""Evaluate `expect` rules against a batch response.
-
-Implements `cpt-bronze-to-api-e2e-algo-yaml-eval-expect`
-(DoD `cpt-bronze-to-api-e2e-dod-yaml-expect-engine`).
-
-Each rule:
-  in:     select the batch result by request id (omit when one query)
-  find:   exact field-equality selector → exactly one row of result.items (binds `it`)
-  then ONE of:
-    equal:  subset equality on the matched row (explicit null supported)
-    assert: CEL boolean over bindings `it`, `items`, `result`, `results`, `status`
-
-`find` is intentionally exact-equality only — anything richer (inequalities,
-counts, predicates) is expressed in a CEL `assert`, so the rig does not carry a
-second selector mini-language (CEL is already the assertion language).
-
-No-unasserted-stat rule
-------------------------
-A bullet row the API returns carries up to six stat fields:
-`value, median, range_min, range_max, p25, p75` (there is no `p50` — the 50th
-percentile is returned as `median`). Within one `case`, every `find`-matched row
-that CARRIES a stat field MUST have that field asserted — either by an `equal`
-key or by referencing it in a CEL `assert` on the same row — otherwise this
-module raises `ExpectError`. This stops a fixture from silently ignoring a stat
-the API returns (e.g. asserting `value`/`median` but forgetting `p25`/`p75`).
-
-The rule is self-scoping: a stat field ABSENT from the row is never required, so
-a row that legitimately returns only `value`/`median`/`range_*` passes without a
-`p25`/`p75` assertion. Empty-window cases (a `find` that matches 0 rows binds no
-`it`) are naturally exempt. The gate runs AFTER all explicit rules pass, so the
-existing first-explicit-failure semantics are preserved.
-"""
-
 from __future__ import annotations
 
 import math
 import re
-
+from functools import cache
 from typing import Any
 
 import celpy
 
 
-# Stat fields the bullet/batch endpoint returns per row. `median` is the 50th
-# percentile (the API returns no `p50`). Every one of these that a matched row
-# carries must be asserted within its case — see the no-unasserted-stat rule.
-_STAT_FIELDS = ("value", "median", "range_min", "range_max", "p25", "p75")
-
-
-def _stat_refs_in_cel(expr: str) -> set[str]:
-    """Stat fields READ off the matched row (`it.<field>` or `it["<field>"]`) in a
-    CEL `assert`. Scoped to actual `it` access so a stat NAME that merely appears
-    in a string literal or on another object (e.g. `it.metric_key == "p75"`) does
-    NOT count as asserting that stat — otherwise a fixture could bypass the
-    no-unasserted-stat gate by mentioning the name. `_STAT_FIELDS` are literals,
-    but `re.escape` keeps the pattern hardcoded-safe regardless."""
-    refs: set[str] = set()
-    for f in _STAT_FIELDS:
-        name = re.escape(f)
-        if re.search(rf"\bit\.{name}\b", expr) or re.search(rf'\bit\[["\']{name}["\']\]', expr):
-            refs.add(f)
-    return refs
-
-
-def _values_equal(got: Any, exp: Any) -> bool:
-    """Equality for an `equal:` field.
-
-    Two numbers compare with a tolerance: the API rounds floats to 4 decimals,
-    so a fractional stat (a ratio, an average) must not be rejected by binary
-    float drift. `abs_tol` (1e-6) sits far below the API's 4dp quantum (1e-4), so
-    a tolerant pass never masks a real mismatch — two distinct served values
-    differ by at least 1e-4. Non-numbers (str / None / bool) compare exactly;
-    bool is excluded from the numeric path so `True`/`1` do not cross-match.
-    """
-    if (
-        isinstance(got, (int, float))
-        and isinstance(exp, (int, float))
-        and not isinstance(got, bool)
-        and not isinstance(exp, bool)
-    ):
-        return math.isclose(got, exp, rel_tol=1e-9, abs_tol=1e-6)
-    return got == exp
-
-
 class ExpectError(AssertionError):
-    """A failing expect rule. Message names the case, rule and the mismatch."""
+    pass
 
-
-# ---------------------------------------------------------------------------
-# find — exact field equality
-# ---------------------------------------------------------------------------
-
-def _find(items: list[dict], selector: dict) -> list[dict]:
-    """Rows whose every selected field equals the given value (exact match)."""
-    return [it for it in items if all(it.get(f) == v for f, v in selector.items())]
-
-
-# ---------------------------------------------------------------------------
-# CEL
-# ---------------------------------------------------------------------------
 
 _CEL_ENV = celpy.Environment()
+_VIEW_ITEMS = {
+    "period": "values",
+    "peer": "values",
+    "timeseries": "series",
+    "breakdown": "values",
+    "histogram": "values",
+}
+_REQUIRED_VIEW_FIELDS = {
+    "period": {"value"},
+    "peer": {"target_value", "p25", "median", "p75", "min", "max", "n"},
+    "timeseries": {"points"},
+    "breakdown": {"value"},
+    "histogram": {"bins"},
+}
 
 
-def _eval_cel(expr: str, bindings: dict) -> bool:
+@cache
+def _cel_program(expr: str) -> Any:
     ast = _CEL_ENV.compile(expr)
-    prog = _CEL_ENV.program(ast)
-    activation = {k: celpy.json_to_cel(v) for k, v in bindings.items()}
-    result = prog.evaluate(activation)
-    return bool(result)
+    return _CEL_ENV.program(ast)
 
 
-# ---------------------------------------------------------------------------
-# Rule evaluation
-# ---------------------------------------------------------------------------
-
-def _select_result(rule: dict, results: list[dict], where: str) -> dict | None:
-    if "in" in rule:
-        wanted = rule["in"]
-        for r in results:
-            if r.get("id") == wanted:
-                return r
-        raise ExpectError(f"{where}: no batch result with id '{wanted}' (have {[r.get('id') for r in results]})")
-    if len(results) == 1:
-        return results[0]
-    return None
+def _eval_cel(expr: str, bindings: dict[str, Any]) -> bool:
+    activation = {
+        key: celpy.json_to_cel(value)
+        for key, value in bindings.items()
+        if re.search(rf"\b{re.escape(key)}\b", expr)
+    }
+    return bool(_cel_program(expr).evaluate(activation))
 
 
-def evaluate_case(case: dict, batch: dict, http_status: int) -> None:
-    """Run every rule of `case`. Raise ExpectError on the first failure."""
+def _values_equal(got: Any, expected: Any) -> bool:
+    if (
+        isinstance(got, (int, float))
+        and isinstance(expected, (int, float))
+        and not isinstance(got, bool)
+        and not isinstance(expected, bool)
+    ):
+        return math.isclose(got, expected, rel_tol=1e-9, abs_tol=1e-6)
+    return got == expected
+
+
+def _matches(value: Any, selector: Any) -> bool:
+    if isinstance(selector, dict):
+        if isinstance(value, dict):
+            return all(key in value and _matches(value[key], expected) for key, expected in selector.items())
+        if isinstance(value, list):
+            return any(_matches(item, selector) for item in value)
+        return False
+    return _values_equal(value, selector)
+
+
+def _select_one(rows: list[dict[str, Any]], selector: dict[str, Any], where: str) -> dict[str, Any]:
+    matches = [row for row in rows if _matches(row, selector)]
+    if len(matches) != 1:
+        raise ExpectError(f"{where}: find {selector} matched {len(matches)} rows (expected exactly 1)")
+    return matches[0]
+
+
+def _select_metric(
+    rule: dict[str, Any], metrics: list[dict[str, Any]], where: str
+) -> dict[str, Any] | None:
+    metric_key = rule.get("metric")
+    if metric_key is None:
+        return None
+    matches = [metric for metric in metrics if metric.get("metric_key") == metric_key]
+    if len(matches) != 1:
+        raise ExpectError(
+            f"{where}: metric {metric_key!r} matched {len(matches)} metrics (expected exactly 1)"
+        )
+    return matches[0]
+
+
+def _select_view(
+    rule: dict[str, Any], metric: dict[str, Any] | None, where: str
+) -> dict[str, Any] | None:
+    view_kind = rule.get("view")
+    if view_kind is None:
+        return None
+    if metric is None:
+        raise ExpectError(f"{where}: `view` requires `metric`")
+    matches = [view for view in metric.get("views", []) if view.get("view") == view_kind]
+    if len(matches) != 1:
+        raise ExpectError(
+            f"{where}: view {view_kind!r} matched {len(matches)} views (expected exactly 1)"
+        )
+    return matches[0]
+
+
+def _asserted_fields(rule: dict[str, Any]) -> set[str]:
+    fields = set((rule.get("equal") or {}).keys())
+    fields.update((rule.get("contains") or {}).keys())
+    fields.update(rule.get("nonempty") or [])
+    expression = rule.get("assert")
+    if expression:
+        fields.update(re.findall(r"\bit\.([a-zA-Z_][a-zA-Z0-9_]*)\b", expression))
+        fields.update(re.findall(r"\bit\[['\"]([a-zA-Z_][a-zA-Z0-9_]*)['\"]\]", expression))
+    return fields
+
+
+def evaluate_case(case: dict[str, Any], response: Any, http_status: int) -> None:
     name = case.get("name", "<unnamed>")
-    results = batch.get("results", []) if isinstance(batch, dict) else []
+    metrics = response.get("metrics", []) if isinstance(response, dict) else []
+    checked: dict[tuple[str, int], set[str]] = {}
+    rows: dict[tuple[str, int], dict[str, Any]] = {}
 
-    # Per-case ledger of every `find`-matched row and the stat fields asserted on
-    # it, keyed by row identity. Drives the no-unasserted-stat gate after the loop.
-    checked: dict[int, dict] = {}
+    for index, rule in enumerate(case.get("expect", [])):
+        where = f"case '{name}' rule #{index}"
+        metric = _select_metric(rule, metrics, where)
+        view = _select_view(rule, metric, where)
+        view_kind = view.get("view") if view else None
+        items = view.get(_VIEW_ITEMS[view_kind], []) if view_kind else []
+        item = _select_one(items, rule["find"], where) if "find" in rule else None
+        target = item if item is not None else view if view is not None else metric
 
-    for i, rule in enumerate(case.get("expect", [])):
-        where = f"case '{name}' rule #{i}"
-        result = _select_result(rule, results, where)
-        items = result.get("items", []) if result else []
-
-        it = None
-        if "find" in rule:
-            matches = _find(items, rule["find"])
-            if len(matches) != 1:
-                raise ExpectError(
-                    f"{where}: find {rule['find']} matched {len(matches)} rows (expected exactly 1)"
-                )
-            it = matches[0]
-
-        if it is not None:
-            entry = checked.setdefault(
-                id(it),
-                {"row": it, "find": rule["find"], "where": where, "asserted": set()},
-            )
+        if item is not None and view_kind is not None:
+            identity = (view_kind, id(item))
+            rows[identity] = item
+            checked.setdefault(identity, set()).update(_asserted_fields(rule))
 
         if "equal" in rule:
-            if it is None:
-                raise ExpectError(f"{where}: `equal` requires a `find` that selects one row")
-            entry["asserted"] |= {k for k in rule["equal"] if k in _STAT_FIELDS}
-            for field, exp in rule["equal"].items():
-                got = it.get(field)
-                if not _values_equal(got, exp):
-                    raise ExpectError(f"{where}: {field}: expected {exp!r}, got {got!r}")
+            if target is None:
+                raise ExpectError(f"{where}: `equal` requires `metric`, `view`, or `find`")
+            for field, expected in rule["equal"].items():
+                got = target.get(field)
+                if not _values_equal(got, expected):
+                    raise ExpectError(f"{where}: {field}: expected {expected!r}, got {got!r}")
+        elif "contains" in rule:
+            if target is None:
+                raise ExpectError(f"{where}: `contains` requires `metric`, `view`, or `find`")
+            for field, selector in rule["contains"].items():
+                values = target.get(field)
+                if not isinstance(values, list) or not any(_matches(value, selector) for value in values):
+                    raise ExpectError(f"{where}: {field} contains no match for {selector!r}")
+        elif "nonempty" in rule:
+            if target is None:
+                raise ExpectError(f"{where}: `nonempty` requires `metric`, `view`, or `find`")
+            for field in rule["nonempty"]:
+                if not target.get(field):
+                    raise ExpectError(f"{where}: {field} is empty")
         elif "assert" in rule:
-            # CANONICAL source of the CEL `assert` bindings (documented in the
-            # yaml-rig FEATURE, DESIGN expect-engine component, README, and the
-            # /metric-test skill). `it` is None unless this rule had a `find`.
             bindings = {
-                "it": it,
+                "it": item,
                 "items": items,
-                "result": result,
-                "results": results,
+                "view": view,
+                "metric": metric,
+                "metrics": metrics,
                 "status": http_status,
             }
-            if it is not None:
-                entry["asserted"] |= _stat_refs_in_cel(rule["assert"])
             try:
-                ok = _eval_cel(rule["assert"], bindings)
-            except Exception as e:  # noqa: BLE001 - surface CEL errors as rule failures
-                raise ExpectError(f"{where}: CEL error in {rule['assert']!r}: {e}") from e
-            if not ok:
+                passed = _eval_cel(rule["assert"], bindings)
+            except Exception as error:
+                raise ExpectError(f"{where}: CEL error in {rule['assert']!r}: {error}") from error
+            if not passed:
                 raise ExpectError(f"{where}: assert failed: {rule['assert']}")
         else:
-            raise ExpectError(f"{where}: rule must have `equal` or `assert`")
+            raise ExpectError(f"{where}: rule must have `equal`, `contains`, `nonempty`, or `assert`")
 
-    # No-unasserted-stat gate (runs after every explicit rule passed): every stat
-    # field a matched row CARRIES must have been asserted somewhere in this case.
-    for e in checked.values():
-        present = {f for f in _STAT_FIELDS if f in e["row"]}
-        missing = present - e["asserted"]
+    for identity, asserted in checked.items():
+        view_kind, _ = identity
+        required = _REQUIRED_VIEW_FIELDS[view_kind]
+        missing = required - asserted
         if missing:
             raise ExpectError(
-                f"{e['where']}: row for find {e['find']} returns {sorted(missing)} "
-                f"but no expect rule asserts them — every bullet stat the API "
-                f"returns must be checked (add to `equal` or a CEL `assert`)."
+                f"case '{name}': {view_kind} row leaves {sorted(missing)} unasserted"
             )

@@ -68,10 +68,11 @@ class CHSeeder:
         """
         self._truncate(schema, table)
 
-    def seed_bronze(self, bronze: dict[str, list[dict]]) -> None:
+    def seed_bronze(self, bronze: dict[str, list[dict]], schemas: dict[str, dict]) -> None:
         """Seed every `<db>.<table>: [records]` entry of a TestYaml."""
         for table_fqn, rows in bronze.items():
             schema, _, table = table_fqn.partition(".")
+            self._ensure_table(schema, table, schemas[table_fqn])
             self.seed_records(schema, table, rows)
             self.ledger.record(schema, table)
 
@@ -132,6 +133,19 @@ class CHSeeder:
         )
         return {name: ctype for name, ctype in rows}
 
+    def _ensure_table(self, database: str, table: str, schema: dict[str, Any]) -> None:
+        if self._fetch_column_types(database, table):
+            return
+        columns = ", ".join(
+            f"`{name}` {_clickhouse_type(definition)}"
+            for name, definition in schema.get("properties", {}).items()
+        )
+        ch.execute(self.cfg, f"CREATE DATABASE IF NOT EXISTS `{database}`")
+        ch.execute(
+            self.cfg,
+            f"CREATE TABLE `{database}`.`{table}` ({columns}) ENGINE = MergeTree ORDER BY tuple()",
+        )
+
     @staticmethod
     def _coerce(value: Any, ch_type: str, col: str) -> Any:
         """Coerce a YAML-parsed value to what clickhouse-connect expects for `ch_type`."""
@@ -166,3 +180,19 @@ def _strip_nullable(ch_type: str) -> str:
     if ch_type.startswith("Nullable(") and ch_type.endswith(")"):
         return ch_type[len("Nullable(") : -1]
     return ch_type
+
+
+def _clickhouse_type(definition: dict[str, Any]) -> str:
+    declared = definition.get("type", "string")
+    types = declared if isinstance(declared, list) else [declared]
+    base = next((item for item in types if item != "null"), "string")
+    if base == "array":
+        return f"Array({_clickhouse_type(definition.get('items', {})).removeprefix('Nullable(').removesuffix(')')})"
+    mapped = {
+        "boolean": "Bool",
+        "integer": "Int64",
+        "number": "Float64",
+        "string": "String",
+        "object": "String",
+    }.get(base, "String")
+    return f"Nullable({mapped})"

@@ -1,0 +1,90 @@
+spec_version: 1
+description: >
+  Task Delivery - estimation_accuracy - JIRA, IC Bullet Task Delivery (...0011),
+  department-of-5 distribution + 6 stats in a single custom window.
+
+  bronze -> silver -> gold: jira_issue (Closed) + jira_issue_history + jira_user;
+  bamboohr employees give the Engineering org_unit_id (the cohort). jira-enrich
+  only sees timeoriginalestimate / timespent through the CHANGELOG (they are not
+  on the issue snapshot), so each close event carries three item changes: the
+  status transition PLUS timeoriginalestimate and timespent. accuracy =
+  100 - |100 - 100*estimate/spent|, clamped. The ...0011 query_ref takes the
+  per-person value; median/p25/p75/range = the department distribution.
+
+  Department: 5 Engineering members alice..erin of rank r in 1..5. Each closes ONE
+  issue on 2026-12-25 with timespent fixed at 36000 (10h) and estimate =
+  {21600,25200,28800,32400,36000} -> daily% = 100*est/36000 = {60,70,80,90,100},
+  all <=100 so accuracy = daily% = {60,70,80,90,100}. The IC case requests
+  erin (5): value=100, median=80, range_min=60, range_max=100, p25=70, p75=90.
+  Empty window 2026-06 -> no items.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_jira.jira_user:
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-alice-jira-acct, account_id: alice-jira-acct, email: alice@example.com, display_name: Alice Alpha }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-bob-jira-acct, account_id: bob-jira-acct, email: bob@example.com, display_name: Bob Beta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-carol-jira-acct, account_id: carol-jira-acct, email: carol@example.com, display_name: Carol Gamma }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-jira-acct, account_id: dave-jira-acct, email: dave@example.com, display_name: Dave Delta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-erin-jira-acct, account_id: erin-jira-acct, email: erin@example.com, display_name: Erin Epsilon }
+
+  bronze_jira.jira_statuses:
+    - $ref: templates/jira_task.yaml#/templates/status_open
+    - $ref: templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: templates/jira_task.yaml#/templates/field_timeoriginalestimate
+    - $ref: templates/jira_task.yaml#/templates/field_timespent
+
+  bronze_jira.jira_issue:
+    # Each member: created 2026-12-20T09:00, closed 2026-12-25T09:00.
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: EAA-1, jira_id: EAA-1, unique_key: jira-test-EAA-1, id_readable: EAA1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: EAB-1, jira_id: EAB-1, unique_key: jira-test-EAB-1, id_readable: EAB1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: EAC-1, jira_id: EAC-1, unique_key: jira-test-EAC-1, id_readable: EAC1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: EAD-1, jira_id: EAD-1, unique_key: jira-test-EAD-1, id_readable: EAD1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: EAE-1, jira_id: EAE-1, unique_key: jira-test-EAE-1, id_readable: EAE1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}' }
+
+  bronze_jira.jira_issue_history:
+    # One close event per member at 2026-12-25T09:00; items carries Status + estimate + spent.
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: EAA1, changelog_id: "55001", unique_key: jira-test-EAA1-55001, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"},{"field":"timeoriginalestimate","fieldId":"timeoriginalestimate","from":null,"fromString":null,"to":"21600","toString":"21600"},{"field":"timespent","fieldId":"timespent","from":null,"fromString":null,"to":"36000","toString":"36000"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: EAB1, changelog_id: "55002", unique_key: jira-test-EAB1-55002, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"},{"field":"timeoriginalestimate","fieldId":"timeoriginalestimate","from":null,"fromString":null,"to":"25200","toString":"25200"},{"field":"timespent","fieldId":"timespent","from":null,"fromString":null,"to":"36000","toString":"36000"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: EAC1, changelog_id: "55003", unique_key: jira-test-EAC1-55003, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"},{"field":"timeoriginalestimate","fieldId":"timeoriginalestimate","from":null,"fromString":null,"to":"28800","toString":"28800"},{"field":"timespent","fieldId":"timespent","from":null,"fromString":null,"to":"36000","toString":"36000"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: EAD1, changelog_id: "55004", unique_key: jira-test-EAD1-55004, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"},{"field":"timeoriginalestimate","fieldId":"timeoriginalestimate","from":null,"fromString":null,"to":"32400","toString":"32400"},{"field":"timespent","fieldId":"timespent","from":null,"fromString":null,"to":"36000","toString":"36000"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: EAE1, changelog_id: "55005", unique_key: jira-test-EAE1-55005, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"},{"field":"timeoriginalestimate","fieldId":"timeoriginalestimate","from":null,"fromString":null,"to":"36000","toString":"36000"},{"field":"timespent","fieldId":"timespent","from":null,"fromString":null,"to":"36000","toString":"36000"}]' }
+
+cases:
+  - name: tasks.estimation_accuracy
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-12-20", to: "2026-12-31" }
+        metrics:
+          - metric_key: tasks.estimation_accuracy
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.estimation_accuracy
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 100 }
+      - metric: tasks.estimation_accuracy
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 100, p25: 70, median: 80, p75: 90, min: 60, max: 100, n: 5 }
+      - metric: tasks.estimation_accuracy
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 100.0))"

@@ -257,8 +257,7 @@ class AnalyticsProcess:
     def call_request(self, request: dict) -> tuple[int, Any]:
         """Execute a `case.request` ({url, method, body}). Return (status_code, json|text).
 
-        Used by the YAML rig; the primary endpoint is the batch
-        `POST /v1/metrics/queries`. The body is sent as JSON.
+        Used by the YAML rig. The body is sent as JSON.
         """
         url = request["url"]
         method = str(request.get("method", "POST")).upper()

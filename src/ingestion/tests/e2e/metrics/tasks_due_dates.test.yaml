@@ -1,0 +1,418 @@
+spec_version: 1
+description: >
+  Unified task due-date metrics,
+  department-of-5 distribution + 6 stats in a single custom window.
+
+  bronze -> silver -> gold: jira_issue + jira_issue_history (Status->Closed event
+  = metric_date) + jira_user. jira_closed_tasks per (person, close-day):
+    has_due_date_count = countIf(due present);
+    on_time_count      = countIf(due present AND close<=due).
+  The ...0011 query_ref: if(Σwith_due>0, round(100*Σon_time/Σwith_due, 1)).
+
+  Department: 5 Engineering members alice..erin of rank r in 1..5. Each closes
+  EXACTLY 4 issues on the same close date (2026-06-25), ALL carrying a due date:
+  (r-1) on time (due = close+5d) + (5-r) late (due = close-5d) -> per-person
+  compliance = 100*(r-1)/4 = {0,25,50,75,100}. alice(r=1)=0% (0 on-time / 4 with
+  due, denominator>0 so NOT dropped); erin(r=5)=100%. value = the requested
+  member's OWN compliance; median/p25/p75/range = the department distribution.
+
+  REGRESSION GUARD: the due date is set ONLY on the bronze `due_date` column (no
+  `duedate` changelog item), so it must reach due_date_compliance via the
+  Jira-native field_id `duedate` -- fails if jira__issue_field_snapshot regresses.
+  Empty window 2026-06 -> no items.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_jira.jira_user:
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-alice-jira-acct, account_id: alice-jira-acct, email: alice@example.com, display_name: Alice Alpha }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-bob-jira-acct, account_id: bob-jira-acct, email: bob@example.com, display_name: Bob Beta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-carol-jira-acct, account_id: carol-jira-acct, email: carol@example.com, display_name: Carol Gamma }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-jira-acct, account_id: dave-jira-acct, email: dave@example.com, display_name: Dave Delta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-erin-jira-acct, account_id: erin-jira-acct, email: erin@example.com, display_name: Erin Epsilon }
+
+  bronze_jira.jira_statuses:
+    - $ref: templates/jira_task.yaml#/templates/status_open
+    - $ref: templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: templates/jira_task.yaml#/templates/field_duedate
+
+  bronze_jira.jira_issue:
+    # ── Alice Alpha (rank 1) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DAW-1
+      jira_id: DAW-1
+      unique_key: jira-test-DAW-1
+      id_readable: DAW1
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DAW-2
+      jira_id: DAW-2
+      unique_key: jira-test-DAW-2
+      id_readable: DAW2
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DAW-3
+      jira_id: DAW-3
+      unique_key: jira-test-DAW-3
+      id_readable: DAW3
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DAW-4
+      jira_id: DAW-4
+      unique_key: jira-test-DAW-4
+      id_readable: DAW4
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    # ── Bob Beta (rank 2) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DBW-1
+      jira_id: DBW-1
+      unique_key: jira-test-DBW-1
+      id_readable: DBW1
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-30"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DBW-2
+      jira_id: DBW-2
+      unique_key: jira-test-DBW-2
+      id_readable: DBW2
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DBW-3
+      jira_id: DBW-3
+      unique_key: jira-test-DBW-3
+      id_readable: DBW3
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DBW-4
+      jira_id: DBW-4
+      unique_key: jira-test-DBW-4
+      id_readable: DBW4
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+    # ── Carol Gamma (rank 3) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DCW-1
+      jira_id: DCW-1
+      unique_key: jira-test-DCW-1
+      id_readable: DCW1
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-30"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DCW-2
+      jira_id: DCW-2
+      unique_key: jira-test-DCW-2
+      id_readable: DCW2
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-30"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DCW-3
+      jira_id: DCW-3
+      unique_key: jira-test-DCW-3
+      id_readable: DCW3
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DCW-4
+      jira_id: DCW-4
+      unique_key: jira-test-DCW-4
+      id_readable: DCW4
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    # ── Dave Delta (rank 4) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDW-1
+      jira_id: DDW-1
+      unique_key: jira-test-DDW-1
+      id_readable: DDW1
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-30"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDW-2
+      jira_id: DDW-2
+      unique_key: jira-test-DDW-2
+      id_readable: DDW2
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-30"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDW-3
+      jira_id: DDW-3
+      unique_key: jira-test-DDW-3
+      id_readable: DDW3
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-30"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDW-4
+      jira_id: DDW-4
+      unique_key: jira-test-DDW-4
+      id_readable: DDW4
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+    # ── Erin Epsilon (rank 5) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DEW-1
+      jira_id: DEW-1
+      unique_key: jira-test-DEW-1
+      id_readable: DEW1
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-30"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DEW-2
+      jira_id: DEW-2
+      unique_key: jira-test-DEW-2
+      id_readable: DEW2
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-30"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DEW-3
+      jira_id: DEW-3
+      unique_key: jira-test-DEW-3
+      id_readable: DEW3
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-30"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DEW-4
+      jira_id: DEW-4
+      unique_key: jira-test-DEW-4
+      id_readable: DEW4
+      created: "2026-01-05T09:00:00"
+      due_date: "2026-06-20"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+
+  bronze_jira.jira_issue_history:
+    # ── Alice Alpha (rank 1) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DAW1
+      changelog_id: "50000"
+      unique_key: jira-test-DAW1-50000
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: alice-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DAW2
+      changelog_id: "50001"
+      unique_key: jira-test-DAW2-50001
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: alice-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DAW3
+      changelog_id: "50002"
+      unique_key: jira-test-DAW3-50002
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: alice-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DAW4
+      changelog_id: "50003"
+      unique_key: jira-test-DAW4-50003
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: alice-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    # ── Bob Beta (rank 2) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DBW1
+      changelog_id: "50004"
+      unique_key: jira-test-DBW1-50004
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: bob-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DBW2
+      changelog_id: "50005"
+      unique_key: jira-test-DBW2-50005
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: bob-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DBW3
+      changelog_id: "50006"
+      unique_key: jira-test-DBW3-50006
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: bob-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DBW4
+      changelog_id: "50007"
+      unique_key: jira-test-DBW4-50007
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: bob-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    # ── Carol Gamma (rank 3) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DCW1
+      changelog_id: "50008"
+      unique_key: jira-test-DCW1-50008
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: carol-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DCW2
+      changelog_id: "50009"
+      unique_key: jira-test-DCW2-50009
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: carol-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DCW3
+      changelog_id: "50010"
+      unique_key: jira-test-DCW3-50010
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: carol-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DCW4
+      changelog_id: "50011"
+      unique_key: jira-test-DCW4-50011
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: carol-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    # ── Dave Delta (rank 4) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DDW1
+      changelog_id: "50012"
+      unique_key: jira-test-DDW1-50012
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: dave-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DDW2
+      changelog_id: "50013"
+      unique_key: jira-test-DDW2-50013
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: dave-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DDW3
+      changelog_id: "50014"
+      unique_key: jira-test-DDW3-50014
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: dave-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DDW4
+      changelog_id: "50015"
+      unique_key: jira-test-DDW4-50015
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: dave-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    # ── Erin Epsilon (rank 5) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DEW1
+      changelog_id: "50016"
+      unique_key: jira-test-DEW1-50016
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: erin-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DEW2
+      changelog_id: "50017"
+      unique_key: jira-test-DEW2-50017
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: erin-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DEW3
+      changelog_id: "50018"
+      unique_key: jira-test-DEW3-50018
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: erin-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: DEW4
+      changelog_id: "50019"
+      unique_key: jira-test-DEW4-50019
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: erin-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+
+cases:
+  - name: Unified task due-date metrics
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-06-20", to: "2026-06-30" }
+        metrics:
+          - metric_key: tasks.due_date_compliance
+            views: &task_views
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+          - { metric_key: tasks.on_time_delivery, views: *task_views }
+          - metric_key: tasks.avg_slip
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.due_date_compliance
+        view: period
+        find: &erin { entity_id: erin@example.com }
+        equal: { value: 75 }
+      - metric: tasks.due_date_compliance
+        view: peer
+        find: *erin
+        equal: { target_value: 75, p25: null, median: null, p75: null, min: null, max: null, n: 4 }
+      - metric: tasks.due_date_compliance
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-06-25' && double(p.value) == 75.0))"
+      - metric: tasks.on_time_delivery
+        view: period
+        find: *erin
+        equal: { value: 75 }
+      - metric: tasks.on_time_delivery
+        view: peer
+        find: *erin
+        equal: { target_value: 75, p25: null, median: null, p75: null, min: null, max: null, n: 4 }
+      - metric: tasks.on_time_delivery
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-06-25' && double(p.value) == 75.0))"
+      - metric: tasks.avg_slip
+        view: period
+        find: *erin
+        equal: { value: 5 }
+      - metric: tasks.avg_slip
+        view: peer
+        find: *erin
+        equal: { target_value: 5, p25: 5, median: 5, p75: 5, min: 5, max: 5, n: 5 }
+      - metric: tasks.avg_slip
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-06-25' && double(p.value) == 5.0))"

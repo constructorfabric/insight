@@ -1,0 +1,67 @@
+spec_version: 1
+description: "Wiki edit sessions collapse rapid saves and count distinct pages edited."
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+  bronze_outline.wiki_page_versions:
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: alice-1, page_id: page-alice, revision_id: alice-1, author_id: alice, author_email: alice@example.com, created_at: "2026-05-06T08:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: alice-2, page_id: page-alice, revision_id: alice-2, author_id: alice, author_email: alice@example.com, created_at: "2026-05-06T08:10:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: bob-1, page_id: page-bob, revision_id: bob-1, author_id: bob, author_email: bob@example.com, created_at: "2026-05-06T08:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: bob-2, page_id: page-bob, revision_id: bob-2, author_id: bob, author_email: bob@example.com, created_at: "2026-05-06T09:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: carol-1, page_id: page-carol, revision_id: carol-1, author_id: carol, author_email: carol@example.com, created_at: "2026-05-06T08:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: carol-2, page_id: page-carol, revision_id: carol-2, author_id: carol, author_email: carol@example.com, created_at: "2026-05-06T09:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: carol-3, page_id: page-carol, revision_id: carol-3, author_id: carol, author_email: carol@example.com, created_at: "2026-05-06T10:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: dave-1, page_id: page-dave, revision_id: dave-1, author_id: dave, author_email: dave@example.com, created_at: "2026-05-06T08:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: dave-2, page_id: page-dave, revision_id: dave-2, author_id: dave, author_email: dave@example.com, created_at: "2026-05-06T09:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: dave-3, page_id: page-dave, revision_id: dave-3, author_id: dave, author_email: dave@example.com, created_at: "2026-05-06T10:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: dave-4, page_id: page-dave, revision_id: dave-4, author_id: dave, author_email: dave@example.com, created_at: "2026-05-06T11:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: erin-1, page_id: page-erin, revision_id: erin-1, author_id: erin, author_email: erin@example.com, created_at: "2026-05-06T08:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: erin-2, page_id: page-erin, revision_id: erin-2, author_id: erin, author_email: erin@example.com, created_at: "2026-05-06T09:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: erin-3, page_id: page-erin, revision_id: erin-3, author_id: erin, author_email: erin@example.com, created_at: "2026-05-06T10:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: erin-4, page_id: page-erin, revision_id: erin-4, author_id: erin, author_email: erin@example.com, created_at: "2026-05-06T11:00:00Z" }
+    - { $ref: templates/wiki_page_versions.yaml#/templates/revision, unique_key: erin-5, page_id: page-erin, revision_id: erin-5, author_id: erin, author_email: erin@example.com, created_at: "2026-05-06T12:00:00Z" }
+
+cases:
+  - name: Wiki edit sessions and pages edited
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-05-01", to: "2026-05-10" }
+        metrics:
+          - metric_key: wiki.edits
+            views: &wiki_edit_views
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+          - { metric_key: wiki.pages_edited, views: *wiki_edit_views }
+    expect:
+      - assert: "status == 200"
+      - metric: wiki.edits
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      - metric: wiki.edits
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: wiki.edits
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-05-06' && double(p.value) == 5.0))"
+      - metric: wiki.pages_edited
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 1 }
+      - metric: wiki.pages_edited
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5 }
+      - metric: wiki.pages_edited
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-05-06' && double(p.value) == 1.0))"

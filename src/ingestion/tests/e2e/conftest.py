@@ -206,37 +206,18 @@ def dbt_runner(ch_migrations_applied: SessionConfig):
     runner.cleanup()
 
 
-def _collect_metrics(proc: AnalyticsProcess) -> None:
-    """Run `lib/collect_metrics.py` (a script — NOT a test) against the
-    live API, primary worker only. Snapshots the metric catalog into `.artifacts/`
-    so the metric-coverage gate analyses a file with no second app boot.
-    Best-effort: a failure just means the gate finds no artifact and fails loudly —
-    never abort the session for it. Must run while the API is up (called from
-    analytics teardown, before proc.stop())."""
+def _collect_metrics(cfg: SessionConfig) -> None:
     if not _IS_PRIMARY:
         return
-    import subprocess
-    import sys
+    from lib.collect_metric_definitions import collect
 
-    script = Path(__file__).parent / "lib" / "collect_metrics.py"
     out_dir = Path(__file__).parent / ".artifacts"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(script),
-            "--url",
-            proc.base_url,
-            "--out-dir",
-            str(out_dir),
-            "--tenant",
-            str(TEST_TENANT_ID),
-        ],
-        check=False,
-    )
-    if result.returncode != 0:
+    try:
+        collect(cfg, out_dir)
+    except Exception as error:
         LOG.warning(
-            "coverage-artifact collection failed (rc=%d); gate jobs may lack inputs",
-            result.returncode,
+            "coverage-artifact collection failed: %s; gate jobs may lack inputs",
+            error,
         )
 
 
@@ -258,7 +239,12 @@ def identity_stub():
 
 
 @pytest.fixture(scope="session")
-def analytics(ch_migrations_applied: SessionConfig, identity_stub: IdentityStub):
+def analytics(
+    ch_migrations_applied: SessionConfig,
+    dbt_runner: DbtRunner,
+    worker_ctx: WorkerContext,
+    identity_stub: IdentityStub,
+):
     """Spawn the analytics binary baked into the runner image. Its SeaORM
     migrations run on startup; we then upsert test-specific metrics from
     seed/metrics.yaml.
@@ -270,6 +256,7 @@ def analytics(ch_migrations_applied: SessionConfig, identity_stub: IdentityStub)
     bronze→API tests cannot run, so the only honest result is red.
     """
     cfg = ch_migrations_applied
+    dbt_runner.run("tag:gold", worker_ctx=worker_ctx)
     from lib.analytics import ApiSpawnError  # local import to keep top clean
     try:
         binary = locate_binary(cfg)
@@ -280,11 +267,8 @@ def analytics(ch_migrations_applied: SessionConfig, identity_stub: IdentityStub)
     proc.start()
     seed_test_metrics(cfg)
     yield proc
-    # Snapshot the metric catalog while the API is still up (a script, run via
-    # subprocess — see _collect_metrics). Always
-    # stop the process afterward, even if collection raised.
     try:
-        _collect_metrics(proc)
+        _collect_metrics(cfg)
     finally:
         proc.stop()
 

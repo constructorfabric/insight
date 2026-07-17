@@ -36,40 +36,33 @@ bronze:
     - { $ref: templates/m365_email.yaml#/templates/erin_email,  reportRefreshDate: "2026-12-25", unique_key: sent-erin-20261225,  sendCount: 50 }   # r=50 (the requested IC member)
 
 cases:
-  # ── CUSTOM scope (Dec 23 .. Dec 29) ──────────────────────────────────────────
-  # erin's per-person SUM = 50; dept {10,20,30,40,50}.
-  # p25=20 median=30 p75=40 range=[10,50]
-  - name: "m365_emails_sent — custom scope (department of 5)"
+  - name: collab.emails_sent
     request:
-      url: /v1/metrics/queries
+      url: /v1/metric-results
       method: POST
       body:
-        queries:
-          - id: collaboration
-            metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-23' and metric_date le '2026-12-29'"
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-12-01", to: "2026-12-31" }
+        metrics:
+          - metric_key: collab.emails_sent
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
     expect:
       - assert: "status == 200"
-      - in: collaboration
-        assert: "result.status == 'ok'"
-      - in: collaboration
-        find: { metric_key: m365_emails_sent }
-        equal: { value: 50, median: 30, range_min: 10, range_max: 50, p25: 20, p75: 40 }
-
-  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
-  # a valid window with no seeded rows → no items.
-  - name: "m365_emails_sent — EMPTY window (no data → no items)"
-    request:
-      url: /v1/metrics/queries
-      method: POST
-      body:
-        queries:
-          - id: collaboration
-            metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
-    expect:
-      - assert: "status == 200"
-      - in: collaboration
-        assert: "result.status == 'ok'"
-      - in: collaboration
-        assert: "size(items) == 0"
+      - metric: collab.emails_sent
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 50 }
+      - metric: collab.emails_sent
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
+      - metric: collab.emails_sent
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 50.0))"
+      - metric: collab.emails_sent
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool') && double(v.value) == 50.0)"
