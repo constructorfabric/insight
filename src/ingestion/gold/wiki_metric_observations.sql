@@ -52,11 +52,23 @@
 -- standing rather than dragging peer medians toward zero.
 
 WITH
+-- Page -> author attribution for the comment join. No created_at gate:
+-- comment attribution needs only the page's author, so a page snapshot
+-- without a creation timestamp still receives its comments.
 pages AS (
     SELECT
         tenant_id,
         source_id,
         page_id,
+        lower(author_email) AS entity_id
+    FROM {{ ref('class_wiki_pages') }} FINAL
+    WHERE author_email LIKE '%@%'
+),
+-- Dated branch for pages_created; the creation date is the metric date, so
+-- only here does a missing created_at exclude the page.
+page_creations AS (
+    SELECT
+        tenant_id,
         lower(author_email) AS entity_id,
         toDate(created_at) AS metric_date,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
@@ -99,7 +111,7 @@ engagement AS (
        AND e.page_id = p.page_id
 ),
 value_measures AS (
-    {{ sum_measure('pages_created', 'pages', '1', 'no_dimensions') }}
+    {{ sum_measure('pages_created', 'page_creations', '1', 'no_dimensions') }}
 
     UNION ALL
 
