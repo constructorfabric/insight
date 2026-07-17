@@ -1,0 +1,81 @@
+name: Semgrep SAST
+
+# Report-only SAST gate (constructorfabric/insight#1797, split from #1463; umbrella #1478).
+#
+# p/default findings surface in the GitHub "Security -> Code scanning" tab (SARIF upload)
+# AND as a count in the job summary, but they DO NOT block: `semgrep scan` runs WITHOUT
+# `--error`. Flip to blocking once the baseline is triaged and clean (zero un-waived
+# findings) by adding `--error` here and marking `sast` a required status check.
+#
+# Secret detection is intentionally excluded (`--exclude-rule generic.secrets...`); the
+# separate TruffleHog gate owns secret scanning.
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly full-tree baseline (independent of what any PR touched), 03:27 UTC.
+    - cron: "27 3 * * *"
+  workflow_dispatch:
+
+# A new push obsoletes any run still in flight for the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sast:
+    name: sast
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+      security-events: write # upload SARIF to Code Scanning
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Semgrep scan (report-only — ratchet to blocking with --error once baseline is clean)
+        # Runs the digest-pinned Semgrep image via `docker run` (not a `container:` job) so the
+        # checkout and SARIF-upload JS actions keep the host runner's Node — the Semgrep image
+        # does not ship Node. No `--error`: findings are reported, never block. Secrets excluded
+        # (TruffleHog owns them). `.semgrepignore` in the repo root prunes build/dep artifacts.
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -w /src \
+            semgrep/semgrep:1.131.0@sha256:6bd07d7b166b097e1384f41b94a62d8c8a26a4fff8713992c296e053310da01f \
+            semgrep scan \
+              --config p/default \
+              --exclude-rule generic.secrets.security.detected-generic-secret \
+              --sarif --output semgrep.sarif \
+              --metrics off
+
+      - name: Summarize findings in the job summary
+        if: always()
+        # Null-guarded append (repo convention, cf. e2e-bronze-to-api.yml). Counts SARIF
+        # results with the stdlib json module (no jq dependency).
+        run: |
+          if [ -f semgrep.sarif ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            count=$(python3 -c "import json; d=json.load(open('semgrep.sarif')); print(sum(len(r.get('results', [])) for r in d.get('runs', [])))" 2>/dev/null || echo "?")
+            {
+              echo "## Semgrep SAST (report-only)"
+              echo ""
+              echo "**${count}** finding(s) from \`p/default\` — see the **Security → Code scanning** tab for details."
+              echo ""
+              echo "_Report-only: this check never blocks. It becomes blocking when \`--error\` is added and the baseline is clean (#1797)._"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload SARIF to GitHub Code Scanning
+        # Skip on fork PRs: they receive a read-only token and cannot upload to Code Scanning,
+        # which would otherwise red-X this report-only job.
+        if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@fbcef3fba75224ed6476919775448de80b23cb15 # v3.32.0
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
