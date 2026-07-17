@@ -124,6 +124,12 @@ connectors:
         value: http://10.0.0.1:9999/api
       zulip_proxy_start_date:
         value: "2024-01-01"
+        # hubspot and salesforce are disabled: their stream schemas are built
+        # from the live describe APIs, so `discover` needs real credentials —
+        # fake values cannot create their tables. To enable, uncomment and
+        # replace the token/secret values with env references resolved at run
+        # time, e.g. `hubspot_access_token: { env: HUBSPOT_ACCESS_TOKEN }`,
+        # so secrets never land in this file.
         # hubspot:
         #   path: crm/hubspot
         #   config:
