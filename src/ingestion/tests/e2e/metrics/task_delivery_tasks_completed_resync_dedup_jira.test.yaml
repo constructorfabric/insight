@@ -1,0 +1,191 @@
+spec_version: 1
+description: >
+  Task Delivery - tasks_completed - JIRA, IC Bullet Task Delivery (...0011), bronze re-sync dedup: latest extraction wins per issue. bronze -> silver -> gold: jira_issue is APPEND-ONLY - every Airbyte sync re-extracts an updated issue as a NEW bronze row with the same (source_id, jira_id) and a later _airbyte_extracted_at, so one issue may have several bronze rows with DIFFERENT payloads. The current-state snapshot must keep exactly one row per issue - the one from the LATEST extraction (not the first-seeded, not the last-inserted, not an accidental double). jira-enrich then bootstraps these snapshot-only issues (no changelog rows at all) with a synthetic status event at `created`; jira_closed_tasks counts an issue iff its CURRENT status is in the done category, on metric_date = created. REGRESSION GUARD for the jira__issue_field_snapshot dedup rewrite (LIMIT 1 BY -> argMax GROUP BY, PR 1817): a dedup that picks the OLDEST extraction, or the last-INSERTED row, or drops the issue, changes which single-day windows below have a close. One-member department (alice), 4 snapshot-only issues, one per close day. DDP-1 created 12-21, In Progress then Closed extracted later -> counted (latest wins). DDP-2 created 12-22, identical Closed row seeded twice -> counted once. DDP-3 created 12-23, Closed row inserted FIRST but extracted LATER, In Progress inserted after it -> counted (max extracted_at, not insert order). DDP-4 created 12-24, was Closed, re-opened by the latest extraction -> NOT counted. Cases: full window 12-20..12-31 -> 3; per-day windows 12-21 -> 1, 12-22 -> 1 (not 2), 12-23 -> 1, 12-24 -> no items.
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+  bronze_jira.jira_statuses:
+    - $ref: templates/jira_task.yaml#/templates/status_open
+    - $ref: templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: templates/jira_task.yaml#/templates/field_duedate
+
+  bronze_jira.jira_issue:
+    # ── DDP-1: In Progress first, Closed re-extracted LATER → latest wins ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-1
+      jira_id: DDP-1
+      unique_key: jira-test-DDP-1
+      id_readable: DDP1
+      created: "2026-12-21T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-1
+      jira_id: DDP-1
+      unique_key: jira-test-DDP-1
+      id_readable: DDP1
+      created: "2026-12-21T09:00:00"
+      _airbyte_extracted_at: "2026-12-27T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+    # ── DDP-2: byte-identical re-sync duplicate → must count ONCE ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-2
+      jira_id: DDP-2
+      unique_key: jira-test-DDP-2
+      id_readable: DDP2
+      created: "2026-12-22T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-2
+      jira_id: DDP-2
+      unique_key: jira-test-DDP-2
+      id_readable: DDP2
+      created: "2026-12-22T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+    # ── DDP-3: LATEST extraction (Closed) inserted FIRST, older In Progress
+    #    inserted after it → dedup must key on _airbyte_extracted_at, not on
+    #    physical insert order ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-3
+      jira_id: DDP-3
+      unique_key: jira-test-DDP-3
+      id_readable: DDP3
+      created: "2026-12-23T09:00:00"
+      _airbyte_extracted_at: "2026-12-28T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-3
+      jira_id: DDP-3
+      unique_key: jira-test-DDP-3
+      id_readable: DDP3
+      created: "2026-12-23T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+    # ── DDP-4: was Closed, the LATEST extraction re-opens it → the stale
+    #    Closed row must NOT resurrect a close (min-extraction dedup would) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-4
+      jira_id: DDP-4
+      unique_key: jira-test-DDP-4
+      id_readable: DDP4
+      created: "2026-12-24T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-4
+      jira_id: DDP-4
+      unique_key: jira-test-DDP-4
+      id_readable: DDP4
+      created: "2026-12-24T09:00:00"
+      _airbyte_extracted_at: "2026-12-27T00:00:00"
+      custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+cases:
+  - name: "resync dedup — full window counts exactly the 3 currently-closed issues"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-12-20' and metric_date le '2026-12-31'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: {metric_key: tasks_completed}
+        equal: {value: 3, median: 3, range_min: 3, range_max: 3, p25: 3, p75: 3}
+
+  - name: "DDP-1 day (12-21) — later extraction closed it → counted"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-12-21' and metric_date le '2026-12-21'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: {metric_key: tasks_completed}
+        equal: {value: 1, median: 1, range_min: 1, range_max: 1, p25: 1, p75: 1}
+
+  - name: "DDP-2 day (12-22) — identical duplicate rows count once, not twice"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-12-22' and metric_date le '2026-12-22'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: {metric_key: tasks_completed}
+        equal: {value: 1, median: 1, range_min: 1, range_max: 1, p25: 1, p75: 1}
+
+  - name: "DDP-3 day (12-23) — max extracted_at wins over insert order → counted"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-12-23' and metric_date le '2026-12-23'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        find: {metric_key: tasks_completed}
+        equal: {value: 1, median: 1, range_min: 1, range_max: 1, p25: 1, p75: 1}
+
+  - name: "DDP-4 day (12-24) — re-opened by the latest extraction → no close, no items"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $top: 50
+            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-12-24' and metric_date le '2026-12-24'"
+            $orderby: metric_key
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        assert: "size(items) == 0"
