@@ -16,7 +16,7 @@ person produces and at what volume.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # ─── Fixed UUIDs ────────────────────────────────────────────────────────
 # The dev lead's UUID matches the value the original dev-compose.sh seed
@@ -61,6 +61,36 @@ class Person:
     team: str | None  # None for CEO
     role: str         # "ceo" | "lead" | "ic"
     parent_uuid: str | None  # report-to chain
+    first_name: str = ""     # assigned deterministically in build_roster
+    last_name: str = ""
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip()
+
+
+# Deterministic human names, assigned by roster build-order index so re-runs
+# are stable. Seeded into MariaDB `identity.persons` (value_type=display_name/
+# first_name/last_name) so the UI shows names instead of falling back to email.
+_FIRST_NAMES = [
+    "Ava", "Liam", "Maya", "Noah", "Zoe", "Ethan", "Aria", "Leo", "Nora",
+    "Kai", "Ivy", "Owen", "Mila", "Ezra", "Luna", "Finn", "Ruby", "Milo",
+    "Sage", "Cole", "Iris", "Jude", "Elle", "Reid", "Wren", "Beau", "Faye",
+    "Cruz", "Tess", "Rhys",
+]
+_LAST_NAMES = [
+    "Carter", "Nguyen", "Patel", "Rivera", "Brooks", "Okafor", "Meyer",
+    "Sato", "Flores", "Haas", "Kelly", "Novak", "Reyes", "Park", "Bauer",
+    "Costa", "Lund", "Amari", "Dixon", "Frost", "Grant", "Hale", "Ivers",
+    "Jansen", "Keir", "Lowe", "Mora", "Nash", "Okeefe", "Pratt",
+]
+
+
+def _name_at(index: int) -> tuple[str, str]:
+    return (
+        _FIRST_NAMES[index % len(_FIRST_NAMES)],
+        _LAST_NAMES[index % len(_LAST_NAMES)],
+    )
 
 
 # ─── Team profile ────────────────────────────────────────────────────────
@@ -165,7 +195,12 @@ def build_roster(dev_user_email: str) -> list[Person]:
                 parent_uuid=lead.uuid,
             ))
 
-    return [ceo, *leads, *ics]
+    # Assign deterministic names by build-order index (CEO, leads, then ICs).
+    return [
+        replace(p, first_name=fn, last_name=ln)
+        for i, p in enumerate([ceo, *leads, *ics])
+        for fn, ln in [_name_at(i)]
+    ]
 
 
 def get_dev_user_email() -> str:
