@@ -1,5 +1,38 @@
-# Tool config for the Insight sample-data seeder.
-# Lives next to the code so `ruff check .` and `mypy .` work from the dir.
+# Package metadata, dependencies, and tool config for the Insight
+# sample-data seeder. Lives next to the code so `ruff check .` and `mypy .`
+# work from the dir, and `pip install .` builds the flat module + generators
+# package straight from here.
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insight-seed"
+version = "0.1.0"
+description = "Insight sample-data seeder for the local docker-compose stack."
+requires-python = ">=3.13"
+dependencies = [
+    "PyMySQL==1.2.0",
+    "clickhouse-connect==1.2.0",
+    # Unpinned to match src/ingestion/tools/toolbox/Dockerfile. dbt-core pulls
+    # in PyYAML, which apply-ch-migrations.sh's profiles.yml generator imports.
+    "dbt-clickhouse",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy==2.1.0",
+    "ruff==0.15.16",
+    "types-PyMySQL==1.1.0.20260518",
+]
+
+# Flat layout: top-level modules plus the generators/ package.
+[tool.setuptools]
+py-modules = ["seed", "silver", "identity", "profiles"]
+
+[tool.setuptools.packages.find]
+include = ["generators*"]
 
 [tool.ruff]
 line-length = 100
