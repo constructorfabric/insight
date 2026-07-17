@@ -5,9 +5,8 @@ models:
     description: >
       Unified per-page snapshot across wiki sources. One row per
       (tenant, source, page) with latest metadata: space, title, status,
-      author, last editor, version count, timestamps. Feeds future wiki
-      metrics (pages_by_author, pages_per_space) — currently no dashboard
-      metrics consume this model.
+      author, last editor, version count, timestamps. Feeds the wiki gold
+      observations (page creation, comment attribution to the page author).
 
       Identity resolution: Confluence v2 API returns only `author_id`
       (Atlassian accountId). `author_email` is resolved via LEFT JOIN with

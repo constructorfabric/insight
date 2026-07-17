@@ -40,8 +40,10 @@ if TYPE_CHECKING:
 
 def _task_persons(roster: Sequence[Person]) -> list[Person]:
     return [
-        p for p in roster
-        if p.team and (
+        p
+        for p in roster
+        if p.team
+        and (
             TEAM_PROFILES[p.team].weights.get("jira", 0) > 0
             or TEAM_PROFILES[p.team].weights.get("zendesk-placeholder", 0) > 0
         )
@@ -56,9 +58,17 @@ def seed_task_worklogs(
 ) -> int:
     truncate(client, "silver", "class_task_worklogs")
     cols = [
-        "insight_tenant_id", "insight_source_id", "worklog_id",
-        "issue_id", "author_id", "author_email", "work_date",
-        "duration_seconds", "worklog_seconds", "unique_key", "_version",
+        "insight_tenant_id",
+        "insight_source_id",
+        "worklog_id",
+        "issue_id",
+        "author_id",
+        "author_email",
+        "work_date",
+        "duration_seconds",
+        "worklog_seconds",
+        "unique_key",
+        "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -87,14 +97,21 @@ def seed_task_worklogs(
                 spent += duration
                 worklog_id = deterministic_uuid("task.worklog", p.uuid, d.isoformat(), str(i))
                 issue_id = f"INSIGHT-{rng.randint(1000, 9999)}"
-                rows.append((
-                    tenant_uuid,
-                    deterministic_uuid("task.source", p.uuid),
-                    worklog_id, issue_id,
-                    p.email, p.email, d,
-                    float(duration), float(duration),
-                    worklog_id, version,
-                ))
+                rows.append(
+                    (
+                        tenant_uuid,
+                        deterministic_uuid("task.source", p.uuid),
+                        worklog_id,
+                        issue_id,
+                        p.email,
+                        p.email,
+                        d,
+                        float(duration),
+                        float(duration),
+                        worklog_id,
+                        version,
+                    )
+                )
     return bulk_insert(client, "silver", "class_task_worklogs", cols, rows)
 
 
@@ -107,8 +124,12 @@ def seed_task_users(
     on insight_source_id + user_id) actually emits rows."""
     truncate(client, "silver", "class_task_users")
     cols = [
-        "insight_tenant_id", "insight_source_id", "user_id", "email",
-        "unique_key", "_version",
+        "insight_tenant_id",
+        "insight_source_id",
+        "user_id",
+        "email",
+        "unique_key",
+        "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -116,10 +137,16 @@ def seed_task_users(
         src_id = deterministic_uuid("task.source", p.uuid)
         # author_id in class_task_worklogs == p.email — mirror that here so
         # the JOIN matches.
-        rows.append((
-            tenant_uuid, src_id, p.email, p.email,
-            deterministic_uuid("task.user", p.uuid), version,
-        ))
+        rows.append(
+            (
+                tenant_uuid,
+                src_id,
+                p.email,
+                p.email,
+                deterministic_uuid("task.user", p.uuid),
+                version,
+            )
+        )
     return bulk_insert(client, "silver", "class_task_users", cols, rows)
 
 
@@ -136,9 +163,9 @@ _CLOSE_STATUSES = ("Closed", "Resolved", "Verified")
 # status_category values are the reconciled set: new / in_progress / done.
 _STATUS_DIM = {
     # status_name: (status_id, status_category)
-    "To Do":    ("1",     "new"),
-    "Closed":   ("6",     "done"),
-    "Resolved": ("5",     "done"),
+    "To Do": ("1", "new"),
+    "Closed": ("6", "done"),
+    "Resolved": ("5", "done"),
     "Verified": ("10001", "done"),
 }
 _STATUS_CATEGORY_ID = {"new": 2, "in_progress": 4, "done": 3, "undefined": 1}
@@ -184,14 +211,27 @@ def _fh_row(
     event_id = deterministic_uuid("task.fh", issue_id, field_id, str(seq))
     return (
         deterministic_uuid("task.fh.uk", issue_id, field_id, str(seq)),
-        src_id, data_source, issue_id,
+        src_id,
+        data_source,
+        issue_id,
         f"INSIGHT-{issue_id[-4:]}",
-        event_id, event_at, event_kind, seq,
-        author_id, author_id,
-        field_id, field_name, "single", "set",
-        value_id, value_display,
-        value_ids, value_displays,
-        _value_id_type(field_id), event_at, 1,
+        event_id,
+        event_at,
+        event_kind,
+        seq,
+        author_id,
+        author_id,
+        field_id,
+        field_name,
+        "single",
+        "set",
+        value_id,
+        value_display,
+        value_ids,
+        value_displays,
+        _value_id_type(field_id),
+        event_at,
+        1,
     )
 
 
@@ -206,12 +246,28 @@ def seed_task_field_history(
     closing it."""
     truncate(client, "silver", "class_task_field_history")
     cols = [
-        "unique_key", "insight_source_id", "data_source", "issue_id",
-        "id_readable", "event_id", "event_at", "event_kind", "_seq",
-        "author_id", "author_display", "field_id", "field_name",
-        "field_cardinality", "delta_action", "delta_value_id",
-        "delta_value_display", "value_ids", "value_displays",
-        "value_id_type", "collected_at", "_version",
+        "unique_key",
+        "insight_source_id",
+        "data_source",
+        "issue_id",
+        "id_readable",
+        "event_id",
+        "event_at",
+        "event_kind",
+        "_seq",
+        "author_id",
+        "author_display",
+        "field_id",
+        "field_name",
+        "field_cardinality",
+        "delta_action",
+        "delta_value_id",
+        "delta_value_display",
+        "value_ids",
+        "value_displays",
+        "value_id_type",
+        "collected_at",
+        "_version",
     ]
     rows: list[tuple[object, ...]] = []
     window = days_window(days)
@@ -235,7 +291,8 @@ def seed_task_field_history(
                 issue_type = _ISSUE_TYPES[rng.randint(0, len(_ISSUE_TYPES) - 1)]
                 priority = _PRIORITIES[rng.randint(0, len(_PRIORITIES) - 1)]
                 created_at = _dt.datetime.combine(
-                    created_day, _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59)),
+                    created_day,
+                    _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59)),
                 )
                 est_seconds = float(rng.randint(2, 16) * 3600)
                 spent_seconds = float(est_seconds * rng.uniform(0.5, 1.5))
@@ -247,20 +304,26 @@ def seed_task_field_history(
                     ("issuetype", "Issue Type", None, issue_type),
                     ("priority", "Priority", None, priority),
                     ("duedate", "Due Date", None, due_date),
-                    ("timeoriginalestimate", "Original Estimate",
-                     None, str(int(est_seconds))),
-                    ("timespent", "Time Spent",
-                     None, str(int(spent_seconds))),
+                    ("timeoriginalestimate", "Original Estimate", None, str(int(est_seconds))),
+                    ("timespent", "Time Spent", None, str(int(spent_seconds))),
                 ]
                 for seq, (fid, fname, vid, vdisp) in enumerate(base_fields):
-                    rows.append(_fh_row(
-                        tenant_uuid=tenant_uuid, src_id=src_id,
-                        data_source=data_source, issue_id=issue_id,
-                        event_at=created_at, event_kind="synthetic_initial",
-                        field_id=fid, field_name=fname,
-                        value_id=vid, value_display=vdisp,
-                        author_id=p.email, seq=seq,
-                    ))
+                    rows.append(
+                        _fh_row(
+                            tenant_uuid=tenant_uuid,
+                            src_id=src_id,
+                            data_source=data_source,
+                            issue_id=issue_id,
+                            event_at=created_at,
+                            event_kind="synthetic_initial",
+                            field_id=fid,
+                            field_name=fname,
+                            value_id=vid,
+                            value_display=vdisp,
+                            author_id=p.email,
+                            seq=seq,
+                        )
+                    )
                 # ~55% of issues get closed before today.
                 if rng.random() < 0.55:
                     days_to_close = rng.randint(3, 28)
@@ -269,17 +332,25 @@ def seed_task_field_history(
                     if close_day < today:
                         close_status = _CLOSE_STATUSES[rng.randint(0, len(_CLOSE_STATUSES) - 1)]
                         close_at = _dt.datetime.combine(
-                            close_day, _dt.time(rng.randint(10, 17), rng.randint(0, 59)),
+                            close_day,
+                            _dt.time(rng.randint(10, 17), rng.randint(0, 59)),
                         )
-                        rows.append(_fh_row(
-                            tenant_uuid=tenant_uuid, src_id=src_id,
-                            data_source=data_source, issue_id=issue_id,
-                            event_at=close_at, event_kind="changelog",
-                            field_id="status", field_name="Status",
-                            value_id=_STATUS_DIM[close_status][0],
-                            value_display=close_status,
-                            author_id=p.email, seq=100,
-                        ))
+                        rows.append(
+                            _fh_row(
+                                tenant_uuid=tenant_uuid,
+                                src_id=src_id,
+                                data_source=data_source,
+                                issue_id=issue_id,
+                                event_at=close_at,
+                                event_kind="changelog",
+                                field_id="status",
+                                field_name="Status",
+                                value_id=_STATUS_DIM[close_status][0],
+                                value_display=close_status,
+                                author_id=p.email,
+                                seq=100,
+                            )
+                        )
 
     return bulk_insert(client, "silver", "class_task_field_history", cols, rows)
 
@@ -294,9 +365,16 @@ def seed_class_task_statuses(
     jira_closed_tasks (which filters status_category = 'done') is empty."""
     truncate(client, "silver", "class_task_statuses")
     cols = [
-        "insight_source_id", "data_source", "status_id", "status_name",
-        "category_id", "category_key", "status_category", "collected_at",
-        "unique_key", "_version",
+        "insight_source_id",
+        "data_source",
+        "status_id",
+        "status_name",
+        "category_id",
+        "category_key",
+        "status_category",
+        "collected_at",
+        "unique_key",
+        "_version",
     ]
     now = _dt.datetime.now(_dt.UTC).replace(tzinfo=None)
     rows: list[tuple[object, ...]] = []
@@ -304,21 +382,32 @@ def seed_class_task_statuses(
         src_id = deterministic_uuid("task.source", p.uuid)
         data_source = _task_data_source(p.team)
         for name, (status_id, category) in _STATUS_DIM.items():
-            rows.append((
-                src_id, data_source, status_id, name,
-                _STATUS_CATEGORY_ID[category], category, category, now,
-                deterministic_uuid("task.status", src_id, status_id), 1,
-            ))
+            rows.append(
+                (
+                    src_id,
+                    data_source,
+                    status_id,
+                    name,
+                    _STATUS_CATEGORY_ID[category],
+                    category,
+                    category,
+                    now,
+                    deterministic_uuid("task.status", src_id, status_id),
+                    1,
+                )
+            )
     return bulk_insert(client, "silver", "class_task_statuses", cols, rows)
 
 
 # Refreshable materialized views that derive from class_task_field_history.
 # Listed explicitly so a CH version mismatch errors loudly here rather than
 # leaving downstream metrics stale until the scheduled refresh tick.
-_TASK_REFRESHABLE_MVS = (
-    "insight.task_issue_current_state",
-    "insight.task_status_intervals",
-)
+# NOTE: task_status_intervals is NOT here — the migration creates it as a
+# stub (so that migration's own downstream CREATE VIEWs type-check), but it
+# is a dbt-owned gold *table* now (gold/task_status_intervals.sql), rebuilt
+# fresh over seeded silver by `dbt run --select tag:gold` in
+# apply-ch-migrations.sh. SYSTEM REFRESH VIEW on a table errors.
+_TASK_REFRESHABLE_MVS = ("insight.task_issue_current_state",)
 
 
 def refresh_dependent_mvs(client: clickhouse_connect.driver.client.Client) -> None:
@@ -337,14 +426,15 @@ def generate(
     tenant_uuid: str,
     days: int,
 ) -> dict[str, int]:
-    totals = {
-        "silver.class_task_worklogs":      seed_task_worklogs(client, roster, tenant_uuid, days),
-        "silver.class_task_users":         seed_task_users(client, roster, tenant_uuid),
-        "silver.class_task_field_history": seed_task_field_history(client, roster, tenant_uuid, days),
-        "silver.class_task_statuses":      seed_class_task_statuses(client, roster),
-    }
     # NOTE: the refreshable MVs these rows feed (see refresh_dependent_mvs)
     # are created by apply-ch-migrations.sh, which the orchestrator runs
     # AFTER seeding — so the refresh is triggered by silver.run() once the
     # migrations exist, not here. See silver.py.
-    return totals
+    return {
+        "silver.class_task_worklogs": seed_task_worklogs(client, roster, tenant_uuid, days),
+        "silver.class_task_users": seed_task_users(client, roster, tenant_uuid),
+        "silver.class_task_field_history": seed_task_field_history(
+            client, roster, tenant_uuid, days
+        ),
+        "silver.class_task_statuses": seed_class_task_statuses(client, roster),
+    }

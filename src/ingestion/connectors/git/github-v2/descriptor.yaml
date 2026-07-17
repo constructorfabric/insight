@@ -1,5 +1,5 @@
 name: github-v2
-version: "1.1.0"
+version: "1.2.0"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
@@ -11,7 +11,7 @@ images:
     name: source-github-v2-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-github-v2-insight:2026.06.10.11.55-376321d"
+    image: "ghcr.io/constructorfabric/source-github-v2-insight:2026.07.17.14.01-2db4f46"
 dbt_select: "tag:github+"
 connection:
   namespace: "bronze_github"
