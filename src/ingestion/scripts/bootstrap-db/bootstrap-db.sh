@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_FILE="${1:?usage: seed-db.sh <connectors-config.yaml>}"
+CONFIG_FILE="${1:?usage: bootstrap-db.sh <connectors-config.yaml>}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -18,7 +18,7 @@ fi
 : "${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}"
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set}"
 
-echo "=== Seeding connector tables ==="
+echo "=== Creating connector tables ==="
 "${SCRIPT_DIR}/seed-connectors.sh" "${CONFIG_FILE}"
 
 echo "=== Running all dbt models ==="

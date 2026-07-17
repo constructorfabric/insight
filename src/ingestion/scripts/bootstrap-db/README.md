@@ -1,4 +1,4 @@
-# seed_db
+# bootstrap-db
 
 Creates all connector bronze tables in ClickHouse without running Airbyte, then promotes them to ReplacingMergeTree and builds the dbt/gold layers. Table schemas come from the connectors themselves (`discover`), so they never drift from what a real sync would create.
 
@@ -14,7 +14,7 @@ How it works: for every connector the source image runs `discover` (schemas are 
 Start a throwaway ClickHouse in docker (one migration needs the refreshable-MV setting, enabled on real clusters):
 
 ```bash
-cat > /tmp/clickhouse-seed-settings.xml <<'EOF'
+cat > /tmp/clickhouse-bootstrap-settings.xml <<'EOF'
 <clickhouse>
   <profiles>
     <default>
@@ -24,9 +24,9 @@ cat > /tmp/clickhouse-seed-settings.xml <<'EOF'
 </clickhouse>
 EOF
 
-docker run -d --name seed-db-clickhouse -p 8123:8123 \
+docker run -d --name bootstrap-db-clickhouse -p 8123:8123 \
   -e CLICKHOUSE_USER=insight -e CLICKHOUSE_PASSWORD=insight -e CLICKHOUSE_DB=insight \
-  -v /tmp/clickhouse-seed-settings.xml:/etc/clickhouse-server/users.d/seed-settings.xml:ro \
+  -v /tmp/clickhouse-bootstrap-settings.xml:/etc/clickhouse-server/users.d/bootstrap-settings.xml:ro \
   clickhouse/clickhouse-server:24.8.4.13
 ```
 
@@ -37,7 +37,7 @@ curl -s "http://localhost:8123/" -H "X-ClickHouse-User: insight" -H "X-ClickHous
   --data "SELECT database, name, engine FROM system.tables WHERE database LIKE 'bronze%'"
 ```
 
-Throw it away with `docker rm -f seed-db-clickhouse`.
+Throw it away with `docker rm -f bootstrap-db-clickhouse`.
 
 ## Usage
 
@@ -64,15 +64,15 @@ Throw it away with `docker rm -f seed-db-clickhouse`.
 
    The file contains no secrets and can be committed to the repository.
 
-3. Copy `.env.seed.example` to `.env` next to the scripts and fill in the values (or export the same variables yourself — the `.env` file is optional).
+3. Copy `.env.bootstrap.example` to `.env` next to the scripts and fill in the values (or export the same variables yourself — the `.env` file is optional).
 
 4. Run everything:
 
    ```bash
-   ./seed-db.sh connectors-config.yaml
+   ./bootstrap-db.sh connectors-config.yaml
    ```
 
-   This seeds the tables for every connector in the file (a failing connector is reported and skipped, the run continues), then runs all dbt models, then applies the ClickHouse migrations (`../apply-ch-migrations.sh`).
+   This creates the tables for every connector in the file (a failing connector is reported and skipped, the run continues), then runs all dbt models, then applies the ClickHouse migrations (`../apply-ch-migrations.sh`).
 
 ## Scripts
 
@@ -81,7 +81,7 @@ Throw it away with `docker rm -f seed-db-clickhouse`.
 | `generate-connectors-config.sh [pattern]` | Finds `descriptor.yaml` files, extracts every required config field from the connector spec, writes the config YAML with fake values to stdout. |
 | `seed-connectors.sh <config.yaml>` | Iterates over the config file, resolves `value`/`env` fields into a config JSON, calls `create-connector-tables.sh` per connector. Errors are printed and skipped. |
 | `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog → `destination-clickhouse write` with a zero-record stream-status input (creates empty tables) → `dbt run --select <name>__bronze_promoted` (MergeTree → ReplacingMergeTree). |
-| `seed-db.sh <config.yaml>` | Sources `.env` if present, runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
+| `bootstrap-db.sh <config.yaml>` | Sources `.env` if present, runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
 | `run-dbt.sh [dbt args]` | Helper: generates a profiles.yml from the `CLICKHOUSE_*` variables and runs `dbt run` in `src/ingestion/dbt`. |
 
 ## Pinning DESTINATION_CLICKHOUSE_IMAGE

@@ -21,9 +21,9 @@ fi
 
 cat > "${PROFILES_DIR}/profiles.yml" <<EOF
 ingestion:
-  target: seed
+  target: bootstrap
   outputs:
-    seed:
+    bootstrap:
       type: clickhouse
       host: ${CLICKHOUSE_HOST}
       port: ${CLICKHOUSE_PORT}
