@@ -103,10 +103,10 @@ cdk_register_definition() {
 # ---------------------------------------------------------------------------
 # cdk_build <connector_path> [--push]
 # Full CDK build: Docker build → push/Kind-load → Airbyte definition register.
-# connector_path is relative to the project root (e.g. git/github).
+# connector_path is relative to the project root (e.g. git/gitlab).
 # ---------------------------------------------------------------------------
 cdk_build() {
-  local connector="${1:?cdk_build requires connector_path (e.g. git/github)}"
+  local connector="${1:?cdk_build requires connector_path (e.g. git/gitlab)}"
   local push=0
   local arg
   for arg in "${@:2}"; do
