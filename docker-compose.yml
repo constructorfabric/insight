@@ -193,8 +193,6 @@ services:
       identity: {condition: service_started}
     environment:
       !!merge <<: *backend-env
-      # Service config is baked at /app/config/. Compose `command:` below
-      # selects which one; see CONTRIBUTING.md for the OIDC swap.
     volumes:
       # Bind-mount the host-built Linux binary over the baked one. The
       # ./deploy/compose/build/api-gateway path is populated by `./dev-compose.sh up`
@@ -208,12 +206,19 @@ services:
       # Mount the service's config dir so YAML edits don't require a
       # full image rebuild.
       - ./src/backend/services/api-gateway/config:/app/config:ro
+      # Compose-only Keycloak-mode config (auth ENFORCED). Always mounted but
+      # only SELECTED when API_GATEWAY_CONFIG points at it (keycloak mode);
+      # inert otherwise. Kept out of the service's own config dir above.
+      - ./deploy/compose/keycloak/api-gateway.keycloak.yaml:/app/config-compose/keycloak.yaml:ro
+    # Which gateway config to run is an env switch: default no-auth.yaml (auth
+    # bypass, fakeidp mode); dev-compose.sh sets API_GATEWAY_CONFIG to the
+    # keycloak config when AUTH_MODE=keycloak. See CONTRIBUTING.md.
     command:
       - "/app/insight-api-gateway" # <watched path>
       - "--"
       - "/app/insight-api-gateway"
       - "-c"
-      - "/app/config/no-auth.yaml"
+      - "${API_GATEWAY_CONFIG:-/app/config/no-auth.yaml}"
       - "run"
     ports:
       - "${API_GATEWAY_PORT:-8080}:8080"
@@ -310,7 +315,9 @@ services:
       dockerfile: services/authenticator/Dockerfile
     depends_on:
       redis: {condition: service_healthy}
-      fakeidp: {condition: service_started}
+      # required: false → compose skips this dependency when the fakeidp
+      # profile is inactive (--auth=keycloak runs auth-keycloak instead).
+      fakeidp: {condition: service_started, required: false}
       identity: {condition: service_started}
     environment:
       !!merge <<: *backend-env
@@ -352,9 +359,11 @@ services:
   # a throwaway keypair generated at startup and exposes /_control/* test hooks. Builds
   # entirely from its own Dockerfile (no host-built-binary bind mount), so it is
   # self-contained. See src/backend/services/fakeidp/README.md and
-  # cf/NGINX_BFF.md §10 G6. On the default profile — comes up with the stack.
+  # cf/NGINX_BFF.md §10 G6. Gated behind --profile auth-fakeidp (the default
+  # auth mode); --profile auth-keycloak brings up `keycloak` instead.
   fakeidp:
     !!merge <<: *backend-common
+    profiles: ["auth-fakeidp"]
     image: ${FAKEIDP_IMAGE:-insight-fakeidp:dev}
     container_name: insight-fakeidp
     build:
@@ -380,6 +389,46 @@ services:
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "${FAKEIDP_PORT:-8084}:8084"
+
+  # ── Keycloak (dev/e2e realm-import IdP — the real-OIDC counterpart to
+  # fakeidp) ───────────────────────────────────────────────────────────────
+  #
+  # Single container, embedded H2, imports the roster-generated realm at
+  # deploy/compose/keycloak/realm-insight.generated.json (produced by
+  # deploy/compose/keycloak/gen-realm.py, gitignored). Gated behind
+  # --profile auth-keycloak; mutually exclusive with fakeidp's auth-fakeidp
+  # profile.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    container_name: insight-keycloak
+    command: ["start-dev", "--import-realm", "--http-relative-path=/kc"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # KC_HOSTNAME is the PUBLIC (browser-facing) issuer. The compose
+      # frontend does the OIDC code+PKCE flow directly from the host browser,
+      # which reaches Keycloak via the published port at localhost:8085 — so
+      # the issuer must be localhost. It MUST include /kc: KC26 hostname-v2
+      # drops --http-relative-path from the advertised issuer, so a path-less
+      # value would yield iss=.../realms/insight while endpoints live under /kc.
+      KC_HOSTNAME: http://localhost:8085/kc
+      # The api-gateway validates tokens by fetching JWKS over the compose
+      # network at keycloak:8085 (a different host than the public issuer).
+      # backchannel-dynamic lets Keycloak serve those back-channel requests on
+      # the internal host while keeping the public issuer as localhost.
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: "8085"
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"
+    ports: ["8085:8085"]
+    volumes:
+      - ./deploy/compose/keycloak/realm-insight.generated.json:/opt/keycloak/data/import/realm-insight.json:ro
+    # `insight`, not `default` — every other service in this stack (see
+    # x-backend-common / front-* blocks) attaches to the named `insight`
+    # network; a bare `default` network would leave keycloak unreachable
+    # by service name from authenticator/gateway.
+    networks: [insight]
+    profiles: ["auth-keycloak"]
 
   # ── Gateway (OpenResty edge) ───────────────────────────────────────────
   #

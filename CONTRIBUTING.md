@@ -20,6 +20,7 @@ files under `docs/components/<area>/specs/`.
    - [First-run wizard + re-runs](#first-run-wizard--re-runs)
    - [External MariaDB / ClickHouse](#external-mariadb--clickhouse)
    - [Frontend modes](#frontend-modes)
+   - [Local dev auth backend (fakeidp / Keycloak)](#local-dev-auth-backend-fakeidp--keycloak)
    - [Backend image fallback (ghcr)](#backend-image-fallback-ghcr)
    - [Settings reference (`.env.compose`)](#settings-reference-envcompose)
 6. [Daily workflow](#daily-workflow)
@@ -260,6 +261,35 @@ wizard. To use it, hand-edit `FRONTEND_MODE=built` in `.env.compose`,
 ./dev-compose.sh up --frontend-mode=ghcr --skip-build
 ./dev-compose.sh up --no-frontend                  # backend-only
 ```
+
+### Local dev auth backend (fakeidp / Keycloak)
+
+The `authenticator` service's login always runs the same BFF code path — only
+the IdP behind it changes. Select it with **`AUTH_MODE` in `.env.compose`**
+(a persisted setting like `FRONTEND_MODE`):
+
+- `fakeidp` (default) — a tiny in-repo test double, no login screen, no setup.
+- `keycloak` — a real Keycloak container with an actual login form, for
+  exercising the genuine OIDC code path.
+
+```dotenv
+# .env.compose
+AUTH_MODE=keycloak
+```
+
+```bash
+./dev-compose.sh up            # reads AUTH_MODE from .env.compose
+./dev-compose.sh up --auth=keycloak   # optional per-run override
+```
+
+In keycloak mode the api-gateway enforces auth (validates the Keycloak JWT); the
+frontend auto-switches to the OIDC-capable `ghcr` build, and Keycloak uses a
+`localhost` issuer so the browser reaches it via the published port. See
+[`deploy/compose/keycloak/README.md`](deploy/compose/keycloak/README.md) for
+login creds, admin console, enforcement, and the custom-claims contract. This is
+distinct from [switching the gateway to real
+OIDC](#switch-the-gateway-to-real-oidc) below (a production-style toggle against
+an external IdP).
 
 ### Backend image fallback (ghcr)
 

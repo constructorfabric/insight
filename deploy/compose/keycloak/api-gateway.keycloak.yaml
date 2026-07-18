@@ -1,0 +1,100 @@
+# Insight API Gateway — Local Development (Keycloak, auth ENFORCED)
+#
+# Compose-only config. docker-compose.yml always bind-mounts this file into the
+# api-gateway at /app/config-compose/keycloak.yaml; the gateway's `-c` flag is an
+# env switch (${API_GATEWAY_CONFIG:-/app/config/no-auth.yaml}) that dev-compose.sh
+# points here when AUTH_MODE=keycloak. It is NOT in the backend service's own
+# config dir.
+#
+# Unlike no-auth.yaml, auth is ENABLED here: the gateway validates the
+# Keycloak-issued
+# JWT the SPA frontend sends as a Bearer token.
+#
+# Why a static, fully-resolved file (vs insight.yaml's ${OIDC_*} placeholders):
+# gears does NOT interpolate ${ENV} in the mounted config (that substitution is
+# a Helm render-time step in the k8s path), and hyphenated APP__gears__<gear>
+# env-override keys are invalid env-var names. So compose needs concrete values.
+#
+# Split-horizon (public issuer vs internal JWKS):
+#   - issuer_url = the PUBLIC browser-facing issuer (localhost:8085). It must
+#     equal the token `iss`, which the browser SPA obtains over the published
+#     port.
+#   - jwks_url   = fetched by the gateway over the compose network at
+#     keycloak:8085 (Keycloak runs with KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true so
+#     it serves the certs endpoint on the internal host).
+
+server:
+  home_dir: "~/.insight"
+
+logging:
+  default:
+    console_level: debug
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "0.0.0.0:8080"
+      enable_docs: true
+      cors_enabled: true
+      prefix_path: "/api"
+      openapi:
+        title: "Insight API (dev, keycloak)"
+        version: "0.1.0-dev"
+        description: "Insight Platform API — auth enforced via Keycloak"
+      auth_disabled: false
+
+  auth-info:
+    config:
+      issuer_url: "http://localhost:8085/kc/realms/insight"
+      client_id: "insight"
+      redirect_uri: "http://localhost:3000/callback"
+      scopes: "openid profile email"
+
+  oidc-authn-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 50
+      issuer_url: "http://localhost:8085/kc/realms/insight"
+      audience: "insight"
+      jwks_url: "http://keycloak:8085/kc/realms/insight/protocol/openid-connect/certs"
+      jwks_refresh_interval_seconds: 300
+      tenant_claim: "tenant_id"
+      subject_type: "user"
+      leeway_seconds: 60
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/insight-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "hyperspot"
+
+  authz-resolver:
+    config:
+      vendor: "hyperspot"
+
+  static-authz-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "hyperspot"
+
+  single-tenant-tr-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 20
+
+  proxy:
+    config:
+      routes:
+        - prefix: "/analytics"
+          upstream: "http://analytics:8081"
+        - prefix: "/identity"
+          upstream: "http://identity:8082"

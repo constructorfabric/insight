@@ -531,6 +531,7 @@ Per-tag artifacts are immutable; the Chart Publishing CI does not overwrite. GHC
 |----------|-------------|-----------|
 | `ENABLE_AUTO_RELOAD` | Wraps each backend entrypoint in `watchexec --restart` for ~1s reload. Compose-only — never set in a Kubernetes manifest. | stable |
 | `FRONTEND_MODE` | `ghcr` (published image, default), `dev` (Vite HMR from `INSIGHT_FRONT_PATH`), or `built` (host-built dist). | stable |
+| `AUTH_MODE` | `fakeidp` (default, in-repo test IdP) or `keycloak` (real login via a bundled Keycloak container — see [`deploy/compose/keycloak/README.md`](../../../../deploy/compose/keycloak/README.md)). Persisted here; a per-run `--auth` flag overrides it. | stable |
 | `<SVC>_IMAGE` | Pull a published image for a backend service instead of building it (e.g. `API_GATEWAY_IMAGE`). | stable |
 | `*_PORT` | Host port for each published service (Frontend :3000, gateway :8080, …); override on conflict. | stable |
 | `MARIADB_EXTERNAL` / `_HOST` / `_INTERNAL_PORT`, ClickHouse equivalents | Point the stack at an external DB instead of the bundled container. | stable |

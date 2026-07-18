@@ -7,6 +7,7 @@ up-orb.sh
 # docker-compose dev stack
 /deploy/compose/build/
 /deploy/compose/override.generated.yml
+/deploy/compose/keycloak/realm-insight.generated.json
 /deploy/seed/.venv/
 /deploy/seed/__pycache__/
 /deploy/seed/.mypy_cache/

@@ -13,6 +13,11 @@ token-endpoint outages).
 > production, ship in a production image, or be referenced by a production
 > chart.** See `cf/NGINX_BFF.md` §10 G6 for the decision.
 
+fakeidp is the **default** IdP behind the compose stack's `authenticator` BFF
+(`AUTH_MODE=fakeidp` in `.env.compose`). For the real-login alternative
+(`AUTH_MODE=keycloak`), see
+[`deploy/compose/keycloak/README.md`](../../../../deploy/compose/keycloak/README.md).
+
 ## Why this is NOT a gears-rust toolkit gear (by intent, not by mistake)
 
 Every other backend service here is an idiomatic gears-rust gear

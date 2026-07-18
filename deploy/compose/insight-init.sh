@@ -427,6 +427,27 @@ write_compose() {
   done
   echo "" >&2
 
+  # ── Auth mode (compose-only) ──────────────────────────────────────
+  echo "--- Auth ---" >&2
+  local auth_mode
+  echo "  Which auth backend should the authenticator log in against?" >&2
+  echo "    1) fakeidp   — no login screen, binds to VITE_DEV_USER_EMAIL (default)" >&2
+  echo "    2) keycloak  — real Keycloak login form + custom claims (:8085)" >&2
+  local auth_choice
+  while true; do
+    auth_choice=$(ask "  Choice" "1")
+    case "$auth_choice" in
+      1|fakeidp)
+        auth_mode="fakeidp"
+        break ;;
+      2|keycloak)
+        auth_mode="keycloak"
+        break ;;
+      *) echo "  Please answer 1 or 2." >&2 ;;
+    esac
+  done
+  echo "" >&2
+
   # ── Seeding decision for external DBs ─────────────────────────────
   local seed_external=false
   if [[ "$MARIADB_EXTERNAL" == "true" || "$CLICKHOUSE_EXTERNAL" == "true" ]]; then
@@ -457,6 +478,7 @@ write_compose() {
   update_env_var "$env_file" VITE_DEV_USER_EMAIL           "$DEV_USER_EMAIL"
   update_env_var "$env_file" FRONTEND_MODE                 "$fe_mode"
   update_env_var "$env_file" INSIGHT_FRONT_PATH            "$fe_path"
+  update_env_var "$env_file" AUTH_MODE                     "$auth_mode"
 
   # SEEDED_LOCAL_* gates the first-run auto-seed in dev-compose.sh.
   if [[ "$MARIADB_EXTERNAL" == "true" && "$seed_external" != "true" ]]; then
