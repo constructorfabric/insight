@@ -206,6 +206,8 @@ def _types_compatible(expected: str, existing: str) -> bool:
     existing_base = _strip_nullable(existing)
     if expected_base == existing_base:
         return True
+    if {expected_base, existing_base} == {"Bool", "UInt8"}:
+        return True
     integer_prefixes = ("Int", "UInt")
     if expected_base.startswith(integer_prefixes) and existing_base.startswith(
         integer_prefixes
