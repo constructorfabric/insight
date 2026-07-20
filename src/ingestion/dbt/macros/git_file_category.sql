@@ -15,7 +15,16 @@
    consistently. Patterns are configurable via the `git_vendored_path_patterns`
    dbt var (see dbt_project.yml) so the list evolves without a code change. #}
 {% macro git_vendored_path_regex() -%}
-'(?i)(' ~ (var('git_vendored_path_patterns') | join('|')) ~ ')'
+{%- set patterns = var('git_vendored_path_patterns') -%}
+{%- if patterns | length == 0 -%}
+{# Empty override disables the exclusion. Emit a never-match pattern rather
+   than an empty group `(?i)()`, which would match every path and flag all
+   files as vendored. `[^\s\S]` is the RE2-safe never-match (RE2 has no
+   lookahead), doubled-escaped for the ClickHouse string literal. #}
+'[^\\s\\S]'
+{%- else -%}
+'(?i)(' ~ (patterns | join('|')) ~ ')'
+{%- endif -%}
 {%- endmacro %}
 
 {% macro git_file_category(path_expr) %}

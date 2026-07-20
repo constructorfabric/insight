@@ -20,6 +20,8 @@ WITH fixtures AS (
             ('frontend/pnpm-lock.yaml', 'vendored'),
             ('services/.venv/lib/site-packages/foo.py', 'vendored'),
             ('api/types.d.ts', 'vendored'),
+            ('package-lock.json', 'vendored'),
+            ('backend/Cargo.lock', 'vendored'),
             ('src/app/main.py', 'code'),
             ('src/components/Button.tsx', 'code'),
             ('lib/vendorize.py', 'code'),

@@ -59,11 +59,22 @@ vars:
     - '\\.generated\\.'
     - '\\.designer\\.cs$'
     - '\\.d\\.ts$'
+    # lockfiles / machine-managed manifests (checked before the `config`
+    # branch, so all lockfiles land in one auditable `vendored` bucket)
     - '(^|/)go\\.sum$'
     - '(^|/)Cargo\\.lock$'
     - '(^|/)composer\\.lock$'
     - '(^|/)Gemfile\\.lock$'
     - '(^|/)pnpm-lock\\.yaml$'
+    - '(^|/)package-lock\\.json$'
+    - '(^|/)npm-shrinkwrap\\.json$'
+    - '(^|/)yarn\\.lock$'
+    - '(^|/)poetry\\.lock$'
+    - '(^|/)Pipfile\\.lock$'
+    - '(^|/)packages\\.lock\\.json$'
+    - '(^|/)gradle\\.lockfile$'
+    - '(^|/)mix\\.lock$'
+    - '(^|/)flake\\.lock$'
 
 # on-run-start hooks:
 #  - create_task_field_history_staging:
