@@ -64,6 +64,8 @@ bronze:
     - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: STE-4, jira_id: STE-4, unique_key: jira-test-STE-4, id_readable: STE4, created: "2026-01-01T09:00:00", custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}' }
     - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: STE-5, jira_id: STE-5, unique_key: jira-test-STE-5, id_readable: STE5, created: "2026-01-01T09:00:00", custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}' }
 
+  bronze_jira.jira_issue_history: []
+
 cases:
   - name: tasks.stale_in_progress
     request:
@@ -71,7 +73,7 @@ cases:
       method: POST
       body:
         entity: { type: person, ids: [erin@example.com] }
-        period: { from: "2026-01-01", to: "2026-07-17" }
+        period: { from: "2026-01-01", to: "2026-12-31" }
         metrics:
           - metric_key: tasks.stale_in_progress
             views:
