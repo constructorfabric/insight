@@ -35,7 +35,8 @@ impl Gear for IdentityResolutionGear {
 
         // Persons-seed background worker: drains a job queue and runs each seed.
         // A single spawned task (like the analytics validators) owns the queue.
-        let (seed_tx, seed_rx) = tokio::sync::mpsc::channel(32);
+        // Capacity matches the .NET `PersonsSeedQueue` bound (100).
+        let (seed_tx, seed_rx) = tokio::sync::mpsc::channel(100);
         let worker_db = db.clone();
         let worker_config = config.clone();
         tokio::spawn(async move {

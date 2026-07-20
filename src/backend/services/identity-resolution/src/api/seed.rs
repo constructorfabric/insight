@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Extension, Path, Query};
+use axum::http::header::LOCATION;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use sea_orm::DatabaseConnection;
@@ -36,7 +37,12 @@ use crate::infra::db::roles_repo;
 use crate::infra::db::seed_repo::MariaDbSeedStore;
 use crate::infra::identity_inputs::ClickHouseIdentityInputsReader;
 
-const LINK_BY_EMAIL_MODE: &str = "link_by_email";
+const LINK_BY_EMAIL_MODE: &str = "link-by-email";
+
+/// Default page size / cap for the list endpoint (parity with the .NET
+/// `PageRequest.DefaultLimit` / `MaxLimit`).
+const LIST_DEFAULT_LIMIT: u64 = 50;
+const LIST_MAX_LIMIT: u64 = 500;
 
 /// Header carrying the caller's `person_id`, parity with the .NET
 /// `HeaderCallerContext`. JWT id/email-claim fallbacks are deferred until gears
@@ -57,7 +63,7 @@ pub struct PersonsSeedJob {
     pub author_person_id: Uuid,
 }
 
-/// Body of `POST /v1/persons-seed`. `mode` defaults to `link_by_email`.
+/// Body of `POST /v1/persons-seed`. `mode` defaults to `link-by-email`.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PersonsSeedRequest {
     #[serde(default)]
@@ -66,22 +72,53 @@ pub struct PersonsSeedRequest {
 impl toolkit::api::api_dto::RequestApiDto for PersonsSeedRequest {}
 
 /// One operation's status (POST returns the queued row; GETs return current).
+/// Wire shape mirrors the .NET `PersonsSeedOperationResponse`: `request` and
+/// `summary` are surfaced as parsed JSON (not double-encoded strings), the
+/// tenant/author ids are included, timestamps are ISO-8601, and null fields are
+/// emitted (the .NET serializer does not drop nulls).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonsSeedOperationResponse {
     pub operation_id: Uuid,
     pub operation_type: String,
     pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_json: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary_json: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insight_tenant_id: Uuid,
+    pub author_person_id: Uuid,
+    #[schema(value_type = Option<Object>)]
+    pub request: Option<serde_json::Value>,
+    #[schema(value_type = Option<Object>)]
+    pub summary: Option<serde_json::Value>,
     pub error_message: Option<String>,
     pub started_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedOperationResponse {}
+
+impl PersonsSeedOperationResponse {
+    /// The just-enqueued shape for the `202 Accepted` body, built from the
+    /// fields the POST handler already holds — avoids a second round-trip to
+    /// re-read the row, and (unlike a re-read) always reports `queued` even if
+    /// the worker has already picked the job up. Mirrors the .NET `Queued(...)`.
+    fn queued(
+        operation_id: Uuid,
+        tenant_id: Uuid,
+        author_person_id: Uuid,
+        request_json: Option<&str>,
+        started_at: sea_orm::prelude::DateTime,
+    ) -> Self {
+        Self {
+            operation_id,
+            operation_type: PERSONS_SEED_OP.to_owned(),
+            status: OperationStatus::Queued.as_db().to_owned(),
+            insight_tenant_id: tenant_id,
+            author_person_id,
+            request: parse_or_null(request_json),
+            summary: None,
+            error_message: None,
+            started_at: fmt_ts(started_at),
+            completed_at: None,
+        }
+    }
+}
 
 impl From<Operation> for PersonsSeedOperationResponse {
     fn from(op: Operation) -> Self {
@@ -89,25 +126,47 @@ impl From<Operation> for PersonsSeedOperationResponse {
             operation_id: op.operation_id,
             operation_type: op.operation_type,
             status: op.status.as_db().to_owned(),
-            request_json: op.request_json,
-            summary_json: op.summary_json,
+            insight_tenant_id: op.insight_tenant_id,
+            author_person_id: op.author_person_id,
+            request: parse_or_null(op.request_json.as_deref()),
+            summary: parse_or_null(op.summary_json.as_deref()),
             error_message: op.error_message,
-            started_at: op.started_at.to_string(),
-            completed_at: op.completed_at.map(|t| t.to_string()),
+            started_at: fmt_ts(op.started_at),
+            completed_at: op.completed_at.map(fmt_ts),
         }
     }
 }
 
-/// List response wrapper (typed for OpenAPI).
+/// Surface a stored JSON column as a parsed value (not a double-encoded string);
+/// `None` for absent/empty/unparseable. Mirrors the .NET `ParseOrNull`.
+fn parse_or_null(json: Option<&str>) -> Option<serde_json::Value> {
+    let s = json?;
+    if s.is_empty() {
+        return None;
+    }
+    serde_json::from_str(s).ok()
+}
+
+/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator, matching the
+/// .NET `System.Text.Json` `DateTime` output (`NaiveDateTime::to_string` uses a
+/// space, which breaks ISO-8601 parsers).
+fn fmt_ts(dt: sea_orm::prelude::DateTime) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
+}
+
+/// List response wrapper (typed for OpenAPI). `next_cursor` mirrors the .NET
+/// `ListResponse<T>` shape (always null until cursor pagination lands).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonsSeedListResponse {
     pub items: Vec<PersonsSeedOperationResponse>,
+    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedListResponse {}
 
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
     pub status: Option<String>,
+    pub limit: Option<u64>,
 }
 
 /// `POST /v1/persons-seed` — enqueue an async persons-seed run.
@@ -127,7 +186,7 @@ pub async fn create_persons_seed(
         return Err(PersonsSeedError::invalid_argument()
             .with_field_violation(
                 "mode",
-                "unsupported mode; only 'link_by_email' is available",
+                "unsupported mode; only 'link-by-email' is available",
                 "INVALID",
             )
             .create());
@@ -159,6 +218,7 @@ pub async fn create_persons_seed(
     }
 
     let operation_id = Uuid::now_v7();
+    let started_at = chrono::Utc::now().naive_utc();
     let request_json = serde_json::json!({ "mode": mode }).to_string();
 
     ops_repo::enqueue(
@@ -181,16 +241,25 @@ pub async fn create_persons_seed(
         author_person_id: author,
     };
     if state.seed_tx.try_send(job).is_err() {
-        // Channel full/closed — fail the row so it isn't a zombie.
+        // Channel full/closed — fail the row so it isn't a zombie, and tell the
+        // caller to retry later (503, not 500 — parity with the .NET queue-full).
         let _ = ops_repo::fail(&state.db, operation_id, "seed queue full; retry later").await;
-        return Err(CanonicalError::internal("seed queue full; retry later").create());
+        return Err(CanonicalError::service_unavailable()
+            .with_detail("seed queue is full; retry later")
+            .create());
     }
 
-    let op = load_op(&state.db, tenant, operation_id).await?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(PersonsSeedOperationResponse::from(op)),
-    ))
+    // Build the 202 body from the in-memory snapshot (always `queued`) and set
+    // Location to the status URL — no re-read of the just-inserted row.
+    let body = PersonsSeedOperationResponse::queued(
+        operation_id,
+        tenant,
+        author,
+        Some(&request_json),
+        started_at,
+    );
+    let location = format!("/v1/persons-seed/{operation_id}");
+    Ok((StatusCode::ACCEPTED, [(LOCATION, location)], Json(body)))
 }
 
 /// `GET /v1/persons-seed/{id}` — poll one operation.
@@ -215,18 +284,20 @@ pub async fn get_persons_seed(
     Ok(Json(PersonsSeedOperationResponse::from(op)))
 }
 
-/// `GET /v1/persons-seed` — list persons-seed operations (optional `?status=`).
+/// `GET /v1/persons-seed` — list persons-seed operations. Optional `?status=`
+/// (unknown values ignored) and `?limit=` (default 50, capped 500).
 pub async fn list_persons_seed(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Query(params): Query<ListParams>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
-    let status = match params.status.as_deref() {
-        None | Some("") => None,
-        Some(s) => Some(parse_status(s)?),
-    };
-    let ops = ops_repo::list(&state.db, tenant, Some(PERSONS_SEED_OP), status)
+    let status = status_filter(params.status.as_deref());
+    let limit = params
+        .limit
+        .unwrap_or(LIST_DEFAULT_LIMIT)
+        .clamp(1, LIST_MAX_LIMIT);
+    let ops = ops_repo::list(&state.db, tenant, Some(PERSONS_SEED_OP), status, limit)
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "list operations failed");
@@ -236,21 +307,10 @@ pub async fn list_persons_seed(
         .into_iter()
         .map(PersonsSeedOperationResponse::from)
         .collect();
-    Ok(Json(PersonsSeedListResponse { items }))
-}
-
-async fn load_op(
-    db: &DatabaseConnection,
-    tenant: Uuid,
-    operation_id: Uuid,
-) -> Result<Operation, CanonicalError> {
-    ops_repo::get_by_id(db, tenant, operation_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "read operation failed");
-            CanonicalError::internal("failed to read operation").create()
-        })?
-        .ok_or_else(|| CanonicalError::internal("operation vanished after enqueue").create())
+    Ok(Json(PersonsSeedListResponse {
+        items,
+        next_cursor: None,
+    }))
 }
 
 /// Resolve the caller's `person_id` from the `X-Insight-Person-Id` header —
@@ -258,27 +318,31 @@ async fn load_op(
 /// non-nil). Returns `None` when absent/blank/malformed/nil, which the handler
 /// maps to 401. The JWT id/email-claim fallbacks are intentionally not ported
 /// yet (auth-disabled host → no claims to read).
+///
+/// TODO(#1602): the header is caller-supplied and currently trusted (auth is
+/// disabled on the host). Before prod cutover the subject MUST come from the
+/// authenticated principal (gears auth / api-gateway), not a raw client header.
 fn resolve_caller(headers: &HeaderMap) -> Option<Uuid> {
     let raw = headers.get(CALLER_HEADER)?.to_str().ok()?;
     let id = Uuid::parse_str(raw.trim()).ok()?;
     (!id.is_nil()).then_some(id)
 }
 
-fn parse_status(s: &str) -> Result<OperationStatus, CanonicalError> {
-    match s {
-        "queued" => Ok(OperationStatus::Queued),
-        "running" => Ok(OperationStatus::Running),
-        "completed" => Ok(OperationStatus::Completed),
-        "failed" => Ok(OperationStatus::Failed),
-        _ => Err(PersonsSeedError::invalid_argument()
-            .with_field_violation(
-                "status",
-                "status must be one of queued|running|completed|failed",
-                "INVALID",
-            )
-            .create()),
+/// Map the `?status=` query to a filter. An unknown/blank value is ignored
+/// (returns all statuses), matching the .NET `_ => null` — not a 400.
+fn status_filter(raw: Option<&str>) -> Option<OperationStatus> {
+    match raw {
+        Some("queued") => Some(OperationStatus::Queued),
+        Some("running") => Some(OperationStatus::Running),
+        Some("completed") => Some(OperationStatus::Completed),
+        Some("failed") => Some(OperationStatus::Failed),
+        _ => None,
     }
 }
+
+/// How stale a `queued`/`running` row must be before the startup sweep reclaims
+/// it — parity with the .NET `PersonsSeedWorker.ZombieCutoff` (1 hour).
+const ZOMBIE_CUTOFF_HOURS: i64 = 1;
 
 /// Background worker: drain the queue and run each seed to completion, updating
 /// the `operations` row. Spawned once from the gear `init`; ends when the
@@ -295,6 +359,16 @@ pub async fn run_worker(
         &config.clickhouse_password,
     );
     let store = MariaDbSeedStore::new(&db);
+
+    // Startup sweep: a pod restart drops the in-memory queue, so any row left
+    // `queued`/`running` by the previous process would otherwise never resolve.
+    // Fail rows older than the cutoff (parity with .NET `SweepZombiesAsync`).
+    let cutoff = chrono::Utc::now().naive_utc() - chrono::Duration::hours(ZOMBIE_CUTOFF_HOURS);
+    match ops_repo::sweep_zombies(&db, cutoff).await {
+        Ok(n) if n > 0 => tracing::warn!(swept = n, "persons-seed: reclaimed zombie operations"),
+        Ok(_) => {}
+        Err(e) => tracing::error!(error = %e, "persons-seed: zombie sweep failed"),
+    }
 
     while let Some(job) = rx.recv().await {
         // Only the worker that wins queued→running proceeds (no double-run).

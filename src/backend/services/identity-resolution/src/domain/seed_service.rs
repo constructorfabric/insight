@@ -44,22 +44,41 @@ pub trait SeedStore {
         tenant_id: Uuid,
         author_person_id: Uuid,
         rows: &[SeedObservationRow],
-    ) -> anyhow::Result<u64>;
+    ) -> anyhow::Result<ApplyCounts>;
+}
+
+/// Row counts from one [`SeedStore::apply`]: the net-new observations appended
+/// and the `org_chart` rows rebuilt. Both are surfaced in the seed summary.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ApplyCounts {
+    pub observations_inserted: u64,
+    pub org_chart_rows_rebuilt: u64,
 }
 
 /// Outcome of one persons-seed run (feeds the operation status). Mirrors the
 /// .NET `PersonsSeedSummary` (org-chart counter lands with that rebuild).
+// Serialized field names mirror the .NET `PersonsSeedSummary` wire shape
+// (`accounts_*` prefix, `accounts_minted_new`, `org_chart_rows_rebuilt`) so the
+// `summary` JSON stays contract-compatible. `known_binding_conflicts` is an
+// additive Insight-side field (observability of a silent identity merge; not in
+// .NET) — additive keys are ignored by conformant consumers.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SeedSummary {
     pub accounts_read: usize,
+    #[serde(rename = "accounts_reused_known")]
     pub reused_known: usize,
+    #[serde(rename = "accounts_linked_by_email")]
     pub linked_by_email: usize,
+    #[serde(rename = "accounts_minted_new")]
     pub minted: usize,
+    #[serde(rename = "accounts_skipped_closed")]
     pub skipped_closed: usize,
+    #[serde(rename = "accounts_skipped_no_email")]
     pub skipped_no_email: usize,
+    pub observations_inserted: u64,
+    pub org_chart_rows_rebuilt: u64,
     /// Email groups collapsed across a multi-person binding conflict (logged).
     pub known_binding_conflicts: usize,
-    pub observations_inserted: u64,
 }
 
 /// Run one persons-seed: read the input stream, fold to per-account profiles,
@@ -106,10 +125,14 @@ where
         observation_rows = observation_rows.len(),
         "persons-seed: applying"
     );
-    let observations_inserted = store
+    let counts = store
         .apply(tenant_id, author_person_id, &observation_rows)
         .await?;
-    tracing::info!(observations_inserted, "persons-seed: applied");
+    tracing::info!(
+        observations_inserted = counts.observations_inserted,
+        org_chart_rows_rebuilt = counts.org_chart_rows_rebuilt,
+        "persons-seed: applied"
+    );
 
     Ok(SeedSummary {
         accounts_read,
@@ -118,8 +141,9 @@ where
         minted: outcome.minted,
         skipped_closed: outcome.skipped_closed,
         skipped_no_email: outcome.skipped_no_email,
+        observations_inserted: counts.observations_inserted,
+        org_chart_rows_rebuilt: counts.org_chart_rows_rebuilt,
         known_binding_conflicts: outcome.known_binding_conflicts,
-        observations_inserted,
     })
 }
 
@@ -161,8 +185,12 @@ mod tests {
             _tenant: Uuid,
             _author: Uuid,
             rows: &[SeedObservationRow],
-        ) -> anyhow::Result<u64> {
-            Ok(rows.len() as u64) // net-inserted (no dedup in the fake)
+        ) -> anyhow::Result<ApplyCounts> {
+            // Net-inserted (no dedup in the fake); org_chart rebuild is DB-only.
+            Ok(ApplyCounts {
+                observations_inserted: rows.len() as u64,
+                org_chart_rows_rebuilt: 0,
+            })
         }
     }
 

@@ -18,7 +18,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 use uuid::Uuid;
 
 use crate::domain::seed::{SeedObservationRow, SourceAccountKey, normalize_email};
-use crate::domain::seed_service::SeedStore;
+use crate::domain::seed_service::{ApplyCounts, SeedStore};
 
 /// MariaDB-backed [`SeedStore`] — wraps a connection so the persons-seed service
 /// can be driven against the real DB (or a fake in tests).
@@ -54,7 +54,7 @@ impl SeedStore for MariaDbSeedStore<'_> {
         tenant_id: Uuid,
         author_person_id: Uuid,
         rows: &[SeedObservationRow],
-    ) -> anyhow::Result<u64> {
+    ) -> anyhow::Result<ApplyCounts> {
         apply(self.db, tenant_id, author_person_id, rows).await
     }
 }
@@ -117,9 +117,9 @@ pub async fn known_account_bindings(
 }
 
 /// Current `email → person_id` map for the tenant — the latest
-/// `value_type='email'` observation per email. Keys are normalized (trim +
-/// lowercase, ADR-0011) so the resolver's lookups match. Ported from
-/// `SqlPersonsSeed.LatestEmailToPerson`.
+/// `value_type='email'` observation per email. Keys are normalized via
+/// [`normalize_email`] (lowercase only, no trim — ADR-0011, .NET parity) so the
+/// resolver's lookups match. Ported from `SqlPersonsSeed.LatestEmailToPerson`.
 ///
 /// # Errors
 ///
@@ -182,7 +182,7 @@ pub async fn apply(
     tenant_id: Uuid,
     author_person_id: Uuid,
     rows: &[SeedObservationRow],
-) -> anyhow::Result<u64> {
+) -> anyhow::Result<ApplyCounts> {
     // Idempotent insert — uq_person_observation dedups a re-emitted identical
     // observation; INSERT IGNORE swallows the duplicate-key error. Batched
     // (multi-row VALUES) so N observations cost ~N/INSERT_CHUNK round-trips
@@ -492,24 +492,32 @@ pub async fn apply(
         [tenant_bytes.clone().into()],
     ))
     .await?;
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::MySql,
-        INSERT_ORG_CHART,
-        [
-            tenant_bytes.clone().into(),
-            tenant_bytes.clone().into(),
-            tenant_bytes.clone().into(),
-            tenant_bytes.clone().into(),
-            tenant_bytes.clone().into(),
-            tenant_bytes.into(),
-            author_bytes.into(),
-        ],
-    ))
-    .await?;
-    tracing::info!("persons-seed apply: org_chart rebuilt");
+    let org_chart = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            INSERT_ORG_CHART,
+            [
+                tenant_bytes.clone().into(),
+                tenant_bytes.clone().into(),
+                tenant_bytes.clone().into(),
+                tenant_bytes.clone().into(),
+                tenant_bytes.clone().into(),
+                tenant_bytes.into(),
+                author_bytes.into(),
+            ],
+        ))
+        .await?;
+    let org_chart_rows_rebuilt = org_chart.rows_affected();
+    tracing::info!(
+        org_chart_rows_rebuilt,
+        "persons-seed apply: org_chart rebuilt"
+    );
 
     txn.commit().await?;
-    Ok(inserted)
+    Ok(ApplyCounts {
+        observations_inserted: inserted,
+        org_chart_rows_rebuilt,
+    })
 }
 
 #[cfg(test)]

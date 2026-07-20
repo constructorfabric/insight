@@ -63,9 +63,6 @@ pub struct Operation {
 const COLUMNS: &str = "operation_id, operation_type, status, insight_tenant_id, author_person_id, \
      request_json, summary_json, error_message, started_at, completed_at";
 
-/// Page cap for [`list`] — a compile-time literal, never interpolated user input.
-const LIST_LIMIT: &str = "200";
-
 /// Insert a new `queued` operation.
 ///
 /// # Errors
@@ -197,9 +194,11 @@ pub async fn get_by_id(
 }
 
 /// List operations for the tenant (newest first), optionally filtered by
-/// `operation_type` and `status`. Capped at [`LIST_LIMIT`] rows — the shared
+/// `operation_type` and `status`, capped at `limit` rows. The shared
 /// `operations` table holds every job kind, so callers push their type filter
 /// (and the cap) into SQL rather than scanning + filtering in application code.
+/// The `operation_id DESC` tiebreak keeps the order deterministic when rows
+/// share a `started_at` (parity with `OperationsRepository.ListAsync`).
 ///
 /// # Errors
 ///
@@ -209,6 +208,7 @@ pub async fn list(
     tenant_id: Uuid,
     operation_type: Option<&str>,
     status: Option<OperationStatus>,
+    limit: u64,
 ) -> anyhow::Result<Vec<Operation>> {
     let mut sql = format!("SELECT {COLUMNS} FROM operations WHERE insight_tenant_id = ?");
     let mut params: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
@@ -220,8 +220,8 @@ pub async fn list(
         sql.push_str(" AND status = ?");
         params.push(s.as_db().into());
     }
-    sql.push_str(" ORDER BY started_at DESC LIMIT ");
-    sql.push_str(LIST_LIMIT);
+    sql.push_str(" ORDER BY started_at DESC, operation_id DESC LIMIT ?");
+    params.push(limit.into());
 
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -231,6 +231,35 @@ pub async fn list(
         ))
         .await?;
     rows.iter().map(row_to_operation).collect()
+}
+
+/// Fail every `queued`/`running` operation whose `started_at` is older than
+/// `older_than`. Run once at worker startup so a pod restart cannot leave a row
+/// stuck in `running` forever (its in-memory job is gone). Intentionally NOT
+/// tenant-scoped — the single-process worker owns all in-flight operations
+/// across tenants. Mirrors `Sql.Operations.cs::SweepZombies`. Returns the number
+/// of rows reclaimed.
+///
+/// # Errors
+///
+/// Returns an error if the update fails.
+pub async fn sweep_zombies(db: &DatabaseConnection, older_than: DateTime) -> anyhow::Result<u64> {
+    const SQL: &str = r"
+        UPDATE operations
+        SET status        = 'failed',
+            error_message = 'aborted by pod restart',
+            completed_at  = UTC_TIMESTAMP(6)
+        WHERE status IN ('queued', 'running')
+          AND started_at < ?
+    ";
+    let res = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            SQL,
+            [older_than.into()],
+        ))
+        .await?;
+    Ok(res.rows_affected())
 }
 
 fn row_to_operation(r: &sea_orm::QueryResult) -> anyhow::Result<Operation> {

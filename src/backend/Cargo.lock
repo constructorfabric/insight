@@ -3023,6 +3023,7 @@ dependencies = [
  "cf-gears-toolkit-canonical-errors",
  "cf-gears-toolkit-security",
  "cf-gears-types-registry",
+ "chrono",
  "clap",
  "clickhouse",
  "insight-clickhouse",
