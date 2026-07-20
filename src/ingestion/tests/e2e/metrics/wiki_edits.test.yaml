@@ -65,3 +65,18 @@ cases:
       - metric: wiki.pages_edited
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-05-06' && double(p.value) == 1.0))"
+
+  - name: Unified wiki edits empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics:
+          - { metric_key: wiki.edits, views: [{ view: period }] }
+          - { metric_key: wiki.pages_edited, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - { metric: wiki.edits, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: wiki.pages_edited, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }

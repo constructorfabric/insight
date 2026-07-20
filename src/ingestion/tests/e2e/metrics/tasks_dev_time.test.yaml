@@ -81,7 +81,19 @@ cases:
         equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
       - metric: tasks.dev_time
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 5.0))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-03-25' && double(p.value) == 5.0))"
       - metric: tasks.dev_time
         view: histogram
         assert: "items.exists(h, h.entity_id == 'erin@example.com' && size(h.bins) > 0)"
+
+  - name: tasks.dev_time empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics: [{ metric_key: tasks.dev_time, views: [{ view: period }] }]
+    expect:
+      - assert: "status == 200"
+      - { metric: tasks.dev_time, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

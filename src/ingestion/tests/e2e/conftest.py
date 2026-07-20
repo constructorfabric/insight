@@ -212,13 +212,7 @@ def _collect_metrics(cfg: SessionConfig) -> None:
     from lib.collect_metric_definitions import collect
 
     out_dir = Path(__file__).parent / ".artifacts"
-    try:
-        collect(cfg, out_dir)
-    except Exception as error:
-        LOG.warning(
-            "coverage-artifact collection failed: %s; gate jobs may lack inputs",
-            error,
-        )
+    collect(cfg, out_dir)
 
 
 @pytest.fixture(scope="session")

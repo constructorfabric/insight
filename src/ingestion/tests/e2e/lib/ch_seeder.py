@@ -134,11 +134,30 @@ class CHSeeder:
         return {name: ctype for name, ctype in rows}
 
     def _ensure_table(self, database: str, table: str, schema: dict[str, Any]) -> None:
-        if self._fetch_column_types(database, table):
-            return
-        columns = ", ".join(
-            f"`{name}` {_clickhouse_type(definition)}"
+        expected = {
+            name: _clickhouse_type(definition)
             for name, definition in schema.get("properties", {}).items()
+        }
+        existing = self._fetch_column_types(database, table)
+        if existing and existing.keys() == expected.keys() and all(
+            _types_compatible(expected[name], existing[name]) for name in expected
+        ):
+            return
+        if existing:
+            missing = sorted(expected.keys() - existing.keys())
+            unexpected = sorted(existing.keys() - expected.keys())
+            mismatched = sorted(
+                name
+                for name in expected.keys() & existing.keys()
+                if not _types_compatible(expected[name], existing[name])
+            )
+            raise SeederError(
+                f"table {database}.{table} does not match its fixture schema "
+                f"(missing={missing}, unexpected={unexpected}, type_mismatches="
+                f"{[(name, expected[name], existing[name]) for name in mismatched]})"
+            )
+        columns = ", ".join(
+            f"`{name}` {column_type}" for name, column_type in expected.items()
         )
         ch.execute(self.cfg, f"CREATE DATABASE IF NOT EXISTS `{database}`")
         ch.execute(
@@ -182,12 +201,29 @@ def _strip_nullable(ch_type: str) -> str:
     return ch_type
 
 
+def _types_compatible(expected: str, existing: str) -> bool:
+    expected_base = _strip_nullable(expected)
+    existing_base = _strip_nullable(existing)
+    if expected_base == existing_base:
+        return True
+    integer_prefixes = ("Int", "UInt")
+    if expected_base.startswith(integer_prefixes) and existing_base.startswith(
+        integer_prefixes
+    ):
+        return True
+    numeric_prefixes = ("Float", "Decimal")
+    return expected_base.startswith(numeric_prefixes) and existing_base.startswith(
+        numeric_prefixes
+    )
+
+
 def _clickhouse_type(definition: dict[str, Any]) -> str:
     declared = definition.get("type", "string")
     types = declared if isinstance(declared, list) else [declared]
     base = next((item for item in types if item != "null"), "string")
     if base == "array":
-        return f"Array({_clickhouse_type(definition.get('items', {})).removeprefix('Nullable(').removesuffix(')')})"
+        item_type = _strip_nullable(_clickhouse_type(definition.get("items", {})))
+        return f"Array({item_type})"
     mapped = {
         "boolean": "Bool",
         "integer": "Int64",
@@ -195,4 +231,6 @@ def _clickhouse_type(definition: dict[str, Any]) -> str:
         "string": "String",
         "object": "String",
     }.get(base, "String")
+    if base == "string" and definition.get("format") == "date-time":
+        mapped = "DateTime64(3)"
     return f"Nullable({mapped})"

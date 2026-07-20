@@ -416,3 +416,20 @@ cases:
       - metric: tasks.avg_slip
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-06-25' && double(p.value) == 5.0))"
+
+  - name: Unified task due-date metrics empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics:
+          - { metric_key: tasks.due_date_compliance, views: [{ view: period }] }
+          - { metric_key: tasks.on_time_delivery, views: [{ view: period }] }
+          - { metric_key: tasks.avg_slip, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - { metric: tasks.due_date_compliance, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
+      - { metric: tasks.on_time_delivery, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
+      - { metric: tasks.avg_slip, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

@@ -106,6 +106,21 @@ def test_equal_mismatch_fails():
         evaluate_case(case, _response(), 200)
 
 
+def test_expected_null_requires_present_field():
+    case = _case(
+        [
+            {
+                "metric": "collab.emails_sent",
+                "view": "period",
+                "find": {"entity_id": "alice@example.com"},
+                "equal": {"missing": None},
+            }
+        ]
+    )
+    with pytest.raises(ExpectError, match="missing: field is missing"):
+        evaluate_case(case, _response(), 200)
+
+
 def test_unknown_metric_fails():
     case = _case([{"metric": "collab.missing", "assert": "true"}])
     with pytest.raises(ExpectError, match="matched 0 metrics"):

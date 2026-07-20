@@ -81,7 +81,7 @@ cases:
         equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
       - metric: collab.active_days
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 1.0))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-23' && double(p.value) == 1.0))"
       - metric: collab.active_days
         view: breakdown
         assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'm365') && double(v.value) == 5.0)"
@@ -95,4 +95,19 @@ cases:
         equal: { target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5 }
       - metric: collab.breadth
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 1.0))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-23' && double(p.value) == 1.0))"
+
+  - name: Unified collaboration activity empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - { metric_key: collab.active_days, views: [{ view: period }] }
+          - { metric_key: collab.breadth, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - { metric: collab.active_days, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.breadth, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }

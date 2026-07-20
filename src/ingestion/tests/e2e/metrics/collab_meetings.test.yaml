@@ -88,7 +88,7 @@ cases:
       - metric: collab.meeting_hours
         view: timeseries
         find: { entity_id: erin@example.com }
-        contains: { points: { value: 5 } }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
       - metric: collab.meeting_hours
         view: breakdown
         find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
@@ -104,7 +104,7 @@ cases:
       - metric: collab.meetings_count
         view: timeseries
         find: { entity_id: erin@example.com }
-        contains: { points: { value: 5 } }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
       - metric: collab.meetings_count
         view: breakdown
         find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
@@ -120,7 +120,7 @@ cases:
       - metric: collab.meetings_organized
         view: timeseries
         find: { entity_id: erin@example.com }
-        contains: { points: { value: 5 } }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
       - metric: collab.meetings_organized
         view: breakdown
         find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
@@ -136,7 +136,7 @@ cases:
       - metric: collab.adhoc_meetings
         view: timeseries
         find: { entity_id: erin@example.com }
-        contains: { points: { value: 5 } }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
       - metric: collab.adhoc_meetings
         view: breakdown
         find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
@@ -152,7 +152,7 @@ cases:
       - metric: collab.scheduled_meetings
         view: timeseries
         find: { entity_id: erin@example.com }
-        contains: { points: { value: 5 } }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
       - metric: collab.scheduled_meetings
         view: breakdown
         find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
@@ -168,4 +168,27 @@ cases:
       - metric: collab.focus_time_pct
         view: timeseries
         find: { entity_id: erin@example.com }
-        contains: { points: { value: 37.5 } }
+        contains: { points: { bucket_start: "2026-12-25", value: 37.5 } }
+
+  - name: Unified collaboration meeting metrics empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - { metric_key: collab.meeting_hours, views: [{ view: period }] }
+          - { metric_key: collab.meetings_count, views: [{ view: period }] }
+          - { metric_key: collab.meetings_organized, views: [{ view: period }] }
+          - { metric_key: collab.adhoc_meetings, views: [{ view: period }] }
+          - { metric_key: collab.scheduled_meetings, views: [{ view: period }] }
+          - { metric_key: collab.focus_time_pct, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - { metric: collab.meeting_hours, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.meetings_count, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.meetings_organized, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.adhoc_meetings, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.scheduled_meetings, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.focus_time_pct, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

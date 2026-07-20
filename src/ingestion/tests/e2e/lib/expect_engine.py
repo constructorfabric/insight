@@ -137,6 +137,8 @@ def evaluate_case(case: dict[str, Any], response: Any, http_status: int) -> None
             if target is None:
                 raise ExpectError(f"{where}: `equal` requires `metric`, `view`, or `find`")
             for field, expected in rule["equal"].items():
+                if field not in target:
+                    raise ExpectError(f"{where}: {field}: field is missing")
                 got = target.get(field)
                 if not _values_equal(got, expected):
                     raise ExpectError(f"{where}: {field}: expected {expected!r}, got {got!r}")

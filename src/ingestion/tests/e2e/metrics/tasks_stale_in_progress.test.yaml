@@ -93,3 +93,15 @@ cases:
       - metric: tasks.stale_in_progress
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 5.0))"
+
+  - name: tasks.stale_in_progress out of window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics: [{ metric_key: tasks.stale_in_progress, views: [{ view: period }] }]
+    expect:
+      - assert: "status == 200"
+      - { metric: tasks.stale_in_progress, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }

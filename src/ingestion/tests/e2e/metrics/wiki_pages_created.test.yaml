@@ -63,4 +63,16 @@ cases:
         equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
       - metric: wiki.pages_created
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 5.0))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-02-04' && double(p.value) == 5.0))"
+
+  - name: wiki.pages_created empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics: [{ metric_key: wiki.pages_created, views: [{ view: period }] }]
+    expect:
+      - assert: "status == 200"
+      - { metric: wiki.pages_created, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }

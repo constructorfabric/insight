@@ -263,3 +263,34 @@ cases:
         view: histogram
         find: { entity_id: erin@example.com }
         nonempty: [bins]
+
+  - name: Unified Git metrics empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics:
+          - { metric_key: git.commits, views: [{ view: period }] }
+          - { metric_key: git.code_lines, views: [{ view: period }] }
+          - { metric_key: git.lines_added, views: [{ view: period }] }
+          - { metric_key: git.prs_created, views: [{ view: period }] }
+          - { metric_key: git.prs_merged, views: [{ view: period }] }
+          - { metric_key: git.merge_rate, views: [{ view: period }] }
+          - { metric_key: git.commits_per_active_day, views: [{ view: period }] }
+          - { metric_key: git.commit_size, views: [{ view: period }] }
+          - { metric_key: git.pr_size, views: [{ view: period }] }
+          - { metric_key: git.pr_cycle_time_h, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - { metric: git.commits, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: git.code_lines, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: git.lines_added, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: git.prs_created, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: git.prs_merged, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: git.merge_rate, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
+      - { metric: git.commits_per_active_day, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
+      - { metric: git.commit_size, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
+      - { metric: git.pr_size, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
+      - { metric: git.pr_cycle_time_h, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

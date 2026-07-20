@@ -94,3 +94,15 @@ cases:
       - metric: tasks.pickup_time
         view: histogram
         assert: "items.exists(h, h.entity_id == 'erin@example.com' && size(h.bins) > 0)"
+
+  - name: tasks.pickup_time empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics: [{ metric_key: tasks.pickup_time, views: [{ view: period }] }]
+    expect:
+      - assert: "status == 200"
+      - { metric: tasks.pickup_time, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

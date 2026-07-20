@@ -366,7 +366,7 @@ cases:
         equal: { target_value: 4, p25: null, median: null, p75: null, min: null, max: null, n: 4 }
       - metric: tasks.bugs_fixed
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 4.0))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-06-25' && double(p.value) == 4.0))"
       - metric: tasks.bugs_ratio
         view: period
         find: { entity_id: erin@example.com }
@@ -377,4 +377,19 @@ cases:
         equal: { target_value: 100, p25: null, median: null, p75: null, min: null, max: null, n: 4 }
       - metric: tasks.bugs_ratio
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 100.0))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-06-25' && double(p.value) == 100.0))"
+
+  - name: Unified task bug metrics empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics:
+          - { metric_key: tasks.bugs_fixed, views: [{ view: period }] }
+          - { metric_key: tasks.bugs_ratio, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - { metric: tasks.bugs_fixed, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: tasks.bugs_ratio, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

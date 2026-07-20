@@ -57,7 +57,19 @@ cases:
         equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
       - metric: collab.emails_read
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 50.0))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-25' && double(p.value) == 50.0))"
       - metric: collab.emails_read
         view: breakdown
-        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool') && double(v.value) == 50.0)"
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'm365') && double(v.value) == 50.0)"
+
+  - name: collab.emails_read empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics: [{ metric_key: collab.emails_read, views: [{ view: period }] }]
+    expect:
+      - assert: "status == 200"
+      - { metric: collab.emails_read, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }

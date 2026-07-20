@@ -107,13 +107,6 @@ Locally, after a run:
 
 Missing views, unknown asserted keys, unknown requested keys, and stale fixtures fail. There are no legacy suffix mappings or skip lists.
 
-```bash
-# ad hoc against a running analytics (instead of the collected artifact):
-ANALYTICS_URL=http://localhost:18081 python3 lib/metric_coverage.py
-```
-
-Coverage is **per metric_key**, so every number on a bullet is validated independently — one tested key of a metric does not cover the rest. Today: **44/96** value-tested; the rest are skip-listed with a reason (`reachable — …` entries are the backlog where fixtures already exist).
-
 ## API endpoint coverage gate
 
 The suite records which analytics routes it exercises: an httpx response hook on the rig's single client chokepoint (`AnalyticsProcess.client()`) accumulates `(method, path) → {status codes}`, and `conftest.pytest_sessionfinish` dumps the ledger to `.artifacts/observed_endpoints.json` (shipped to CI inside the `coverage-inputs-api` artifact, produced by the `e2e-api` lane). The `api-endpoint-coverage-gate` job diffs it against the committed OpenAPI spec (`docs/components/backend/analytics/openapi.json` — kept accurate by the analytics OpenAPI drift gate: the `openapi_spec_matches_committed` golden test + the `openapi-specs` workflow) via [`lib/api_coverage.py`](lib/api_coverage.py). **Blocking is at the operation level**: the gate fails only when a documented operation is exercised by NO test — a new endpoint added to the spec without a contract test — or when a `SKIP_LIST` entry rots (now exercised, or gone from the spec). It does **not** fail on an individual unobserved status code.

@@ -87,4 +87,16 @@ cases:
         equal: { target_value: 100, p25: 70, median: 80, p75: 90, min: 60, max: 100, n: 5 }
       - metric: tasks.estimation_accuracy
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 100.0))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-25' && double(p.value) == 100.0))"
+
+  - name: tasks.estimation_accuracy empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics: [{ metric_key: tasks.estimation_accuracy, views: [{ view: period }] }]
+    expect:
+      - assert: "status == 200"
+      - { metric: tasks.estimation_accuracy, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
