@@ -116,7 +116,19 @@ SELECT
     s.created_at                                                     AS created_at,
     sc.final_close_at                                                AS final_close_at,
     s.last_status_event_at                                           AS last_status_event_at,
-    lower(u.email)                                                   AS assignee_email,
+    -- Person key for every per-person Task Delivery metric. Prefer the
+    -- assignee's email; when the Jira account exposes none (only ~31% do),
+    -- fall back to a namespaced accountId (#1776) so the work is surfaced as
+    -- an unattributed-but-present person instead of being silently dropped by
+    -- the downstream `assignee_email != ''` guards. Truly unassigned issues
+    -- (no accountId) keep an empty key and stay excluded. The `jira-account:`
+    -- prefix cannot collide with an email (no '@') and never matches
+    -- insight.people, so org_unit_id stays NULL (honestly unattributed).
+    multiIf(
+        u.email != '',               lower(u.email),
+        s.assignee_account_id != '', concat('jira-account:', s.assignee_account_id),
+        ''
+    )                                                                AS assignee_email,
     p.org_unit_id                                                    AS org_unit_id
 FROM issue_state AS s
 LEFT JOIN status_cat AS sc

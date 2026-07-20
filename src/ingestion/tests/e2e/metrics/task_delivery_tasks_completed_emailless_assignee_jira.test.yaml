@@ -1,0 +1,112 @@
+spec_version: 1
+description: |
+  Metric: tasks_completed — IC Bullet Task Delivery (...0011), JIRA. Regression
+  guard for #1776: Jira work assigned to an account with NO email must NOT be
+  silently dropped from per-person Task Delivery.
+
+  How it's computed (bronze -> silver -> gold). bronze: jira_issue (assignee =
+  an account whose jira_user carries an EMPTY email) + jira_issue_history
+  (Status -> Closed event = the close date) + jira_user. silver: jira-enrich
+  produces one closed task per issue; the assignee resolves to class_task_users,
+  whose email is empty. gold: task_issue_current_state derives the person key
+  from the assignee's email, falling back to jira-account:<accountId> when the
+  email is empty (#1776) instead of leaving it blank and being dropped by the
+  downstream assignee_email != '' guards; jira_closed_tasks then counts the
+  closed tasks under that fallback key.
+
+  Bob Nomail has a Jira account with an empty email and NO org-chart identity,
+  so he can only be keyed by accountId. He closes TWO tasks on 2026-12-25.
+  Querying his fallback person_id must return tasks_completed = 2 — the work is
+  surfaced (honestly unattributed: no org, so peer stats are null), not
+  discarded. Before the fix his rows never reach task_delivery_bullet_rows and
+  the query returns nothing.
+
+  Cases: (1) custom window 2026-12-20..12-31 surfaces the 2 closed tasks under
+  the accountId fallback key; (2) empty window 2026-06 -> no items.
+
+bronze:
+  # Deliberately NO bronze_bamboohr.employees row for Bob: he has no org-chart
+  # identity, which is the whole point — an emailless, unresolvable assignee.
+
+  bronze_jira.jira_user:
+    # Empty email is the crux — this is what used to drop all of Bob's work.
+    - {$ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-bob-nomail-acct, account_id: bob-nomail-acct, email: "", display_name: Bob Nomail,}
+
+  bronze_jira.jira_statuses:
+    - $ref: templates/jira_task.yaml#/templates/status_open
+    - $ref: templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+
+  bronze_jira.jira_issue:
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: TNM-1
+      jira_id: TNM-1
+      unique_key: jira-test-TNM-1
+      id_readable: TNM1
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-nomail-acct","displayName":"Bob Nomail"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: TNM-2
+      jira_id: TNM-2
+      unique_key: jira-test-TNM-2
+      id_readable: TNM2
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-nomail-acct","displayName":"Bob Nomail"}}'
+
+  bronze_jira.jira_issue_history:
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TNM1
+      changelog_id: "70000"
+      unique_key: jira-test-TNM1-70000
+      created_at: "2026-12-25T14:00:00.000+0000"
+      author_account_id: bob-nomail-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: templates/jira_task.yaml#/templates/jira_history
+      id_readable: TNM2
+      changelog_id: "70001"
+      unique_key: jira-test-TNM2-70001
+      created_at: "2026-12-25T14:00:00.000+0000"
+      author_account_id: bob-nomail-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+
+cases:
+  - name: "emailless assignee's closed tasks are surfaced under the accountId fallback key (#1776)"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $filter: "person_id eq 'jira-account:bob-nomail-acct' and metric_date ge '2026-12-20' and metric_date le '2026-12-31'"
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      # The regression: before #1776 the emailless assignee was dropped upstream,
+      # so no tasks_completed row existed for this person. Assert via CEL on the
+      # items array (not `find`) because a person with no org has null peer stats
+      # (honest "No peer data"); only the person's own value is meaningful here.
+      - in: task_delivery
+        assert: "items.exists(x, x.metric_key == 'tasks_completed' && double(x.value) == 2.0)"
+
+  - name: "empty window (no close events) -> no items"
+    request:
+      url: /v1/metrics/queries
+      method: POST
+      body:
+        queries:
+          - id: task_delivery
+            metric_id: 00000000-0000-0000-0001-000000000011
+            $filter: "person_id eq 'jira-account:bob-nomail-acct' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+    expect:
+      - assert: "status == 200"
+      - in: task_delivery
+        assert: "result.status == 'ok'"
+      - in: task_delivery
+        assert: "size(items) == 0"
