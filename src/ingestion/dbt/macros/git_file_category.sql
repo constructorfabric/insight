@@ -23,7 +23,7 @@
    lookahead), doubled-escaped for the ClickHouse string literal. #}
 '[^\\s\\S]'
 {%- else -%}
-'(?i)(' ~ (patterns | join('|')) ~ ')'
+{{ "'(?i)(" ~ (patterns | join('|')) ~ ")'" }}
 {%- endif -%}
 {%- endmacro %}
 

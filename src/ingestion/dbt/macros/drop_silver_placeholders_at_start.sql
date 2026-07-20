@@ -56,7 +56,8 @@
         {%- for silver_node in graph.nodes.values() -%}
             {%- if 'silver' in silver_node.tags
                   and silver_node.resource_type == 'model'
-                  and silver_node.config.materialized != 'ephemeral' -%}
+                  and silver_node.config.materialized != 'ephemeral'
+                  and silver_node.unique_id in selected_resources -%}
 
                 {%- set silver_id = silver_node.alias or silver_node.name -%}
                 {%- set silver_tag = 'silver:' ~ silver_id -%}
