@@ -138,7 +138,7 @@ models:
         description: "inherited from the joined commit"
         tests: [not_null]
       - name: file_category
-        description: "spec | config | code"
+        description: "vendored | spec | config | code (vendored = machine-produced deps/build/generated output, excluded from code_loc)"
 
   - name: fct_git_review
     description: "Review-row facts: adds reviewer person_key (reviewer-login namespace, not unified with email-based person_key)."
@@ -175,7 +175,7 @@ models:
         description: "concat(tenant_id, '|', person_key, '|', week) — enforces one row per person per tenant per week"
         tests: [not_null, unique]
       - name: code_loc
-        description: "Lines added in code-category files (file_category='code')."
+        description: "Lines added in code-category files (file_category='code'). Excludes vendored/generated files (file_category='vendored')."
       - name: spec_lines
         description: "Lines added in spec/test-category files (file_category='spec')."
       - name: config_loc
