@@ -1,9 +1,0 @@
-name: bitbucket-server
-version: "2026.05.04"
-schedule: 0 2 * * *
-dbt_select: tag:bitbucket-server+
-workflow: sync
-connection:
-  namespace: bronze_bitbucket_server
-secret:
-  required_fields: []

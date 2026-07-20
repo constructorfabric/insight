@@ -20,8 +20,11 @@ roster introduces mixed-case emails, restore `.lower()` on `workEmail`
 and `supervisorEmail` below or fix the downstream view to compare
 case-insensitively.
 
-Both tables use ReplacingMergeTree so re-inserting the same `_version`
-is safe; we TRUNCATE first anyway for cleanliness.
+Both tables use ReplacingMergeTree; we TRUNCATE before each insert so
+re-runs stay clean. `class_people` is a versionless RMT (its dbt model
+`silver/_shared/class_people.sql` unions staging with
+`dedup_version_col=none`), so the insert below deliberately omits a
+`_version` column.
 """
 
 from __future__ import annotations
@@ -103,12 +106,10 @@ def seed_class_people(
     # tenant_id, so an empty value drops every person from the cohort view.
     # It MUST equal the tenant_uuid the git/ai generators use, or the
     # observation↔cohort join yields nothing.
-    cols = ["unique_key", "email", "department_name", "workspace_id", "_version"]
-    # Constant `_version` — every other generator emits version=1 too.
-    # `int(time.time())` would make re-runs emit "newer" rows on every
-    # invocation, defeating the deterministic-reseed contract baked into
-    # generators/base.py (deterministic_uuid + seeded_rng).
-    version = 1
+    # `class_people` is a versionless ReplacingMergeTree (see module
+    # docstring), so no `_version` column here — emitting one fails against
+    # the dbt-materialised table, which has no such column.
+    cols = ["unique_key", "email", "department_name", "workspace_id"]
     rows: list[tuple[object, ...]] = []
     for p in roster:
         dept = _TEAM_DEPARTMENT.get(p.team or "", "Executive")
@@ -117,7 +118,6 @@ def seed_class_people(
             p.email.lower(),
             dept,
             tenant_uuid,
-            version,
         ))
     return bulk_insert(client, "silver", "class_people", cols, rows)
 

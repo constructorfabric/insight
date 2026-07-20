@@ -533,15 +533,16 @@ fi
 if ! ch_table_exists silver class_people; then
   echo "  Creating placeholder: silver.class_people"
   run_ch <<'SQL'
+# Versionless RMT to match the dbt model (silver/_shared/class_people.sql
+# unions staging with dedup_version_col=none — no `_version` column).
 CREATE TABLE IF NOT EXISTS silver.class_people (
     unique_key      String,
     workspace_id    String DEFAULT '',
     email           Nullable(String),
     valid_from      Nullable(String),
     department_name Nullable(String),
-    org_unit_id     Nullable(String),
-    _version        UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
+    org_unit_id     Nullable(String)
+) ENGINE = ReplacingMergeTree ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 else
   class_people_placeholder_count="$(

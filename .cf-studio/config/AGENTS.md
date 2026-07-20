@@ -19,4 +19,6 @@ ALWAYS open and follow `.cf-studio/config/rules/architecture.md` WHEN modifying 
 ALWAYS open and follow `.cf-studio/config/rules/patterns.md` WHEN documenting a new connector or defining new data source tables
 
 ALWAYS open and follow `.cf-studio/config/rules/code-conventions.md` WHEN writing or reviewing shell scripts, Python helpers, Argo/Kubernetes YAML, dbt macros, deploy scripts, or any imperative code
+
+ALWAYS open and follow deploy/compose/keycloak/README.md WHEN configuring or debugging local Keycloak auth for the compose stack
 <!-- auto-config:rules:end -->

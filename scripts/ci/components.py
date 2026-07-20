@@ -165,13 +165,6 @@ COMPONENTS = [
         "paths": ["src/ingestion/connectors/git/gitlab"],
     },
     {
-        "name": "github",
-        "lang": "python",
-        "root": "src/ingestion/connectors/git/github",
-        "cov_package": "source_github",
-        "paths": ["src/ingestion/connectors/git/github"],
-    },
-    {
         "name": "github-v2",
         "lang": "python",
         "root": "src/ingestion/connectors/git/github-v2",
