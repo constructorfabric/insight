@@ -2,7 +2,8 @@ name: Semgrep SAST
 
 # Report-only SAST gate (constructorfabric/insight#1797, split from #1463; umbrella #1478).
 #
-# Findings (p/default + the p/rust, p/csharp, p/python language packs) surface in the
+# Findings (Semgrep `--config auto`, which auto-detects rules per language via the
+# registry — matches the org GitLab semgrep-scan component) surface in the
 # GitHub "Security -> Code scanning" tab (SARIF upload)
 # AND as a count in the job summary, but they DO NOT block: `semgrep scan` runs WITHOUT
 # `--error`. Flip to blocking once the baseline is triaged and clean (zero un-waived
@@ -45,19 +46,17 @@ jobs:
         # checkout and SARIF-upload JS actions keep the host runner's Node — the Semgrep image
         # does not ship Node. No `--error`: findings are reported, never block. Secrets excluded
         # (TruffleHog owns them). `.semgrepignore` in the repo root prunes build/dep artifacts.
+        # NB: `--config auto` requires metrics ON (it sends language/rule/finding counts — not
+        # source — to semgrep.dev to select rules), so `--metrics off` is intentionally omitted.
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/src" \
             -w /src \
             semgrep/semgrep:1.131.0@sha256:6bd07d7b166b097e1384f41b94a62d8c8a26a4fff8713992c296e053310da01f \
             semgrep scan \
-              --config p/default \
-              --config p/rust \
-              --config p/csharp \
-              --config p/python \
+              --config auto \
               --exclude-rule generic.secrets.security.detected-generic-secret \
-              --sarif --output semgrep.sarif \
-              --metrics off
+              --sarif --output semgrep.sarif
 
       - name: Summarize findings in the job summary
         if: always()
@@ -76,7 +75,7 @@ jobs:
           rules = collections.Counter(x.get("ruleId", "?").split(".")[-1] for x in res)
           w = out.write
           w("## Semgrep SAST (report-only)\n\n")
-          w(f"**{total}** finding(s) from `p/default` + `p/rust`/`p/csharp`/`p/python` (secrets excluded — TruffleHog owns those). "
+          w(f"**{total}** finding(s) from `--config auto` (secrets excluded — TruffleHog owns those). "
             "This check does **not** block; full details in **Security -> Code scanning**.\n\n")
           if total:
               w("| Severity | Count |\n|---|---:|\n")
