@@ -3,7 +3,7 @@
     engine='MergeTree',
     order_by=['insight_source_id', 'issue_id', 'interval_start'],
     schema='insight',
-    alias='task_status_intervals',
+    alias='task_status_spans',
     tags=['gold'],
     query_settings={
         'max_memory_usage': 1610612736,

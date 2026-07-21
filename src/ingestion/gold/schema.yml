@@ -359,7 +359,7 @@ models:
         tests:
           - not_null
 
-  - name: task_status_intervals
+  - name: task_status_spans
     description: >
       Per-issue status spans for the task-delivery observation pipeline: each
       status event paired with the next; the last span ends at the close for
