@@ -355,7 +355,6 @@ fn validate_filters(
             );
         }
         let mut seen_values = BTreeSet::new();
-        let mut values = Vec::with_capacity(filter.values.len());
         for value in filter.values {
             let value = value.trim();
             if value.is_empty() {
@@ -367,11 +366,12 @@ fn validate_filters(
                     format!("filter value must not exceed {MAX_FILTER_VALUE_BYTES} bytes"),
                 );
             }
-            if seen_values.insert(value.to_owned()) {
-                values.push(value.to_owned());
-            }
+            seen_values.insert(value.to_owned());
         }
-        out.push(ValidatedDimensionFilter { dimension, values });
+        out.push(ValidatedDimensionFilter {
+            dimension,
+            values: seen_values.into_iter().collect(),
+        });
     }
     out.sort();
     Ok(out)
@@ -746,6 +746,93 @@ mod tests {
         let def = sum_definition(vec!["tool"]);
         let view = MetricViewRequest::Breakdown { dimensions: vec![] };
         assert!(validate_view(&def, view).is_err());
+    }
+
+    #[test]
+    fn filters_are_trimmed_deduplicated_and_sorted() {
+        let def = sum_definition(vec!["source", "repository"]);
+        let filters = vec![
+            MetricDimensionFilterRequest {
+                dimension: " source ".to_owned(),
+                values: vec![
+                    "github".to_owned(),
+                    " bitbucket ".to_owned(),
+                    "github".to_owned(),
+                ],
+            },
+            MetricDimensionFilterRequest {
+                dimension: "repository".to_owned(),
+                values: vec!["z/repo".to_owned(), "a/repo".to_owned()],
+            },
+        ];
+        let Ok(filters) = validate_filters(&def, filters) else {
+            panic!("expected valid filters");
+        };
+        assert_eq!(
+            filters,
+            vec![
+                ValidatedDimensionFilter {
+                    dimension: "repository".to_owned(),
+                    values: vec!["a/repo".to_owned(), "z/repo".to_owned()],
+                },
+                ValidatedDimensionFilter {
+                    dimension: "source".to_owned(),
+                    values: vec!["bitbucket".to_owned(), "github".to_owned()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn filters_reject_invalid_shapes() {
+        let def = sum_definition(vec!["source"]);
+        let filter = |dimension: &str, values: Vec<String>| MetricDimensionFilterRequest {
+            dimension: dimension.to_owned(),
+            values,
+        };
+        assert!(
+            validate_filters(
+                &def,
+                vec![
+                    filter("source", vec!["github".to_owned()]),
+                    filter("source", vec!["gitlab".to_owned()]),
+                ],
+            )
+            .is_err()
+        );
+        assert!(validate_filters(&def, vec![filter("source", vec![])]).is_err());
+        assert!(
+            validate_filters(
+                &def,
+                vec![filter(
+                    "source",
+                    (0..=MAX_FILTER_VALUES)
+                        .map(|index| index.to_string())
+                        .collect(),
+                )],
+            )
+            .is_err()
+        );
+        assert!(validate_filters(&def, vec![filter("source", vec![" ".to_owned()])]).is_err());
+        assert!(
+            validate_filters(
+                &def,
+                vec![filter(
+                    "source",
+                    vec!["x".repeat(MAX_FILTER_VALUE_BYTES + 1)],
+                )],
+            )
+            .is_err()
+        );
+        assert!(
+            validate_filters(
+                &def,
+                (0..=MAX_FILTERS)
+                    .map(|index| filter(&format!("d{index}"), vec!["x".to_owned()]))
+                    .collect(),
+            )
+            .is_err()
+        );
     }
 
     #[test]
