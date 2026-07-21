@@ -8,5 +8,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-      pull-requests: write
+      # No pull-requests: write here — the code-ranker GitHub App posts (and
+      # updates in place) the report comment using its own installation
+      # token, not this workflow's GITHUB_TOKEN.
       security-events: write
