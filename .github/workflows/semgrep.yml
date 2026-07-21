@@ -68,10 +68,14 @@ jobs:
         run: |
           [ -f semgrep.sarif ] || exit 0
           [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
-          python3 - semgrep.sarif "$GITHUB_STEP_SUMMARY" <<'PY'
+          # Link the summary to Code scanning filtered to this branch (head branch on PRs).
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          CS_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/security/code-scanning?query=is%3Aopen+branch%3A${BRANCH}"
+          python3 - semgrep.sarif "$GITHUB_STEP_SUMMARY" "$CS_URL" <<'PY'
           import json, sys, collections
           d = json.load(open(sys.argv[1]))
           out = open(sys.argv[2], "a")
+          cs_url = sys.argv[3]
           res = [x for r in d.get("runs", []) for x in r.get("results", [])]
           total = len(res)
           sev = collections.Counter((x.get("level") or "warning") for x in res)
@@ -79,7 +83,7 @@ jobs:
           w = out.write
           w("## Semgrep SAST (report-only)\n\n")
           w(f"**{total}** finding(s) from `auto` + `p/rust`/`p/csharp` (secrets excluded — TruffleHog owns those). "
-            "This check does **not** block; full details in **Security -> Code scanning**.\n\n")
+            f"This check does **not** block; full details in [Security -> Code scanning (this branch)]({cs_url}).\n\n")
           if total:
               w("| Severity | Count |\n|---|---:|\n")
               for s in ("error", "warning", "note"):
