@@ -136,6 +136,7 @@ models:
                   - commit_change_size
                   - code_lines_added
                   - lines_added
+                  - lines_removed
                   - pr_created
                   - pr_created_merged
                   - pr_merged

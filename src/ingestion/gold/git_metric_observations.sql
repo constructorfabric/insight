@@ -22,7 +22,7 @@
 -- taxonomy/label changes apply retroactively on the next build).
 --
 -- Materialized as a sorted table: the observation pipeline below (FINAL
--- dedup, joins, ten measure branches) runs once per dbt build — which is
+-- dedup, joins, measure branches) runs once per dbt build — which is
 -- also the only time the silver inputs can have changed — instead of once
 -- per metric query. The ordering key mirrors the runtime's filter shape
 -- (source_key, measure_key, entity_id, metric_date), so single-measure
@@ -34,7 +34,7 @@
 --
 -- Grain per measure:
 --   day-grain sums:  commit_count, code_lines_added, lines_added,
---                    pr_created, pr_merged
+--                    lines_removed, pr_created, pr_merged
 --   day-grain presence: commit_day
 --   event-grain (one row per source event, feeding median metrics):
 --                    commit_change_size (per non-merge commit),
@@ -87,10 +87,18 @@ commits_source AS (
         toDate(date) AS metric_date,
         lines_added,
         lines_removed,
+        if(project_key = '', '__unknown__', concat(toString(source_id), ':', project_key)) AS project_value,
+        if(project_key = '', 'Unknown', project_key) AS project_label,
+        concat(toString(source_id), ':', project_key, '/', repo_slug) AS repository_value,
+        if(project_key = '', repo_slug, concat(project_key, '/', repo_slug)) AS repository_label,
         replaceOne(data_source, 'insight_', '') AS source_value,
         {{ git_source_label('source_value') }} AS source_label,
         CAST(
-            [tuple('source', source_value, source_label)]
+            [
+                tuple('repository', repository_value, repository_label),
+                tuple('project', project_value, project_label),
+                tuple('source', source_value, source_label)
+            ]
             AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS source_dimensions
     FROM {{ ref('class_git_commits') }} FINAL
@@ -111,11 +119,31 @@ file_changes_source AS (
         commits.metric_date AS metric_date,
         file_changes.category AS category,
         {{ git_file_category_label('file_changes.category') }} AS category_label,
+        file_changes.file_extension_value AS file_extension,
+        file_changes.file_extension_label AS file_extension_label,
+        file_changes.change_type_value AS change_type,
+        file_changes.change_type_label AS change_type_label,
         file_changes.lines_added AS lines_added,
+        file_changes.lines_removed AS lines_removed,
+        commits.repository_value AS repository_value,
+        commits.repository_label AS repository_label,
         commits.source_dimensions AS source_dimensions,
         CAST(
             [
+                tuple('file_extension', file_extension, file_extension_label),
+                tuple('change_type', change_type, change_type_label),
+                tuple('repository', repository_value, repository_label),
+                tuple('project', commits.project_value, commits.project_label),
+                tuple('source', commits.source_value, commits.source_label)
+            ] AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS file_source_dimensions,
+        CAST(
+            [
                 tuple('category', category, category_label),
+                tuple('file_extension', file_extension, file_extension_label),
+                tuple('change_type', change_type, change_type_label),
+                tuple('repository', repository_value, repository_label),
+                tuple('project', commits.project_value, commits.project_label),
                 tuple('source', commits.source_value, commits.source_label)
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS category_source_dimensions
@@ -130,9 +158,21 @@ file_changes_source AS (
             repo_slug,
             commit_hash,
             {{ git_file_category('file_path') }} AS category,
-            sum(lines_added) AS lines_added
-        FROM {{ ref('class_git_file_changes') }} FINAL
-        GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash, category
+            if(raw_file_change.file_extension = '', '__unknown__', lower(raw_file_change.file_extension)) AS file_extension_value,
+            if(raw_file_change.file_extension = '', 'Unknown', lower(raw_file_change.file_extension)) AS file_extension_label,
+            if(raw_file_change.change_type = '', '__unknown__', lower(raw_file_change.change_type)) AS change_type_value,
+            multiIf(
+                raw_file_change.change_type = '', 'Unknown',
+                lower(raw_file_change.change_type) = 'added', 'Added',
+                lower(raw_file_change.change_type) = 'modified', 'Modified',
+                lower(raw_file_change.change_type) = 'renamed', 'Renamed',
+                lower(raw_file_change.change_type) = 'deleted', 'Deleted',
+                raw_file_change.change_type
+            ) AS change_type_label,
+            sum(lines_added) AS lines_added,
+            sum(lines_removed) AS lines_removed
+        FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
+        GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash, category, file_extension_value, file_extension_label, change_type_value, change_type_label
     ) AS file_changes
     INNER JOIN commits_source AS commits
         ON commits.tenant_id = file_changes.tenant_id
@@ -204,10 +244,21 @@ pull_requests_source AS (
             dateDiff('second', prs.created_on, prs.closed_on) / 3600.0,
             CAST(NULL AS Nullable(Float64))
         ) AS cycle_hours,
+        if(prs.project_key = '', '__unknown__', concat(toString(prs.source_id), ':', prs.project_key)) AS project_value,
+        if(prs.project_key = '', 'Unknown', prs.project_key) AS project_label,
+        concat(toString(prs.source_id), ':', prs.project_key, '/', prs.repo_slug) AS repository_value,
+        if(prs.project_key = '', prs.repo_slug, concat(prs.project_key, '/', prs.repo_slug)) AS repository_label,
+        if(prs.destination_branch = '', '__unknown__', prs.destination_branch) AS destination_branch_value,
+        if(prs.destination_branch = '', 'Unknown', prs.destination_branch) AS destination_branch_label,
         replaceOne(prs.data_source, 'insight_', '') AS source_value,
         {{ git_source_label('source_value') }} AS source_label,
         CAST(
-            [tuple('source', source_value, source_label)]
+            [
+                tuple('destination_branch', destination_branch_value, destination_branch_label),
+                tuple('repository', repository_value, repository_label),
+                tuple('project', project_value, project_label),
+                tuple('source', source_value, source_label)
+            ]
             AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS source_dimensions
     FROM {{ ref('class_git_pull_requests') }} AS prs FINAL
@@ -258,11 +309,15 @@ measure_observations AS (
 
     UNION ALL
 
-    {{ sum_measure('code_lines_added', 'file_changes_source', 'lines_added', 'source_dimensions', where="category = 'code'") }}
+    {{ sum_measure('code_lines_added', 'file_changes_source', 'lines_added', 'file_source_dimensions', where="category = 'code'") }}
 
     UNION ALL
 
     {{ sum_measure('lines_added', 'file_changes_source', 'lines_added', 'category_source_dimensions') }}
+
+    UNION ALL
+
+    {{ sum_measure('lines_removed', 'file_changes_source', 'lines_removed', 'category_source_dimensions') }}
 
     UNION ALL
 
