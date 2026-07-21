@@ -68,9 +68,15 @@ jobs:
         run: |
           [ -f semgrep.sarif ] || exit 0
           [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
-          # Link the summary to Code scanning filtered to this branch (head branch on PRs).
-          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          CS_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/security/code-scanning?query=is%3Aopen+branch%3A${BRANCH}"
+          # Link the summary to Code scanning. On PRs the analysis is attributed to the PR
+          # (merge ref) — NOT the branch ref — so filter by pr:<n>; on push/schedule/dispatch
+          # filter by branch. GITHUB_REF_NAME is "<n>/merge" on pull_request events.
+          CS_BASE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/security/code-scanning"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            CS_URL="${CS_BASE}?query=is%3Aopen+pr%3A${GITHUB_REF_NAME%/merge}"
+          else
+            CS_URL="${CS_BASE}?query=is%3Aopen+branch%3A${GITHUB_REF_NAME}"
+          fi
           python3 - semgrep.sarif "$GITHUB_STEP_SUMMARY" "$CS_URL" <<'PY'
           import json, sys, collections
           d = json.load(open(sys.argv[1]))
@@ -83,7 +89,7 @@ jobs:
           w = out.write
           w("## Semgrep SAST (report-only)\n\n")
           w(f"**{total}** finding(s) from `auto` + `p/rust`/`p/csharp` (secrets excluded — TruffleHog owns those). "
-            f"This check does **not** block; full details in [Security -> Code scanning (this branch)]({cs_url}).\n\n")
+            f"This check does **not** block; full details in [Security -> Code scanning]({cs_url}).\n\n")
           if total:
               w("| Severity | Count |\n|---|---:|\n")
               for s in ("error", "warning", "note"):
