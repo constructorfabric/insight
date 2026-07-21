@@ -593,9 +593,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         source_key: "git",
         label: "Commits per active day",
         description: Some("Commit cadence on days with commits"),
-        explanation: Some(
-            "Commits divided by active repository-days: each repository with at least one commit on a day contributes one active day.",
-        ),
+        explanation: Some("Commits divided by the number of days with at least one commit."),
         unit: None,
         format: MetricFormat::Decimal,
         direction: MetricDirection::HigherIsBetter,
@@ -613,7 +611,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
                 measure_key: "commit_day",
             },
         ],
-        dimensions: &["project", "repository", "source"],
+        dimensions: &[],
     },
     MetricSeed {
         metric_key: "git.commit_size",

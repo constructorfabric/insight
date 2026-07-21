@@ -30,21 +30,20 @@
     {% endif %}
 {% endmacro %}
 
-{% macro presence_measure(measure_key, relations, dimensions_col=none) %}
+{% macro presence_measure(measure_key, relations) %}
     SELECT
         tenant_id,
         entity_id,
         metric_date,
         '{{ measure_key }}' AS measure_key,
         toNullable(toFloat64(1)) AS value,
-        {% if dimensions_col %}{{ dimensions_col }}{% else %}CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))){% endif %} AS dimensions
+        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS dimensions
     FROM (
         {%- for relation in relations %}
         SELECT DISTINCT
             tenant_id,
             entity_id,
-            metric_date{% if dimensions_col %},
-            {{ dimensions_col }}{% endif %}
+            metric_date
         FROM {{ relation }}
         {%- if not loop.last %}
         UNION DISTINCT

@@ -301,7 +301,7 @@ measure_observations AS (
 
     UNION ALL
 
-    {{ presence_measure('commit_day', ['commits_source'], 'source_dimensions') }}
+    {{ presence_measure('commit_day', ['commits_source']) }}
 
     UNION ALL
 
