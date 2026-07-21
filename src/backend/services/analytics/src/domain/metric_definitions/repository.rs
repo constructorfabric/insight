@@ -18,6 +18,7 @@ struct DefinitionRow {
     tenant_id: Option<Uuid>,
     metric_key: String,
     label: String,
+    short_label: Option<String>,
     description: Option<String>,
     explanation: Option<String>,
     unit: Option<String>,
@@ -190,6 +191,7 @@ async fn fetch_definition_rows(
             d.tenant_id AS tenant_id, \
             d.metric_key AS metric_key, \
             d.label AS label, \
+            d.short_label AS short_label, \
             d.description AS description, \
             d.explanation AS explanation, \
             d.unit AS unit, \
@@ -494,6 +496,7 @@ fn build_base(
     Ok(MetricBase {
         key: row.metric_key.clone(),
         label: row.label.clone(),
+        short_label: row.short_label.clone(),
         description: row.description.clone(),
         explanation: row.explanation.clone(),
         entity_type: row.entity_type.clone(),
@@ -679,6 +682,7 @@ mod tests {
             tenant_id: tenant,
             metric_key: metric_key.to_owned(),
             label: "Label".to_owned(),
+            short_label: None,
             description: None,
             explanation: None,
             unit: None,
