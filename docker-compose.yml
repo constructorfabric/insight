@@ -40,6 +40,8 @@ volumes:
   # Cargo build cache. Lives in Docker so Mac/Windows hosts don't get
   # Linux-target object files polluting their native ./src/backend/target.
   rust-target: {}
+  rust-cargo-registry: {}
+  rust-cargo-git: {}
   # Frontend dev mode: node_modules lives in a named volume so the host's
   # bind-mount of source doesn't clobber it and Mac perf stays sane.
   frontend-node-modules: {}
@@ -363,9 +365,9 @@ services:
       FAKEIDP_DEFAULT_AUD: "${OIDC_CLIENT_ID:-insight-authenticator}"
       FAKEIDP_TOKEN_TTL: "${FAKEIDP_TOKEN_TTL:-300}"
       # Default login identity: the dev-impersonation person the seeder writes
-      # into identity (dev-compose.sh's VITE_DEV_USER_EMAIL). Overrides the
+      # into identity (dev-compose.sh's DEV_USER_EMAIL). Overrides the
       # first user in users.yaml so a plain login resolves to a seeded person.
-      FAKEIDP_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-dev@company.nonpresent}"
+      FAKEIDP_DEV_USER_EMAIL: "${DEV_USER_EMAIL:-dev@company.nonpresent}"
       # Back-channel logout receiver on the authenticator (endpoint lands in a
       # later step; wired here so the /_control/backchannel hook has a target).
       FAKEIDP_BACKCHANNEL_URL: "${FAKEIDP_BACKCHANNEL_URL:-http://authenticator:8083/auth/oidc/back-channel-logout}"
@@ -479,13 +481,6 @@ services:
       # analytics + identity API clients. Must resolve from inside the
       # frontend container, so we use the compose service name.
       VITE_API_PROXY_TARGET: "${VITE_API_PROXY_TARGET:-http://gateway:8080}"
-      VITE_OIDC_ISSUER: "${OIDC_ISSUER:-}"
-      VITE_OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
-      # Dev impersonation: when set AND a matching row exists in
-      # identity.persons (value_type='email'), the FE skips OIDC and
-      # binds requests to that person. See CONTRIBUTING.md "Dev
-      # impersonation seed".
-      VITE_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-}"
     volumes:
       - ${INSIGHT_FRONT_PATH:-../insight-front}:/app
       - frontend-node-modules:/app/node_modules
@@ -530,15 +525,6 @@ services:
         aliases: [insight-front]
     environment:
       CSP_REMOTE: ${CSP_REMOTE:-}
-      # Production builds of the FE refuse to dev-impersonate unless the
-      # entrypoint emits window.__DEV_CONFIG__. Forwarding the wizard's
-      # dev email here is what makes the ghcr image actually render data
-      # in the compose stack. The entrypoint refuses to honor both
-      # DEV_USER_EMAIL and OIDC_* simultaneously.
-      DEV_USER_EMAIL: ${VITE_DEV_USER_EMAIL:-}
-      OIDC_ISSUER: ${OIDC_ISSUER:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      OIDC_SCOPES: ${OIDC_SCOPES:-}
     volumes:
       # Patch script — inserts `location /api/ → gateway:8080` into
       # the FE image's nginx template at a known marker, then chains to
@@ -637,7 +623,7 @@ services:
       identity: {condition: service_started}
     environment:
       # Identity / persons anchor
-      VITE_DEV_USER_EMAIL: "${VITE_DEV_USER_EMAIL:-}"
+      DEV_USER_EMAIL: "${DEV_USER_EMAIL:-}"
       TENANT_DEFAULT_ID: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
       # MariaDB — falls back to the local docker service name/port; the
       # wizard rewrites these when external MariaDB is selected.
