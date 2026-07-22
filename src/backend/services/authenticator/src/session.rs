@@ -484,6 +484,181 @@ impl SessionManager {
         Ok(rotated == 1)
     }
 
+    // ── Background workers (G5 refresher, janitor) ─────────────────────────
+
+    /// Try to take (or renew) a leader lock. `SET key holder NX PX ttl` wins a
+    /// free lock; an already-held lock renews only for the same `holder`
+    /// (DD-BFF-09 — one leader per pass, Redis is already a hard dependency).
+    ///
+    /// # Errors
+    /// Fails on a Redis error (the worker then skips this pass).
+    pub async fn try_lead(&self, key: &str, holder: &str, ttl_ms: u64) -> anyhow::Result<bool> {
+        let mut conn = self.conn.clone();
+        let won: Option<String> = redis::cmd("SET")
+            .arg(key)
+            .arg(holder)
+            .arg("NX")
+            .arg("PX")
+            .arg(ttl_ms.max(1))
+            .query_async(&mut conn)
+            .await
+            .context("acquire leader lock")?;
+        if won.is_some() {
+            return Ok(true);
+        }
+        let current: Option<String> = conn.get(key).await.context("read leader lock")?;
+        if current.as_deref() == Some(holder) {
+            let _: bool = conn
+                .pexpire(key, i64::try_from(ttl_ms).unwrap_or(1))
+                .await
+                .context("renew leader lock")?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Sessions due for IdP refresh (`ZRANGEBYSCORE asm:idp_refresh_due 0 now`,
+    /// bounded).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn due_refresh_sessions(
+        &self,
+        now: u64,
+        limit: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut conn = self.conn.clone();
+        conn.zrangebyscore_limit(
+            REFRESH_DUE_KEY,
+            0,
+            i64::try_from(now).unwrap_or(i64::MAX),
+            0,
+            isize::try_from(limit).unwrap_or(isize::MAX),
+        )
+        .await
+        .context("read refresh schedule")
+    }
+
+    /// Per-session refresh lock (`SET NX PX`): refresh-token rotation is
+    /// one-time-use at most IdPs; two workers racing the same rotation would
+    /// burn the grant and falsely kill the session. Returns `true` when this
+    /// caller holds the lock.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn lock_session_refresh(
+        &self,
+        session_id: &str,
+        ttl_ms: u64,
+    ) -> anyhow::Result<bool> {
+        let mut conn = self.conn.clone();
+        let set: Option<String> = redis::cmd("SET")
+            .arg(format!("asm:refresh_lock:{session_id}"))
+            .arg("1")
+            .arg("NX")
+            .arg("PX")
+            .arg(ttl_ms.max(1))
+            .query_async(&mut conn)
+            .await
+            .context("acquire per-session refresh lock")?;
+        Ok(set.is_some())
+    }
+
+    /// Release the per-session refresh lock.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn unlock_session_refresh(&self, session_id: &str) -> anyhow::Result<()> {
+        let mut conn = self.conn.clone();
+        let _: i64 = conn
+            .del(format!("asm:refresh_lock:{session_id}"))
+            .await
+            .context("release per-session refresh lock")?;
+        Ok(())
+    }
+
+    /// Persist a successful IdP refresh: rotated refresh token (when the IdP
+    /// returned one), new access-token expiry, reset failure counter, and the
+    /// next schedule entry — one pipeline.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn store_idp_refresh(
+        &self,
+        session_id: &str,
+        new_refresh_token: Option<&str>,
+        access_expires_at: Option<u64>,
+        next_due: u64,
+    ) -> anyhow::Result<()> {
+        let mut conn = self.conn.clone();
+        let skey = session_key(session_id);
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        if let Some(token) = new_refresh_token {
+            pipe.hset(&skey, "idp_refresh_token", token).ignore();
+        }
+        if let Some(exp) = access_expires_at {
+            pipe.hset(&skey, "idp_access_expires_at", exp.to_string())
+                .ignore();
+        }
+        pipe.hset(&skey, "idp_refresh_failures", "0").ignore();
+        pipe.zadd(
+            REFRESH_DUE_KEY,
+            session_id,
+            i64::try_from(next_due).unwrap_or(i64::MAX),
+        )
+        .ignore();
+        pipe.query_async::<()>(&mut conn)
+            .await
+            .context("store IdP refresh pipeline")?;
+        Ok(())
+    }
+
+    /// Bump the per-session transient-failure counter; returns the new count
+    /// (sizes the exponential backoff).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn bump_refresh_failures(&self, session_id: &str) -> anyhow::Result<u64> {
+        let mut conn = self.conn.clone();
+        let failures: i64 = conn
+            .hincr(session_key(session_id), "idp_refresh_failures", 1)
+            .await
+            .context("bump refresh failures")?;
+        Ok(u64::try_from(failures).unwrap_or(0))
+    }
+
+    /// Re-schedule a session's next refresh attempt.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn reschedule_refresh(&self, session_id: &str, due_at: u64) -> anyhow::Result<()> {
+        let mut conn = self.conn.clone();
+        let _: i64 = conn
+            .zadd(
+                REFRESH_DUE_KEY,
+                session_id,
+                i64::try_from(due_at).unwrap_or(i64::MAX),
+            )
+            .await
+            .context("reschedule refresh")?;
+        Ok(())
+    }
+
+    /// Drop a session from the refresh schedule (dead session, or nothing to
+    /// refresh).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn unschedule_refresh(&self, session_id: &str) -> anyhow::Result<()> {
+        let mut conn = self.conn.clone();
+        let _: i64 = conn
+            .zrem(REFRESH_DUE_KEY, session_id)
+            .await
+            .context("unschedule refresh")?;
+        Ok(())
+    }
+
     // ── Back-channel logout (PRD 5.10) ─────────────────────────────────────
 
     /// One-shot replay guard for a back-channel `logout_token` `jti`

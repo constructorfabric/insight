@@ -50,6 +50,11 @@ pub struct IdpConfig {
     pub refresh_concurrency: u32,
     /// Behavior when the IdP issues no refresh token.
     pub no_refresh_token_policy: NoRefreshTokenPolicy,
+    /// Refresher pass interval (leader polls the due schedule this often).
+    pub refresher_tick_seconds: u64,
+    /// Jitter (± this window) applied to due-times when WRITTEN to the
+    /// schedule, so sessions do not herd after a deploy or Redis restore (G5).
+    pub refresh_due_jitter_seconds: u64,
 }
 
 impl Default for IdpConfig {
@@ -64,6 +69,8 @@ impl Default for IdpConfig {
             refresh_safety_margin_seconds: 60,
             refresh_concurrency: 128,
             no_refresh_token_policy: NoRefreshTokenPolicy::Strict,
+            refresher_tick_seconds: 5,
+            refresh_due_jitter_seconds: 30,
         }
     }
 }

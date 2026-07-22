@@ -241,7 +241,23 @@ async fn mint_and_store_session(
     let now = now_secs();
     let cfg = &state.cfg;
     let expires_at = now + cfg.session_ttl_seconds;
-    let absolute_expires_at = now + cfg.session_absolute_lifetime_seconds;
+    let mut absolute_expires_at = now + cfg.session_absolute_lifetime_seconds;
+
+    // No refresh token → the refresher can't keep the IdP vouching for the
+    // user. `strict` (default) caps the session at the IdP access-token
+    // lifetime; `login_only` lets it live to the absolute cap (killed only by
+    // back-channel logout / manual revoke). (PRD 5.12 policy knob.)
+    if idp.refresh_token.is_none()
+        && cfg.idp.no_refresh_token_policy == crate::config::NoRefreshTokenPolicy::Strict
+        && let Some(ttl) = idp.expires_in
+    {
+        absolute_expires_at = absolute_expires_at.min(now + ttl);
+        tracing::debug!(
+            cap = absolute_expires_at,
+            "no IdP refresh token: strict policy caps the session at the IdP token lifetime"
+        );
+    }
+    let expires_at = expires_at.min(absolute_expires_at);
 
     let session_id = Uuid::now_v7().to_string();
     let token = csprng_token();
@@ -267,11 +283,13 @@ async fn mint_and_store_session(
     };
     let jwt = state.keystore.sign(&claims)?;
 
-    // Schedule the IdP background refresh (consumer lands in step 10).
-    let refresh_due_at = if cfg.idp.refresh_enabled {
+    // Schedule the background refresh — only when there is a grant to refresh
+    // (no refresh token → the policy above already decided the lifetime).
+    // Due-times are jittered at write so sessions never herd (G5).
+    let refresh_due_at = if cfg.idp.refresh_enabled && idp.refresh_token.is_some() {
         idp.expires_in.map(|ttl| {
             let base = now + ttl.saturating_sub(cfg.idp.refresh_safety_margin_seconds);
-            base.saturating_add_signed(jitter_seconds(30))
+            base.saturating_add_signed(jitter_seconds(cfg.idp.refresh_due_jitter_seconds))
         })
     } else {
         None
