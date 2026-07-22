@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use chrono::NaiveDate;
 use clickhouse::Row;
 use sea_orm::DatabaseConnection;
 use serde::Deserialize;
@@ -13,6 +14,12 @@ use crate::domain::metric_definitions::repository::{
     update_definition_status, update_definitions_for_source_status, update_source_status,
 };
 
+// Dimension coverage is checked over a trailing window anchored at the
+// newest observed row, not at today(): rows predating a dimension's
+// introduction would otherwise fail coverage forever, and a paused
+// connector would empty the window entirely. Measure existence and
+// freshness are probed over all history — schema validity is structural
+// and does not decay with time.
 const PROBE_WINDOW_DAYS: u32 = 35;
 // Managed observation relations are dbt-created and can appear (or regress)
 // while the service is running — a one-shot startup scan would pin
@@ -142,12 +149,18 @@ impl MetricDefinitionValidator {
         };
 
         for spec in specs {
-            match self.validate_definition(&relation, &spec).await {
+            let (outcome, last_observed) = self.validate_definition(&relation, &spec).await;
+            match outcome {
                 ProbeOutcome::Definitive(state) => {
                     let (status, error_code) = state.as_db();
-                    if let Err(error) =
-                        update_definition_status(&self.db, spec.definition_id, status, error_code)
-                            .await
+                    if let Err(error) = update_definition_status(
+                        &self.db,
+                        spec.definition_id,
+                        status,
+                        error_code,
+                        last_observed,
+                    )
+                    .await
                     {
                         tracing::warn!(
                             error = %error,
@@ -170,16 +183,17 @@ impl MetricDefinitionValidator {
         &self,
         relation: &ObservationRelation,
         spec: &MetricDefinitionValidationSpec,
-    ) -> ProbeOutcome {
+    ) -> (ProbeOutcome, Option<NaiveDate>) {
         let inputs = spec
             .inputs
             .iter()
             .filter(|input| &input.observation_relation == relation)
             .collect::<Vec<_>>();
         if inputs.is_empty() {
-            return ProbeOutcome::Definitive(ValidationState::Error(
-                MetricSchemaErrorCode::Unknown,
-            ));
+            return (
+                ProbeOutcome::Definitive(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
+                None,
+            );
         }
 
         let source_keys = inputs
@@ -189,14 +203,16 @@ impl MetricDefinitionValidator {
             .into_iter()
             .collect::<Vec<_>>();
         let Some(source_key) = source_keys.first().copied() else {
-            return ProbeOutcome::Definitive(ValidationState::Error(
-                MetricSchemaErrorCode::Unknown,
-            ));
+            return (
+                ProbeOutcome::Definitive(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
+                None,
+            );
         };
         if source_keys.len() != 1 {
-            return ProbeOutcome::Definitive(ValidationState::Error(
-                MetricSchemaErrorCode::Unknown,
-            ));
+            return (
+                ProbeOutcome::Definitive(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
+                None,
+            );
         }
 
         let measure_keys = inputs
@@ -204,25 +220,10 @@ impl MetricDefinitionValidator {
             .map(|input| input.measure_key.as_str())
             .collect::<BTreeSet<_>>();
 
-        match self
-            .has_source_rows(relation, source_key, spec.entity_type.as_str())
-            .await
-        {
-            Ok(true) => {}
-            Ok(false) => return ProbeOutcome::Definitive(ValidationState::Unchecked),
-            Err(error) => {
-                tracing::warn!(error = %error, "metric observation row probe failed");
-                return ProbeOutcome::Inconclusive;
-            }
-        }
-
-        // Absence of recent rows for a declared measure is a data condition,
-        // not a schema error: filtered measures (e.g. tool-scoped
-        // conversations) legitimately go quiet. Only measures that ARE
-        // observed can be checked definitively; unobserved ones downgrade
-        // the definition to unchecked, which stays runtime-available.
-        let observed = match self
-            .observed_measure_keys(
+        // One probe answers both questions: which declared measures have
+        // ever been observed (schema), and how fresh each one is (data).
+        let last_dates = match self
+            .measure_last_dates(
                 relation,
                 source_key,
                 spec.entity_type.as_str(),
@@ -230,40 +231,54 @@ impl MetricDefinitionValidator {
             )
             .await
         {
-            Ok(observed) => observed,
+            Ok(last_dates) => last_dates,
             Err(error) => {
                 tracing::warn!(error = %error, "metric measure probe failed");
-                return ProbeOutcome::Inconclusive;
+                return (ProbeOutcome::Inconclusive, None);
             }
         };
+        let last_observed = last_dates.values().max().copied();
+
+        if last_dates.is_empty() {
+            return (ProbeOutcome::Definitive(ValidationState::Unchecked), None);
+        }
+
         let observed_keys = measure_keys
             .iter()
             .copied()
-            .filter(|key| observed.contains(*key))
+            .filter(|key| last_dates.contains_key(*key))
             .collect::<Vec<_>>();
 
         if let Some(outcome) = self
-            .check_dimension_coverage(relation, source_key, spec, &observed_keys)
+            .check_dimension_coverage(relation, source_key, spec, &observed_keys, last_observed)
             .await
         {
-            return outcome;
+            return (outcome, last_observed);
         }
 
+        // A declared measure with no observation ever is a data condition,
+        // not a schema error: filtered measures (e.g. tool-scoped
+        // conversations) legitimately stay quiet. Only measures that ARE
+        // observed can be checked definitively; unobserved ones downgrade
+        // the definition to unchecked, which stays runtime-available.
         if observed_keys.len() < measure_keys.len() {
             let unobserved = measure_keys
                 .iter()
                 .copied()
-                .filter(|key| !observed.contains(*key))
+                .filter(|key| !last_dates.contains_key(*key))
                 .collect::<Vec<_>>();
             tracing::warn!(
                 metric_key = %spec.metric_key,
                 unobserved = ?unobserved,
-                "declared measures without recent observations; definition stays unchecked"
+                "declared measures without observations; definition stays unchecked"
             );
-            return ProbeOutcome::Definitive(ValidationState::Unchecked);
+            return (
+                ProbeOutcome::Definitive(ValidationState::Unchecked),
+                last_observed,
+            );
         }
 
-        ProbeOutcome::Definitive(ValidationState::Ok)
+        (ProbeOutcome::Definitive(ValidationState::Ok), last_observed)
     }
 
     async fn check_dimension_coverage(
@@ -272,10 +287,12 @@ impl MetricDefinitionValidator {
         source_key: &str,
         spec: &MetricDefinitionValidationSpec,
         observed_keys: &[&str],
+        anchor: Option<NaiveDate>,
     ) -> Option<ProbeOutcome> {
-        if observed_keys.is_empty() {
-            return None;
-        }
+        let (observed_keys, anchor) = match (observed_keys, anchor) {
+            ([], _) | (_, None) => return None,
+            (keys, Some(anchor)) => (keys, anchor),
+        };
         for dimension in &spec.dimensions {
             match self
                 .dimension_present_on_all_rows(
@@ -284,6 +301,7 @@ impl MetricDefinitionValidator {
                     spec.entity_type.as_str(),
                     observed_keys.iter().copied(),
                     dimension,
+                    anchor,
                 )
                 .await
             {
@@ -332,49 +350,20 @@ impl MetricDefinitionValidator {
         Ok(ColumnCheck::Present)
     }
 
-    async fn has_source_rows(
-        &self,
-        relation: &ObservationRelation,
-        source_key: &str,
-        entity_type: &str,
-    ) -> Result<bool, clickhouse::error::Error> {
-        let (database, table) = relation.table_ref();
-        let sql = format!(
-            "SELECT count() AS rows \
-             FROM ( \
-                SELECT 1 \
-                FROM {database}.{table} \
-                WHERE source_key = ? \
-                  AND entity_type = ? \
-                  AND metric_date >= today() - {PROBE_WINDOW_DAYS} \
-                LIMIT 1 \
-             )"
-        );
-        let row: CountProbeRow = self
-            .ch
-            .query(&sql)
-            .bind(source_key)
-            .bind(entity_type)
-            .fetch_one()
-            .await?;
-        Ok(row.rows > 0)
-    }
-
-    async fn observed_measure_keys(
+    async fn measure_last_dates(
         &self,
         relation: &ObservationRelation,
         source_key: &str,
         entity_type: &str,
         measure_keys: &[&str],
-    ) -> Result<BTreeSet<String>, clickhouse::error::Error> {
+    ) -> Result<HashMap<String, NaiveDate>, clickhouse::error::Error> {
         let (database, table) = relation.table_ref();
         let placeholders = vec!["?"; measure_keys.len()].join(", ");
         let sql = format!(
-            "SELECT measure_key \
+            "SELECT measure_key, toString(max(metric_date)) AS last_date \
              FROM {database}.{table} \
              WHERE source_key = ? \
                AND entity_type = ? \
-               AND metric_date >= today() - {PROBE_WINDOW_DAYS} \
                AND measure_key IN ({placeholders}) \
              GROUP BY measure_key"
         );
@@ -382,8 +371,18 @@ impl MetricDefinitionValidator {
         for measure_key in measure_keys {
             query = query.bind(*measure_key);
         }
-        let rows = query.fetch_all::<MeasureKeyProbeRow>().await?;
-        Ok(rows.into_iter().map(|row| row.measure_key).collect())
+        let rows = query.fetch_all::<MeasureLastDateProbeRow>().await?;
+        rows.into_iter()
+            .map(|row| {
+                let date = row.last_date.parse::<NaiveDate>().map_err(|error| {
+                    clickhouse::error::Error::Custom(format!(
+                        "unparseable metric_date {:?} for measure {}: {error}",
+                        row.last_date, row.measure_key
+                    ))
+                })?;
+                Ok((row.measure_key, date))
+            })
+            .collect()
     }
 
     async fn dimension_present_on_all_rows<'a>(
@@ -393,10 +392,18 @@ impl MetricDefinitionValidator {
         entity_type: &str,
         measure_keys: impl Iterator<Item = &'a str>,
         dimension: &str,
+        anchor: NaiveDate,
     ) -> Result<bool, clickhouse::error::Error> {
         let measure_keys = measure_keys.collect::<Vec<_>>();
         let rows = self
-            .dimension_coverage(relation, source_key, entity_type, &measure_keys, dimension)
+            .dimension_coverage(
+                relation,
+                source_key,
+                entity_type,
+                &measure_keys,
+                dimension,
+                anchor,
+            )
             .await?;
         let by_measure = rows
             .into_iter()
@@ -417,6 +424,7 @@ impl MetricDefinitionValidator {
         entity_type: &str,
         measure_keys: &[&str],
         dimension: &str,
+        anchor: NaiveDate,
     ) -> Result<Vec<DimensionCoverageProbeRow>, clickhouse::error::Error> {
         let (database, table) = relation.table_ref();
         let placeholders = vec!["?"; measure_keys.len()].join(", ");
@@ -428,7 +436,7 @@ impl MetricDefinitionValidator {
              FROM {database}.{table} \
              WHERE source_key = ? \
                AND entity_type = ? \
-               AND metric_date >= today() - {PROBE_WINDOW_DAYS} \
+               AND metric_date >= toDate(?) - {PROBE_WINDOW_DAYS} \
                AND measure_key IN ({placeholders}) \
              GROUP BY measure_key"
         );
@@ -437,7 +445,8 @@ impl MetricDefinitionValidator {
             .query(&sql)
             .bind(dimension)
             .bind(source_key)
-            .bind(entity_type);
+            .bind(entity_type)
+            .bind(anchor.to_string());
         for measure_key in measure_keys {
             query = query.bind(*measure_key);
         }
@@ -473,13 +482,9 @@ struct ColumnProbeRow {
 }
 
 #[derive(Row, Deserialize)]
-struct CountProbeRow {
-    rows: u64,
-}
-
-#[derive(Row, Deserialize)]
-struct MeasureKeyProbeRow {
+struct MeasureLastDateProbeRow {
     measure_key: String,
+    last_date: String,
 }
 
 #[derive(Row, Deserialize)]

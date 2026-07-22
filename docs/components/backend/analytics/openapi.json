@@ -560,8 +560,27 @@
           "label": {
             "type": "string"
           },
+          "last_observed_date": {
+            "description": "Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`.",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "metric_key": {
             "type": "string"
+          },
+          "schema_error_code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricSchemaErrorCode",
+                "description": "Why `schema_status` is `error`; absent otherwise (the DB enforces the\nbiconditional)."
+              }
+            ]
           },
           "schema_status": {
             "$ref": "#/components/schemas/SchemaStatus"
@@ -645,6 +664,15 @@
           "catalog_metric_ids"
         ],
         "type": "object"
+      },
+      "MetricSchemaErrorCode": {
+        "enum": [
+          "table_not_found",
+          "column_not_found",
+          "dimension_not_covered",
+          "unknown"
+        ],
+        "type": "string"
       },
       "MetricSummary": {
         "description": "Summary returned in list endpoints (no `query_ref`).",

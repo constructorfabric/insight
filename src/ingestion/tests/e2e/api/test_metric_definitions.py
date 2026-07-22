@@ -26,6 +26,12 @@ def test_list_metric_definitions_200(api) -> None:
         assert metric["schema_status"] in VALID_SCHEMA_STATUSES
         assert isinstance(metric["is_enabled"], bool)
         assert isinstance(metric["dimensions"], list)
+        assert metric["last_observed_date"] is None or isinstance(
+            metric["last_observed_date"], str
+        )
+        assert (metric["schema_status"] == "error") == (
+            metric["schema_error_code"] is not None
+        )
 
 
 def test_list_metric_definitions_sorted_and_unique(api) -> None:

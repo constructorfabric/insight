@@ -17,7 +17,7 @@ use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
 use crate::domain::metric_definitions::definition::{MetricDirection, MetricFormat};
-use crate::domain::metric_definitions::error_code::SchemaStatus;
+use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::repository::fetch_dimensions;
 
 /// Response body for `GET /v1/metric-definitions`. Metrics are sorted by
@@ -44,6 +44,13 @@ pub struct MetricDefinitionView {
     pub dimensions: Vec<String>,
     pub is_enabled: bool,
     pub schema_status: SchemaStatus,
+    /// Why `schema_status` is `error`; absent otherwise (the DB enforces the
+    /// biconditional).
+    pub schema_error_code: Option<MetricSchemaErrorCode>,
+    /// Newest `metric_date` ever observed across the definition's input
+    /// measures; absent when no observation has ever been seen. Freshness
+    /// signal, orthogonal to `schema_status`.
+    pub last_observed_date: Option<chrono::NaiveDate>,
 }
 
 impl toolkit::api::api_dto::ResponseApiDto for MetricDefinitionListResponse {}
@@ -62,6 +69,8 @@ struct ListingRow {
     direction: String,
     is_enabled: bool,
     schema_status: String,
+    schema_error_code: Option<String>,
+    last_observed_date: Option<chrono::NaiveDate>,
 }
 
 pub async fn list_definition_views(
@@ -100,6 +109,14 @@ pub async fn list_definition_views(
             .ok_or_else(|| config_error(&row.metric_key, "direction", &row.direction))?;
         let schema_status = SchemaStatus::from_db(&row.schema_status)
             .ok_or_else(|| config_error(&row.metric_key, "schema_status", &row.schema_status))?;
+        let schema_error_code = row
+            .schema_error_code
+            .as_deref()
+            .map(|code| {
+                MetricSchemaErrorCode::from_db(code)
+                    .ok_or_else(|| config_error(&row.metric_key, "schema_error_code", code))
+            })
+            .transpose()?;
         metrics.push(MetricDefinitionView {
             metric_key: row.metric_key,
             label: row.label,
@@ -112,6 +129,8 @@ pub async fn list_definition_views(
             dimensions: dimensions.remove(&row.definition_id).unwrap_or_default(),
             is_enabled: row.is_enabled,
             schema_status,
+            schema_error_code,
+            last_observed_date: row.last_observed_date,
         });
     }
 
@@ -136,7 +155,9 @@ async fn fetch_listing_rows(
             d.format AS format, \
             d.direction AS direction, \
             d.is_enabled AS is_enabled, \
-            d.schema_status AS schema_status \
+            d.schema_status AS schema_status, \
+            d.schema_error_code AS schema_error_code, \
+            d.last_observed_date AS last_observed_date \
          FROM metric_definitions d \
          WHERE d.tenant_id IS NULL OR d.tenant_id = ? \
          ORDER BY d.metric_key",

@@ -1,6 +1,7 @@
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum MetricSchemaErrorCode {
     TableNotFound,
     ColumnNotFound,
@@ -24,6 +25,16 @@ impl MetricSchemaErrorCode {
             Self::ColumnNotFound => "column_not_found",
             Self::DimensionNotCovered => "dimension_not_covered",
             Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "table_not_found" => Some(Self::TableNotFound),
+            "column_not_found" => Some(Self::ColumnNotFound),
+            "dimension_not_covered" => Some(Self::DimensionNotCovered),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
         }
     }
 }

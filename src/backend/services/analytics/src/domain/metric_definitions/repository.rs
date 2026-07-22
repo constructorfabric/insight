@@ -621,19 +621,28 @@ pub async fn update_definition_status(
     definition_id: Uuid,
     status: SchemaStatus,
     error_code: Option<MetricSchemaErrorCode>,
+    last_observed: Option<chrono::NaiveDate>,
 ) -> Result<(), sea_orm::DbErr> {
+    // COALESCE keeps the previously recorded freshness when a sweep could
+    // not produce one (config errors bail before the observation probe) —
+    // last_observed_date is monotonic knowledge, not per-sweep state.
     db.execute(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
              schema_checked_at = CURRENT_TIMESTAMP(3), \
              schema_error_code = ?, \
+             last_observed_date = COALESCE(?, last_observed_date), \
              updated_at = updated_at \
          WHERE id = ?",
         [
             Value::from(status.as_db()),
             match error_code {
                 Some(code) => Value::from(code.as_db()),
+                None => Value::String(None),
+            },
+            match last_observed {
+                Some(date) => Value::from(date.to_string()),
                 None => Value::String(None),
             },
             uuid_value(definition_id),
