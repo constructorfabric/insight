@@ -1,0 +1,104 @@
+spec_version: 1
+description: >
+  Metric: ai.cost.
+  How it's computed (bronze → silver → gold):
+    • bronze: Claude Team daily per-user metrics (cost as a decimal string, e.g. "2.00")
+    • silver: class_ai_dev_usage, deduped to one row per user/day (tool='claude_code');
+              cost_cents ← round(toFloat64(total_cost) * 100)
+    • gold:   ai_bullet_rows branch 3 emits ('cc_cost', cost_cents) per day; the served
+              IC query SUMs the requested person's per-day cost (cents) over the window
+              (value), and reports the DEPARTMENT distribution of those per-person SUMs
+              as median/range_min/range_max.
+
+  NOTE on the served stat set: the IC Bullet AI query_ref (id …0013) is last
+  re-seeded by migration m20260618_000001 (cc_overage), which carries only
+  value/median/range_min/range_max — NOT p25/p75/n. So these AI fixtures assert the
+  four stats the API actually returns; the no-unasserted-stat gate is self-scoping
+  and never requires p25/p75 on a row that does not carry them.
+
+  Department: 5 Engineering members (alice, bob, carol, dave, erin), base rates
+  r ∈ {20,40,60,80,100} cents. Each member is seeded two cost-rows inside the custom
+  window (Nov 01 .. Dec 12) — one Nov 15 (2*r) + one Dec 10 (1*r) — so each per-person
+  window SUM = 3*r cents; total_cost is the decimal dollar string (cents/100). The IC
+  case requests erin (r=100) → value 300; the department of 5 yields the median/range
+  below. Cases: custom scope · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_claude_team.claude_team_code_metrics:
+    # Per member: Nov 15 = 2*r¢, Dec 10 = 1*r¢ → window SUM = 3*r¢.
+    # ── alice, r=20¢ ────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-15", unique_key: cc-alice-20261115, total_cost: "0.40" }  # 2r = 40¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-12-10", unique_key: cc-alice-20261210, total_cost: "0.20" }  # 1r = 20¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-12-10", unique_key: cc-alice-20261210, total_cost: "0.20" }  # duplicate → dedup to 20¢, not 40¢
+    # ── bob, r=40¢ ──────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/bob,   metric_date: "2026-11-15", unique_key: cc-bob-20261115,   total_cost: "0.80" }  # 2r = 80¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/bob,   metric_date: "2026-12-10", unique_key: cc-bob-20261210,   total_cost: "0.40" }  # 1r = 40¢
+    # ── carol, r=60¢ ────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/carol, metric_date: "2026-11-15", unique_key: cc-carol-20261115, total_cost: "1.20" }  # 2r = 120¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/carol, metric_date: "2026-12-10", unique_key: cc-carol-20261210, total_cost: "0.60" }  # 1r = 60¢
+    # ── dave, r=80¢ ─────────────────────────────────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-11-15", unique_key: cc-dave-20261115,  total_cost: "1.60" }  # 2r = 160¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-12-10", unique_key: cc-dave-20261210,  total_cost: "0.80" }  # 1r = 80¢
+    # ── erin, r=100¢ (the requested IC member) ──────────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-11-15", unique_key: cc-erin-20261115,  total_cost: "2.00" }  # 2r = 200¢
+    - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-12-10", unique_key: cc-erin-20261210,  total_cost: "1.00" }  # 1r = 100¢
+
+cases:
+  # ── CUSTOM scope (Nov 01 .. Dec 12) — Nov 15 + Dec 10 rows ───────────────────
+  # per-person sums 3r → dept {60,120,180,240,300}; erin value 300.
+  - name: AI cost
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.cost
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.cost
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 3 }
+      - metric: ai.cost
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 3, p25: 1.2, median: 1.8, p75: 2.4, min: 0.6, max: 3, n: 5 }
+      - metric: ai.cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-11-15' && double(p.value) == 2.0) && s.points.exists(p, p.bucket_start == '2026-12-10' && double(p.value) == 1.0))"
+      - metric: ai.cost
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'claude_code') && double(v.value) == 3.0)"
+
+  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
+  - name: AI cost empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-06-01", to: "2026-06-30" }
+        metrics:
+          - metric_key: ai.cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.cost
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 0 }

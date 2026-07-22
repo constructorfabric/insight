@@ -1,0 +1,194 @@
+spec_version: 1
+description: >
+  Metric: teams_meetings — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Teams meeting report per person (meetings attended)
+    • silver: deduped to meetings-attended per person/day
+    • gold:   value = the requested member's per-person SUM of Teams meetings over
+              the window, Teams-only — the M365 slice of meetings_count (Zoom is
+              filtered out by definition). median/p25/p75/range = the distribution
+              of those per-person SUMs across the member's DEPARTMENT (org_unit_id).
+
+  Department: 5 Engineering members (alice, bob, carol, dave, erin) with meetings
+  attended {1,2,3,4,5}, each seeded as one Teams meeting-row dated 2026-12-25.
+  The IC case requests erin (5), so value = 5; the department of 5 yields
+  median 3, p25 2, p75 4, range [1,5] (quantileExact over the ascending peers).
+  Cases: custom scope (single window over the department) · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_m365.teams_activity:
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-alice-20261225, meetingsAttendedCount: 1, meetingsOrganizedCount: 1, adHocMeetingsAttendedCount: 1, scheduledOneTimeMeetingsAttendedCount: 1, audioDuration: PT1H, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-alice-20261225, meetingsAttendedCount: 1, meetingsOrganizedCount: 1, adHocMeetingsAttendedCount: 1, scheduledOneTimeMeetingsAttendedCount: 1, audioDuration: PT1H, videoDuration: PT0S, screenShareDuration: PT0S }   # duplicate → dedup, not 2
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: bob@example.com,   reportRefreshDate: "2026-12-25", unique_key: tm-bob-20261225,   meetingsAttendedCount: 2, meetingsOrganizedCount: 2, adHocMeetingsAttendedCount: 2, scheduledOneTimeMeetingsAttendedCount: 2, audioDuration: PT2H, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-carol-20261225, meetingsAttendedCount: 3, meetingsOrganizedCount: 3, adHocMeetingsAttendedCount: 3, scheduledOneTimeMeetingsAttendedCount: 3, audioDuration: PT3H, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: tm-dave-20261225,  meetingsAttendedCount: 4, meetingsOrganizedCount: 4, adHocMeetingsAttendedCount: 4, scheduledOneTimeMeetingsAttendedCount: 4, audioDuration: PT4H, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com,  reportRefreshDate: "2026-12-25", unique_key: tm-erin-20261225,  meetingsAttendedCount: 5, meetingsOrganizedCount: 5, adHocMeetingsAttendedCount: 5, scheduledOneTimeMeetingsAttendedCount: 5, audioDuration: PT5H, videoDuration: PT0S, screenShareDuration: PT0S }
+
+cases:
+  - name: Unified collaboration meeting metrics
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-12-01", to: "2026-12-31" }
+        metrics:
+          - metric_key: collab.meeting_hours
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+          - metric_key: collab.meetings_count
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+          - metric_key: collab.meetings_organized
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+          - metric_key: collab.adhoc_meetings
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+          - metric_key: collab.scheduled_meetings
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+          - metric_key: collab.focus_time_pct
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      - metric: collab.meeting_hours
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      - metric: collab.meeting_hours
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: collab.meeting_hours
+        view: timeseries
+        find: { entity_id: erin@example.com }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
+      - metric: collab.meeting_hours
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
+        equal: { value: 5 }
+      - metric: collab.meetings_count
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      - metric: collab.meetings_count
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: collab.meetings_count
+        view: timeseries
+        find: { entity_id: erin@example.com }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
+      - metric: collab.meetings_count
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
+        equal: { value: 5 }
+      - metric: collab.meetings_organized
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      - metric: collab.meetings_organized
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: collab.meetings_organized
+        view: timeseries
+        find: { entity_id: erin@example.com }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
+      - metric: collab.meetings_organized
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
+        equal: { value: 5 }
+      - metric: collab.adhoc_meetings
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      - metric: collab.adhoc_meetings
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: collab.adhoc_meetings
+        view: timeseries
+        find: { entity_id: erin@example.com }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
+      - metric: collab.adhoc_meetings
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
+        equal: { value: 5 }
+      - metric: collab.scheduled_meetings
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      - metric: collab.scheduled_meetings
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: collab.scheduled_meetings
+        view: timeseries
+        find: { entity_id: erin@example.com }
+        contains: { points: { bucket_start: "2026-12-25", value: 5 } }
+      - metric: collab.scheduled_meetings
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: tool, value: m365 } }
+        equal: { value: 5 }
+      - metric: collab.focus_time_pct
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 37.5 }
+      - metric: collab.focus_time_pct
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 37.5, p25: 50, median: 62.5, p75: 75, min: 37.5, max: 87.5, n: 5 }
+      - metric: collab.focus_time_pct
+        view: timeseries
+        find: { entity_id: erin@example.com }
+        contains: { points: { bucket_start: "2026-12-25", value: 37.5 } }
+
+  - name: Unified collaboration meeting metrics empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - { metric_key: collab.meeting_hours, views: [{ view: period }] }
+          - { metric_key: collab.meetings_count, views: [{ view: period }] }
+          - { metric_key: collab.meetings_organized, views: [{ view: period }] }
+          - { metric_key: collab.adhoc_meetings, views: [{ view: period }] }
+          - { metric_key: collab.scheduled_meetings, views: [{ view: period }] }
+          - { metric_key: collab.focus_time_pct, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - { metric: collab.meeting_hours, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.meetings_count, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.meetings_organized, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.adhoc_meetings, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.scheduled_meetings, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
+      - { metric: collab.focus_time_pct, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

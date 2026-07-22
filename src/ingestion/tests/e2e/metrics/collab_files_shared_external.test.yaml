@@ -35,39 +35,45 @@ bronze:
     - { $ref: templates/m365_onedrive.yaml#/templates/m365_onedrive, userPrincipalName: erin@example.com, reportRefreshDate: "2026-12-25", unique_key: ext-erin-20261225, sharedExternallyFileCount: 50 }   # r=50 (the requested IC member; inline base + UPN override)
 
 cases:
-  # ── CUSTOM scope (Dec 23 .. Dec 29) — department of 5 ────────────────────────
-  # per-person SUM r → dept {10,20,30,40,50}; erin value 50.
-  # p25=20 median=30 p75=40 range=[10,50]
-  - name: "m365_files_shared_external — custom scope (department of 5)"
+  - name: collab.files_shared_external
     request:
-      url: /v1/metrics/queries
+      url: /v1/metric-results
       method: POST
       body:
-        queries:
-          - id: collaboration
-            metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-12-23' and metric_date le '2026-12-29'"
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-12-01", to: "2026-12-31" }
+        metrics:
+          - metric_key: collab.files_shared_external
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
     expect:
       - assert: "status == 200"
-      - in: collaboration
-        assert: "result.status == 'ok'"
-      - in: collaboration
-        find: { metric_key: m365_files_shared_external }
-        equal: { value: 50, median: 30, range_min: 10, range_max: 50, p25: 20, p75: 40 }
+      - metric: collab.files_shared_external
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 50 }
+      - metric: collab.files_shared_external
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
+      - metric: collab.files_shared_external
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-25' && double(p.value) == 50.0))"
+      - metric: collab.files_shared_external
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'm365') && double(v.value) == 50.0)"
 
-  # ── EMPTY window (no rows in range) ──────────────────────────────────────────
-  - name: "m365_files_shared_external — EMPTY window (no data → no items)"
+  - name: collab.files_shared_external empty window
     request:
-      url: /v1/metrics/queries
+      url: /v1/metric-results
       method: POST
       body:
-        queries:
-          - id: collaboration
-            metric_id: 00000000-0000-0000-0001-000000000012
-            $filter: "person_id eq 'erin@example.com' and metric_date ge '2026-06-01' and metric_date le '2026-06-30'"
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics: [{ metric_key: collab.files_shared_external, views: [{ view: period }] }]
     expect:
       - assert: "status == 200"
-      - in: collaboration
-        assert: "result.status == 'ok'"
-      - in: collaboration
-        assert: "size(items) == 0"
+      - { metric: collab.files_shared_external, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }

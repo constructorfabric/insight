@@ -42,6 +42,7 @@ class TestYaml:
     path: Path
     # table fqn ("bronze_m365.email_activity") -> list of resolved+padded rows
     bronze: dict[str, list[dict]] = field(default_factory=dict)
+    schemas: dict[str, dict] = field(default_factory=dict)
     cases: list[dict] = field(default_factory=list)
 
     @property
@@ -81,6 +82,7 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
     if not isinstance(bronze_doc, dict):
         raise FixtureError(f"{path}: `bronze` must be a mapping of table → records")
     bronze: dict[str, list[dict]] = {}
+    schemas: dict[str, dict] = {}
     for table, rows in bronze_doc.items():
         if not isinstance(rows, list):
             raise FixtureError(f"{path}: bronze.{table} must be a list of records")
@@ -101,6 +103,7 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
             except schema_validator.SchemaError as e:
                 raise FixtureError(f"{path}: bronze.{table}[{idx}]: {e}") from e
         bronze[table] = resolved
+        schemas[table] = schema
 
     cases = doc["cases"]
     if not isinstance(cases, list) or not cases:
@@ -109,7 +112,13 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
         if not isinstance(case, dict) or "request" not in case or "expect" not in case:
             raise FixtureError(f"{path}: cases[{i}] must be a mapping with `request` and `expect`")
 
-    return TestYaml(name=path.name[: -len(".test.yaml")], path=path, bronze=bronze, cases=cases)
+    return TestYaml(
+        name=path.name[: -len(".test.yaml")],
+        path=path,
+        bronze=bronze,
+        schemas=schemas,
+        cases=cases,
+    )
 
 
 def _find_schemas_dir(test_path: Path) -> Path:

@@ -1,0 +1,78 @@
+spec_version: 1
+description: >
+  Metric: wiki_pages_created (Confluence) — IC Bullet Wiki (…0041), #1440. SINGLE-WINDOW fixture.
+  Department of 5 Engineering members (alice…erin); requested IC member = erin.
+  One narrow custom window (2026-02-01 … 2026-02-07) holds ALL of this
+  fixture's rows (dated 2026-02-04); a second case probes an empty window.
+
+  ISOLATION: silver.class_wiki_pages / class_wiki_engagement are incremental
+  delete+insert tables the e2e rig resets only at SESSION START — the per-test
+  ledger truncates only the bronze a fixture seeds, so a sibling fixture's silver
+  rows persist across tests. Every wiki fixture is therefore pinned to its OWN
+  disjoint date + window so a leaked foreign row falls OUTSIDE this window and
+  cannot perturb the stats. Per-person value = count of pages authored in the window = m → dept {1,2,3,4,5}.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+  bronze_outline.wiki_pages:
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/alice", page_id: cp-alice-1, unique_key: cf-alice-1, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/bob", page_id: cp-bob-1, unique_key: cf-bob-1, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/bob", page_id: cp-bob-2, unique_key: cf-bob-2, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/carol", page_id: cp-carol-1, unique_key: cf-carol-1, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/carol", page_id: cp-carol-2, unique_key: cf-carol-2, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/carol", page_id: cp-carol-3, unique_key: cf-carol-3, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/dave", page_id: cp-dave-1, unique_key: cf-dave-1, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/dave", page_id: cp-dave-2, unique_key: cf-dave-2, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/dave", page_id: cp-dave-3, unique_key: cf-dave-3, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/dave", page_id: cp-dave-4, unique_key: cf-dave-4, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/erin", page_id: cp-erin-1, unique_key: cf-erin-1, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/erin", page_id: cp-erin-2, unique_key: cf-erin-2, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/erin", page_id: cp-erin-3, unique_key: cf-erin-3, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/erin", page_id: cp-erin-4, unique_key: cf-erin-4, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/erin", page_id: cp-erin-5, unique_key: cf-erin-5, version_number: 1, created_at: "2026-02-04T00:00:00Z" }
+    - { $ref: "templates/outline_wiki_pages.yaml#/templates/erin", page_id: cp-erin-1, unique_key: cf-erin-1, version_number: 1, created_at: "2026-02-04T00:00:00Z" }   # re-sync dup → count stays
+
+cases:
+  - name: wiki.pages_created
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-02-01", to: "2026-02-07" }
+        metrics:
+          - metric_key: wiki.pages_created
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      - metric: wiki.pages_created
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      - metric: wiki.pages_created
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: wiki.pages_created
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-02-04' && double(p.value) == 5.0))"
+
+  - name: wiki.pages_created empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics: [{ metric_key: wiki.pages_created, views: [{ view: period }] }]
+    expect:
+      - assert: "status == 200"
+      - { metric: wiki.pages_created, view: period, find: { entity_id: erin@example.com }, equal: { value: 0 } }
