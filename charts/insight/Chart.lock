@@ -1,6 +1,15 @@
 dependencies:
-- name: insight-api-gateway
-  repository: file://../../src/backend/services/api-gateway/helm
+- name: insight-gateway
+  repository: file://../../src/backend/services/gateway/helm
+  version: 0.1.0
+- name: insight-authenticator
+  repository: file://../../src/backend/services/authenticator/helm
+  version: 0.1.0
+- name: insight-fakeidp
+  repository: file://../../src/backend/services/fakeidp/helm
+  version: 0.1.0
+- name: insight-keycloak
+  repository: file://../../src/backend/services/keycloak/helm
   version: 0.1.0
 - name: insight-analytics
   repository: file://../../src/backend/services/analytics/helm
@@ -11,5 +20,5 @@ dependencies:
 - name: insight-frontend
   repository: file://../../src/frontend/helm
   version: 0.1.0
-digest: sha256:fe702b3761feeb33328e51945c6f0a6f8c293250b53317e31349b45a4cdf89f3
-generated: "2026-07-03T10:49:33.322019+02:00"
+digest: sha256:3e5bb801b6b74d639fa2209e5ae039fb3b14488669cf2ebfdbd4740913b7123e
+generated: "2026-07-20T12:43:38.603586+08:00"

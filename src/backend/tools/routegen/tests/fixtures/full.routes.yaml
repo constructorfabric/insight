@@ -10,12 +10,12 @@ defaults:
     - X-Real-IP
     - Forwarded
 routes:
-  - prefix: /api/v1/analytics
+  - prefix: /api/analytics
     upstream: http://analytics.insight.svc.cluster.local:8081
     timeout_ms: 60000
     strip_prefix: false
 
-  - prefix: /api/v1/identity
+  - prefix: /api/identity
     upstream: http://identity.insight.svc.cluster.local:8082
 
   - prefix: /api/v1/stream

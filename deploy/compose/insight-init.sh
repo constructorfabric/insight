@@ -352,9 +352,11 @@ EOF
     TENANT_DEFAULT_ID="$TENANT_DEFAULT_UUID"
   fi
 
-  # ── Dev impersonation email ───────────────────────────────────────
-  echo "--- Dev impersonation ---" >&2
-  DEV_USER_EMAIL=$(ask "VITE_DEV_USER_EMAIL" "dev@company.nonpresent")
+  # ── Primary seeded / login user ───────────────────────────────────
+  echo "--- Login identity ---" >&2
+  echo "  The seeded person you sign in as (also the demo dev-team lead + the" >&2
+  echo "  Keycloak realm anchor). Any *@company.nonpresent; password insight-dev." >&2
+  DEV_USER_EMAIL=$(ask "Login email (VITE_DEV_USER_EMAIL)" "dev@company.nonpresent")
   echo "" >&2
 }
 
@@ -801,7 +803,9 @@ EOF
   # holds the committed sandbox config.
   cp "$values_tmpl" "$values_out"
   yq -i ".global.tenantDefaultId = \"$TENANT_DEFAULT_ID\"" "$values_out"
-  yq -i ".frontend.devUserEmail  = \"$DEV_USER_EMAIL\""    "$values_out"
+  # Full auth: the dev login identity is the fakeidp default user (must exist in
+  # identity's `persons`), not a frontend impersonation escape hatch.
+  yq -i ".fakeidp.devUserEmail   = \"$DEV_USER_EMAIL\""    "$values_out"
   echo "Wrote $values_out." >&2
 
   cat >&2 <<EOF

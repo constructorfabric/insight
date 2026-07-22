@@ -7,10 +7,6 @@
 ##                insight-infra, deployed via `make system-<svc> ENV=local`.
 ##   L3 umbrella (this overlay) runs the app services only into `insight`.
 ##
-## OIDC is disabled for sandbox; the apiGateway lets unauthenticated
-## requests through. Bring up the rest of the stack and then decide on
-## an IdP (Okta, Entra, Auth0, Keycloak, stub Dex, …).
-##
 
 # Gitops contract: `insight-db-creds` is pre-sealed in the `insight`
 # namespace, fetched by `scripts/secret-fetch.sh` with resource name
@@ -82,31 +78,87 @@ ingestion:
 
 # ─── App services ──────────────────────────────────────────────────────────
 #
-# Image tags are NOT pinned here. The umbrella chart's appVersion (and
-# each subchart's image.tag default) drives which image versions get
-# deployed — bumping `.insight-version` switches to that chart's image
-# defaults atomically. Override `image.tag` per service ONLY when you
-# need to roll out a hotfix on one service ahead of a new chart version;
-# remove the override on the next chart bump so you don't drift from
-# the chart's tested set.
+# LOCAL IMAGES: the sandbox runs locally-built `:dev` images, not ghcr. OrbStack
+# (and k3d/kind with a loaded image) share the Docker image store with the
+# cluster, so `IfNotPresent` finds them without a registry. Build them first:
+#     ./dev-compose.sh build            # builds all backend service images :dev
 
-apiGateway:
+# Full auth (NGINX_BFF EPIC #1583) — no auth_disabled anywhere. The nginx
+# `gateway` is the single edge: auth_request -> authenticator, ES256 gateway-JWT
+# injection, fan-out to the app services + SPA. `fakeidp` is the local OIDC
+# provider the authenticator logs in against; every downstream verifies the JWT.
+gateway:
+  image: { repository: insight-gateway, tag: dev, pullPolicy: IfNotPresent }
   replicaCount: 1
-  # Sandbox: no OIDC. Real envs flip this to false and supply an
-  # `insight-oidc` Secret in the `insight` namespace.
-  authDisabled: true
-  # Ingress: empty host matches any Host header — on OrbStack/k3d/kind
-  # the ingress-nginx LoadBalancer takes a host-reachable IP (see
-  # `kubectl -n ingress-nginx get svc`) so `http://<that-ip>/api/...`
-  # works without /etc/hosts entries. Real envs set `host:` to an FQDN
-  # and add TLS via cert-manager.
+  # The gateway is the cluster ingress target. Empty host matches any Host
+  # header — on OrbStack/k3d/kind the ingress-nginx LoadBalancer takes a
+  # host-reachable IP (`kubectl -n ingress-nginx get svc`), so
+  # `http://<that-ip>/...` works without /etc/hosts entries. Real envs set a
+  # host + TLS via cert-manager.
   ingress:
     enabled: true
   resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits:   { cpu: 500m, memory: 512Mi }
+    requests: { cpu: 25m, memory: 32Mi }
+    limits:   { cpu: 500m, memory: 128Mi }
+
+authenticator:
+  image: { repository: insight-authenticator, tag: dev, pullPolicy: IfNotPresent }
+  replicaCount: 1
+  # authn-tls sidecar cert is issued by the bootstrap `local-ca` ClusterIssuer.
+  tlsDiscovery:
+    enabled: true
+    issuerRef:
+      name: local-ca
+      kind: ClusterIssuer
+  # Local IdP = the in-cluster Keycloak (below), pre-seeded `insight-authenticator`
+  # CONFIDENTIAL client. Both the browser AND the authenticator pod reach Keycloak
+  # at the SAME ingress LoadBalancer IP (`__INGRESS_LB_IP__`), so the id_token `iss`
+  # matches for discovery AND the browser redirect. `redirectUri` stays on
+  # `http://localhost` because the `__Host-sid` session cookie requires a
+  # secure-context origin, and `http://localhost` qualifies (the LB IP does not).
+  # clientSecret matches the dev secret gen-realm.py bakes into the realm.
+  oidc:
+    issuerUrl: 'http://__INGRESS_LB_IP__/kc/realms/insight'
+    clientId: "insight-authenticator"
+    clientSecret: "insight-authenticator-dev-secret"
+    redirectUri: "http://localhost/auth/callback"
+    # Optional tenant sourcing: `tenantClaim` names the id_token claim carrying
+    # the single tenant (default `tenant_id` — fakeidp/Keycloak; Entra: `tid`);
+    # `defaultTenantId` is the fallback for a claim-less IdP (e.g. Okta),
+    # empty = fail closed.
+
+# ─── Local IdP topology ──────────────────────────────────────────────────────
+# Local k8s runs an in-cluster `keycloak` exposed THROUGH the ingress at the `/kc`
+# prefix (Keycloak serves under /kc natively via --http-relative-path, no rewrite).
+# The browser reaches it at `http://__INGRESS_LB_IP__/kc` and so does the
+# authenticator pod (via the same LoadBalancer IP), so the id_token issuer matches
+# in both directions. The realm is generated from the seed roster + applied as the
+# `insight-keycloak-realm` ConfigMap by `make deploy ENV=local` (keycloak-realm
+# target) before the umbrella deploys. `__INGRESS_LB_IP__` is the ingress-nginx
+# LoadBalancer IP (`kubectl -n ingress-nginx get svc ingress-nginx-controller`);
+# the per-developer gitignored `values.yaml` substitutes the concrete IP.
+
+# keycloak — DEV/E2E real-OIDC provider (local IdP). NEVER enable in a real env.
+keycloak:
+  deploy: true
+  hostname: 'http://__INGRESS_LB_IP__/kc'
+  ingress:
+    enabled: true
+    className: nginx
+
+# fakeidp — the lighter alt IdP; off for local (keycloak is the local IdP). Flip
+# fakeidp.deploy=true + keycloak.deploy=false (and point authenticator.oidc.issuerUrl
+# back at http://__INGRESS_LB_IP__/idp) to use it instead.
+fakeidp:
+  image: { repository: insight-fakeidp, tag: dev, pullPolicy: IfNotPresent }
+  deploy: false
+  ingress:
+    enabled: false
+  issuer: 'http://__INGRESS_LB_IP__/idp'
+  devUserEmail: "dev@company.nonpresent"
 
 analytics:
+  image: { repository: insight-analytics, tag: dev, pullPolicy: IfNotPresent }
   replicaCount: 1
   resources:
     requests: { cpu: 50m, memory: 128Mi }
@@ -122,6 +174,7 @@ analytics:
 # tenant_default_id) is produced by scripts/compose-app-secrets.sh
 # from insight-db-creds.
 identity:
+  image: { repository: insight-identity, tag: dev, pullPolicy: IfNotPresent }
   deploy: true
   databaseName: "identity"
   # Optional. When set (must be a valid GUID), identity-resolution
@@ -135,15 +188,12 @@ identity:
     limits:   { cpu: 500m, memory: 512Mi }
 
 frontend:
+  # The SPA image is pulled from ghcr (ghcr.io/constructorfabric/insight-front,
+  # chart appVersion tag) — no local build needed. It deploys but may not fully
+  # work against the current backend yet.
+  deploy: true
   replicaCount: 1
-  # Ingress: same host as apiGateway. Path-based routing in
-  # ingress-nginx — `/api/*` → api-gateway, `/*` → frontend. Empty host
-  # matches any Host header (see apiGateway.ingress comment).
+  # No own ingress: the SPA is served THROUGH the gateway edge (the gateway
+  # proxies "/" to the frontend), so only the gateway holds an Ingress.
   ingress:
-    enabled: true
-  # Dev-impersonation: matches apiGateway.authDisabled=true above. The
-  # FE entrypoint writes a runtime `oidc-config.js` so the browser
-  # builds an unsigned-JWT bearer for this address. Wizard collects the
-  # email and the operator can edit `values.yaml` (gitignored copy)
-  # afterwards. Real envs leave this empty and configure `oidc.*`.
-  devUserEmail: "dev@company.nonpresent"
+    enabled: false

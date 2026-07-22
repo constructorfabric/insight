@@ -9,11 +9,9 @@ use std::sync::Arc;
 use axum::Extension;
 use axum::Router;
 use axum::http::StatusCode;
-use axum::middleware::from_fn;
 use sea_orm::DatabaseConnection;
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
 
-use crate::auth;
 use crate::config::GearConfig;
 use crate::domain::profile;
 
@@ -28,17 +26,18 @@ pub struct AppState {
 
 /// Mount the identity-resolution routes onto the host's router.
 ///
-/// Builds our endpoints on a fresh sub-router (so the tenant middleware + the
-/// `AppState` extension scope to our routes, not the host's `/health`/`/docs`),
-/// then merges it into the host router.
+/// Builds our endpoints on a fresh sub-router (so the `AppState` extension
+/// scopes to our routes, not the host's `/health`/`/docs`), then merges it into
+/// the host router. Gateway-JWT identity is enforced entirely by the host authn
+/// pipeline: the `oidc-authn-plugin` verifies the ES256 gateway JWT and maps its
+/// claims — including the single signed `tenant_id` -> `subject_tenant_id` — into
+/// the request `SecurityContext` (`NGINX_BFF` R1). No bespoke tenant layer.
 pub fn register_routes(
     host_router: Router,
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let api = build_operations(Router::new(), openapi)
-        .layer(from_fn(auth::tenant_middleware))
-        .layer(Extension(state));
+    let api = build_operations(Router::new(), openapi).layer(Extension(state));
 
     host_router.merge(api)
 }

@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insight-keycloak.fullname" . }}
+  labels:
+    {{- include "insight-keycloak.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "insight-keycloak.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insight-keycloak.selectorLabels" . | nindent 8 }}
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: keycloak
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - start-dev
+            - --import-realm
+            - --http-relative-path=/kc
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.admin.username | quote }}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              value: {{ .Values.admin.password | quote }}
+            # Advertised (browser + authenticator) issuer base. MUST include /kc.
+            - name: KC_HOSTNAME
+              value: {{ tpl (required "keycloak.hostname is required (the ingress-LB URL both the browser and the authenticator reach, e.g. http://<lb-ip>/kc)" .Values.hostname) . | quote }}
+            # Serve back-channel (token/JWKS) on the reached host too, so an
+            # in-cluster caller works alongside the advertised issuer.
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HTTP_PORT
+              value: {{ .Values.service.port | quote }}
+            - name: JAVA_OPTS_APPEND
+              value: "-Xms256m -Xmx512m"
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+      volumes:
+        - name: realm
+          configMap:
+            # Pre-created by the deploy flow (gen-realm.py -> ConfigMap). The realm
+            # JSON lands under /opt/keycloak/data/import, which --import-realm reads.
+            name: {{ include "insight-keycloak.realmConfigMap" . }}

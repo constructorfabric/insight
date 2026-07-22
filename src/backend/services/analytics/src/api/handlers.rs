@@ -31,6 +31,7 @@ use toolkit_security::SecurityContext;
 
 pub async fn get_person(
     Extension(state): Extension<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Path(email): Path<String>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     if !state.identity.is_configured() {
@@ -39,10 +40,20 @@ pub async fn get_person(
         );
     }
 
-    let person = state.identity.get_person(&email).await.map_err(|e| {
-        tracing::error!(error = %e, email = %email, "identity resolution request failed");
-        CanonicalError::internal("identity resolution unavailable").create()
-    })?;
+    // Forward the caller's gateway JWT to identity (G1): this is a user-context
+    // fan-out, so it propagates the incoming Authorization header verbatim.
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let person = state
+        .identity
+        .get_person(&email, authorization)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "identity resolution request failed");
+            CanonicalError::internal("identity resolution unavailable").create()
+        })?;
 
     match person {
         Some(p) => Ok(Json(serde_json::to_value(p).map_err(|e| {
@@ -304,21 +315,27 @@ async fn execute_metric_query(
                 None => (None, "<"),
             },
         };
-        if date_from.is_some() || date_to.is_some() {
-            let mut clauses: Vec<String> = vec![];
-            if let Some(ref v) = date_from {
-                clauses.push(format!("metric_date >= '{}'", v.replace('\'', "''")));
-            }
-            if let Some(ref v) = date_to {
-                clauses.push(format!(
-                    "metric_date {} '{}'",
-                    date_to_op,
-                    v.replace('\'', "''"),
-                ));
-            }
-            let where_inner = format!(" WHERE {}", clauses.join(" AND "));
+        // Build the validated `WHERE metric_date …` fragment. Each bound is
+        // checked as a strict YYYY-MM-DD date because it is interpolated (not
+        // bound) into the clause — see build_metric_date_where. An invalid
+        // value is a 400, mirroring the $orderby validator.
+        let where_inner =
+            match build_metric_date_where(date_from.as_deref(), date_to.as_deref(), date_to_op) {
+                Ok(w) => w,
+                Err(bad) => {
+                    return Err(MetricError::invalid_argument()
+                        .with_resource(id.to_string())
+                        .with_field_violation(
+                            "$filter",
+                            format!("invalid metric_date value (expected YYYY-MM-DD): {bad}"),
+                            "INVALID",
+                        )
+                        .create());
+                }
+            };
+        if let Some(ref where_inner) = where_inner {
             let normalised = ensure_subquery_from(&from_clause);
-            match inject_date_filter_into_subqueries(&normalised, &where_inner) {
+            match inject_date_filter_into_subqueries(&normalised, where_inner) {
                 Some(new_from) => (new_from, true),
                 None => (from_clause.clone(), false),
             }
@@ -935,6 +952,64 @@ fn is_valid_ident(s: &str) -> bool {
         && !s.ends_with('.')
 }
 
+/// Validate a `metric_date` filter value as a strict `YYYY-MM-DD` calendar date.
+///
+/// `metric_date` is the one filter interpolated into SQL rather than bound, so
+/// this guard is the injection boundary: it must reject anything that is not
+/// exactly ten chars of `dddd-dd-dd` (no quotes, backslashes, whitespace or SQL
+/// fragments). Month/day are range-checked as a sanity bound, not a full
+/// calendar (ClickHouse tolerates e.g. day 31 in a 30-day month, and
+/// `metric_date` is a `Date` column that rejects genuinely impossible values).
+fn is_valid_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return false;
+    }
+    let digits = |lo: usize, hi: usize| b[lo..hi].iter().all(u8::is_ascii_digit);
+    if !(digits(0, 4) && digits(5, 7) && digits(8, 10)) {
+        return false;
+    }
+    // Safe to parse: the ranges are verified ASCII digits above.
+    let month: u32 = s[5..7].parse().unwrap_or(0);
+    let day: u32 = s[8..10].parse().unwrap_or(0);
+    (1..=12).contains(&month) && (1..=31).contains(&day)
+}
+
+/// Build the ` WHERE metric_date …` fragment for the requested date range.
+///
+/// This is the SQL-injection boundary for the date filter: `metric_date` is
+/// interpolated into the fragment (not bound as a `?`), so every bound is
+/// validated as a strict `YYYY-MM-DD` date first. On a malformed bound this
+/// returns `Err(bad_value)` (the caller maps it to a 400); with no bound it
+/// returns `Ok(None)` (no date filter). Because the values are validated they
+/// cannot contain a quote or backslash, so no escaping is needed.
+///
+/// `date_to_op` is the pre-selected comparison operator (`<` for `lt`, `<=`
+/// for `le`); it is a fixed literal chosen by the caller, never user input.
+fn build_metric_date_where(
+    date_from: Option<&str>,
+    date_to: Option<&str>,
+    date_to_op: &str,
+) -> Result<Option<String>, String> {
+    for v in [date_from, date_to].into_iter().flatten() {
+        if !is_valid_date(v) {
+            return Err(v.to_owned());
+        }
+    }
+    let mut clauses: Vec<String> = vec![];
+    if let Some(v) = date_from {
+        clauses.push(format!("metric_date >= '{v}'"));
+    }
+    if let Some(v) = date_to {
+        clauses.push(format!("metric_date {date_to_op} '{v}'"));
+    }
+    if clauses.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(format!(" WHERE {}", clauses.join(" AND "))))
+    }
+}
+
 // ── Shared helpers ──────────────────────────────────────────
 
 /// Product/global tenant. Platform metric *definitions* are seeded once under
@@ -1444,6 +1519,99 @@ mod tests {
         assert!(!is_valid_ident(""));
         assert!(!is_valid_ident(".leading_dot"));
         assert!(!is_valid_ident("trailing_dot."));
+    }
+
+    // ── is_valid_date (metric_date $filter injection guard) ──
+
+    #[test]
+    fn date_valid() {
+        assert!(is_valid_date("2026-01-01"));
+        assert!(is_valid_date("2026-12-31"));
+        assert!(is_valid_date("1970-01-01"));
+    }
+
+    #[test]
+    fn date_rejects_wrong_shape() {
+        assert!(!is_valid_date(""));
+        assert!(!is_valid_date("2026-1-1")); // not zero-padded / wrong length
+        assert!(!is_valid_date("2026/01/01")); // wrong separator
+        assert!(!is_valid_date("2026-01-01 ")); // trailing space
+        assert!(!is_valid_date("2026-13-01")); // month out of range
+        assert!(!is_valid_date("2026-00-10")); // month zero
+        assert!(!is_valid_date("2026-01-32")); // day out of range
+        assert!(!is_valid_date("2026-01-00")); // day zero
+        assert!(!is_valid_date("202X-01-01")); // non-digit
+        assert!(!is_valid_date("2026-01-01T00:00:00")); // datetime, not a Date
+    }
+
+    #[test]
+    fn date_rejects_sql_injection() {
+        // Quote-doubling does NOT neutralise a trailing backslash; strict
+        // validation must.
+        assert!(!is_valid_date("2026-01-01\\")); // backslash escapes the closing quote in CH
+        assert!(!is_valid_date("2026-01-01' OR '1'='1"));
+        assert!(!is_valid_date("2026-01-01'; DROP TABLE metrics --"));
+        assert!(!is_valid_date("2026-01-01' UNION SELECT 1--"));
+    }
+
+    #[test]
+    fn date_rejects_injection_payload_after_odata_extraction()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // End-to-end: the value that reaches the interpolation site is whatever
+        // extract_odata_value pulls out of the raw $filter. This is the exact
+        // vector from the issue — it stops at the first quote and yields
+        // `2026-01-01\`, which the guard must reject.
+        let filter = "metric_date ge '2026-01-01\\' UNION SELECT 1--'";
+        let extracted =
+            extract_odata_value(filter, "metric_date", "ge").ok_or("value is extracted")?;
+        assert_eq!(extracted, "2026-01-01\\");
+        assert!(!is_valid_date(&extracted));
+        Ok(())
+    }
+
+    // ── build_metric_date_where ─────────────────────────────
+
+    #[test]
+    fn build_date_where_both_bounds() -> Result<(), Box<dyn std::error::Error>> {
+        let out = build_metric_date_where(Some("2026-04-01"), Some("2026-05-01"), "<")?
+            .ok_or("expected a WHERE fragment")?;
+        assert_eq!(
+            out,
+            " WHERE metric_date >= '2026-04-01' AND metric_date < '2026-05-01'"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_date_where_inclusive_upper() -> Result<(), Box<dyn std::error::Error>> {
+        let out = build_metric_date_where(None, Some("2026-05-01"), "<=")?
+            .ok_or("expected a WHERE fragment")?;
+        assert_eq!(out, " WHERE metric_date <= '2026-05-01'");
+        Ok(())
+    }
+
+    #[test]
+    fn build_date_where_lower_only() -> Result<(), Box<dyn std::error::Error>> {
+        let out = build_metric_date_where(Some("2026-04-01"), None, "<")?
+            .ok_or("expected a WHERE fragment")?;
+        assert_eq!(out, " WHERE metric_date >= '2026-04-01'");
+        Ok(())
+    }
+
+    #[test]
+    fn build_date_where_none_when_no_bounds() -> Result<(), Box<dyn std::error::Error>> {
+        assert!(build_metric_date_where(None, None, "<")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn build_date_where_rejects_injection() {
+        // The injection vector (and any malformed bound) must be an Err, never
+        // an interpolated fragment.
+        let res = build_metric_date_where(Some("2026-01-01\\"), None, "<");
+        assert!(res.is_err());
+        assert_eq!(res.err(), Some("2026-01-01\\".to_owned()));
+        assert!(build_metric_date_where(Some("2026-04-01"), Some("2026-05-01'--"), "<").is_err());
     }
 
     // ── inject_date_filter_into_subqueries ──────────────────

@@ -98,23 +98,11 @@ global:
     # list. We use bitnamilegacy (see mariadb.image / redis.image) so we
     # have to allow "insecure" images — otherwise the chart refuses to deploy.
     allowInsecureImages: true
-  # Single-tenant default UUID — ONE source of truth for the three places
-  # the chart pins a tenant id:
-  #   1. api-gateway `single-tenant-tr-plugin.tenants[0].id` (the value
-  #      the gateway emits as `X-Insight-Tenant-Id` when the JWT has no
-  #      tenant claim).
-  #   2. `IDENTITY__identity__tenant_default_id` env var on the identity
-  #      service (its ConfigTenantContext fallback).
-  #   3. `APP__gears__analytics__config__metric_catalog__tenant_default_id`
-  #      env var on the analytics (Metric Catalog single-tenant fallback).
-  # Set this to the UUID your `persons` / `account_person_map` /
-  # `org_chart` data was seeded under (i.e. the
-  # `insight_tenant_id` value in ClickHouse `identity_inputs`). Empty =
-  # multi-tenant mode: the api-gateway falls back to the chart's hard
-  # default; identity and analytics leave the resolver strict and
-  # return 400 tenant_unresolved for header-less callers. Visible to all
-  # subcharts (Helm propagates `global.*` automatically), so subchart
-  # templates read `.Values.global.tenantDefaultId` directly.
+  # Optional single-tenant seed UUID. NGINX_BFF: the request tenant comes ONLY
+  # from the signed gateway JWT (the api-gateway plugin + identity's default
+  # fallback were removed), so this no longer affects request-time tenant — it
+  # only feeds the analytics metric-catalog fallback + identity's bootstrap-admin
+  # seed. Empty (default) = no default anywhere; a missing tenant fails closed.
   tenantDefaultId: ""
 # ═══════════════════════════════════════════════════════════════════════════
 #  OBSERVABILITY — logs & traces EMISSION (the product contract)
@@ -191,7 +179,7 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.07.21.12.34-55aa2b2" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.07.22.09.19-5810b65" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -309,51 +297,94 @@ redpanda:
 # NO defaults for image.tag, OIDC audience, OIDC issuer/clientId/redirectUri,
 # or downstream service URLs (those come from `{release}-platform`
 # ConfigMap via envFrom). The chart MUST refuse to render without them.
-apiGateway:
+# ─── Gateway (nginx+auth edge, NGINX_BFF EPIC #1583) ───────────────────────
+# The single entrance: OpenResty runs auth_request -> authenticator, injects the
+# ES256 gateway JWT, and fans out to the app services + SPA. The subchart's own
+# defaults template the upstreams (authenticatorUrl / frontUrl / analytics /
+# identity) off `.Release.Name`, so no per-URL wiring is needed here.
+gateway:
   replicaCount: 2
   image:
-    repository: ghcr.io/constructorfabric/insight-api-gateway
+    repository: ghcr.io/constructorfabric/insight-gateway
     tag: "" # MUST be set (e.g. "0.1.0")
     pullPolicy: IfNotPresent
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: 500m, memory: 256Mi}
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 500m, memory: 128Mi}
+  # The gateway is the cluster ingress target; it routes "/" internally.
   ingress:
-    enabled: false
+    enabled: true
     className: nginx
     host: ""
     tls:
       enabled: false
       secretName: ""
-  # OIDC (required in prod — either existingSecret, or ALL four inline
-  # fields: issuer + audience + clientId + redirectUri). The umbrella
-  # validator fails when authDisabled=false and OIDC is incomplete.
+# ─── Authenticator (OIDC login + Redis sessions + gateway-JWT mint) ─────────
+authenticator:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/constructorfabric/insight-authenticator
+    tag: "" # MUST be set (e.g. "0.1.0")
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  # Leaf config (redis/identity/gateway_issuer/idp/redirect) is composed by the
+  # umbrella into `insight-authenticator-config` (templates/secrets.yaml).
+  existingSecret: "insight-authenticator-config"
+  # ES256 signing keys (current.pem PKCS#8). NOT auto-generated — supplied as a
+  # sealed/BYO Secret with key `current.pem` (local: sealed under
+  # environments/local/sealed-secrets/insight/).
+  signingKeysSecret: "insight-authenticator-signing-keys"
+  # authn-tls sidecar so downstream verifiers resolve the JWKS over https. The
+  # cert is issued by cert-manager; `issuerRef.name` is the cluster's CA issuer
+  # (local: the self-signed `local-ca` ClusterIssuer from bootstrap).
+  tlsDiscovery:
+    enabled: true
+    port: 8443
+    issuerRef:
+      name: local-ca
+      kind: ClusterIssuer
+  # OIDC upstream + browser callback, folded into insight-authenticator-config.
+  # Values may be Helm templates (rendered with `tpl`); local points at fakeidp.
   oidc:
-    existingSecret: ""
-    issuer: ""
-    audience: "" # MUST be set (e.g. "api://insight")
-    clientId: ""
-    redirectUri: ""
-    # Space-separated OIDC scopes; IdP-specific (Entra wants
-    # api://<clientId>/Access.Default; Okta uses bare names).
-    scopes: ""
-  authDisabled: false # true = disable auth (LOCAL DEV ONLY)
-  gateway:
-    prefixPath: "/api"
-    corsEnabled: true
-    enableDocs: false
-    rateLimit: {rps: 100, burst: 50, inFlight: 32}
-  proxy:
-    routes:
-      - prefix: "/analytics"
-        # Templated — `tpl` evaluates this at install time so `.Release.Name`
-        # resolves to the umbrella's release name. Override with a literal
-        # URL (no template syntax) to point at an external service.
-        upstream: 'http://{{ .Release.Name }}-analytics:8081'
-        public: false
-      - prefix: "/identity"
-        upstream: 'http://{{ .Release.Name }}-identity:8082'
-        public: false
+    issuerUrl: "" # the IdP issuer (local: the in-cluster fakeidp FQDN)
+    clientId: "insight-authenticator"
+    clientSecret: ""
+    redirectUri: "" # browser-facing callback, through the gateway edge
+# ─── fakeidp (dev/e2e OIDC provider — NEVER a real environment) ─────────────
+fakeidp:
+  deploy: false
+  image:
+    repository: ghcr.io/constructorfabric/insight-fakeidp
+    tag: "" # MUST be set (e.g. "0.1.0")
+    pullPolicy: IfNotPresent
+  # In-cluster URL the authenticator validates the id_token `iss` against. Set
+  # to the fakeidp Service FQDN (a Helm template, rendered with `tpl`). MUST
+  # equal `authenticator.oidc.issuerUrl`.
+  issuer: ""
+  defaultAudience: "insight-authenticator"
+  devUserEmail: "dev@company.nonpresent"
+# ─── keycloak (real-OIDC dev/e2e IdP — NEVER a real environment) ────────────
+# The heavier, real-login counterpart to fakeidp. Off by default; local k8s
+# flips keycloak.deploy=true + fakeidp.deploy=false and points the authenticator
+# at the pre-seeded `insight-authenticator` confidential client. The realm is
+# generated (deploy/compose/keycloak/gen-realm.py) into a ConfigMap the deploy
+# flow applies as `<release>-keycloak-realm` before this chart.
+keycloak:
+  deploy: false
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "26.4"
+    pullPolicy: IfNotPresent
+  # Advertised issuer BASE (must end in /kc). Both the browser and the in-cluster
+  # authenticator reach it here, so it's the ingress-LB URL (e.g. http://<lb-ip>/kc).
+  # `authenticator.oidc.issuerUrl` MUST equal `${hostname}/realms/insight`.
+  hostname: ""
+  # Pre-created realm ConfigMap (empty = <release>-keycloak-realm).
+  realmConfigMap: ""
+  ingress:
+    enabled: false
 # ─── Analytics ────────────────────────────────────────────────────────────
 analytics:
   replicaCount: 2
@@ -374,6 +405,17 @@ analytics:
   # default). The session-bound tenant from the gateway ALWAYS wins; this
   # global default fires only on header-less callers. Empty global value =
   # strict mode (400 tenant_unresolved on header-less requests).
+  # Gateway-JWT verification (NGINX_BFF R1). The oidc-authn-plugin resolves the
+  # authenticator's JWKS via OIDC discovery over https on `issuer` (the authn-tls
+  # FQDN, rendered with `tpl`). It trusts the issuer's CA (ca.crt) from the
+  # authn-tls cert Secret, mounted via `caCertSecret`. `issuer` here MUST equal
+  # the authenticator's gateway_issuer and the identity issuer.
+  gateway:
+    issuer: 'https://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.cluster.local:8443'
+    audience: "internal-services"
+    caCertSecret: "insight-authenticator-authn-tls-cert"
+    caCertPaths:
+      - /etc/insight/authn-ca/ca.crt
 # ─── Identity (.NET 9) ───────────────────────────────────────────────────
 # The persons-store API. Reads from MariaDB `persons` written by the seed
 # pipeline (src/backend/services/identity/seed/seed-persons-from-identity-input.py)
@@ -422,6 +464,10 @@ identity:
   existingSecret: "insight-identity-config"
 # ─── Frontend (SPA) ──────────────────────────────────────────────────────
 frontend:
+  # Served through the gateway edge at "/". Set deploy=false for a backend-only
+  # bring-up (the gateway resolves its front upstream lazily, so /api/* still
+  # works without a frontend pod).
+  deploy: true
   replicaCount: 1
   image:
     repository: ghcr.io/constructorfabric/insight-front

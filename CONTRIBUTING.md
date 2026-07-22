@@ -30,7 +30,7 @@ files under `docs/components/<area>/specs/`.
 7. [Seeding](#seeding)
    - [Compose](#compose)
    - [Kubernetes](#kubernetes)
-8. [Dev auth chain (no-auth mode)](#dev-auth-chain-no-auth-mode)
+8. [Dev auth chain (fakeidp)](#dev-auth-chain-fakeidp)
 9. [Troubleshooting](#troubleshooting)
 10. [Code style and reviews](#code-style-and-reviews)
 
@@ -63,6 +63,13 @@ the Cargo cache and finish in seconds.
 
 Open <http://localhost:3000>. `dev@company.nonpresent` leads the dev
 team; CEO sees the whole org tree. To use CEO more set email to `email_ceo@company.nonpresent`.
+
+> **Stuck after pulling an update?** The compose stack runs full auth
+> (fakeidp → authenticator → nginx gateway → downstream JWT verification;
+> no `auth_disabled`). If a stale local config trips it up, wipe and
+> regenerate: `rm -f .env.compose && ./dev-compose.sh up` re-runs the
+> first-run wizard, and `./dev-compose.sh prune` additionally clears the
+> containers + volumes for a clean slate.
 
 ---
 
@@ -164,8 +171,12 @@ cp environments/local/inventory.yaml.template environments/local/inventory.yaml
 cp environments/local/values.yaml.template environments/local/values.yaml
 # Edit:
 #   global.tenantDefaultId: <UUID>           # required for external DBs with seeded persons
-#   apiGateway.authDisabled: true            # local sandbox; flip for real OIDC
+#   fakeidp.deploy: true                     # local sandbox IdP; set false + point
+#   authenticator.oidc.issuerUrl: <idp>      #   authenticator.oidc.* at a real IdP
 #   <l2>.host / <l2>.port                    # only when <l2>.deploy=false
+# The `__INGRESS_LB_IP__` placeholders (authenticator.oidc.issuerUrl,
+# fakeidp.issuer) must be replaced with your ingress-nginx LoadBalancer IP
+# (`kubectl -n ingress-nginx get svc ingress-nginx-controller`).
 
 # 3. Cleartext secret store (read by `make seal`, never committed).
 cp secrets-store.yaml.template secrets-store.yaml
@@ -195,8 +206,9 @@ every Deployment is Ready before the chain returns.
 │  Vite dev (HMR) / nginx+dist / ghcr image — port 3000                │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Backend                                                              │
-│  api-gateway (Rust :8080)  analytics (Rust :8081)                    │
+│  gateway (nginx :8080)  analytics (Rust :8081)                       │
 │  identity (.NET 9 :8082)                                              │
+│  authenticator (Rust :8083/:8093)  fakeidp (Rust :8084, dev-only)    │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Infra                                                                │
 │  MariaDB :3306  ClickHouse :8123/:9000  Redis :6379  Redpanda :19092…│
@@ -282,9 +294,10 @@ AUTH_MODE=keycloak
 ./dev-compose.sh up --auth=keycloak   # optional per-run override
 ```
 
-In keycloak mode the api-gateway enforces auth (validates the Keycloak JWT); the
-frontend auto-switches to the OIDC-capable `ghcr` build, and Keycloak uses a
-`localhost` issuer so the browser reaches it via the published port. See
+In keycloak mode the authenticator logs in server-side against the pre-seeded
+realm's `insight-authenticator` confidential client; the SPA stays cookie/BFF (no
+special frontend build), and dev-compose points both the browser and the
+authenticator at a host-IP Keycloak issuer so the id_token `iss` validates. See
 [`deploy/compose/keycloak/README.md`](deploy/compose/keycloak/README.md) for
 login creds, admin console, enforcement, and the custom-claims contract. This is
 distinct from [switching the gateway to real
@@ -296,12 +309,12 @@ an external IdP).
 Skip the local Rust/dotnet build for one or more services:
 
 ```bash
-# Per-run flags
-./dev-compose.sh up --from-ghcr=api-gateway,identity
+# Per-run flags (recognised services: analytics, identity)
+./dev-compose.sh up --from-ghcr=analytics,identity
 ./dev-compose.sh up --build-only=analytics     # invert: build only this
 
 # Or pin in .env.compose
-API_GATEWAY_IMAGE=ghcr.io/constructorfabric/insight-api-gateway:latest
+ANALYTICS_IMAGE=ghcr.io/constructorfabric/insight-analytics:latest
 ```
 
 The script writes `deploy/compose/override.generated.yml` (gitignored) that
@@ -313,7 +326,7 @@ drops the `build:` + bind-mount for the chosen services.
 
 - **Auto-reload** — `ENABLE_AUTO_RELOAD` (compose-only, never in k8s)
 - **Frontend** — `FRONTEND_MODE`, `INSIGHT_FRONT_PATH`, `FRONTEND_IMAGE`
-- **Backend image overrides** — `API_GATEWAY_IMAGE`, `ANALYTICS_IMAGE`, `IDENTITY_IMAGE`
+- **Backend image overrides** — `ANALYTICS_IMAGE`, `IDENTITY_IMAGE`
 - **Host ports** — every published port is configurable
 - **Database mode** — `MARIADB_EXTERNAL`/`_HOST`/`_INTERNAL_PORT`/…, ClickHouse equivalents (see [External DBs](#external-mariadb--clickhouse))
 - **Credentials** — local-only, kept in dotenv per project policy
@@ -330,7 +343,9 @@ drops the `build:` + bind-mount for the chosen services.
 | Edit | Then | Picked up by |
 | --- | --- | --- |
 | Rust / C# source | `./dev-compose.sh build <service>` | watchexec → ~1s restart |
-| `src/backend/services/api-gateway/config/*.yaml` | save | watchexec → ~1s restart (bind-mounted) |
+| `deploy/compose/gateway/routes.yaml` (gateway route table) | `docker compose restart gateway` | nginx.conf regenerated at startup |
+| `src/backend/services/authenticator/config/*.yaml` | save | watchexec → ~1s restart (bind-mounted) |
+| `deploy/compose/analytics-fullauth.yaml` (analytics plugin config) | save | watchexec → ~1s restart (bind-mounted) |
 | identity / analytics env | edit `docker-compose.yml`, `up -d <svc>` | container respawn |
 | Frontend (`dev` mode) | save | Vite HMR |
 | Frontend (`built` mode) | `./dev-compose.sh build frontend` | nginx auto |
@@ -339,11 +354,11 @@ drops the `build:` + bind-mount for the chosen services.
 Build targets:
 
 ```bash
-./dev-compose.sh build api-gateway     # Rust gateway
-./dev-compose.sh build analytics   # Rust analytics
+./dev-compose.sh build analytics       # Rust analytics
+./dev-compose.sh build authenticator   # Rust authenticator
 ./dev-compose.sh build identity        # .NET 9 publish
 ./dev-compose.sh build frontend        # pnpm build → dist/
-./dev-compose.sh build rust            # both Rust services
+./dev-compose.sh build rust            # all Rust services (analytics + authenticator)
 ./dev-compose.sh build all             # everything
 ./dev-compose.sh up --skip-build       # bounce without rebuilding
 ```
@@ -374,7 +389,7 @@ watchexec wants, and `useradd -m` ensures `appuser` has a usable
 
 ```bash
 # Tail logs
-docker compose logs -f api-gateway analytics identity
+docker compose logs -f gateway authenticator analytics identity fakeidp
 
 # Inspect databases
 docker compose exec mariadb mariadb -uinsight -pinsight-local identity
@@ -386,7 +401,7 @@ docker compose exec clickhouse clickhouse-client --user insight --password insig
 ./dev-compose.sh prune                 # interactive nuke — see below
 
 # One-off cargo work
-docker compose --profile build run --rm build-rust cargo test -p insight-api-gateway
+docker compose --profile build run --rm build-rust cargo test -p analytics
 ```
 
 `prune` is the only command that removes `.env.compose`. Always
@@ -394,15 +409,38 @@ interactive — no `--yes` switch. Asks separately whether to also remove
 pulled `ghcr.io/constructorfabric/insight-*` images (defaults to no —
 they're slow to re-pull). After prune, next `up` re-runs the wizard.
 
-### Switch the gateway to real OIDC
+### Point the authenticator at a real IdP
 
-Edit `src/backend/services/api-gateway/config/no-auth.yaml` directly
-(bind-mounted):
+Auth is **always on** — there is no bypass. Local dev logs in against the
+in-repo `fakeidp` OIDC provider by default. The authenticator is
+IdP-agnostic, so switching to a real IdP (Entra, Keycloak, …) is a
+config change, not a mode flip:
 
-1. Set `api-gateway.config.auth_disabled: false`.
-2. Fill in `oidc-authn-plugin.config.issuer_url`, `audience`, and the
-   `auth-info` section's `client_id` / `scopes`.
-3. Save — watchexec restarts in ~1 second.
+- **Compose** — set `AUTHENTICATOR_OIDC_ISSUER` (plus `OIDC_CLIENT_ID` /
+  `OIDC_CLIENT_SECRET` and `AUTHENTICATOR_REDIRECT_URI`) in `.env.compose`
+  and bounce the `authenticator`. Leaving them unset falls back to
+  `http://fakeidp:8084`.
+- **K8s** — set `authenticator.oidc.issuerUrl` (+ `clientId` /
+  `redirectUri`) in the values overlay and set `fakeidp.deploy: false`.
+
+> **redirect/issuer: local uses `localhost`, remote needs a real host.** On local
+> k8s `issuerUrl` is the ingress LB IP (e.g. `http://192.168.139.2/kc/realms/insight`)
+> because it must be reachable by the browser **and** the in-cluster authenticator
+> pod (`localhost` inside the pod is the pod). But `redirectUri` is
+> `http://localhost/auth/callback`: it's where the `__Host-sid` cookie is set, and
+> that cookie needs a *secure context* — `http://localhost` qualifies (OrbStack
+> binds the ingress to `localhost:80`), a plain-HTTP IP does not. This is
+> **single-machine only**: on a *remote* cluster (deploy over a kube-context) your
+> browser's `localhost` is your laptop, not the ingress, so it won't work. Remote /
+> shared envs give the ingress a real DNS host + TLS (cert-manager) and set **both**
+> `issuerUrl` and `redirectUri` to that `https://…` host — over HTTPS `__Host-`
+> cookies work on any hostname, so no `localhost` hack — as the `dev` / `virtuozzo`
+> overlays do. To poke a remote cluster quickly: `kubectl port-forward
+> svc/insight-gateway 8080:80` and use `http://localhost:8080`.
+
+See ADR
+[`docs/components/backend/authenticator/specs/ADR/0001-per-environment-idp-selection.md`](docs/components/backend/authenticator/specs/ADR/0001-per-environment-idp-selection.md)
+for the per-environment IdP selection rationale.
 
 ---
 
@@ -492,36 +530,67 @@ resolves to a real person row and dashboards populate.
 
 ---
 
-## Dev auth chain (no-auth mode)
+## Dev auth chain (fakeidp)
 
-When `AUTH_DISABLED=true` and `VITE_DEV_USER_EMAIL=you@yourorg.com`:
+Auth is **always on** (NGINX_BFF EPIC #1583) — there is no no-auth mode.
+Every request that reaches a backend carries an ES256 gateway JWT that
+the `gateway` (nginx / OpenResty) injects after the `authenticator`
+confirms a valid session. Local dev logs in against `fakeidp`, an
+in-repo dev-only OIDC provider, so the real login code path runs with no
+external IdP.
 
 ```text
-1. Browser   → fetch-with-auth.ts builds an unsigned JWT
-               ({alg:"none"}.{email, sub, preferred_username}.) and sets
-               Authorization: Bearer <jwt> on every request.
-2. Vite      → proxies /api/* to api-gateway via the compose network.
-3. Gateway   → auth_disabled=true skips JWT validation but forwards
-               the Authorization header end-to-end.
-4. Service   → identity's HeaderCallerContext falls back to JWT claims
-               when X-Insight-Person-Id is absent: reads email/sub/oid,
-               looks the value up in persons (value_type='email'),
-               returns the matching person_id. Tenant comes from
-               X-Insight-Tenant-Id or
-               IDENTITY__identity__tenant_default_id.
+1. Browser   → GET /auth/login on the gateway (:8080). The authenticator
+               starts an OIDC authorization-code + PKCE flow and 302s to
+               fakeidp's /authorize.
+2. fakeidp   → no login screen: mints a one-time code for the default
+               user (VITE_DEV_USER_EMAIL) and 302s back to /auth/callback.
+3. Gateway   → /auth/callback → authenticator exchanges the code for
+               tokens, resolves the person in identity, opens an opaque
+               session in Redis, and sets the `__Host-sid` cookie.
+               (`__Host-` requires a secure context — HTTPS or
+               http://localhost.)
+4. Gateway   → on every subsequent /api/* request it runs auth_request
+               against the authenticator, mints/attaches the ES256
+               gateway JWT, and proxies to analytics / identity + the SPA.
+5. Downstream→ analytics verifies the JWT via cf-gears-oidc-authn-plugin
+               (JWKS over the authn-tls discovery front); identity
+               verifies it with .NET JwtBearer against the authenticator's
+               JWKS endpoint. Both resolve the caller person from the
+               token claims.
 ```
 
-So three things must all be true for a dev call to succeed:
+**Driving it from a real browser (not just curl)** works out of the box — two
+things a browser needs that curl doesn't are handled automatically:
 
-- `VITE_DEV_USER_EMAIL` is set (FE builds the bearer token).
+- **The callback rides the SPA's own origin** so the `__Host-sid` cookie lands
+  where the SPA runs: `AUTHENTICATOR_REDIRECT_URI` defaults to
+  `http://localhost:3000/auth/callback` (the Vite origin, which proxies `/auth` +
+  `/api` to the gateway) — never the authenticator's own `:8083`, where the
+  cookie would strand.
+- **The fakeidp issuer is a host IP, not a hostname.** `./dev-compose.sh up`
+  auto-detects your host IP and sets `FAKEIDP_ISSUER` + `AUTHENTICATOR_OIDC_ISSUER`
+  to `http://<host-ip>:8084`. A hostname (`fakeidp:8084`) gets HTTPS-upgraded by
+  the browser and fails (fakeidp is http-only); `localhost` means the container
+  itself. An IP literal is reached un-upgraded by the browser and by the
+  containers alike. (curl/e2e flows run inside the compose network, so when no
+  issuer is set they fall back to `fakeidp:8084` and don't need this.)
+
+So a dev call succeeds when:
+
+- The stack is up with `fakeidp` (default profile) and the authenticator
+  dev signing key + authn-tls cert exist (generated by `dev-compose.sh up`).
 - A row in `persons` has `value_type='email'` and `value_id` matching
-  that address (run `./dev-compose.sh seed identity`).
-- The gateway proxies `/api/{prefix}` to the right upstream (see
-  `no-auth.yaml`).
+  `VITE_DEV_USER_EMAIL` (run `./dev-compose.sh seed identity` — fakeidp's
+  default login resolves to that seeded person).
+- The gateway's `routes.yaml` proxies `/api/{prefix}` to the right
+  upstream (`deploy/compose/gateway/routes.yaml`).
 
-If you bypass the FE (curl from the host), you must construct the same
-fake bearer yourself; otherwise identity returns
-`401 caller_unresolved`.
+To drive it from the host with `curl` (or a browser), start at
+`http://localhost:8080/auth/login` and follow the redirects with a cookie
+jar so the `__Host-sid` cookie is captured; subsequent `/api/*` calls
+reuse that session. `fakeidp` itself exposes a copy-paste code+PKCE flow
+in `src/backend/services/fakeidp/README.md` for exercising it directly.
 
 ---
 
@@ -541,11 +610,18 @@ Image out-of-date (the Dockerfile pins the musl static build of
 watchexec and creates a home dir for `appuser`). Force a rebuild:
 `docker compose build --no-cache <service>`.
 
-**api-gateway exits with `oidc-authn-plugin: issuer_url is required`.**
-`no-auth.yaml` ships with a placeholder issuer because the plugin
-module is registered even when `auth_disabled=true`. Restore the
-`issuer_url: https://no-auth.local/oauth2/default` line — the URL is
-never actually called.
+**`authenticator` exits at startup / login fails.**
+The authenticator needs its dev ES256 signing key
+(`deploy/compose/authenticator-dev-keys/current.pem`) and the analytics
+plugin needs the authn-tls discovery cert
+(`deploy/compose/authn-tls-certs/`). Both are generated by
+`./dev-compose.sh up` (never committed). If they're missing or stale,
+re-run `up` (or `prune` then `up`) so the key/cert are regenerated.
+
+**Login returns 403 / "person not found".**
+`fakeidp`'s default login identity (`VITE_DEV_USER_EMAIL`) must resolve
+to a seeded person in identity. Run `./dev-compose.sh seed identity`
+first — an unknown person is denied.
 
 **Frontend dev mode hangs at "pnpm install".**
 First-run installs all deps into the named volume; can take several

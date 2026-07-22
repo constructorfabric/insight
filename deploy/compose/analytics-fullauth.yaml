@@ -1,0 +1,99 @@
+# dev-compose full-auth analytics host config (bind-mounted over
+# /app/config/insight.yaml). Same structure as
+# services/analytics/config/insight.yaml, but with the oidc-authn-plugin wired
+# to the dev TLS discovery front (`authn-tls`) + its self-signed CA at
+# /certs/ca.pem. DB/ClickHouse/identity/redis leaves come from APP__ env in
+# docker-compose.yml. NGINX_BFF R1: analytics verifies the ES256 gateway JWT.
+
+server:
+  # MUST stay OUTSIDE /app: compose auto-reload (watchexec) watches /app (the
+  # binary's dir), so a home_dir under /app makes the gear's own startup writes
+  # (gts store, etc.) trip a restart mid-migration → a concurrent-migrator
+  # crash-loop. Keep runtime state in /tmp (ephemeral is fine for dev).
+  home_dir: "/tmp/analytics"
+
+logging:
+  default:
+    console_level: info
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "0.0.0.0:8081"
+      enable_docs: true
+      cors_enabled: true
+      openapi:
+        title: "Insight Analytics API"
+        version: "0.1.0"
+        description: "Read-only query service over predefined ClickHouse metrics"
+      auth_disabled: false
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/analytics-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "hyperspot"
+
+  oidc-authn-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 50
+      jwt:
+        supported_algorithms: ["ES256"]
+        clock_skew_leeway: 60s
+        require_audience: true
+        expected_audience:
+          - "internal-services"
+        trusted_issuers:
+          # = token `iss` (authenticator gateway_issuer). discovery_url omitted
+          # → {issuer}/.well-known/openid-configuration, served by authn-tls.
+          - issuer: "https://authn-tls:8443"
+        claim_mapping:
+          subject_id: "sub"
+          subject_tenant_id: "tenant_id"
+          subject_type: "sub_type"
+          token_scopes: "roles"
+        required_claims: []
+      http_client:
+        request_timeout: 5s
+        custom_ca_certificate_paths: ["/certs/ca.pem"]
+      s2s_oauth:
+        discovery_url: "https://authn-tls:8443"
+        default_subject_type: "service"
+        token_cache:
+          ttl: 300s
+          max_entries: 100
+
+  authz-resolver:
+    config:
+      vendor: "hyperspot"
+
+  static-authz-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "hyperspot"
+
+  single-tenant-tr-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 20
+
+  analytics:
+    config:
+      bind_addr: "0.0.0.0:8081"
+      database_url: ""
+      clickhouse_url: ""
+      clickhouse_database: "insight"
+      identity_url: ""
+      redis_url: ""
+      metric_catalog:
+        tenant_default_id: ~
