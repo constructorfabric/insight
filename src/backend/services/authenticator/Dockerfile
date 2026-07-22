@@ -92,3 +92,5 @@ EXPOSE 8083
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/app/authenticator", "--", "/app/authenticator", "-c", "/app/config/insight.yaml", "run"]
+
+# CI rebuild marker -- appVersion bump now covers this subchart (fix/ci-publish-gateway-authenticator).
