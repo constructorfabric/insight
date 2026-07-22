@@ -100,7 +100,7 @@ services to ghcr images, then `docker compose up -d`.
 
 Options:
   --from-ghcr=svc1,svc2     Pull these backend services from ghcr instead
-                            of building. Recognised: api-gateway,
+                            of building. Recognised:
                             analytics, identity.
   --build-only=svc1,svc2    Build only these; everything else from ghcr.
   --frontend-mode=MODE      Override FRONTEND_MODE for this run.
@@ -122,7 +122,7 @@ EOF
 }
 
 # Generate the dev-only ES256 signing key the authenticator mounts at
-# signing_keys_path. Never committed (gitignored) and never baked into an
+# signing_keys_path (§9.6). Never committed (gitignored) and never baked into an
 # image; regenerated on demand. Prod mounts a real key via a K8s Secret.
 ensure_authenticator_dev_key() {
   local dir="deploy/compose/authenticator-dev-keys"
@@ -165,6 +165,75 @@ ensure_service_token_dev_key() {
   fi
   openssl pkey -in "$key" -pubout -out "$pub" 2>/dev/null
   chmod 600 "$key"
+}
+
+# Generate the dev-only self-signed TLS cert for the `authn-tls` front (SAN
+# authn-tls). The analytics oidc-authn-plugin resolves the authenticator's JWKS
+# via OIDC discovery over https ONLY; authn-tls terminates that TLS and analytics
+# trusts ca.pem. Never committed (gitignored). Regenerated when missing/expired.
+ensure_authn_tls_certs() {
+  local dir="deploy/compose/authn-tls-certs"
+  local cert="$dir/server.pem"
+  [[ -f "$cert" ]] && openssl x509 -in "$cert" -noout -checkend 86400 2>/dev/null && return 0
+  mkdir -p "$dir"
+  echo "=== Generating dev TLS cert for the authn-tls discovery front ($cert) ==="
+  # A config file (not -addext) keeps this working on LibreSSL (macOS default).
+  local cnf="$dir/openssl.cnf"
+  cat > "$cnf" <<'EOF'
+[req]
+distinguished_name = dn
+x509_extensions = v3
+prompt = no
+[dn]
+CN = authn-tls
+[v3]
+subjectAltName = DNS:authn-tls
+EOF
+  if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve -out "$dir/server.key" 2>/dev/null; then
+    echo "WARN: openssl unavailable — analytics cannot verify the gateway JWT without the authn-tls cert" >&2
+    return 1
+  fi
+  openssl req -x509 -key "$dir/server.key" -out "$cert" -days 3650 -config "$cnf" 2>/dev/null
+  # The self-signed leaf is its own trust root (analytics adds it as a CA).
+  cp "$cert" "$dir/ca.pem"
+  chmod 644 "$dir/server.key" "$cert" "$dir/ca.pem"
+}
+
+# The host's primary IPv4 (macOS: the default-route interface; Linux: the src of
+# the default route). An IP LITERAL — browsers don't HTTPS-upgrade it (unlike a
+# hostname), and it's reachable from both the host browser and the containers.
+detect_host_ip() {
+  if command -v ipconfig >/dev/null 2>&1; then           # macOS
+    local ifc
+    ifc="$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')"
+    if [[ -n "$ifc" ]] && ipconfig getifaddr "$ifc" 2>/dev/null; then return 0; fi
+    ipconfig getifaddr en0 2>/dev/null && return 0
+    return 1
+  fi
+  ip route get 1.1.1.1 2>/dev/null \
+    | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
+}
+
+# Point fakeidp's issuer at the host IP so the BROWSER login flow works out of
+# the box. The authenticator 302s the browser to `{issuer}/authorize`; a
+# hostname (`fakeidp:8084`) gets HTTPS-upgraded by the browser and fails (fakeidp
+# is http-only), and `localhost` means the container itself. The host IP
+# satisfies both sides over plain http. fakeidp's advertised issuer and the
+# authenticator's expected issuer MUST match, so set both. Skipped when the
+# operator pinned an issuer (a real IdP) or when no host IP is detectable
+# (offline) — then it stays `fakeidp:8084`, which still serves the curl/e2e path.
+ensure_fakeidp_issuer() {
+  [[ -n "${AUTHENTICATOR_OIDC_ISSUER:-}" ]] && return 0
+  local ip
+  ip="$(detect_host_ip)"
+  if [[ -z "$ip" ]]; then
+    echo "WARN: no host IP detected — fakeidp issuer stays http://fakeidp:8084." >&2
+    echo "      curl/e2e still work; browser login needs the browser's HTTPS-upgrade off." >&2
+    return 0
+  fi
+  export FAKEIDP_ISSUER="http://$ip:8084"
+  export AUTHENTICATOR_OIDC_ISSUER="http://$ip:8084"
+  echo "fakeidp issuer → http://$ip:8084 (host IP; browser-reachable, no HTTPS upgrade)"
 }
 
 cmd_up() {
@@ -222,23 +291,22 @@ cmd_up() {
     *) echo "ERROR: AUTH_MODE must be fakeidp|keycloak (got: $AUTH_MODE)" >&2; return 1 ;;
   esac
 
-  # Keycloak mode needs a frontend that injects window.__OIDC_CONFIG__ at
-  # runtime from OIDC_* env — only the published FE image (front-ghcr) does
-  # that via its entrypoint. front-dev (Vite) and front-built (plain nginx)
-  # can't, so they'd render "Nothing to display" with no login. Auto-switch to
-  # ghcr and say so, rather than silently serving a broken login.
-  if [[ "$AUTH_MODE" == keycloak && "$FRONTEND_MODE" != "ghcr" && "$no_frontend" != "true" ]]; then
-    echo "NOTE: AUTH_MODE=keycloak needs the OIDC-injecting frontend image;" >&2
-    echo "      switching FRONTEND_MODE=$FRONTEND_MODE -> ghcr for this run." >&2
-    FRONTEND_MODE="ghcr"
-  fi
+  # Browser OIDC: default the fakeidp issuer to the host IP (unless pinned).
+  # keycloak mode sets its own host-IP issuer in the AUTH_MODE=keycloak block.
+  [[ "$AUTH_MODE" == fakeidp ]] && ensure_fakeidp_issuer
+
+  # NGINX_BFF: keycloak mode needs NO special frontend. The SPA is cookie/BFF
+  # (same-origin): it calls /auth/login + /api through the gateway and never
+  # does client-side OIDC, so any FRONTEND_MODE (incl. the default `dev` Vite)
+  # works — the authenticator, not the frontend, drives the Keycloak login.
 
   # ── Resolve which services go to ghcr ────────────────────────────
-  local all_backend="api-gateway analytics identity"
+  # The legacy Rust api-gateway is gone; the nginx `gateway` is the sole :8080
+  # entry doing full auth via the authenticator (NGINX_BFF #1583 step 09).
+  local all_backend="analytics identity"
   local ghcr_list=""
   local build_list=""
 
-  [[ -n "${API_GATEWAY_IMAGE:-}"   ]] && ghcr_list=$(add "$ghcr_list" api-gateway)
   [[ -n "${ANALYTICS_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" analytics)
   [[ -n "${IDENTITY_IMAGE:-}"      ]] && ghcr_list=$(add "$ghcr_list" identity)
 
@@ -258,7 +326,6 @@ cmd_up() {
     done
   fi
 
-  contains "$ghcr_list" api-gateway   && [[ -z "${API_GATEWAY_IMAGE:-}"   ]] && export API_GATEWAY_IMAGE="ghcr.io/constructorfabric/insight-api-gateway:${API_GATEWAY_GHCR_TAG:-latest}"
   contains "$ghcr_list" analytics && [[ -z "${ANALYTICS_IMAGE:-}" ]] && export ANALYTICS_IMAGE="ghcr.io/constructorfabric/insight-analytics:${ANALYTICS_GHCR_TAG:-latest}"
   contains "$ghcr_list" identity      && [[ -z "${IDENTITY_IMAGE:-}"      ]] && export IDENTITY_IMAGE="ghcr.io/constructorfabric/insight-identity:${IDENTITY_GHCR_TAG:-latest}"
   true
@@ -267,7 +334,7 @@ cmd_up() {
   local override="deploy/compose/override.generated.yml"
   mkdir -p compose
   local want_overrides=false
-  { [[ -n "$ghcr_list" ]] || [[ "$AUTH_MODE" == keycloak ]]; } && want_overrides=true
+  [[ -n "$ghcr_list" ]] && want_overrides=true
   {
     echo "# Auto-generated by dev-compose.sh — DO NOT EDIT BY HAND."
     echo "# Per-run override: flips selected services to ghcr mode, and in"
@@ -294,30 +361,15 @@ cmd_up() {
 YML
         fi
       done
-      # Keycloak mode: turn OFF frontend dev-impersonation so real Keycloak
-      # login engages. Scoped to the frontend services — the ONLY consumers of
-      # the impersonation vars — so seed-sample and the realm roster keep the
-      # real VITE_DEV_USER_EMAIL. (Compose merges these env keys over the base.)
-      if [[ "$AUTH_MODE" == keycloak ]]; then
-        local fe
-        for fe in insight-front-dev insight-front-built insight-front-ghcr; do
-          cat <<YML
-  ${fe}:
-    environment:
-      VITE_DEV_USER_EMAIL: ""
-      DEV_USER_EMAIL: ""
-YML
-        done
-        # NOTE: the api-gateway config switch is NOT done here — it's an env
-        # var (API_GATEWAY_CONFIG) read by the base docker-compose.yml command,
-        # exported in the keycloak branch below. The keycloak config file is
-        # always bind-mounted by the base compose (inert unless selected).
-      fi
+      # NGINX_BFF: no frontend dev-impersonation to disable — the cookie/BFF SPA
+      # has no impersonation path, so keycloak mode needs no per-frontend override.
     fi
   } > "$override"
 
-  # Ensure the authenticator's dev signing key exists before bring-up.
+  # Ensure the authenticator's dev signing key + the authn-tls discovery cert
+  # exist before bring-up (full-auth: analytics verifies the gateway JWT).
   ensure_authenticator_dev_key
+  ensure_authn_tls_certs
 
   # Keycloak mode: generate the realm import file and repoint the
   # authenticator's BFF at Keycloak. This must run before `up -d` — the
@@ -325,36 +377,40 @@ YML
   # missing at container-create time Docker creates an empty directory
   # at the mount path instead, so --import-realm silently imports nothing.
   if [[ "$AUTH_MODE" == keycloak ]]; then
-    # Hand the roster-anchor email to the generator explicitly (--dev-email) so
-    # the realm's dev-lead persona is decoupled from VITE_DEV_USER_EMAIL's other
-    # role (the frontend dev-impersonation trigger). VITE_DEV_USER_EMAIL stays
-    # set here — the realm roster and the seed step both still need it. The
-    # frontend impersonation is turned off separately, per-service, in the
-    # generated override above (NOT by blanking the shell var, which would also
-    # break seed-sample).
+    # Roster anchor for the realm's dev-lead persona (passed explicitly so it's
+    # independent of any other VITE_DEV_USER_EMAIL role). It stays set — the
+    # realm roster and the seed step both need it.
     local dev_lead_email="${VITE_DEV_USER_EMAIL:?VITE_DEV_USER_EMAIL must be set (roster anchor for the Keycloak realm; e.g. dev@company.nonpresent — see .env.compose)}"
+
+    # The authenticator (server-side) AND the browser must reach Keycloak at the
+    # SAME issuer, or the id_token `iss` won't validate. Use the host IP (an IP
+    # literal the browser won't HTTPS-upgrade, reachable from the container via
+    # the published :8085) — the same trick as ensure_fakeidp_issuer. A
+    # `localhost` issuer is unreachable from inside the authenticator; a
+    # `keycloak:8085` issuer wouldn't match the browser-facing `iss`.
+    local kc_ip; kc_ip="$(detect_host_ip)"
+    if [[ -z "$kc_ip" ]]; then
+      echo "WARN: no host IP detected — Keycloak issuer stays localhost (browser-only; the authenticator can't reach it)." >&2
+      kc_ip="localhost"
+    fi
+    local kc_base="http://${kc_ip}:8085/kc"
 
     echo "=== Generating Keycloak realm import (deploy/compose/keycloak/realm-insight.generated.json) ==="
     python3 deploy/compose/keycloak/gen-realm.py \
       --dev-email "$dev_lead_email" \
       --out deploy/compose/keycloak/realm-insight.generated.json
 
-    # Frontend OIDC config. The compose FE does the OIDC code+PKCE flow
-    # directly (SPA) using the PUBLIC `insight` client; its entrypoint injects
-    # window.__OIDC_CONFIG__ from these. The issuer is the browser-facing
-    # localhost URL (reached via the published port). Consumed by
-    # front-ghcr's ${OIDC_ISSUER}/${OIDC_CLIENT_ID}/${OIDC_SCOPES}.
-    export OIDC_ISSUER="http://localhost:8085/kc/realms/insight"
-    export OIDC_CLIENT_ID="insight"
-    export OIDC_SCOPES="openid profile email"
-
-    # Enforce auth at the gateway: select the compose-only keycloak config via
-    # the API_GATEWAY_CONFIG env switch the base docker-compose.yml command
-    # reads (the file is always bind-mounted there). fakeidp mode leaves this
-    # unset, so the command falls back to no-auth.yaml (bypass).
-    export API_GATEWAY_CONFIG="/app/config-compose/keycloak.yaml"
-    # NOTE: the `authenticator` BFF is NOT in the compose login path (the FE
-    # talks OIDC directly), so we do not repoint it here.
+    # NGINX_BFF: the AUTHENTICATOR (not the frontend) logs in against Keycloak,
+    # server-side, as the pre-seeded `insight-authenticator` confidential client.
+    # - KEYCLOAK_HOSTNAME  -> the keycloak service's advertised (browser-facing) issuer
+    # - AUTHENTICATOR_OIDC_ISSUER -> what the authenticator discovers + validates `iss` against
+    # redirect_uri keeps its default (the SPA origin http://localhost:3000/auth/callback,
+    # which the realm registers for this client).
+    export KEYCLOAK_HOSTNAME="$kc_base"
+    export AUTHENTICATOR_OIDC_ISSUER="${kc_base}/realms/insight"
+    export OIDC_CLIENT_ID="insight-authenticator"
+    export OIDC_CLIENT_SECRET="insight-authenticator-dev-secret"
+    echo "keycloak issuer → ${kc_base}/realms/insight (host IP; browser + authenticator reachable)"
 
     # AUTH_DISABLED is a separate, blunter bypass; if it's on, real login is
     # still skipped regardless.
@@ -386,7 +442,6 @@ YML
     # binary is bind-mounted as a file — omit it and compose auto-creates the
     # mount source as an empty directory, failing container init.
     local rust_bins="authenticator"
-    contains "$ghcr_list" api-gateway || rust_bins="$rust_bins insight-api-gateway"
     contains "$ghcr_list" analytics   || rust_bins="$rust_bins analytics"
     rust_bins=$(trim "$rust_bins")
     if [[ -n "$rust_bins" ]]; then
@@ -400,8 +455,7 @@ YML
           apt-get update && apt-get install -y --no-install-recommends \
             protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
           cargo build --release$bin_flags
-          mkdir -p /out/api-gateway /out/analytics /out/authenticator
-          [ -f /target/release/insight-api-gateway ] && install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway || true
+          mkdir -p /out/analytics /out/authenticator
           [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
           [ -f /target/release/authenticator ]       && install -m 0755 /target/release/authenticator       /out/authenticator/authenticator || true
         "
@@ -491,19 +545,13 @@ report_service_urls() {
   if [[ "$frontend_up" == "true" ]]; then
     printf '  %-18s %s\n' "Frontend UI"   "http://$h:${FRONTEND_PORT:-3000}"
   fi
-  printf '  %-18s %s\n' "API Gateway"     "http://$h:${API_GATEWAY_PORT:-8080}"
+  printf '  %-18s %s\n' "Gateway"         "http://$h:${GATEWAY_PORT:-8080}"
   printf '  %-18s %s\n' "Analytics API"   "http://$h:${ANALYTICS_PORT:-8081}"
   printf '  %-18s %s\n' "Identity API"    "http://$h:${IDENTITY_PORT:-8082}"
   printf '  %-18s %s\n' "Authenticator"   "http://$h:${AUTHENTICATOR_PORT:-8083}"
   if [[ "$auth_mode" == keycloak ]]; then
     printf '  %-18s %s\n' "Keycloak" \
       "http://$h:${KEYCLOAK_PORT:-8085}/kc/admin/  (admin console: admin/admin)"  # RULE-DEFAULTS-OK: display-only port default, mirrors the pre-existing per-service *_PORT lines above
-    # Default login to show testers: a stable ENGINEERING persona (development
-    # team). Any seeded persona works (email_{development,sales,hr,support}_NN@
-    # company.nonpresent, the *_lead variants, or email_ceo@…); all use the same
-    # password. Independent of VITE_DEV_USER_EMAIL so the hint never drifts.
-    printf '  %-18s %s\n' "  ↳ login" \
-      "${KEYCLOAK_DEFAULT_LOGIN:-email_development_01@company.nonpresent} / insight-dev   (engineering; any seeded persona works)"
   else
     printf '  %-18s %s\n' "Fake IdP"        "http://$h:${FAKEIDP_PORT:-8084}"
   fi
@@ -517,6 +565,16 @@ report_service_urls() {
   printf '  %-18s %s\n' "Redis"           "$h:${REDIS_PORT:-6379}"
   printf '  %-18s %s\n' "Redpanda Kafka"  \
     "$h:${REDPANDA_KAFKA_PORT:-19092}  (admin $h:${REDPANDA_ADMIN_PORT:-19644}, schema $h:${REDPANDA_SCHEMA_PORT:-18081})"
+
+  echo
+  echo "=== Sign in ==="
+  if [[ "$auth_mode" == keycloak ]]; then
+    echo "  Open http://$h:${FRONTEND_PORT:-3000}, click Sign in, then at the Keycloak form enter"
+    echo "  your dev persona (or any seeded user) + password insight-dev:"
+    echo "    ${VITE_DEV_USER_EMAIL:-dev@company.nonpresent}   /   insight-dev"
+  else
+    echo "  fakeidp auto-logs-in as ${VITE_DEV_USER_EMAIL:-dev@company.nonpresent} (no form) — just open http://$h:${FRONTEND_PORT:-3000}."
+  fi
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -602,7 +660,6 @@ Rebuild one host-side artefact and let the already-running container
 pick it up via ENABLE_AUTO_RELOAD.
 
 Targets:
-  api-gateway        Rust gateway binary only.
   analytics          Rust analytics binary only.
   authenticator      Rust authenticator binary only.
   identity           .NET 9 publish output.
@@ -633,27 +690,31 @@ cmd_build() {
       apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
       cargo build --release$bin_flags
-      mkdir -p /out/api-gateway /out/analytics /out/authenticator
-      [ -f /target/release/insight-api-gateway ] && install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway || true
+      mkdir -p /out/analytics /out/authenticator
       [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
       [ -f /target/release/authenticator ]       && install -m 0755 /target/release/authenticator       /out/authenticator/authenticator || true
     "
   }
 
-  case "$target" in
-    api-gateway)   build_rust_bins insight-api-gateway ;;
-    analytics)     build_rust_bins analytics ;;
-    authenticator) build_rust_bins authenticator ;;
-    rust)          build_rust_bins insight-api-gateway analytics authenticator ;;
-    identity)    "${compose_cmd[@]}" run --rm build-dotnet ;;
-    frontend)    "${compose_cmd[@]}" run --rm build-frontend ;;
-    all)
-      build_rust_bins insight-api-gateway analytics authenticator
-      "${compose_cmd[@]}" run --rm build-dotnet
-      "${compose_cmd[@]}" run --rm build-frontend
-      ;;
-    *) echo "ERROR: unknown target: $target" >&2; cmd_build_help; return 2 ;;
-  esac
+  # Accept MULTIPLE targets, e.g. `build authenticator identity`. Rust bins are
+  # batched into one build; dotnet/frontend run once if requested.
+  local rust_bins="" want_dotnet=false want_frontend=false t
+  for t in "$@"; do
+    case "$t" in
+      analytics)     rust_bins="$rust_bins analytics" ;;
+      authenticator) rust_bins="$rust_bins authenticator" ;;
+      rust)          rust_bins="$rust_bins analytics authenticator" ;;
+      identity)      want_dotnet=true ;;
+      frontend)      want_frontend=true ;;
+      all)           rust_bins="$rust_bins analytics authenticator"; want_dotnet=true; want_frontend=true ;;
+      *) echo "ERROR: unknown target: $t" >&2; cmd_build_help; return 2 ;;
+    esac
+  done
+  rust_bins="$(trim "$rust_bins")"
+  # shellcheck disable=SC2086 # word-split the bin list intentionally
+  [[ -n "$rust_bins" ]] && build_rust_bins $rust_bins
+  [[ "$want_dotnet"   == true ]] && "${compose_cmd[@]}" run --rm build-dotnet
+  [[ "$want_frontend" == true ]] && "${compose_cmd[@]}" run --rm build-frontend
   echo "Done. If a runtime container has ENABLE_AUTO_RELOAD=true it will restart automatically."
 }
 

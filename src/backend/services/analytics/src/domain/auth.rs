@@ -58,14 +58,14 @@ pub type ActorSubject = String;
 /// `None` as a 400 `invalid_argument` per
 /// `cpt-metric-cat-constraint-tenant-default`.
 pub trait TenantAuthorization: Send + Sync {
-    /// `session_tenant`: the tenant attached to the session by upstream auth
-    /// (today: the `X-Insight-Tenant-Id` header stub; eventually the JWT
-    /// `insight_tenant_id` claim). `None` when the session carries no tenant.
+    /// `session_tenant`: the request's resolved tenant. It comes from the signed
+    /// gateway JWT — the `authverify` layer selects it from the JWT's `tenants[]`
+    /// via the `X-Tenant-ID` selector (G2) and sets `SecurityContext`'s
+    /// `subject_tenant_id`. `None` when the caller carries no tenant.
     ///
-    /// No longer called from the request path under the auth-disabled host
-    /// (the gateway injects the tenant and `crate::auth::tenant_middleware`
-    /// overrides it directly), but retained on the trait + covered by unit
-    /// tests for the single-tenant-fallback security invariant.
+    /// Not called from the request path today (`authverify` sets the context's
+    /// tenant directly), but retained on the trait + covered by unit tests for
+    /// the single-tenant-fallback security invariant.
     #[allow(dead_code)]
     fn resolve_tenant(&self, session_tenant: Option<Uuid>) -> Option<Uuid>;
 

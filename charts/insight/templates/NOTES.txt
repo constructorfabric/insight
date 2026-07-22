@@ -15,9 +15,13 @@ Resolved infra endpoints (external L2, see ConfigMap {{ .Release.Name }}-platfor
   Airbyte:     {{ include "insight.airbyte.url" . }}
 
 Application services (always-on):
-  ✓ API Gateway        http://{{ include "insight.apiGateway.host" . }}:8080
+  ✓ Gateway (edge)     http://{{ include "insight.gateway.host" . }}:8080
+  ✓ Authenticator      http://{{ include "insight.authenticator.host" . }}:8083
   ✓ Analytics          http://{{ include "insight.analytics.host" . }}:8081
   ✓ Frontend           http://{{ include "insight.frontend.host" . }}:80
+{{- if .Values.fakeidp.deploy }}
+  ⚠ fakeidp (dev IdP)  http://{{ include "insight.fakeidp.host" . }}:8084  (DEV/E2E ONLY — never production)
+{{- end }}
 {{- if .Values.identity.deploy }}
   ✓ Identity           http://{{ include "insight.identity.host" . }}:8082  (deployed)
 {{- else }}
@@ -36,19 +40,15 @@ Next steps:
   1. Wait for all pods to be ready:
        kubectl -n {{ .Release.Namespace }} rollout status -l app.kubernetes.io/part-of=insight deploy --timeout=5m
 
-  2. Open the frontend locally:
-       kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "insight.frontend.host" . }} 8080:80
+  2. Open the platform locally (everything enters through the gateway edge):
+       kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "insight.gateway.host" . }} 8080:8080
 
   3. Docs: https://github.com/constructorfabric/insight
 
-{{- /* Only warn when auth is enabled, no existingSecret is set,
-       and inline issuer is also empty — i.e. operator hasn't picked
-       any of the three valid OIDC paths. */ -}}
-{{- $oid := default dict .Values.apiGateway.oidc -}}
-{{ if and (not .Values.apiGateway.authDisabled) (not $oid.existingSecret) (not $oid.issuer) -}}
-⚠  WARNING: OIDC is not configured. For production set either
-            apiGateway.oidc.existingSecret OR all four inline fields
-            (issuer + audience + clientId + redirectUri).
+{{- if .Values.fakeidp.deploy }}
+⚠  WARNING: fakeidp is DEPLOYED — this is a DEV/E2E-only OIDC provider and must
+            NEVER run in a real environment. Set fakeidp.deploy=false and point
+            authenticator.oidc.issuerUrl at your real IdP for anything else.
 {{- end }}
 
 {{- if .Values.credentials.autoGenerate }}

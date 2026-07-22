@@ -23,19 +23,21 @@ sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 # ToolKit host runtime. analytics runs as a gears-rust host: routes are
 # declared via `OperationBuilder` and served by the `api-gateway` system gear
-# (the REST host) under `toolkit::bootstrap::run_server`. Auth is disabled on
-# this host (the platform api-gateway is the sole authenticator; see
-# config + `crate::gear`), so the host injects a single-tenant SecurityContext
-# and a thin layer overrides the tenant from `X-Insight-Tenant-Id`.
+# (the REST host) under `toolkit::bootstrap::run_server`. Auth is ENABLED: the
+# `oidc-authn-plugin` (cf-gears-oidc-authn-plugin) verifies the ES256 gateway JWT
+# against the authenticator's JWKS and maps its claims to a SecurityContext via
+# configured claim_mapping (sub→subject_id, tenant_id→subject_tenant_id,
+# roles→token_scopes) — no bespoke wrapper (NGINX_BFF R1 / G2).
 toolkit = { workspace = true, features = ["bootstrap"] }
 toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
 
-# System gears linked for the REST host + (disabled) auth pipeline. Discovered
-# at link time via inventory; mirrors the api-gateway service's no-auth setup.
+# System gears linked for the REST host + auth pipeline. Discovered at link time
+# via inventory; mirrors the api-gateway service's authenticated gear set.
 api_gateway = { workspace = true }
 authn-resolver = { workspace = true }
 authz-resolver = { workspace = true }
+oidc-authn-plugin = { workspace = true }
 tenant-resolver = { workspace = true }
 single-tenant-tr-plugin = { workspace = true }
 static-authz-plugin = { workspace = true }
@@ -66,7 +68,6 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 
 [dev-dependencies]
-# `tower::ServiceExt::oneshot` for driving the Axum router in
-# `api::tenant_resolution_tests` (Refs #522). Same dev-dep pattern as
-# api-gateway's proxy tests.
+# `tower::ServiceExt::oneshot` for driving the Axum router in the HTTP
+# integration tests. Same dev-dep pattern as api-gateway's proxy tests.
 tower = { version = "0.5", features = ["util"] }

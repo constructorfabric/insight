@@ -125,13 +125,22 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
             "commit_change_size",
             "code_lines_added",
             "lines_added",
+            "lines_removed",
             "pr_created",
             "pr_created_merged",
             "pr_merged",
             "pr_cycle_hours",
             "pr_change_size",
         ],
-        dimensions: &["source", "category"],
+        dimensions: &[
+            "category",
+            "change_type",
+            "destination_branch",
+            "file_extension",
+            "project",
+            "repository",
+            "source",
+        ],
     },
     BuiltinSource {
         source: SourceSeed {
@@ -429,7 +438,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "commit_count",
         }],
-        dimensions: &["source"],
+        dimensions: &["project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.code_lines",
@@ -450,7 +459,13 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "code_lines_added",
         }],
-        dimensions: &["source"],
+        dimensions: &[
+            "change_type",
+            "file_extension",
+            "project",
+            "repository",
+            "source",
+        ],
     },
     MetricSeed {
         metric_key: "git.lines_added",
@@ -471,7 +486,42 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "lines_added",
         }],
-        dimensions: &["category", "source"],
+        dimensions: &[
+            "category",
+            "change_type",
+            "file_extension",
+            "project",
+            "repository",
+            "source",
+        ],
+    },
+    MetricSeed {
+        metric_key: "git.lines_removed",
+        source_key: "git",
+        label: "Lines removed",
+        description: Some("All lines removed, by file category"),
+        explanation: Some(
+            "Lines removed across all reported file changes, with file-category, repository, and source breakdowns available.",
+        ),
+        unit: Some("lines"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::Neutral,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "lines_removed",
+        }],
+        dimensions: &[
+            "category",
+            "change_type",
+            "file_extension",
+            "project",
+            "repository",
+            "source",
+        ],
     },
     MetricSeed {
         metric_key: "git.prs_created",
@@ -490,7 +540,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "pr_created",
         }],
-        dimensions: &["source"],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.prs_merged",
@@ -509,7 +559,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "pr_merged",
         }],
-        dimensions: &["source"],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.merge_rate",
@@ -536,7 +586,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
                 measure_key: "pr_created",
             },
         ],
-        dimensions: &[],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.commits_per_active_day",
@@ -582,7 +632,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "commit_change_size",
         }],
-        dimensions: &["source"],
+        dimensions: &["project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.pr_size",
@@ -603,7 +653,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "pr_change_size",
         }],
-        dimensions: &["source"],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.pr_cycle_time_h",
@@ -624,7 +674,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "pr_cycle_hours",
         }],
-        dimensions: &["source"],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     // ─────────────────────────── collaboration ───────────────────────────
     MetricSeed {

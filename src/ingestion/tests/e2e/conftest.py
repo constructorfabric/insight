@@ -25,18 +25,18 @@ from __future__ import annotations
 
 import logging
 import os
-import pytest
-
 from pathlib import Path
 
+import pytest
 from lib import clickhouse as ch
 from lib import compose, mariadb
 from lib.analytics import AnalyticsProcess, find_free_port, locate_binary
 from lib.ch_seeder import CHSeeder
-from lib.config import SessionConfig, TEST_TENANT_ID
+from lib.config import TEST_TENANT_ID, SessionConfig
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
-from lib.fixture_loader import TestYaml, discover_tests, load as load_test
+from lib.fixture_loader import TestYaml, discover_tests
+from lib.fixture_loader import load as load_test
 from lib.identity_stub import IdentityStub
 from lib.metric_seed import seed_test_metrics
 from lib.migration_applier import apply_all as apply_ch_migrations
@@ -252,6 +252,7 @@ def analytics(
     cfg = ch_migrations_applied
     dbt_runner.run("tag:gold", worker_ctx=worker_ctx)
     from lib.analytics import ApiSpawnError  # local import to keep top clean
+
     try:
         binary = locate_binary(cfg)
     except ApiSpawnError as e:
@@ -317,11 +318,7 @@ def pytest_generate_tests(metafunc):
     """Generate one `test_metric_smoke` invocation per discovered `*.test.yaml`."""
     if "test_yaml" in metafunc.fixturenames and metafunc.function.__name__ == "test_metric_smoke":
         paths = discover_tests(_METRICS_ROOT)
-        metafunc.parametrize(
-            "test_path",
-            paths,
-            ids=[p.name[: -len(".test.yaml")] for p in paths],
-        )
+        metafunc.parametrize("test_path", paths, ids=[p.name[: -len(".test.yaml")] for p in paths])
 
 
 @pytest.fixture

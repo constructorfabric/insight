@@ -24,7 +24,7 @@ type SeriesKey = (String, DimensionKey);
 type PointsByBucket = HashMap<String, Option<f64>>;
 
 pub fn build_period_view(
-    def: &MetricDefinition,
+    _def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     rows: Vec<PeriodQueryRow>,
 ) -> MetricResultViewDto {
@@ -37,24 +37,14 @@ pub fn build_period_view(
         .iter()
         .map(|entity_id| PeriodValueDto {
             entity_id: entity_id.clone(),
-            value: values_by_entity
-                .get(entity_id)
-                .copied()
-                .flatten()
-                .or_else(|| {
-                    if def.is_zero_filled() {
-                        Some(zero_fill_value(def))
-                    } else {
-                        None
-                    }
-                }),
+            value: values_by_entity.get(entity_id).copied().flatten(),
         })
         .collect();
     MetricResultViewDto::Period { values }
 }
 
 pub fn build_timeseries_view(
-    def: &MetricDefinition,
+    _def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     bucket: Bucket,
     dimensions: &[String],
@@ -86,13 +76,7 @@ pub fn build_timeseries_view(
                 .iter()
                 .map(|bucket| TimeseriesPointDto {
                     bucket_start: bucket.clone(),
-                    value: points_by_bucket.get(bucket).copied().flatten().or_else(|| {
-                        if def.is_zero_filled() {
-                            Some(zero_fill_value(def))
-                        } else {
-                            None
-                        }
-                    }),
+                    value: points_by_bucket.get(bucket).copied().flatten(),
                 })
                 .collect();
             TimeseriesDto {
@@ -234,16 +218,6 @@ pub fn build_metric_result(
         direction: def.base.direction,
         computation,
         views,
-    }
-}
-
-// The fabricated zero for absent zero-filled entities, shaped by the
-// definition's transform so a clamped or folded metric zero-fills to the
-// value an actual all-zero aggregation would produce.
-fn zero_fill_value(def: &MetricDefinition) -> f64 {
-    match &def.transform {
-        Some(transform) => transform.apply(0.0),
-        None => 0.0,
     }
 }
 
@@ -420,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn period_view_zero_fills_sum_and_keeps_request_order() {
+    fn period_view_keeps_missing_sum_null_and_request_order() {
         let req = request(vec!["b@x.io", "a@x.io"], "2026-01-01", "2026-01-31");
         let rows = vec![PeriodQueryRow {
             entity_id: "a@x.io".to_owned(),
@@ -431,7 +405,7 @@ mod tests {
             panic!("expected period view");
         };
         assert_eq!(values[0].entity_id, "b@x.io");
-        assert_eq!(values[0].value, Some(0.0));
+        assert_eq!(values[0].value, None);
         assert_eq!(values[1].entity_id, "a@x.io");
         assert_eq!(values[1].value, Some(5.0));
     }
@@ -460,15 +434,14 @@ mod tests {
     }
 
     #[test]
-    fn period_view_zero_fills_distinct_count() {
-        // Zero distinct subjects is a genuine zero, like a sum of nothing.
+    fn period_view_keeps_missing_distinct_count_null() {
         let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-31");
         let MetricResultViewDto::Period { values } =
             build_period_view(&distinct_count_metric(), &req, Vec::new())
         else {
             panic!("expected period view");
         };
-        assert_eq!(values[0].value, Some(0.0));
+        assert_eq!(values[0].value, None);
     }
 
     #[test]
@@ -533,9 +506,9 @@ mod tests {
         assert_eq!(series.len(), 1);
         let points = &series[0].points;
         assert_eq!(points.len(), 3);
-        assert_eq!(points[0].value, Some(0.0));
+        assert_eq!(points[0].value, None);
         assert_eq!(points[1].value, Some(3.0));
-        assert_eq!(points[2].value, Some(0.0));
+        assert_eq!(points[2].value, None);
     }
 
     #[test]
@@ -679,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_fill_applies_the_transform() {
+    fn missing_value_ignores_the_transform() {
         let mut def = sum_metric();
         def.transform = Some(ValueTransform {
             multiplier: Some(-1.0),
@@ -691,6 +664,6 @@ mod tests {
         let MetricResultViewDto::Period { values } = build_period_view(&def, &req, vec![]) else {
             panic!("expected period view");
         };
-        assert_eq!(values[0].value, Some(100.0));
+        assert_eq!(values[0].value, None);
     }
 }

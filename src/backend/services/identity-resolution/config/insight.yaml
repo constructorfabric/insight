@@ -2,10 +2,17 @@
 #
 # Usage: identity-resolution --config config/insight.yaml
 #
-# The `api-gateway` system gear is the REST host with auth DISABLED — the
-# platform api-gateway is the sole authenticator and proxies to us. Same
-# no-auth system-gear set as the analytics host. NO domain gear yet
-# (iteration-1 scaffold): the host boots and serves /health only.
+# Auth is ENABLED on the api-gateway host (NGINX_BFF R1): the upstream
+# `cf-gears-oidc-authn-plugin` verifies the ES256 gateway JWT against the
+# authenticator's JWKS (resolved via OIDC discovery on the issuer) and maps its
+# claims into the SecurityContext (sub -> subject_id, tenant_id ->
+# subject_tenant_id, sub_type -> subject_type, roles -> token_scopes). Same
+# authenticated system-gear set as the analytics host. A request without a valid
+# gateway JWT carrying a `tenant_id` gets 401 — no auth_disabled path.
+#
+# The plugin's verification config (jwt.trusted_issuers, expected_audience,
+# http_client.custom_ca_certificate_paths) is nested/list-shaped and supplied by
+# the deployment's config layer (compose bind-mount / Helm), not APP__ env.
 
 server:
   home_dir: "~/.insight"
@@ -23,8 +30,10 @@ gears:
       openapi:
         title: "Insight Identity Resolution API"
         version: "0.1.0"
-        description: "Identity Resolution read API (Rust port) — auth disabled"
-      auth_disabled: true
+        description: "Identity Resolution read API (Rust port)"
+      # Auth ENABLED: the oidc-authn-plugin verifies the ES256 gateway JWT and
+      # maps its claims into the SecurityContext (R1). No auth_disabled path.
+      auth_disabled: false
 
   gear-orchestrator:
     config: {}
@@ -36,6 +45,42 @@ gears:
   authn-resolver:
     config:
       vendor: "hyperspot"
+
+  # Downstream gateway-JWT verification (NGINX_BFF R1). Verifies the ES256
+  # gateway JWT against the authenticator's JWKS (resolved via OIDC discovery on
+  # the issuer) and maps its claims into the SecurityContext. The deployment
+  # supplies the real issuer + self-signed CA (dev/e2e) via the config layer;
+  # the placeholders below (`.invalid`, never resolvable) fail closed.
+  oidc-authn-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 50
+      jwt:
+        supported_algorithms: ["ES256"]
+        clock_skew_leeway: 60s
+        require_audience: true
+        expected_audience:
+          - "internal-services"
+        trusted_issuers:
+          - issuer: "https://gateway.invalid"
+        claim_mapping:
+          subject_id: "sub"
+          subject_tenant_id: "tenant_id"
+          subject_type: "sub_type"
+          token_scopes: "roles"
+        required_claims: []
+      http_client:
+        request_timeout: 5s
+        # Dev/e2e self-signed CA injected per deploy:
+        #   custom_ca_certificate_paths: ["/certs/ca.pem"]
+      # Client-credentials exchange is unused here but required config;
+      # discovery_url must name a trusted issuer, never fetched.
+      s2s_oauth:
+        discovery_url: "https://gateway.invalid"
+        default_subject_type: "service"
+        token_cache:
+          ttl: 300s
+          max_entries: 100
 
   authz-resolver:
     config:

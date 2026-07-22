@@ -25,7 +25,15 @@ pub struct MetricResultsPeriod {
 #[derive(Debug, Deserialize)]
 pub struct MetricRequest {
     pub metric_key: String,
+    #[serde(default)]
+    pub filters: Vec<MetricDimensionFilterRequest>,
     pub views: Vec<MetricViewRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MetricDimensionFilterRequest {
+    pub dimension: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

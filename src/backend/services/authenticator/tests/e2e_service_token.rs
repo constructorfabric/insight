@@ -5,7 +5,7 @@
 //! It drives the whole flow through the SDK `ServiceTokenClient`:
 //!   1. obtain a tenant-scoped service token and verify it against the JWKS
 //!      (`sub = sid = service:testclient`, `roles` includes `service`,
-//!      `tenants = [tenant-a]`);
+//!      `tenant_id = tenant-a`);
 //!   2. a replayed assertion is rejected (single-use `jti`);
 //!   3. an assertion signed with a key the registry does not hold is rejected;
 //!   4. a request that names no tenant is rejected (tenant isolation).
@@ -55,7 +55,7 @@ struct Jwk {
 #[derive(Deserialize)]
 struct Claims {
     sub: String,
-    tenants: Vec<String>,
+    tenant_id: String,
     roles: Vec<String>,
     sid: String,
     aud: String,
@@ -93,11 +93,11 @@ async fn service_token_full_loop() {
     let endpoint = token_endpoint();
     let client =
         ServiceTokenClient::from_key_file("testclient", testclient_key_path(), &endpoint).unwrap();
-    let tenant = vec!["tenant-a".to_owned()];
+    let tenant = "tenant-a";
 
     // 1. Obtain a (tenant-scoped) service token and verify it against the JWKS.
     let bearer = client
-        .bearer(&tenant)
+        .bearer(tenant)
         .await
         .expect("bearer() should mint a tenant-scoped token");
     let jwt = bearer
@@ -113,18 +113,18 @@ async fn service_token_full_loop() {
         claims.roles
     );
     assert_eq!(
-        claims.tenants, tenant,
+        claims.tenant_id, tenant,
         "the requested tenant is carried in the token"
     );
 
     // 2. Replay: the same assertion must be accepted once, then rejected.
     let assertion = client.make_assertion().unwrap();
     client
-        .post(&assertion, &tenant)
+        .post(&assertion, tenant)
         .await
         .expect("first use of an assertion succeeds");
     assert!(
-        client.post(&assertion, &tenant).await.is_err(),
+        client.post(&assertion, tenant).await.is_err(),
         "a replayed assertion must be rejected"
     );
 
@@ -134,13 +134,13 @@ async fn service_token_full_loop() {
     let impostor = ServiceTokenClient::from_key_pem("testclient", &wrong_priv, &endpoint).unwrap();
     let forged = impostor.make_assertion().unwrap();
     assert!(
-        impostor.post(&forged, &tenant).await.is_err(),
+        impostor.post(&forged, tenant).await.is_err(),
         "an assertion signed with an unregistered key must be rejected"
     );
 
     // 4. Tenant isolation: a request that names no tenant is refused (400).
     assert!(
-        client.fetch(&[]).await.is_err(),
+        client.fetch("").await.is_err(),
         "a service token must name a tenant; an unscoped request is rejected"
     );
 }

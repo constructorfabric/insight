@@ -49,7 +49,10 @@ impl LoginState {
 #[derive(Debug, Clone)]
 pub struct SessionRecord {
     pub person_id: String,
-    pub tenants: Vec<String>,
+    /// The person's email (from the id_token at login) — surfaced to the SPA
+    /// via `/auth/me` so the (email-keyed) frontend can self-locate.
+    pub email: String,
+    pub tenant_id: String,
     pub roles: Vec<String>,
     pub idp_iss: String,
     pub idp_sub: String,
@@ -74,7 +77,8 @@ impl SessionRecord {
         let json = |v: &[String]| serde_json::to_string(v).unwrap_or_else(|_| "[]".to_owned());
         vec![
             ("person_id", self.person_id.clone()),
-            ("tenants", json(&self.tenants)),
+            ("email", self.email.clone()),
+            ("tenant_id", self.tenant_id.clone()),
             ("roles", json(&self.roles)),
             ("idp_iss", self.idp_iss.clone()),
             ("idp_sub", self.idp_sub.clone()),
@@ -113,7 +117,8 @@ impl SessionRecord {
 
         Self {
             person_id: get("person_id"),
-            tenants: parse_vec("tenants"),
+            email: get("email"),
+            tenant_id: get("tenant_id"),
             roles: parse_vec("roles"),
             idp_iss: get("idp_iss"),
             idp_sub: get("idp_sub"),

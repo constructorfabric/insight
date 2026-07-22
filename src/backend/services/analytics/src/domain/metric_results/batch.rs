@@ -11,7 +11,9 @@ use super::compiler::{
     CompiledQuery, PeerQueryRow, PeriodQueryRow, compile_breakdown_query, compile_histogram_query,
     compile_peer_batch_query, compile_period_batch_query, compile_timeseries_query,
 };
-use super::validation::{ValidatedMetricResultsRequest, ValidatedMetricView};
+use super::validation::{
+    ValidatedDimensionFilter, ValidatedMetricResultsRequest, ValidatedMetricView,
+};
 use super::view::Bucket;
 
 #[derive(Debug)]
@@ -55,8 +57,10 @@ pub enum PlannedQuery {
 }
 
 pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
-    let mut period_groups: BTreeMap<String, Vec<BatchItem>> = BTreeMap::new();
-    let mut peer_groups: BTreeMap<(String, String), Vec<BatchItem>> = BTreeMap::new();
+    let mut period_groups: BTreeMap<(String, Vec<ValidatedDimensionFilter>), Vec<BatchItem>> =
+        BTreeMap::new();
+    let mut peer_groups: BTreeMap<(String, String, Vec<ValidatedDimensionFilter>), Vec<BatchItem>> =
+        BTreeMap::new();
     let mut singles = Vec::new();
 
     for (metric_index, metric) in req.metrics.iter().enumerate() {
@@ -69,7 +73,10 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
             match view {
                 ValidatedMetricView::Period => {
                     period_groups
-                        .entry(metric.def.observation_relation().source_ref().to_owned())
+                        .entry((
+                            metric.def.observation_relation().source_ref().to_owned(),
+                            metric.filters.clone(),
+                        ))
                         .or_default()
                         .push(item());
                 }
@@ -78,6 +85,7 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
                         .entry((
                             metric.def.observation_relation().source_ref().to_owned(),
                             cohort_key.clone(),
+                            metric.filters.clone(),
                         ))
                         .or_default()
                         .push(item());
@@ -91,7 +99,13 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
                             bucket: *bucket,
                             dimensions: dimensions.clone(),
                         },
-                        query: compile_timeseries_query(&metric.def, req, *bucket, dimensions),
+                        query: compile_timeseries_query(
+                            &metric.def,
+                            req,
+                            *bucket,
+                            dimensions,
+                            &metric.filters,
+                        ),
                     });
                 }
                 ValidatedMetricView::Breakdown { dimensions } => {
@@ -102,7 +116,12 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
                         view: UnbatchedView::Breakdown {
                             dimensions: dimensions.clone(),
                         },
-                        query: compile_breakdown_query(&metric.def, req, dimensions),
+                        query: compile_breakdown_query(
+                            &metric.def,
+                            req,
+                            dimensions,
+                            &metric.filters,
+                        ),
                     });
                 }
                 ValidatedMetricView::Histogram => {
@@ -111,7 +130,7 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
                         view_index,
                         def: Box::new(metric.def.clone()),
                         view: UnbatchedView::Histogram,
-                        query: compile_histogram_query(&metric.def, req),
+                        query: compile_histogram_query(&metric.def, req, &metric.filters),
                     });
                 }
             }
@@ -119,14 +138,14 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
     }
 
     let mut planned = Vec::with_capacity(period_groups.len() + peer_groups.len() + singles.len());
-    for items in period_groups.into_values() {
+    for ((_, filters), items) in period_groups {
         let defs: Vec<&MetricDefinition> = items.iter().map(|item| &item.def).collect();
-        let query = compile_period_batch_query(&defs, req);
+        let query = compile_period_batch_query(&defs, req, &filters);
         planned.push(PlannedQuery::PeriodBatch { items, query });
     }
-    for ((_, cohort_key), items) in peer_groups {
+    for ((_, cohort_key, filters), items) in peer_groups {
         let defs: Vec<&MetricDefinition> = items.iter().map(|item| &item.def).collect();
-        let query = compile_peer_batch_query(&defs, req, &cohort_key);
+        let query = compile_peer_batch_query(&defs, req, &cohort_key, &filters);
         planned.push(PlannedQuery::PeerBatch { items, query });
     }
     planned.extend(singles);
@@ -287,6 +306,7 @@ mod tests {
     fn views(views: Vec<ValidatedMetricView>, key: &str) -> ValidatedMetricRequest {
         ValidatedMetricRequest {
             def: def(key, Some("org_unit")),
+            filters: vec![],
             views,
         }
     }

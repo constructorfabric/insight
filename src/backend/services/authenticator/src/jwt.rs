@@ -1,17 +1,13 @@
 //! JWT Issuer, Key Store, and JWKS (§3.8 claim contract, DESIGN 3.10).
 //!
-//! **§9.6 decision — ES256.** The deleted spec mandated EdDSA (DD-BFF-05: small
-//! signatures, fast verify), but the downstream verifier (`oidc-authn-plugin`)
-//! validates RS256/ES256 today; EdDSA would need a non-trivial plugin change,
-//! and downstream verification is a later phase. ES256 (P-256 / ECDSA-SHA256)
-//! satisfies DD-BFF-05's rationale — 64-byte signatures, fast verify — with
-//! zero downstream friction, so the authenticator mints ES256. Recorded in the
-//! DESIGN and the PR.
-//!
-//! Keys are a plain mounted directory (`signing_keys_path`): `current.pem`
-//! (PKCS#8 EC P-256 private key, required) and optional `previous.pem` for the
-//! rotation overlap. The `kid` is the RFC 7638 JWK thumbprint — stable, needs
-//! no manifest. Rotation = drop a new `current.pem` and re-read (or roll pods).
+//! **§9.6 decision — ES256.** The gateway JWT is signed ES256 (ECDSA P-256 /
+//! SHA-256): 64-byte signatures + fast verify, and the downstream verifier
+//! (`cf-gears-oidc-authn-plugin`, whose JWKS goes through `jsonwebtoken`'s
+//! EC-capable `JwkSet`) validates EC keys natively. Keys are a plain mounted
+//! directory (`signing_keys_path`): `current.pem` (PKCS#8 EC P-256 private key,
+//! required) and optional `previous.pem` for the rotation overlap. The `kid` is
+//! the RFC 7638 JWK thumbprint — stable, needs no manifest. Rotation = drop a
+//! new `current.pem` and re-read (or roll pods).
 
 use std::path::Path;
 
@@ -28,12 +24,20 @@ use sha2::{Digest as _, Sha256};
 /// The gateway JWT claim set (§3.8). Serializes to the wire claims verbatim.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayClaims {
-    /// Internal `person_id` (or `service:<name>` for service tokens, later).
+    /// Internal `person_id` (a UUID), or a service's UUID for service tokens.
     pub sub: String,
-    /// All tenant memberships resolved at login — the only tenant authority.
-    pub tenants: Vec<String>,
-    /// Access-control roles (default `["user"]` until the permissions service).
+    /// The single tenant this token is scoped to (UUID). The only tenant
+    /// authority — downstream reads it as `subject_tenant_id`.
+    pub tenant_id: String,
+    /// Access-control roles (default `["user"]` until the permissions service;
+    /// service tokens include `"service"`). Serialized on the wire as a single
+    /// space-delimited string (OAuth `scope` convention): the downstream
+    /// verifier (`cf-gears-oidc-authn-plugin`) reads `token_scopes` via
+    /// `as_str().split_whitespace()`, so a JSON array would be dropped.
+    #[serde(with = "space_delimited")]
     pub roles: Vec<String>,
+    /// Subject type — `"user"` for people, `"service"` for service tokens.
+    pub sub_type: String,
     /// Stable session id (UUIDv7) — survives cookie rotation.
     pub sid: String,
     /// Gateway origin issuer URL.
@@ -199,6 +203,22 @@ impl KeyStore {
     }
 }
 
+/// Serde adapter: represent `Vec<String>` as one space-delimited string on the
+/// wire (the OAuth `scope` shape the downstream verifier's `token_scopes`
+/// mapping expects). Empty roles serialize to `""` and split back to `[]`.
+mod space_delimited {
+    use serde::{Deserialize as _, Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(roles: &[String], ser: S) -> Result<S::Ok, S::Error> {
+        ser.serialize_str(&roles.join(" "))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Vec<String>, D::Error> {
+        let raw = String::deserialize(de)?;
+        Ok(raw.split_whitespace().map(str::to_owned).collect())
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -216,8 +236,9 @@ mod tests {
     fn sample_claims() -> GatewayClaims {
         GatewayClaims {
             sub: "person-123".to_owned(),
-            tenants: vec!["t-a".to_owned(), "t-b".to_owned()],
+            tenant_id: "t-a".to_owned(),
             roles: vec!["user".to_owned(), "admin".to_owned()],
+            sub_type: "user".to_owned(),
             sid: "sid-xyz".to_owned(),
             iss: "http://gateway.local".to_owned(),
             aud: "internal-services".to_owned(),
@@ -239,10 +260,23 @@ mod tests {
 
         let claims = store.verify(&jwt, "internal-services").unwrap();
         assert_eq!(claims.sub, "person-123");
-        assert_eq!(claims.tenants, vec!["t-a", "t-b"]);
+        assert_eq!(claims.tenant_id, "t-a");
         assert_eq!(claims.roles, vec!["user", "admin"]);
-        assert_eq!(claims.sid, "sid-xyz");
+        assert_eq!(claims.sub_type, "user");
         assert_eq!(claims.aud, "internal-services");
+    }
+
+    #[test]
+    fn roles_serialize_as_space_delimited_string() {
+        // The downstream verifier reads `token_scopes` via
+        // `as_str().split_whitespace()`, so `roles` must be a STRING on the
+        // wire, not a JSON array — else scopes are silently dropped.
+        let json = serde_json::to_value(sample_claims()).unwrap();
+        assert_eq!(json["roles"], serde_json::json!("user admin"));
+
+        // And it round-trips back to the Vec model.
+        let back: GatewayClaims = serde_json::from_value(json).unwrap();
+        assert_eq!(back.roles, vec!["user", "admin"]);
     }
 
     #[test]

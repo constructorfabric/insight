@@ -67,6 +67,57 @@ IDENTITY_DB=$(yq -r '.identity.databaseName       // "identity"' "$VALUES")
 TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
 IDENTITY_ORG_CHART_SOURCE=$(yq -r '.identity.orgChartSourceType // ""' "$VALUES")
 
+# ── Authenticator OIDC (NGINX_BFF). issuerUrl/redirectUri may be Helm template
+#    strings in values.yaml; render {{ .Release.Name }}/{{ .Release.Namespace }}
+#    the same way the chart's `tpl` would. ──
+render_tpl() {
+  # shellcheck disable=SC2001
+  echo "$1" \
+    | sed "s/{{[[:space:]]*\.Release\.Name[[:space:]]*}}/${RELEASE}/g" \
+    | sed "s/{{[[:space:]]*\.Release\.Namespace[[:space:]]*}}/${NS_APP}/g"
+}
+AUTH_IDP_ISSUER=$(render_tpl "$(yq -r '.authenticator.oidc.issuerUrl   // ""' "$VALUES")")
+AUTH_CLIENT_ID=$(          yq -r '.authenticator.oidc.clientId     // "insight-authenticator"' "$VALUES")
+# Confidential-client secret: prefer the sealed `insight-oidc` Secret (Passbolt →
+# seal-secret; never committed) and fall back to values.yaml (local/dev IdPs whose
+# secret is not sensitive, e.g. the baked Keycloak dev client).
+# If the env ships a sealed insight-oidc, wait for the controller to materialise it
+# rather than silently composing an empty client secret on a fresh deploy.
+if kubectl -n "$NS_APP" get sealedsecret insight-oidc >/dev/null 2>&1; then
+  for i in $(seq 1 30); do
+    kubectl -n "$NS_APP" get secret insight-oidc >/dev/null 2>&1 && break
+    sleep 1
+  done
+  kubectl -n "$NS_APP" get secret insight-oidc >/dev/null 2>&1 || {
+    echo "ERROR: sealed insight-oidc never materialised — refusing to compose an empty OIDC client secret" >&2
+    exit 1
+  }
+fi
+AUTH_CLIENT_SECRET=$(kubectl -n "$NS_APP" get secret insight-oidc \
+  -o jsonpath='{.data.oidc-client-secret}' 2>/dev/null | base64 -d || true)
+[ -n "$AUTH_CLIENT_SECRET" ] || AUTH_CLIENT_SECRET=$(yq -r '.authenticator.oidc.clientSecret // ""' "$VALUES")
+AUTH_REDIRECT_URI=$(render_tpl "$(yq -r '.authenticator.oidc.redirectUri // ""' "$VALUES")")
+# Requested OIDC scopes (space-delimited for the env layer; the authenticator
+# splits it back into a list). Default matches the config default; an IdP that
+# only issues a refresh token WITH offline_access (e.g. Entra) adds it here.
+AUTH_SCOPES=$(yq -r '(.authenticator.oidc.scopes // ["openid","email","profile"]) | join(" ")' "$VALUES")
+# Tenant sourcing: the id_token claim naming the single tenant (`tenant_id` on
+# fakeidp/Keycloak, `tid` on Entra) and the fallback for a claim-less IdP
+# (e.g. Okta). Empty fallback = fail closed downstream.
+AUTH_TENANT_CLAIM=$(     yq -r '.authenticator.oidc.tenantClaim     // "tenant_id"' "$VALUES")
+AUTH_DEFAULT_TENANT_ID=$(yq -r '.authenticator.oidc.defaultTenantId // ""' "$VALUES")
+# The authn-tls discovery FQDN — the minted token `iss` and downstream issuer.
+GATEWAY_ISSUER="https://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:8443"
+GATEWAY_JWKS_URL="http://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:8083/.well-known/jwks.json"
+AUTH_TOKEN_AUD="http://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:8093/internal/token"
+
+for v in AUTH_IDP_ISSUER AUTH_REDIRECT_URI; do
+  [ -n "${!v}" ] && [ "${!v}" != "null" ] || {
+    echo "ERROR: authenticator.oidc.* incomplete in $VALUES ($v empty) — auth is always on (NGINX_BFF)" >&2
+    exit 1
+  }
+done
+
 for v in MDB_HOST MDB_USER MDB_DB CH_HOST CH_USER CH_DB RD_HOST; do
   [ -n "${!v}" ] && [ "${!v}" != "null" ] || {
     echo "ERROR: $v not set in $VALUES" >&2
@@ -148,6 +199,37 @@ EOF
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
 echo "composed → $NS_APP/insight-analytics-config"
 
+# `insight-authenticator-config` (NGINX_BFF): the authenticator's leaf config.
+# The chart emits this only when autoGenerate=true; in gitops mode we compose it
+# here. redis reuses insight-db-creds; gateway_issuer is the authn-tls FQDN; the
+# idp.* + redirect come from authenticator.oidc.* in values.yaml. The signing
+# keys are a SEPARATE sealed Secret (insight-authenticator-signing-keys).
+{
+  cat <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: insight-authenticator-config
+  namespace: $NS_APP
+  annotations:
+    helm.sh/resource-policy: keep   # see analytics-config rationale above
+type: Opaque
+stringData:
+  APP__gears__authenticator__config__redis_url: "${REDIS_URL}"
+  APP__gears__authenticator__config__identity_url: "http://${RELEASE}-identity:8082"
+  APP__gears__authenticator__config__gateway_issuer: "${GATEWAY_ISSUER}"
+  APP__gears__authenticator__config__idp__issuer_url: "${AUTH_IDP_ISSUER}"
+  APP__gears__authenticator__config__idp__client_id: "${AUTH_CLIENT_ID}"
+  APP__gears__authenticator__config__idp__client_secret: "${AUTH_CLIENT_SECRET}"
+  APP__gears__authenticator__config__idp__tenant_claim: "${AUTH_TENANT_CLAIM}"
+  APP__gears__authenticator__config__idp__default_tenant_id: "${AUTH_DEFAULT_TENANT_ID}"
+  APP__gears__authenticator__config__redirect_uri: "${AUTH_REDIRECT_URI}"
+  APP__gears__authenticator__config__oidc_scopes: "${AUTH_SCOPES}"
+  APP__gears__authenticator__config__service_tokens__audience: "${AUTH_TOKEN_AUD}"
+EOF
+} | kubectl -n "$NS_APP" apply -f - >/dev/null
+echo "composed → $NS_APP/insight-authenticator-config"
+
 # `insight-identity-config` carries the .NET identity service's
 # IDENTITY__* config. The service applies its own DbUp migrations
 # against `${IDENTITY_DB}` at startup — see ADR-0006 (service-owned
@@ -166,6 +248,11 @@ metadata:
 type: Opaque
 stringData:
   IDENTITY__mariadb__url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${IDENTITY_DB}"
+  # Gateway-JWT verification (NGINX_BFF R1). issuer = the authn-tls FQDN (equals
+  # the token iss); JWKS is fetched over plain http from the authenticator main
+  # port (identity validates iss as a string, RequireHttpsMetadata=false).
+  IDENTITY__identity__auth_gateway_issuer: "${GATEWAY_ISSUER}"
+  IDENTITY__identity__auth_gateway_jwks_url: "${GATEWAY_JWKS_URL}"
 EOF
   if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
     echo "  IDENTITY__identity__tenant_default_id: \"${TENANT_DEFAULT}\""

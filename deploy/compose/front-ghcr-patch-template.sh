@@ -2,7 +2,7 @@
 # Compose-only patch for the insight-front ghcr image.
 #
 # The published image's nginx template deliberately has no /api proxy —
-# in k8s the cluster ingress routes /api/* straight to the api-gateway
+# in k8s the cluster ingress routes /api/* straight to the gateway
 # pod, so the FE pod never sees those requests. The docker-compose dev
 # stack has nothing in front of the FE pod, so /api needs to land
 # locally.
@@ -35,16 +35,16 @@ else
       print
       print ""
       print "    # Compose-only /api proxy injected by front-ghcr-patch-template.sh."
-      print "    # k8s relies on the cluster ingress to route /api → api-gateway;"
+      print "    # k8s relies on the cluster ingress to route /api → gateway;"
       print "    # compose has no front-proxy so we add the hop here."
       print "    #"
       print "    # 127.0.0.11 is Dockers embedded DNS. We use it via `resolver` +"
       print "    # `set $upstream_apigw` so nginx resolves at request time instead"
       print "    # of startup — without this, the FE container refuses to start"
-      print "    # if api-gateway isnt yet reachable, breaking `up -d` ordering."
+      print "    # if gateway isnt yet reachable, breaking `up -d` ordering."
       print "    resolver 127.0.0.11 valid=10s;"
       print "    location /api/ {"
-      print "        set $upstream_apigw \"api-gateway:8080\";"
+      print "        set $upstream_apigw \"gateway:8080\";"
       print "        proxy_pass http://$upstream_apigw;"
       print "        proxy_http_version 1.1;"
       print "        proxy_set_header Host $host;"
@@ -58,7 +58,7 @@ else
     { print }
   ' "$TPL" > "$TPL.new"
   mv "$TPL.new" "$TPL"
-  echo "front-ghcr-patch: inserted /api → api-gateway:8080 into template."
+  echo "front-ghcr-patch: inserted /api → gateway:8080 into template."
 fi
 
 exec /docker-entrypoint.sh "$@"

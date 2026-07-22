@@ -7,10 +7,12 @@
 //!
 //! Runs as a gears-rust host on [`toolkit::bootstrap::run_server`]. The
 //! `api-gateway` system gear is the REST host; the analytics functionality is
-//! the [`gear::AnalyticsApiGear`] (`rest` + `stateful`). Auth is **disabled** on
-//! this host — the platform api-gateway is the sole authenticator and proxies
-//! to us — so the host injects a single-tenant `SecurityContext` and a thin
-//! layer overrides the tenant from `X-Insight-Tenant-Id` (see [`crate::auth`]).
+//! the [`gear::AnalyticsApiGear`] (`rest` + `stateful`). Auth is **enabled** on
+//! this host: `oidc-authn-plugin` verifies the ES256 gateway JWT (signature /
+//! `iss` / `aud` / `exp`) against the authenticator's JWKS, and the `authverify`
+//! layer maps the signed claims (`sub`, `roles`, `tenants[]` + the `X-Tenant-ID`
+//! selector) into the request `SecurityContext` (`NGINX_BFF` R1 / G2). There is
+//! no `auth_disabled` path — a request without a valid gateway JWT gets 401.
 //!
 //! The MariaDB connection, its 45 sea-orm migrations, and the startup CHECK /
 //! product-default probes remain self-managed inside the gear (we do not use
@@ -26,21 +28,22 @@
 //! ```
 
 mod api;
-mod auth;
 mod config;
 mod domain;
 mod gear;
 mod infra;
 mod migration;
 
-// System gears — linked via inventory for the REST host and the (disabled)
-// auth pipeline. Mirrors the api-gateway service's no-auth gear set, minus the
-// OIDC plugin / proxy / auth-info (this host never authenticates).
+// System gears — linked via inventory for the REST host + auth pipeline.
+// `oidc-authn-plugin` verifies the ES256 gateway JWT against the authenticator's
+// JWKS (host config points its issuer/JWKS at the authenticator); `authverify`
+// then maps the signed claims (see `api::register_routes`).
 use api_gateway as _;
 use authn_resolver as _;
 use authz_resolver as _;
 use gear_orchestrator as _;
 use grpc_hub as _;
+use oidc_authn_plugin as _;
 use single_tenant_tr_plugin as _;
 use static_authz_plugin as _;
 use tenant_resolver as _;

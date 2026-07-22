@@ -88,10 +88,19 @@ gears:
       jwt_audience: "internal-services"
       redirect_uri: ""
       default_return_to: "/"
+      # Login scopes. offline_access is omitted (survives-logout token, wrong for a
+      # BFF); add it only for an IdP that needs it for a refresh token, e.g. Entra.
+      oidc_scopes: ["openid", "email", "profile"]
       idp:
         issuer_url: ""
         client_id: ""
         client_secret: ""
+        # id_token claim naming the user's single tenant (string; an array is
+        # tolerated — first entry wins). fakeidp/Keycloak emit `tenant_id`;
+        # Entra emits `tid`.
+        tenant_claim: "tenant_id"
+        # Fallback tenant for a claim-less IdP (e.g. Okta); empty = fail closed.
+        default_tenant_id: ""
       # Service tokens (§10 G1 / DD-AUTH-05). The token endpoint runs on its own
       # listener (token_bind_addr) so it never shares the main port. Service
       # tokens are always tenant-scoped; the caller names the tenant.

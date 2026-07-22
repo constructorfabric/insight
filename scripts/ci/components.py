@@ -27,20 +27,13 @@ COMPONENTS = [
     # Rust: `cargo llvm-cov --package <package>` run in <root>. Each --package
     # report includes cross-crate files and the gate merges all reports (max
     # hits/line), so a lib's coverage reflects tests in other crates too, not
-    # just its own. NB: api-gateway's cargo package is insight-api-gateway.
+    # just its own.
     {
         "name": "insight-clickhouse",
         "lang": "rust",
         "root": "src/backend",
         "package": "insight-clickhouse",
         "paths": ["src/backend/libs/insight-clickhouse"],
-    },
-    {
-        "name": "oidc-authn-plugin",
-        "lang": "rust",
-        "root": "src/backend",
-        "package": "oidc-authn-plugin",
-        "paths": ["src/backend/plugins/oidc-authn-plugin"],
     },
     {
         "name": "analytics",
@@ -59,22 +52,6 @@ COMPONENTS = [
         # service happens to exercise. Scope the report to this service's code.
         "cover_ignore_regex": "src/backend/libs/",
         "paths": ["src/backend/services/analytics"],
-    },
-    # cover=False: the gateway has no unit tests yet (its behavior is covered
-    # by the e2e suite), so a coverage report would gate it at 0% the moment
-    # any file under its paths changes. Tests + lint still run; re-enable
-    # coverage when unit tests land. Mirrors the identity decision below.
-    {
-        "name": "api-gateway",
-        "lang": "rust",
-        "root": "src/backend",
-        "package": "insight-api-gateway",
-        "cover": False,
-        # When coverage is re-enabled: scope out linked dependency crates
-        # (oidc-authn-plugin, libs) — they self-report in their own jobs, and
-        # zero-hit dependency files would gate THOSE components at 0%.
-        "cover_ignore_regex": "src/backend/(libs|plugins)/",
-        "paths": ["src/backend/services/api-gateway"],
     },
     # fakeidp is a dev/e2e test double (see cf/NGINX_BFF.md §10 G6), not shipped
     # code — but it has real integration tests, so it is covered + gated like any
@@ -99,7 +76,7 @@ COMPONENTS = [
         "package": "routegen",
         "paths": ["src/backend/tools/routegen"],
     },
-    # cover=False (mirrors api-gateway): the authenticator's security-critical
+    # cover=False (mirrors identity): the authenticator's security-critical
     # flow (OIDC login, sessions, cookie->JWT exchange) is proven by the e2e
     # login-loop, which drives the server as a SEPARATE process — so it can't
     # feed `cargo llvm-cov` (that instruments the test binary, not a spawned
