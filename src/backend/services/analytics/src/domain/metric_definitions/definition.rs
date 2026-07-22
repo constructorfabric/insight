@@ -124,7 +124,7 @@ impl ValueTransform {
         format!("if(({out}) IS NULL, NULL, {clamped})")
     }
 
-    /// Rust-side application, for values the builder fabricates (zero-fill).
+    #[cfg(test)]
     pub fn apply(&self, value: f64) -> f64 {
         let mut out = self.multiplier.unwrap_or(1.0) * value + self.offset.unwrap_or(0.0);
         if let Some(clamp_min) = self.clamp_min {
@@ -196,16 +196,6 @@ impl MetricDefinition {
             .iter()
             .map(String::as_str)
             .find(|d| *d == dimension)
-    }
-
-    // Sums and distinct counts zero-fill: an absent entity genuinely summed
-    // to nothing / has zero distinct subjects. Ratios and medians of no
-    // observations are unknowable, not zero.
-    pub fn is_zero_filled(&self) -> bool {
-        matches!(
-            self.spec,
-            ComputationSpec::Sum { .. } | ComputationSpec::DistinctCount { .. }
-        )
     }
 
     pub fn observation_relation(&self) -> &ObservationRelation {

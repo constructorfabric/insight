@@ -264,7 +264,7 @@ public sealed class MariaDbFixture : IAsyncLifetime
             insight_source_type VARCHAR(30) NOT NULL,
             insight_source_id BINARY(16) NOT NULL,
             child_person_id BINARY(16) NOT NULL,
-            parent_person_id BINARY(16) NOT NULL,
+            parent_person_id BINARY(16) NULL,
             author_person_id BINARY(16) NOT NULL,
             reason VARCHAR(50) NULL,
             valid_from DATETIME(6) NOT NULL,
@@ -273,7 +273,7 @@ public sealed class MariaDbFixture : IAsyncLifetime
                 insight_tenant_id, insight_source_type, insight_source_id,
                 child_person_id, valid_from
             ),
-            CONSTRAINT chk_no_self_loop CHECK (child_person_id <> parent_person_id),
+            CONSTRAINT chk_no_self_loop CHECK (parent_person_id IS NULL OR child_person_id <> parent_person_id),
             INDEX idx_current_parent (
                 insight_tenant_id, insight_source_type, insight_source_id,
                 child_person_id, valid_to
