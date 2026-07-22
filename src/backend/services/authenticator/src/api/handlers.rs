@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use crate::api::AppState;
 use crate::api::error::{OidcError, PersonError, SessionError};
+use crate::audit::AuditEvent;
 use crate::cookie;
 use crate::identity::PersonResolution;
 use crate::jwt::GatewayClaims;
@@ -204,6 +205,22 @@ pub async fn callback(
                 email = %idp.identity.email,
                 "login denied: no matching person in Identity"
             );
+            let client = ClientInfo::from_headers(&headers);
+            state.audit.emit(AuditEvent {
+                action: "login",
+                outcome: "failure",
+                tenant_id: idp.identity.tenant_id.clone(),
+                actor_person_id: String::new(),
+                actor_ip: client.ip,
+                actor_user_agent: client.user_agent,
+                correlation_id: correlation_id(&headers),
+                resource_type: "session",
+                resource_id: String::new(),
+                details: serde_json::json!({
+                    "reason": "unknown_person",
+                    "idp_sub": idp.identity.sub,
+                }),
+            });
             return PersonError::permission_denied()
                 .with_reason("unknown_person")
                 .create()
@@ -216,7 +233,19 @@ pub async fn callback(
     let return_to = login_state.return_to.clone();
     let client = ClientInfo::from_headers(&headers);
     match mint_and_store_session(&state, &idp, &resolution, &client).await {
-        Ok(token) => {
+        Ok((session_id, token)) => {
+            state.audit.emit(AuditEvent {
+                action: "login",
+                outcome: "success",
+                tenant_id: resolution.tenant_id.clone(),
+                actor_person_id: resolution.person_id.clone(),
+                actor_ip: client.ip,
+                actor_user_agent: client.user_agent,
+                correlation_id: correlation_id(&headers),
+                resource_type: "session",
+                resource_id: session_id,
+                details: serde_json::json!({ "idp_sub": idp.identity.sub }),
+            });
             let jar = jar.add(cookie::session_cookie(
                 &token,
                 state.cfg.session_ttl_seconds,
@@ -262,6 +291,38 @@ impl ClientInfo {
     }
 }
 
+/// The gateway-minted request correlation id (edge Lua, `X-Correlation-Id`).
+fn correlation_id(headers: &axum::http::HeaderMap) -> String {
+    headers
+        .get("x-correlation-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// An audit event attributed to a live session record.
+fn session_audit(
+    action: &'static str,
+    outcome: &'static str,
+    record: &SessionRecord,
+    resource_id: &str,
+    correlation_id: String,
+    details: serde_json::Value,
+) -> AuditEvent {
+    AuditEvent {
+        action,
+        outcome,
+        tenant_id: record.tenant_id.clone(),
+        actor_person_id: record.person_id.clone(),
+        actor_ip: record.ip.clone(),
+        actor_user_agent: record.user_agent.clone(),
+        correlation_id,
+        resource_type: "session",
+        resource_id: resource_id.to_owned(),
+        details,
+    }
+}
+
 /// Build claims, sign the linked JWT, and persist the session in one pipeline.
 /// Returns the cookie token.
 async fn mint_and_store_session(
@@ -269,7 +330,7 @@ async fn mint_and_store_session(
     idp: &crate::oidc::AuthenticatedIdp,
     resolution: &PersonResolution,
     client: &ClientInfo,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<(String, String)> {
     let now = now_secs();
     let cfg = &state.cfg;
     let expires_at = now + cfg.session_ttl_seconds;
@@ -350,7 +411,7 @@ async fn mint_and_store_session(
     state
         .sessions
         .create_session(&NewSession {
-            session_id,
+            session_id: session_id.clone(),
             token: token.clone(),
             record,
             jwt,
@@ -359,7 +420,7 @@ async fn mint_and_store_session(
         })
         .await?;
 
-    Ok(token)
+    Ok((session_id, token))
 }
 
 // ── /internal/authz ─────────────────────────────────────────────────────────
@@ -554,7 +615,11 @@ pub async fn csrf(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) ->
 /// stable `session_id` and the linked JWT are untouched. A stale token still
 /// inside the grace window resolves to the same session and is answered with
 /// the current state, no second rotation; past grace → 401 + clear cookie.
-pub async fn refresh(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> Response {
+pub async fn refresh(
+    Extension(state): Extension<Arc<AppState>>,
+    jar: CookieJar,
+    headers: axum::http::HeaderMap,
+) -> Response {
     let Some(token) = cookie::read(&jar) else {
         return unauthenticated_clear_cookie(jar);
     };
@@ -620,6 +685,14 @@ pub async fn refresh(Extension(state): Extension<Arc<AppState>>, jar: CookieJar)
         };
     }
     tracing::debug!(session_id = %session_id, expires_at = new_expires_at, "session refreshed (credential rotated)");
+    state.audit.emit(session_audit(
+        "session_refresh",
+        "success",
+        &record,
+        &session_id,
+        correlation_id(&headers),
+        serde_json::json!({ "expires_at": new_expires_at }),
+    ));
     refresh_ok(&state, jar, &new_token, new_expires_at, now)
 }
 
@@ -648,7 +721,11 @@ fn refresh_ok(
 // ── /auth/logout ─────────────────────────────────────────────────────────────
 
 /// Revoke the session, clear the cookie, and return the RP-logout URL.
-pub async fn logout(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> Response {
+pub async fn logout(
+    Extension(state): Extension<Arc<AppState>>,
+    jar: CookieJar,
+    headers: axum::http::HeaderMap,
+) -> Response {
     let mut rp_logout_url = serde_json::Value::Null;
 
     if let Some(token) = cookie::read(&jar)
@@ -656,6 +733,14 @@ pub async fn logout(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) 
     {
         let _ = state.sessions.revoke_session(&session_id).await;
         tracing::info!(session_id = %session_id, "logout: session revoked");
+        state.audit.emit(session_audit(
+            "logout",
+            "success",
+            &record,
+            &session_id,
+            correlation_id(&headers),
+            serde_json::json!({}),
+        ));
         if let Some(url) = state
             .oidc
             .rp_logout_url(&record.id_token, &state.cfg.default_return_to)
@@ -723,6 +808,7 @@ pub async fn sessions_list(Extension(state): Extension<Arc<AppState>>, jar: Cook
 pub async fn sessions_revoke_one(
     Extension(state): Extension<Arc<AppState>>,
     jar: CookieJar,
+    headers: axum::http::HeaderMap,
     axum::extract::Path(target_id): axum::extract::Path<String>,
 ) -> Response {
     let Some(token) = cookie::read(&jar) else {
@@ -755,6 +841,14 @@ pub async fn sessions_revoke_one(
         by = "self",
         "session revoked"
     );
+    state.audit.emit(session_audit(
+        "session_revoke",
+        "success",
+        &record,
+        &target_id,
+        correlation_id(&headers),
+        serde_json::json!({ "by": "self", "scope": "single" }),
+    ));
 
     let resp = json_ok(serde_json::json!({ "revoked": 1 }).to_string());
     if target_id == current_id {
@@ -768,6 +862,7 @@ pub async fn sessions_revoke_one(
 pub async fn sessions_revoke_all(
     Extension(state): Extension<Arc<AppState>>,
     jar: CookieJar,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     let Some(token) = cookie::read(&jar) else {
         return unauthenticated();
@@ -790,6 +885,14 @@ pub async fn sessions_revoke_all(
         by = "self",
         "all sessions revoked"
     );
+    state.audit.emit(session_audit(
+        "session_revoke",
+        "success",
+        &record,
+        &record.person_id.clone(),
+        correlation_id(&headers),
+        serde_json::json!({ "by": "self", "scope": "all", "revoked": revoked }),
+    ));
     let resp = json_ok(serde_json::json!({ "revoked": revoked }).to_string());
     (jar.add(cookie::clear_cookie()), resp).into_response()
 }
@@ -803,6 +906,7 @@ pub async fn sessions_revoke_all(
 pub async fn admin_revoke_user_sessions(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<toolkit_security::SecurityContext>,
+    headers: axum::http::HeaderMap,
     axum::extract::Path(person_id): axum::extract::Path<Uuid>,
 ) -> Response {
     let allowed = ctx
@@ -840,6 +944,23 @@ pub async fn admin_revoke_user_sessions(
                 subject_type = ctx.subject_type().unwrap_or(""),
                 "all sessions revoked (admin)"
             );
+            state.audit.emit(AuditEvent {
+                action: "session_revoke",
+                outcome: "success",
+                tenant_id: ctx.subject_tenant_id().to_string(),
+                actor_person_id: ctx.subject_id().to_string(),
+                actor_ip: String::new(),
+                actor_user_agent: String::new(),
+                correlation_id: correlation_id(&headers),
+                resource_type: "session",
+                resource_id: person_id.to_string(),
+                details: serde_json::json!({
+                    "by": "admin",
+                    "scope": "all",
+                    "revoked": revoked,
+                    "subject_type": ctx.subject_type().unwrap_or(""),
+                }),
+            });
             json_ok(serde_json::json!({ "revoked": revoked }).to_string())
         }
         Err(e) => e.into_response(),
@@ -946,6 +1067,25 @@ pub async fn back_channel_logout(
                 revoked,
                 "back-channel logout processed"
             );
+            state.audit.emit(AuditEvent {
+                action: "back_channel_logout",
+                outcome: "success",
+                tenant_id: String::new(),
+                actor_person_id: String::new(),
+                actor_ip: String::new(),
+                actor_user_agent: String::new(),
+                correlation_id: String::new(),
+                resource_type: "session",
+                resource_id: claims
+                    .sid
+                    .clone()
+                    .or(claims.sub.clone())
+                    .unwrap_or_default(),
+                details: serde_json::json!({
+                    "revoked": revoked,
+                    "sub_only_fallback": claims.sid.is_none(),
+                }),
+            });
             no_content_ok()
         }
         Err(e) => {

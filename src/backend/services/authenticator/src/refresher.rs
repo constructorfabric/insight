@@ -279,6 +279,18 @@ async fn do_refresh(
                 detail = %detail,
                 "IdP refused the refresh grant definitively: session revoked"
             );
+            state.audit.emit(crate::audit::AuditEvent {
+                action: "idp_refresh_invalid_grant",
+                outcome: "success",
+                tenant_id: record.tenant_id.clone(),
+                actor_person_id: record.person_id.clone(),
+                actor_ip: String::new(),
+                actor_user_agent: String::new(),
+                correlation_id: String::new(),
+                resource_type: "session",
+                resource_id: session_id.to_owned(),
+                details: serde_json::json!({ "detail": detail }),
+            });
         }
         RefreshOutcome::Transient(detail) => {
             metrics.record("transient");

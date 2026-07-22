@@ -44,6 +44,13 @@ serviceTokens:
 # the transition.
 csrfOrigins: []
 
+# Audit publishing (PRD nfr-auth-audit): auth events to the platform Redpanda
+# topic. Empty brokers (default) disables publishing — events stay in the
+# structured log. The umbrella wires the bundled Redpanda.
+audit:
+  brokers: ""
+  topic: "insight.audit.events"
+
 resources:
   requests:
     cpu: 50m

@@ -6,9 +6,10 @@
 # Stage 1: Builder
 FROM rust:1.95-bookworm AS builder
 
-# protobuf-compiler is required by grpc-hub -> prost-build.
+# protobuf-compiler is required by grpc-hub -> prost-build; cmake builds the
+# vendored librdkafka (audit events to Redpanda, step 10.8).
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev && \
+    apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev cmake && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
