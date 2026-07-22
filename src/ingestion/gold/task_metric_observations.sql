@@ -17,7 +17,7 @@
 -- measure is emitted through macros/metric_observation_measures.sql.
 --
 -- The per-issue reconstruction is materialized upstream (task_issue_state,
--- task_status_intervals): ClickHouse re-inlines every WITH reference, so the
+-- task_status_spans): ClickHouse re-inlines every WITH reference, so the
 -- measure branches would otherwise re-run it once per branch.
 --
 -- Grain: event rows per closed issue for the median metrics (dev_time_hours,
@@ -43,7 +43,7 @@ issue_state AS (
 ),
 status_intervals AS (
     SELECT *
-    FROM {{ ref('task_status_intervals') }}
+    FROM {{ ref('task_status_spans') }}
 ),
 -- Per closed issue (metric_date = close date): dev seconds, lead, pickup.
 -- Only spans started before the close count — live rework on a reopened

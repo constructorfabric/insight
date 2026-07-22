@@ -4,10 +4,11 @@
 //! authorization-code + PKCE, code exchange, and id_token validation
 //! (signature via JWKS, `iss`, `aud`, `nonce`, `exp`, algorithm allowlist). We
 //! keep only two thin bits it doesn't surface through the `Core*` typed API:
-//! the non-standard `tenants` claim (interim — moves to the Identity membership
-//! API, constructorfabric/insight#1687) and the OIDC `sid` (back-channel logout
-//! index), both read from the **already-validated** id_token payload; plus the
-//! RP-initiated `end_session_endpoint`, which is not part of core discovery.
+//! the configurable tenant claim (`idp.tenant_claim`; interim — moves to the
+//! Identity membership API, constructorfabric/insight#1687) and the OIDC `sid`
+//! (back-channel logout index), both read from the **already-validated**
+//! id_token payload; plus the RP-initiated `end_session_endpoint`, which is
+//! not part of core discovery.
 
 use anyhow::Context as _;
 use base64::Engine as _;
@@ -18,6 +19,7 @@ use openidconnect::{
     PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 
+use crate::config::IdpConfig;
 use crate::identity::IdpIdentity;
 
 /// What `authorize` hands back for the handler to stash in the login state.
@@ -55,15 +57,18 @@ pub struct OidcClient {
     issuer_url: String,
     client_id: String,
     client_secret: String,
+    tenant_claim: String,
+    default_tenant_id: String,
     http: reqwest::Client,
 }
 
 impl OidcClient {
-    /// Build the client. Returns an error if the HTTP client can't be built.
+    /// Build the client from the `idp.*` config. Returns an error if the HTTP
+    /// client can't be built.
     ///
     /// # Errors
     /// Fails when the underlying `reqwest` client cannot be constructed.
-    pub fn new(issuer_url: &str, client_id: &str, client_secret: &str) -> anyhow::Result<Self> {
+    pub fn new(idp: &IdpConfig) -> anyhow::Result<Self> {
         // Do not follow redirects: the RP must never chase the IdP's 3xx itself
         // (SSRF-safety guidance from the openidconnect docs).
         let http = reqwest::Client::builder()
@@ -71,9 +76,11 @@ impl OidcClient {
             .build()
             .context("build OIDC HTTP client")?;
         Ok(Self {
-            issuer_url: issuer_url.trim_end_matches('/').to_owned(),
-            client_id: client_id.to_owned(),
-            client_secret: client_secret.to_owned(),
+            issuer_url: idp.issuer_url.trim_end_matches('/').to_owned(),
+            client_id: idp.client_id.clone(),
+            client_secret: idp.client_secret.clone(),
+            tenant_claim: idp.tenant_claim.clone(),
+            default_tenant_id: idp.default_tenant_id.clone(),
             http,
         })
     }
@@ -159,7 +166,21 @@ impl OidcClient {
             .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier.to_owned()))
             .request_async(&self.http)
             .await
-            .context("code exchange")?;
+            // Surface the IdP's OAuth error + description (ServerResponse), not a
+            // bare "code exchange", so the failure is diagnosable.
+            .map_err(|e| {
+                use openidconnect::RequestTokenError::ServerResponse;
+                match &e {
+                    ServerResponse(r) => anyhow::anyhow!(
+                        "idp token endpoint rejected the code: {}{}",
+                        r.error(),
+                        r.error_description()
+                            .map(|d| format!(" — {d}"))
+                            .unwrap_or_default(),
+                    ),
+                    _ => anyhow::anyhow!("code exchange transport/parse error: {e}"),
+                }
+            })?;
 
         let id_token = token.id_token().context("token response has no id_token")?;
         let claims = id_token
@@ -174,16 +195,24 @@ impl OidcClient {
         let issuer = claims.issuer().to_string();
         let email = claims.email().map(|e| e.to_string()).unwrap_or_default();
 
-        // Non-standard claims read from the already-validated payload.
+        // Non-standard claims read from the already-validated payload. One and
+        // only one tenant per token (EPIC #1583): the claim name is per-IdP
+        // (`tenant_id` on fakeidp/Keycloak, `tid` on Entra); claim-less IdPs
+        // (Okta) fall back to the configured default tenant; empty = downstream
+        // fails closed.
         let raw = id_token.to_string();
-        let tenants = payload_string_array(&raw, "tenants");
+        let mut tenant_id = payload_tenant(&raw, &self.tenant_claim);
+        if tenant_id.is_empty() && !self.default_tenant_id.is_empty() {
+            tracing::debug!(tenant_id = %self.default_tenant_id, "id_token carries no tenant claim; using idp.default_tenant_id");
+            tenant_id.clone_from(&self.default_tenant_id);
+        }
         let idp_sid = payload_string(&raw, "sid");
 
         Ok(AuthenticatedIdp {
             identity: IdpIdentity {
                 sub,
                 email,
-                tenants,
+                tenant_id,
             },
             issuer,
             idp_sid,
@@ -227,13 +256,19 @@ impl OidcClient {
     }
 }
 
-/// Read a string-array claim from an (already-validated) compact JWT payload.
-fn payload_string_array(jwt: &str, field: &str) -> Vec<String> {
-    payload(jwt)
-        .as_ref()
-        .and_then(|v| v.get(field))
-        .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
-        .unwrap_or_default()
+/// Read the single tenant from an (already-validated) compact JWT payload.
+/// Accepts a plain string (`tenant_id` on fakeidp/Keycloak, `tid` on Entra); a
+/// string array is tolerated by taking its first entry (a Keycloak multivalued
+/// mapper). Anything else yields empty (→ fail closed downstream).
+fn payload_tenant(jwt: &str, field: &str) -> String {
+    match payload(jwt).as_ref().and_then(|v| v.get(field).cloned()) {
+        Some(serde_json::Value::String(s)) => s,
+        Some(v) => serde_json::from_value::<Vec<String>>(v)
+            .ok()
+            .and_then(|mut t| (!t.is_empty()).then(|| t.remove(0)))
+            .unwrap_or_default(),
+        None => String::new(),
+    }
 }
 
 /// Read a string claim from an (already-validated) compact JWT payload.
@@ -250,4 +285,42 @@ fn payload(jwt: &str) -> Option<serde_json::Value> {
     let segment = jwt.split('.').nth(1)?;
     let bytes = B64.decode(segment).ok()?;
     serde_json::from_slice(&bytes).ok()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// Compact-JWT shell around a claims object (header/signature are dummies —
+    /// `payload` only reads the middle segment).
+    fn jwt_with(claims: &serde_json::Value) -> String {
+        let body = B64.encode(serde_json::to_vec(claims).unwrap());
+        format!("e30.{body}.sig")
+    }
+
+    #[test]
+    fn tenant_claim_string_and_array_shapes() {
+        // Canonical shape: a plain string (`tenant_id` ours, `tid` Entra).
+        let jwt = jwt_with(&serde_json::json!({"tenant_id": "t1"}));
+        assert_eq!(payload_tenant(&jwt, "tenant_id"), "t1");
+        let jwt = jwt_with(&serde_json::json!({"tid": "dir-guid"}));
+        assert_eq!(payload_tenant(&jwt, "tid"), "dir-guid");
+
+        // Tolerated: an array (Keycloak multivalued mapper) — first entry wins.
+        let jwt = jwt_with(&serde_json::json!({"tenant_id": ["t1", "t2"]}));
+        assert_eq!(payload_tenant(&jwt, "tenant_id"), "t1");
+    }
+
+    #[test]
+    fn tenant_claim_absent_or_malformed_is_empty() {
+        let jwt = jwt_with(&serde_json::json!({"sub": "u1"}));
+        assert!(payload_tenant(&jwt, "tenant_id").is_empty());
+
+        // Wrong shape (number / mixed array) never panics, yields empty.
+        let jwt = jwt_with(&serde_json::json!({"tenant_id": 42}));
+        assert!(payload_tenant(&jwt, "tenant_id").is_empty());
+        let jwt = jwt_with(&serde_json::json!({"tenant_id": ["t1", 2]}));
+        assert!(payload_tenant(&jwt, "tenant_id").is_empty());
+    }
 }

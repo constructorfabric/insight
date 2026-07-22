@@ -31,6 +31,7 @@ use toolkit_security::SecurityContext;
 
 pub async fn get_person(
     Extension(state): Extension<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Path(email): Path<String>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     if !state.identity.is_configured() {
@@ -39,10 +40,20 @@ pub async fn get_person(
         );
     }
 
-    let person = state.identity.get_person(&email).await.map_err(|e| {
-        tracing::error!(error = %e, email = %email, "identity resolution request failed");
-        CanonicalError::internal("identity resolution unavailable").create()
-    })?;
+    // Forward the caller's gateway JWT to identity (G1): this is a user-context
+    // fan-out, so it propagates the incoming Authorization header verbatim.
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let person = state
+        .identity
+        .get_person(&email, authorization)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, email = %email, "identity resolution request failed");
+            CanonicalError::internal("identity resolution unavailable").create()
+        })?;
 
     match person {
         Some(p) => Ok(Json(serde_json::to_value(p).map_err(|e| {

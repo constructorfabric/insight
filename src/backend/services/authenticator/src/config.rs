@@ -33,6 +33,15 @@ pub struct IdpConfig {
     pub client_id: String,
     /// Confidential-client secret (injected per-deployment; never committed).
     pub client_secret: String,
+    /// id_token claim naming the user's single tenant. A plain string (an
+    /// array is tolerated: first entry wins). fakeidp/Keycloak emit
+    /// `tenant_id`; Entra emits `tid`.
+    pub tenant_claim: String,
+    /// Fallback tenant when the id_token carries no tenant claim at all (e.g.
+    /// Okta). Empty = no fallback: the gateway JWT gets an empty `tenant_id`
+    /// and downstream services fail closed. Interim until the Identity
+    /// membership API (#1687) / Keycloak broker (#1782).
+    pub default_tenant_id: String,
     /// Background refresh of IdP tokens per session (workers land in step 10).
     pub refresh_enabled: bool,
     /// Refresh IdP tokens this long before their expiry.
@@ -49,6 +58,8 @@ impl Default for IdpConfig {
             issuer_url: String::new(),
             client_id: String::new(),
             client_secret: String::new(),
+            tenant_claim: "tenant_id".to_owned(),
+            default_tenant_id: String::new(),
             refresh_enabled: true,
             refresh_safety_margin_seconds: 60,
             refresh_concurrency: 128,
@@ -161,7 +172,9 @@ pub struct AuthenticatorConfig {
     // ── OIDC handshake ───────────────────────────────────────────────────
     /// The registered redirect URI for the code flow (`{public}/auth/callback`).
     pub redirect_uri: String,
-    /// Requested OIDC scopes.
+    /// Requested OIDC scopes. Accepts a YAML list or a space/comma-delimited
+    /// string, so a single env override (`APP__…__oidc_scopes`) can set it.
+    #[serde(deserialize_with = "de_scopes")]
     pub oidc_scopes: Vec<String>,
     /// Where to send the browser after a successful login when the request
     /// named no (or an unsafe) `return_to`. A site-relative path.
@@ -182,7 +195,7 @@ pub struct AuthenticatorConfig {
     /// Directory holding the ES256 signing keys (`current.pem`, optional
     /// `previous.pem`) — a mounted K8s Secret in production.
     pub signing_keys_path: String,
-    /// Identity Service base URL for `sub -> person_id, tenants` resolution.
+    /// Identity Service base URL for `email -> person_id` resolution.
     pub identity_url: String,
 
     /// HTTP bind address. Owned by the `api-gateway` host gear; retained for
@@ -194,6 +207,26 @@ pub struct AuthenticatorConfig {
 
     /// Service-token issuance (§10 G1): the second listener + registry.
     pub service_tokens: ServiceTokensConfig,
+}
+
+/// Deserialize `oidc_scopes` from either a YAML list (`["openid","email"]`) or a
+/// space/comma-delimited string (`"openid email offline_access"`), so it round-trips
+/// through a single env var (`APP__…__oidc_scopes`) — env layers can't express a list.
+fn de_scopes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ListOrStr {
+        List(Vec<String>),
+        Str(String),
+    }
+    Ok(match ListOrStr::deserialize(d)? {
+        ListOrStr::List(v) => v,
+        ListOrStr::Str(s) => s
+            .split([' ', ','])
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    })
 }
 
 impl Default for AuthenticatorConfig {
@@ -211,11 +244,12 @@ impl Default for AuthenticatorConfig {
             gateway_issuer: String::new(),
             jwt_audience: "internal-services".to_owned(),
             redirect_uri: String::new(),
+            // offline_access omitted: survives-logout token, wrong for a BFF.
+            // Add via oidc_scopes for an IdP that needs it (Entra); see insight.yaml.
             oidc_scopes: vec![
                 "openid".to_owned(),
                 "email".to_owned(),
                 "profile".to_owned(),
-                "offline_access".to_owned(),
             ],
             default_return_to: "/".to_owned(),
             csrf_origins: Vec::new(),

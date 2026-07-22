@@ -1,14 +1,15 @@
 """In-process Identity stub for the bronze-to-api e2e rig (#1691).
 
 A minimal loopback HTTP backend the analytics `get_person` handler resolves
-against (`GET {identity_url}/v1/persons/{email}`): a canned `Person` for one
-seeded email (→ 200) and 404 for every other. Lets the persons endpoint exercise
-its real 200/404 contract, which is otherwise a no-backend 500.
+against (`POST {identity_url}/v1/profiles` with `{value_type:"email", value:<email>}`):
+a canned profile for one seeded email (→ 200) and 404 for every other. Lets the
+persons endpoint exercise its real 200/404 contract, which is otherwise a
+no-backend 500.
 
-Answers purely by email and ignores headers on purpose: the analytics client
-sends no caller header (the api-gateway injects it in production), so the REAL
-Identity service would 401 the header-less call → 500. The stub is what keeps
-this a test-only change; a real backend would need an analytics code change.
+Resolves purely by the request `value` and ignores headers on purpose. Analytics
+forwards the caller's gateway JWT (Authorization) on this hop (NGINX_BFF G1), but
+the stub does not verify it — the REAL Identity service would (R1); the stub is
+what keeps this a test-only backend.
 """
 
 from __future__ import annotations
@@ -18,15 +19,14 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 LOG = logging.getLogger("e2e.identity-stub")
 
-# The one person the stub resolves. `email` is the lookup key; the whole dict is
-# the Person body the analytics get_person handler returns verbatim on 200. Its
-# field set + names MUST match analytics `infra::identity::Person` (all
-# snake_case; every non-Option field required) or the client's
-# `resp.json::<Person>()` fails and the handler maps that to a 500 — not a 200.
+# The one person the stub resolves, keyed by `email`. The dict is the identity
+# `ProfileResponse` body analytics deserializes then maps into its own `Person`.
+# Field names must match `infra::identity::ProfileResponse` (snake_case); unknown
+# fields are ignored and null-valued optionals may be omitted.
 SEEDED_EMAIL = "e2e.person@example.com"
 SEEDED_PERSON: dict[str, Any] = {
     "email": SEEDED_EMAIL,
@@ -45,21 +45,27 @@ SEEDED_PERSON: dict[str, Any] = {
 # An email the stub never resolves — the 404 (not-found) probe.
 UNKNOWN_EMAIL = "nobody@example.com"
 
-_PREFIX = "/v1/persons/"
+_PROFILES_PATH = "/v1/profiles"
 
 
 class _Handler(BaseHTTPRequestHandler):
-    """Serves GET /v1/persons/{email}; the seeded map lives on `self.server`."""
+    """Serves POST /v1/profiles; the seeded map lives on `self.server`."""
 
-    def do_GET(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler API
+    def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler API
         path = urlparse(self.path).path
-        if not path.startswith(_PREFIX):
+        if path != _PROFILES_PATH:
             self._send(404, {"error": "not found", "path": path})
             return
-        email = unquote(path[len(_PREFIX) :])
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length else b""
+        try:
+            email = json.loads(raw).get("value", "")
+        except json.JSONDecodeError:
+            self._send(400, {"error": "invalid json body"})
+            return
         person = self.server.people.get(email)  # type: ignore[attr-defined]
         if person is None:
-            self._send(404, {"error": "person not found", "email": email})
+            self._send(404, {"error": "person not found", "value": email})
         else:
             self._send(200, person)
 
@@ -93,9 +99,7 @@ class IdentityStub:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         server.people = self._people  # type: ignore[attr-defined]
         self._server = server
-        self._thread = threading.Thread(
-            target=server.serve_forever, name="identity-stub", daemon=True
-        )
+        self._thread = threading.Thread(target=server.serve_forever, name="identity-stub", daemon=True)
         self._thread.start()
         LOG.info("identity stub listening on %s", self.url)
 

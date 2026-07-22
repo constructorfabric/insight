@@ -46,7 +46,7 @@ date: 2026-07-06
   - [DD-AUTH-06: Two Listeners for Two Internal Surfaces](#dd-auth-06-two-listeners-for-two-internal-surfaces)
   - [DD-AUTH-07: Access-Control Claims Fetched Once, at Login](#dd-auth-07-access-control-claims-fetched-once-at-login)
   - [DD-AUTH-08: Empty-Table First-Admin Bootstrap plus INSTALLER](#dd-auth-08-empty-table-first-admin-bootstrap-plus-installer)
-  - [RESOLVED (step 04): ES256 for the Gateway JWT](#resolved-step-04-es256-for-the-gateway-jwt)
+  - [RESOLVED (step 07): ES256 for the Gateway JWT](#resolved-step-07-es256-for-the-gateway-jwt)
 - [6. Traceability](#6-traceability)
 
 <!-- /toc -->
@@ -96,7 +96,7 @@ The authenticator is a plain HTTP service: no proxying, no K8s API access, no st
 | `cpt-insightspec-nfr-auth-rate-limit` | Layer-2 precise limits | Auth Controller | Redis token bucket by session/user + login-state cap | Flood test: 429 at cap, bounded Redis entries |
 | `cpt-insightspec-nfr-auth-fail-closed` | No auth without Redis | Session Manager | No local cache; readiness = Redis + keys loaded | Kill Redis; verify 401/503 + not-ready |
 
-**ADRs**: to be authored alongside implementation; decisions captured inline in [section 5](#5-design-decisions) until then, including the carried-over and superseded decisions from the deleted API Gateway spec tree.
+**ADRs**: [`cpt-insightspec-adr-auth-0001-per-environment-idp-selection`](specs/ADR/0001-per-environment-idp-selection.md) -- which IdP backs the authenticator's OIDC client per environment (fakeidp for all dev environments -- CI, compose, and local k8s -- because it injects the `tenant_id` claim with zero extra infrastructure; Dex, heavy brokers, and a dev-login endpoint rejected; the production IdP/broker deferred), realising `cpt-insightspec-fr-auth-oidc-login` wiring without a code change. Remaining decisions are captured inline in [section 5](#5-design-decisions) until extracted alongside implementation, including the carried-over and superseded decisions from the deleted API Gateway spec tree.
 
 ### 1.3 Architecture Layers
 
@@ -375,7 +375,7 @@ Does not verify inbound JWTs (the host's auth pipeline does, for the admin surfa
 No-user workloads need signed identity without a secret in transit.
 
 ##### Responsibility scope
-`POST /internal/token` on the second listener: validate the RFC 7523 assertion (signature against the registry's public keys, `aud`, `exp` at most 60 s), require a tenant scope (reject `400` if none), replay-guard `jti` (`SET NX`, same pattern as `asm:logout_jti`), audit, and mint `sub = service:<name>` with registry roles and the requested `tenants`.
+`POST /internal/token` on the second listener: validate the RFC 7523 assertion (signature against the registry's public keys, `aud`, `exp` at most 60 s), require a tenant scope (reject `400` if none), replay-guard `jti` (`SET NX`, same pattern as `asm:logout_jti`), audit, and mint a token with a stable per-service UUID `sub` (deterministic v5), `sub_type = service`, registry roles (including `service`), and the requested single `tenant_id`.
 
 ##### Responsibility boundaries
 Does not manage the registry (gitops does). Does not issue user tokens.
@@ -543,7 +543,7 @@ sequenceDiagram
     Note over B: IdP tokens stay HERE, browser never sees them.<br/>Refreshed in background; a definitive refusal later<br/>kills all linked session tokens.
     B->>ID: resolve author: person_id, tenant(s)
     Note over B: access-control claims: ONE call at login to the<br/>permissions service (built later) -- until then<br/>default roles from config
-    B->>B: create session: stable session_id (UUIDv7)<br/>+ session token (opaque credential, CSPRNG)<br/>mint linked JWT: sub=person_id, tenants, roles,<br/>sid=session_id, exp=iat+300s
+    B->>B: create session: stable session_id (UUIDv7)<br/>+ session token (opaque credential, CSPRNG)<br/>mint linked JWT: sub=person_id, tenant_id, roles,<br/>sub_type=user, sid=session_id, exp=iat+300s
     B->>R: one pipeline: session record + token mapping<br/>+ linked JWT + indexes + refresh schedule
     B-->>U: Set-Cookie __Host-sid=(session token) + 302 to SPA
 ```
@@ -687,11 +687,11 @@ sequenceDiagram
     participant R as Redis
 
     S->>S: sign assertion: iss=sub=service, aud=authenticator,<br/>jti, exp <= 60s (private key)
-    S->>B: POST /internal/token (assertion + tenants=[t])
+    S->>B: POST /internal/token (assertion + tenant=t)
     B->>B: verify signature against registry public keys
     Note over B: reject 400 if no tenant named (tenant isolation)
     B->>R: SET jti NX (replay guard)
-    B-->>S: gateway JWT: sub=sid=service:name, roles per registry,<br/>tenants:[t] (required), TTL 300s, same key + JWKS
+    B-->>S: gateway JWT: sub=<service-uuid>, sub_type=service,<br/>sid=service:name, roles per registry,<br/>tenant_id=t (required), TTL 300s, same key + JWKS
     S->>S: cache per tenant, re-request before expiry
 ```
 
@@ -740,7 +740,7 @@ graph LR
 | Field | Type | Description |
 |---|---|---|
 | `person_id` | String | Internal person identifier |
-| `tenants` | String (JSON) | Tenant memberships resolved at login -- the JWT's `tenants` source |
+| `tenants` | String (JSON) | Tenant memberships resolved at login -- the JWT's single `tenant_id` is minted from the first entry |
 | `roles` | String (JSON) | Access-control snapshot fetched at login (default roles until the permissions service exists) |
 | `idp_iss` | String | OIDC issuer URL |
 | `idp_sub` | String | OIDC subject |
@@ -801,22 +801,23 @@ graph LR
 
 Technical specification of `cpt-insightspec-contract-auth-gateway-jwt` ([PRD section 7.2](./PRD.md#72-external-integration-contracts)). This schema **supersedes the deleted spec's DD-ROUTER-05** (identity-only JWT, all authorization downstream): the JWT is the signed, complete description of the request author.
 
-**Header**: `alg` (see the open EdDSA vs ES256 decision in [section 5](#open-eddsa-vs-es256-for-the-gateway-jwt)), `typ: JWT`, `kid` from JWKS.
+**Header**: `alg: ES256` (see the algorithm decision in [section 5](#resolved-step-07-es256-for-the-gateway-jwt)), `typ: JWT`, `kid` from JWKS.
 
 | Claim | Type | Value |
 |---|---|---|
-| `sub` | String | Internal **person_id**; `service:<name>` for service tokens |
-| `tenants` | Array of String | For a user token: all tenant memberships (1..N), resolved at login. For a **service token**: the tenant(s) the caller requested -- always present, since service tokens are mandatorily tenant-scoped (DD-AUTH-05). The JWT is the only tenant **authority**; per-request **selection** is an unsigned attribute (`X-Tenant-ID` or path segment) that downstream validates against this signed set: selector missing when needed = 400; selector not in the set = 403. An unsigned header can no longer grant anything -- the worst it can do is pick among tenants the JWT already granted |
-| `roles` | Array of String | Default from config (`["user"]`); the permissions service's login-time answer later replaces the values, never the shape. Service tokens carry `["service", ...]` per the registry |
-| `sid` | String | **Stable** session id (UUIDv7) -- survives cookie rotations; one id from login to logout for tracing, audit, and the JWT/session linkage. **Service tokens** have no session, so `sid = service:<name>` (equal to `sub`): a non-empty, stable value that keeps the claim shape fixed (never optional) and correlates a service's issuance in audit/trace |
+| `sub` | String (UUID) | Internal **person_id**; for a **service token**, a stable per-service UUID (deterministic v5, not a `service:<name>` string) |
+| `tenant_id` | String (UUID) | The **single** tenant this token is scoped to -- the sole tenant authority. A user token carries the session's tenant; a service token carries the caller's requested tenant (mandatorily tenant-scoped, DD-AUTH-05). **Required**: a token without a valid `tenant_id` is rejected downstream (no Nil fallback). Multi-tenant-in-token and the `X-Tenant-ID` selector are dropped -- a tenant from the outside world never passes |
+| `roles` | String | Space-delimited access-control scopes (OAuth `scope` shape), default `user`; the permissions service's login-time answer later replaces the values, never the shape. Service tokens include `service`. (Serialized as a space-delimited string, not a JSON array, so the plugin's `token_scopes` mapping — `as_str().split_whitespace()` — reads it.) |
+| `sub_type` | String | `user` for people, `service` for service tokens (maps to `SecurityContext.subject_type`) |
+| `sid` | String | **Stable** session id (UUIDv7) -- survives cookie rotations; one id from login to logout for tracing, audit, and the JWT/session linkage. **Service tokens** have no session, so `sid = service:<name>`: a non-empty, stable value that keeps the claim shape fixed (never optional) and correlates a service's issuance in audit/trace |
 | `iss` | String | Gateway host issuer URL |
 | `aud` | String | `internal-services` |
 | `iat` / `exp` | Int | `exp = iat + 60..300 s` (default TTL 300 s) |
 | `jti` | String | UUIDv7 |
 
-**SecurityContext alignment (load-bearing).** Downstream gears construct caller identity from claims via the authn-resolver claim mapper into `toolkit_security::SecurityContext`. The claims map 1:1: `sub` maps to `subject_id` (`service:<name>` yields `subject_type = "service"`), `roles` maps to `token_scopes`, and the validated tenant selection maps to `subject_tenant_id`. `SecurityContext` is single-tenant by design -- which is exactly the authority/selection split: `tenants[]` in the JWT is the authority; the shared verification middleware resolves selector membership and constructs the context with the *selected* tenant.
+**SecurityContext alignment (load-bearing).** Downstream gears construct caller identity from claims via the `cf-gears-oidc-authn-plugin` claim mapper into `toolkit_security::SecurityContext`, configured by `claim_mapping`. The claims map 1:1: `sub` → `subject_id` (parsed as a UUID), `tenant_id` → `subject_tenant_id` (**required**), `sub_type` → `subject_type`, `roles` → `token_scopes`. `SecurityContext` is single-tenant by design, which now matches the token exactly: one signed `tenant_id`, no authority/selection split, no bespoke mapping layer.
 
-**Verification at downstream**: signature via JWKS (`GATEWAY_JWKS_URL`), `iss`, `aud`, `exp` -- no shared secrets. Mandatory for every service, fail closed, no production disable knob: a gateway misconfiguration that skips auth yields a JWT-less request downstream and a 401 -- an availability bug, never a breach. The gateway's own check is UX and hot-path efficiency, not the security boundary.
+**Verification at downstream**: signature via JWKS (resolved through OIDC discovery on `iss`), `iss`, `aud`, `exp`, and the required `tenant_id` -- no shared secrets. Mandatory for every service, fail closed, no production disable knob: a gateway misconfiguration that skips auth yields a JWT-less request downstream and a 401 -- an availability bug, never a breach. The gateway's own check is UX and hot-path efficiency, not the security boundary.
 
 ### 3.9 Configuration Surface
 
@@ -958,7 +959,7 @@ Recorded here so the decisions survive the deleted tree; rationale as originally
 
 ### Superseded decisions
 
-- **DD-ROUTER-05 (identity-only JWT, all authorization downstream) -- SUPERSEDED** by DD-AUTH-04: the JWT now carries `tenants` and `roles`; downstream services still make the final authorization decision, but from signed claims instead of per-request identity lookups and unsigned tenant headers.
+- **DD-ROUTER-05 (identity-only JWT, all authorization downstream) -- SUPERSEDED** by DD-AUTH-04: the JWT now carries a single `tenant_id` and `roles`; downstream services still make the final authorization decision, but from signed claims instead of per-request identity lookups and unsigned tenant headers.
 - **The BFF spec's "no IdP token refresh in v1" carve-out -- SUPERSEDED** by DD-AUTH-03: the authenticator stores and background-refreshes IdP tokens; sessions die on definitive IdP refusal.
 - **DD-BFF-10's swap-key rotation pipeline -- SUPERSEDED** in mechanism by DD-AUTH-02 (the grace *semantics* are preserved by the old mapping's TTL; the rotation, grace, and jitter *intent* of DD-BFF-10 carries over with the bigger jitter window).
 - **The single-binary gateway NFR (`nfr-gw-single-binary` in the deleted tree) -- deliberately violated and retired**: that NFR existed to avoid a hop between auth and routing; this architecture reintroduces the hop deliberately and absorbs it with the gateway-side exchange cache.
@@ -998,25 +999,25 @@ Recorded here so the decisions survive the deleted tree; rationale as originally
 
 ### DD-AUTH-04: Tenants and Roles in the JWT
 
-**Decision**: The JWT carries `tenants[]` (the only tenant authority) and `roles` from day one. Per-request tenant selection stays an unsigned attribute validated against the signed set inside the shared verification middleware.
+**Decision**: The JWT carries a **single** signed `tenant_id` (the only tenant authority) and `roles` from day one. There is **no** per-request tenant selection: the token names exactly one tenant, minted from the session. (An earlier cut carried `tenants[]` plus an `X-Tenant-ID` selector validated downstream; that was dropped in step 07 — multi-tenant-in-token "leads to errors mostly and may not be used at all", and the single-tenant shape matches `SecurityContext` and the upstream plugin's `subject_tenant_id` 1:1, with no bespoke selection middleware.)
 
 **Why**:
-- Headers are not signed; an unsigned `X-Insight-Tenant-Id` as a trust source is exactly the anti-pattern this design deletes. Demoting it to a validated selector means the worst a forged header can do is pick among tenants the JWT already granted.
-- The SPA keeps sending `X-Tenant-ID` exactly as today; switching tenant in the UI is just a different selector -- no session mutation, no JWT reissue.
+- Headers are not signed; an unsigned `X-Insight-Tenant-Id`/`X-Tenant-ID` as a trust source is exactly the anti-pattern this design deletes. With a single signed `tenant_id` there is nothing for an outside header to select — a tenant from the outside world never passes, full stop.
+- One signed `tenant_id` maps directly to the plugin's `subject_tenant_id` (required), so the whole authority/selection split — and the 400/403 selector logic it needed downstream — disappears.
 - Fixing the claim shape now means the permissions service later changes claim values, never the contract; downstream services code against the final shape from day one.
 
-**Consequences**: Membership and role changes propagate on re-login; the instant lever is session revocation (the permissions service calls the admin revoke on grant change). Claim size stays bounded: memberships are 1..few in practice; if a deployment ever has persons in hundreds of tenants, cap the claim and fall back to selector + membership lookup -- a downstream-only change.
+**Consequences**: Membership and role changes propagate on re-login; the instant lever is session revocation (the permissions service calls the admin revoke on grant change). Switching the active tenant in the UI is a re-login / new token rather than a per-request selector. If a future need for multi-tenant fan-out appears, it is a downstream-only change (per-tenant tokens), not a claim-contract change.
 
 ### DD-AUTH-05: Service Tokens via RFC 7523 Assertions and a Public-Key Registry
 
-**Decision**: `POST /internal/token` accepts `private_key_jwt` assertions verified against a gitops-reviewable registry (service name, public keys, roles); output is a normal gateway JWT with `sub = service:<name>`. **Service tokens are always tenant-scoped**: the request must name a tenant (`tenants=[...]`); one that names none is rejected `400 tenant_required`. There is no cross-tenant service token and no per-service tenant flag.
+**Decision**: `POST /internal/token` accepts `private_key_jwt` assertions verified against a gitops-reviewable registry (service name, public keys, roles); output is a normal gateway JWT with a stable per-service UUID `sub` (deterministic v5) and `sub_type = service` (the `service:<name>` string survives only as the human-readable `sid`). **Service tokens are always tenant-scoped**: the request must name a tenant; one that names none is rejected `400 tenant_required`. There is no cross-tenant service token and no per-service tenant flag.
 
 **Why**:
 - Against static client secrets: no secret in transit, rotation is a reviewable PR shipping key n+1 alongside n.
 - Against K8s ServiceAccount projected tokens: those bind auth to k8s (compose/e2e need a parallel mechanism) and couple the authenticator to the apiserver -- a good v2 convenience layer, wrong base.
 - Against mTLS/SPIFFE: strongest story, but drags in cert infra or a mesh for a handful of services.
 - One verification path downstream; the permissions service's authenticated path to session-revoke falls out for free (its registry entry grants the revoke role).
-- **Mandatory tenant** enforces tenant isolation for machine work: every service token is scoped to the tenant it acts on, so a downstream service sees the same `tenants[]` authority contract for user and service traffic. This **supersedes NGINX_BFF.md §10 G1's "no tenants claim = cross-tenant service work"** -- where a service legitimately needs to fan out across tenants, it requests one token per tenant. Where the service gets its tenant is the service's concern.
+- **Mandatory tenant** enforces tenant isolation for machine work: every service token is scoped to the tenant it acts on, so a downstream service sees the same single-`tenant_id` authority contract for user and service traffic. This **supersedes NGINX_BFF.md §10 G1's "no tenants claim = cross-tenant service work"** -- where a service legitimately needs to fan out across tenants, it requests one token per tenant. Where the service gets its tenant is the service's concern.
 
 **Consequences**: No key material is committed -- dev/e2e generate a throwaway keypair at bring-up (like the gateway signing key) and reference its public half via `public_key_paths`; the flow is identical outside k8s. Assertion `jti` replay uses the existing `SET NX` pattern. A future genuinely cross-tenant service (should one arise) would need an explicit new decision, not a silent unscoped token.
 
@@ -1046,9 +1047,15 @@ Recorded here so the decisions survive the deleted tree; rationale as originally
 
 **Consequences**: The documented race ("first colleague to log in wins the universe") is bounded to IdP-authenticated principals on an empty install and is loudly audited; security-sensitive installs disable it.
 
-### RESOLVED (step 04): ES256 for the Gateway JWT
+### RESOLVED (step 07): ES256 for the Gateway JWT
 
-**Decision: mint ES256 (ECDSA P-256 / SHA-256).** The deleted spec mandated EdDSA (DD-BFF-05: small signatures, fast verify), but the downstream verifier (oidc-authn-plugin) validates RS256/ES256 today; EdDSA would need a non-trivial plugin extension, and downstream verification is a later phase (the R1 rule). ES256 satisfies DD-BFF-05's rationale -- 64-byte signatures, fast verify -- with **zero downstream friction**. The authenticator's Key Store loads a mounted PKCS#8 EC P-256 private key (`current.pem` + optional `previous.pem`), the `kid` is the RFC 7638 JWK thumbprint (stable, no manifest), and `/.well-known/jwks.json` publishes the EC public keys. If a future need for EdDSA arises, the plugin extension remains the documented upgrade path (it changes only the signing alg, not the claim contract). Implemented in step 04 before any signing code shipped.
+**Decision: mint ES256 (ECDSA P-256 / SHA-256).** Downstream verification (step 07) is done by the **upstream `cf-gears-oidc-authn-plugin`**, which resolves the JWKS through `jsonwebtoken`'s EC-capable `jwk::JwkSet` — so it validates EC keys natively. ES256 is the right default: 64-byte signatures and fast verification, and the gateway JWT rides in an HTTP header on **every** downstream request, so those bytes and cycles are paid per call. `none` is always rejected; the plugin's `supported_algorithms` is pinned to `["ES256"]`.
+
+(An earlier step-07 cut briefly fell back to RS256 because the insight-local *fork* of the plugin used `cf-gears-toolkit-auth`'s RSA-only JWKS parser. That fork has been dropped in favour of the published plugin; the toolkit-auth RSA-only limitation is now tracked purely as an upstream enhancement in constructorfabric/gears-rust#4215 and no longer constrains this design.)
+
+The authenticator's Key Store loads a mounted PKCS#8 **EC P-256** private key (`current.pem` + optional `previous.pem`); the `kid` is the RFC 7638 EC JWK thumbprint (stable, no manifest); `/.well-known/jwks.json` publishes the EC public keys (`kty=EC`, `crv=P-256`, `x`/`y`).
+
+**Discovery front (deployment note).** The plugin resolves the JWKS via OIDC **discovery** (`{issuer}/.well-known/openid-configuration` → `jwks_uri`), not from a directly-configured JWKS URL, and its runtime URL policy is **https-only**. So the authenticator also serves `GET /.well-known/openid-configuration` (a minimal doc: `issuer` + `jwks_uri`, both derived from `gateway_issuer`), and in production the issuer is a real https origin. In local dev / the step-07 e2e — which run over http — a tiny TLS front (self-signed cert, trusted by downstream via `http_client.custom_ca_certificate_paths`) terminates https for the well-known endpoints, so the real (https-only) code path is exercised rather than a dev-only insecure toggle. (The RFC 7523 service-token *client assertions* stay ES256 too — verified against the services' own EC keys in the registry, not via the plugin's JWKS.)
 
 ## 6. Traceability
 

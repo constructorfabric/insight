@@ -8,7 +8,6 @@
 //! `POST /v1/profiles`) land in the next steps.
 
 mod api;
-mod auth;
 mod config;
 mod domain;
 mod gear;

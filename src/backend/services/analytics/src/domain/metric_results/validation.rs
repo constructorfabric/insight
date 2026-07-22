@@ -8,13 +8,16 @@ use uuid::Uuid;
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition, load_definitions};
 
-use super::dto::{MetricResultsRequest, MetricViewRequest};
+use super::dto::{MetricDimensionFilterRequest, MetricResultsRequest, MetricViewRequest};
 use super::view::Bucket;
 
 const ROW_LIMIT: usize = 5000;
 const MAX_METRICS: usize = 50;
 const MAX_ENTITY_IDS: usize = 1000;
 const MAX_PERIOD_DAYS: i64 = 400;
+const MAX_FILTERS: usize = 10;
+const MAX_FILTER_VALUES: usize = 100;
+const MAX_FILTER_VALUE_BYTES: usize = 512;
 
 /// Server-owned histogram resolution: fixed-width bins over each entity's
 /// own exact [min, max]. A fixed count keeps responses deterministic and
@@ -34,7 +37,14 @@ pub struct ValidatedMetricResultsRequest {
 #[derive(Debug)]
 pub struct ValidatedMetricRequest {
     pub def: MetricDefinition,
+    pub filters: Vec<ValidatedDimensionFilter>,
     pub views: Vec<ValidatedMetricView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ValidatedDimensionFilter {
+    pub dimension: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +111,7 @@ pub async fn validate_request(
             );
         }
 
+        let filters = validate_filters(&def, metric.filters)?;
         let mut view_kinds = BTreeSet::new();
         let mut views = Vec::with_capacity(metric.views.len());
         for view in metric.views {
@@ -114,7 +125,11 @@ pub async fn validate_request(
             views.push(validate_view(&def, view)?);
         }
 
-        metrics.push(ValidatedMetricRequest { def, views });
+        metrics.push(ValidatedMetricRequest {
+            def,
+            filters,
+            views,
+        });
     }
 
     let validated = ValidatedMetricResultsRequest {
@@ -301,6 +316,67 @@ fn validate_dimensions(
     Ok(out)
 }
 
+fn validate_filters(
+    def: &MetricDefinition,
+    filters: Vec<MetricDimensionFilterRequest>,
+) -> Result<Vec<ValidatedDimensionFilter>, CanonicalError> {
+    if filters.len() > MAX_FILTERS {
+        return invalid(
+            "metrics.filters",
+            format!("at most {MAX_FILTERS} dimension filters per metric"),
+        );
+    }
+    let mut seen_dimensions = BTreeSet::new();
+    let mut out = Vec::with_capacity(filters.len());
+    for filter in filters {
+        let Some(dimension) =
+            validate_dimensions(def, "metrics.filters.dimension", vec![filter.dimension])?
+                .into_iter()
+                .next()
+        else {
+            return invalid("metrics.filters.dimension", "dimension must not be empty");
+        };
+        if !seen_dimensions.insert(dimension.clone()) {
+            return invalid(
+                "metrics.filters.dimension",
+                format!("duplicate dimension filter: {dimension}"),
+            );
+        }
+        if filter.values.is_empty() {
+            return invalid(
+                "metrics.filters.values",
+                format!("filter {dimension} must contain at least one value"),
+            );
+        }
+        if filter.values.len() > MAX_FILTER_VALUES {
+            return invalid(
+                "metrics.filters.values",
+                format!("filter {dimension} supports at most {MAX_FILTER_VALUES} values"),
+            );
+        }
+        let mut seen_values = BTreeSet::new();
+        for value in filter.values {
+            let value = value.trim();
+            if value.is_empty() {
+                return invalid("metrics.filters.values", "filter value must not be empty");
+            }
+            if value.len() > MAX_FILTER_VALUE_BYTES {
+                return invalid(
+                    "metrics.filters.values",
+                    format!("filter value must not exceed {MAX_FILTER_VALUE_BYTES} bytes"),
+                );
+            }
+            seen_values.insert(value.to_owned());
+        }
+        out.push(ValidatedDimensionFilter {
+            dimension,
+            values: seen_values.into_iter().collect(),
+        });
+    }
+    out.sort();
+    Ok(out)
+}
+
 fn normalize_entity_type(entity_type: &str) -> Result<String, CanonicalError> {
     normalize_key("entity.type", entity_type)
 }
@@ -446,6 +522,7 @@ mod tests {
                 .into_iter()
                 .map(|key| super::super::dto::MetricRequest {
                     metric_key: key.to_owned(),
+                    filters: vec![],
                     views: vec![MetricViewRequest::Period],
                 })
                 .collect(),
@@ -672,6 +749,93 @@ mod tests {
     }
 
     #[test]
+    fn filters_are_trimmed_deduplicated_and_sorted() {
+        let def = sum_definition(vec!["source", "repository"]);
+        let filters = vec![
+            MetricDimensionFilterRequest {
+                dimension: " source ".to_owned(),
+                values: vec![
+                    "github".to_owned(),
+                    " bitbucket ".to_owned(),
+                    "github".to_owned(),
+                ],
+            },
+            MetricDimensionFilterRequest {
+                dimension: "repository".to_owned(),
+                values: vec!["z/repo".to_owned(), "a/repo".to_owned()],
+            },
+        ];
+        let Ok(filters) = validate_filters(&def, filters) else {
+            panic!("expected valid filters");
+        };
+        assert_eq!(
+            filters,
+            vec![
+                ValidatedDimensionFilter {
+                    dimension: "repository".to_owned(),
+                    values: vec!["a/repo".to_owned(), "z/repo".to_owned()],
+                },
+                ValidatedDimensionFilter {
+                    dimension: "source".to_owned(),
+                    values: vec!["bitbucket".to_owned(), "github".to_owned()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn filters_reject_invalid_shapes() {
+        let def = sum_definition(vec!["source"]);
+        let filter = |dimension: &str, values: Vec<String>| MetricDimensionFilterRequest {
+            dimension: dimension.to_owned(),
+            values,
+        };
+        assert!(
+            validate_filters(
+                &def,
+                vec![
+                    filter("source", vec!["github".to_owned()]),
+                    filter("source", vec!["gitlab".to_owned()]),
+                ],
+            )
+            .is_err()
+        );
+        assert!(validate_filters(&def, vec![filter("source", vec![])]).is_err());
+        assert!(
+            validate_filters(
+                &def,
+                vec![filter(
+                    "source",
+                    (0..=MAX_FILTER_VALUES)
+                        .map(|index| index.to_string())
+                        .collect(),
+                )],
+            )
+            .is_err()
+        );
+        assert!(validate_filters(&def, vec![filter("source", vec![" ".to_owned()])]).is_err());
+        assert!(
+            validate_filters(
+                &def,
+                vec![filter(
+                    "source",
+                    vec!["x".repeat(MAX_FILTER_VALUE_BYTES + 1)],
+                )],
+            )
+            .is_err()
+        );
+        assert!(
+            validate_filters(
+                &def,
+                (0..=MAX_FILTERS)
+                    .map(|index| filter(&format!("d{index}"), vec!["x".to_owned()]))
+                    .collect(),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn validate_view_gates_histogram_on_median_computation() {
         // Histograms bin per-event values; sum/ratio observations are
         // day-aggregated, so binning them would present aggregates as events.
@@ -720,6 +884,7 @@ mod tests {
             to: day("2026-03-31"),
             metrics: vec![ValidatedMetricRequest {
                 def,
+                filters: vec![],
                 views: vec![ValidatedMetricView::Timeseries {
                     bucket: Bucket::Day,
                     dimensions: vec![],
@@ -739,6 +904,7 @@ mod tests {
             to: day("2026-01-31"),
             metrics: vec![ValidatedMetricRequest {
                 def: median_definition(),
+                filters: vec![],
                 views: vec![ValidatedMetricView::Histogram],
             }],
         };
@@ -755,6 +921,7 @@ mod tests {
             to: day("2026-01-31"),
             metrics: vec![ValidatedMetricRequest {
                 def,
+                filters: vec![],
                 views: vec![
                     ValidatedMetricView::Period,
                     ValidatedMetricView::Peer {

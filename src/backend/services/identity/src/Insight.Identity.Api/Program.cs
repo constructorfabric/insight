@@ -15,7 +15,6 @@ using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using MySqlConnector;
 using Serilog;
@@ -102,71 +101,80 @@ builder.Services.AddHostedService<Insight.Identity.Api.Background.PersonsSeedWor
 // assembly for AbstractValidator<T> implementations.
 builder.Services.AddValidatorsFromAssemblyContaining<Insight.Identity.Api.Validation.ResolveProfileCommandValidator>();
 
-// Composite tenant resolver: header → JWT → config default.
-builder.Services.AddSingleton<HeaderTenantContext>();
-builder.Services.AddSingleton<JwtTenantContext>();
-builder.Services.AddSingleton<ConfigTenantContext>();
-builder.Services.AddSingleton<ITenantContext>(sp => new CompositeTenantContext(new ITenantContext[]
-{
-    sp.GetRequiredService<HeaderTenantContext>(),
-    sp.GetRequiredService<JwtTenantContext>(),
-    sp.GetRequiredService<ConfigTenantContext>(),
-}));
+// Tenant resolver (NGINX_BFF §10 G2): the ONLY authority is the single signed
+// gateway-JWT `tenant_id` claim. No config-default fallback — a request without a
+// signed tenant resolves to null and fails closed (400 tenant_unresolved) rather
+// than silently reading another tenant's data.
+builder.Services.AddSingleton<ITenantContext, GatewayTenantContext>();
 
-// JWT bearer authentication — parse-only mode. The api-gateway already
-// validates the token upstream (issuer, audience, signature, lifetime)
-// before forwarding the request, so this service treats the JWT as a
-// context-bearing envelope: the middleware decodes the payload into a
-// ClaimsPrincipal that downstream resolvers (JwtTenantContext, and the
-// upcoming caller-id resolver tracked under #346) can read. No
-// endpoint enforces authentication in this PR — anonymous requests
-// still pass through unchanged.
+// Gateway-JWT bearer authentication — full, fail-closed validation
+// (NGINX_BFF §6 R1). identity verifies the gateway JWT itself: signature
+// (ES256, via the authenticator's JWKS), issuer (the gateway origin), audience
+// (internal-services), and lifetime. Raw customer-IdP tokens are no longer
+// accepted. There is no parse-only / disable path.
 //
-// TODO(#346): switch to full validation once the IdP authority is
-// pinned per environment. The block below is the swap-in skeleton —
-// every line must flip together. The `SignatureValidator = null` line
-// is load-bearing: without it the no-op below keeps short-circuiting
-// signature checks even with `ValidateIssuerSigningKey = true`, which
-// would also silently accept `alg=none` tokens.
-//     options.Authority = configuration["identity:auth_authority"];
-//     options.Audience  = configuration["identity:auth_audience"];
-//     options.TokenValidationParameters.ValidateIssuer            = true;
-//     options.TokenValidationParameters.ValidateAudience          = true;
-//     options.TokenValidationParameters.ValidateLifetime          = true;
-//     options.TokenValidationParameters.ValidateIssuerSigningKey  = true;
-//     options.TokenValidationParameters.RequireSignedTokens       = true;
-//     options.TokenValidationParameters.SignatureValidator        = null;
+// The authenticator publishes JWKS at `/.well-known/jwks.json` but serves no
+// OIDC discovery document, so `Authority` metadata discovery cannot be used;
+// the signing keys are resolved directly from the configured JWKS URL with a
+// caching ConfigurationManager (periodic refresh + auto-refresh on unknown
+// kid, which covers key rotation).
+var gatewayIssuer = builder.Configuration["identity:auth_gateway_issuer"] ?? "";
+var gatewayJwksUrl = builder.Configuration["identity:auth_gateway_jwks_url"] ?? "";
+if (string.IsNullOrWhiteSpace(gatewayIssuer) || string.IsNullOrWhiteSpace(gatewayJwksUrl))
+{
+    throw new InvalidOperationException(
+        "identity:auth_gateway_issuer and identity:auth_gateway_jwks_url are required " +
+        "(env IDENTITY__auth_gateway_issuer / IDENTITY__auth_gateway_jwks_url). " +
+        "The gateway JWT is verified fail-closed — there is no disable knob.");
+}
+
+// In-cluster JWKS is plain HTTP (TLS terminates at the ingress); do not require
+// HTTPS on the document fetch.
+var jwksConfigManager = new Microsoft.IdentityModel.Protocols.ConfigurationManager<JsonWebKeySet>(
+    gatewayJwksUrl,
+    new JwksRetriever(),
+    new Microsoft.IdentityModel.Protocols.HttpDocumentRetriever { RequireHttps = false });
+
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.RequireHttpsMetadata = false;
-        // Keep JWT claim names as-is (`email`, `sub`, `oid`, …) so we
-        // can read them by their short JWT names. Without this, the
-        // default JwtBearer pipeline rewrites `email` / `sub` / `name`
-        // into long ClaimTypes.* URIs (a legacy WS-Federation hand-me-
-        // down), and `FindFirst("email")` would return null while
-        // `oid` (not in the rewrite table) would still work — easy to
-        // miss in review. False keeps every claim under one rule.
+        // Keep JWT claim names as-is (`sub`, `tenants`, `roles`, …) so resolvers
+        // read them by their short names rather than the long ClaimTypes.* URIs
+        // the default pipeline would rewrite them to.
         options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidateIssuer = false,
-            ValidateAudience = false,
-            ValidateLifetime = false,
-            ValidateIssuerSigningKey = false,
-            RequireSignedTokens = false,
-            // Accept any token shape; do not enforce signature. Returning
-            // a parsed JsonWebToken short-circuits the default signature
-            // verifier and lets the claim pipeline run.
-            SignatureValidator = (token, _) => new JsonWebToken(token),
+            ValidateIssuer = true,
+            ValidIssuer = gatewayIssuer,
+            ValidateAudience = true,
+            ValidAudience = "internal-services",
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            RequireSignedTokens = true,
+            // Pin the algorithm to the authenticator's ES256 (ECDSA P-256) —
+            // reject `alg=none` and RSA/HS confusion outright.
+            ValidAlgorithms = new[] { SecurityAlgorithms.EcdsaSha256 },
+            IssuerSigningKeyResolver = (_, _, _, _) =>
+                jwksConfigManager.GetConfigurationAsync(CancellationToken.None)
+                    .GetAwaiter().GetResult().GetSigningKeys(),
         };
     });
 
-// Caller resolver — header first, then JWT claims (oid/sub via
-// account_person_map, then email/preferred_username/upn via persons).
-// Scoped because resolution hits MariaDB through IPersonsReader.
-builder.Services.AddScoped<ICallerContext, HeaderCallerContext>();
+// Fail-closed by default (NGINX_BFF R1): every endpoint requires a valid
+// gateway JWT unless it opts out with AllowAnonymous (health probes, the
+// OpenAPI document). A request without a valid gateway JWT gets 401.
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});
+
+// Caller resolver — the gateway JWT's `sub` IS the internal person_id
+// (NGINX_BFF step 07). No DB lookup, no header trust path.
+builder.Services.AddScoped<ICallerContext, SubjectCallerContext>();
 
 // Admin-probe — used by CRUD endpoints on /v1/visibility, /v1/roles,
 // /v1/person-roles to gate by the `admin` role. Scoped to match the
@@ -265,6 +273,7 @@ app.UseExceptionHandler(handler =>
     {
         var feature = context.Features.Get<IExceptionHandlerFeature>();
         var ex = feature?.Error;
+
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("Insight.Identity.Api.UnhandledException");
         // Log the route TEMPLATE, not the raw path (`/v1/persons/<email>`)
@@ -304,10 +313,11 @@ app.UseExceptionHandler(handler =>
     });
 });
 
-// Populate HttpContext.User from a Bearer token when present. No
-// UseAuthorization() — endpoints stay anonymous (#346 will add the
-// caller-id check on top once visibility lands).
+// Verify the gateway JWT, then enforce the fail-closed fallback policy
+// (NGINX_BFF R1): every endpoint requires a valid gateway JWT unless it is
+// marked AllowAnonymous (health probes, the OpenAPI document).
 app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapPersonsEndpoints();
 app.MapVisibilityEndpoints();
@@ -317,9 +327,8 @@ app.MapSubchartEndpoints();
 app.MapPersonsSeedEndpoints();
 
 // Serve the OpenAPI document at /openapi.json (parity with analytics-api).
-// Public — no caller/tenant header required — so docs tooling and the drift
-// gate can fetch the contract; identity endpoints are anonymous today anyway.
-app.MapOpenApi("/openapi.json");
+// Anonymous so docs tooling and the drift gate can fetch the contract.
+app.MapOpenApi("/openapi.json").AllowAnonymous();
 
 await app.RunAsync().ConfigureAwait(false);
 

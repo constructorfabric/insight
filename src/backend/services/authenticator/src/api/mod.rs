@@ -109,8 +109,23 @@ fn register_internal_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .register(router, openapi)
 }
 
-/// The public JWKS at `/.well-known/jwks.json` (downstream JWT verification).
+/// The public well-known surface for downstream JWT verification: the OIDC
+/// discovery document (`cf-gears-oidc-authn-plugin` resolves the JWKS from it)
+/// and the JWKS itself.
 fn register_well_known_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let router = OperationBuilder::get("/.well-known/openid-configuration")
+        .operation_id("authenticator.openid_configuration")
+        .summary("OIDC discovery document (issuer + jwks_uri) for downstream verifiers")
+        .tag("internal")
+        .public()
+        .text_response(
+            StatusCode::OK,
+            "OIDC discovery document",
+            "application/json",
+        )
+        .handler(handlers::openid_configuration)
+        .register(router, openapi);
+
     OperationBuilder::get("/.well-known/jwks.json")
         .operation_id("authenticator.jwks")
         .summary("Public JWKS for gateway-JWT verification")

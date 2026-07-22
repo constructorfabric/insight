@@ -77,6 +77,30 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.tlsDiscovery.enabled }}
+        # TLS discovery front (NGINX_BFF R1): terminates HTTPS on
+        # :{{ .Values.tlsDiscovery.port }} and proxies /.well-known/* to the
+        # authenticator on localhost, so the downstream oidc-authn-plugin can
+        # resolve the JWKS over https. Cert from cert-manager (see authn-tls.yaml).
+        - name: authn-tls
+          image: "{{ .Values.tlsDiscovery.image.repository }}:{{ .Values.tlsDiscovery.image.tag }}"
+          ports:
+            - name: tls
+              containerPort: {{ .Values.tlsDiscovery.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: authn-tls-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
+            - name: authn-tls-cert
+              mountPath: /tls
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 101       # the nginx-unprivileged user (owns /tmp paths)
+        {{- end }}
       volumes:
         - name: authenticator-config
           configMap:
@@ -84,3 +108,11 @@ spec:
         - name: signing-keys
           secret:
             secretName: {{ required "signingKeysSecret is required (mount the ES256 current.pem/previous.pem)" .Values.signingKeysSecret | quote }}
+        {{- if .Values.tlsDiscovery.enabled }}
+        - name: authn-tls-conf
+          configMap:
+            name: {{ include "insight-authenticator.fullname" . }}-authn-tls
+        - name: authn-tls-cert
+          secret:
+            secretName: {{ include "insight-authenticator.authnTlsSecret" . }}
+        {{- end }}

@@ -4,12 +4,13 @@ We build once per session (cargo's incremental compile keeps it fast across
 sessions) and spawn the binary directly on the host (per DESIGN §4: a host
 binary keeps target/ warm and avoids container I/O on the cargo hot path).
 
-analytics runs auth-disabled (auth happens at the API Gateway, which we
-bypass), so the gears host injects a default-tenant SecurityContext. `/health`
-is served by the api-gateway host gear (public, off the tenant path). For data
-routes the harness sends `X-Insight-Tenant-Id: config.TEST_TENANT_ID`, which the
-tenant-override layer honors, and `metric_seed.seed_test_metrics` re-homes the
-seeded metric definitions onto that tenant. The header is harmless on /health.
+analytics runs auth-ENABLED (NGINX_BFF R1): the `cf-gears-oidc-authn-plugin`
+verifies a signed ES256 gateway JWT on every data route and maps its `tenant_id`
+claim to the request tenant. The rig mints those JWTs and serves the JWKS +
+OIDC discovery over a self-signed TLS front (see lib/gateway_jwt.py); the removed
+`X-Insight-Tenant-Id` header is gone. `/health` is public (host gear, no auth).
+`metric_seed.seed_test_metrics` re-homes the seeded metric definitions onto
+`config.TEST_TENANT_ID`, which is the tenant the harness's default bearer carries.
 """
 
 from __future__ import annotations
@@ -28,9 +29,11 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
 from lib import api_coverage
-from lib.config import SessionConfig, TENANT_HEADER, TEST_TENANT_ID
+from lib.config import TEST_TENANT_ID, SessionConfig
+from lib.gateway_jwt import AUDIENCE, GatewayAuth
 
 LOG = logging.getLogger("e2e.api")
 
@@ -45,7 +48,9 @@ LOG = logging.getLogger("e2e.api")
 # nothing on the warm path and only absorbs cold-start jitter. Override on an
 # especially slow host (e.g. a constrained CI runner) via the env var.
 _HEALTH_TIMEOUT_S = float(
-    os.environ.get("E2E_API_HEALTH_TIMEOUT_S", "120")  # RULE-DEFAULTS-OK: rig readiness ceiling, not a data-config input
+    os.environ.get(
+        "E2E_API_HEALTH_TIMEOUT_S", "120"
+    )  # RULE-DEFAULTS-OK: rig readiness ceiling, not a data-config input
 )
 
 
@@ -66,7 +71,7 @@ class ApiResponse:
     raw: Any = None
 
     @classmethod
-    def from_httpx(cls, response: httpx.Response) -> "ApiResponse":
+    def from_httpx(cls, response: httpx.Response) -> ApiResponse:
         try:
             body = response.json() if response.content else None
         except Exception:
@@ -78,12 +83,7 @@ class ApiResponse:
             page_info = body.get("page_info") or {}
         elif isinstance(body, list):
             items = list(body)
-        return cls(
-            status_code=response.status_code,
-            items=items,
-            page_info=page_info,
-            raw=body,
-        )
+        return cls(status_code=response.status_code, items=items, page_info=page_info, raw=body)
 
 
 class ApiSpawnError(RuntimeError):
@@ -141,6 +141,11 @@ class AnalyticsProcess:
         # In docker mode the pytest process and the binary live in the same
         # container, so localhost is the same loopback either way.
         self.base_url = f"http://127.0.0.1:{port}"
+        # Gateway-JWT auth (NGINX_BFF R1): mints per-tenant ES256 bearers and
+        # serves the JWKS/discovery over a self-signed TLS front the plugin
+        # trusts. Started on construction; torn down in `stop()`.
+        self.auth = GatewayAuth()
+        self._rig_config_path: Path | None = None
         self._proc: subprocess.Popen[str] | None = None
         # Child stdout+stderr stream to a file (not a PIPE) so the startup log
         # can be tailed into an error message even while the process is still
@@ -149,15 +154,88 @@ class AnalyticsProcess:
         self._log_fh: Any = None
         self._log_path: Path | None = None
 
+    def _write_rig_config(self) -> Path:
+        """Write a per-spawn gears host config with the oidc-authn-plugin wired
+        to this rig's TLS discovery front (issuer + self-signed CA). Leaf values
+        (DB/ClickHouse/bind) still come from `APP__*` env overrides."""
+        cfg = {
+            "server": {"home_dir": "/tmp"},
+            "logging": {"default": {"console_level": "info"}},
+            "gears": {
+                "api-gateway": {
+                    "config": {
+                        "bind_addr": f"127.0.0.1:{self.port}",
+                        "enable_docs": True,
+                        "cors_enabled": True,
+                        # Auth ENABLED: the plugin verifies the signed gateway JWT.
+                        "auth_disabled": False,
+                    }
+                },
+                "gear-orchestrator": {"config": {}},
+                "grpc-hub": {"config": {"listen_addr": "uds:///tmp/analytics-grpc.sock"}},
+                "authn-resolver": {"config": {"vendor": "hyperspot"}},
+                "oidc-authn-plugin": {
+                    "config": {
+                        "vendor": "hyperspot",
+                        "priority": 50,
+                        "jwt": {
+                            "supported_algorithms": ["ES256"],
+                            "clock_skew_leeway": "60s",
+                            "require_audience": True,
+                            "expected_audience": [AUDIENCE],
+                            "trusted_issuers": [{"issuer": self.auth.issuer}],
+                            "claim_mapping": {
+                                "subject_id": "sub",
+                                "subject_tenant_id": "tenant_id",
+                                "subject_type": "sub_type",
+                                "token_scopes": "roles",
+                            },
+                            "required_claims": [],
+                        },
+                        "http_client": {"request_timeout": "5s", "custom_ca_certificate_paths": [self.auth.ca_path]},
+                        "s2s_oauth": {
+                            "discovery_url": self.auth.issuer,
+                            "default_subject_type": "service",
+                            "token_cache": {"ttl": "300s", "max_entries": 100},
+                        },
+                    }
+                },
+                "authz-resolver": {"config": {"vendor": "hyperspot"}},
+                "static-authz-plugin": {"config": {"vendor": "hyperspot", "priority": 100}},
+                "tenant-resolver": {"config": {"vendor": "hyperspot"}},
+                "single-tenant-tr-plugin": {"config": {"vendor": "hyperspot", "priority": 20}},
+                "analytics": {
+                    "config": {
+                        "database_url": "",
+                        "clickhouse_url": "",
+                        "clickhouse_database": "insight",
+                        "identity_url": "",
+                        "redis_url": "",
+                        "metric_catalog": {"tenant_default_id": None},
+                    }
+                },
+            },
+        }
+        fh = tempfile.NamedTemporaryFile(  # noqa: SIM115 — path used by the spawned binary
+            mode="w", suffix=".yaml", prefix=f"analytics-cfg-{self.port}-", delete=False
+        )
+        yaml.safe_dump(cfg, fh, sort_keys=False)
+        fh.close()
+        self._rig_config_path = Path(fh.name)
+        return self._rig_config_path
+
     def start(self) -> None:
         env = os.environ.copy()
         # analytics is now a gears-rust host (toolkit::bootstrap::run_server):
-        # the `api-gateway` system gear is the REST host and structural config
-        # (gears list, auth_disabled, resolvers, grpc-hub) lives in the checked-in
-        # config file, which we pass with `-c`. Per-run values are injected as
-        # `APP__*` env overrides (direct Popen execve preserves the hyphenated
-        # gear-name segments, unlike the compose sh entrypoint).
-        config_path = self.cfg.analytics_manifest_dir / "config" / "insight.yaml"
+        # the `api-gateway` system gear is the REST host. This rig runs analytics
+        # auth-ENABLED (NGINX_BFF R1): tenant comes from a signed gateway JWT, not
+        # a header. The oidc-authn-plugin verification config (issuer + self-
+        # signed CA of `self.auth`'s TLS discovery front) is nested/list-shaped
+        # and not env-injectable, so it is written into a per-spawn config file
+        # passed with `-c`. Per-run scalar values are injected as `APP__*` env
+        # overrides (direct Popen execve preserves the hyphenated gear-name
+        # segments, unlike the compose sh entrypoint).
+        config_path = self._write_rig_config()
         # bind_addr: loopback-only (PRD cpt-bronze-to-api-e2e-constraint-loopback-only).
         # The REST host bind belongs to the api-gateway gear, so override it there.
         bind_addr = f"127.0.0.1:{self.port}"
@@ -172,17 +250,15 @@ class AnalyticsProcess:
                 "APP__gears__analytics__config__clickhouse_database": self.cfg.ch_database,
                 "APP__gears__analytics__config__clickhouse_user": self.cfg.ch_user,
                 "APP__gears__analytics__config__clickhouse_password": self.cfg.ch_password,
-                # Single-tenant catalog-resolution hint. Under auth_disabled the
-                # host injects DEFAULT_TENANT_ID; the rig additionally sends
-                # `X-Insight-Tenant-Id: TEST_TENANT_ID` on every request, which
-                # the tenant-override layer honors. Platform metric definitions
+                # Single-tenant catalog-resolution hint. The request tenant comes
+                # from the signed JWT's `tenant_id`; platform metric definitions
                 # seed under GLOBAL_TENANT (nil) and stay visible via
                 # `InsightTenantId IN [tenant, nil]`, so this need not match the
                 # seeded bronze tenant.
                 "APP__gears__analytics__config__metric_catalog__tenant_default_id": "00000000-0000-0000-0000-000000000001",
                 # No redis_url — leave config default (empty).
                 "RUST_LOG": env.get("RUST_LOG", "info"),
-            },
+            }
         )
         # Only override identity_url when the rig wired a stub (see __init__).
         if self.identity_url:
@@ -194,11 +270,7 @@ class AnalyticsProcess:
             mode="w", suffix=".log", prefix=f"analytics-{self.port}-", delete=False
         )
         self._log_path = Path(self._log_fh.name)
-        LOG.info(
-            "spawning analytics (gears host) on 127.0.0.1:%d (startup log: %s)",
-            self.port,
-            self._log_path,
-        )
+        LOG.info("spawning analytics (gears host) on 127.0.0.1:%d (startup log: %s)", self.port, self._log_path)
         self._proc = subprocess.Popen(
             [str(self.binary), "-c", str(config_path), "run"],
             env=env,
@@ -233,20 +305,33 @@ class AnalyticsProcess:
             except OSError:
                 pass
             self._log_path = None
+        # Tear down the gateway-JWT TLS front + its per-spawn config file.
+        self.auth.stop()
+        if self._rig_config_path is not None:
+            try:
+                self._rig_config_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._rig_config_path = None
 
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    def bearer(self, tenant_id: str) -> str:
+        """A signed gateway JWT scoped to `tenant_id` (for cross-tenant cases)."""
+        return self.auth.mint(tenant_id)
+
     def client(self) -> httpx.Client:
         """Return an httpx.Client bound to this process's base URL.
 
-        Every request carries `X-Insight-Tenant-Id` so the tenant-override layer
-        pins data routes to the test tenant. `/health` (host gear) ignores it.
+        Every request carries a signed gateway JWT (Authorization: Bearer) whose
+        `tenant_id` claim is the test tenant — analytics verifies it and maps the
+        claim to the request tenant (NGINX_BFF R1). `/health` is public.
         """
         return httpx.Client(
             base_url=self.base_url,
             timeout=30.0,
-            headers={TENANT_HEADER: str(TEST_TENANT_ID)},
+            headers=self.auth.auth_header(str(TEST_TENANT_ID)),
             # Record every (method, path, status) the suite exercises so the
             # endpoint-coverage gate (lib/api_coverage.py) can diff it
             # against the OpenAPI spec. This is THE chokepoint — metric tests
@@ -302,17 +387,10 @@ class AnalyticsProcess:
         while time.monotonic() < deadline:
             if not self.is_running():
                 code = self._proc.returncode if self._proc else "?"
-                raise ApiSpawnError(
-                    f"analytics exited during startup (code={code}):\n"
-                    f"{self._read_log_tail()}"
-                )
+                raise ApiSpawnError(f"analytics exited during startup (code={code}):\n{self._read_log_tail()}")
             try:
-                with httpx.Client(
-                    base_url=self.base_url,
-                    timeout=2.0,
-                    headers={TENANT_HEADER: str(TEST_TENANT_ID)},
-                ) as c:
-                    r = c.get("/health")
+                with httpx.Client(base_url=self.base_url, timeout=2.0) as c:
+                    r = c.get("/health")  # public host-gear route; no auth needed
                     if r.status_code == 200:
                         LOG.info("analytics is healthy at %s", self.base_url)
                         return
@@ -332,8 +410,8 @@ class AnalyticsProcess:
 
 @contextmanager
 def spawn(cfg: SessionConfig):
-    """Context manager: build (if needed), spawn, yield, stop."""
-    binary = build(cfg)
+    """Context manager: locate the binary, spawn, yield, stop."""
+    binary = locate_binary(cfg)
     port = find_free_port()
     proc = AnalyticsProcess(cfg, binary, port)
     proc.start()

@@ -48,7 +48,7 @@ tokio = { workspace = true }
 tokio-util = "0.7"
 async-trait = { workspace = true }
 futures = { workspace = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v5"] }
 chrono = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -60,11 +60,13 @@ openidconnect = "4"
 axum-extra = { version = "0.12", features = ["cookie"] }
 time = { workspace = true }
 
-# Crypto: ES256 gateway-JWT minting/verification (§9.6 decision — ES256 over
-# EdDSA for zero downstream-verifier friction), JWKS export, PKCE, CSPRNG.
+# Crypto: ES256 gateway-JWT minting/verification (§9.6 — ES256: 64-byte
+# signatures + fast verify; the downstream `cf-gears-oidc-authn-plugin` verifies
+# EC keys natively via jsonwebtoken's JwkSet), JWKS export, PKCE, CSPRNG.
 # jsonwebtoken is a workspace dep (one version + one crypto provider, aws_lc_rs,
 # across the workspace — v10 panics if two providers are active under feature
-# unification).
+# unification). `p256` is also used for the ES256 service-token client
+# assertions (RFC 7523), whose keys are the services' own EC identity keys.
 jsonwebtoken = { workspace = true }
 p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }
 sha2 = "0.10"

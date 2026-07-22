@@ -179,49 +179,11 @@ services:
   # ref in .env.compose — the dev-compose.sh up script generates an
   # override that drops `build:` and the bind-mount for affected services.
 
-  api-gateway:
-    !!merge <<: *backend-common
-    image: ${API_GATEWAY_IMAGE:-insight-api-gateway:dev}
-    container_name: insight-api-gateway
-    build:
-      context: src/backend
-      dockerfile: services/api-gateway/Dockerfile
-    depends_on:
-      # required: false → compose skips this dependency when mariadb's
-      # `local-mariadb` profile isn't active (external MariaDB mode).
-      mariadb: {condition: service_healthy, required: false}
-      identity: {condition: service_started}
-    environment:
-      !!merge <<: *backend-env
-    volumes:
-      # Bind-mount the host-built Linux binary over the baked one. The
-      # ./deploy/compose/build/api-gateway path is populated by `./dev-compose.sh up`
-      # (or `./dev-compose.sh build api-gateway`), which runs the
-      # `build-rust` builder service under the `build` profile and writes
-      # the freshly-compiled binary to /out/api-gateway/. A plain
-      # `docker compose build` does NOT create this artefact — it only
-      # builds the runtime image; the bind-mount source has to exist on
-      # the host or compose errors out.
-      - ./deploy/compose/build/api-gateway/insight-api-gateway:/app/insight-api-gateway:ro
-      # Mount the service's config dir so YAML edits don't require a
-      # full image rebuild.
-      - ./src/backend/services/api-gateway/config:/app/config:ro
-      # Compose-only Keycloak-mode config (auth ENFORCED). Always mounted but
-      # only SELECTED when API_GATEWAY_CONFIG points at it (keycloak mode);
-      # inert otherwise. Kept out of the service's own config dir above.
-      - ./deploy/compose/keycloak/api-gateway.keycloak.yaml:/app/config-compose/keycloak.yaml:ro
-    # Which gateway config to run is an env switch: default no-auth.yaml (auth
-    # bypass, fakeidp mode); dev-compose.sh sets API_GATEWAY_CONFIG to the
-    # keycloak config when AUTH_MODE=keycloak. See CONTRIBUTING.md.
-    command:
-      - "/app/insight-api-gateway" # <watched path>
-      - "--"
-      - "/app/insight-api-gateway"
-      - "-c"
-      - "${API_GATEWAY_CONFIG:-/app/config/no-auth.yaml}"
-      - "run"
-    ports:
-      - "${API_GATEWAY_PORT:-8080}:8080"
+  # (The legacy Rust api-gateway is gone — the nginx `gateway` below is the sole
+  # :8080 entry, doing full auth via the authenticator, NGINX_BFF #1583 step 09.)
+  # AUTH_MODE selects the authenticator's IdP: `fakeidp` (default, fast) or
+  # `keycloak` (real login form + pre-seeded realm). Both are full cookie/BFF
+  # auth — only the IdP differs; the authenticator does the OIDC flow either way.
 
   analytics:
     !!merge <<: *backend-common
@@ -239,7 +201,7 @@ services:
     environment:
       !!merge <<: *backend-env
       # analytics runs on the gears-rust host: structural config
-      # (gears list, api-gateway REST host w/ auth_disabled) lives in the
+      # (gears list, api-gateway REST host w/ auth ENABLED) lives in the
       # bind-mounted config/insight.yaml; these APP__gears__analytics__config__*
       # env vars (toolkit `Env::prefixed`, gear config key `analytics`)
       # override the deployment-specific leaf values.
@@ -251,11 +213,19 @@ services:
       APP__gears__analytics__config__identity_url: "http://identity:8082"
       APP__gears__analytics__config__redis_url: "redis://redis:6379"
       APP__gears__analytics__config__metric_catalog__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
+      # Gateway-JWT verification (NGINX_BFF R1) is done by the upstream
+      # cf-gears-oidc-authn-plugin. Its config is nested/list-shaped (not
+      # env-injectable) and resolves the JWKS via OIDC discovery over HTTPS ONLY,
+      # so the concrete plugin config (issuer = the authn-tls front, + its CA at
+      # /certs/ca.pem) is bind-mounted from deploy/compose/analytics-fullauth.yaml
+      # over /app/config/insight.yaml below. The leaf values above still override.
     volumes:
       - ./deploy/compose/build/analytics/analytics:/app/analytics:ro
-      # Mount the gears config so YAML edits don't require an image rebuild
-      # (mirrors api-gateway). watchexec restarts the binary on change.
-      - ./src/backend/services/analytics/config:/app/config:ro
+      # Full-auth plugin config (issuer + CA) — bind-mounted over the committed
+      # placeholder config so analytics verifies real gateway JWTs in dev.
+      - ./deploy/compose/analytics-fullauth.yaml:/app/config/insight.yaml:ro
+      # Self-signed CA for the authn-tls discovery front.
+      - ./deploy/compose/authn-tls-certs:/certs:ro
     command:
       - "/app/analytics" # <watched path>
       - "--"
@@ -283,6 +253,14 @@ services:
       IDENTITY__mariadb__url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/identity"
       IDENTITY__identity__bind_addr: "0.0.0.0:8082"
       IDENTITY__identity__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
+      # Gateway-JWT verification (NGINX_BFF R1). `auth_gateway_issuer` must equal
+      # the authenticator's gateway_issuer (the token `iss`); `auth_gateway_jwks_url`
+      # must be network-reachable (the authenticator serves JWKS on :8083).
+      # `iss` must equal the token's (authn-tls). identity is .NET (not the gears
+      # plugin) and fetches JWKS from an explicit URL with RequireHttps off, so
+      # it keeps the plain-http JWKS endpoint directly — no TLS front needed here.
+      IDENTITY__identity__auth_gateway_issuer: "${AUTHENTICATOR_GATEWAY_ISSUER:-https://authn-tls:8443}"
+      IDENTITY__identity__auth_gateway_jwks_url: "${GATEWAY_JWKS_URL:-http://authenticator:8083/.well-known/jwks.json}"
     volumes:
       # The .NET publish dir is replaced wholesale, not just one binary.
       - ./deploy/compose/build/identity:/app:ro
@@ -324,13 +302,18 @@ services:
       APP__gears__authenticator__config__redis_url: "redis://redis:6379"
       APP__gears__authenticator__config__signing_keys_path: "/app/keys"
       APP__gears__authenticator__config__identity_url: "${AUTHENTICATOR_IDENTITY_URL:-http://identity:8082}"
-      APP__gears__authenticator__config__gateway_issuer: "${AUTHENTICATOR_GATEWAY_ISSUER:-http://localhost:8080}"
+      # Token `iss` = the TLS discovery front, so downstream verifiers resolve
+      # the JWKS over https (the plugin's runtime is https-only). The browser
+      # still reaches the gateway plainly at :8080.
+      APP__gears__authenticator__config__gateway_issuer: "${AUTHENTICATOR_GATEWAY_ISSUER:-https://authn-tls:8443}"
       # OIDC: discovery/token/JWKS are fetched in-network at fakeidp:8084; the
       # browser-facing redirect_uri is host-visible (the SPA / e2e runs there).
       APP__gears__authenticator__config__idp__issuer_url: "${AUTHENTICATOR_OIDC_ISSUER:-http://fakeidp:8084}"
       APP__gears__authenticator__config__idp__client_id: "${OIDC_CLIENT_ID:-insight-authenticator}"
       APP__gears__authenticator__config__idp__client_secret: "${OIDC_CLIENT_SECRET:-}"
-      APP__gears__authenticator__config__redirect_uri: "${AUTHENTICATOR_REDIRECT_URI:-http://localhost:8083/auth/callback}"
+      # Callback rides the SPA's browser origin (Vite :3000) so the __Host-sid
+      # cookie lands where the SPA runs; see .env.compose.example.
+      APP__gears__authenticator__config__redirect_uri: "${AUTHENTICATOR_REDIRECT_URI:-http://localhost:3000/auth/callback}"
       APP__gears__authenticator__config__service_tokens__audience: "${AUTHENTICATOR_TOKEN_AUDIENCE:-http://authenticator:8093/internal/token}"
       # Resolves the testclient public_key_paths against the mounted dev keys
       # (dev-compose.sh generates testclient.pub.pem there; nothing committed).
@@ -405,17 +388,17 @@ services:
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      # KC_HOSTNAME is the PUBLIC (browser-facing) issuer. The compose
-      # frontend does the OIDC code+PKCE flow directly from the host browser,
-      # which reaches Keycloak via the published port at localhost:8085 — so
-      # the issuer must be localhost. It MUST include /kc: KC26 hostname-v2
-      # drops --http-relative-path from the advertised issuer, so a path-less
-      # value would yield iss=.../realms/insight while endpoints live under /kc.
-      KC_HOSTNAME: http://localhost:8085/kc
-      # The api-gateway validates tokens by fetching JWKS over the compose
-      # network at keycloak:8085 (a different host than the public issuer).
-      # backchannel-dynamic lets Keycloak serve those back-channel requests on
-      # the internal host while keeping the public issuer as localhost.
+      # KC_HOSTNAME is the advertised issuer. NGINX_BFF: the authenticator does
+      # the OIDC flow SERVER-side, so the issuer must be reachable from BOTH the
+      # browser and the authenticator container — dev-compose.sh sets it to the
+      # host IP (KEYCLOAK_HOSTNAME) for keycloak mode. Falls back to localhost for
+      # a browser-only bring-up. It MUST include /kc: KC26 hostname-v2 drops
+      # --http-relative-path from the advertised issuer, so a path-less value
+      # would yield iss=.../realms/insight while endpoints live under /kc.
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-http://localhost:8085/kc}
+      # Let Keycloak also serve back-channel (token/JWKS) requests on the host
+      # used to reach it, so an internal caller (keycloak:8085) still works
+      # alongside the advertised issuer.
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HTTP_ENABLED: "true"
       KC_HTTP_PORT: "8085"
@@ -435,14 +418,28 @@ services:
   # Compiles the mounted routes.yaml (same file the chart ships) into nginx.conf
   # at startup; deployment settings come from the environment below.
   #
-  # TODO(#1583 step 09 — Destroy): once the legacy api-gateway is deleted this
-  # takes 8080 unconditionally; drop the `gateway` profile and this note.
-  # Profile-gated for now to avoid the 8080 clash. `/` -> insight-front must
-  # resolve at nginx start, so bring up a frontend profile too, e.g.:
-  #   docker compose --profile gateway --profile front-built up gateway insight-front-built
+  # TLS discovery front for the authenticator (see deploy/compose/authn-tls.conf).
+  # The analytics oidc-authn-plugin resolves the JWKS via OIDC discovery over
+  # https ONLY, so this terminates TLS (self-signed CA, trusted by analytics via
+  # /certs/ca.pem) and proxies the well-known endpoints to the authenticator.
+  # certs generated by dev-compose.sh into deploy/compose/authn-tls-certs/.
+  authn-tls:
+    !!merge <<: *backend-common
+    image: nginx:1.27-alpine
+    container_name: insight-authn-tls
+    depends_on:
+      authenticator: {condition: service_started}
+    volumes:
+      - ./deploy/compose/authn-tls.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/compose/authn-tls-certs:/certs:ro
+
+  # Gateway (OpenResty edge) — the DEFAULT :8080 entry (NGINX_BFF): auth_request
+  # to the authenticator, JWT injection, routing to analytics/identity + the SPA.
+  # `/` -> insight-front resolves lazily (nginx resolver), so the gateway starts
+  # even when no frontend profile is up — the /auth + /api surfaces (drivable by
+  # curl) work regardless. (#1583 step 09 removes the legacy api-gateway.)
   gateway:
     !!merge <<: *backend-common
-    profiles: ["gateway"]
     image: ${GATEWAY_IMAGE:-insight-gateway:dev}
     container_name: insight-gateway
     build:
@@ -481,7 +478,7 @@ services:
       # Vite proxies `/api/*` to this target — used by the FE's
       # analytics + identity API clients. Must resolve from inside the
       # frontend container, so we use the compose service name.
-      VITE_API_PROXY_TARGET: "${VITE_API_PROXY_TARGET:-http://api-gateway:8080}"
+      VITE_API_PROXY_TARGET: "${VITE_API_PROXY_TARGET:-http://gateway:8080}"
       VITE_OIDC_ISSUER: "${OIDC_ISSUER:-}"
       VITE_OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
       # Dev impersonation: when set AND a matching row exists in
@@ -543,12 +540,12 @@ services:
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       OIDC_SCOPES: ${OIDC_SCOPES:-}
     volumes:
-      # Patch script — inserts `location /api/ → api-gateway:8080` into
+      # Patch script — inserts `location /api/ → gateway:8080` into
       # the FE image's nginx template at a known marker, then chains to
       # the original entrypoint. Avoids maintaining a parallel template
       # (drift surface): we describe just the diff we need. The
       # published image has no /api proxy because k8s ingress routes
-      # /api → api-gateway directly; compose has no front-proxy so the
+      # /api → gateway directly; compose has no front-proxy so the
       # hop has to land locally.
       - ./deploy/compose/front-ghcr-patch-template.sh:/compose/front-ghcr-patch-template.sh:ro
     entrypoint: ["/bin/sh", "/compose/front-ghcr-patch-template.sh"]
@@ -585,9 +582,8 @@ services:
       - |
         set -eux
         apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
-        cargo build --release --bin insight-api-gateway --bin analytics --bin authenticator
-        mkdir -p /out/api-gateway /out/analytics /out/authenticator
-        install -m 0755 /target/release/insight-api-gateway /out/api-gateway/insight-api-gateway
+        cargo build --release --bin analytics --bin authenticator
+        mkdir -p /out/analytics /out/authenticator
         install -m 0755 /target/release/analytics           /out/analytics/analytics
         install -m 0755 /target/release/authenticator       /out/authenticator/authenticator
 

@@ -63,6 +63,30 @@ existingSecret: ""
 signingKeysSecret: ""
 signingKeysPath: /app/keys
 
+# TLS discovery front (NGINX_BFF R1). Downstream verifiers (analytics /
+# identity-resolution) run the oidc-authn-plugin, which resolves the JWKS via
+# OIDC discovery over HTTPS ONLY. When enabled, an `authn-tls` nginx sidecar
+# terminates TLS on `port` (cert issued by cert-manager from `issuerRef`) and
+# proxies the well-known endpoints to the authenticator on localhost. The token
+# `iss` (gateway_issuer) is then `https://<fullname>:<port>`, and downstream
+# services trust the issuer's CA (the cert Secret's ca.crt) via
+# gateway.caCertPaths. Disabled by default; the umbrella turns it on.
+tlsDiscovery:
+  enabled: false
+  port: 8443
+  # cert-manager issuer that signs the discovery cert (local: the self-signed
+  # `local-ca` ClusterIssuer; prod: a real issuer).
+  issuerRef:
+    name: ""
+    kind: ClusterIssuer
+  # Secret cert-manager writes the leaf + ca.crt into. Empty = <fullname>-authn-tls-cert.
+  certSecret: ""
+  # Unprivileged nginx (runs non-root, binds the high :8443, writable /tmp paths)
+  # — the pod's securityContext forbids root.
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: "1.27-alpine"
+
 # Health probes. Boot fails closed if Redis is unreachable or the signing keys
 # are missing (the gear pings Redis and loads keys in `init`), so a Ready pod
 # has both. (A dedicated /ready that re-checks Redis at runtime is a follow-up.)

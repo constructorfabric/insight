@@ -124,10 +124,12 @@ http://{{ .Values.airbyte.releaseName }}-airbyte-server-svc.{{ .Release.Namespac
 ==============================================================================
 App services are mandatory umbrella components — no deploy flag.
 */}}
-{{- define "insight.apiGateway.host"          -}}{{- printf "%s-api-gateway"          .Release.Name -}}{{- end -}}
+{{- define "insight.gateway.host"             -}}{{- printf "%s-gateway"              .Release.Name -}}{{- end -}}
+{{- define "insight.authenticator.host"       -}}{{- printf "%s-authenticator"        .Release.Name -}}{{- end -}}
 {{- define "insight.analytics.host"           -}}{{- printf "%s-analytics"            .Release.Name -}}{{- end -}}
 {{- define "insight.identity.host"            -}}{{- printf "%s-identity"             .Release.Name -}}{{- end -}}
 {{- define "insight.frontend.host"            -}}{{- printf "%s-frontend"             .Release.Name -}}{{- end -}}
+{{- define "insight.fakeidp.host"             -}}{{- printf "%s-fakeidp"              .Release.Name -}}{{- end -}}
 
 {{/*
 ==============================================================================
@@ -156,37 +158,28 @@ Invoked from NOTES.txt so they fire on every install.
     {{- fail "credentials.deploymentMode=gitops is incompatible with credentials.autoGenerate=true. ArgoCD renders via `helm template` where `lookup` returns nil — auto-gen would rotate every DB password on each sync. Set credentials.autoGenerate: false and pre-create `insight-db-creds` (ExternalSecrets / sealed-secrets / SOPS)." -}}
   {{- end -}}
 
-  {{- /* OIDC: when auth is enabled, require either existingSecret or ALL
-         four inline fields. Defensive `default dict` guards against
-         aggressive override files that remove the whole apiGateway /
-         apiGateway.oidc block — without these, a nil-map dereference
-         would replace the fail message with a cryptic template error.
-
-         NB: `clientSecret` is intentionally NOT validated. The api-gateway
-         uses Authorization Code + PKCE (public client flow) — `client_secret`
-         has no meaning in this architecture. Operators with a Confidential
-         IdP app should reconfigure it as Public/SPA-with-PKCE. */ -}}
-  {{- $gw  := default dict .Values.apiGateway -}}
-  {{- $oid := default dict $gw.oidc -}}
-  {{- if not $gw.authDisabled -}}
-    {{- if not $oid.existingSecret -}}
-      {{- if or (not $oid.issuer) (not $oid.audience) (not $oid.clientId) (not $oid.redirectUri) -}}
-        {{- fail "apiGateway.oidc: when existingSecret is empty and authDisabled=false, ALL of issuer + audience + clientId + redirectUri are required" -}}
-      {{- end -}}
-    {{- end -}}
+  {{- /* Auth is ALWAYS on (NGINX_BFF EPIC #1583 — no auth_disabled path).
+         Every request enters through the nginx `gateway`, which runs
+         auth_request against the `authenticator`; the authenticator's OIDC
+         upstream + browser callback are REQUIRED. Defensive `default dict`
+         guards against override files that strip the whole authenticator
+         block (a nil-map deref would mask the fail with a cryptic error).
+         The leaf values are also `required` in templates/secrets.yaml; this
+         is the earlier, friendlier message. */ -}}
+  {{- $auth := default dict .Values.authenticator -}}
+  {{- $aoidc := default dict $auth.oidc -}}
+  {{- if or (not $aoidc.issuerUrl) (not $aoidc.redirectUri) -}}
+    {{- fail "authenticator.oidc: issuerUrl (the IdP) and redirectUri (the browser callback) are REQUIRED — auth is always on (no auth_disabled). For local, point issuerUrl at the fakeidp Service FQDN and set fakeidp.deploy=true." -}}
   {{- end -}}
 
-  {{- /* frontend.devUserEmail is the dev-impersonation escape hatch — the
-         FE entrypoint stamps it into `oidc-config.js` so the browser
-         builds an unsigned-JWT bearer on every /api/* call. Only
-         meaningful when the gateway lets unauthenticated requests
-         through (apiGateway.authDisabled=true). Setting it together
-         with real auth is a misconfiguration — a forgotten value in a
-         prod overlay would silently impersonate every visitor as that
-         address. Catch it loudly at template time. */ -}}
-  {{- $fe := default dict .Values.frontend -}}
-  {{- if and $fe.devUserEmail (not $gw.authDisabled) -}}
-    {{- fail (printf "frontend.devUserEmail (%q) is only valid when apiGateway.authDisabled=true. Either clear devUserEmail (real OIDC flow) or set apiGateway.authDisabled=true (sandbox dev impersonation)." $fe.devUserEmail) -}}
+  {{- /* fakeidp is dev/e2e only. Refuse to arm it as a real IdP: if
+         fakeidp.deploy=true, the authenticator MUST point at it (issuerUrl ==
+         fakeidp.issuer), and a real environment must never set deploy=true. */ -}}
+  {{- $fake := default dict .Values.fakeidp -}}
+  {{- if $fake.deploy -}}
+    {{- if ne (toString $aoidc.issuerUrl) (toString $fake.issuer) -}}
+      {{- fail (printf "fakeidp.deploy=true but authenticator.oidc.issuerUrl (%q) != fakeidp.issuer (%q) — they must be identical (the authenticator validates the id_token `iss` against its configured IdP)." $aoidc.issuerUrl $fake.issuer) -}}
+    {{- end -}}
   {{- end -}}
 
   {{- /* External hosts (L2 infra is out-of-chart → consumer must supply

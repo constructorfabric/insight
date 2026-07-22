@@ -38,7 +38,7 @@ use uuid::Uuid;
 use toolkit::api::OpenApiRegistryImpl;
 use toolkit_security::SecurityContext;
 
-use crate::api::{AppState, register_routes};
+use crate::api::AppState;
 use crate::config::GearConfig;
 use crate::domain::admin_threshold::AdminThresholdService;
 use crate::domain::auth::{ConfigTenantAuthorization, TenantAuthorization};
@@ -103,24 +103,33 @@ fn build_state(db: DatabaseConnection) -> AppState {
     }
 }
 
-/// Mount the real route table, then wrap it with a host-context injector so
-/// `Extension<SecurityContext>` is present (the api-gateway host supplies this
-/// in production). The injector is the OUTER layer, so it seeds the context
-/// before `tenant_middleware` (inside `register_routes`) reads it.
+/// Fixed test subject id. Handlers filter by tenant, not subject (subject only
+/// surfaces in audit `actor_subject`).
+const TEST_PERSON: Uuid = Uuid::from_u128(0x018f_0000_0000_7000_8000_0000_0000_0001);
+
+/// Mount the real operation table with the `SecurityContext` injected directly
+/// for `tenant`, **bypassing** the host authn pipeline — the
+/// `cf-gears-oidc-authn-plugin` verification needs a live JWKS, and that path is
+/// covered by the plugin's own tests + the compose e2e. This suite is about the
+/// handler -> DB glue for a known caller.
 fn app(db: DatabaseConnection, tenant: Uuid) -> Router {
     let openapi = OpenApiRegistryImpl::new();
     let state = Arc::new(build_state(db));
-    register_routes(Router::new(), &openapi, state)
+    let api = super::build_operations(Router::new(), &openapi)
         .layer(from_fn_with_state(tenant, inject_host_context))
+        .layer(axum::Extension(state));
+    Router::new().merge(api)
 }
 
+/// Seed a `SecurityContext` (subject + tenant) the way `authverify` would.
 async fn inject_host_context(
     axum::extract::State(tenant): axum::extract::State<Uuid>,
     mut req: Request<Body>,
     next: axum::middleware::Next,
 ) -> Response {
     let Ok(ctx) = SecurityContext::builder()
-        .subject_id(Uuid::nil())
+        .subject_id(TEST_PERSON)
+        .subject_type("user")
         .subject_tenant_id(tenant)
         .build()
     else {
@@ -178,6 +187,30 @@ async fn list_metrics_returns_200_items() -> TestResult {
     assert!(
         body.get("items").is_some(),
         "list payload has items: {body}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn get_person_forwards_authorization_then_5xx_on_dead_identity() -> TestResult {
+    // Identity is a dead address (127.0.0.1:1), so this exercises the G1
+    // Authorization-forwarding path — the handler reads the incoming bearer and
+    // the IdentityClient attaches it to the outbound call — and the mapping of
+    // the (unreachable) failure to 5xx, with no live identity provider needed.
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let app = app(db, Uuid::now_v7());
+    let req = Request::builder()
+        .uri("/v1/persons/nobody@example.com")
+        .header("authorization", "Bearer test-gateway-jwt")
+        .body(Body::empty())?;
+    let resp = app.oneshot(req).await?;
+    assert!(
+        resp.status().is_server_error(),
+        "dead identity should map to 5xx, got {}",
+        resp.status()
     );
     Ok(())
 }
