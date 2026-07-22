@@ -1,34 +1,13 @@
-# Insight Authenticator — gears-rust host config.
-#
-# Usage: authenticator -c config/insight.yaml run
-#
-# NOTE on the `api-gateway` gear below: this is the gears-rust toolkit REST-host
-# system gear (`cf-gears-api-gateway`) — the HTTP server + OpenAPI + auth
-# pipeline that every gear-based service runs on (analytics uses it too). It is
-# NOT the Insight platform api-gateway *service* that the nginx gateway replaces
-# in this EPIC. The authenticator hosts its endpoints on this REST-host gear and
-# runs behind the nginx edge.
-#
-# Auth is ENABLED on the host for the `.authenticated()` admin surface
-# (session revoke-by-user): the oidc-authn-plugin verifies the ES256 gateway
-# JWT — the authenticator trusts its own tokens exactly like any downstream
-# service. Every browser endpoint stays `.public()` (the credential is the
-# session cookie, checked in the handler) and bypasses the plugin.
-#
-# Deployment-specific leaf values are injected via env overrides
-# (APP__gears__authenticator__config__*) from the umbrella Secret / compose;
-# they are left empty here so no credential is committed:
-#   APP__gears__authenticator__config__redis_url
-#   APP__gears__authenticator__config__signing_keys_path
-#   APP__gears__authenticator__config__identity_url
-#   APP__gears__authenticator__config__gateway_issuer
-#   APP__gears__authenticator__config__redirect_uri
-#   APP__gears__authenticator__config__idp__issuer_url
-#   APP__gears__authenticator__config__idp__client_id
-#   APP__gears__authenticator__config__idp__client_secret
+# dev-compose full-auth authenticator host config (bind-mounted over
+# /app/config/insight.yaml). Same structure as
+# services/authenticator/config/insight.yaml, but with the oidc-authn-plugin
+# wired to the dev TLS discovery front (`authn-tls`, i.e. the authenticator's
+# own issuer) + its self-signed CA at /certs/ca.pem, so the `.authenticated()`
+# admin surface (session revoke-by-user) verifies real gateway JWTs in dev.
+# Redis/Identity/OIDC leaves come from APP__ env in docker-compose.yml.
 
 server:
-  home_dir: "~/.insight"
+  home_dir: "/tmp/authenticator"
 
 logging:
   default:
@@ -73,7 +52,10 @@ gears:
         expected_audience:
           - "internal-services"
         trusted_issuers:
-          - issuer: "https://gateway.invalid"
+          # = the authenticator's own gateway_issuer (the token `iss`);
+          # discovery_url omitted → {issuer}/.well-known/openid-configuration,
+          # served by the authn-tls front.
+          - issuer: "https://authn-tls:8443"
         claim_mapping:
           subject_id: "sub"
           subject_tenant_id: "tenant_id"
@@ -82,10 +64,11 @@ gears:
         required_claims: []
       http_client:
         request_timeout: 5s
+        custom_ca_certificate_paths: ["/certs/ca.pem"]
       # Client-credentials exchange is UNUSED here (the authenticator makes no
       # outbound S2S calls through the plugin) but the block is required config.
       s2s_oauth:
-        discovery_url: "https://gateway.invalid"
+        discovery_url: "https://authn-tls:8443"
         default_subject_type: "service"
         token_cache:
           ttl: 300s

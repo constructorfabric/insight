@@ -188,6 +188,11 @@ pub struct AuthenticatorConfig {
     // ── Cross-cutting ────────────────────────────────────────────────────
     /// CSRF `Origin` allowlist (empty = token-required, fail closed).
     pub csrf_origins: Vec<String>,
+    /// Roles (gateway-JWT `roles` scopes) authorized to call the admin
+    /// revoke-by-user operation. The service registry grants one of these to
+    /// the services that may force-logout users (e.g. the future permissions
+    /// service on grant changes, DD-AUTH-07).
+    pub admin_revoke_roles: Vec<String>,
 
     // ── Dependencies ─────────────────────────────────────────────────────
     /// Redis connection URL (`redis://host:port`).
@@ -253,6 +258,7 @@ impl Default for AuthenticatorConfig {
             ],
             default_return_to: "/".to_owned(),
             csrf_origins: Vec::new(),
+            admin_revoke_roles: vec!["session_admin".to_owned()],
             redis_url: String::new(),
             signing_keys_path: String::new(),
             identity_url: String::new(),

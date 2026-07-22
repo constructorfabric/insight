@@ -291,6 +291,7 @@ dependencies = [
  "cf-gears-authz-resolver",
  "cf-gears-gear-orchestrator",
  "cf-gears-grpc-hub",
+ "cf-gears-oidc-authn-plugin",
  "cf-gears-single-tenant-tr-plugin",
  "cf-gears-static-authz-plugin",
  "cf-gears-tenant-resolver",

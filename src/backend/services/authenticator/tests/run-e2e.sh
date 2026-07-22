@@ -72,7 +72,7 @@ wait_ready fakeidp "http://localhost:$IDP_PORT/.well-known/openid-configuration"
 echo "==> identity stub :$IDENTITY_PORT (resolves any email to a person)"
 python3 "$HERE/identity-stub.py" "127.0.0.1:$IDENTITY_PORT" >/tmp/authenticator-e2e-identity.log 2>&1 &
 pids+=($!)
-wait_ready identity-stub "http://localhost:$IDENTITY_PORT/v1/persons/probe@example.com"
+wait_ready identity-stub "http://localhost:$IDENTITY_PORT/internal/persons/by-email/probe@example.com"
 
 echo "==> authenticator :$AUTH_PORT"
 APP__gears__authenticator__config__redis_url=redis://localhost:6399 \
@@ -96,6 +96,14 @@ fi
 echo "==> run the login loop"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \
   cargo test -p authenticator --test e2e_login_loop -- --ignored --nocapture
+
+echo "==> run the refresh rotation-with-grace loop (step 10.1)"
+AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \
+  cargo test -p authenticator --test e2e_refresh -- --ignored --nocapture
+
+echo "==> run the session-management loop (step 10.2)"
+AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \
+  cargo test -p authenticator --test e2e_sessions -- --ignored --nocapture
 
 echo "==> run the service-token loop (step 06)"
 # The token listener binds 8093 (config service_tokens.token_bind_addr); the dev

@@ -84,8 +84,12 @@ impl Gear for AuthenticatorGear {
         );
 
         // Register the inter-gear client contract in the hub (DESIGN §3.10).
+        // The same instance backs the admin revoke-by-user HTTP operation, so
+        // the SDK contract is the single revoke path.
+        let authn_client: Arc<dyn AuthenticatorClientV1> =
+            Arc::new(LocalClient::new(sessions.clone()));
         ctx.client_hub()
-            .register::<dyn AuthenticatorClientV1>(Arc::new(LocalClient::new(sessions.clone())));
+            .register::<dyn AuthenticatorClientV1>(authn_client.clone());
 
         let state = Arc::new(AppState {
             cfg,
@@ -94,6 +98,7 @@ impl Gear for AuthenticatorGear {
             oidc,
             resolver,
             service_registry,
+            authn_client,
         });
         self.state
             .set(state)
