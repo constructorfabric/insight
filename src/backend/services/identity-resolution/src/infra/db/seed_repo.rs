@@ -10,7 +10,7 @@
 //! from the .NET service for parity. These queries use `LEAD()`/`ROW_NUMBER()`
 //! window functions (SCD2 `valid_from`/`valid_to`) and `INSERT … SELECT` cache
 //! rebuilds — constructs `toolkit-db` cannot express, hence the raw-SQL /
-//! self-managed pool (see `infra::db` module docs + gears-rust#4239).
+//! self-managed pool (see `infra::db` module docs + constructorfabric/gears-rust#4239).
 
 #![allow(dead_code)]
 
