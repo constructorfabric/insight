@@ -73,11 +73,10 @@ impl From<PersonRole> for PersonRoleResponse {
     }
 }
 
-/// List wrapper (parity with the .NET `ListResponse<T>`).
+/// List wrapper.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonRoleListResponse {
     pub items: Vec<PersonRoleResponse>,
-    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonRoleListResponse {}
 
@@ -168,10 +167,7 @@ pub async fn list_person_roles(
     .await
     .map_err(read_err)?;
     let items = rows.into_iter().map(PersonRoleResponse::from).collect();
-    Ok(Json(PersonRoleListResponse {
-        items,
-        next_cursor: None,
-    }))
+    Ok(Json(PersonRoleListResponse { items }))
 }
 
 /// `DELETE /v1/person-roles/{id}` — revoke an assignment (admin only); refuses

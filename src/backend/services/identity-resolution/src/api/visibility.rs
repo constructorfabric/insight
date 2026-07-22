@@ -73,11 +73,10 @@ impl From<Visibility> for VisibilityResponse {
     }
 }
 
-/// List wrapper (parity with the .NET `ListResponse<T>`).
+/// List wrapper.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct VisibilityListResponse {
     pub items: Vec<VisibilityResponse>,
-    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for VisibilityListResponse {}
 
@@ -176,10 +175,7 @@ pub async fn list_visibility(
     .await
     .map_err(read_err)?;
     let items = rows.into_iter().map(VisibilityResponse::from).collect();
-    Ok(Json(VisibilityListResponse {
-        items,
-        next_cursor: None,
-    }))
+    Ok(Json(VisibilityListResponse { items }))
 }
 
 /// `DELETE /v1/visibility/{id}` — revoke a grant (admin only).

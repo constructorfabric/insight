@@ -52,12 +52,10 @@ impl From<Role> for RoleResponse {
     }
 }
 
-/// List wrapper (parity with the .NET `ListResponse<T>`; `next_cursor` always
-/// null until cursor pagination lands).
+/// List wrapper.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RoleListResponse {
     pub items: Vec<RoleResponse>,
-    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for RoleListResponse {}
 
@@ -117,10 +115,7 @@ pub async fn list_roles(
 
     let roles = roles_repo::list_all(&state.db).await.map_err(read_err)?;
     let items = roles.into_iter().map(RoleResponse::from).collect();
-    Ok(Json(RoleListResponse {
-        items,
-        next_cursor: None,
-    }))
+    Ok(Json(RoleListResponse { items }))
 }
 
 /// `DELETE /v1/roles/{id}` — hard-delete a role (admin only); refuses with a
