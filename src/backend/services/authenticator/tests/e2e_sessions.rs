@@ -54,6 +54,22 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
     None
 }
 
+/// Fetch the session's CSRF token (state-changing /auth/* requires it, 10.5).
+async fn get_csrf(http: &reqwest::Client, auth_base: &str, token: &str) -> String {
+    #[derive(Deserialize)]
+    struct CsrfBody {
+        csrf_token: String,
+    }
+    let resp = http
+        .get(format!("{auth_base}/auth/csrf"))
+        .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "GET /auth/csrf must succeed");
+    resp.json::<CsrfBody>().await.unwrap().csrf_token
+}
+
 /// Run the full fakeidp login loop; returns the session cookie token.
 async fn login(http: &reqwest::Client, auth_base: &str, user: &str) -> String {
     let login = http
@@ -123,6 +139,7 @@ async fn sessions_list_revoke_and_logout_everywhere() {
     // Two devices: two independent logins for the same person.
     let token_a = login(&http, &auth_base, &test_user).await;
     let token_b = login(&http, &auth_base, &test_user).await;
+    let csrf_b = get_csrf(&http, &auth_base, &token_b).await;
 
     // 1. The list shows both sessions, flags the caller's as current, and
     //    carries the attribution captured at login.
@@ -162,6 +179,7 @@ async fn sessions_list_revoke_and_logout_everywhere() {
             "{auth_base}/auth/sessions/00000000-0000-7000-8000-000000000000"
         ))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token_b}"))
+        .header("X-CSRF-Token", &csrf_b)
         .send()
         .await
         .unwrap();
@@ -171,6 +189,7 @@ async fn sessions_list_revoke_and_logout_everywhere() {
     let revoke = http
         .delete(format!("{auth_base}/auth/sessions/{}", other.session_id))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token_b}"))
+        .header("X-CSRF-Token", &csrf_b)
         .send()
         .await
         .unwrap();
@@ -186,9 +205,24 @@ async fn sessions_list_revoke_and_logout_everywhere() {
     assert!(survivors.iter().all(|s| s.session_id != other.session_id));
 
     // 4. Log out everywhere: every session dies, cookie cleared.
+    // Without the CSRF token the destructive call is refused (10.5)…
+    let no_csrf = http
+        .delete(format!("{auth_base}/auth/sessions"))
+        .header(reqwest::header::COOKIE, format!("{COOKIE}={token_b}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        no_csrf.status(),
+        403,
+        "log-out-everywhere without CSRF must be 403"
+    );
+
+    // …and with it, every session dies.
     let all = http
         .delete(format!("{auth_base}/auth/sessions"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token_b}"))
+        .header("X-CSRF-Token", &csrf_b)
         .send()
         .await
         .unwrap();

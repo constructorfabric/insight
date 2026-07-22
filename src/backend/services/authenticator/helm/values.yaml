@@ -32,6 +32,11 @@ serviceTokens:
   # Service tokens are always tenant-scoped; there is no per-service tenant flag.
   services: {}
 
+# CSRF Origin-allowlist fallback (PRD 5.11) for state-changing /auth/*
+# requests that carry no X-CSRF-Token: list the SPA's public origin(s), e.g.
+# ["https://insight.example.com"]. Empty (default) = fail closed, header only.
+csrfOrigins: []
+
 resources:
   requests:
     cpu: 50m

@@ -469,9 +469,31 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
         "roles": record.roles,
         "expires_at": record.expires_at,
         "refresh_at": refresh_at,
+        "csrf_token": record.csrf_token,
     })
     .to_string();
     json_ok(body)
+}
+
+// ── /auth/csrf ───────────────────────────────────────────────────────────────
+
+/// Issue the CSRF token bound to the current session (PRD 5.11). The SPA sends
+/// it back as `X-CSRF-Token` on state-changing `/auth/*` requests; `/auth/me`
+/// echoes the same value so a page load primes both timers in one call.
+pub async fn csrf(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> Response {
+    let Some(token) = cookie::read(&jar) else {
+        return unauthenticated();
+    };
+    let (_, record) = match state.sessions.resolve_by_token(&token).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return unauthenticated(),
+        Err(e) => return internal_problem("session_store", &e),
+    };
+    let now = now_secs();
+    if record.expires_at <= now || record.absolute_expires_at <= now {
+        return unauthenticated();
+    }
+    json_ok(serde_json::json!({ "csrf_token": record.csrf_token }).to_string())
 }
 
 // ── /auth/refresh ────────────────────────────────────────────────────────────

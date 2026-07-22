@@ -41,7 +41,15 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let api = build_operations(Router::new(), openapi).layer(Extension(state));
+    // CSRF verification wraps the route table (state-changing `/auth/*` only —
+    // the middleware filters); the Extension layer runs first so handlers and
+    // middleware share the same state.
+    let api = build_operations(Router::new(), openapi)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::csrf::middleware,
+        ))
+        .layer(Extension(state));
     host_router.merge(api)
 }
 
@@ -125,6 +133,16 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .error_401(openapi)
         .error_403(openapi)
         .handler(handlers::admin_revoke_user_sessions)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/auth/csrf")
+        .operation_id("authenticator.csrf")
+        .summary("Issue the CSRF token bound to the current session")
+        .tag("auth")
+        .public()
+        .text_response(StatusCode::OK, "CSRF token", "application/json")
+        .error_401(openapi)
+        .handler(handlers::csrf)
         .register(router, openapi);
 
     router = OperationBuilder::get("/auth/me")
