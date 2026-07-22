@@ -22,6 +22,7 @@
 #![allow(clippy::doc_markdown)]
 
 mod api;
+mod audit;
 mod backchannel;
 mod config;
 mod cookie;

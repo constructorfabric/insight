@@ -91,6 +91,10 @@ impl Gear for AuthenticatorGear {
         ctx.client_hub()
             .register::<dyn AuthenticatorClientV1>(authn_client.clone());
 
+        // Audit sink (PRD nfr-auth-audit). Fails the gear on a malformed
+        // broker config; unconfigured = disabled (structured log only).
+        let audit = crate::audit::AuditEmitter::new(&cfg.audit.brokers, &cfg.audit.topic)?;
+
         let state = Arc::new(AppState {
             cfg,
             sessions,
@@ -99,6 +103,7 @@ impl Gear for AuthenticatorGear {
             resolver,
             service_registry,
             authn_client,
+            audit,
         });
         self.state
             .set(state)

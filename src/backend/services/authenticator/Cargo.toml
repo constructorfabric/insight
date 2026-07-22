@@ -53,6 +53,9 @@ uuid = { workspace = true, features = ["v5"] }
 chrono = { workspace = true }
 tracing = { workspace = true }
 opentelemetry = "0.31"
+# Audit events to the platform Redpanda topic (Kafka-compatible rdkafka API
+# only — backend PRD migration constraint). cmake-build vendors librdkafka.
+rdkafka = { version = "0.38", features = ["cmake-build", "tokio"] }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 reqwest = { workspace = true }

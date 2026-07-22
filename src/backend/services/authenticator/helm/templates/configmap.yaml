@@ -123,6 +123,10 @@ data:
       authenticator:
         config:
           signing_keys_path: {{ .Values.signingKeysPath | quote }}
+          # Audit events to the platform Redpanda topic (PRD nfr-auth-audit).
+          audit:
+            brokers: {{ .Values.audit.brokers | quote }}
+            topic: {{ .Values.audit.topic | quote }}
           # CSRF Origin-allowlist fallback for state-changing /auth/* requests;
           # empty = fail closed (X-CSRF-Token required).
           {{- with .Values.csrfOrigins }}

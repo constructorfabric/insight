@@ -31,6 +31,8 @@ pub struct AppState {
     /// revoke-by-user operation goes through it, so the HTTP surface and
     /// in-process consumers (the future permissions service) share one path.
     pub authn_client: Arc<dyn authenticator_sdk::AuthenticatorClientV1>,
+    /// Audit publisher (Redpanda; no-op when unconfigured).
+    pub audit: crate::audit::AuditEmitter,
 }
 
 /// Register the authenticator routes onto the host router. The `Extension`

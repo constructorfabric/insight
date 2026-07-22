@@ -143,6 +143,26 @@ impl Default for ServiceTokensConfig {
     }
 }
 
+/// Audit publishing (PRD `nfr-auth-audit`): the Redpanda sink for auth events.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuditConfig {
+    /// Kafka-compatible bootstrap servers (`host:port[,host:port]`). Empty
+    /// (default) disables publishing — events stay in the structured log.
+    pub brokers: String,
+    /// The platform audit topic.
+    pub topic: String,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            brokers: String::new(),
+            topic: "insight.audit.events".to_owned(),
+        }
+    }
+}
+
 /// Layer-2 rate limiting (DESIGN §4.4, G8): the precise, multi-replica-correct
 /// guards behind the gateway's coarse per-IP zone. Buckets key on what
 /// identifies the caller (session / OIDC state), never IP. A burst of 0
@@ -234,6 +254,8 @@ pub struct AuthenticatorConfig {
     pub janitor_interval_seconds: u64,
     /// Layer-2 rate limiting knobs (DESIGN §4.4).
     pub rate_limit: RateLimitConfig,
+    /// Audit publishing (Redpanda).
+    pub audit: AuditConfig,
     /// Back-channel logout: tolerated clock skew on the `logout_token`'s `iat`
     /// (future-dated tokens inside this window are accepted).
     pub backchannel_clock_skew_seconds: u64,
@@ -313,6 +335,7 @@ impl Default for AuthenticatorConfig {
             csrf_origins: Vec::new(),
             janitor_interval_seconds: 30,
             rate_limit: RateLimitConfig::default(),
+            audit: AuditConfig::default(),
             backchannel_clock_skew_seconds: 60,
             backchannel_token_max_age_seconds: 300,
             admin_revoke_roles: vec!["session_admin".to_owned()],

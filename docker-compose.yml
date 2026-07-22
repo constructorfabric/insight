@@ -325,6 +325,9 @@ services:
       # Resolves the testclient public_key_paths against the mounted dev keys
       # (dev-compose.sh generates testclient.pub.pem there; nothing committed).
       APP__gears__authenticator__config__service_tokens__public_key_dir: "/app/keys"
+      # Audit events to the platform topic (step 10.8). Delivery failures are
+      # dropped + counted, so a stack without Redpanda still works.
+      APP__gears__authenticator__config__audit__brokers: "${AUDIT_BROKERS:-redpanda:9092}"
     volumes:
       - type: bind
         source: ./deploy/compose/build/authenticator/authenticator
