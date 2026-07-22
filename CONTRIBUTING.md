@@ -272,6 +272,7 @@ wizard. To use it, hand-edit `FRONTEND_MODE=built` in `.env.compose`,
 ```bash
 ./dev-compose.sh up --frontend-mode=ghcr --skip-build
 ./dev-compose.sh up --no-frontend                  # backend-only
+./dev-compose.sh up --host=analytics --no-frontend # host analytics, Compose infra
 ```
 
 ### Local dev auth backend (fakeidp / Keycloak)
@@ -319,6 +320,21 @@ ANALYTICS_IMAGE=ghcr.io/constructorfabric/insight-analytics:latest
 
 The script writes `deploy/compose/override.generated.yml` (gitignored) that
 drops the `build:` + bind-mount for the chosen services.
+
+### Host backend services
+
+Run selected request-serving services on the host while Compose owns their
+dependencies and the authenticated gateway:
+
+```bash
+./dev-compose.sh up --host=analytics,identity --no-frontend
+```
+
+The script excludes those containers, rewrites their gateway upstreams to
+`host.docker.internal`, and prints the commands to start each service with the
+same database, Redis, Identity, and JWT-verification configuration. Start the
+printed commands after Compose is healthy. `--host` and `--from-ghcr` are
+mutually exclusive for the same service.
 
 ### Settings reference (`.env.compose`)
 

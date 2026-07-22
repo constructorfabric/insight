@@ -432,6 +432,8 @@ services:
     volumes:
       - ./deploy/compose/authn-tls.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/compose/authn-tls-certs:/certs:ro
+    ports:
+      - "${AUTHN_TLS_PORT:-8443}:8443"
 
   # Gateway (OpenResty edge) — the DEFAULT :8080 entry (NGINX_BFF): auth_request
   # to the authenticator, JWT injection, routing to analytics/identity + the SPA.
