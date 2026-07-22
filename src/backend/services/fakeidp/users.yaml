@@ -7,10 +7,10 @@
 # the fake IdP carries it so e2e fixtures have something to assert on.
 #
 # The first user's email is the dev-impersonation identity. Its default here
-# matches dev-compose.sh's VITE_DEV_USER_EMAIL default (dev@company.nonpresent),
+# matches dev-compose.sh's DEV_USER_EMAIL default (dev@company.nonpresent),
 # which is the same email the seeder writes into identity.persons — so a plain
 # `docker compose up` + login "just works". Set FAKEIDP_DEV_USER_EMAIL (compose
-# wires it from VITE_DEV_USER_EMAIL) to override this first user's email when
+# wires it from DEV_USER_EMAIL) to override this first user's email when
 # the wizard was given a different value.
 users:
   - email: dev@company.nonpresent

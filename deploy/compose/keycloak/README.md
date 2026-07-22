@@ -60,10 +60,10 @@ Switching modes stops the other IdP so only the active one runs.
 
 Any seeded persona logs in with password `insight-dev`:
 
-- Your dev-lead identity — `VITE_DEV_USER_EMAIL` (from `.env.compose`).
+- Your dev-lead identity — `DEV_USER_EMAIL` (from `.env.compose`).
 - Any other seeded person — `email_*@company.nonpresent`.
 
-`VITE_DEV_USER_EMAIL` is only the **realm roster anchor + seed identity** now (the
+`DEV_USER_EMAIL` is the **realm roster anchor + seed identity** (the
 cookie/BFF SPA has no dev-impersonation), so it can stay set in keycloak mode; the
 dev lead just logs in like anyone else.
 
