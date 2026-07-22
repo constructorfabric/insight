@@ -222,6 +222,51 @@ impl OidcClient {
         })
     }
 
+    /// The IdP issuer URL this client trusts (back-channel `iss` check).
+    #[must_use]
+    pub fn issuer(&self) -> &str {
+        &self.issuer_url
+    }
+
+    /// The registered client id (back-channel `aud` check).
+    #[must_use]
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    /// Fetch the IdP's JWKS (via discovery) for back-channel `logout_token`
+    /// verification. Cold path — back-channel logout is rare — so no cache:
+    /// a fresh fetch also picks up IdP key rotation immediately.
+    ///
+    /// # Errors
+    /// Fails when discovery or the JWKS endpoint is unreachable / malformed.
+    pub async fn idp_jwks(&self) -> anyhow::Result<jsonwebtoken::jwk::JwkSet> {
+        #[derive(serde::Deserialize)]
+        struct Disco {
+            jwks_uri: String,
+        }
+        let disco: Disco = self
+            .http
+            .get(format!(
+                "{}/.well-known/openid-configuration",
+                self.issuer_url
+            ))
+            .send()
+            .await
+            .context("fetch IdP discovery")?
+            .json()
+            .await
+            .context("decode IdP discovery")?;
+        self.http
+            .get(&disco.jwks_uri)
+            .send()
+            .await
+            .context("fetch IdP JWKS")?
+            .json()
+            .await
+            .context("decode IdP JWKS")
+    }
+
     /// Build the RP-initiated logout URL. `end_session_endpoint` is not part of
     /// core discovery, so it is fetched here directly. Returns `None` when the
     /// IdP advertises no endpoint.

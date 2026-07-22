@@ -188,6 +188,13 @@ pub struct AuthenticatorConfig {
     // ── Cross-cutting ────────────────────────────────────────────────────
     /// CSRF `Origin` allowlist (empty = token-required, fail closed).
     pub csrf_origins: Vec<String>,
+    /// Back-channel logout: tolerated clock skew on the `logout_token`'s `iat`
+    /// (future-dated tokens inside this window are accepted).
+    pub backchannel_clock_skew_seconds: u64,
+    /// Back-channel logout: how long after `iat` a `logout_token` stays
+    /// acceptable. Also sizes the `jti` replay-guard TTL
+    /// (`iat + max_age + skew − now`).
+    pub backchannel_token_max_age_seconds: u64,
     /// Roles (gateway-JWT `roles` scopes) authorized to call the admin
     /// revoke-by-user operation. The service registry grants one of these to
     /// the services that may force-logout users (e.g. the future permissions
@@ -258,6 +265,8 @@ impl Default for AuthenticatorConfig {
             ],
             default_return_to: "/".to_owned(),
             csrf_origins: Vec::new(),
+            backchannel_clock_skew_seconds: 60,
+            backchannel_token_max_age_seconds: 300,
             admin_revoke_roles: vec!["session_admin".to_owned()],
             redis_url: String::new(),
             signing_keys_path: String::new(),

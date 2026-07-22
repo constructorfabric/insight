@@ -783,6 +783,168 @@ pub async fn admin_revoke_user_sessions(
     }
 }
 
+// ── /auth/oidc/back-channel-logout (PRD 5.10) ────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct BackChannelForm {
+    #[serde(default)]
+    logout_token: Option<String>,
+}
+
+/// Receive an IdP back-channel `logout_token` (form-encoded, OIDC BCL §2.5):
+/// validate it against the configured issuer's JWKS, replay-guard its `jti`
+/// (one-shot — a replayed delivery answers 200 without another revoke), then
+/// revoke the targeted sessions: by `(iss, sid)` via the sid index, or — the
+/// documented sub-only fallback — everything for that user.
+pub async fn back_channel_logout(
+    Extension(state): Extension<Arc<AppState>>,
+    axum::extract::Form(form): axum::extract::Form<BackChannelForm>,
+) -> Response {
+    let Some(raw) = form.logout_token.as_deref().filter(|t| !t.is_empty()) else {
+        return OidcError::invalid_argument()
+            .with_field_violation("logout_token", "missing logout_token", "MISSING")
+            .create()
+            .into_response();
+    };
+
+    // The IdP's keys — fetched per call (cold path, picks up rotation).
+    let jwks = match state.oidc.idp_jwks().await {
+        Ok(jwks) => jwks,
+        Err(e) => {
+            tracing::warn!(
+                error = format!("{e:#}"),
+                "back-channel: IdP JWKS unavailable"
+            );
+            return toolkit_canonical_errors::CanonicalError::service_unavailable()
+                .with_detail("IdP JWKS unavailable")
+                .create()
+                .into_response();
+        }
+    };
+
+    let now = now_secs();
+    let cfg = &state.cfg;
+    let claims = match crate::backchannel::validate_logout_token(
+        &jwks,
+        raw,
+        state.oidc.issuer(),
+        state.oidc.client_id(),
+        now,
+        cfg.backchannel_clock_skew_seconds,
+        cfg.backchannel_token_max_age_seconds,
+    ) {
+        Ok(c) => c,
+        Err(reason) => {
+            tracing::warn!(reason, "back-channel: logout_token rejected");
+            return OidcError::invalid_argument()
+                .with_field_violation("logout_token", reason, "INVALID_LOGOUT_TOKEN")
+                .create()
+                .into_response();
+        }
+    };
+
+    // One-shot per (iss, jti): a replay answers 200 idempotently, no revoke.
+    let ttl = crate::backchannel::replay_guard_ttl(
+        claims.iat,
+        now,
+        cfg.backchannel_clock_skew_seconds,
+        cfg.backchannel_token_max_age_seconds,
+    );
+    match state
+        .sessions
+        .guard_logout_jti(state.oidc.issuer(), &claims.jti, ttl)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::info!(jti = %claims.jti, "back-channel: replayed logout_token (idempotent 200)");
+            return no_content_ok();
+        }
+        Err(e) => return internal_problem("logout_jti_guard", &e),
+    }
+
+    let result = match &claims.sid {
+        Some(idp_sid) => revoke_by_sid_index(&state, idp_sid).await,
+        None => match &claims.sub {
+            Some(sub) => revoke_by_sub_fallback(&state, sub).await,
+            None => unreachable!("validator requires sub or sid"),
+        },
+    };
+    match result {
+        Ok(revoked) => {
+            tracing::info!(
+                target: "audit",
+                event = "back_channel_logout",
+                sid = claims.sid.as_deref().unwrap_or(""),
+                sub = claims.sub.as_deref().unwrap_or(""),
+                revoked,
+                "back-channel logout processed"
+            );
+            no_content_ok()
+        }
+        Err(e) => internal_problem("back_channel_revoke", &e),
+    }
+}
+
+/// Revoke every session indexed under the token's `(iss, sid)`.
+async fn revoke_by_sid_index(state: &AppState, idp_sid: &str) -> anyhow::Result<u64> {
+    let session_ids = state
+        .sessions
+        .sessions_by_idp_sid(state.oidc.issuer(), idp_sid)
+        .await?;
+    let mut revoked = 0u64;
+    for sid in &session_ids {
+        if state.sessions.revoke_session(sid).await? {
+            revoked += 1;
+        }
+    }
+    Ok(revoked)
+}
+
+/// The sub-only fallback (spec-compliant, blast radius documented): revoke
+/// EVERYTHING for the users behind `(iss, sub)` — with the operator-facing
+/// log line the runbook calls out, so a misconfigured IdP that omits `sid`
+/// is visible, not silent.
+async fn revoke_by_sub_fallback(state: &AppState, idp_sub: &str) -> anyhow::Result<u64> {
+    let session_ids = state
+        .sessions
+        .sessions_by_idp_sub(state.oidc.issuer(), idp_sub)
+        .await?;
+    // Resolve the distinct person(s) behind those sessions, then run the
+    // standard revoke-everything pipeline per person.
+    let mut persons: Vec<String> = Vec::new();
+    for sid in &session_ids {
+        if let Some(record) = state.sessions.load_session(sid).await?
+            && !persons.contains(&record.person_id)
+        {
+            persons.push(record.person_id);
+        }
+    }
+    let mut revoked = 0u64;
+    for person_id in &persons {
+        tracing::warn!(
+            target: "audit",
+            event = "back_channel_logout_sub_fallback",
+            idp_sub,
+            person_id = %person_id,
+            "back-channel logout_token carried no sid: revoking ALL sessions for this user \
+             (OIDC-compliant fallback — configure the IdP to emit sid to narrow the blast radius)"
+        );
+        revoked += state.sessions.revoke_user_sessions(person_id).await?;
+    }
+    Ok(revoked)
+}
+
+/// 200 with an empty body and `no-store` (OIDC BCL §2.7 — the response must
+/// not be cached).
+fn no_content_ok() -> Response {
+    build_response(
+        StatusCode::OK,
+        vec![(CACHE_CONTROL.clone(), "no-store".to_owned())],
+        Body::empty(),
+    )
+}
+
 // ── Pure helpers (unit-tested) ───────────────────────────────────────────────
 
 /// Compute the `/internal/authz` 200 `Cache-Control`:
