@@ -24,6 +24,7 @@
 mod api;
 mod config;
 mod cookie;
+mod csrf;
 mod gear;
 mod identity;
 mod jwt;

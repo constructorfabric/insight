@@ -123,6 +123,12 @@ data:
       authenticator:
         config:
           signing_keys_path: {{ .Values.signingKeysPath | quote }}
+          # CSRF Origin-allowlist fallback for state-changing /auth/* requests;
+          # empty = fail closed (X-CSRF-Token required).
+          {{- with .Values.csrfOrigins }}
+          csrf_origins:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           # Service tokens (§10 G1). The registry is gitops-reviewable config
           # (public keys are not secrets) rendered from .Values.serviceTokens.
           service_tokens:

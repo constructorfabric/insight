@@ -106,6 +106,10 @@ gears:
       jwt_audience: "internal-services"
       redirect_uri: ""
       default_return_to: "/"
+      # CSRF Origin-allowlist fallback (10.5): the browser sends Origin on all
+      # state-changing fetches, so dev flows keep working until the SPA sends
+      # X-CSRF-Token. Vite dev origin + the gateway entry.
+      csrf_origins: ["http://localhost:3000", "http://localhost:8080"]
       # Login scopes. offline_access is omitted (survives-logout token, wrong for a
       # BFF); add it only for an IdP that needs it for a refresh token, e.g. Entra.
       oidc_scopes: ["openid", "email", "profile"]

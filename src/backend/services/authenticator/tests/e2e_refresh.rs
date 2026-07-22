@@ -80,6 +80,22 @@ async fn login(http: &reqwest::Client, auth_base: &str, user: &str) -> String {
     cookie_from(&cb).expect("callback must set __Host-sid")
 }
 
+/// Fetch the session's CSRF token (state-changing /auth/* requires it, 10.5).
+async fn get_csrf(http: &reqwest::Client, auth_base: &str, token: &str) -> String {
+    #[derive(Deserialize)]
+    struct CsrfBody {
+        csrf_token: String,
+    }
+    let resp = http
+        .get(format!("{auth_base}/auth/csrf"))
+        .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "GET /auth/csrf must succeed");
+    resp.json::<CsrfBody>().await.unwrap().csrf_token
+}
+
 #[derive(Deserialize)]
 struct RefreshBody {
     expires_at: u64,
@@ -133,10 +149,23 @@ async fn refresh_rotates_with_grace_and_stable_session() {
         .await
         .expect("fresh session exchanges");
 
+    let csrf = get_csrf(&http, &auth_base, &old_token).await;
+
+    // 0. A state-changing /auth/* request without the CSRF token (and no
+    //    allowlisted Origin) is rejected 403 before any rotation happens.
+    let no_csrf = http
+        .post(format!("{auth_base}/auth/refresh"))
+        .header(reqwest::header::COOKIE, format!("{COOKIE}={old_token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_csrf.status(), 403, "refresh without CSRF must be 403");
+
     // 1. Refresh rotates the credential and returns the timing contract.
     let refresh = http
         .post(format!("{auth_base}/auth/refresh"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={old_token}"))
+        .header("X-CSRF-Token", &csrf)
         .send()
         .await
         .unwrap();
@@ -162,6 +191,7 @@ async fn refresh_rotates_with_grace_and_stable_session() {
     let grace = http
         .post(format!("{auth_base}/auth/refresh"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={old_token}"))
+        .header("X-CSRF-Token", &csrf)
         .send()
         .await
         .unwrap();
@@ -182,6 +212,7 @@ async fn refresh_rotates_with_grace_and_stable_session() {
     let stale = http
         .post(format!("{auth_base}/auth/refresh"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={old_token}"))
+        .header("X-CSRF-Token", &csrf)
         .send()
         .await
         .unwrap();

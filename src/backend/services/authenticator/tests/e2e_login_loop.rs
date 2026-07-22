@@ -194,10 +194,13 @@ async fn full_login_exchange_logout_loop() {
     assert!(me_body.get("user").is_some());
     assert!(me_body.get("refresh_at").is_some());
 
-    // 7. /auth/logout revokes the session and clears the cookie.
+    // 7. /auth/logout revokes the session and clears the cookie. State-changing
+    //    /auth/* requires the CSRF token (step 10.5) — /auth/me echoed it.
+    let csrf = me_body["csrf_token"].as_str().unwrap().to_owned();
     let logout = http
         .post(format!("{auth_base}/auth/logout"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
+        .header("X-CSRF-Token", &csrf)
         .send()
         .await
         .unwrap();
