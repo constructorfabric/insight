@@ -195,6 +195,8 @@ pub struct AuthenticatorConfig {
     // ── Cross-cutting ────────────────────────────────────────────────────
     /// CSRF `Origin` allowlist (empty = token-required, fail closed).
     pub csrf_origins: Vec<String>,
+    /// Janitor pass interval (leader-elected trim of expired index members).
+    pub janitor_interval_seconds: u64,
     /// Back-channel logout: tolerated clock skew on the `logout_token`'s `iat`
     /// (future-dated tokens inside this window are accepted).
     pub backchannel_clock_skew_seconds: u64,
@@ -272,6 +274,7 @@ impl Default for AuthenticatorConfig {
             ],
             default_return_to: "/".to_owned(),
             csrf_origins: Vec::new(),
+            janitor_interval_seconds: 30,
             backchannel_clock_skew_seconds: 60,
             backchannel_token_max_age_seconds: 300,
             admin_revoke_roles: vec!["session_admin".to_owned()],
