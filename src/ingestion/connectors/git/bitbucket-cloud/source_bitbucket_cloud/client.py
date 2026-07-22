@@ -170,7 +170,11 @@ class BitbucketClient:
                     raise RuntimeError(f"Bitbucket pagination loop detected for {next_value}")
                 if next_value:
                     seen.add(str(next_value))
-                current = self.request("GET", str(next_value)) if next_value else None
+                current = (
+                    self.request("GET", str(next_value), allow_statuses={403, 404})
+                    if next_value
+                    else None
+                )
 
         return True, records()
 

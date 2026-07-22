@@ -65,8 +65,7 @@ class CommitBranchReachabilityStream(CommitRangeMixin, BitbucketIncrementalStrea
 
     def _changes(self, repo, branch, include: str, exclude: str | None, action: str):
         try:
-            commits = self._client.commits_between(repo, [include], [exclude] if exclude else [])
-            yield from self._reachability_records(repo, branch, include, action, commits)
+            commits = list(self._client.commits_between(repo, [include], [exclude] if exclude else []))
         except BitbucketApiError as exc:
             if exc.status_code != 404 or not exclude:
                 raise
@@ -95,6 +94,8 @@ class CommitBranchReachabilityStream(CommitRangeMixin, BitbucketIncrementalStrea
                 committed_at=None,
                 reachability_action="removal_unavailable",
             )
+            return
+        yield from self._reachability_records(repo, branch, include, action, commits)
 
     def _reachability_records(self, repo, branch, head, action, commits):
         for commit in commits:

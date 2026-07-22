@@ -127,11 +127,7 @@ class SourceBitbucketCloud(AbstractSource):
         issue_changes = IssueChangesStream(**shared)
         pr_tasks = PRTasksStream(**shared)
 
-        _logger.info(
-            f"streams: wired 20 streams (workspaces={shared['workspaces']} "
-            f"start_date={shared['start_date']} skip_forks={shared['skip_forks']})"
-        )
-        return [
+        streams = [
             repos,
             branches,
             prs,
@@ -153,6 +149,11 @@ class SourceBitbucketCloud(AbstractSource):
             commit_branch_reachability,
             file_changes,
         ]
+        _logger.info(
+            f"streams: wired {len(streams)} streams (workspaces={shared['workspaces']} "
+            f"start_date={shared['start_date']} skip_forks={shared['skip_forks']})"
+        )
+        return streams
 
 
 def main() -> None:

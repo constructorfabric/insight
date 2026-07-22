@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from source_bitbucket_cloud.client import BitbucketClient, RepositoryCatalog
+from source_bitbucket_cloud.client import BitbucketApiError, BitbucketClient, RepositoryCatalog
 from source_bitbucket_cloud.streams.base import BUCKET_COUNT
 from source_bitbucket_cloud.streams.commits import CommitsStream
 from source_bitbucket_cloud.streams.metric_events import IssuesStream
@@ -153,6 +153,51 @@ class TestClientHardening:
         assert seen["method"] == "POST"
         assert seen["params"] == {"pagelen": "100"}
         assert ("include", "new1") in seen["data"] and ("exclude", "old1") in seen["data"]
+
+
+class TestNewCommits404Recovery:
+    def make_stream(self, client, repo):
+        return CommitsStream(**{**SHARED, "client": client, "catalog": FakeCatalog([repo], client)})
+
+    def test_404_with_previous_heads_retries_without_excludes(self):
+        repo = repository()
+
+        class Client(FakeClient):
+            def commits_between(self, repo, include, exclude):
+                self.commit_calls.append((list(include), list(exclude)))
+                if exclude:
+                    raise BitbucketApiError(404, "https://api.bitbucket.org/2.0/x", "gone")
+                return iter([{"hash": "c1", "date": "2026-06-01"}])
+
+        client = Client()
+        stream = self.make_stream(client, repo)
+
+        result = list(stream.new_commits(repo, ["new"], ["old"]))
+
+        assert [commit["hash"] for commit in result] == ["c1"]
+        assert client.commit_calls == [(["new"], ["old"]), (["new"], [])]
+
+    def test_non_404_propagates(self):
+        repo = repository()
+
+        class Client(FakeClient):
+            def commits_between(self, repo, include, exclude):
+                raise BitbucketApiError(500, "https://api.bitbucket.org/2.0/x", "boom")
+
+        stream = self.make_stream(Client(), repo)
+        with pytest.raises(BitbucketApiError):
+            list(stream.new_commits(repo, ["new"], ["old"]))
+
+    def test_404_without_previous_heads_propagates(self):
+        repo = repository()
+
+        class Client(FakeClient):
+            def commits_between(self, repo, include, exclude):
+                raise BitbucketApiError(404, "https://api.bitbucket.org/2.0/x", "gone")
+
+        stream = self.make_stream(Client(), repo)
+        with pytest.raises(BitbucketApiError):
+            list(stream.new_commits(repo, ["new"], []))
 
 
 class TestStartDateValidation:
