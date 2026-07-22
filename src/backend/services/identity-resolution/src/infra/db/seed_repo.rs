@@ -381,8 +381,6 @@ pub async fn apply(
               )
         ),
         source_member_latest_active AS (
-            -- Path B (#344): one current-state row per (tenant, source, person)
-            -- who is no one's child. author = the seed author, not the source row.
             SELECT
                 m.insight_tenant_id, m.insight_source_type, m.insight_source_id, m.person_id,
                 m.first_obs,
