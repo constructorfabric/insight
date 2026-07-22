@@ -814,6 +814,9 @@ pub struct BackChannelForm {
 /// (one-shot — a replayed delivery answers 200 without another revoke), then
 /// revoke the targeted sessions: by `(iss, sid)` via the sid index, or — the
 /// documented sub-only fallback — everything for that user.
+// Linear validate → replay-guard → resolve → revoke flow with per-step error
+// mapping; splitting it would scatter the sequence without making it clearer.
+#[allow(clippy::too_many_lines)]
 pub async fn back_channel_logout(
     Extension(state): Extension<Arc<AppState>>,
     axum::extract::Form(form): axum::extract::Form<BackChannelForm>,
@@ -900,7 +903,19 @@ pub async fn back_channel_logout(
             );
             no_content_ok()
         }
-        Err(e) => internal_problem("back_channel_revoke", &e),
+        Err(e) => {
+            // Release the replay guard so the IdP's retry actually revokes
+            // (review M1) — the claim was consumed above, but the revoke did
+            // not happen. Revoke is idempotent, so re-processing is safe.
+            if let Err(re) = state
+                .sessions
+                .release_logout_jti(state.oidc.issuer(), &claims.jti)
+                .await
+            {
+                tracing::warn!(error = %re, "back-channel: failed to release jti guard after revoke error");
+            }
+            internal_problem("back_channel_revoke", &e)
+        }
     }
 }
 

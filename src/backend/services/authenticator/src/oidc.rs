@@ -86,9 +86,18 @@ impl OidcClient {
     /// Fails when the underlying `reqwest` client cannot be constructed.
     pub fn new(idp: &IdpConfig) -> anyhow::Result<Self> {
         // Do not follow redirects: the RP must never chase the IdP's 3xx itself
-        // (SSRF-safety guidance from the openidconnect docs).
+        // (SSRF-safety guidance from the openidconnect docs). A total timeout is
+        // mandatory (reqwest has none by default): the background refresher runs
+        // each grant under a 30 s per-session lock, so a hung IdP connection
+        // (half-open TCP, no RST) must fail well before that — otherwise the
+        // request outlives its lock, a second worker re-runs the grant with the
+        // same one-time-use refresh token, and the IdP burns it → false logout.
+        // It also caps semaphore-permit hold time so hung calls can't wedge the
+        // whole refresher (G5).
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(5))
             .build()
             .context("build OIDC HTTP client")?;
         Ok(Self {
