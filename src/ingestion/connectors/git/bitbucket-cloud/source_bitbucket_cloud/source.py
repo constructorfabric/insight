@@ -61,7 +61,7 @@ class SourceBitbucketCloud(AbstractSource):
             f"username={'set' if username else 'unset'} token={'set' if token else 'unset'}"
         )
         try:
-            client = BitbucketClient(token, username)
+            client = BitbucketClient(token, username, config.get("bitbucket_api_base_url"))
             for workspace in workspaces:
                 logger.info(f"check_connection: probing workspace '{workspace}'")
                 client.request(
@@ -85,7 +85,9 @@ class SourceBitbucketCloud(AbstractSource):
 
     def streams(self, config: Mapping[str, Any]) -> list[Stream]:
         client = BitbucketClient(
-            config["bitbucket_token"], config.get("bitbucket_username", "")
+            config["bitbucket_token"],
+            config.get("bitbucket_username", ""),
+            config.get("bitbucket_api_base_url"),
         )
         catalog = RepositoryCatalog(
             client,

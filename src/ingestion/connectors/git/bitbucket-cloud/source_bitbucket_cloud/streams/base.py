@@ -7,7 +7,7 @@ import re
 import uuid
 from abc import ABC
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from airbyte_cdk.models import SyncMode
@@ -22,7 +22,7 @@ MAX_TEXT_BYTES = 16_384
 
 
 def now_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def normalize_start_date(value: str | None) -> str | None:

@@ -83,4 +83,15 @@ def test_tenant_identity_and_spec():
     assert all(stream._tenant_id == "T" and stream._source_id == "S" for stream in streams)
     spec = SourceBitbucketCloud().spec(LOGGER)
     properties = spec.connectionSpecification["properties"]
-    assert {"bitbucket_token", "bitbucket_workspaces"} <= set(properties)
+    assert {"bitbucket_token", "bitbucket_workspaces", "bitbucket_api_base_url"} <= set(properties)
+
+
+@patch("source_bitbucket_cloud.source.BitbucketClient")
+def test_api_base_url_is_used_for_check_and_streams(client_type):
+    config = {**CONFIG, "bitbucket_api_base_url": "http://emulator:8080/2.0/"}
+    ok, reason = SourceBitbucketCloud().check_connection(LOGGER, config)
+    assert ok is True
+    assert reason is None
+    SourceBitbucketCloud().streams(config)
+    assert client_type.call_args_list[0].args == ("tok", "", "http://emulator:8080/2.0/")
+    assert client_type.call_args_list[1].args == ("tok", "", "http://emulator:8080/2.0/")

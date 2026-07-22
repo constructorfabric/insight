@@ -57,6 +57,14 @@
         "description": "Skip forked repositories during collection.",
         "default": true,
         "order": 6
+      },
+      "bitbucket_api_base_url": {
+        "type": "string",
+        "title": "API Base URL",
+        "description": "Bitbucket Cloud REST API base URL.",
+        "format": "uri",
+        "default": "https://api.bitbucket.org/2.0/",
+        "order": 7
       }
     }
   }

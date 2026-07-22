@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import random
 import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
@@ -57,10 +58,12 @@ class RepositoryCatalog:
 class BitbucketClient:
     url_base = "https://api.bitbucket.org/2.0/"
 
-    def __init__(self, token: str, username: str = "") -> None:
+    def __init__(self, token: str, username: str = "", base_url: str | None = None) -> None:
         self._session = requests.Session()
         self._session.headers.update(auth_headers(token, username))
         self._session.headers.update({"Accept": "application/json"})
+        configured_url = base_url or os.environ.get("BITBUCKET_API_BASE_URL") or self.url_base
+        self._base_url = configured_url.rstrip("/") + "/"
 
     def request(
         self,
@@ -237,7 +240,7 @@ class BitbucketClient:
     def _url(self, path_or_url: str) -> str:
         if path_or_url.startswith(("https://", "http://")):
             return path_or_url
-        return f"{self.url_base}{path_or_url.lstrip('/')}"
+        return f"{self._base_url}{path_or_url.lstrip('/')}"
 
     def _retry_delay(self, response: requests.Response, attempt: int) -> float:
         retry_after = response.headers.get("Retry-After")
