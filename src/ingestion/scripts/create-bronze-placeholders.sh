@@ -732,6 +732,8 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes (
     tenant_id         String,
     source_id         String DEFAULT '',
     file_path         String,
+    file_extension    String DEFAULT '',
+    change_type       String DEFAULT '',
     lines_added       Int64,
     lines_removed     Int64,
     _version          UInt64
@@ -747,6 +749,8 @@ else
     echo "  Reconciling placeholder schema: silver.class_git_file_changes"
     run_ch <<'SQL'
 ALTER TABLE silver.class_git_file_changes ADD COLUMN IF NOT EXISTS source_id String DEFAULT '';
+ALTER TABLE silver.class_git_file_changes ADD COLUMN IF NOT EXISTS file_extension String DEFAULT '';
+ALTER TABLE silver.class_git_file_changes ADD COLUMN IF NOT EXISTS change_type String DEFAULT '';
 SQL
   else
     echo "  Skipping placeholder schema reconciliation: silver.class_git_file_changes is not a placeholder"
