@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 
-from source_bitbucket_cloud.client import BitbucketApiError, BranchRef, RepositoryRef
+from source_bitbucket_cloud.client import BitbucketApiError, BranchRef, RepositoryCatalog, RepositoryRef
 
 
 class CommitRangeMixin:
     _client: object
+    _catalog: RepositoryCatalog
 
     def branch_snapshot(self, repo: RepositoryRef) -> tuple[list[BranchRef], dict[str, str]]:
-        branches = self._client.branches(repo)
+        branches = self._catalog.branches(repo)
         return branches, {branch.name: branch.head_sha for branch in branches}
 
     def new_commits(

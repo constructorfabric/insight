@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from airbyte_cdk.models import SyncMode
-
 from source_bitbucket_cloud.streams.base import AUTHOR_RE, BitbucketIncrementalStream, schema, truncate, unique_key
 from source_bitbucket_cloud.streams.git_ranges import CommitRangeMixin
 
@@ -13,30 +11,19 @@ class CommitsStream(CommitRangeMixin, BitbucketIncrementalStream):
     name = "commits"
     cursor_field = "date"
 
-    def read_records(
-        self,
-        sync_mode: SyncMode,
-        cursor_field: list[str] | None = None,
-        stream_slice: Mapping[str, Any] | None = None,
-        stream_state: Mapping[str, Any] | None = None,
-    ) -> Iterable[Mapping[str, Any]]:
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            prior = self.repository_state(repo)
-            _, current_heads = self.branch_snapshot(repo)
-            current_head_shas = sorted(set(current_heads.values()))
-            previous_head_shas = prior.get("head_shas") or []
-            if current_head_shas != previous_head_shas:
-                for commit in self.new_commits(repo, current_head_shas, previous_head_shas):
-                    record = self._record(repo, commit)
-                    if self._start_date and record.get("date") and str(record["date"])[:10] < self._start_date:
-                        continue
-                    yield record
-            self.commit_repository_state(repo, {"head_shas": current_head_shas})
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
+    def repository_records(self, repo, bucket_id: int) -> Iterable[Mapping[str, Any]]:
+        del bucket_id
+        prior = self.repository_state(repo)
+        _, current_heads = self.branch_snapshot(repo)
+        current_head_shas = sorted(set(current_heads.values()))
+        previous_head_shas = prior.get("head_shas") or []
+        if current_head_shas != previous_head_shas:
+            for commit in self.new_commits(repo, current_head_shas, previous_head_shas):
+                record = self._record(repo, commit)
+                if self._start_date and record.get("date") and str(record["date"])[:10] < self._start_date:
+                    continue
+                yield record
+        self.commit_repository_state(repo, {"head_shas": current_head_shas})
 
     def _record(self, repo, commit: Mapping[str, Any]) -> Mapping[str, Any]:
         sha = str(commit.get("hash") or "")

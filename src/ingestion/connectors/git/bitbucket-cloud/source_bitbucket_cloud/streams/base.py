@@ -28,7 +28,12 @@ def now_iso() -> str:
 def normalize_start_date(value: str | None) -> str | None:
     if not value:
         return None
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"bitbucket_start_date must be an ISO date (YYYY-MM-DD), got {value!r}"
+        ) from exc
     return parsed.date().isoformat()
 
 
@@ -102,6 +107,7 @@ class BitbucketStream(Stream, ABC):
         self._run_id = uuid.uuid4().hex
         self._catalog = catalog or RepositoryCatalog(self._client, self._workspaces, self._skip_forks)
         self._repositories_by_bucket: dict[int, list[RepositoryRef]] = {}
+        self._failed_repositories: list[str] = []
 
     def stream_slices(
         self,
@@ -111,21 +117,56 @@ class BitbucketStream(Stream, ABC):
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any]]:
         del sync_mode, cursor_field, stream_state
-        repositories = self._load_repositories()
-        self._repositories_by_bucket = {bucket: [] for bucket in range(BUCKET_COUNT)}
-        for repo in repositories:
-            self._repositories_by_bucket[repository_bucket(repo.uuid)].append(repo)
+        self._bucket_repositories()
         for bucket in range(BUCKET_COUNT):
             yield {"bucket_id": bucket}
+
+    def read_records(
+        self,
+        sync_mode: SyncMode,
+        cursor_field: list[str] | None = None,
+        stream_slice: Mapping[str, Any] | None = None,
+        stream_state: Mapping[str, Any] | None = None,
+    ) -> Iterable[Mapping[str, Any]]:
+        del sync_mode, cursor_field, stream_state
+        bucket_id, repositories = self.bucket(stream_slice)
+        for repo in repositories:
+            try:
+                yield from self.repository_records(repo, bucket_id)
+            except Exception:
+                self.record_failure(repo)
+        self.finish_bucket(bucket_id, repositories)
+
+    def repository_records(self, repo: RepositoryRef, bucket_id: int) -> Iterable[Mapping[str, Any]]:
+        raise NotImplementedError
+
+    def bucket(self, stream_slice: Mapping[str, Any] | None) -> tuple[int, list[RepositoryRef]]:
+        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
+        return bucket_id, self.repositories_for_slice(stream_slice)
+
+    def record_failure(self, repo: RepositoryRef) -> None:
+        name = f"{repo.workspace}/{repo.slug}"
+        self._failed_repositories.append(name)
+        logger.exception(f"{self.name}: repository {name} failed; its state was not advanced, continuing")
+
+    def finish_bucket(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
+        del repositories
+        if bucket_id == BUCKET_COUNT - 1 and self._failed_repositories:
+            raise RuntimeError(
+                f"{self.name}: {len(self._failed_repositories)} repositories failed this sync: "
+                + ", ".join(self._failed_repositories[:10])
+            )
 
     def repositories_for_slice(self, stream_slice: Mapping[str, Any] | None) -> list[RepositoryRef]:
         bucket = int((stream_slice or {}).get("bucket_id", 0))
         if not self._repositories_by_bucket:
-            self._load_repositories()
-            self._repositories_by_bucket = {value: [] for value in range(BUCKET_COUNT)}
-            for repo in self._load_repositories():
-                self._repositories_by_bucket[repository_bucket(repo.uuid)].append(repo)
+            self._bucket_repositories()
         return self._repositories_by_bucket[bucket]
+
+    def _bucket_repositories(self) -> None:
+        self._repositories_by_bucket = {bucket: [] for bucket in range(BUCKET_COUNT)}
+        for repo in self._catalog.repositories():
+            self._repositories_by_bucket[repository_bucket(repo.uuid)].append(repo)
 
     def envelope(self, record: Mapping[str, Any]) -> dict[str, Any]:
         return {
@@ -177,9 +218,6 @@ class BitbucketStream(Stream, ABC):
         value = ":".join([self._run_id, *(str(part) for part in parts)])
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
-    def _load_repositories(self) -> list[RepositoryRef]:
-        return self._catalog.repositories()
-
 
 class BitbucketIncrementalStream(BitbucketStream, CheckpointMixin, ABC):
     def __init__(self, **kwargs: Any) -> None:
@@ -210,6 +248,11 @@ class BitbucketIncrementalStream(BitbucketStream, CheckpointMixin, ABC):
         stale = [key for key in state_repositories if repository_bucket(key) == bucket_id and key not in current]
         for key in stale:
             del state_repositories[key]
+
+    def finish_bucket(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
+        self.prune_bucket_state(bucket_id, repositories)
+        self.log_state_size()
+        super().finish_bucket(bucket_id, repositories)
 
     def log_state_size(self) -> None:
         encoded = json.dumps(self._state, separators=(",", ":")).encode("utf-8")

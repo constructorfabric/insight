@@ -71,6 +71,7 @@ class RepositoriesStream(BitbucketStream):
             item_count=len(entity_keys),
             bucket_id=bucket_id,
         )
+        self.finish_bucket(bucket_id, repositories)
 
     def get_json_schema(self) -> Mapping[str, Any]:
         nullable_string = {"type": ["null", "string"]}

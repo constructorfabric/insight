@@ -16,6 +16,16 @@ OVERLAP_MINUTES = 5
 class PullRequestStateStream(BitbucketIncrementalStream):
     cursor_field = "updated_on"
 
+    def repository_records(self, repo, bucket_id):
+        del bucket_id
+        selected, new_state = self.selected_pull_requests(repo, self.repository_state(repo))
+        for pr in selected:
+            yield from self.pull_request_records(repo, pr)
+        self.commit_repository_state(repo, new_state)
+
+    def pull_request_records(self, repo, pr: Mapping[str, Any]):
+        raise NotImplementedError
+
     def selected_pull_requests(
         self, repo: RepositoryRef, prior: Mapping[str, Any]
     ) -> tuple[list[Mapping[str, Any]], Mapping[str, Any]]:

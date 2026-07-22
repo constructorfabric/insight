@@ -21,7 +21,7 @@ def test_comments_snapshot_uses_revision_and_distinct_count(pr_comments_stream, 
         "inline": {"path": "a.py", "from": 1, "to": 2},
     }
     client.optional_values[path] = (True, [value, value])
-    records = list(pr_comments_stream._snapshot(repo, pr()))
+    records = list(pr_comments_stream.pull_request_records(repo, pr()))
     assert records[0]["inline_path"] == "a.py"
     assert records[0]["pull_request_source_commit_hash"] == "source"
     assert records[-1]["pull_request_destination_commit_hash"] == "dest"
@@ -32,7 +32,7 @@ def test_comments_snapshot_uses_revision_and_distinct_count(pr_comments_stream, 
 def test_comments_unavailable_snapshot_is_marked(pr_comments_stream, client, repo):
     path = client.repo_path(repo, "pullrequests/42/comments")
     client.optional_values[path] = (False, [])
-    record = list(pr_comments_stream._snapshot(repo, pr()))[-1]
+    record = list(pr_comments_stream.pull_request_records(repo, pr()))[-1]
     assert record["snapshot_available"] is False
     assert record["snapshot_item_count"] == 0
 
@@ -41,7 +41,7 @@ def test_pr_commits_snapshot_has_order_revision_and_distinct_count(pr_commits_st
     path = client.repo_path(repo, "pullrequests/42/commits")
     value = {"hash": "c1", "author": {"user": {"uuid": "{a}"}}}
     client.optional_values[path] = (True, [value, value, {"author": {}}])
-    records = list(pr_commits_stream._snapshot(repo, pr()))
+    records = list(pr_commits_stream.pull_request_records(repo, pr()))
     assert [record["commit_order"] for record in records[:-1]] == [0, 1]
     assert records[0]["pull_request_source_commit_hash"] == "source"
     assert records[-1]["snapshot_item_count"] == 1
@@ -59,7 +59,7 @@ def test_diffstat_snapshot_uses_final_revision_and_distinct_count(stream_args, c
         "lines_removed": 2,
     }
     client.optional_values[path] = (True, [entry, entry])
-    records = list(stream._snapshot(repo, pr()))
+    records = list(stream.pull_request_records(repo, pr()))
     assert records[0]["lines_added"] == 5
     assert records[0]["pull_request_destination_commit_hash"] == "dest"
     assert records[-1]["snapshot_item_count"] == 1
@@ -72,7 +72,7 @@ def test_activity_snapshot_uses_provider_event_timestamp(stream_args, client, re
         True,
         [{"update": {"state": "MERGED", "date": "2026-06-30T02:00:00+00:00", "author": {"account_id": "actor"}}}],
     )
-    records = list(stream._snapshot(repo, pr()))
+    records = list(stream.pull_request_records(repo, pr()))
     assert records[0]["event_type"] == "update"
     assert records[0]["activity_date"] == "2026-06-30T02:00:00+00:00"
     assert records[0]["actor_account_id"] == "actor"

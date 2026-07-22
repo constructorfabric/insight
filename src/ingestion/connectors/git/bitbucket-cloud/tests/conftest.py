@@ -36,11 +36,15 @@ def branch(name: str = "main", sha: str = "a1", **raw: Any) -> BranchRef:
 
 
 class FakeCatalog:
-    def __init__(self, repositories: Iterable[RepositoryRef]):
+    def __init__(self, repositories: Iterable[RepositoryRef], client: FakeClient | None = None):
         self._repositories = list(repositories)
+        self._client = client
 
     def repositories(self) -> list[RepositoryRef]:
         return self._repositories
+
+    def branches(self, repo: RepositoryRef) -> list[BranchRef]:
+        return self._client.branches(repo) if self._client else []
 
 
 class FakeClient:
@@ -84,7 +88,7 @@ def client():
 
 @pytest.fixture
 def stream_args(repo, client):
-    return {**SHARED, "client": client, "catalog": FakeCatalog([repo])}
+    return {**SHARED, "client": client, "catalog": FakeCatalog([repo], client)}
 
 
 @pytest.fixture

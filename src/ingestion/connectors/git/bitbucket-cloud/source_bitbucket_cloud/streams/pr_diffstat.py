@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from airbyte_cdk.models import SyncMode
-
 from source_bitbucket_cloud.streams.base import schema, unique_key
 from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
@@ -12,19 +10,7 @@ from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 class PRDiffstatStream(PullRequestStateStream):
     name = "pull_request_diffstat"
 
-    def read_records(self, sync_mode: SyncMode, cursor_field=None, stream_slice=None, stream_state=None):
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            selected, new_state = self.selected_pull_requests(repo, self.repository_state(repo))
-            for pr in selected:
-                yield from self._snapshot(repo, pr)
-            self.commit_repository_state(repo, new_state)
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
-
-    def _snapshot(self, repo, pr: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
+    def pull_request_records(self, repo, pr: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
         pr_id = pr.get("id")
         updated_on = pr.get("updated_on")
         revision = self.pull_request_revision(pr)

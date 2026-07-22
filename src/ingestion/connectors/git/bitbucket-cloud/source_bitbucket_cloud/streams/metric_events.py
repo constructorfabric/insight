@@ -4,8 +4,6 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
-from airbyte_cdk.models import SyncMode
-
 from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream, BitbucketStream, schema, unique_key
 from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
@@ -13,46 +11,43 @@ from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 class RepositorySnapshotStream(BitbucketStream):
     resource = ""
 
-    def read_records(self, sync_mode: SyncMode, cursor_field=None, stream_slice=None, stream_state=None):
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        for repo in self.repositories_for_slice(stream_slice):
-            if not self.enabled(repo):
+    def repository_records(self, repo, bucket_id: int):
+        if not self.enabled(repo):
+            return
+        generation = self.generation(self.name, repo.uuid)
+        entity_keys: set[str] = set()
+        present, records = self._client.paginate_optional(
+            self._client.repo_path(repo, self.resource), params={"pagelen": "100"}
+        )
+        for record in records:
+            identity = record.get("uuid") or record.get("id") or record.get("name")
+            if identity is None:
                 continue
-            generation = self.generation(self.name, repo.uuid)
-            entity_keys: set[str] = set()
-            present, records = self._client.paginate_optional(
-                self._client.repo_path(repo, self.resource), params={"pagelen": "100"}
+            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, identity)
+            entity_keys.add(entity_key)
+            projected = dict(record)
+            projected.update(self.project(record))
+            projected.update(
+                {
+                    "bucket_id": bucket_id,
+                    "repository_uuid": repo.uuid,
+                    "workspace_uuid": repo.workspace_uuid,
+                    "workspace": repo.workspace,
+                    "repo_slug": repo.slug,
+                }
             )
-            for record in records:
-                identity = record.get("uuid") or record.get("id") or record.get("name")
-                if identity is None:
-                    continue
-                entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, identity)
-                entity_keys.add(entity_key)
-                projected = dict(record)
-                projected.update(self.project(record))
-                projected.update(
-                    {
-                        "bucket_id": bucket_id,
-                        "repository_uuid": repo.uuid,
-                        "workspace_uuid": repo.workspace_uuid,
-                        "workspace": repo.workspace,
-                        "repo_slug": repo.slug,
-                    }
-                )
-                yield self.item(entity_key=entity_key, generation_id=generation, **projected)
-            yield self.complete(
-                scope_parts=[self.name, repo.uuid],
-                generation_id=generation,
-                item_count=len(entity_keys),
-                bucket_id=bucket_id,
-                available=present,
-                repository_uuid=repo.uuid,
-                workspace_uuid=repo.workspace_uuid,
-                workspace=repo.workspace,
-                repo_slug=repo.slug,
-            )
+            yield self.item(entity_key=entity_key, generation_id=generation, **projected)
+        yield self.complete(
+            scope_parts=[self.name, repo.uuid],
+            generation_id=generation,
+            item_count=len(entity_keys),
+            bucket_id=bucket_id,
+            available=present,
+            repository_uuid=repo.uuid,
+            workspace_uuid=repo.workspace_uuid,
+            workspace=repo.workspace,
+            repo_slug=repo.slug,
+        )
 
     def enabled(self, repo) -> bool:
         return True
@@ -92,6 +87,18 @@ class DeploymentsStream(RepositorySnapshotStream):
 
 class PipelineStateStream(BitbucketIncrementalStream):
     cursor_field = "created_on"
+
+    def repository_records(self, repo, bucket_id: int):
+        del bucket_id
+        present, pipelines, new_state = self.pipeline_candidates(repo, self.repository_state(repo))
+        if not present:
+            return
+        for pipeline in pipelines:
+            yield from self.pipeline_records(repo, pipeline)
+        self.commit_repository_state(repo, new_state)
+
+    def pipeline_records(self, repo, pipeline: Mapping[str, Any]):
+        raise NotImplementedError
 
     def pipeline_candidates(self, repo, prior: Mapping[str, Any]):
         watermark = str(prior.get("created_on") or "")
@@ -134,30 +141,19 @@ class PipelineStateStream(BitbucketIncrementalStream):
 class PipelinesStream(PipelineStateStream):
     name = "pipelines"
 
-    def read_records(self, sync_mode: SyncMode, cursor_field=None, stream_slice=None, stream_state=None):
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            present, pipelines, new_state = self.pipeline_candidates(repo, self.repository_state(repo))
-            if not present:
-                continue
-            for pipeline in pipelines:
-                pipeline_uuid = pipeline.get("uuid")
-                entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, pipeline_uuid)
-                projected = dict(pipeline)
-                projected.update(
-                    {
-                        "repository_uuid": repo.uuid,
-                        "workspace_uuid": repo.workspace_uuid,
-                        "workspace": repo.workspace,
-                        "repo_slug": repo.slug,
-                    }
-                )
-                yield self.item(entity_key=entity_key, **projected)
-            self.commit_repository_state(repo, new_state)
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
+    def pipeline_records(self, repo, pipeline: Mapping[str, Any]):
+        pipeline_uuid = pipeline.get("uuid")
+        entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, pipeline_uuid)
+        projected = dict(pipeline)
+        projected.update(
+            {
+                "repository_uuid": repo.uuid,
+                "workspace_uuid": repo.workspace_uuid,
+                "workspace": repo.workspace,
+                "repo_slug": repo.slug,
+            }
+        )
+        yield self.item(entity_key=entity_key, **projected)
 
     def get_json_schema(self) -> Mapping[str, Any]:
         return schema(
@@ -174,21 +170,7 @@ class PipelinesStream(PipelineStateStream):
 class PipelineStepsStream(PipelineStateStream):
     name = "pipeline_steps"
 
-    def read_records(self, sync_mode: SyncMode, cursor_field=None, stream_slice=None, stream_state=None):
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            present, pipelines, new_state = self.pipeline_candidates(repo, self.repository_state(repo))
-            if not present:
-                continue
-            for pipeline in pipelines:
-                yield from self._snapshot(repo, pipeline)
-            self.commit_repository_state(repo, new_state)
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
-
-    def _snapshot(self, repo, pipeline):
+    def pipeline_records(self, repo, pipeline: Mapping[str, Any]):
         pipeline_uuid = pipeline.get("uuid")
         generation = self.generation(repo.uuid, pipeline_uuid, "steps")
         present, steps = self._client.paginate_optional(
@@ -233,21 +215,7 @@ class PipelineStepsStream(PipelineStateStream):
 class PipelineStepTestReportsStream(PipelineStateStream):
     name = "pipeline_step_test_reports"
 
-    def read_records(self, sync_mode: SyncMode, cursor_field=None, stream_slice=None, stream_state=None):
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            present, pipelines, new_state = self.pipeline_candidates(repo, self.repository_state(repo))
-            if not present:
-                continue
-            for pipeline in pipelines:
-                yield from self._pipeline_reports(repo, pipeline)
-            self.commit_repository_state(repo, new_state)
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
-
-    def _pipeline_reports(self, repo, pipeline):
+    def pipeline_records(self, repo, pipeline: Mapping[str, Any]):
         pipeline_uuid = pipeline.get("uuid")
         _, steps = self._client.paginate_optional(
             self._client.repo_path(repo, f"pipelines/{pipeline_uuid}/steps"), params={"pagelen": "100"}
@@ -308,6 +276,21 @@ class PipelineStepTestReportsStream(PipelineStateStream):
 class IssueStateStream(BitbucketIncrementalStream):
     cursor_field = "updated_on"
 
+    def repository_records(self, repo, bucket_id: int):
+        del bucket_id
+        if not repo.has_issues:
+            self.commit_repository_state(repo, {})
+            return
+        present, issues, new_state = self.selected_issues(repo, self.repository_state(repo))
+        if not present:
+            return
+        for issue in issues:
+            yield from self.issue_records(repo, issue)
+        self.commit_repository_state(repo, new_state)
+
+    def issue_records(self, repo, issue: Mapping[str, Any]):
+        raise NotImplementedError
+
     def selected_issues(self, repo, prior):
         watermark = str(prior.get("updated_on") or "")
         floor = self._start_date
@@ -326,33 +309,19 @@ class IssueStateStream(BitbucketIncrementalStream):
 class IssuesStream(IssueStateStream):
     name = "issues"
 
-    def read_records(self, sync_mode: SyncMode, cursor_field=None, stream_slice=None, stream_state=None):
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            if not repo.has_issues:
-                self.commit_repository_state(repo, {})
-                continue
-            present, issues, new_state = self.selected_issues(repo, self.repository_state(repo))
-            if not present:
-                continue
-            for issue in issues:
-                issue_id = issue.get("id")
-                entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, issue_id)
-                projected = dict(issue)
-                projected.update(
-                    {
-                        "repository_uuid": repo.uuid,
-                        "workspace_uuid": repo.workspace_uuid,
-                        "workspace": repo.workspace,
-                        "repo_slug": repo.slug,
-                    }
-                )
-                yield self.item(entity_key=entity_key, **projected)
-            self.commit_repository_state(repo, new_state)
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
+    def issue_records(self, repo, issue: Mapping[str, Any]):
+        issue_id = issue.get("id")
+        entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, issue_id)
+        projected = dict(issue)
+        projected.update(
+            {
+                "repository_uuid": repo.uuid,
+                "workspace_uuid": repo.workspace_uuid,
+                "workspace": repo.workspace,
+                "repo_slug": repo.slug,
+            }
+        )
+        yield self.item(entity_key=entity_key, **projected)
 
     def get_json_schema(self) -> Mapping[str, Any]:
         return schema(
@@ -369,24 +338,7 @@ class IssuesStream(IssueStateStream):
 class IssueChildStream(IssueStateStream):
     issue_resource = ""
 
-    def read_records(self, sync_mode: SyncMode, cursor_field=None, stream_slice=None, stream_state=None):
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            if not repo.has_issues:
-                self.commit_repository_state(repo, {})
-                continue
-            present, issues, new_state = self.selected_issues(repo, self.repository_state(repo))
-            if not present:
-                continue
-            for issue in issues:
-                yield from self._snapshot(repo, issue)
-            self.commit_repository_state(repo, new_state)
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
-
-    def _snapshot(self, repo, issue):
+    def issue_records(self, repo, issue: Mapping[str, Any]):
         issue_id = issue.get("id")
         generation = self.generation(repo.uuid, issue_id, self.issue_resource)
         present, records = self._client.paginate_optional(
@@ -449,19 +401,7 @@ class IssueChangesStream(IssueChildStream):
 class PRTasksStream(PullRequestStateStream):
     name = "pull_request_tasks"
 
-    def read_records(self, sync_mode: SyncMode, cursor_field=None, stream_slice=None, stream_state=None):
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            selected, new_state = self.selected_pull_requests(repo, self.repository_state(repo))
-            for pr in selected:
-                yield from self._snapshot(repo, pr)
-            self.commit_repository_state(repo, new_state)
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
-
-    def _snapshot(self, repo, pr):
+    def pull_request_records(self, repo, pr: Mapping[str, Any]):
         pr_id = pr.get("id")
         revision = self.pull_request_revision(pr)
         generation = self.generation(repo.uuid, pr_id, "tasks")

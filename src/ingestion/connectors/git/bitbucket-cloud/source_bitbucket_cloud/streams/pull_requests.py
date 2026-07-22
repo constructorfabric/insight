@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from airbyte_cdk.models import SyncMode
-
 from source_bitbucket_cloud.streams.base import schema, truncate, unique_key
 from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
@@ -12,23 +10,8 @@ from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 class PullRequestsStream(PullRequestStateStream):
     name = "pull_requests"
 
-    def read_records(
-        self,
-        sync_mode: SyncMode,
-        cursor_field: list[str] | None = None,
-        stream_slice: Mapping[str, Any] | None = None,
-        stream_state: Mapping[str, Any] | None = None,
-    ) -> Iterable[Mapping[str, Any]]:
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            selected, new_state = self.selected_pull_requests(repo, self.repository_state(repo))
-            for pr in selected:
-                yield self._record(repo, pr)
-            self.commit_repository_state(repo, new_state)
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
+    def pull_request_records(self, repo, pr: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
+        yield self._record(repo, pr)
 
     def _record(self, repo, pr: Mapping[str, Any]) -> Mapping[str, Any]:
         pr_id = pr.get("id")

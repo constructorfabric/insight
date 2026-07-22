@@ -48,11 +48,17 @@ class RepositoryCatalog:
         self._workspaces = tuple(workspaces)
         self._skip_forks = skip_forks
         self._repositories: list[RepositoryRef] | None = None
+        self._branches: dict[str, list[BranchRef]] = {}
 
     def repositories(self) -> list[RepositoryRef]:
         if self._repositories is None:
             self._repositories = self._client.repositories(self._workspaces, self._skip_forks)
         return self._repositories
+
+    def branches(self, repo: RepositoryRef) -> list[BranchRef]:
+        if repo.uuid not in self._branches:
+            self._branches[repo.uuid] = self._client.branches(repo)
+        return self._branches[repo.uuid]
 
 
 class BitbucketClient:
@@ -118,7 +124,7 @@ class BitbucketClient:
             )
             if response is None:
                 return
-            payload = response.json()
+            payload = self._json(response)
             if isinstance(payload, Mapping):
                 values = payload.get("values")
                 if isinstance(values, list):
@@ -149,7 +155,7 @@ class BitbucketClient:
             current: requests.Response | None = response
             seen = {response.url}
             while current is not None:
-                payload = current.json()
+                payload = self._json(current)
                 if not isinstance(payload, Mapping):
                     raise ValueError(f"Unexpected Bitbucket response from {current.url}")
                 values = payload.get("values")
@@ -230,7 +236,12 @@ class BitbucketClient:
         form.extend(("exclude", head) for head in sorted(set(previous_heads)))
         if not form:
             return
-        yield from self.paginate(self.repo_path(repo, "commits"), method="POST", data=form)
+        yield from self.paginate(
+            self.repo_path(repo, "commits"),
+            method="POST",
+            params={"pagelen": "100"},
+            data=form,
+        )
 
     def repo_path(self, repo: RepositoryRef, suffix: str) -> str:
         workspace = quote(repo.workspace, safe="")
@@ -239,8 +250,16 @@ class BitbucketClient:
 
     def _url(self, path_or_url: str) -> str:
         if path_or_url.startswith(("https://", "http://")):
+            if not path_or_url.startswith(self._base_url):
+                raise RuntimeError(f"Refusing to follow URL outside the Bitbucket API base: {path_or_url}")
             return path_or_url
         return f"{self._base_url}{path_or_url.lstrip('/')}"
+
+    def _json(self, response: requests.Response) -> Any:
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"Bitbucket returned invalid JSON from {response.url}") from exc
 
     def _retry_delay(self, response: requests.Response, attempt: int) -> float:
         retry_after = response.headers.get("Retry-After")

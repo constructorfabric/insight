@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from airbyte_cdk.models import SyncMode
-
 from source_bitbucket_cloud.client import BitbucketApiError
 from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream, schema, unique_key
 from source_bitbucket_cloud.streams.git_ranges import CommitRangeMixin
@@ -14,67 +12,56 @@ class CommitBranchReachabilityStream(CommitRangeMixin, BitbucketIncrementalStrea
     name = "commit_branch_reachability"
     cursor_field = "branch_head_sha"
 
-    def read_records(
-        self,
-        sync_mode: SyncMode,
-        cursor_field: list[str] | None = None,
-        stream_slice: Mapping[str, Any] | None = None,
-        stream_state: Mapping[str, Any] | None = None,
-    ) -> Iterable[Mapping[str, Any]]:
-        del sync_mode, cursor_field, stream_state
-        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
-        repositories = self.repositories_for_slice(stream_slice)
-        for repo in repositories:
-            prior = self.repository_state(repo)
-            branches, current_heads = self.branch_snapshot(repo)
-            previous_heads = prior.get("heads") or {}
-            branch_by_name = {branch.name: branch for branch in branches}
-            for branch_name in sorted(set(current_heads) | set(previous_heads)):
-                old_head = previous_heads.get(branch_name)
-                new_head = current_heads.get(branch_name)
-                if old_head == new_head:
-                    continue
-                if new_head:
-                    yield from self._changes(
-                        repo,
-                        branch_by_name[branch_name],
-                        new_head,
-                        old_head,
-                        "added",
-                    )
-                if old_head and new_head:
-                    yield from self._changes(
-                        repo,
-                        branch_by_name[branch_name],
-                        old_head,
-                        new_head,
-                        "removed",
-                    )
-                if old_head and not new_head:
-                    entity_key = unique_key(
-                        self._tenant_id,
-                        self._source_id,
-                        repo.uuid,
-                        branch_name,
-                        old_head,
-                        "deleted",
-                    )
-                    yield self.item(
-                        entity_key=entity_key,
-                        repository_uuid=repo.uuid,
-                        workspace_uuid=repo.workspace_uuid,
-                        workspace=repo.workspace,
-                        repo_slug=repo.slug,
-                        branch_name=branch_name,
-                        branch_head_sha=old_head,
-                        default_branch_name=repo.mainbranch_name,
-                        commit_sha=None,
-                        committed_at=None,
-                        reachability_action="branch_deleted",
-                    )
-            self.commit_repository_state(repo, {"heads": current_heads})
-        self.prune_bucket_state(bucket_id, repositories)
-        self.log_state_size()
+    def repository_records(self, repo, bucket_id: int) -> Iterable[Mapping[str, Any]]:
+        del bucket_id
+        prior = self.repository_state(repo)
+        branches, current_heads = self.branch_snapshot(repo)
+        previous_heads = prior.get("heads") or {}
+        branch_by_name = {branch.name: branch for branch in branches}
+        for branch_name in sorted(set(current_heads) | set(previous_heads)):
+            old_head = previous_heads.get(branch_name)
+            new_head = current_heads.get(branch_name)
+            if old_head == new_head:
+                continue
+            if new_head:
+                yield from self._changes(
+                    repo,
+                    branch_by_name[branch_name],
+                    new_head,
+                    old_head,
+                    "added",
+                )
+            if old_head and new_head:
+                yield from self._changes(
+                    repo,
+                    branch_by_name[branch_name],
+                    old_head,
+                    new_head,
+                    "removed",
+                )
+            if old_head and not new_head:
+                entity_key = unique_key(
+                    self._tenant_id,
+                    self._source_id,
+                    repo.uuid,
+                    branch_name,
+                    old_head,
+                    "deleted",
+                )
+                yield self.item(
+                    entity_key=entity_key,
+                    repository_uuid=repo.uuid,
+                    workspace_uuid=repo.workspace_uuid,
+                    workspace=repo.workspace,
+                    repo_slug=repo.slug,
+                    branch_name=branch_name,
+                    branch_head_sha=old_head,
+                    default_branch_name=repo.mainbranch_name,
+                    commit_sha=None,
+                    committed_at=None,
+                    reachability_action="branch_deleted",
+                )
+        self.commit_repository_state(repo, {"heads": current_heads})
 
     def _changes(self, repo, branch, include: str, exclude: str | None, action: str):
         try:
