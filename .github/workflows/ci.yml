@@ -76,6 +76,27 @@ jobs:
           echo "dotnet=$(echo "$changed" | jq -c .dotnet)" >> "$GITHUB_OUTPUT"
           echo "python=$(echo "$changed" | jq -c .python)" >> "$GITHUB_OUTPUT"
 
+  # Assert exactly one jsonwebtoken crypto provider is active in the unified
+  # backend build. Cheap (no compile — `cargo tree` only reads the resolved
+  # graph) guard against the aws_lc_rs + rust_crypto feature-unification trap
+  # that panics on every JWT verify (#1725). See #1727. Runs on every PR that
+  # reaches this workflow — a provider flip can come from any dependency bump,
+  # not just a changed backend crate.
+  jwt-provider-guard:
+    name: JWT crypto-provider invariant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+
+      - name: Exactly one jsonwebtoken provider
+        run: ./scripts/ci/check_jwt_provider.sh
+
   # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
   # (when entry.cover). Replaces the old standalone workspace rust-lint — fmt and
   # clippy now run per crate, gated by the lint flag from changed.py (a shared
