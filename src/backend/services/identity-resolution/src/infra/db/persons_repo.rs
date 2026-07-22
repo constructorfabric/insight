@@ -219,6 +219,11 @@ pub struct OrgChartEdge {
 /// instance, ordered by source. The caller filters to the configured
 /// `org_chart` source. Ported from `Sql.OrgChart.cs::CurrentParentsForChild`.
 ///
+/// The `parent_person_id IS NOT NULL` filter intentionally diverges from .NET:
+/// the seed writes Path-B root/membership rows with a NULL parent, and decoding
+/// those into a non-nullable id would 500 the profile — a parent edge with no
+/// parent is not an edge, so it is skipped.
+///
 /// # Errors
 ///
 /// Returns an error if the query fails or a stored id column is not 16 bytes.
@@ -228,11 +233,6 @@ pub async fn current_parents_for_child(
     child_person_id: Uuid,
 ) -> anyhow::Result<Vec<OrgChartEdge>> {
     const SQL: &str = r"
-        -- `parent_person_id IS NOT NULL` intentionally diverges from the .NET
-        -- query (Sql.OrgChart.cs): the seed writes Path-B root/membership rows
-        -- with a NULL parent, and decoding those into a non-nullable id would
-        -- 500 the profile (the .NET reader would likewise throw). A parent edge
-        -- with no parent is not an edge, so skip it here.
         SELECT insight_source_type, insight_source_id, parent_person_id
         FROM org_chart
         WHERE insight_tenant_id = ?
