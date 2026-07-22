@@ -941,4 +941,15 @@ mod tests {
         assert!(one_input("ai.x", std::slice::from_ref(&input), MetricInputRole::Value).is_ok());
         assert!(one_input("ai.x", &[input.clone(), input], MetricInputRole::Value).is_err());
     }
+
+    #[test]
+    fn build_base_maps_short_label_and_full_fields() {
+        let mut row = definition_row("git.commits", None, true, "ok");
+        row.short_label = Some("Commits".to_owned());
+        let base = build_base(&row, vec!["repository".to_owned()])
+            .unwrap_or_else(|_| panic!("valid row maps to a base"));
+        assert_eq!(base.key, "git.commits");
+        assert_eq!(base.short_label.as_deref(), Some("Commits"));
+        assert_eq!(base.allowed_dimensions, vec!["repository".to_owned()]);
+    }
 }
