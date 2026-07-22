@@ -63,9 +63,12 @@ wait_ready() { # name url
 }
 
 echo "==> fakeidp :$IDP_PORT"
+# Short IdP token TTL so the background refresher (step 10.4) cycles within
+# seconds instead of minutes; see the matching margin/tick overrides below.
 FAKEIDP_ISSUER="http://localhost:$IDP_PORT" FAKEIDP_BIND="0.0.0.0:$IDP_PORT" \
   FAKEIDP_DEFAULT_AUD=insight-authenticator \
   FAKEIDP_BACKCHANNEL_URL="http://localhost:$AUTH_PORT/auth/oidc/back-channel-logout" \
+  FAKEIDP_TOKEN_TTL=15 \
   ./target/release/fakeidp >/tmp/authenticator-e2e-fakeidp.log 2>&1 &
 pids+=($!)
 wait_ready fakeidp "http://localhost:$IDP_PORT/.well-known/openid-configuration"
@@ -84,6 +87,9 @@ APP__gears__authenticator__config__idp__issuer_url="http://localhost:$IDP_PORT" 
 APP__gears__authenticator__config__idp__client_id=insight-authenticator \
 APP__gears__authenticator__config__redirect_uri="http://localhost:$AUTH_PORT/auth/callback" \
 APP__gears__authenticator__config__service_tokens__public_key_dir="$SVC_KEYS_DIR" \
+APP__gears__authenticator__config__idp__refresh_safety_margin_seconds=10 \
+APP__gears__authenticator__config__idp__refresh_due_jitter_seconds=1 \
+APP__gears__authenticator__config__idp__refresher_tick_seconds=1 \
   ./target/release/authenticator -c services/authenticator/config/insight.yaml run \
   >/tmp/authenticator-e2e-auth.log 2>&1 &
 pids+=($!)
@@ -110,6 +116,10 @@ echo "==> run the back-channel logout loop (step 10.3)"
 AUTH_BASE="http://localhost:$AUTH_PORT" FAKEIDP_PUBLIC="http://localhost:$IDP_PORT" \
   E2E_USER=dev@company.nonpresent \
   cargo test -p authenticator --test e2e_backchannel -- --ignored --nocapture
+
+echo "==> run the IdP background-refresher loop (step 10.4: outage + invalid_grant)"
+AUTH_BASE="http://localhost:$AUTH_PORT" FAKEIDP_PUBLIC="http://localhost:$IDP_PORT" \
+  cargo test -p authenticator --test e2e_refresher -- --ignored --nocapture
 
 echo "==> run the service-token loop (step 06)"
 # The token listener binds 8093 (config service_tokens.token_bind_addr); the dev

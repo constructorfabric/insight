@@ -52,6 +52,7 @@ futures = { workspace = true }
 uuid = { workspace = true, features = ["v5"] }
 chrono = { workspace = true }
 tracing = { workspace = true }
+opentelemetry = "0.31"
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 reqwest = { workspace = true }

@@ -137,8 +137,10 @@ impl RunnableCapability for AuthenticatorGear {
             .get()
             .ok_or_else(|| anyhow::anyhow!("authenticator gear not initialized"))?
             .clone();
-        service_token::spawn(state, cancel).await?;
-        tracing::info!("authenticator runnable: service-token listener started (step 06)");
+        service_token::spawn(state.clone(), cancel.clone()).await?;
+        // Leader-elected background workers (step 10): the IdP refresher (G5).
+        crate::refresher::spawn(state, cancel);
+        tracing::info!("authenticator runnable: service-token listener + idp refresher started");
         Ok(())
     }
 

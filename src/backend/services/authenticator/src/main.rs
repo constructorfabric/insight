@@ -31,6 +31,7 @@ mod identity;
 mod jwt;
 mod local_client;
 mod oidc;
+mod refresher;
 mod service_token;
 mod session;
 
