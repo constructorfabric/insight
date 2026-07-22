@@ -2,9 +2,11 @@
 //!
 //! Ported from the .NET service's `Sql.Profiles.cs`. The resolution queries use
 //! window functions (`ROW_NUMBER()` over the canonical partition) that have no
-//! first-class SeaORM query-builder form, so we run them as **raw SQL** via
-//! SeaORM's `Statement` and read columns off the `QueryResult`. Running the same
-//! SQL as the .NET service keeps resolution behaviour identical.
+//! first-class SeaORM query-builder form and no `toolkit-db` equivalent (see
+//! `infra::db` module docs + constructorfabric/gears-rust#4239), so we run them
+//! as **raw SQL** via SeaORM's `Statement` and read columns off the
+//! `QueryResult`. Running the same SQL as the .NET service keeps resolution
+//! behaviour identical.
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,

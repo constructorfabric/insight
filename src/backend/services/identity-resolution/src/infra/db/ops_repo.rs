@@ -4,6 +4,12 @@
 //! The POST handler enqueues a row; the worker flips it to `running`
 //! (`try_start`, so two workers can't double-run), then `complete`s or `fail`s
 //! it. GETs poll status. SQL ported from the .NET `Sql.Operations.cs`.
+//!
+//! Raw SQL on the self-managed pool (like the rest of `infra::db`): the atomic
+//! `queued→running` transition (`try_start`) and the cross-tenant startup
+//! `sweep_zombies` are conditional DML that `toolkit-db`'s scoped builder can't
+//! express, so the whole repo stays on raw SQL for consistency. Values are
+//! bound params; see `infra::db` module docs + constructorfabric/gears-rust#4239.
 
 #![allow(dead_code)]
 
