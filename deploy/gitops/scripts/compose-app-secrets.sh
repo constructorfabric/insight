@@ -78,7 +78,12 @@ render_tpl() {
 }
 AUTH_IDP_ISSUER=$(render_tpl "$(yq -r '.authenticator.oidc.issuerUrl   // ""' "$VALUES")")
 AUTH_CLIENT_ID=$(          yq -r '.authenticator.oidc.clientId     // "insight-authenticator"' "$VALUES")
-AUTH_CLIENT_SECRET=$(      yq -r '.authenticator.oidc.clientSecret // ""' "$VALUES")
+# Confidential-client secret: prefer the sealed `insight-oidc` Secret (Passbolt →
+# seal-secret; never committed) and fall back to values.yaml (local/dev IdPs whose
+# secret is not sensitive, e.g. the baked Keycloak dev client).
+AUTH_CLIENT_SECRET=$(kubectl -n "$NS_APP" get secret insight-oidc \
+  -o jsonpath='{.data.oidc-client-secret}' 2>/dev/null | base64 -d || true)
+[ -n "$AUTH_CLIENT_SECRET" ] || AUTH_CLIENT_SECRET=$(yq -r '.authenticator.oidc.clientSecret // ""' "$VALUES")
 AUTH_REDIRECT_URI=$(render_tpl "$(yq -r '.authenticator.oidc.redirectUri // ""' "$VALUES")")
 # Requested OIDC scopes (space-delimited for the env layer; the authenticator
 # splits it back into a list). Default matches the config default; an IdP that
