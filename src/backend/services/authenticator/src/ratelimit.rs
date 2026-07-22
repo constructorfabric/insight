@@ -29,6 +29,10 @@ local tokens = tonumber(data[1])
 local ts = tonumber(data[2])
 if tokens == nil then tokens = capacity end
 if ts == nil then ts = now end
+-- Never let ts move backwards: on a clock step-back (NTP correction) or
+-- multi-pod skew, `now < ts` would otherwise re-add the skipped window next
+-- time and over-refill. Clamp to the newest timestamp seen (review L5).
+if now < ts then now = ts end
 if now > ts then
   tokens = math.min(capacity, tokens + (now - ts) * refill)
 end
@@ -66,8 +70,13 @@ impl BucketSpec {
     }
 }
 
-/// Take one token from `asm:rl:{class}:{key}`. `Ok(true)` = allowed.
+/// Take one token from `asm:rl:{class}:{key-digest}`. `Ok(true)` = allowed.
 /// A zero/absent spec (burst 0) disables the bucket (always allowed).
+///
+/// The key component is SHA-256-hashed (hex) before use, so an attacker-chosen
+/// `key` (e.g. the OIDC `state` on `/auth/callback`) is bounded to a
+/// fixed-width digest — it cannot inflate Redis with arbitrarily long keys or
+/// smuggle control characters (review L4).
 ///
 /// # Errors
 /// Fails on a Redis error — the caller decides fail-open vs fail-closed.
@@ -81,10 +90,12 @@ pub async fn take(
     if spec.burst == 0 {
         return Ok(true);
     }
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(key.as_bytes());
+    let key_hex = base16(&digest);
     let mut conn = conn.clone();
     let script = redis::Script::new(TOKEN_BUCKET_LUA);
     let allowed: i64 = script
-        .key(format!("asm:rl:{class}:{key}"))
+        .key(format!("asm:rl:{class}:{key_hex}"))
         .arg(spec.burst)
         .arg(spec.refill_per_second())
         .arg(now)
@@ -93,6 +104,16 @@ pub async fn take(
         .await
         .context("token bucket take")?;
     Ok(allowed == 1)
+}
+
+/// Lowercase hex of a byte slice (avoids a hex-crate dependency).
+fn base16(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 #[cfg(test)]
