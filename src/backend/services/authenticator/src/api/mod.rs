@@ -59,6 +59,7 @@ pub fn register_routes(
 /// is the session cookie, checked inside the handler.
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = register_auth_routes(router, openapi);
+    let router = register_session_routes(router, openapi);
     let router = register_internal_routes(router, openapi);
     register_well_known_routes(router, openapi)
 }
@@ -87,6 +88,64 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         )
         .handler(handlers::callback)
         .register(router, openapi);
+
+    router = OperationBuilder::get("/auth/csrf")
+        .operation_id("authenticator.csrf")
+        .summary("Issue the CSRF token bound to the current session")
+        .tag("auth")
+        .public()
+        .text_response(StatusCode::OK, "CSRF token", "application/json")
+        .error_401(openapi)
+        .handler(handlers::csrf)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/auth/me")
+        .operation_id("authenticator.me")
+        .summary("Current session summary for the SPA")
+        .tag("auth")
+        .public()
+        .text_response(StatusCode::OK, "Session summary", "application/json")
+        .error_401(openapi)
+        .handler(handlers::me)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/auth/refresh")
+        .operation_id("authenticator.refresh")
+        .summary("Rotate the session cookie and extend the session (grace-tolerant)")
+        .tag("auth")
+        .public()
+        .text_response(
+            StatusCode::OK,
+            "{expires_at, refresh_at} + re-issued cookie",
+            "application/json",
+        )
+        .error_401(openapi)
+        .handler(handlers::refresh)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/auth/oidc/back-channel-logout")
+        .operation_id("authenticator.back_channel_logout")
+        .summary("Receive IdP back-channel logout tokens (OIDC BCL 1.0)")
+        .tag("auth")
+        .public()
+        .no_content_response(StatusCode::OK, "Logout processed (or idempotent replay)")
+        .handler(handlers::back_channel_logout)
+        .register(router, openapi);
+
+    OperationBuilder::post("/auth/logout")
+        .operation_id("authenticator.logout")
+        .summary("Revoke the session, clear the cookie, return the RP-logout URL")
+        .tag("auth")
+        .public()
+        .text_response(StatusCode::OK, "RP-logout URL", "application/json")
+        .handler(handlers::logout)
+        .register(router, openapi)
+}
+
+/// The session-management surface (PRD 5.9): list + revoke for the current
+/// user, and the gateway-JWT-authenticated admin revoke-by-user variant.
+fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let mut router = router;
 
     router = OperationBuilder::get("/auth/sessions")
         .operation_id("authenticator.sessions.list")
@@ -135,48 +194,7 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .handler(handlers::admin_revoke_user_sessions)
         .register(router, openapi);
 
-    router = OperationBuilder::get("/auth/csrf")
-        .operation_id("authenticator.csrf")
-        .summary("Issue the CSRF token bound to the current session")
-        .tag("auth")
-        .public()
-        .text_response(StatusCode::OK, "CSRF token", "application/json")
-        .error_401(openapi)
-        .handler(handlers::csrf)
-        .register(router, openapi);
-
-    router = OperationBuilder::get("/auth/me")
-        .operation_id("authenticator.me")
-        .summary("Current session summary for the SPA")
-        .tag("auth")
-        .public()
-        .text_response(StatusCode::OK, "Session summary", "application/json")
-        .error_401(openapi)
-        .handler(handlers::me)
-        .register(router, openapi);
-
-    router = OperationBuilder::post("/auth/refresh")
-        .operation_id("authenticator.refresh")
-        .summary("Rotate the session cookie and extend the session (grace-tolerant)")
-        .tag("auth")
-        .public()
-        .text_response(
-            StatusCode::OK,
-            "{expires_at, refresh_at} + re-issued cookie",
-            "application/json",
-        )
-        .error_401(openapi)
-        .handler(handlers::refresh)
-        .register(router, openapi);
-
-    OperationBuilder::post("/auth/logout")
-        .operation_id("authenticator.logout")
-        .summary("Revoke the session, clear the cookie, return the RP-logout URL")
-        .tag("auth")
-        .public()
-        .text_response(StatusCode::OK, "RP-logout URL", "application/json")
-        .handler(handlers::logout)
-        .register(router, openapi)
+    router
 }
 
 /// The gateway-facing `/internal/*` surface (the `auth_request` target).

@@ -166,6 +166,12 @@ fn user_sessions_key(person_id: &str) -> String {
 fn sid_index_key(iss: &str, idp_sid: &str) -> String {
     format!("asm:sid_index:{iss}:{idp_sid}")
 }
+fn sub_index_key(iss: &str, idp_sub: &str) -> String {
+    format!("asm:sub_index:{iss}:{idp_sub}")
+}
+fn logout_jti_key(iss: &str, jti: &str) -> String {
+    format!("asm:logout_jti:{iss}:{jti}")
+}
 fn login_state_key(state: &str) -> String {
     format!("asm:login_state:{state}")
 }
@@ -319,15 +325,18 @@ impl SessionManager {
         // User-session index (score = expiry).
         pipe.zadd(user_sessions_key(&r.person_id), &s.session_id, expires_at)
             .ignore();
-        // Back-channel logout index (only when the IdP supplies `sid`).
+        // Back-channel logout indexes: by OIDC `sid` (when the IdP supplies
+        // one) and by `(iss, sub)` — the sub-only fallback path.
+        let absolute = i64::try_from(r.absolute_expires_at).unwrap_or(i64::MAX);
         if let Some(sid) = &r.idp_sid {
             let idx = sid_index_key(&r.idp_iss, sid);
             pipe.sadd(&idx, &s.session_id).ignore();
-            pipe.expire_at(
-                &idx,
-                i64::try_from(r.absolute_expires_at).unwrap_or(i64::MAX),
-            )
-            .ignore();
+            pipe.expire_at(&idx, absolute).ignore();
+        }
+        if !r.idp_sub.is_empty() {
+            let idx = sub_index_key(&r.idp_iss, &r.idp_sub);
+            pipe.sadd(&idx, &s.session_id).ignore();
+            pipe.expire_at(&idx, absolute).ignore();
         }
         // IdP refresh schedule (consumer lands in step 10).
         if let Some(due) = s.refresh_due_at {
@@ -475,6 +484,64 @@ impl SessionManager {
         Ok(rotated == 1)
     }
 
+    // ── Back-channel logout (PRD 5.10) ─────────────────────────────────────
+
+    /// One-shot replay guard for a back-channel `logout_token` `jti`
+    /// (`asm:logout_jti:{iss}:{jti}`, `SET NX EX`). Returns `true` on first
+    /// delivery; `false` when this `(iss, jti)` was already accepted.
+    ///
+    /// # Errors
+    /// Fails on a Redis error (the handler then fails closed).
+    pub async fn guard_logout_jti(
+        &self,
+        iss: &str,
+        jti: &str,
+        ttl_seconds: u64,
+    ) -> anyhow::Result<bool> {
+        let mut conn = self.conn.clone();
+        let set: Option<String> = redis::cmd("SET")
+            .arg(logout_jti_key(iss, jti))
+            .arg("1")
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl_seconds.max(1))
+            .query_async(&mut conn)
+            .await
+            .context("guard logout jti (NX EX)")?;
+        Ok(set.is_some())
+    }
+
+    /// Sessions indexed under a back-channel `(iss, sid)` pair.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn sessions_by_idp_sid(
+        &self,
+        iss: &str,
+        idp_sid: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut conn = self.conn.clone();
+        conn.smembers(sid_index_key(iss, idp_sid))
+            .await
+            .context("read sid index")
+    }
+
+    /// Sessions indexed under a back-channel `(iss, sub)` pair (the sub-only
+    /// fallback).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn sessions_by_idp_sub(
+        &self,
+        iss: &str,
+        idp_sub: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut conn = self.conn.clone();
+        conn.smembers(sub_index_key(iss, idp_sub))
+            .await
+            .context("read sub index")
+    }
+
     /// List a person's live sessions from the per-user index (score > `now`),
     /// loading each record. Index members whose record has already expired are
     /// skipped (the janitor trims them).
@@ -520,6 +587,10 @@ impl SessionManager {
             .ignore();
         if let Some(sid) = &r.idp_sid {
             pipe.srem(sid_index_key(&r.idp_iss, sid), session_id)
+                .ignore();
+        }
+        if !r.idp_sub.is_empty() {
+            pipe.srem(sub_index_key(&r.idp_iss, &r.idp_sub), session_id)
                 .ignore();
         }
         pipe.zrem(REFRESH_DUE_KEY, session_id).ignore();
