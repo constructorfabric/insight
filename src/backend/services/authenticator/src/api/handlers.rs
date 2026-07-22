@@ -44,6 +44,22 @@ pub async fn login(
 ) -> Response {
     let return_to = sanitize_return_to(params.return_to.as_deref(), &state.cfg.default_return_to);
 
+    // Layer-2 cap (DESIGN §4.4): pre-auth there is no per-caller key, so the
+    // guarded resource is the login-state store itself — refuse before any
+    // state is written.
+    let now = now_secs();
+    match state.sessions.live_login_states(now).await {
+        Ok(live) if live >= state.cfg.rate_limit.login_state_max => {
+            tracing::warn!(
+                live,
+                "login-state cap reached: refusing /auth/login with 429"
+            );
+            return too_many_requests("login_state_cap", 30);
+        }
+        Ok(_) => {}
+        Err(e) => return internal_problem("login_state_count", &e),
+    }
+
     // openidconnect generates the state, nonce, and PKCE pair; we stash the
     // verifier + nonce under the state key for the callback to replay.
     let start = match state
@@ -65,6 +81,7 @@ pub async fn login(
                 return_to,
             },
             300,
+            now,
         )
         .await
     {
@@ -114,6 +131,21 @@ pub async fn callback(
             .create()
             .into_response();
     };
+
+    // Layer-2 bucket keyed by the presented `state` (DESIGN §4.4): caps how
+    // often one state value can drive the code-exchange path. Fail open on a
+    // Redis error — the coarse gateway layer still guards, and the state
+    // lookup below fails closed anyway.
+    if !rate_limit_or_open(&state, "callback", &oidc_state, {
+        crate::ratelimit::BucketSpec {
+            burst: state.cfg.rate_limit.callback_burst,
+            per_minute: state.cfg.rate_limit.callback_per_minute,
+        }
+    })
+    .await
+    {
+        return too_many_requests("callback_rate_limited", 10);
+    }
 
     // Validate state -> recover PKCE verifier + nonce (one-shot).
     let login_state = match state.sessions.take_login_state(&oidc_state).await {
@@ -534,6 +566,19 @@ pub async fn refresh(Extension(state): Extension<Arc<AppState>>, jar: CookieJar)
     let now = now_secs();
     if record.expires_at <= now || record.absolute_expires_at <= now {
         return unauthenticated_clear_cookie(jar);
+    }
+
+    // Layer-2 bucket keyed by the stable session (DESIGN §4.4 — never IP:
+    // corporate NAT makes per-IP keys wrong at the precise layer).
+    if !rate_limit_or_open(&state, "refresh", &session_id, {
+        crate::ratelimit::BucketSpec {
+            burst: state.cfg.rate_limit.refresh_burst,
+            per_minute: state.cfg.rate_limit.refresh_per_minute,
+        }
+    })
+    .await
+    {
+        return too_many_requests("refresh_rate_limited", 10);
     }
 
     // Grace path: the presented token has already been rotated past (the old
@@ -1074,6 +1119,43 @@ fn unauthenticated() -> Response {
         ],
         Body::from(r#"{"error":"unauthenticated"}"#),
     )
+}
+
+/// Take a token from a layer-2 bucket; a Redis failure fails OPEN (`true`) —
+/// the gateway's coarse layer still guards, and turning a Redis blip into a
+/// 429 storm would be a self-inflicted outage. (Auth itself always fails
+/// closed; this is only the limiter.)
+async fn rate_limit_or_open(
+    state: &AppState,
+    class: &str,
+    key: &str,
+    spec: crate::ratelimit::BucketSpec,
+) -> bool {
+    match state
+        .sessions
+        .rate_limit_take(class, key, spec, now_secs())
+        .await
+    {
+        Ok(allowed) => {
+            if !allowed {
+                tracing::warn!(class, "layer-2 rate limit tripped");
+            }
+            allowed
+        }
+        Err(e) => {
+            tracing::warn!(class, error = %e, "rate limiter unavailable: failing open");
+            true
+        }
+    }
+}
+
+/// 429 with a quota violation + retry hint (RFC 9457 problem body).
+fn too_many_requests(subject: &str, retry_after_seconds: u64) -> Response {
+    SessionError::resource_exhausted("rate limited")
+        .with_quota_violation(subject, "too many requests")
+        .with_quota_violation_retry_after_seconds(retry_after_seconds)
+        .create()
+        .into_response()
 }
 
 /// 404 that does not distinguish "absent" from "not yours" (no existence oracle).

@@ -175,6 +175,9 @@ fn logout_jti_key(iss: &str, jti: &str) -> String {
 fn login_state_key(state: &str) -> String {
     format!("asm:login_state:{state}")
 }
+/// Live login-state index (ZSET, score = expiry) backing the layer-2 cap:
+/// counting `asm:login_state:*` cheaply requires an index, not SCAN-per-login.
+const LOGIN_STATE_LIVE_KEY: &str = "asm:login_state_live";
 fn service_jti_key(service: &str, jti: &str) -> String {
     format!("asm:svc_jti:{service}:{jti}")
 }
@@ -226,6 +229,7 @@ impl SessionManager {
         state: &str,
         ls: &LoginState,
         ttl_seconds: u64,
+        now: u64,
     ) -> anyhow::Result<()> {
         let mut conn = self.conn.clone();
         let key = login_state_key(state);
@@ -235,10 +239,43 @@ impl SessionManager {
             .ignore()
             .expire(&key, i64::try_from(ttl_seconds).unwrap_or(300))
             .ignore()
+            // Live index (score = expiry) backing the layer-2 login cap.
+            .zadd(
+                LOGIN_STATE_LIVE_KEY,
+                state,
+                i64::try_from(now + ttl_seconds).unwrap_or(i64::MAX),
+            )
+            .ignore()
             .query_async::<()>(&mut conn)
             .await
             .context("store login state")?;
         Ok(())
+    }
+
+    /// Count live (unexpired) login states — the layer-2 cap input.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn live_login_states(&self, now: u64) -> anyhow::Result<u64> {
+        let mut conn = self.conn.clone();
+        conn.zcount(LOGIN_STATE_LIVE_KEY, format!("({now}"), "+inf")
+            .await
+            .context("count live login states")
+    }
+
+    /// Take one token from the `class`/`key` bucket (layer-2 rate limit).
+    ///
+    /// # Errors
+    /// Fails on a Redis error — callers fail open (the coarse gateway layer
+    /// still guards) rather than turning a Redis blip into a lockout.
+    pub async fn rate_limit_take(
+        &self,
+        class: &str,
+        key: &str,
+        spec: crate::ratelimit::BucketSpec,
+        now: u64,
+    ) -> anyhow::Result<bool> {
+        crate::ratelimit::take(&self.conn, class, key, spec, now).await
     }
 
     /// Atomically read and delete the login state for `state` (one-shot).
@@ -250,10 +287,11 @@ impl SessionManager {
         let mut conn = self.conn.clone();
         let key = login_state_key(state);
         // HGETALL then DEL in one atomic transaction.
-        let (map, _deleted): (HashMap<String, String>, i64) = redis::pipe()
+        let (map, _deleted, _unindexed): (HashMap<String, String>, i64, i64) = redis::pipe()
             .atomic()
             .hgetall(&key)
             .del(&key)
+            .zrem(LOGIN_STATE_LIVE_KEY, state)
             .query_async(&mut conn)
             .await
             .context("take login state")?;
@@ -715,6 +753,13 @@ impl SessionManager {
                 break;
             }
         }
+
+        // Expired login-state index members (the HASH keys expired via TTL).
+        let stale_states: u64 = conn
+            .zrembyscore(LOGIN_STATE_LIVE_KEY, 0, now_i)
+            .await
+            .context("trim expired login-state index")?;
+        removed += stale_states;
 
         // Refresh-schedule orphans: an entry overdue by more than the grace
         // window is trimmed **only if its session hash is actually gone**

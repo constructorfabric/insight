@@ -32,6 +32,7 @@ mod janitor;
 mod jwt;
 mod local_client;
 mod oidc;
+mod ratelimit;
 mod refresher;
 mod service_token;
 mod session;
