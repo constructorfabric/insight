@@ -9,15 +9,16 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::Extension;
+use axum::extract::{Extension, Path};
 use axum::response::IntoResponse;
+use serde::Serialize;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::AppState;
 use super::canonical_json::CanonicalJson;
-use super::error::ProfileError;
+use super::error::{AccessError, ProfileError};
 use crate::domain::profile::{
     ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person, assemble_profile,
     latest_values,
@@ -79,6 +80,55 @@ pub async fn resolve_profile(
             .with_reason("AMBIGUOUS_PROFILE")
             .create()),
     }
+}
+
+/// Wire shape of the internal S2S lookup response. Mirrors the .NET anonymous
+/// object `{ value_type, value, insight_source_type, insight_source_id }`.
+#[derive(Debug, Serialize)]
+struct InternalPersonResponse {
+    value_type: &'static str,
+    value: String,
+    insight_source_type: &'static str,
+    insight_source_id: Uuid,
+}
+
+/// `GET /internal/persons/by-email/{email}` — SERVICE-ONLY email → `person_id`
+/// resolution for the login bootstrap. Deliberately bypasses the tenant +
+/// visibility gates the public `/v1/profiles` enforces: at login neither a
+/// tenant nor a caller identity exists yet. Still fail-closed — a valid gateway
+/// JWT is required (host authn), and a non-service principal
+/// (`subject_type != "service"`, the gears mapping of the .NET `sub_type` claim)
+/// gets 403. Registered as a raw route so it stays out of the public OpenAPI,
+/// matching the .NET `.ExcludeFromDescription()`. Ported from `PersonsEndpoints`.
+pub async fn internal_person_by_email(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Path(email): Path<String>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    if ctx.subject_type() != Some("service") {
+        return Err(AccessError::permission_denied()
+            .with_reason("this endpoint is restricted to service principals (sub_type=service)")
+            .create());
+    }
+
+    let person_id = persons_repo::resolve_person_id_by_email_any_tenant(&state.db, &email)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "internal by-email lookup failed");
+            CanonicalError::internal("lookup failed").create()
+        })?
+        .ok_or_else(|| {
+            ProfileError::not_found(format!("person with email '{email}' not found"))
+                .with_resource(email.clone())
+                .create()
+        })?;
+
+    Ok(Json(InternalPersonResponse {
+        value_type: "email",
+        value: email,
+        insight_source_type: "person",
+        insight_source_id: person_id,
+    }))
 }
 
 /// Validate the request and resolve it to candidate `person_id`s.
@@ -313,4 +363,31 @@ fn hydrate_person<'a>(
             subordinates,
         )))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lock the internal S2S response wire shape (`snake_case` keys + constant
+    /// `value_type`/`insight_source_type`) — the login authenticator depends on
+    /// it verbatim.
+    #[test]
+    fn internal_person_response_wire_shape() -> anyhow::Result<()> {
+        let body = InternalPersonResponse {
+            value_type: "email",
+            value: "a@b.com".to_owned(),
+            insight_source_type: "person",
+            insight_source_id: Uuid::from_u128(1),
+        };
+        let json = serde_json::to_value(&body)?;
+        assert_eq!(json["value_type"], "email");
+        assert_eq!(json["value"], "a@b.com");
+        assert_eq!(json["insight_source_type"], "person");
+        assert_eq!(
+            json["insight_source_id"],
+            "00000000-0000-0000-0000-000000000001"
+        );
+        Ok(())
+    }
 }
