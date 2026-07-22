@@ -81,6 +81,18 @@ AUTH_CLIENT_ID=$(          yq -r '.authenticator.oidc.clientId     // "insight-a
 # Confidential-client secret: prefer the sealed `insight-oidc` Secret (Passbolt →
 # seal-secret; never committed) and fall back to values.yaml (local/dev IdPs whose
 # secret is not sensitive, e.g. the baked Keycloak dev client).
+# If the env ships a sealed insight-oidc, wait for the controller to materialise it
+# rather than silently composing an empty client secret on a fresh deploy.
+if kubectl -n "$NS_APP" get sealedsecret insight-oidc >/dev/null 2>&1; then
+  for i in $(seq 1 30); do
+    kubectl -n "$NS_APP" get secret insight-oidc >/dev/null 2>&1 && break
+    sleep 1
+  done
+  kubectl -n "$NS_APP" get secret insight-oidc >/dev/null 2>&1 || {
+    echo "ERROR: sealed insight-oidc never materialised — refusing to compose an empty OIDC client secret" >&2
+    exit 1
+  }
+fi
 AUTH_CLIENT_SECRET=$(kubectl -n "$NS_APP" get secret insight-oidc \
   -o jsonpath='{.data.oidc-client-secret}' 2>/dev/null | base64 -d || true)
 [ -n "$AUTH_CLIENT_SECRET" ] || AUTH_CLIENT_SECRET=$(yq -r '.authenticator.oidc.clientSecret // ""' "$VALUES")
