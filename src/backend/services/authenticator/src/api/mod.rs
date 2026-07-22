@@ -27,6 +27,10 @@ pub struct AppState {
     pub resolver: Arc<dyn PersonResolver>,
     /// Parsed service-token registry (DD-AUTH-05); used by the token listener.
     pub service_registry: ServiceRegistry,
+    /// The SDK contract impl (also registered in the `ClientHub`): the admin
+    /// revoke-by-user operation goes through it, so the HTTP surface and
+    /// in-process consumers (the future permissions service) share one path.
+    pub authn_client: Arc<dyn authenticator_sdk::AuthenticatorClientV1>,
 }
 
 /// Register the authenticator routes onto the host router. The `Extension`
@@ -76,6 +80,53 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .handler(handlers::callback)
         .register(router, openapi);
 
+    router = OperationBuilder::get("/auth/sessions")
+        .operation_id("authenticator.sessions.list")
+        .summary("List the current user's active sessions")
+        .tag("auth")
+        .public()
+        .text_response(StatusCode::OK, "Active sessions", "application/json")
+        .error_401(openapi)
+        .handler(handlers::sessions_list)
+        .register(router, openapi);
+
+    router = OperationBuilder::delete("/auth/sessions/{session_id}")
+        .operation_id("authenticator.sessions.revoke")
+        .summary("Revoke one of the current user's sessions")
+        .tag("auth")
+        .public()
+        .text_response(StatusCode::OK, "Revocation result", "application/json")
+        .error_401(openapi)
+        .error_404(openapi)
+        .handler(handlers::sessions_revoke_one)
+        .register(router, openapi);
+
+    router = OperationBuilder::delete("/auth/sessions")
+        .operation_id("authenticator.sessions.revoke_all")
+        .summary("Revoke all sessions of the current user (log out everywhere)")
+        .tag("auth")
+        .public()
+        .text_response(StatusCode::OK, "Revocation result", "application/json")
+        .error_401(openapi)
+        .handler(handlers::sessions_revoke_all)
+        .register(router, openapi);
+
+    // Admin/service variant (PRD 5.9): `.authenticated()` — the host authn
+    // pipeline verifies a gateway JWT (the authenticator trusts its own tokens
+    // exactly like any downstream service, G10) and the handler enforces the
+    // authorized role.
+    router = OperationBuilder::delete("/auth/admin/users/{person_id}/sessions")
+        .operation_id("authenticator.sessions.admin_revoke_by_user")
+        .summary("Revoke every session of a user (admin/service, gateway-JWT authenticated)")
+        .tag("auth")
+        .authenticated()
+        .no_license_required()
+        .text_response(StatusCode::OK, "Revocation result", "application/json")
+        .error_401(openapi)
+        .error_403(openapi)
+        .handler(handlers::admin_revoke_user_sessions)
+        .register(router, openapi);
+
     router = OperationBuilder::get("/auth/me")
         .operation_id("authenticator.me")
         .summary("Current session summary for the SPA")
@@ -84,6 +135,20 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .text_response(StatusCode::OK, "Session summary", "application/json")
         .error_401(openapi)
         .handler(handlers::me)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/auth/refresh")
+        .operation_id("authenticator.refresh")
+        .summary("Rotate the session cookie and extend the session (grace-tolerant)")
+        .tag("auth")
+        .public()
+        .text_response(
+            StatusCode::OK,
+            "{expires_at, refresh_at} + re-issued cookie",
+            "application/json",
+        )
+        .error_401(openapi)
+        .handler(handlers::refresh)
         .register(router, openapi);
 
     OperationBuilder::post("/auth/logout")

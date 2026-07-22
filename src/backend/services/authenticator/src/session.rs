@@ -5,10 +5,10 @@
 //! linked JWT, indexes, and refresh schedule stay consistent. The store fails
 //! closed: a Redis error surfaces to the handler, which answers 401/503.
 //!
-//! Step 04 implements create / resolve / exchange-reissue / revoke and the
-//! login-state store. Rotation (`/auth/refresh`), the sid-index consumer
-//! (back-channel logout), and the refresh-due consumer (IdP refresher) are
-//! wired into the schema here but their *consumers* land in later steps.
+//! Owns create / resolve / rotate (`/auth/refresh`) / exchange-reissue /
+//! revoke and the login-state store. The sid-index consumer (back-channel
+//! logout) and the refresh-due consumer (IdP refresher) key off the schema
+//! written here.
 
 use std::collections::HashMap;
 
@@ -417,6 +417,74 @@ impl SessionManager {
             .await
             .context("store reissued JWT (NX EX)")?;
         Ok(set.is_some())
+    }
+
+    /// Rotate the session credential (`POST /auth/refresh`, DESIGN §3.6
+    /// "Session refresh — rotation without churn"): write the new token
+    /// mapping, shorten the superseded mapping's TTL to the rotation grace,
+    /// advance the session's `expires_at` (record field, key TTL, and per-user
+    /// index score) — one pipeline. The stable `session_id`, the linked JWT,
+    /// and every other index stay untouched (G10).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn rotate_session(
+        &self,
+        session_id: &str,
+        record: &SessionRecord,
+        new_token: &str,
+        new_expires_at: u64,
+        grace_ms: u64,
+    ) -> anyhow::Result<()> {
+        let mut conn = self.conn.clone();
+        let skey = session_key(session_id);
+        let expires_at = i64::try_from(new_expires_at).unwrap_or(i64::MAX);
+
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        pipe.set(token_key(new_token), session_id).ignore();
+        pipe.expire_at(token_key(new_token), expires_at).ignore();
+        // The expiring old mapping IS the grace window (no swap keys).
+        pipe.pexpire(
+            token_key(&record.current_token),
+            i64::try_from(grace_ms).unwrap_or(250),
+        )
+        .ignore();
+        pipe.hset(&skey, "expires_at", new_expires_at.to_string())
+            .ignore();
+        pipe.hset(&skey, "current_token", new_token).ignore();
+        pipe.expire_at(&skey, expires_at).ignore();
+        pipe.zadd(user_sessions_key(&record.person_id), session_id, expires_at)
+            .ignore();
+        pipe.query_async::<()>(&mut conn)
+            .await
+            .context("rotate session pipeline")?;
+        Ok(())
+    }
+
+    /// List a person's live sessions from the per-user index (score > `now`),
+    /// loading each record. Index members whose record has already expired are
+    /// skipped (the janitor trims them).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn list_user_sessions(
+        &self,
+        person_id: &str,
+        now: u64,
+    ) -> anyhow::Result<Vec<(String, SessionRecord)>> {
+        let mut conn = self.conn.clone();
+        let session_ids: Vec<String> = conn
+            .zrangebyscore(user_sessions_key(person_id), format!("({now}"), "+inf")
+            .await
+            .context("list user sessions by score")?;
+        let mut out = Vec::with_capacity(session_ids.len());
+        for sid in session_ids {
+            if let Some(record) = self.load_session(&sid).await? {
+                out.push((sid, record));
+            }
+        }
+        Ok(out)
     }
 
     /// Revoke one session — delete session, linked JWT, live token mapping,

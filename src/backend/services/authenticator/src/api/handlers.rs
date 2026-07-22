@@ -1,8 +1,8 @@
-//! HTTP handlers for the step-04 surface: `/auth/login`, `/auth/callback`,
-//! `/internal/authz`, `/.well-known/jwks.json`, `/auth/me`, `/auth/logout`.
+//! HTTP handlers for the browser/gateway surface: `/auth/login`,
+//! `/auth/callback`, `/auth/refresh`, `/auth/me`, `/auth/logout`,
+//! `/internal/authz`, `/.well-known/jwks.json`.
 //!
-//! Deferred (later steps): `/auth/refresh`, `/auth/sessions`, CSRF enforcement,
-//! back-channel logout, `/internal/token`.
+//! `/internal/token` lives on the dedicated token listener (`service_token`).
 
 use std::sync::Arc;
 
@@ -20,7 +20,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api::AppState;
-use crate::api::error::{OidcError, PersonError};
+use crate::api::error::{OidcError, PersonError, SessionError};
 use crate::cookie;
 use crate::identity::PersonResolution;
 use crate::jwt::GatewayClaims;
@@ -99,6 +99,7 @@ pub struct CallbackParams {
 pub async fn callback(
     Extension(state): Extension<Arc<AppState>>,
     jar: CookieJar,
+    headers: axum::http::HeaderMap,
     Query(params): Query<CallbackParams>,
 ) -> Response {
     if let Some(err) = params.error {
@@ -181,7 +182,8 @@ pub async fn callback(
 
     // `return_to` was sanitized at login time and stored with the login state.
     let return_to = login_state.return_to.clone();
-    match mint_and_store_session(&state, &idp, &resolution).await {
+    let client = ClientInfo::from_headers(&headers);
+    match mint_and_store_session(&state, &idp, &resolution, &client).await {
         Ok(token) => {
             let jar = jar.add(cookie::session_cookie(
                 &token,
@@ -198,12 +200,43 @@ pub async fn callback(
     }
 }
 
+/// Client attribution captured at login for the session list (PRD 5.9):
+/// the User-Agent and the client IP as the gateway saw it (first
+/// `X-Forwarded-For` hop; nginx guards the header with `set_real_ip_from`).
+struct ClientInfo {
+    user_agent: String,
+    ip: String,
+}
+
+impl ClientInfo {
+    fn from_headers(headers: &axum::http::HeaderMap) -> Self {
+        let header = |name: &str| {
+            headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+        };
+        // Attribution only (never authorization) — cap length so a hostile
+        // header can't bloat the session record.
+        let mut user_agent = header("user-agent").to_owned();
+        user_agent.truncate(256);
+        let ip = header("x-forwarded-for")
+            .split(',')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        Self { user_agent, ip }
+    }
+}
+
 /// Build claims, sign the linked JWT, and persist the session in one pipeline.
 /// Returns the cookie token.
 async fn mint_and_store_session(
     state: &AppState,
     idp: &crate::oidc::AuthenticatedIdp,
     resolution: &PersonResolution,
+    client: &ClientInfo,
 ) -> anyhow::Result<String> {
     let now = now_secs();
     let cfg = &state.cfg;
@@ -258,8 +291,8 @@ async fn mint_and_store_session(
         created_at: now,
         expires_at,
         absolute_expires_at,
-        user_agent: String::new(),
-        ip: String::new(),
+        user_agent: client.user_agent.clone(),
+        ip: client.ip.clone(),
         csrf_token,
         current_token: token.clone(),
     };
@@ -427,12 +460,7 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
         return unauthenticated();
     }
 
-    let margin = state.cfg.session_refresh_safety_margin_seconds;
-    let half_jitter = state.cfg.refresh_jitter_seconds / 2;
-    let refresh_at = record
-        .expires_at
-        .saturating_sub(margin)
-        .saturating_add_signed(jitter_seconds(half_jitter));
+    let refresh_at = refresh_at_for(&state.cfg, record.expires_at);
 
     let body = serde_json::json!({
         "user": record.person_id,
@@ -444,6 +472,77 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
     })
     .to_string();
     json_ok(body)
+}
+
+// ── /auth/refresh ────────────────────────────────────────────────────────────
+
+/// Rotate the session credential and extend the session (PRD 5.4, G10 model):
+/// new CSPRNG token mapping, old mapping demoted to the grace TTL, session
+/// `expires_at` advanced to `min(now + ttl, absolute_cap)` — one pipeline. The
+/// stable `session_id` and the linked JWT are untouched. A stale token still
+/// inside the grace window resolves to the same session and is answered with
+/// the current state, no second rotation; past grace → 401 + clear cookie.
+pub async fn refresh(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> Response {
+    let Some(token) = cookie::read(&jar) else {
+        return unauthenticated_clear_cookie(jar);
+    };
+    let (session_id, record) = match state.sessions.resolve_by_token(&token).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return unauthenticated_clear_cookie(jar),
+        Err(e) => return internal_problem("session_store", &e),
+    };
+    let now = now_secs();
+    if record.expires_at <= now || record.absolute_expires_at <= now {
+        return unauthenticated_clear_cookie(jar);
+    }
+
+    // Grace path: the presented token has already been rotated past (the old
+    // mapping lives out its grace TTL). Answer with the current state and the
+    // current cookie value — rotating again would burn the grace guarantee.
+    if record.current_token != token {
+        tracing::debug!(session_id = %session_id, "refresh within rotation grace: no re-rotation");
+        return refresh_ok(&state, jar, &record.current_token, record.expires_at, now);
+    }
+
+    let new_token = csprng_token();
+    let new_expires_at = (now + state.cfg.session_ttl_seconds).min(record.absolute_expires_at);
+    if let Err(e) = state
+        .sessions
+        .rotate_session(
+            &session_id,
+            &record,
+            &new_token,
+            new_expires_at,
+            state.cfg.refresh_grace_ms,
+        )
+        .await
+    {
+        return internal_problem("rotate_session", &e);
+    }
+    tracing::debug!(session_id = %session_id, expires_at = new_expires_at, "session refreshed (credential rotated)");
+    refresh_ok(&state, jar, &new_token, new_expires_at, now)
+}
+
+/// `200 {expires_at, refresh_at}` + the (re-)issued session cookie. `Max-Age`
+/// is the session's actual remaining life, so the cookie can never outlive the
+/// absolute cap.
+fn refresh_ok(
+    state: &AppState,
+    jar: CookieJar,
+    token: &str,
+    expires_at: u64,
+    now: u64,
+) -> Response {
+    let body = serde_json::json!({
+        "expires_at": expires_at,
+        "refresh_at": refresh_at_for(&state.cfg, expires_at),
+    })
+    .to_string();
+    let jar = jar.add(cookie::session_cookie(
+        token,
+        expires_at.saturating_sub(now),
+    ));
+    (jar, json_ok(body)).into_response()
 }
 
 // ── /auth/logout ─────────────────────────────────────────────────────────────
@@ -476,6 +575,177 @@ pub async fn logout(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) 
     (jar, resp).into_response()
 }
 
+// ── /auth/sessions (PRD 5.9) ─────────────────────────────────────────────────
+
+/// List the caller's active sessions from the per-user index (score > now):
+/// created_at, expires_at, user_agent, ip, and a `current` flag.
+pub async fn sessions_list(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> Response {
+    let Some(token) = cookie::read(&jar) else {
+        return unauthenticated();
+    };
+    let (current_id, record) = match state.sessions.resolve_by_token(&token).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return unauthenticated(),
+        Err(e) => return internal_problem("session_store", &e),
+    };
+    let now = now_secs();
+    if record.expires_at <= now || record.absolute_expires_at <= now {
+        return unauthenticated();
+    }
+
+    let sessions = match state
+        .sessions
+        .list_user_sessions(&record.person_id, now)
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => return internal_problem("session_list", &e),
+    };
+    let items: Vec<serde_json::Value> = sessions
+        .iter()
+        .map(|(sid, r)| {
+            serde_json::json!({
+                "session_id": sid,
+                "created_at": r.created_at,
+                "expires_at": r.expires_at,
+                "user_agent": r.user_agent,
+                "ip": r.ip,
+                "current": *sid == current_id,
+            })
+        })
+        .collect();
+    json_ok(serde_json::json!({ "sessions": items }).to_string())
+}
+
+/// Revoke one of the caller's sessions by id. A session that does not exist or
+/// belongs to someone else is answered 404 (no existence oracle). Revoking the
+/// current session also clears the cookie.
+pub async fn sessions_revoke_one(
+    Extension(state): Extension<Arc<AppState>>,
+    jar: CookieJar,
+    axum::extract::Path(target_id): axum::extract::Path<String>,
+) -> Response {
+    let Some(token) = cookie::read(&jar) else {
+        return unauthenticated();
+    };
+    let (current_id, record) = match state.sessions.resolve_by_token(&token).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return unauthenticated(),
+        Err(e) => return internal_problem("session_store", &e),
+    };
+
+    let target = match state.sessions.load_session(&target_id).await {
+        Ok(t) => t,
+        Err(e) => return internal_problem("session_load", &e),
+    };
+    let owned = target
+        .as_ref()
+        .is_some_and(|t| t.person_id == record.person_id);
+    if !owned {
+        return not_found(&target_id);
+    }
+    if let Err(e) = state.sessions.revoke_session(&target_id).await {
+        return internal_problem("session_revoke", &e);
+    }
+    tracing::info!(
+        target: "audit",
+        event = "session_revoked",
+        session_id = %target_id,
+        person_id = %record.person_id,
+        by = "self",
+        "session revoked"
+    );
+
+    let resp = json_ok(serde_json::json!({ "revoked": 1 }).to_string());
+    if target_id == current_id {
+        return (jar.add(cookie::clear_cookie()), resp).into_response();
+    }
+    resp
+}
+
+/// Revoke every session of the current user ("log out everywhere") and clear
+/// the cookie.
+pub async fn sessions_revoke_all(
+    Extension(state): Extension<Arc<AppState>>,
+    jar: CookieJar,
+) -> Response {
+    let Some(token) = cookie::read(&jar) else {
+        return unauthenticated();
+    };
+    let (_, record) = match state.sessions.resolve_by_token(&token).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return unauthenticated(),
+        Err(e) => return internal_problem("session_store", &e),
+    };
+
+    let revoked = match state.sessions.revoke_user_sessions(&record.person_id).await {
+        Ok(n) => n,
+        Err(e) => return internal_problem("session_revoke_all", &e),
+    };
+    tracing::info!(
+        target: "audit",
+        event = "sessions_revoked_all",
+        person_id = %record.person_id,
+        revoked,
+        by = "self",
+        "all sessions revoked"
+    );
+    let resp = json_ok(serde_json::json!({ "revoked": revoked }).to_string());
+    (jar.add(cookie::clear_cookie()), resp).into_response()
+}
+
+/// Admin/service revoke-by-user (PRD 5.9 "admin variant"): the host authn
+/// pipeline has already verified the gateway JWT and built the
+/// [`SecurityContext`]; this handler enforces the authorized role
+/// (`admin_revoke_roles`) and delegates to the SDK contract
+/// (`AuthenticatorClientV1::revoke_user_sessions`) — the same lever the
+/// future permissions service pulls on grant changes (DD-AUTH-07).
+pub async fn admin_revoke_user_sessions(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<toolkit_security::SecurityContext>,
+    axum::extract::Path(person_id): axum::extract::Path<Uuid>,
+) -> Response {
+    let allowed = ctx
+        .token_scopes()
+        .iter()
+        .any(|scope| state.cfg.admin_revoke_roles.iter().any(|r| r == scope));
+    if !allowed {
+        tracing::warn!(
+            target: "audit",
+            event = "admin_session_revoke_denied",
+            subject = %ctx.subject_id(),
+            subject_type = ctx.subject_type().unwrap_or(""),
+            person_id = %person_id,
+            "admin session revoke denied: missing authorized role"
+        );
+        return SessionError::permission_denied()
+            .with_reason("missing_authorized_role")
+            .create()
+            .into_response();
+    }
+
+    match state
+        .authn_client
+        .revoke_user_sessions(&person_id.to_string())
+        .await
+    {
+        Ok(revoked) => {
+            tracing::info!(
+                target: "audit",
+                event = "sessions_revoked_all",
+                person_id = %person_id,
+                revoked,
+                by = "admin",
+                subject = %ctx.subject_id(),
+                subject_type = ctx.subject_type().unwrap_or(""),
+                "all sessions revoked (admin)"
+            );
+            json_ok(serde_json::json!({ "revoked": revoked }).to_string())
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
 // ── Pure helpers (unit-tested) ───────────────────────────────────────────────
 
 /// Compute the `/internal/authz` 200 `Cache-Control`:
@@ -490,6 +760,16 @@ pub fn cache_control_for(exp: u64, now: u64, authz_cache_max_age: u64) -> String
     } else {
         format!("max-age={max_age}")
     }
+}
+
+/// The server-supplied refresh moment: `expires_at − margin ± jitter/2` (G8 —
+/// the deliberately big jitter spreads NAT'd-office refresh waves into a
+/// uniform trickle and keeps an attacker from aligning to the rotation grace
+/// window). Re-jittered on every call.
+fn refresh_at_for(cfg: &crate::config::AuthenticatorConfig, expires_at: u64) -> u64 {
+    expires_at
+        .saturating_sub(cfg.session_refresh_safety_margin_seconds)
+        .saturating_add_signed(jitter_seconds(cfg.refresh_jitter_seconds / 2))
 }
 
 /// Sanitize an SPA-supplied `return_to`: accept only a site-relative path (one
@@ -564,6 +844,21 @@ fn unauthenticated() -> Response {
     )
 }
 
+/// 404 that does not distinguish "absent" from "not yours" (no existence oracle).
+fn not_found(resource: &str) -> Response {
+    SessionError::not_found("session not found")
+        .with_resource(resource)
+        .create()
+        .into_response()
+}
+
+/// 401 that also clears the session cookie — for `/auth/refresh`, where a dead
+/// credential must not linger in the browser (PRD 5.4 case 1).
+fn unauthenticated_clear_cookie(jar: CookieJar) -> Response {
+    let jar = jar.add(cookie::clear_cookie());
+    (jar, unauthenticated()).into_response()
+}
+
 fn internal_problem(context: &str, err: &anyhow::Error) -> Response {
     tracing::error!(context, error = %err, "authenticator internal error");
     toolkit_canonical_errors::CanonicalError::internal(format!("{context}: {err}"))
@@ -613,6 +908,18 @@ mod tests {
         assert_eq!(sanitize_return_to(Some("//evil.example"), "/"), "/");
         assert_eq!(sanitize_return_to(Some("https://evil.example"), "/"), "/");
         assert_eq!(sanitize_return_to(None, "/home"), "/home");
+    }
+
+    #[test]
+    fn refresh_at_stays_inside_the_jitter_window() {
+        // margin 90, full jitter 120 (±60): refresh_at ∈ [exp−150, exp−30] —
+        // the late edge still leaves ≥30 s of session life (G8).
+        let cfg = crate::config::AuthenticatorConfig::default();
+        let expires_at = 10_000;
+        for _ in 0..200 {
+            let at = refresh_at_for(&cfg, expires_at);
+            assert!((expires_at - 150..=expires_at - 30).contains(&at), "{at}");
+        }
     }
 
     #[test]
