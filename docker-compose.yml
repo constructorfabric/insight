@@ -222,7 +222,12 @@ services:
       # /certs/ca.pem) is bind-mounted from deploy/compose/analytics-fullauth.yaml
       # over /app/config/insight.yaml below. The leaf values above still override.
     volumes:
-      - ./deploy/compose/build/analytics/analytics:/app/analytics:ro
+      - type: bind
+        source: ./deploy/compose/build/analytics/analytics
+        target: /app/analytics
+        read_only: true
+        bind:
+          create_host_path: false
       # Full-auth plugin config (issuer + CA) — bind-mounted over the committed
       # placeholder config so analytics verifies real gateway JWTs in dev.
       - ./deploy/compose/analytics-fullauth.yaml:/app/config/insight.yaml:ro
@@ -321,7 +326,12 @@ services:
       # (dev-compose.sh generates testclient.pub.pem there; nothing committed).
       APP__gears__authenticator__config__service_tokens__public_key_dir: "/app/keys"
     volumes:
-      - ./deploy/compose/build/authenticator/authenticator:/app/authenticator:ro
+      - type: bind
+        source: ./deploy/compose/build/authenticator/authenticator
+        target: /app/authenticator
+        read_only: true
+        bind:
+          create_host_path: false
       - ./src/backend/services/authenticator/config:/app/config:ro
       # dev signing key (current.pem) + dev service-token pubkey, both generated
       # by dev-compose.sh into this gitignored dir and mounted at signing_keys_path.
@@ -570,8 +580,10 @@ services:
         apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
         cargo build --release --bin analytics --bin authenticator
         mkdir -p /out/analytics /out/authenticator
-        install -m 0755 /target/release/analytics           /out/analytics/analytics
-        install -m 0755 /target/release/authenticator       /out/authenticator/authenticator
+        [ ! -d /out/analytics/analytics ] || rm -rf /out/analytics/analytics
+        [ ! -d /out/authenticator/authenticator ] || rm -rf /out/authenticator/authenticator
+        install -m 0755 /target/release/analytics /out/analytics/analytics
+        install -m 0755 /target/release/authenticator /out/authenticator/authenticator
 
   build-dotnet:
     profiles: ["build"]

@@ -538,8 +538,14 @@ YML
             protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
           cargo build --release$bin_flags
           mkdir -p /out/analytics /out/authenticator
-          [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
-          [ -f /target/release/authenticator ]       && install -m 0755 /target/release/authenticator       /out/authenticator/authenticator || true
+          if [ -f /target/release/analytics ]; then
+            [ ! -d /out/analytics/analytics ] || rm -rf /out/analytics/analytics
+            install -m 0755 /target/release/analytics /out/analytics/analytics
+          fi
+          if [ -f /target/release/authenticator ]; then
+            [ ! -d /out/authenticator/authenticator ] || rm -rf /out/authenticator/authenticator
+            install -m 0755 /target/release/authenticator /out/authenticator/authenticator
+          fi
         "
     fi
     if ! contains "$ghcr_list" identity; then
@@ -781,8 +787,14 @@ cmd_build() {
         protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
       cargo build --release$bin_flags
       mkdir -p /out/analytics /out/authenticator
-      [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
-      [ -f /target/release/authenticator ]       && install -m 0755 /target/release/authenticator       /out/authenticator/authenticator || true
+      if [ -f /target/release/analytics ]; then
+        [ ! -d /out/analytics/analytics ] || rm -rf /out/analytics/analytics
+        install -m 0755 /target/release/analytics /out/analytics/analytics
+      fi
+      if [ -f /target/release/authenticator ]; then
+        [ ! -d /out/authenticator/authenticator ] || rm -rf /out/authenticator/authenticator
+        install -m 0755 /target/release/authenticator /out/authenticator/authenticator
+      fi
     "
   }
 
