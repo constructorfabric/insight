@@ -10,6 +10,7 @@ pub mod person_roles_repo;
 pub mod persons_repo;
 pub mod roles_repo;
 pub mod seed_repo;
+pub mod visibility_repo;
 
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 

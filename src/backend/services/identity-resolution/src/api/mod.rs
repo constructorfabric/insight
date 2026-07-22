@@ -7,6 +7,7 @@ mod handlers;
 pub mod person_roles;
 pub mod roles;
 pub mod seed;
+pub mod visibility;
 
 use std::sync::Arc;
 
@@ -195,7 +196,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(person_roles::list_person_roles)
         .register(router, openapi);
 
-    OperationBuilder::delete("/v1/person-roles/{id}")
+    let router = OperationBuilder::delete("/v1/person-roles/{id}")
         .operation_id("identity_resolution.person_roles.delete")
         .summary("Revoke a role assignment (admin)")
         .authenticated()
@@ -203,5 +204,45 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .no_content_response(StatusCode::NO_CONTENT, "Assignment revoked")
         .standard_errors(openapi)
         .handler(person_roles::delete_person_role)
+        .register(router, openapi);
+
+    // Visibility grants (admin-gated create / list / revoke).
+    let router = OperationBuilder::post("/v1/visibility")
+        .operation_id("identity_resolution.visibility.create")
+        .summary("Create a visibility grant (admin)")
+        .authenticated()
+        .no_license_required()
+        .json_request::<visibility::CreateVisibilityRequest>(openapi, "Grant to create")
+        .json_response_with_schema::<visibility::VisibilityResponse>(
+            openapi,
+            StatusCode::CREATED,
+            "Created grant",
+        )
+        .standard_errors(openapi)
+        .handler(visibility::create_visibility)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/visibility")
+        .operation_id("identity_resolution.visibility.list")
+        .summary("List visibility grants (admin)")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<visibility::VisibilityListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Grants",
+        )
+        .standard_errors(openapi)
+        .handler(visibility::list_visibility)
+        .register(router, openapi);
+
+    OperationBuilder::delete("/v1/visibility/{id}")
+        .operation_id("identity_resolution.visibility.delete")
+        .summary("Revoke a visibility grant (admin)")
+        .authenticated()
+        .no_license_required()
+        .no_content_response(StatusCode::NO_CONTENT, "Grant revoked")
+        .standard_errors(openapi)
+        .handler(visibility::delete_visibility)
         .register(router, openapi)
 }
