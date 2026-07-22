@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Minimal Identity stub for the authenticator e2e runner (dev/CI only).
 
-Answers `GET /v1/persons/{email}` with a `ResolveProfileCommandModel` carrying a
-deterministic `insight_source_id`, so the login loop can resolve a person
-without standing up the real .NET Identity service + seeding. Any other path
-404s. Bind address from argv[1] (default 127.0.0.1:8092).
+Answers the authenticator's internal person lookup
+`GET /internal/persons/by-email/{email}` with a deterministic `insight_source_id`,
+so the login loop can resolve a person without standing up the real .NET Identity
+service + seeding. The real endpoint gates on a service gateway JWT; the stub
+ignores the bearer (test seam). Any other path 404s. Bind address from argv[1]
+(default 127.0.0.1:8092).
 """
+
 import hashlib
 import json
 import sys
@@ -21,15 +24,19 @@ def person_id_for(email: str) -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
+    PREFIX = "/internal/persons/by-email/"
+
     def do_GET(self):  # noqa: N802
-        if self.path.startswith("/v1/persons/"):
-            email = unquote(self.path[len("/v1/persons/"):])
-            body = json.dumps({
-                "value_type": "email",
-                "value": email,
-                "insight_source_type": "person",
-                "insight_source_id": person_id_for(email),
-            }).encode()
+        if self.path.startswith(self.PREFIX):
+            email = unquote(self.path[len(self.PREFIX) :])
+            body = json.dumps(
+                {
+                    "value_type": "email",
+                    "value": email,
+                    "insight_source_type": "person",
+                    "insight_source_id": person_id_for(email),
+                }
+            ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

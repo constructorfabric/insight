@@ -190,7 +190,7 @@ jobs:
           cargo llvm-cov report --cobertura $ignore \
             --output-path "$GITHUB_WORKSPACE/coverage/rust-${{ matrix.entry.name }}.cobertura.xml"
 
-      # Changed crates with cover=false (api-gateway — no unit tests yet) still
+      # Changed crates with cover=false (authenticator — no in-process tests yet) still
       # run plain `cargo test`: a failure fails this job; only the Cobertura
       # collection and the coverage gates are skipped. Lint-only fanout entries
       # (test=false) skip this too — coverage/tests stay per-changed-crate.
@@ -363,10 +363,7 @@ jobs:
       # unchanged language) report 'skipped', not 'failure', so they're fine.
       - name: Guard against incomplete reports
         if: >-
-          needs.changes.result != 'success' ||
-          needs.rust.result == 'failure' ||
-          needs.dotnet.result == 'failure' ||
-          needs.python.result == 'failure'
+          needs.changes.result != 'success' || needs.rust.result == 'failure' || needs.dotnet.result == 'failure' || needs.python.result == 'failure'
         run: |
           echo "changes=${{ needs.changes.result }} rust=${{ needs.rust.result }} dotnet=${{ needs.dotnet.result }} python=${{ needs.python.result }}"
           echo "::error::Change detection or a producer job failed — refusing to gate on an incomplete report set."

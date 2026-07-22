@@ -155,10 +155,10 @@ async fn full_login_refresh_rotation_and_revoke() {
     assert_eq!(claims["email"], "alice@example.com");
     assert_eq!(claims["nonce"], "n1");
     assert!(claims["sub"].as_str().unwrap().starts_with("fakeidp|"));
-    // Tenant hints from users.yaml are emitted for e2e to assert/map.
+    // The single tenant from users.yaml is emitted for e2e to assert/map.
     assert_eq!(
-        claims["tenants"],
-        serde_json::json!(["00000000-df51-5b42-9538-d2b56b7ee953"])
+        claims["tenant_id"],
+        serde_json::json!("00000000-df51-5b42-9538-d2b56b7ee953")
     );
 
     // ── refresh rotates; the old token then fails closed ─────────────────
@@ -681,9 +681,9 @@ async fn refresh_preserves_non_default_audience() {
         "audience preserved across refresh"
     );
     assert_eq!(
-        claims["tenants"],
-        serde_json::json!(["00000000-df51-5b42-9538-d2b56b7ee953"]),
-        "bob's tenant hint present on refreshed token too"
+        claims["tenant_id"],
+        serde_json::json!("00000000-df51-5b42-9538-d2b56b7ee953"),
+        "bob's tenant present on refreshed token too"
     );
 }
 

@@ -4,7 +4,9 @@ use std::fmt::Write;
 use serde::Deserialize;
 
 use super::batch::{peer_aliases, period_alias};
-use super::validation::{HISTOGRAM_BINS, ValidatedMetricResultsRequest, query_row_limit};
+use super::validation::{
+    HISTOGRAM_BINS, ValidatedDimensionFilter, ValidatedMetricResultsRequest, query_row_limit,
+};
 use super::view::Bucket;
 use crate::domain::metric_definitions::{
     CohortSource, ComputationSpec, MetricDefinition, ObservationRelation,
@@ -79,10 +81,11 @@ pub struct HistogramQueryRow {
 pub(crate) fn compile_period_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
+    filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
     let selects = item_value_selects(defs, &mut params, period_alias);
-    let metric_scope = shared_observation_where(defs, req, &mut params);
+    let metric_scope = shared_observation_where(defs, req, filters, &mut params);
     params.extend(req.entity_ids.iter().cloned());
     let entities = placeholders(req.entity_ids.len());
     let observation_table = batch_observation_table(defs);
@@ -107,8 +110,10 @@ pub(crate) fn compile_timeseries_query(
     req: &ValidatedMetricResultsRequest,
     bucket: Bucket,
     dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = metric_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
     params.extend(req.entity_ids.iter().cloned());
     let entities = placeholders(req.entity_ids.len());
     let bucket = bucket_expr(bucket);
@@ -129,6 +134,7 @@ pub(crate) fn compile_timeseries_query(
             {value_expr} AS value
         FROM {observation_table}
         WHERE {metric_where}
+          {filter_where}
           AND entity_id IN ({entities})
         GROUP BY {group}
         ORDER BY entity_id, bucket_start
@@ -144,8 +150,10 @@ pub(crate) fn compile_breakdown_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = metric_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
     params.extend(req.entity_ids.iter().cloned());
     let entities = placeholders(req.entity_ids.len());
     let (dim_select, dim_group) = dimension_select_group(dimensions);
@@ -164,6 +172,7 @@ pub(crate) fn compile_breakdown_query(
             {value_expr} AS value
         FROM {observation_table}
         WHERE {metric_where}
+          {filter_where}
           AND entity_id IN ({entities})
         GROUP BY {group}
         ORDER BY entity_id
@@ -204,8 +213,10 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
 pub(crate) fn compile_histogram_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
+    filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = metric_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
     params.extend(req.entity_ids.iter().cloned());
     let entities = placeholders(req.entity_ids.len());
     let observation_table = observation_table(def.observation_relation());
@@ -220,6 +231,7 @@ pub(crate) fn compile_histogram_query(
                 assumeNotNull({event_value}) AS event_value
             FROM {observation_table}
             WHERE {metric_where}
+              {filter_where}
               AND entity_id IN ({entities})
               AND value IS NOT NULL
         ),
@@ -264,6 +276,7 @@ pub(crate) fn compile_peer_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
     cohort_key: &str,
+    filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
     params.push(req.entity_type.clone());
@@ -272,7 +285,7 @@ pub(crate) fn compile_peer_batch_query(
     params.push(req.entity_type.clone());
     params.push(cohort_key.to_owned());
     let value_selects = item_value_selects(defs, &mut params, period_alias);
-    let metric_scope = shared_observation_where(defs, req, &mut params);
+    let metric_scope = shared_observation_where(defs, req, filters, &mut params);
 
     let entities = placeholders(req.entity_ids.len());
     let observation_table = batch_observation_table(defs);
@@ -511,6 +524,7 @@ fn transformed_batch(
 fn shared_observation_where(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
+    filters: &[ValidatedDimensionFilter],
     params: &mut Vec<String>,
 ) -> String {
     params.push(req.entity_type.clone());
@@ -522,9 +536,28 @@ fn shared_observation_where(
         params.push(measure_key.clone());
     }
     let pair_placeholders = vec!["(?, ?)"; pairs.len()].join(", ");
-    format!(
+    let mut where_clause = format!(
         "entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND (source_key, measure_key) IN ({pair_placeholders})"
-    )
+    );
+    where_clause.push_str(&dimension_filter_where(filters, params));
+    where_clause
+}
+
+fn dimension_filter_where(
+    filters: &[ValidatedDimensionFilter],
+    params: &mut Vec<String>,
+) -> String {
+    let mut sql = String::new();
+    for filter in filters {
+        let values = placeholders(filter.values.len());
+        let _ = write!(
+            sql,
+            " AND indexOf(dimensions.1, '{dimension}') > 0 AND dimensions.2[indexOf(dimensions.1, '{dimension}')] IN ({values})",
+            dimension = filter.dimension,
+        );
+        params.extend(filter.values.iter().cloned());
+    }
+    sql
 }
 
 fn measure_pairs(defs: &[&MetricDefinition]) -> BTreeSet<(String, String)> {
@@ -790,7 +823,7 @@ mod tests {
     #[test]
     fn period_batch_binds_item_params_then_scope_then_pairs_then_entities() {
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_period_batch_query(&[&sum, &ratio], &request());
+        let query = compile_period_batch_query(&[&sum, &ratio], &request(), &[]);
         assert!(query.sql.contains("FROM insight.ai_metric_observations"));
         assert!(!query.sql.contains("tenant_id"));
         assert!(query.sql.contains("AS m0"));
@@ -839,7 +872,7 @@ mod tests {
     #[test]
     fn period_batch_of_one_uses_wide_aliases() {
         let sum = sum_metric();
-        let query = compile_period_batch_query(&[&sum], &request());
+        let query = compile_period_batch_query(&[&sum], &request(), &[]);
         assert!(query.sql.contains("AS m0"));
         assert!(!query.sql.contains("AS value"));
     }
@@ -847,7 +880,7 @@ mod tests {
     #[test]
     fn ratio_item_binds_numerator_source_for_both_halves() {
         let ratio = ratio_metric();
-        let query = compile_period_batch_query(&[&ratio], &request());
+        let query = compile_period_batch_query(&[&ratio], &request(), &[]);
         // Ratio inputs share one source by the definition-load invariant;
         // both sumIf halves and the pruning pair carry the numerator's key.
         assert_eq!(
@@ -877,7 +910,7 @@ mod tests {
             (Bucket::Week, "toStartOfWeek(metric_date, 1)"),
             (Bucket::Month, "toStartOfMonth(metric_date)"),
         ] {
-            let query = compile_timeseries_query(&sum_metric(), &request(), bucket, &[]);
+            let query = compile_timeseries_query(&sum_metric(), &request(), bucket, &[], &[]);
             assert!(
                 query
                     .sql
@@ -889,7 +922,7 @@ mod tests {
 
     #[test]
     fn dimensioned_query_emits_value_and_label_aliases() {
-        let query = compile_breakdown_query(&sum_metric(), &request(), &["tool".to_owned()]);
+        let query = compile_breakdown_query(&sum_metric(), &request(), &["tool".to_owned()], &[]);
         assert!(query.sql.contains("AS dim_0_value"));
         assert!(query.sql.contains("AS dim_0_label"));
         assert!(query.sql.contains("indexOf(dimensions.1, 'tool')"));
@@ -903,7 +936,7 @@ mod tests {
     #[test]
     fn peer_batch_keeps_cohort_ctes_and_param_order() {
         let sum = sum_metric();
-        let query = compile_peer_batch_query(&[&sum], &request(), "org_unit");
+        let query = compile_peer_batch_query(&[&sum], &request(), "org_unit", &[]);
         assert!(
             query
                 .sql
@@ -936,7 +969,7 @@ mod tests {
         // rows cannot be distinguished from "not covered by the source", so
         // the peer query must not invent zeros for them.
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit");
+        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit", &[]);
         assert!(query.sql.contains("sumIfOrNull"));
         assert!(!query.sql.contains("coalesce"));
         assert!(query.sql.contains("metric_values.m0 AS m0"));
@@ -945,7 +978,7 @@ mod tests {
     #[test]
     fn peer_batch_guards_every_percentile_per_item() {
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit");
+        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit", &[]);
         for item in 0..2 {
             let guard =
                 format!("uniqExactIf(peer.entity_id, peer.m{item} IS NOT NULL) >= {MIN_PEER_N}");
@@ -983,12 +1016,12 @@ mod tests {
         let (sum, ratio) = (sum_metric(), ratio_metric());
         let limit = format!("LIMIT {}", query_row_limit());
         assert!(
-            compile_period_batch_query(&[&sum], &request())
+            compile_period_batch_query(&[&sum], &request(), &[])
                 .sql
                 .contains(&limit)
         );
         assert!(
-            compile_peer_batch_query(&[&ratio], &request(), "org_unit")
+            compile_peer_batch_query(&[&ratio], &request(), "org_unit", &[])
                 .sql
                 .contains(&limit)
         );
@@ -1008,8 +1041,13 @@ mod tests {
             distinct_count_metric(),
         );
         for query in [
-            compile_period_batch_query(&[&sum, &median, &ratio, &distinct], &request()),
-            compile_peer_batch_query(&[&sum, &median, &ratio, &distinct], &request(), "org_unit"),
+            compile_period_batch_query(&[&sum, &median, &ratio, &distinct], &request(), &[]),
+            compile_peer_batch_query(
+                &[&sum, &median, &ratio, &distinct],
+                &request(),
+                "org_unit",
+                &[],
+            ),
         ] {
             assert_eq!(query.sql.matches('?').count(), query.params.len());
         }
@@ -1022,8 +1060,8 @@ mod tests {
         // for this one comes back NULL, not 0 (the builder never zero-fills
         // medians). Placeholder/param lockstep still holds.
         for query in [
-            compile_period_batch_query(&[&median_metric()], &request()),
-            compile_peer_batch_query(&[&median_metric()], &request(), "org_unit"),
+            compile_period_batch_query(&[&median_metric()], &request(), &[]),
+            compile_peer_batch_query(&[&median_metric()], &request(), "org_unit", &[]),
         ] {
             assert!(
                 query.sql.contains(
@@ -1037,13 +1075,13 @@ mod tests {
 
     #[test]
     fn median_single_views_use_exact_median() {
-        let ts = compile_timeseries_query(&median_metric(), &request(), Bucket::Week, &[]);
+        let ts = compile_timeseries_query(&median_metric(), &request(), Bucket::Week, &[], &[]);
         assert!(
             ts.sql
                 .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
         );
         assert!(ts.sql.contains("GROUP BY entity_id, bucket_start"));
-        let bd = compile_breakdown_query(&median_metric(), &request(), &["source".to_owned()]);
+        let bd = compile_breakdown_query(&median_metric(), &request(), &["source".to_owned()], &[]);
         assert!(
             bd.sql
                 .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
@@ -1057,8 +1095,8 @@ mod tests {
         // via another measure but with no rows here comes back NULL, not 0 —
         // the builder zero-fills distinct counts like sums. Lockstep holds.
         for query in [
-            compile_period_batch_query(&[&distinct_count_metric()], &request()),
-            compile_peer_batch_query(&[&distinct_count_metric()], &request(), "org_unit"),
+            compile_period_batch_query(&[&distinct_count_metric()], &request(), &[]),
+            compile_peer_batch_query(&[&distinct_count_metric()], &request(), "org_unit", &[]),
         ] {
             assert!(
                 query
@@ -1076,9 +1114,9 @@ mod tests {
         // (e.g. a chat source with totals but no DM split) must read NULL,
         // not 0%: the numerator aggregates OrNull in every query shape, while
         // the denominator relies on nullIf alone.
-        let batched = compile_period_batch_query(&[&ratio_metric()], &request());
-        let ts = compile_timeseries_query(&ratio_metric(), &request(), Bucket::Week, &[]);
-        let bd = compile_breakdown_query(&ratio_metric(), &request(), &["tool".to_owned()]);
+        let batched = compile_period_batch_query(&[&ratio_metric()], &request(), &[]);
+        let ts = compile_timeseries_query(&ratio_metric(), &request(), Bucket::Week, &[], &[]);
+        let bd = compile_breakdown_query(&ratio_metric(), &request(), &["tool".to_owned()], &[]);
         assert!(
             batched
                 .sql
@@ -1096,14 +1134,19 @@ mod tests {
 
     #[test]
     fn distinct_count_single_views_count_distinct_subject_key() {
-        let ts = compile_timeseries_query(&distinct_count_metric(), &request(), Bucket::Week, &[]);
+        let ts =
+            compile_timeseries_query(&distinct_count_metric(), &request(), Bucket::Week, &[], &[]);
         assert!(
             ts.sql
                 .contains("uniqExactIf(subject_key, subject_key IS NOT NULL)")
         );
         assert!(ts.sql.contains("GROUP BY entity_id, bucket_start"));
-        let bd =
-            compile_breakdown_query(&distinct_count_metric(), &request(), &["tool".to_owned()]);
+        let bd = compile_breakdown_query(
+            &distinct_count_metric(),
+            &request(),
+            &["tool".to_owned()],
+            &[],
+        );
         assert!(
             bd.sql
                 .contains("uniqExactIf(subject_key, subject_key IS NOT NULL)")
@@ -1112,7 +1155,7 @@ mod tests {
 
     #[test]
     fn histogram_query_bins_deterministically_from_entity_bounds() {
-        let query = compile_histogram_query(&median_metric(), &request());
+        let query = compile_histogram_query(&median_metric(), &request(), &[]);
         assert!(
             query
                 .sql
@@ -1141,8 +1184,8 @@ mod tests {
             clamp_max: Some(100.0),
             ..ValueTransform::default()
         });
-        let ts = compile_timeseries_query(&def, &request(), Bucket::Day, &[]);
-        let bd = compile_breakdown_query(&def, &request(), &[]);
+        let ts = compile_timeseries_query(&def, &request(), Bucket::Day, &[], &[]);
+        let bd = compile_breakdown_query(&def, &request(), &[], &[]);
         for query in [&ts, &bd] {
             assert!(
                 query
@@ -1160,7 +1203,7 @@ mod tests {
             clamp_max: Some(100.0),
             ..ValueTransform::default()
         });
-        let hist = compile_histogram_query(&median, &request());
+        let hist = compile_histogram_query(&median, &request(), &[]);
         assert!(
             hist.sql
                 .contains("if((value) IS NULL, NULL, least(100.0, value))")
@@ -1175,7 +1218,7 @@ mod tests {
             hist.sql
         );
         assert_eq!(hist.sql.matches('?').count(), hist.params.len());
-        let period = compile_period_batch_query(&[&def], &request());
+        let period = compile_period_batch_query(&[&def], &request(), &[]);
         assert!(
             period
                 .sql
@@ -1184,7 +1227,7 @@ mod tests {
             period.sql
         );
         assert_eq!(period.sql.matches('?').count(), period.params.len());
-        let peer = compile_peer_batch_query(&[&def], &request(), "org_unit");
+        let peer = compile_peer_batch_query(&[&def], &request(), "org_unit", &[]);
         assert!(
             peer.sql.contains("if((metric_values.m0) IS NULL, NULL,"),
             "peer carry must transform before percentiles: {}",

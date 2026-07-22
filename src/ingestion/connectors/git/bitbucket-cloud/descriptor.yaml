@@ -1,7 +1,10 @@
 name: bitbucket-cloud
 version: "1.3.0"
 type: cdk
-schedule: "0 2 * * *"
+# 05:00 — dedicated slot: the 02:00 slot is shared with cursor + m365 and the
+# single-worker node starves replication pods there (Broken-pipe startup
+# deaths, Temporal activity timeouts — jobs 432/454 on 2026-07-15/16).
+schedule: "0 5 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016).
 images:

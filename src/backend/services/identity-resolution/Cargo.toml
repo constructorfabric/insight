@@ -14,14 +14,16 @@ workspace = true
 [dependencies]
 # ToolKit host runtime. This service runs as a gears-rust host: routes are
 # served by the `api-gateway` system gear (the REST host) under
-# `toolkit::bootstrap::run_server`. Same no-auth system-gear set as `analytics`
-# — the platform api-gateway is the sole authenticator and proxies to us.
+# `toolkit::bootstrap::run_server`. Auth is ENABLED (NGINX_BFF R1): the
+# `oidc-authn-plugin` verifies the ES256 gateway JWT and maps its claims into
+# the request SecurityContext — same set as the `analytics` host.
 toolkit = { workspace = true, features = ["bootstrap"] }
 
-# System gears linked for the REST host + (disabled) auth pipeline. Discovered
-# at link time via inventory; mirrors the analytics host's no-auth set.
+# System gears linked for the REST host + auth pipeline. Discovered at link time
+# via inventory; mirrors the analytics host's authenticated set.
 api_gateway = { workspace = true }
 authn-resolver = { workspace = true }
+oidc-authn-plugin = { workspace = true }
 authz-resolver = { workspace = true }
 tenant-resolver = { workspace = true }
 single-tenant-tr-plugin = { workspace = true }

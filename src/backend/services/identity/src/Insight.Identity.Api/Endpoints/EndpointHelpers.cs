@@ -32,7 +32,7 @@ public static class EndpointHelpers
             Type: CallerUnresolvedUrn,
             Title: "Unauthorized",
             Status: StatusCodes.Status401Unauthorized,
-            Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
+            Detail: "Caller not identified. The gateway JWT must carry a person subject (sub)."),
             statusCode: StatusCodes.Status401Unauthorized),
         AdminCheckResult.NoTenant => Results.Json(new ProblemResponse(
             Type: TenantUnresolvedUrn,

@@ -15,10 +15,10 @@ per-id.
 from __future__ import annotations
 
 import pytest
+from lib.config import TEST_TENANT_ID
 
 from api.conftest import purge_tenant_admin_rows
-from api.endpoint_helpers import NON_UUID, OTHER_TENANT, UNKNOWN_ID, text_body_request
-from lib.config import TENANT_HEADER, TEST_TENANT_ID
+from api.endpoint_helpers import NON_UUID, UNKNOWN_ID, text_body_request
 
 pytestmark = pytest.mark.api
 
@@ -84,8 +84,7 @@ def test_create_400_unknown_metric(api) -> None:
     """Referential integrity is checked pre-write: metric_id must resolve to an
     enabled metric_catalog row."""
     r = api.post(
-        "/v1/admin/metric-thresholds",
-        json={"metric_id": UNKNOWN_ID, "scope": "tenant", "good": 0.0, "warn": 0.0},
+        "/v1/admin/metric-thresholds", json={"metric_id": UNKNOWN_ID, "scope": "tenant", "good": 0.0, "warn": 0.0}
     )
     assert r.status_code == 400, f"status={r.status_code} body={r.text}"
 
@@ -101,12 +100,7 @@ def test_create_409_duplicate(api, admin_threshold_row: dict) -> None:
     (today it falls through to the internal-500 schema-drift alarm)."""
     r = api.post(
         "/v1/admin/metric-thresholds",
-        json={
-            "metric_id": admin_threshold_row["metric_id"],
-            "scope": "tenant",
-            "good": 0.0,
-            "warn": 0.0,
-        },
+        json={"metric_id": admin_threshold_row["metric_id"], "scope": "tenant", "good": 0.0, "warn": 0.0},
     )
     assert r.status_code == 409, f"status={r.status_code} body={r.text}"
     assert r.json().get("status") == 409
@@ -124,10 +118,7 @@ def test_get_404_unknown(api) -> None:
 
 
 def test_update_200(api, admin_threshold_row: dict) -> None:
-    r = api.put(
-        f"/v1/admin/metric-thresholds/{admin_threshold_row['id']}",
-        json={"good": 5.0, "warn": 5.0},
-    )
+    r = api.put(f"/v1/admin/metric-thresholds/{admin_threshold_row['id']}", json={"good": 5.0, "warn": 5.0})
     assert r.status_code == 200, f"status={r.status_code} body={r.text}"
     assert (r.json()["good"], r.json()["warn"]) == (5.0, 5.0)
 
@@ -192,13 +183,13 @@ def test_update_415_wrong_content_type(api) -> None:
     assert r.status_code == 415, f"status={r.status_code} body={r.text}"
 
 
-def test_update_403_cross_tenant(api, admin_threshold_row: dict) -> None:
+def test_update_403_cross_tenant(api, admin_threshold_row: dict, other_tenant_headers: dict) -> None:
     """A PUT against another tenant's row fails the ownership check → 403
     (the row is loaded by id, then rejected as not_tenant_admin)."""
     r = api.put(
         f"/v1/admin/metric-thresholds/{admin_threshold_row['id']}",
         json={"good": 1.0, "warn": 1.0},
-        headers={TENANT_HEADER: OTHER_TENANT},
+        headers=other_tenant_headers,
     )
     assert r.status_code == 403, f"status={r.status_code} body={r.text}"
 
@@ -208,10 +199,7 @@ def test_delete_400_non_uuid(api) -> None:
     assert r.status_code == 400, f"status={r.status_code} body={r.text}"
 
 
-def test_delete_403_cross_tenant(api, admin_threshold_row: dict) -> None:
+def test_delete_403_cross_tenant(api, admin_threshold_row: dict, other_tenant_headers: dict) -> None:
     """A DELETE against another tenant's row fails the ownership check → 403."""
-    r = api.delete(
-        f"/v1/admin/metric-thresholds/{admin_threshold_row['id']}",
-        headers={TENANT_HEADER: OTHER_TENANT},
-    )
+    r = api.delete(f"/v1/admin/metric-thresholds/{admin_threshold_row['id']}", headers=other_tenant_headers)
     assert r.status_code == 403, f"status={r.status_code} body={r.text}"

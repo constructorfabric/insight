@@ -308,11 +308,12 @@ local-up: local-wizard
 	  if [ -z "$$CTX" ] || [ "$$CTX" = "null" ]; then \
 	    echo "$(C_RED)ERROR$(C_RST): inventory.yaml missing .kubeContext after wizard"; exit 1; \
 	  fi; \
-	  $(MAKE) --no-print-directory bootstrap   ENV=local KUBE_CTX=$$CTX && \
-	  $(MAKE) --no-print-directory fetch-cert  ENV=local KUBE_CTX=$$CTX && \
-	  $(MAKE) --no-print-directory seal        ENV=local KUBE_CTX=$$CTX && \
-	  $(MAKE) --no-print-directory system      ENV=local KUBE_CTX=$$CTX && \
-	  $(MAKE) --no-print-directory deploy-app  ENV=local KUBE_CTX=$$CTX
+	  $(MAKE) --no-print-directory bootstrap      ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory fetch-cert     ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory seal           ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory system         ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory keycloak-realm ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory deploy-app     ENV=local KUBE_CTX=$$CTX
 
 # Run the wizard only when inventory.yaml is missing. The wizard itself
 # enforces non-TTY rejection. If the file is present (re-run on the
@@ -327,6 +328,30 @@ local-wizard:
 	  echo "$(C_RED)ERROR$(C_RST): wizard not found at $$WIZARD"; exit 1; \
 	fi; \
 	bash "$$WIZARD" --target=k8s-local
+
+.PHONY: keycloak-realm
+# Generate the Keycloak dev realm from the seed roster (deploy/compose/keycloak/
+# gen-realm.py) and apply it as the `$(RELEASE)-keycloak-realm` ConfigMap that the
+# insight-keycloak subchart mounts + imports. Runs before deploy-app in local-up.
+# No-op unless keycloak.deploy=true (fakeidp installs need nothing here).
+keycloak-realm: kube-ctx values-present
+	@if [ "$$(yq -r '.keycloak.deploy // false' $(VALUES))" != "true" ]; then \
+	  echo "$(C_YEL)skip$(C_RST) keycloak-realm (keycloak.deploy != true)"; exit 0; fi
+	@GEN="$$(cd ../.. && pwd)/deploy/compose/keycloak/gen-realm.py"; \
+	OUT="$(RENDER_DIR)/realm-insight-$(ENV).json"; mkdir -p "$(RENDER_DIR)"; \
+	DEV_EMAIL="$$(yq -r '.fakeidp.devUserEmail // "dev@company.nonpresent"' $(VALUES))"; \
+	REDIRECT="$$(yq -r '.authenticator.oidc.redirectUri // "http://localhost/auth/callback"' $(VALUES))"; \
+	KC_BASE="$$(yq -r '.keycloak.hostname // ""' $(VALUES))"; \
+	LB_REDIRECT="$${KC_BASE%/kc}/auth/callback"; \
+	echo "$(C_GRN)→$(C_RST) generating Keycloak realm (dev-lead $$DEV_EMAIL; redirects $$REDIRECT, $$LB_REDIRECT)"; \
+	python3 "$$GEN" --dev-email "$$DEV_EMAIL" \
+	  --authenticator-redirect "$$REDIRECT" \
+	  --authenticator-redirect "$$LB_REDIRECT" \
+	  --out "$$OUT"; \
+	kubectl --context $(KUBE_CTX) -n $(NS_APP) create configmap $(RELEASE)-keycloak-realm \
+	  --from-file=realm-insight.json="$$OUT" --dry-run=client -o yaml | \
+	  kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \
+	echo "$(C_GRN)applied$(C_RST) configmap $(RELEASE)-keycloak-realm → $(NS_APP)"
 
 .PHONY: deploy-app
 deploy-app: deploy-insight
