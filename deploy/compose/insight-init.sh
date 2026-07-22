@@ -169,6 +169,7 @@ validate_clickhouse() {
   [[ "$probe_host" == "host.docker.internal" ]] && probe_host=localhost
   echo "  Probing ClickHouse at ${probe_host}:${port}..." >&2
   if curl -sf -u "${user}:${pass}" \
+       --get \
        --data-urlencode "query=SELECT 1" \
        --data-urlencode "database=${db}" \
        "http://${probe_host}:${port}/" >/dev/null 2>&1; then
