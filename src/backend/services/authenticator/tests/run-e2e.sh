@@ -117,6 +117,10 @@ AUTH_BASE="http://localhost:$AUTH_PORT" FAKEIDP_PUBLIC="http://localhost:$IDP_PO
   E2E_USER=dev@company.nonpresent \
   cargo test -p authenticator --test e2e_backchannel -- --ignored --nocapture
 
+echo "==> run the layer-2 rate-limit loop (step 10.6)"
+AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \
+  cargo test -p authenticator --test e2e_ratelimit -- --ignored --nocapture
+
 echo "==> run the IdP background-refresher loop (step 10.4: outage + invalid_grant)"
 AUTH_BASE="http://localhost:$AUTH_PORT" FAKEIDP_PUBLIC="http://localhost:$IDP_PORT" \
   cargo test -p authenticator --test e2e_refresher -- --ignored --nocapture
