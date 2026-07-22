@@ -406,6 +406,7 @@ mod tests {
             base: MetricBase {
                 key: key.to_owned(),
                 label: key.to_owned(),
+                short_label: None,
                 description: None,
                 explanation: None,
                 entity_type: "person".to_owned(),
