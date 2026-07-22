@@ -659,6 +659,69 @@ impl SessionManager {
         Ok(())
     }
 
+    /// One janitor pass (DESIGN §4.3): trim expired members from every
+    /// `asm:user_sessions:*` ZSET (`ZREMRANGEBYSCORE 0 now` — per-key TTLs
+    /// removed the records, the index members linger) and drop long-overdue
+    /// orphans from the refresh schedule (live sessions are re-scheduled by
+    /// the refresher; an entry still due after `orphan_grace` has no owner).
+    /// Returns (removed members, overdue-backlog size before trimming).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn janitor_pass(&self, now: u64, orphan_grace: u64) -> anyhow::Result<(u64, u64)> {
+        let mut conn = self.conn.clone();
+        let now_i = i64::try_from(now).unwrap_or(i64::MAX);
+        let mut removed = 0u64;
+        let mut backlog = 0u64;
+
+        // SCAN, never KEYS — bounded batches on a shared Redis.
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg("asm:user_sessions:*")
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await
+                .context("scan user-session indexes")?;
+            for key in keys {
+                let expired: u64 = conn
+                    .zcount(&key, 0, now_i)
+                    .await
+                    .context("count expired index members")?;
+                if expired > 0 {
+                    backlog += expired;
+                    let n: u64 = conn
+                        .zrembyscore(&key, 0, now_i)
+                        .await
+                        .context("trim expired index members")?;
+                    removed += n;
+                }
+            }
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        // Refresh-schedule orphans: overdue by more than the grace window.
+        let orphan_cutoff = i64::try_from(now.saturating_sub(orphan_grace)).unwrap_or(0);
+        let overdue: u64 = conn
+            .zcount(REFRESH_DUE_KEY, 0, now_i)
+            .await
+            .context("count overdue refresh entries")?;
+        backlog += overdue;
+        let orphans: u64 = conn
+            .zrembyscore(REFRESH_DUE_KEY, 0, orphan_cutoff)
+            .await
+            .context("trim refresh-schedule orphans")?;
+        removed += orphans;
+
+        Ok((removed, backlog))
+    }
+
     // ── Back-channel logout (PRD 5.10) ─────────────────────────────────────
 
     /// One-shot replay guard for a back-channel `logout_token` `jti`
