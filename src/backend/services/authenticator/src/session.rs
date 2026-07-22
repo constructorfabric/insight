@@ -423,43 +423,56 @@ impl SessionManager {
     /// "Session refresh — rotation without churn"): write the new token
     /// mapping, shorten the superseded mapping's TTL to the rotation grace,
     /// advance the session's `expires_at` (record field, key TTL, and per-user
-    /// index score) — one pipeline. The stable `session_id`, the linked JWT,
-    /// and every other index stay untouched (G10).
+    /// index score). The stable `session_id`, the linked JWT, and every other
+    /// index stay untouched (G10).
+    ///
+    /// **Compare-and-swap on `current_token`** (atomic Lua): the whole
+    /// rotation runs only if the session's stored `current_token` still equals
+    /// the credential the caller presented. Two concurrent refreshes of the
+    /// same cookie (multi-tab) therefore cannot both rotate — the loser gets
+    /// `Ok(false)` and the handler answers the grace path with the winner's
+    /// credential, so no orphan full-TTL token mapping is ever minted.
     ///
     /// # Errors
-    /// Fails on a Redis error.
+    /// Fails on a Redis error. `Ok(false)` = the presented token was no longer
+    /// current (lost the race / already rotated); nothing was written.
     pub async fn rotate_session(
         &self,
         session_id: &str,
         record: &SessionRecord,
+        presented_token: &str,
         new_token: &str,
         new_expires_at: u64,
         grace_ms: u64,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
+        // KEYS: session hash, new-token mapping, old-token mapping, user ZSET.
+        // ARGV: expected current_token, session_id, expireAt (s), grace (ms).
+        const ROTATE_LUA: &str = r"
+            if redis.call('HGET', KEYS[1], 'current_token') ~= ARGV[1] then return 0 end
+            redis.call('SET', KEYS[2], ARGV[2])
+            redis.call('EXPIREAT', KEYS[2], ARGV[3])
+            redis.call('PEXPIRE', KEYS[3], ARGV[4])
+            redis.call('HSET', KEYS[1], 'expires_at', ARGV[3], 'current_token', ARGV[5])
+            redis.call('EXPIREAT', KEYS[1], ARGV[3])
+            redis.call('ZADD', KEYS[4], ARGV[3], ARGV[2])
+            return 1
+        ";
         let mut conn = self.conn.clone();
-        let skey = session_key(session_id);
         let expires_at = i64::try_from(new_expires_at).unwrap_or(i64::MAX);
-
-        let mut pipe = redis::pipe();
-        pipe.atomic();
-        pipe.set(token_key(new_token), session_id).ignore();
-        pipe.expire_at(token_key(new_token), expires_at).ignore();
-        // The expiring old mapping IS the grace window (no swap keys).
-        pipe.pexpire(
-            token_key(&record.current_token),
-            i64::try_from(grace_ms).unwrap_or(250),
-        )
-        .ignore();
-        pipe.hset(&skey, "expires_at", new_expires_at.to_string())
-            .ignore();
-        pipe.hset(&skey, "current_token", new_token).ignore();
-        pipe.expire_at(&skey, expires_at).ignore();
-        pipe.zadd(user_sessions_key(&record.person_id), session_id, expires_at)
-            .ignore();
-        pipe.query_async::<()>(&mut conn)
+        let rotated: i64 = redis::Script::new(ROTATE_LUA)
+            .key(session_key(session_id))
+            .key(token_key(new_token))
+            .key(token_key(&record.current_token))
+            .key(user_sessions_key(&record.person_id))
+            .arg(presented_token)
+            .arg(session_id)
+            .arg(expires_at)
+            .arg(i64::try_from(grace_ms).unwrap_or(250))
+            .arg(new_token)
+            .invoke_async(&mut conn)
             .await
-            .context("rotate session pipeline")?;
-        Ok(())
+            .context("rotate session (CAS)")?;
+        Ok(rotated == 1)
     }
 
     /// List a person's live sessions from the per-user index (score > `now`),

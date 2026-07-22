@@ -35,6 +35,13 @@ serviceTokens:
 # CSRF Origin-allowlist fallback (PRD 5.11) for state-changing /auth/*
 # requests that carry no X-CSRF-Token: list the SPA's public origin(s), e.g.
 # ["https://insight.example.com"]. Empty (default) = fail closed, header only.
+#
+# DEPLOY COORDINATION: CSRF is enforced fail-closed. An SPA that does not yet
+# send X-CSRF-Token will get 403 on POST /auth/logout, /auth/refresh, and
+# DELETE /auth/sessions once this chart is rolled. Either roll the matching
+# insight-front (which sends the header) FIRST, or set csrfOrigins to the SPA's
+# public origin here so the Origin fallback keeps those calls working during
+# the transition.
 csrfOrigins: []
 
 resources:
