@@ -6,18 +6,18 @@
 //! completed/failed. The GETs poll status. Ported from the .NET
 //! `PersonsSeedEndpoints` + `PersonsSeedQueue`.
 //!
-//! Admin-gated like the .NET `CallerAdminCheck`: the caller is resolved from the
-//! `X-Insight-Person-Id` header and must hold an active `admin` role in the
-//! tenant, and is recorded as the seed author. The .NET JWT id/email-claim
-//! fallbacks are deferred until gears auth carries a subject.
+//! Admin-gated like the .NET `CallerAdminCheck`: the caller is the gateway-JWT
+//! subject (`SecurityContext::subject_id`, verified by the host authn pipeline —
+//! `NGINX_BFF` R1) and must hold an active `admin` role in the tenant; it is
+//! recorded as the seed author.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Extension, Path, Query};
+use axum::http::StatusCode;
 use axum::http::header::LOCATION;
-use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
@@ -43,11 +43,6 @@ const LINK_BY_EMAIL_MODE: &str = "link-by-email";
 /// `PageRequest.DefaultLimit` / `MaxLimit`).
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 500;
-
-/// Header carrying the caller's `person_id`, parity with the .NET
-/// `HeaderCallerContext`. JWT id/email-claim fallbacks are deferred until gears
-/// auth carries a subject (the host runs auth-disabled today — no claims).
-const CALLER_HEADER: &str = "X-Insight-Person-Id";
 
 /// Upper bound on one seed run in the serial worker; a stall past this fails the
 /// job rather than wedging the whole queue.
@@ -173,14 +168,13 @@ pub struct ListParams {
 pub async fn create_persons_seed(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    headers: HeaderMap,
     CanonicalJson(req): CanonicalJson<PersonsSeedRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
     // Admin gate first (parity with .NET: the caller/admin check precedes mode
     // validation, so an unauthenticated/non-admin caller gets 401/403, not 400).
     // The resolved caller is recorded as the author of the job + observations.
-    let author = require_admin(&state.db, &headers, tenant).await?;
+    let author = require_admin(&state.db, &ctx).await?;
 
     let mode = req
         .mode
@@ -255,12 +249,11 @@ pub async fn create_persons_seed(
 pub async fn get_persons_seed(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
     // Same admin gate as POST (parity — the .NET service gates all three routes).
-    require_admin(&state.db, &headers, tenant).await?;
+    require_admin(&state.db, &ctx).await?;
     let op = ops_repo::get_by_id(&state.db, tenant, id)
         .await
         .map_err(|e| {
@@ -281,12 +274,11 @@ pub async fn get_persons_seed(
 pub async fn list_persons_seed(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    headers: HeaderMap,
     Query(params): Query<ListParams>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
     // Same admin gate as POST (parity — the .NET service gates all three routes).
-    require_admin(&state.db, &headers, tenant).await?;
+    require_admin(&state.db, &ctx).await?;
     let status = status_filter(params.status.as_deref());
     let limit = params
         .limit
@@ -308,23 +300,21 @@ pub async fn list_persons_seed(
     }))
 }
 
-/// The persons-seed admin gate, applied to every route (parity with the .NET
-/// `CallerAdminCheck`): resolve the caller from the header, then require an
-/// active `admin` role in the tenant. Returns the caller `person_id`, or 401
-/// (no caller) / 403 (not admin).
+/// The persons-seed admin gate (parity with the .NET `CallerAdminCheck`): the
+/// caller is the gateway-JWT subject (`SecurityContext::subject_id`, verified by
+/// the host authn pipeline), which must hold an active `admin` role in the
+/// tenant. Returns the caller `person_id`, or 401 (no subject) / 403 (not admin).
 async fn require_admin(
     db: &DatabaseConnection,
-    headers: &HeaderMap,
-    tenant: Uuid,
+    ctx: &SecurityContext,
 ) -> Result<Uuid, CanonicalError> {
-    let caller = resolve_caller(headers).ok_or_else(|| {
-        CanonicalError::unauthenticated()
-            .with_reason(format!(
-                "caller not identified; send the {CALLER_HEADER} header"
-            ))
-            .create()
-    })?;
-    let is_admin = roles_repo::has_active_admin(db, tenant, caller)
+    let caller = ctx.subject_id();
+    if caller.is_nil() {
+        return Err(CanonicalError::unauthenticated()
+            .with_reason("caller not identified: the gateway JWT carries no person subject")
+            .create());
+    }
+    let is_admin = roles_repo::has_active_admin(db, ctx.subject_tenant_id(), caller)
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "admin role check failed");
@@ -336,21 +326,6 @@ async fn require_admin(
             .create());
     }
     Ok(caller)
-}
-
-/// Resolve the caller's `person_id` from the `X-Insight-Person-Id` header —
-/// the header branch of the .NET `HeaderCallerContext` (present, parseable,
-/// non-nil). Returns `None` when absent/blank/malformed/nil, which the handler
-/// maps to 401. The JWT id/email-claim fallbacks are intentionally not ported
-/// yet (auth-disabled host → no claims to read).
-///
-/// TODO(#1602): the header is caller-supplied and currently trusted (auth is
-/// disabled on the host). Before prod cutover the subject MUST come from the
-/// authenticated principal (gears auth / api-gateway), not a raw client header.
-fn resolve_caller(headers: &HeaderMap) -> Option<Uuid> {
-    let raw = headers.get(CALLER_HEADER)?.to_str().ok()?;
-    let id = Uuid::parse_str(raw.trim()).ok()?;
-    (!id.is_nil()).then_some(id)
 }
 
 /// Map the `?status=` query to a filter. An unknown/blank value is ignored
@@ -451,45 +426,5 @@ pub async fn run_worker(
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn headers_with(value: &str) -> anyhow::Result<HeaderMap> {
-        let mut h = HeaderMap::new();
-        h.insert(CALLER_HEADER, value.parse()?);
-        Ok(h)
-    }
-
-    #[test]
-    fn resolve_caller_reads_valid_person_header() -> anyhow::Result<()> {
-        let id = Uuid::from_u128(0x1234_5678_9abc_def0);
-        assert_eq!(resolve_caller(&headers_with(&id.to_string())?), Some(id));
-        // Surrounding whitespace is tolerated.
-        assert_eq!(
-            resolve_caller(&headers_with(&format!("  {id}  "))?),
-            Some(id)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn resolve_caller_rejects_missing_blank_nil_and_malformed() -> anyhow::Result<()> {
-        assert_eq!(resolve_caller(&HeaderMap::new()), None, "absent header");
-        assert_eq!(resolve_caller(&headers_with("")?), None, "blank");
-        assert_eq!(
-            resolve_caller(&headers_with("not-a-uuid")?),
-            None,
-            "malformed"
-        );
-        assert_eq!(
-            resolve_caller(&headers_with(&Uuid::nil().to_string())?),
-            None,
-            "nil uuid is not a caller"
-        );
-        Ok(())
     }
 }

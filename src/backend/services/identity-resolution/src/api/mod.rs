@@ -64,24 +64,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(handlers::resolve_profile)
         .register(router, openapi);
 
-    // Deprecated: successor is POST /v1/profiles. Kept for existing callers
-    // (authenticator, analytics) until they migrate; emits RFC 8594 headers.
-    let router = OperationBuilder::get("/v1/persons/{email}")
-        .operation_id("identity_resolution.persons.get")
-        .summary("Resolve a person by email (deprecated; use POST /v1/profiles)")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<profile::PersonResponse>(
-            openapi,
-            StatusCode::OK,
-            "Resolved person",
-        )
-        .standard_errors(openapi)
-        .handler(handlers::get_person_by_email)
-        .register(router, openapi);
-
-    // Persons-seed (async job): enqueue + poll. Admin-gated in .NET; not enforced
-    // here (auth-disabled host).
+    // Persons-seed (async job): enqueue + poll. Admin-gated: caller = gateway-JWT
+    // subject, must hold the `admin` role in the tenant.
     let router = OperationBuilder::post("/v1/persons-seed")
         .operation_id("identity_resolution.persons_seed.create")
         .summary("Enqueue a persons-seed run (async)")
