@@ -149,12 +149,10 @@ fn fmt_ts(dt: sea_orm::prelude::DateTime) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
-/// List response wrapper (typed for OpenAPI). `next_cursor` mirrors the .NET
-/// `ListResponse<T>` shape (always null until cursor pagination lands).
+/// List response wrapper (typed for OpenAPI).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonsSeedListResponse {
     pub items: Vec<PersonsSeedOperationResponse>,
-    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedListResponse {}
 
@@ -294,10 +292,7 @@ pub async fn list_persons_seed(
         .into_iter()
         .map(PersonsSeedOperationResponse::from)
         .collect();
-    Ok(Json(PersonsSeedListResponse {
-        items,
-        next_cursor: None,
-    }))
+    Ok(Json(PersonsSeedListResponse { items }))
 }
 
 /// The persons-seed admin gate (parity with the .NET `CallerAdminCheck`): the
