@@ -593,6 +593,11 @@ name = "Authenticator Service Design"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/authenticator/specs/ADR/0001-per-environment-idp-selection.md"
+name = "ADR-0001: Per-Environment IdP Selection (fakeidp for CI/compose, Dex for local k8s)"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/backend/gateway/DESIGN.md"
 name = "Gateway (nginx edge) Design"

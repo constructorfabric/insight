@@ -138,7 +138,11 @@ pub async fn callback(
     {
         Ok(idp) => idp,
         Err(e) => {
-            tracing::warn!(error = %e, "oidc code exchange / id_token validation failed");
+            // {:#} = full anyhow chain, so the log names WHY (incl. the IdP's error_description).
+            tracing::warn!(
+                error = format!("{e:#}"),
+                "oidc code exchange / id_token validation failed"
+            );
             return OidcError::invalid_argument()
                 .with_field_violation("code", "token exchange failed", "EXCHANGE_FAILED")
                 .create()
@@ -218,8 +222,9 @@ async fn mint_and_store_session(
     let exp = (now + cfg.jwt_ttl_seconds).min(absolute_expires_at);
     let claims = GatewayClaims {
         sub: resolution.person_id.clone(),
-        tenants: resolution.tenants.clone(),
+        tenant_id: resolution.tenant_id.clone(),
         roles: roles.clone(),
+        sub_type: "user".to_owned(),
         sid: session_id.clone(),
         iss: cfg.gateway_issuer.clone(),
         aud: cfg.jwt_audience.clone(),
@@ -241,7 +246,8 @@ async fn mint_and_store_session(
 
     let record = SessionRecord {
         person_id: resolution.person_id.clone(),
-        tenants: resolution.tenants.clone(),
+        email: idp.identity.email.clone(),
+        tenant_id: resolution.tenant_id.clone(),
         roles,
         idp_iss: idp.issuer.clone(),
         idp_sub: idp.identity.sub.clone(),
@@ -330,8 +336,9 @@ async fn reissue_jwt(
     let exp = (now + state.cfg.jwt_ttl_seconds).min(record.absolute_expires_at);
     let claims = GatewayClaims {
         sub: record.person_id.clone(),
-        tenants: record.tenants.clone(),
+        tenant_id: record.tenant_id.clone(),
         roles: record.roles.clone(),
+        sub_type: "user".to_owned(),
         sid: session_id.to_owned(),
         iss: state.cfg.gateway_issuer.clone(),
         aud: state.cfg.jwt_audience.clone(),
@@ -354,6 +361,36 @@ async fn reissue_jwt(
             .await?
             .unwrap_or(jwt))
     }
+}
+
+// ── /.well-known/openid-configuration ─────────────────────────────────────
+
+/// Serve a minimal OIDC discovery document so downstream verifiers
+/// (`cf-gears-oidc-authn-plugin`) can resolve the JWKS from the issuer. The
+/// plugin fetches `{issuer}/.well-known/openid-configuration` and reads
+/// `jwks_uri` — it does not accept a directly-configured JWKS URL. Both fields
+/// are derived from `gateway_issuer` (the JWT `iss`), so the advertised issuer
+/// matches the token and the JWKS is served from the same origin.
+pub async fn openid_configuration(Extension(state): Extension<Arc<AppState>>) -> Response {
+    let issuer = state.cfg.gateway_issuer.trim_end_matches('/');
+    let body = serde_json::json!({
+        "issuer": issuer,
+        "jwks_uri": format!("{issuer}/.well-known/jwks.json"),
+        // Advertised for OIDC-discovery completeness; downstream verifiers only
+        // consume `issuer` + `jwks_uri`. Signing is ES256 (gateway JWT).
+        "id_token_signing_alg_values_supported": ["ES256"],
+        "response_types_supported": ["code"],
+        "subject_types_supported": ["public"],
+    })
+    .to_string();
+    build_response(
+        StatusCode::OK,
+        vec![
+            (CONTENT_TYPE.clone(), "application/json".to_owned()),
+            (CACHE_CONTROL.clone(), "public, max-age=3600".to_owned()),
+        ],
+        Body::from(body),
+    )
 }
 
 // ── /.well-known/jwks.json ────────────────────────────────────────────────
@@ -399,7 +436,8 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
 
     let body = serde_json::json!({
         "user": record.person_id,
-        "tenants": record.tenants,
+        "email": record.email,
+        "tenant_id": record.tenant_id,
         "roles": record.roles,
         "expires_at": record.expires_at,
         "refresh_at": refresh_at,

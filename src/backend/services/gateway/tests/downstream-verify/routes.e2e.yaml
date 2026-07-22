@@ -1,0 +1,18 @@
+# Downstream-verify route table: the two API prefixes point at the REAL downstream
+# services. strip_prefix turns `/api/analytics/v1/metrics` into `/v1/metrics`
+# (analytics is addressed directly and serves `/v1/*`), and likewise for
+# identity. The nginx.conf is generated from this by the gateway container at
+# startup (compose upstream names, resolver 127.0.0.11).
+version: 1
+defaults:
+  strip_request_headers:
+    - X-Real-IP
+    - Forwarded
+routes:
+  - prefix: /api/analytics
+    upstream: http://analytics:8081
+    strip_prefix: true
+    timeout_ms: 60000
+  - prefix: /api/identity
+    upstream: http://identity:8082
+    strip_prefix: true

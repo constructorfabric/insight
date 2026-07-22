@@ -13,7 +13,7 @@ import time
 
 from conftest import AUTHENTICATOR, AUTHZ_CACHE_MAX_AGE, GW
 
-ROUTES = ["/api/v1/analytics", "/api/v1/identity"]
+ROUTES = ["/api/analytics", "/api/identity"]
 UUID_V7 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
 UNAUTHENTICATED_TYPE = "gts://gts.cf.core.errors.err.v1~cf.core.err.unauthenticated.v1~"
@@ -36,7 +36,7 @@ def test_no_cookie_401_on_every_route(client):
 
 
 def test_401_body_is_canonical_problem(client):
-    _, headers, body = client.request(f"{GW}/api/v1/analytics/x")
+    _, headers, body = client.request(f"{GW}/api/analytics/x")
     assert "problem+json" in headers.get("content-type", "")
     prob = json.loads(body)
     assert prob["type"] == UNAUTHENTICATED_TYPE
@@ -50,7 +50,7 @@ def test_401_body_is_canonical_problem(client):
 def test_login_injects_verifiable_jwt_and_applies_hygiene(client):
     sid = client.login()
     resp = client.request(
-        f"{GW}/api/v1/analytics/data",
+        f"{GW}/api/analytics/data",
         headers={
             "Cookie": f"__Host-sid={sid}; keep=1",
             "Authorization": "Bearer FORGED",
@@ -79,7 +79,7 @@ def test_correlation_ids_are_unique_per_request(client):
     sid = client.login()
     seen = set()
     for _ in range(3):
-        _, _, body = client.request(f"{GW}/api/v1/analytics/data", headers={"Cookie": f"__Host-sid={sid}"})
+        _, _, body = client.request(f"{GW}/api/analytics/data", headers={"Cookie": f"__Host-sid={sid}"})
         seen.add(json.loads(body)["headers"].get("x-correlation-id"))
     assert len(seen) == 3, seen
 
@@ -109,12 +109,12 @@ def test_internal_and_unmatched_api_are_404(client):
 
 class TestAuthenticatorDown:
     def test_cached_cookie_still_served(self, client, session_sid, authenticator_down):
-        status, _, _ = client.request(f"{GW}/api/v1/analytics/x", headers={"Cookie": f"__Host-sid={session_sid}"})
+        status, _, _ = client.request(f"{GW}/api/analytics/x", headers={"Cookie": f"__Host-sid={session_sid}"})
         assert status == 200, f"got {status}"
 
     def test_cold_cookie_fails_closed(self, client, authenticator_down):
         status, headers, body = client.request(
-            f"{GW}/api/v1/analytics/x", headers={"Cookie": "__Host-sid=cold-never-seen"}
+            f"{GW}/api/analytics/x", headers={"Cookie": "__Host-sid=cold-never-seen"}
         )
         assert status == 503, f"got {status}"
         assert "retry-after" in headers
@@ -133,7 +133,7 @@ def test_revocation_within_cache_window(client, session_sid):
     deadline = time.monotonic() + AUTHZ_CACHE_MAX_AGE + 5
     status = None
     while time.monotonic() < deadline:
-        status, _, _ = client.request(f"{GW}/api/v1/analytics/x", headers={"Cookie": f"__Host-sid={session_sid}"})
+        status, _, _ = client.request(f"{GW}/api/analytics/x", headers={"Cookie": f"__Host-sid={session_sid}"})
         if status == 401:
             break
         time.sleep(1)
@@ -145,7 +145,7 @@ def test_revocation_within_cache_window(client, session_sid):
 
 def test_dead_upstream_5xx(client, echo_down):
     sid = client.login()  # exchange succeeds (authenticator up); echo is down
-    status, _, _ = client.request(f"{GW}/api/v1/analytics/x", headers={"Cookie": f"__Host-sid={sid}"})
+    status, _, _ = client.request(f"{GW}/api/analytics/x", headers={"Cookie": f"__Host-sid={sid}"})
     # Connection refused -> 502; unroutable (killed container) -> 504 at the
     # bounded proxy_connect_timeout. Either is the fail-fast dead-upstream path.
     assert status in (502, 504), f"got {status}"

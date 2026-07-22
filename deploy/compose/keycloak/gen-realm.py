@@ -49,69 +49,45 @@ def _org_unit(person: Person) -> str:
 
 def _protocol_mappers(tenant_id: str) -> list[dict]:
     """The 5 shared mappers, identical on both clients (Input table)."""
-    common = {
-        "id.token.claim": "true",
-        "access.token.claim": "true",
-        "userinfo.token.claim": "true",
-    }
+    common = {"id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}
     return [
         {
+            # The authenticator reads this single-string claim (idp.tenant_claim,
+            # default `tenant_id`) — one and only one tenant per token — and it
+            # becomes the gateway JWT's `tenant_id`.
             "name": "tenant_id",
             "protocol": "openid-connect",
             "protocolMapper": "oidc-hardcoded-claim-mapper",
             "consentRequired": False,
-            "config": {
-                **common,
-                "claim.name": "tenant_id",
-                "claim.value": tenant_id,
-                "jsonType.label": "String",
-            },
+            "config": {**common, "claim.name": "tenant_id", "claim.value": tenant_id, "jsonType.label": "String"},
         },
         {
             "name": "org_unit",
             "protocol": "openid-connect",
             "protocolMapper": "oidc-usermodel-attribute-mapper",
             "consentRequired": False,
-            "config": {
-                **common,
-                "user.attribute": "org_unit",
-                "claim.name": "org_unit",
-                "jsonType.label": "String",
-            },
+            "config": {**common, "user.attribute": "org_unit", "claim.name": "org_unit", "jsonType.label": "String"},
         },
         {
             "name": "groups",
             "protocol": "openid-connect",
             "protocolMapper": "oidc-group-membership-mapper",
             "consentRequired": False,
-            "config": {
-                **common,
-                "claim.name": "groups",
-                "full.path": "false",
-            },
+            "config": {**common, "claim.name": "groups", "full.path": "false"},
         },
         {
             "name": "roles",
             "protocol": "openid-connect",
             "protocolMapper": "oidc-usermodel-realm-role-mapper",
             "consentRequired": False,
-            "config": {
-                **common,
-                "claim.name": "roles",
-                "jsonType.label": "String",
-                "multivalued": "true",
-            },
+            "config": {**common, "claim.name": "roles", "jsonType.label": "String", "multivalued": "true"},
         },
         {
             "name": "aud-insight",
             "protocol": "openid-connect",
             "protocolMapper": "oidc-audience-mapper",
             "consentRequired": False,
-            "config": {
-                "id.token.claim": "false",
-                "access.token.claim": "true",
-                "included.client.audience": "insight",
-            },
+            "config": {"id.token.claim": "false", "access.token.claim": "true", "included.client.audience": "insight"},
         },
     ]
 
@@ -127,26 +103,28 @@ def _client_insight(tenant_id: str) -> dict:
         # localhost:3000 = the compose frontend's callback (SPA does the OIDC
         # code+PKCE flow directly). localhost:8080 kept for the orbstack/SPA
         # host that shares this realm.
-        "redirectUris": [
-            "http://localhost:3000/callback",
-            "http://localhost:8080/callback",
-        ],
+        "redirectUris": ["http://localhost:3000/callback", "http://localhost:8080/callback"],
         "webOrigins": ["+"],
         "attributes": {"pkce.code.challenge.method": "S256"},
         "protocolMappers": _protocol_mappers(tenant_id),
     }
 
 
-def _client_insight_authenticator(tenant_id: str) -> dict:
+def _client_insight_authenticator(tenant_id: str, redirect_uris: list[str], secret: str) -> dict:
     return {
         "clientId": "insight-authenticator",
         "publicClient": False,
         "protocol": "openid-connect",
-        "secret": "insight-authenticator-dev-secret",
+        "secret": secret,
         "standardFlowEnabled": True,
         "directAccessGrantsEnabled": False,
         "serviceAccountsEnabled": False,
-        "redirectUris": ["http://localhost:8083/auth/callback"],
+        # The nginx+auth authenticator does the server-side code exchange and
+        # sets the __Host-sid cookie at the callback, so the redirect must be the
+        # browser-facing SPA/gateway origin (NOT the authenticator's own :8083).
+        # Compose: the Vite SPA (:3000) and the gateway edge (:8080), both of
+        # which proxy /auth to the authenticator. k8s passes its ingress host.
+        "redirectUris": redirect_uris,
         "webOrigins": [],
         "protocolMappers": _protocol_mappers(tenant_id),
     }
@@ -162,16 +140,23 @@ def _user(person: Person) -> dict:
         "lastName": person.last_name,
         "enabled": True,
         "emailVerified": True,
-        "credentials": [
-            {"type": "password", "value": DEV_PASSWORD, "temporary": False}
-        ],
+        "credentials": [{"type": "password", "value": DEV_PASSWORD, "temporary": False}],
         "attributes": {"org_unit": [org_unit]},
         "groups": [f"/{org_unit}"],
         "realmRoles": _ROLE_TO_REALM_ROLES[person.role],
     }
 
 
-def build_realm(dev_user_email: str, tenant_id: str) -> dict:
+DEFAULT_AUTHENTICATOR_REDIRECTS = [
+    "http://localhost:3000/auth/callback",  # compose Vite SPA origin
+    "http://localhost:8080/auth/callback",  # compose gateway edge (curl/e2e)
+]
+DEFAULT_AUTHENTICATOR_SECRET = "insight-authenticator-dev-secret"
+
+
+def build_realm(
+    dev_user_email: str, tenant_id: str, authenticator_redirects: list[str], authenticator_secret: str
+) -> dict:
     roster = build_roster(dev_user_email)
     return {
         "realm": REALM_NAME,
@@ -182,7 +167,7 @@ def build_realm(dev_user_email: str, tenant_id: str) -> dict:
         "users": [_user(person) for person in roster],
         "clients": [
             _client_insight(tenant_id),
-            _client_insight_authenticator(tenant_id),
+            _client_insight_authenticator(tenant_id, authenticator_redirects, authenticator_secret),
         ],
     }
 
@@ -200,6 +185,24 @@ def main() -> None:
             "when omitted."
         ),
     )
+    parser.add_argument(
+        "--authenticator-redirect",
+        action="append",
+        default=None,
+        dest="authenticator_redirects",
+        help=(
+            "Registered redirect URI for the insight-authenticator (BFF) client. "
+            "Repeatable. The nginx+auth authenticator sets the session cookie at "
+            "the callback, so this must be the browser-facing SPA/gateway origin "
+            "(e.g. http://localhost:3000/auth/callback in compose, or the ingress "
+            "host + /auth/callback in k8s). Defaults to the compose origins."
+        ),
+    )
+    parser.add_argument(
+        "--authenticator-secret",
+        default=DEFAULT_AUTHENTICATOR_SECRET,
+        help="Confidential client secret for insight-authenticator (dev default).",
+    )
     args = parser.parse_args()
 
     # Explicit --dev-email wins; otherwise fall back to VITE_DEV_USER_EMAIL via
@@ -212,7 +215,8 @@ def main() -> None:
         "TENANT_DEFAULT_ID", "00000000-df51-5b42-9538-d2b56b7ee953"
     )
 
-    realm = build_realm(dev_user_email, tenant_id)
+    redirects = args.authenticator_redirects or DEFAULT_AUTHENTICATOR_REDIRECTS
+    realm = build_realm(dev_user_email, tenant_id, redirects, args.authenticator_secret)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
