@@ -493,28 +493,27 @@ impl SessionManager {
     /// # Errors
     /// Fails on a Redis error (the worker then skips this pass).
     pub async fn try_lead(&self, key: &str, holder: &str, ttl_ms: u64) -> anyhow::Result<bool> {
+        // Atomic acquire-or-renew: SET NX wins a free lock; otherwise renew the
+        // TTL **only if we still hold it** — compare-and-pexpire in one script
+        // so the lock can't expire between a GET and a PEXPIRE and let a stale
+        // holder extend the new leader's key (brief dual leadership).
+        const LEAD_LUA: &str = r"
+            if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then return 1 end
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                redis.call('PEXPIRE', KEYS[1], ARGV[2])
+                return 1
+            end
+            return 0
+        ";
         let mut conn = self.conn.clone();
-        let won: Option<String> = redis::cmd("SET")
-            .arg(key)
+        let led: i64 = redis::Script::new(LEAD_LUA)
+            .key(key)
             .arg(holder)
-            .arg("NX")
-            .arg("PX")
             .arg(ttl_ms.max(1))
-            .query_async(&mut conn)
+            .invoke_async(&mut conn)
             .await
-            .context("acquire leader lock")?;
-        if won.is_some() {
-            return Ok(true);
-        }
-        let current: Option<String> = conn.get(key).await.context("read leader lock")?;
-        if current.as_deref() == Some(holder) {
-            let _: bool = conn
-                .pexpire(key, i64::try_from(ttl_ms).unwrap_or(1))
-                .await
-                .context("renew leader lock")?;
-            return Ok(true);
-        }
-        Ok(false)
+            .context("acquire/renew leader lock")?;
+        Ok(led == 1)
     }
 
     /// Sessions due for IdP refresh (`ZRANGEBYSCORE asm:idp_refresh_due 0 now`,
@@ -579,7 +578,12 @@ impl SessionManager {
 
     /// Persist a successful IdP refresh: rotated refresh token (when the IdP
     /// returned one), new access-token expiry, reset failure counter, and the
-    /// next schedule entry — one pipeline.
+    /// next schedule entry — one atomic Lua step, **guarded on the session
+    /// still existing**. Returns `false` when the session was revoked while the
+    /// grant was in flight: without the guard, `HSET` on the deleted key would
+    /// resurrect a TTL-less hash holding the freshly-rotated (live) IdP refresh
+    /// token — a permanent, janitor-invisible secret for a logged-out user
+    /// (review H2). On `false` the caller drops the schedule entry.
     ///
     /// # Errors
     /// Fails on a Redis error.
@@ -589,43 +593,49 @@ impl SessionManager {
         new_refresh_token: Option<&str>,
         access_expires_at: Option<u64>,
         next_due: u64,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
+        // KEYS: session hash, refresh-due ZSET.
+        // ARGV: session_id, next_due, refresh_token|"", access_exp|"".
+        const STORE_LUA: &str = r"
+            if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+            if ARGV[3] ~= '' then redis.call('HSET', KEYS[1], 'idp_refresh_token', ARGV[3]) end
+            if ARGV[4] ~= '' then redis.call('HSET', KEYS[1], 'idp_access_expires_at', ARGV[4]) end
+            redis.call('HSET', KEYS[1], 'idp_refresh_failures', '0')
+            redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
+            return 1
+        ";
         let mut conn = self.conn.clone();
-        let skey = session_key(session_id);
-        let mut pipe = redis::pipe();
-        pipe.atomic();
-        if let Some(token) = new_refresh_token {
-            pipe.hset(&skey, "idp_refresh_token", token).ignore();
-        }
-        if let Some(exp) = access_expires_at {
-            pipe.hset(&skey, "idp_access_expires_at", exp.to_string())
-                .ignore();
-        }
-        pipe.hset(&skey, "idp_refresh_failures", "0").ignore();
-        pipe.zadd(
-            REFRESH_DUE_KEY,
-            session_id,
-            i64::try_from(next_due).unwrap_or(i64::MAX),
-        )
-        .ignore();
-        pipe.query_async::<()>(&mut conn)
+        let stored: i64 = redis::Script::new(STORE_LUA)
+            .key(session_key(session_id))
+            .key(REFRESH_DUE_KEY)
+            .arg(session_id)
+            .arg(i64::try_from(next_due).unwrap_or(i64::MAX))
+            .arg(new_refresh_token.unwrap_or(""))
+            .arg(access_expires_at.map(|e| e.to_string()).unwrap_or_default())
+            .invoke_async(&mut conn)
             .await
-            .context("store IdP refresh pipeline")?;
-        Ok(())
+            .context("store IdP refresh (guarded)")?;
+        Ok(stored == 1)
     }
 
     /// Bump the per-session transient-failure counter; returns the new count
-    /// (sizes the exponential backoff).
+    /// (sizes the exponential backoff), or `None` if the session no longer
+    /// exists (so a revoke mid-flight can't resurrect a counter-only zombie).
     ///
     /// # Errors
     /// Fails on a Redis error.
-    pub async fn bump_refresh_failures(&self, session_id: &str) -> anyhow::Result<u64> {
+    pub async fn bump_refresh_failures(&self, session_id: &str) -> anyhow::Result<Option<u64>> {
+        const BUMP_LUA: &str = r"
+            if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
+            return redis.call('HINCRBY', KEYS[1], 'idp_refresh_failures', 1)
+        ";
         let mut conn = self.conn.clone();
-        let failures: i64 = conn
-            .hincr(session_key(session_id), "idp_refresh_failures", 1)
+        let failures: i64 = redis::Script::new(BUMP_LUA)
+            .key(session_key(session_id))
+            .invoke_async(&mut conn)
             .await
-            .context("bump refresh failures")?;
-        Ok(u64::try_from(failures).unwrap_or(0))
+            .context("bump refresh failures (guarded)")?;
+        Ok((failures >= 0).then(|| u64::try_from(failures).unwrap_or(0)))
     }
 
     /// Re-schedule a session's next refresh attempt.
@@ -706,18 +716,39 @@ impl SessionManager {
             }
         }
 
-        // Refresh-schedule orphans: overdue by more than the grace window.
+        // Refresh-schedule orphans: an entry overdue by more than the grace
+        // window is trimmed **only if its session hash is actually gone**
+        // (review M4). Blind ZREMRANGEBYSCORE would silently delete live-but-
+        // behind entries — after a Redis restore from an old backup, or while
+        // the refresher is disabled/wedged — permanently stopping IdP refresh
+        // for those sessions with no signal (voiding the G5 guarantee).
         let orphan_cutoff = i64::try_from(now.saturating_sub(orphan_grace)).unwrap_or(0);
-        let overdue: u64 = conn
-            .zcount(REFRESH_DUE_KEY, 0, now_i)
+        let overdue: Vec<String> = conn
+            .zrangebyscore(REFRESH_DUE_KEY, 0, now_i)
             .await
-            .context("count overdue refresh entries")?;
-        backlog += overdue;
-        let orphans: u64 = conn
-            .zrembyscore(REFRESH_DUE_KEY, 0, orphan_cutoff)
-            .await
-            .context("trim refresh-schedule orphans")?;
-        removed += orphans;
+            .context("list overdue refresh entries")?;
+        backlog += overdue.len() as u64;
+        for sid in &overdue {
+            // Only past the grace window, and only when the owner is gone.
+            let score: Option<i64> = conn
+                .zscore(REFRESH_DUE_KEY, sid)
+                .await
+                .context("read refresh-due score")?;
+            if score.is_none_or(|s| s > orphan_cutoff) {
+                continue;
+            }
+            let exists: bool = conn
+                .exists(session_key(sid))
+                .await
+                .context("check session existence for orphan")?;
+            if !exists {
+                let n: u64 = conn
+                    .zrem(REFRESH_DUE_KEY, sid)
+                    .await
+                    .context("trim refresh-schedule orphan")?;
+                removed += n;
+            }
+        }
 
         Ok((removed, backlog))
     }
@@ -747,6 +778,23 @@ impl SessionManager {
             .await
             .context("guard logout jti (NX EX)")?;
         Ok(set.is_some())
+    }
+
+    /// Release a back-channel `jti` guard (`DEL`). Called when the revoke that
+    /// followed a first-delivery claim then failed — otherwise the IdP's retry
+    /// of the same `logout_token` would hit the still-set guard and get an
+    /// idempotent 200 without ever revoking (review M1). Revoke is idempotent,
+    /// so re-processing on retry is safe.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn release_logout_jti(&self, iss: &str, jti: &str) -> anyhow::Result<()> {
+        let mut conn = self.conn.clone();
+        let _: i64 = conn
+            .del(logout_jti_key(iss, jti))
+            .await
+            .context("release logout jti")?;
+        Ok(())
     }
 
     /// Sessions indexed under a back-channel `(iss, sid)` pair.

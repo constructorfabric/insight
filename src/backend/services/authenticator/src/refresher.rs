@@ -186,6 +186,10 @@ async fn refresh_one(state: &Arc<AppState>, metrics: &Metrics, session_id: &str)
     }
 }
 
+// Linear per-session flow (load → grant → success/invalid_grant/transient),
+// each arm with its own store + logging; splitting it would scatter the outcome
+// handling without making it clearer.
+#[allow(clippy::too_many_lines)]
 async fn do_refresh(
     state: &Arc<AppState>,
     metrics: &Metrics,
@@ -222,15 +226,44 @@ async fn do_refresh(
                 state.cfg.idp.refresh_safety_margin_seconds,
                 state.cfg.idp.refresh_due_jitter_seconds,
             );
-            sessions
-                .store_idp_refresh(
-                    session_id,
-                    new_refresh_token.as_deref(),
-                    access_expires_at,
-                    next_due,
-                )
-                .await?;
-            tracing::debug!(session_id, next_due, "idp refresh ok");
+            // The IdP has ALREADY rotated the grant; the old token is spent. If
+            // the store fails now, the next attempt would re-send the spent
+            // token → invalid_grant → false logout (review M3). So retry the
+            // store a few times before giving up; the guard returns false only
+            // when the session was concurrently revoked (then just unschedule).
+            let mut stored = false;
+            for attempt in 0..3u32 {
+                match sessions
+                    .store_idp_refresh(
+                        session_id,
+                        new_refresh_token.as_deref(),
+                        access_expires_at,
+                        next_due,
+                    )
+                    .await
+                {
+                    Ok(true) => {
+                        stored = true;
+                        break;
+                    }
+                    Ok(false) => {
+                        // Session revoked mid-flight — nothing to persist.
+                        sessions.unschedule_refresh(session_id).await.ok();
+                        stored = true;
+                        break;
+                    }
+                    Err(e) if attempt == 2 => {
+                        tracing::error!(error = %e, session_id, "idp refresh: store failed after retries — the rotated token is lost, session will be logged out on the next attempt");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, session_id, attempt, "idp refresh store failed, retrying");
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                }
+            }
+            if stored {
+                tracing::debug!(session_id, next_due, "idp refresh ok");
+            }
         }
         RefreshOutcome::InvalidGrant(detail) => {
             metrics.record("invalid_grant");
@@ -249,16 +282,19 @@ async fn do_refresh(
         }
         RefreshOutcome::Transient(detail) => {
             metrics.record("transient");
-            let failures = sessions.bump_refresh_failures(session_id).await?;
-            let retry_at = now + backoff_seconds(failures);
-            sessions.reschedule_refresh(session_id, retry_at).await?;
-            tracing::warn!(
-                session_id,
-                failures,
-                retry_at,
-                detail = %detail,
-                "idp refresh transient failure: backing off (never revoking)"
-            );
+            // A revoke mid-flight makes bump return None — don't resurrect a
+            // counter-only zombie or reschedule a dead session.
+            if let Some(failures) = sessions.bump_refresh_failures(session_id).await? {
+                let retry_at = now + backoff_seconds(failures);
+                sessions.reschedule_refresh(session_id, retry_at).await?;
+                tracing::warn!(
+                    session_id,
+                    failures,
+                    retry_at,
+                    detail = %detail,
+                    "idp refresh transient failure: backing off (never revoking)"
+                );
+            }
         }
     }
     Ok(())
@@ -266,12 +302,16 @@ async fn do_refresh(
 
 /// The next schedule entry: `now + (expires_in − margin)`, jittered at write
 /// (G5). An IdP that reports no lifetime is re-checked one margin from now.
+/// Floored at `now + margin/2` (min 5 s) so an IdP issuing very short-lived
+/// access tokens (`expires_in ≤ margin`) can't drive a refresh every tick
+/// (review L3) — we'd hammer the IdP and never make progress.
 fn next_due_at(now: u64, expires_in: Option<u64>, margin: u64, jitter_window: u64) -> u64 {
     let base = match expires_in {
         Some(ttl) => now + ttl.saturating_sub(margin),
         None => now + margin.max(60),
     };
-    base.saturating_add_signed(jitter(jitter_window))
+    let floor = now + (margin / 2).max(5);
+    base.max(floor).saturating_add_signed(jitter(jitter_window))
 }
 
 /// Exponential transient backoff: `min(15 << failures, 300)` seconds, jittered.
