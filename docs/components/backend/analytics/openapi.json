@@ -823,6 +823,12 @@
               "metric_key": {
                 "type": "string"
               },
+              "short_label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "unit": {
                 "type": [
                   "string",
