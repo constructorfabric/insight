@@ -50,11 +50,13 @@ fn row_to_flat(r: &sea_orm::QueryResult) -> anyhow::Result<SubchartFlatNode> {
 }
 
 /// Predicate "can `viewer_person_id` see `target_person_id`?" as of `valid_at`
-/// (`None` = right now). Ported verbatim from `IsTargetInVisibleSet`: a single
-/// recursive CTE that unions the viewer, their active grant targets, the target
-/// itself when a whole-tenant (wildcard) grant exists, and every `org_chart`
-/// descendant of anyone already visible. The outer `EXISTS` is aliased
-/// `is_visible` so it can be read back by name.
+/// (`None` = right now). Ported from `IsTargetInVisibleSet`: a single recursive
+/// CTE that unions the viewer, their active grant targets, the target itself
+/// when a whole-tenant (wildcard) grant exists, and every `org_chart` descendant
+/// of anyone already visible. The .NET final `SELECT EXISTS(…)` is rendered as a
+/// `SELECT 1 … LIMIT 1` presence probe (truthiness = row present), matching the
+/// `roles_repo::has_active_role` convention so it maps cleanly through SeaORM
+/// regardless of how the driver types an `EXISTS` scalar.
 ///
 /// # Errors
 ///
@@ -98,7 +100,7 @@ pub async fn is_target_in_visible_set(
               AND oc.valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
               AND (oc.valid_to IS NULL OR oc.valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
         )
-        SELECT EXISTS (SELECT 1 FROM visible_set WHERE person_id = @target_person_id) AS is_visible
+        SELECT 1 FROM visible_set WHERE person_id = @target_person_id LIMIT 1
     ";
 
     let (sql, values) = bind_named(
@@ -115,10 +117,7 @@ pub async fn is_target_in_visible_set(
     let row = db
         .query_one(Statement::from_sql_and_values(DbBackend::MySql, &sql, values))
         .await?;
-    match row {
-        Some(r) => Ok(r.try_get::<i64>("", "is_visible")? != 0),
-        None => Ok(false),
-    }
+    Ok(row.is_some())
 }
 
 /// Depth-bounded subtree rooted at `root_person_id`. Ported verbatim from

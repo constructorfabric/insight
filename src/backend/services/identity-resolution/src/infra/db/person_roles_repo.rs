@@ -9,7 +9,10 @@
 #![allow(dead_code)]
 
 use sea_orm::prelude::DateTime;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DbBackend, IsolationLevel, Statement, TransactionTrait,
+    Value,
+};
 use uuid::Uuid;
 
 const COLUMNS: &str = "person_role_id, insight_tenant_id, person_id, role_id, \
@@ -161,23 +164,44 @@ pub async fn insert(
     Ok(())
 }
 
-/// Revoke (soft-delete) an assignment, but atomically REFUSE to remove the
-/// tenant's last active `admin` assignment (lockout guard). Returns rows
-/// affected: 1 = revoked, 0 = already revoked / vanished / would-be-last-admin.
-/// Ported verbatim from `SqlRoles.TrySoftDeletePersonRoleProtectingLastAdmin`.
-/// The `UPDATE … JOIN (…count…)` guard is atomic conditional DML with a
-/// correlated subquery — no `toolkit-db` builder form → raw SQL (see
-/// `infra::db` module docs + constructorfabric/gears-rust#4239).
+/// Revoke (soft-delete) an assignment, but REFUSE to remove the tenant's last
+/// active `admin` assignment (lockout guard). Returns rows affected: 1 =
+/// revoked, 0 = already revoked / vanished / would-be-last-admin.
+///
+/// Ported verbatim from `RolesRepository.TrySoftDeletePersonRoleProtectingLastAdminAsync`:
+/// a `RepeatableRead` **transaction** that first takes row-level write locks on
+/// every active admin in the target's tenant (`SELECT … FOR UPDATE`), then runs
+/// the guarded UPDATE. The correlated `COUNT` inside the single UPDATE is a
+/// snapshot read on MariaDB, so the lock is what actually closes the TOCTOU race
+/// (two concurrent revokes of different admins in a 2-admin tenant would
+/// otherwise both see `count > 1` and both commit → zero admins). Neither the
+/// `FOR UPDATE` lock nor the `UPDATE … JOIN (…count…)` guard has a `toolkit-db`
+/// builder form → raw SQL (see `infra::db` module docs +
+/// constructorfabric/gears-rust#4239).
 ///
 /// # Errors
 ///
-/// Returns an error if the update fails.
+/// Returns an error if the transaction fails.
 pub async fn try_soft_delete_protecting_last_admin(
     db: &DatabaseConnection,
     person_role_id: Uuid,
     admin_role_id: Uuid,
     reason: Option<&str>,
 ) -> anyhow::Result<u64> {
+    // Lock every active admin row in the target's tenant. Draining the COUNT
+    // forces MariaDB to finish the scan, so the rows are write-locked before the
+    // UPDATE reads the count. Binds: person_role_id, admin_role_id.
+    const LOCK_SQL: &str = r"
+        SELECT COUNT(*)
+        FROM person_roles
+        WHERE insight_tenant_id = (
+                SELECT insight_tenant_id FROM person_roles
+                WHERE person_role_id = ?
+              )
+          AND role_id  = ?
+          AND valid_to IS NULL
+        FOR UPDATE
+    ";
     // Positional binds follow textual order of the named params:
     //   admin_role_id (subquery), person_role_id (WHERE), reason (SET),
     //   admin_role_id (outer WHERE).
@@ -208,15 +232,28 @@ pub async fn try_soft_delete_protecting_last_admin(
           )
     ";
     let admin = admin_role_id.as_bytes().to_vec();
-    let stmt = Statement::from_sql_and_values(
+    let pr = person_role_id.as_bytes().to_vec();
+
+    let txn = db
+        .begin_with_config(Some(IsolationLevel::RepeatableRead), None)
+        .await?;
+
+    txn.query_one(Statement::from_sql_and_values(
         DbBackend::MySql,
-        SQL,
-        [
-            admin.clone().into(),
-            person_role_id.as_bytes().to_vec().into(),
-            reason.into(),
-            admin.into(),
-        ],
-    );
-    Ok(db.execute(stmt).await?.rows_affected())
+        LOCK_SQL,
+        [pr.clone().into(), admin.clone().into()],
+    ))
+    .await?;
+
+    let rows = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            SQL,
+            [admin.clone().into(), pr.into(), reason.into(), admin.into()],
+        ))
+        .await?
+        .rows_affected();
+
+    txn.commit().await?;
+    Ok(rows)
 }

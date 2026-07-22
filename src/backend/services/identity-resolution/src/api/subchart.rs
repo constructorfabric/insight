@@ -108,11 +108,17 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
 fn validate_depth(depth: Option<i64>) -> Result<Option<i32>, CanonicalError> {
     match depth {
         None => Ok(None),
-        Some(d) if d < 0 => Err(SubchartError::invalid_argument()
-            .with_field_violation("depth", format!("depth must be >= 0; got {d}"), "invalid_depth")
-            .create()),
-        Some(d) => Ok(Some(i32::try_from(d).unwrap_or(i32::MAX))),
+        Some(d) if d < 0 => Err(invalid_depth(format!("depth must be >= 0; got {d}"))),
+        Some(d) => i32::try_from(d)
+            .map(Some)
+            .map_err(|_| invalid_depth(format!("depth is out of range: {d}"))),
     }
+}
+
+fn invalid_depth(detail: String) -> CanonicalError {
+    SubchartError::invalid_argument()
+        .with_field_violation("depth", detail, "invalid_depth")
+        .create()
 }
 
 /// Parse + validate the optional `valid_at`: normalise to naive-UTC and reject
@@ -174,6 +180,10 @@ mod tests {
         assert!(matches!(validate_depth(Some(0)), Ok(Some(0))));
         assert!(matches!(validate_depth(Some(5)), Ok(Some(5))));
         assert!(validate_depth(Some(-1)).is_err(), "negative rejected");
+        assert!(
+            validate_depth(Some(i64::from(i32::MAX) + 1)).is_err(),
+            "overflow rejected"
+        );
     }
 
     #[test]

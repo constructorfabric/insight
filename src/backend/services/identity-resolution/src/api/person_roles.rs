@@ -28,6 +28,7 @@ use crate::infra::db::roles_repo::ADMIN_ROLE_ID;
 
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 500;
+const MAX_REASON_LEN: usize = 500; // VARCHAR(500)
 
 /// Body of `POST /v1/person-roles` — grant a role to a person.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -92,7 +93,9 @@ pub struct ListParams {
     pub person: Option<Uuid>,
     pub role: Option<Uuid>,
     pub active: Option<bool>,
-    pub limit: Option<u64>,
+    // Signed so a negative `?limit=` clamps to 1 (parity with the .NET `int?`
+    // clamp) rather than failing query deserialization.
+    pub limit: Option<i64>,
 }
 
 /// `POST /v1/person-roles` — grant a role (admin only).
@@ -104,10 +107,20 @@ pub async fn create_person_role(
     let tenant = ctx.subject_tenant_id();
     let author = require_admin(&state.db, &ctx).await?;
 
-    if !ids_present(req.person_id, req.role_id) {
-        return Err(PersonRoleError::invalid_argument()
-            .with_field_violation("person_id", "person_id and role_id are required", "INVALID")
-            .create());
+    // Per-field validation, mirroring the .NET `CreatePersonRoleCommandValidator`
+    // (`invalid_person_id` / `invalid_role_id` / `invalid_reason`).
+    if req.person_id.is_nil() {
+        return Err(invalid_field(
+            "person_id",
+            "person_id is required",
+            "invalid_person_id",
+        ));
+    }
+    if req.role_id.is_nil() {
+        return Err(invalid_field("role_id", "role_id is required", "invalid_role_id"));
+    }
+    if !reason_valid(req.reason.as_deref()) {
+        return Err(reason_too_long());
     }
 
     let person_role_id = Uuid::now_v7();
@@ -152,10 +165,7 @@ pub async fn list_person_roles(
     let tenant = ctx.subject_tenant_id();
     require_admin(&state.db, &ctx).await?;
 
-    let limit = params
-        .limit
-        .unwrap_or(LIST_DEFAULT_LIMIT)
-        .clamp(1, LIST_MAX_LIMIT);
+    let limit = clamp_limit(params.limit);
     let rows = person_roles_repo::list(
         &state.db,
         tenant,
@@ -181,6 +191,9 @@ pub async fn delete_person_role(
     let tenant = ctx.subject_tenant_id();
     let author = require_admin(&state.db, &ctx).await?;
     let reason = body.and_then(|Json(b)| b.reason);
+    if !reason_valid(reason.as_deref()) {
+        return Err(reason_too_long());
+    }
 
     // Pre-fetch for audit + initial 404. A revoked row (valid_to set) is 404.
     let existing = match person_roles_repo::get_by_id(&state.db, tenant, id)
@@ -242,10 +255,30 @@ fn fmt_ts(dt: DateTime) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
-/// Both ids must be present (non-nil) — mirrors the .NET `NotEmpty` validators
-/// on `PersonId` / `RoleId`.
-fn ids_present(person_id: Uuid, role_id: Uuid) -> bool {
-    !person_id.is_nil() && !role_id.is_nil()
+/// `reason`, when present, must be at most 500 chars — mirrors the .NET
+/// `MaximumLength(500)` on `CreatePersonRoleCommandValidator` /
+/// `RevokeReasonValidator`.
+fn reason_valid(reason: Option<&str>) -> bool {
+    reason.is_none_or(|r| r.chars().count() <= MAX_REASON_LEN)
+}
+
+/// Build a 400 field-violation error (`invalid_argument`).
+fn invalid_field(field: &str, message: &str, code: &str) -> CanonicalError {
+    PersonRoleError::invalid_argument()
+        .with_field_violation(field, message, code)
+        .create()
+}
+
+fn reason_too_long() -> CanonicalError {
+    invalid_field("reason", "reason must be at most 500 characters", "invalid_reason")
+}
+
+/// Clamp `?limit=` to `[1, 500]`; negatives → 1, absent → 50 (parity with the
+/// .NET `int?` clamp — a nonsense value never 400s the request).
+fn clamp_limit(limit: Option<i64>) -> u64 {
+    limit.map_or(LIST_DEFAULT_LIMIT, |l| {
+        u64::try_from(l).unwrap_or(1).clamp(1, LIST_MAX_LIMIT)
+    })
 }
 
 #[cfg(test)]
@@ -253,12 +286,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ids_present_requires_both_non_nil() {
-        let a = Uuid::from_u128(1);
-        let b = Uuid::from_u128(2);
-        assert!(ids_present(a, b));
-        assert!(!ids_present(Uuid::nil(), b), "nil person");
-        assert!(!ids_present(a, Uuid::nil()), "nil role");
-        assert!(!ids_present(Uuid::nil(), Uuid::nil()), "both nil");
+    fn reason_length_validation() {
+        assert!(reason_valid(None), "absent ok");
+        assert!(reason_valid(Some("short")), "short ok");
+        assert!(reason_valid(Some(&"x".repeat(MAX_REASON_LEN))), "500 ok");
+        assert!(
+            !reason_valid(Some(&"x".repeat(MAX_REASON_LEN + 1))),
+            "501 too long"
+        );
+    }
+
+    #[test]
+    fn limit_clamping() {
+        assert_eq!(clamp_limit(None), LIST_DEFAULT_LIMIT);
+        assert_eq!(clamp_limit(Some(10)), 10);
+        assert_eq!(clamp_limit(Some(0)), 1, "zero → 1");
+        assert_eq!(clamp_limit(Some(-5)), 1, "negative → 1");
+        assert_eq!(clamp_limit(Some(9999)), LIST_MAX_LIMIT, "over cap → 500");
     }
 }

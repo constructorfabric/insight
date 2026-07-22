@@ -92,7 +92,9 @@ pub struct ListParams {
     pub viewer: Option<Uuid>,
     pub viewed: Option<Uuid>,
     pub active: Option<bool>,
-    pub limit: Option<u64>,
+    // Signed so a negative `?limit=` clamps to 1 (parity with the .NET `int?`
+    // clamp) rather than failing query deserialization.
+    pub limit: Option<i64>,
 }
 
 /// `POST /v1/visibility` — create a grant (admin only).
@@ -114,9 +116,7 @@ pub async fn create_visibility(
             .create());
     }
     if !reason_valid(req.reason.as_deref()) {
-        return Err(VisibilityError::invalid_argument()
-            .with_field_violation("reason", "reason must be at most 500 characters", "INVALID")
-            .create());
+        return Err(reason_too_long());
     }
 
     let visibility_id = Uuid::now_v7();
@@ -160,10 +160,7 @@ pub async fn list_visibility(
     let tenant = ctx.subject_tenant_id();
     require_admin(&state.db, &ctx).await?;
 
-    let limit = params
-        .limit
-        .unwrap_or(LIST_DEFAULT_LIMIT)
-        .clamp(1, LIST_MAX_LIMIT);
+    let limit = clamp_limit(params.limit);
     let rows = visibility_repo::list(
         &state.db,
         tenant,
@@ -188,6 +185,9 @@ pub async fn delete_visibility(
     let tenant = ctx.subject_tenant_id();
     let author = require_admin(&state.db, &ctx).await?;
     let reason = body.and_then(|Json(b)| b.reason);
+    if !reason_valid(reason.as_deref()) {
+        return Err(reason_too_long());
+    }
 
     // 404 only if the grant never existed; otherwise soft-delete + 204 (a
     // second revoke of an already-revoked grant is a no-op 204). Parity w/ .NET.
@@ -219,9 +219,23 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
 }
 
 /// `reason`, when present, must be at most 500 chars — mirrors the .NET
-/// `MaximumLength(500)` validator.
+/// `MaximumLength(500)` on the create + `RevokeReasonValidator`.
 fn reason_valid(reason: Option<&str>) -> bool {
     reason.is_none_or(|r| r.chars().count() <= MAX_REASON_LEN)
+}
+
+fn reason_too_long() -> CanonicalError {
+    VisibilityError::invalid_argument()
+        .with_field_violation("reason", "reason must be at most 500 characters", "invalid_reason")
+        .create()
+}
+
+/// Clamp `?limit=` to `[1, 500]`; negatives → 1, absent → 50 (parity with the
+/// .NET `int?` clamp).
+fn clamp_limit(limit: Option<i64>) -> u64 {
+    limit.map_or(LIST_DEFAULT_LIMIT, |l| {
+        u64::try_from(l).unwrap_or(1).clamp(1, LIST_MAX_LIMIT)
+    })
 }
 
 /// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator.
@@ -242,5 +256,14 @@ mod tests {
             !reason_valid(Some(&"x".repeat(MAX_REASON_LEN + 1))),
             "501 too long"
         );
+    }
+
+    #[test]
+    fn limit_clamping() {
+        assert_eq!(clamp_limit(None), LIST_DEFAULT_LIMIT);
+        assert_eq!(clamp_limit(Some(10)), 10);
+        assert_eq!(clamp_limit(Some(0)), 1, "zero → 1");
+        assert_eq!(clamp_limit(Some(-5)), 1, "negative → 1");
+        assert_eq!(clamp_limit(Some(9999)), LIST_MAX_LIMIT, "over cap → 500");
     }
 }
