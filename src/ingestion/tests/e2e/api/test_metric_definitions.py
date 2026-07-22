@@ -34,14 +34,20 @@ def test_list_metric_definitions_200(api) -> None:
         )
 
 
-def test_list_metric_definitions_sorted_and_unique(api) -> None:
+def test_list_metric_definitions_sorted_and_unique(api, tenant_override_definition) -> None:
     """Rows are sorted by metric_key ascending and each key appears once —
-    tenant overrides collapse onto their product-default row."""
+    a tenant override collapses onto its product-default row, and its label
+    is the one returned."""
     r = api.get("/v1/metric-definitions")
     assert r.status_code == 200, f"status={r.status_code} body={r.text}"
-    keys = [m["metric_key"] for m in r.json()["metrics"]]
+    metrics = r.json()["metrics"]
+    keys = [m["metric_key"] for m in metrics]
     assert keys == sorted(keys)
     assert len(keys) == len(set(keys))
+
+    override = tenant_override_definition
+    row = next(m for m in metrics if m["metric_key"] == override["metric_key"])
+    assert row["label"] == override["label"]
 
 
 def test_list_metric_definitions_no_computation_internals(api) -> None:

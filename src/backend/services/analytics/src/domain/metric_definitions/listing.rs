@@ -9,7 +9,7 @@
 //! stay off the wire: consumers get the meaning of a metric, not its
 //! implementation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult, Statement, Value};
 use serde::Serialize;
@@ -80,27 +80,44 @@ pub async fn list_definition_views(
     let rows = fetch_listing_rows(db, tenant_id)
         .await
         .map_err(|error| db_error(&error))?;
-
-    let mut grouped: BTreeMap<String, Vec<ListingRow>> = BTreeMap::new();
-    for row in rows {
-        grouped.entry(row.metric_key.clone()).or_default().push(row);
-    }
-
-    let mut selected = Vec::with_capacity(grouped.len());
-    for (_, mut candidates) in grouped {
-        // Tenant override wins over the product-default row for the same key.
-        candidates.sort_by_key(|row| row.tenant_id.is_none());
-        selected.push(candidates.remove(0));
-    }
+    let selected = select_rows(rows);
 
     let definition_ids = selected
         .iter()
         .map(|row| row.definition_id)
         .collect::<Vec<_>>();
-    let mut dimensions = fetch_dimensions(db, &definition_ids)
+    let dimensions = fetch_dimensions(db, &definition_ids)
         .await
         .map_err(|error| db_error(&error))?;
 
+    let metrics = build_views(selected, dimensions)?;
+    Ok(MetricDefinitionListResponse { metrics })
+}
+
+/// Collapse the tenant + product rows per `metric_key` to the one that wins:
+/// a tenant-scoped row overrides the product default. Input order is
+/// irrelevant; output is sorted by `metric_key` (`BTreeMap` key order).
+fn select_rows(rows: Vec<ListingRow>) -> Vec<ListingRow> {
+    let mut grouped: BTreeMap<String, Vec<ListingRow>> = BTreeMap::new();
+    for row in rows {
+        grouped.entry(row.metric_key.clone()).or_default().push(row);
+    }
+    let mut selected = Vec::with_capacity(grouped.len());
+    for (_, mut candidates) in grouped {
+        // Tenant override (tenant_id = Some) sorts before the product default.
+        candidates.sort_by_key(|row| row.tenant_id.is_none());
+        selected.push(candidates.remove(0));
+    }
+    selected
+}
+
+/// Map selected rows to wire views, attaching each row's dimensions and
+/// decoding its enum columns. Errors on a row whose stored enum value is not
+/// canonical (a corrupt-config invariant, not reachable via the write path).
+fn build_views(
+    selected: Vec<ListingRow>,
+    mut dimensions: HashMap<Uuid, Vec<String>>,
+) -> Result<Vec<MetricDefinitionView>, CanonicalError> {
     let mut metrics = Vec::with_capacity(selected.len());
     for row in selected {
         let format = MetricFormat::from_db(&row.format)
@@ -133,8 +150,7 @@ pub async fn list_definition_views(
             last_observed_date: row.last_observed_date,
         });
     }
-
-    Ok(MetricDefinitionListResponse { metrics })
+    Ok(metrics)
 }
 
 async fn fetch_listing_rows(
@@ -180,4 +196,82 @@ fn config_error(metric_key: &str, field: &str, value: &str) -> CanonicalError {
         "corrupt metric definition row"
     );
     CanonicalError::internal("corrupt metric definition configuration").create()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(metric_key: &str, tenant_id: Option<Uuid>, label: &str) -> ListingRow {
+        ListingRow {
+            definition_id: Uuid::now_v7(),
+            tenant_id,
+            metric_key: metric_key.to_owned(),
+            label: label.to_owned(),
+            short_label: None,
+            description: None,
+            explanation: None,
+            unit: None,
+            format: "integer".to_owned(),
+            direction: "higher_is_better".to_owned(),
+            is_enabled: true,
+            schema_status: "unchecked".to_owned(),
+            schema_error_code: None,
+            last_observed_date: None,
+        }
+    }
+
+    #[test]
+    fn select_rows_prefers_tenant_override_and_sorts_by_key() {
+        let tenant = Uuid::now_v7();
+        let rows = vec![
+            row("git.commits", None, "product"),
+            row("git.commits", Some(tenant), "override"),
+            row("ai.cost", None, "product-ai"),
+        ];
+        let selected = select_rows(rows);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|r| r.metric_key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ai.cost", "git.commits"]
+        );
+        let Some(commits) = selected.iter().find(|r| r.metric_key == "git.commits") else {
+            panic!("git.commits must be selected");
+        };
+        assert_eq!(commits.label, "override");
+    }
+
+    #[test]
+    fn build_views_decodes_columns_and_attaches_dimensions() {
+        let mut r = row("git.commits", None, "Commits");
+        r.schema_status = "error".to_owned();
+        r.schema_error_code = Some("table_not_found".to_owned());
+        let id = r.definition_id;
+        let dims = HashMap::from([(id, vec!["repo".to_owned()])]);
+
+        let Ok(views) = build_views(vec![r], dims) else {
+            panic!("canonical rows must map");
+        };
+        assert_eq!(views.len(), 1);
+        let Some(view) = views.first() else {
+            panic!("one view");
+        };
+        assert_eq!(view.format, MetricFormat::Integer);
+        assert_eq!(view.direction, MetricDirection::HigherIsBetter);
+        assert_eq!(view.schema_status, SchemaStatus::Error);
+        assert_eq!(
+            view.schema_error_code,
+            Some(MetricSchemaErrorCode::TableNotFound)
+        );
+        assert_eq!(view.dimensions, vec!["repo".to_owned()]);
+    }
+
+    #[test]
+    fn build_views_rejects_a_noncanonical_enum_value() {
+        let mut r = row("git.commits", None, "Commits");
+        r.format = "not-a-format".to_owned();
+        assert!(build_views(vec![r], HashMap::new()).is_err());
+    }
 }

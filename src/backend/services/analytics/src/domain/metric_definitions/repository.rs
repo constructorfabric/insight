@@ -623,16 +623,24 @@ pub async fn update_definition_status(
     error_code: Option<MetricSchemaErrorCode>,
     last_observed: Option<chrono::NaiveDate>,
 ) -> Result<(), sea_orm::DbErr> {
-    // COALESCE keeps the previously recorded freshness when a sweep could
-    // not produce one (config errors bail before the observation probe) —
-    // last_observed_date is monotonic knowledge, not per-sweep state.
+    // last_observed_date is monotonic knowledge, not per-sweep state: keep the
+    // stored value when the sweep produced none (NULL — config errors bail
+    // before the observation probe) or an older date (retention drop, shrunk
+    // measure set), and only advance when the new date is strictly newer.
+    let last_val = match last_observed {
+        Some(date) => Value::from(date.to_string()),
+        None => Value::String(None),
+    };
     db.execute(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
              schema_checked_at = CURRENT_TIMESTAMP(3), \
              schema_error_code = ?, \
-             last_observed_date = COALESCE(?, last_observed_date), \
+             last_observed_date = CASE \
+                 WHEN ? IS NULL THEN last_observed_date \
+                 ELSE GREATEST(?, COALESCE(last_observed_date, ?)) \
+             END, \
              updated_at = updated_at \
          WHERE id = ?",
         [
@@ -641,10 +649,9 @@ pub async fn update_definition_status(
                 Some(code) => Value::from(code.as_db()),
                 None => Value::String(None),
             },
-            match last_observed {
-                Some(date) => Value::from(date.to_string()),
-                None => Value::String(None),
-            },
+            last_val.clone(),
+            last_val.clone(),
+            last_val,
             uuid_value(definition_id),
         ],
     ))

@@ -89,6 +89,14 @@ mod tests {
     }
 
     #[test]
+    fn error_code_db_strings_round_trip() {
+        for code in ALL_METRIC_SCHEMA_ERROR_CODES {
+            assert_eq!(MetricSchemaErrorCode::from_db(code.as_db()), Some(*code));
+        }
+        assert_eq!(MetricSchemaErrorCode::from_db("nope"), None);
+    }
+
+    #[test]
     fn all_codes_listed_once() {
         let mut strings = ALL_METRIC_SCHEMA_ERROR_CODES
             .iter()
