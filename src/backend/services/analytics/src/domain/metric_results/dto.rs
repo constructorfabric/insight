@@ -76,6 +76,8 @@ pub struct MetricResultDto {
     pub metric_key: String,
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub short_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub explanation: Option<String>,

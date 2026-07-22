@@ -35,19 +35,21 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 usage() {
   cat <<'EOF'
-usage: insight-init.sh --target=compose|k8s-local
+usage: insight-init.sh --target=compose|k8s-local [--no-frontend]
 
 Targets:
   --target=compose     Generate .env.compose for the docker-compose stack.
   --target=k8s-local   Generate deploy/gitops/environments/local/
                        inventory.yaml + populate secrets-store.yaml for the
                        k8s gitops stack.
+  --no-frontend       Skip frontend setup for the compose target.
 
 The wizard is interactive only. Run from a terminal.
 EOF
 }
 
 TARGET=""
+NO_FRONTEND=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target=*) TARGET="${1#*=}"; shift ;;
@@ -56,6 +58,7 @@ while [[ $# -gt 0 ]]; do
       shift
       [[ $# -gt 0 ]] && shift
       ;;
+    --no-frontend) NO_FRONTEND=true; shift ;;
     -h|--help)  usage; exit 0 ;;
     *) echo "ERROR: unknown arg: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -66,6 +69,11 @@ case "$TARGET" in
   "")  echo "ERROR: --target is required" >&2; usage >&2; exit 2 ;;
   *)   echo "ERROR: unknown target: $TARGET" >&2; usage >&2; exit 2 ;;
 esac
+
+if [[ "$NO_FRONTEND" == "true" && "$TARGET" != "compose" ]]; then
+  echo "ERROR: --no-frontend is only valid with --target=compose." >&2
+  exit 2
+fi
 
 if [[ ! -t 0 ]]; then
   echo "ERROR: insight-init.sh needs an interactive shell (stdin is not a TTY)." >&2
@@ -165,11 +173,17 @@ validate_mariadb() {
 # interface using host-side curl. Returns 0 on success.
 validate_clickhouse() {
   local host="$1" port="$2" user="$3" pass="$4" db="$5"
-  echo "  Probing ClickHouse at ${host}:${port}..." >&2
-  if curl -sf -u "${user}:${pass}" \
+  local probe_host="$host"
+  [[ "$probe_host" == "host.docker.internal" ]] && probe_host="localhost"
+  if [[ "$probe_host" == "$host" ]]; then
+    echo "  Probing ClickHouse at ${probe_host}:${port}..." >&2
+  else
+    echo "  Probing ClickHouse at ${probe_host}:${port} (configured as ${host})..." >&2
+  fi
+  if curl -sf --get -u "${user}:${pass}" \
        --data-urlencode "query=SELECT 1" \
        --data-urlencode "database=${db}" \
-       "http://${host}:${port}/" >/dev/null 2>&1; then
+       "http://${probe_host}:${port}/" >/dev/null 2>&1; then
     echo "  ClickHouse OK." >&2
     return 0
   fi
@@ -356,7 +370,7 @@ EOF
   echo "--- Login identity ---" >&2
   echo "  The seeded person you sign in as (also the demo dev-team lead + the" >&2
   echo "  Keycloak realm anchor). Any *@company.nonpresent; password insight-dev." >&2
-  DEV_USER_EMAIL=$(ask "Login email (VITE_DEV_USER_EMAIL)" "dev@company.nonpresent")
+  DEV_USER_EMAIL=$(ask "Login email (DEV_USER_EMAIL)" "dev@company.nonpresent")
   echo "" >&2
 }
 
@@ -381,59 +395,63 @@ write_compose() {
   ask_shared
 
   # ── Frontend mode (compose-only) ──────────────────────────────────
-  echo "--- Frontend ---" >&2
   local fe_mode fe_path default_fe_path="../insight-front"
-  echo "  How should the frontend run?" >&2
-  echo "    1) ghcr   — pull the pre-built image (no source needed)" >&2
-  echo "    2) local  — Vite + HMR against an existing insight-front checkout" >&2
-  echo "    3) clone  — git clone insight-front, then run Vite + HMR" >&2
-  local fe_choice
-  while true; do
-    fe_choice=$(ask "  Choice" "1")
-    case "$fe_choice" in
-      1|ghcr)
-        fe_mode="ghcr"
-        fe_path="$default_fe_path"
-        break ;;
-      2|local|dev)
-        fe_mode="dev"
-        fe_path=$(ask "  Path to insight-front checkout" "$default_fe_path")
-        if [[ -z "$fe_path" || ! -d "$ROOT_DIR/$fe_path" && ! -d "$fe_path" ]]; then
-          echo "  ERROR: '$fe_path' does not exist. Pick option 3 to clone." >&2
-          exit 1
-        fi
-        break ;;
-      3|clone)
-        if ! command -v git >/dev/null 2>&1; then
-          echo "  ERROR: git is not installed; pick 1 or 2." >&2
-          continue
-        fi
-        fe_path=$(ask "  Clone insight-front into" "$default_fe_path")
-        # Resolve relative paths against the repo root.
-        local clone_target
-        if [[ "$fe_path" = /* ]]; then clone_target="$fe_path"
-        else clone_target="$ROOT_DIR/$fe_path"; fi
-        if [[ -e "$clone_target" ]]; then
-          echo "  ERROR: '$clone_target' already exists; refusing to clone over it." >&2
-          echo "         Remove it first, or pick 2 to reuse the existing checkout." >&2
-          exit 1
-        fi
-        if ! git clone https://github.com/constructorfabric/insight-front.git "$clone_target" >&2; then
-          echo "  ERROR: clone failed." >&2
-          exit 1
-        fi
-        fe_mode="dev"
-        break ;;
-      *) echo "  Please answer 1, 2, or 3." >&2 ;;
-    esac
-  done
-  echo "" >&2
+  if [[ "$NO_FRONTEND" == "true" ]]; then
+    fe_mode="ghcr"
+    fe_path="$default_fe_path"
+  else
+    echo "--- Frontend ---" >&2
+    echo "  How should the frontend run?" >&2
+    echo "    1) ghcr   — pull the pre-built image (no source needed)" >&2
+    echo "    2) local  — Vite + HMR against an existing insight-front checkout" >&2
+    echo "    3) clone  — git clone insight-front, then run Vite + HMR" >&2
+    local fe_choice
+    while true; do
+      fe_choice=$(ask "  Choice" "1")
+      case "$fe_choice" in
+        1|ghcr)
+          fe_mode="ghcr"
+          fe_path="$default_fe_path"
+          break ;;
+        2|local|dev)
+          fe_mode="dev"
+          fe_path=$(ask "  Path to insight-front checkout" "$default_fe_path")
+          if [[ -z "$fe_path" || ! -d "$ROOT_DIR/$fe_path" && ! -d "$fe_path" ]]; then
+            echo "  ERROR: '$fe_path' does not exist. Pick option 3 to clone." >&2
+            exit 1
+          fi
+          break ;;
+        3|clone)
+          if ! command -v git >/dev/null 2>&1; then
+            echo "  ERROR: git is not installed; pick 1 or 2." >&2
+            continue
+          fi
+          fe_path=$(ask "  Clone insight-front into" "$default_fe_path")
+          local clone_target
+          if [[ "$fe_path" = /* ]]; then clone_target="$fe_path"
+          else clone_target="$ROOT_DIR/$fe_path"; fi
+          if [[ -e "$clone_target" ]]; then
+            echo "  ERROR: '$clone_target' already exists; refusing to clone over it." >&2
+            echo "         Remove it first, or pick 2 to reuse the existing checkout." >&2
+            exit 1
+          fi
+          if ! git clone https://github.com/constructorfabric/insight-front.git "$clone_target" >&2; then
+            echo "  ERROR: clone failed." >&2
+            exit 1
+          fi
+          fe_mode="dev"
+          break ;;
+        *) echo "  Please answer 1, 2, or 3." >&2 ;;
+      esac
+    done
+    echo "" >&2
+  fi
 
   # ── Auth mode (compose-only) ──────────────────────────────────────
   echo "--- Auth ---" >&2
   local auth_mode
   echo "  Which auth backend should the authenticator log in against?" >&2
-  echo "    1) fakeidp   — no login screen, binds to VITE_DEV_USER_EMAIL (default)" >&2
+  echo "    1) fakeidp   — no login screen, binds to DEV_USER_EMAIL (default)" >&2
   echo "    2) keycloak  — real Keycloak login form + custom claims (:8085)" >&2
   local auth_choice
   while true; do
@@ -477,7 +495,7 @@ write_compose() {
   update_env_var "$env_file" CLICKHOUSE_USER               "$CLICKHOUSE_USER"
   update_env_var "$env_file" CLICKHOUSE_PASSWORD           "$CLICKHOUSE_PASSWORD"
   update_env_var "$env_file" TENANT_DEFAULT_ID             "$TENANT_DEFAULT_ID"
-  update_env_var "$env_file" VITE_DEV_USER_EMAIL           "$DEV_USER_EMAIL"
+  update_env_var "$env_file" DEV_USER_EMAIL                "$DEV_USER_EMAIL"
   update_env_var "$env_file" FRONTEND_MODE                 "$fe_mode"
   update_env_var "$env_file" INSIGHT_FRONT_PATH            "$fe_path"
   update_env_var "$env_file" AUTH_MODE                     "$auth_mode"

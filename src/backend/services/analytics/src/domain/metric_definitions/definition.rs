@@ -141,6 +141,9 @@ impl ValueTransform {
 pub struct MetricBase {
     pub key: String,
     pub label: String,
+    /// Compact label for dense surfaces (member grids, heatmap columns);
+    /// None = the full label is already compact enough.
+    pub short_label: Option<String>,
     pub description: Option<String>,
     pub explanation: Option<String>,
     pub entity_type: String,
