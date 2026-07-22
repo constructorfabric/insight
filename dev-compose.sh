@@ -32,6 +32,7 @@ cd "$ROOT_DIR"
 trim()     { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
 contains() { case " $1 " in *" $2 "*) return 0 ;; esac; return 1; }
 add()      { local list="$1" item="$2"; contains "$list" "$item" && printf '%s' "$list" || printf '%s %s' "$list" "$item"; }
+host_address() { [[ "$1" == "host.docker.internal" ]] && printf '%s' localhost || printf '%s' "$1"; }
 
 resolve_env_file() {
   local f="${1:-.env.compose}"
@@ -604,6 +605,8 @@ report_host_service_commands() {
   local clickhouse_host="${CLICKHOUSE_HOST:-clickhouse}" clickhouse_port="${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
   [[ "${MARIADB_EXTERNAL:-false}" != "true" ]] && { maria_host=localhost; maria_port="${MARIADB_PORT:-3306}"; }
   [[ "${CLICKHOUSE_EXTERNAL:-false}" != "true" ]] && { clickhouse_host=localhost; clickhouse_port="${CLICKHOUSE_HTTP_PORT:-8123}"; }
+  maria_host="$(host_address "$maria_host")"
+  clickhouse_host="$(host_address "$clickhouse_host")"
   for svc in $host_list; do
     case "$svc" in
       analytics)

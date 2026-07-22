@@ -165,15 +165,17 @@ validate_mariadb() {
 # interface using host-side curl. Returns 0 on success.
 validate_clickhouse() {
   local host="$1" port="$2" user="$3" pass="$4" db="$5"
-  echo "  Probing ClickHouse at ${host}:${port}..." >&2
+  local probe_host="$host"
+  [[ "$probe_host" == "host.docker.internal" ]] && probe_host=localhost
+  echo "  Probing ClickHouse at ${probe_host}:${port}..." >&2
   if curl -sf -u "${user}:${pass}" \
        --data-urlencode "query=SELECT 1" \
        --data-urlencode "database=${db}" \
-       "http://${host}:${port}/" >/dev/null 2>&1; then
+       "http://${probe_host}:${port}/" >/dev/null 2>&1; then
     echo "  ClickHouse OK." >&2
     return 0
   fi
-  echo "  ERROR: could not connect to ClickHouse at ${host}:${port} as ${user}." >&2
+  echo "  ERROR: could not connect to ClickHouse at ${probe_host}:${port} as ${user}." >&2
   return 1
 }
 
