@@ -52,28 +52,14 @@ def _protocol_mappers(tenant_id: str) -> list[dict]:
     common = {"id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}
     return [
         {
+            # The authenticator reads this single-string claim (idp.tenant_claim,
+            # default `tenant_id`) — one and only one tenant per token — and it
+            # becomes the gateway JWT's `tenant_id`.
             "name": "tenant_id",
             "protocol": "openid-connect",
             "protocolMapper": "oidc-hardcoded-claim-mapper",
             "consentRequired": False,
             "config": {**common, "claim.name": "tenant_id", "claim.value": tenant_id, "jsonType.label": "String"},
-        },
-        {
-            # The nginx+auth authenticator (BFF) reads a `tenants` claim as a
-            # JSON string ARRAY from the id_token (services/authenticator
-            # oidc.rs::payload_string_array), mirroring what fakeidp emits — it
-            # becomes the gateway JWT's single tenant_id. A JSON-typed hardcoded
-            # value emits `"tenants": ["<uuid>"]`.
-            "name": "tenants",
-            "protocol": "openid-connect",
-            "protocolMapper": "oidc-hardcoded-claim-mapper",
-            "consentRequired": False,
-            "config": {
-                **common,
-                "claim.name": "tenants",
-                "claim.value": json.dumps([tenant_id]),
-                "jsonType.label": "JSON",
-            },
         },
         {
             "name": "org_unit",

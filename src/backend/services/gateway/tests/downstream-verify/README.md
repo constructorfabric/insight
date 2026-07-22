@@ -2,8 +2,8 @@
 
 Proves the **R1 rule** as code (NGINX_BFF §6 / §D): every downstream service
 verifies the gateway JWT itself — mandatory, fail-closed, no production disable
-knob. Tenant identity comes only from the signed JWT; `X-Tenant-ID` is a
-selector among the JWT's signed `tenants[]` (G2).
+knob. Tenant identity comes only from the signed JWT's single `tenant_id`
+(one and only one tenant per token, G2).
 
 ## What it stands up
 
@@ -28,8 +28,7 @@ fakeidp ─▶ authenticator ─▶ gateway ─▶ {analytics (Rust), identity (
 1. Browser-less login → cookie → `GET /api/analytics/...` → **200**.
 2. Same request **directly to analytics' port** without a JWT → **401**
    (the R1 proof; identity is checked too).
-3. Multi-tenant user (`carol`): correct `X-Tenant-ID` → 200; selector outside
-   the signed set → 403; missing selector with >1 tenants → 400.
+3. A validly-signed token **missing `tenant_id`** → 401 ("no tenant, no auth").
 4. Step-06 **service token** → analytics accepts it; `roles: ["service"]`.
 5. A request reaching analytics without a valid gateway JWT (models a gateway
    route shipped without `auth_request`, or a forged/browser token) → **401**.

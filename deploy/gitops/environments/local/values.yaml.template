@@ -122,6 +122,10 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: "insight-authenticator-dev-secret"
     redirectUri: "http://localhost/auth/callback"
+    # Optional tenant sourcing: `tenantClaim` names the id_token claim carrying
+    # the single tenant (default `tenant_id` — fakeidp/Keycloak; Entra: `tid`);
+    # `defaultTenantId` is the fallback for a claim-less IdP (e.g. Okta),
+    # empty = fail closed.
 
 # ─── Local IdP topology ──────────────────────────────────────────────────────
 # Local k8s runs an in-cluster `keycloak` exposed THROUGH the ingress at the `/kc`

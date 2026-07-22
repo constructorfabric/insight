@@ -301,7 +301,7 @@ def mint_service_token(tenant: str) -> str:
             "grant_type": "client_credentials",
             "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
             "client_assertion": assertion,
-            "tenants": tenant,
+            "tenant_id": tenant,
         },
     )
     assert status == 200, f"token exchange failed: {status} {body!r}"

@@ -11,7 +11,7 @@
 //! user and service traffic.
 //!
 //! Service tokens are **always tenant-scoped** (tenant isolation): the request
-//! must name at least one tenant (`tenants=[...]`), else it is rejected 400.
+//! must name exactly one tenant (`tenant_id=<uuid>`), else it is rejected 400.
 //! There is no cross-tenant service token and no per-service opt-in flag.
 //!
 //! The endpoint lives on its own axum server bound to `token_bind_addr`
@@ -224,7 +224,7 @@ fn build_service_claims(
     cfg: &AuthenticatorConfig,
     service: &str,
     registry_roles: &[String],
-    tenants: &[String],
+    tenant_id: &str,
     now: u64,
 ) -> GatewayClaims {
     let mut roles = registry_roles.to_vec();
@@ -237,7 +237,7 @@ fn build_service_claims(
     );
     GatewayClaims {
         sub: subject.to_string(),
-        tenant_id: tenants.first().cloned().unwrap_or_default(),
+        tenant_id: tenant_id.to_owned(),
         roles,
         sub_type: SERVICE_SUBJECT_TYPE.to_owned(),
         // `sid` correlates a service's issuance in audit/trace; service tokens
@@ -249,18 +249,6 @@ fn build_service_claims(
         exp: now + cfg.service_tokens.token_ttl_seconds,
         jti: Uuid::now_v7().to_string(),
     }
-}
-
-/// Split the optional comma-separated `tenants` form field into ids.
-fn parse_tenants(raw: Option<&str>) -> Vec<String> {
-    raw.map(|s| {
-        s.split(',')
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .map(ToOwned::to_owned)
-            .collect()
-    })
-    .unwrap_or_default()
 }
 
 // ── HTTP layer (the second listener) ───────────────────────────────────────
@@ -282,9 +270,9 @@ struct TokenRequest {
     client_assertion_type: Option<String>,
     #[serde(default)]
     client_assertion: Option<String>,
-    /// Optional comma-separated tenant ids for a tenant-scoped token.
+    /// The single tenant id the token is scoped to (one and only one).
     #[serde(default)]
-    tenants: Option<String>,
+    tenant_id: Option<String>,
 }
 
 /// Handle a service-token request: validate the grant shape, verify the
@@ -322,19 +310,19 @@ async fn token_handler(
     // names no tenant is rejected up front (400) — before the assertion is
     // verified or its jti consumed — so the caller can fix and retry. Where the
     // service gets its tenant is the service's concern.
-    let requested_tenants = parse_tenants(req.tenants.as_deref());
-    if requested_tenants.is_empty() {
+    let requested_tenant = req.tenant_id.as_deref().map(str::trim).unwrap_or_default();
+    if requested_tenant.is_empty() {
         return bad_request(
-            "tenants",
+            "tenant_id",
             "a service token must name a tenant",
             "TENANT_REQUIRED",
         );
     }
-    // Single-tenant on the wire: a token carries exactly one `tenant_id`. Reject
-    // a request that names more than one rather than silently taking the first.
-    if requested_tenants.len() > 1 {
+    // One and only one tenant per token: a comma-joined list is a caller bug —
+    // reject it rather than minting a token with a garbage tenant id.
+    if requested_tenant.contains(',') {
         return bad_request(
-            "tenants",
+            "tenant_id",
             "a service token must name exactly one tenant",
             "MULTIPLE_TENANTS",
         );
@@ -387,7 +375,7 @@ async fn token_handler(
         &state.cfg,
         &verified.service,
         &entry.roles,
-        &requested_tenants,
+        requested_tenant,
         now,
     );
     let jwt = match state.keystore.sign(&claims) {
@@ -669,7 +657,7 @@ mod tests {
             jwt_audience: "internal-services".to_owned(),
             ..Default::default()
         };
-        let claims = build_service_claims(&cfg, "seeder", &[], &[], 1_000);
+        let claims = build_service_claims(&cfg, "seeder", &[], "", 1_000);
         // `sub` is a clean per-service UUIDv5 (deterministic), not `service:<name>`.
         assert_eq!(
             claims.sub,
@@ -689,7 +677,7 @@ mod tests {
             &cfg,
             "perms",
             &["service".to_owned(), "revoke".to_owned()],
-            &["t-1".to_owned()],
+            "t-1",
             1_000,
         );
         assert_eq!(
@@ -698,12 +686,5 @@ mod tests {
             "service role must not be duplicated"
         );
         assert_eq!(claims.tenant_id, "t-1");
-    }
-
-    #[test]
-    fn parse_tenants_splits_and_trims() {
-        assert_eq!(parse_tenants(Some(" t-a , t-b ,,")), vec!["t-a", "t-b"]);
-        assert!(parse_tenants(None).is_empty());
-        assert!(parse_tenants(Some("")).is_empty());
     }
 }

@@ -87,7 +87,7 @@ pub struct ServiceTokenClient {
     http: reqwest::Client,
     /// Cache keyed by the (sorted) requested tenant scope. Service tokens are
     /// always tenant-scoped, so there is one entry per tenant set in use.
-    cache: RwLock<HashMap<Vec<String>, Cached>>,
+    cache: RwLock<HashMap<String, Cached>>,
 }
 
 impl ServiceTokenClient {
@@ -171,16 +171,16 @@ impl ServiceTokenClient {
             .map_err(|e| CanonicalError::internal(format!("sign client assertion: {e}")).create())
     }
 
-    /// Fetch a fresh token (uncached). Pass tenant ids to request a
-    /// tenant-scoped token (allowed only if the registry entry permits it;
-    /// otherwise the endpoint refuses and this returns an error).
+    /// Fetch a fresh token (uncached). `tenant_id` names the single tenant the
+    /// token is scoped to (one and only one; the endpoint rejects an empty or
+    /// multi-tenant scope).
     ///
     /// # Errors
     /// Returns `ServiceUnavailable` on a transport failure and `Internal` when
     /// the endpoint answers non-2xx or an undecodable body.
-    pub async fn fetch(&self, tenants: &[String]) -> Result<FetchedToken, CanonicalError> {
+    pub async fn fetch(&self, tenant_id: &str) -> Result<FetchedToken, CanonicalError> {
         let assertion = self.make_assertion()?;
-        self.post(&assertion, tenants).await
+        self.post(&assertion, tenant_id).await
     }
 
     /// POST a (possibly externally-minted) assertion to the token endpoint.
@@ -190,7 +190,7 @@ impl ServiceTokenClient {
     pub async fn post(
         &self,
         assertion: &str,
-        tenants: &[String],
+        tenant_id: &str,
     ) -> Result<FetchedToken, CanonicalError> {
         let mut form = vec![
             ("grant_type", "client_credentials".to_owned()),
@@ -200,8 +200,8 @@ impl ServiceTokenClient {
             ),
             ("client_assertion", assertion.to_owned()),
         ];
-        if !tenants.is_empty() {
-            form.push(("tenants", tenants.join(",")));
+        if !tenant_id.is_empty() {
+            form.push(("tenant_id", tenant_id.to_owned()));
         }
 
         let resp = self
@@ -233,9 +233,9 @@ impl ServiceTokenClient {
         })
     }
 
-    /// A service bearer for `tenants`, ready for an `Authorization` header
-    /// (`"Bearer <jwt>"`). Service tokens are always tenant-scoped, so a tenant
-    /// must be named (the endpoint rejects an empty scope). Served from a
+    /// A service bearer for `tenant_id`, ready for an `Authorization` header
+    /// (`"Bearer <jwt>"`). Service tokens are always tenant-scoped, so the one
+    /// tenant must be named (the endpoint rejects an empty scope). Served from a
     /// per-scope cache until 4/5 of the TTL has elapsed, then re-fetched ahead
     /// of expiry; if the refresh fails but the cached token has not truly
     /// expired, the stale-but-valid token is served (resilience across a short
@@ -247,8 +247,8 @@ impl ServiceTokenClient {
     /// # Errors
     /// As [`fetch`](Self::fetch), when a refresh is needed and both the fetch
     /// and the stale fallback are unavailable.
-    pub async fn bearer(&self, tenants: &[String]) -> Result<String, CanonicalError> {
-        let key = cache_key(tenants);
+    pub async fn bearer(&self, tenant_id: &str) -> Result<String, CanonicalError> {
+        let key = tenant_id.to_owned();
 
         // Fast path: short read lock, then release before any await.
         {
@@ -261,7 +261,7 @@ impl ServiceTokenClient {
         }
 
         // Refresh with no lock held.
-        match self.fetch(tenants).await {
+        match self.fetch(tenant_id).await {
             Ok(token) => {
                 let bearer = format!("Bearer {}", token.access_token);
                 // Anchor the cache times to when the token was RECEIVED, not to
@@ -290,14 +290,6 @@ impl ServiceTokenClient {
             }
         }
     }
-}
-
-/// Cache key for a tenant scope: the ids sorted so `[a,b]` and `[b,a]` share
-/// one entry.
-fn cache_key(tenants: &[String]) -> Vec<String> {
-    let mut key = tenants.to_vec();
-    key.sort();
-    key
 }
 
 fn now_secs() -> u64 {

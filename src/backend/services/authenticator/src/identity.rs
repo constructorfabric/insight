@@ -6,7 +6,8 @@
 //! `insight_source_id` (the person id) but **no tenant memberships**, so:
 //!
 //! - `person_id` comes from `insight_source_id` when Identity knows the email;
-//! - `tenants` are sourced from the validated id_token claim (fakeidp supplies
+//! - the single `tenant_id` is sourced from the validated id_token claim
+//!   (fakeidp supplies
 //!   it; real-IdP tenant-membership resolution is a follow-up —
 //!   constructorfabric/insight#1687);
 //! - an unknown person is denied (the callback returns 403). First-admin
@@ -30,15 +31,17 @@ use crate::jwt::{GatewayClaims, KeyStore};
 pub struct IdpIdentity {
     pub sub: String,
     pub email: String,
-    /// Tenant memberships as asserted by the id_token (may be empty for real IdPs).
-    pub tenants: Vec<String>,
+    /// The single tenant asserted by the id_token (`idp.tenant_claim`, or
+    /// `idp.default_tenant_id`); empty when the IdP named none — downstream
+    /// then fails closed. One and only one tenant per token (EPIC #1583).
+    pub tenant_id: String,
 }
 
 /// The resolved internal author of a session.
 #[derive(Debug, Clone)]
 pub struct PersonResolution {
     pub person_id: String,
-    pub tenants: Vec<String>,
+    pub tenant_id: String,
 }
 
 /// Resolves the IdP principal to an internal person.
@@ -60,7 +63,7 @@ pub trait PersonResolver: Send + Sync {
 /// this calls the **internal, service-only** endpoint
 /// `GET /internal/persons/by-email/{email}`, authenticating with a short-lived
 /// **service gateway JWT** the authenticator mints with its own signing key
-/// (`sub_type = service`). Tenant-agnostic: the tenants come from the id_token
+/// (`sub_type = service`). Tenant-agnostic: the tenant comes from the id_token
 /// (see `resolve`), not from Identity.
 #[derive(Clone)]
 pub struct IdentityPersonResolver {
@@ -153,7 +156,7 @@ impl PersonResolver for IdentityPersonResolver {
         };
         Ok(Some(PersonResolution {
             person_id: person_id.to_string(),
-            tenants: id.tenants.clone(),
+            tenant_id: id.tenant_id.clone(),
         }))
     }
 }

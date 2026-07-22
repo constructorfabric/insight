@@ -50,8 +50,8 @@ services:
     ports:
       - "${FAKEIDP_E2E_PORT:-18084}:8084"
 
-  # Canned person resolver for the authenticator's login step (email -> person +
-  # tenants). Keeps login working without seeding real identity; the real
+  # Canned person resolver for the authenticator's login step (email -> person).
+  # Keeps login working without seeding real identity; the real
   # identity service is a downstream verification target, not the login backend.
   identity-stub:
     image: python:3.12-slim

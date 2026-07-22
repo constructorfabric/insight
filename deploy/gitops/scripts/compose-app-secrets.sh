@@ -84,6 +84,11 @@ AUTH_REDIRECT_URI=$(render_tpl "$(yq -r '.authenticator.oidc.redirectUri // ""' 
 # splits it back into a list). Default matches the config default; an IdP that
 # only issues a refresh token WITH offline_access (e.g. Entra) adds it here.
 AUTH_SCOPES=$(yq -r '(.authenticator.oidc.scopes // ["openid","email","profile"]) | join(" ")' "$VALUES")
+# Tenant sourcing: the id_token claim naming the single tenant (`tenant_id` on
+# fakeidp/Keycloak, `tid` on Entra) and the fallback for a claim-less IdP
+# (e.g. Okta). Empty fallback = fail closed downstream.
+AUTH_TENANT_CLAIM=$(     yq -r '.authenticator.oidc.tenantClaim     // "tenant_id"' "$VALUES")
+AUTH_DEFAULT_TENANT_ID=$(yq -r '.authenticator.oidc.defaultTenantId // ""' "$VALUES")
 # The authn-tls discovery FQDN — the minted token `iss` and downstream issuer.
 GATEWAY_ISSUER="https://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:8443"
 GATEWAY_JWKS_URL="http://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:8083/.well-known/jwks.json"
@@ -199,6 +204,8 @@ stringData:
   APP__gears__authenticator__config__idp__issuer_url: "${AUTH_IDP_ISSUER}"
   APP__gears__authenticator__config__idp__client_id: "${AUTH_CLIENT_ID}"
   APP__gears__authenticator__config__idp__client_secret: "${AUTH_CLIENT_SECRET}"
+  APP__gears__authenticator__config__idp__tenant_claim: "${AUTH_TENANT_CLAIM}"
+  APP__gears__authenticator__config__idp__default_tenant_id: "${AUTH_DEFAULT_TENANT_ID}"
   APP__gears__authenticator__config__redirect_uri: "${AUTH_REDIRECT_URI}"
   APP__gears__authenticator__config__oidc_scopes: "${AUTH_SCOPES}"
   APP__gears__authenticator__config__service_tokens__audience: "${AUTH_TOKEN_AUD}"

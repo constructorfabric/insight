@@ -80,16 +80,15 @@ Every seeded user's tokens (id / access / userinfo) carry these claims, on both 
 
 | Claim | Source | Consumed by |
 |-------|--------|-------------|
-| `tenants` | JSON array `["<seed-tenant-uuid>"]` | **the authenticator** — becomes the gateway JWT's `tenant_id` |
-| `tenant_id` | static seed tenant UUID (string) | legacy/compat |
+| `tenant_id` | static seed tenant UUID (string) | **the authenticator** — becomes the gateway JWT's `tenant_id` |
 | `org_unit` | user attribute = team (`executive` for CEO) | — |
 | `groups` | `/development /sales /hr /support /executive` | — |
 | `roles` | realm role (`insight-admin`/`insight-lead`/`insight-member`) | — |
 | `aud` += `insight` | audience mapper | — |
 
-The authenticator reads the **`tenants`** array from the validated id_token
-(`services/authenticator` `oidc.rs`), so that mapper is the one that must be
-present for a login to resolve a tenant. It mirrors what `fakeidp` emits.
+The authenticator reads the single-string **`tenant_id`** claim from the
+validated id_token (`services/authenticator` `oidc.rs`, `idp.tenant_claim`) —
+one and only one tenant per token. It mirrors what `fakeidp` emits.
 
 ## Realm is generated — don't hand-edit the JSON
 

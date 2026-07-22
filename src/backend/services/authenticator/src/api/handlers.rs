@@ -222,8 +222,7 @@ async fn mint_and_store_session(
     let exp = (now + cfg.jwt_ttl_seconds).min(absolute_expires_at);
     let claims = GatewayClaims {
         sub: resolution.person_id.clone(),
-        // Single tenant (multi-tenant-in-token dropped): the person's tenant.
-        tenant_id: resolution.tenants.first().cloned().unwrap_or_default(),
+        tenant_id: resolution.tenant_id.clone(),
         roles: roles.clone(),
         sub_type: "user".to_owned(),
         sid: session_id.clone(),
@@ -248,7 +247,7 @@ async fn mint_and_store_session(
     let record = SessionRecord {
         person_id: resolution.person_id.clone(),
         email: idp.identity.email.clone(),
-        tenants: resolution.tenants.clone(),
+        tenant_id: resolution.tenant_id.clone(),
         roles,
         idp_iss: idp.issuer.clone(),
         idp_sub: idp.identity.sub.clone(),
@@ -337,7 +336,7 @@ async fn reissue_jwt(
     let exp = (now + state.cfg.jwt_ttl_seconds).min(record.absolute_expires_at);
     let claims = GatewayClaims {
         sub: record.person_id.clone(),
-        tenant_id: record.tenants.first().cloned().unwrap_or_default(),
+        tenant_id: record.tenant_id.clone(),
         roles: record.roles.clone(),
         sub_type: "user".to_owned(),
         sid: session_id.to_owned(),
@@ -438,7 +437,7 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
     let body = serde_json::json!({
         "user": record.person_id,
         "email": record.email,
-        "tenants": record.tenants,
+        "tenant_id": record.tenant_id,
         "roles": record.roles,
         "expires_at": record.expires_at,
         "refresh_at": refresh_at,

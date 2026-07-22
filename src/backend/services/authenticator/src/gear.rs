@@ -64,11 +64,7 @@ impl Gear for AuthenticatorGear {
         let sessions = SessionManager::connect(&cfg.redis_url).await?;
         sessions.ping().await?;
 
-        let oidc = OidcClient::new(
-            &cfg.idp.issuer_url,
-            &cfg.idp.client_id,
-            &cfg.idp.client_secret,
-        )?;
+        let oidc = OidcClient::new(&cfg.idp)?;
         // The resolver authenticates its internal Identity lookup with a service
         // JWT it mints via the same keystore (fail-closed Identity, R1).
         let resolver: Arc<dyn PersonResolver> = Arc::new(IdentityPersonResolver::new(
