@@ -2,7 +2,9 @@
 
 pub(crate) mod canonical_json;
 pub mod error;
+mod gate;
 mod handlers;
+pub mod roles;
 pub mod seed;
 
 use std::sync::Arc;
@@ -111,7 +113,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(seed::get_persons_seed)
         .register(router, openapi);
 
-    OperationBuilder::get("/v1/persons-seed")
+    let router = OperationBuilder::get("/v1/persons-seed")
         .operation_id("identity_resolution.persons_seed.list")
         .summary("List persons-seed operations")
         .authenticated()
@@ -123,5 +125,41 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(seed::list_persons_seed)
+        .register(router, openapi);
+
+    // Roles catalogue (admin-gated CRUD over the global `roles` table).
+    let router = OperationBuilder::post("/v1/roles")
+        .operation_id("identity_resolution.roles.create")
+        .summary("Create a role (admin)")
+        .authenticated()
+        .no_license_required()
+        .json_request::<roles::CreateRoleRequest>(openapi, "Role to create")
+        .json_response_with_schema::<roles::RoleResponse>(
+            openapi,
+            StatusCode::CREATED,
+            "Created role",
+        )
+        .standard_errors(openapi)
+        .handler(roles::create_role)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/roles")
+        .operation_id("identity_resolution.roles.list")
+        .summary("List roles (admin)")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<roles::RoleListResponse>(openapi, StatusCode::OK, "Roles")
+        .standard_errors(openapi)
+        .handler(roles::list_roles)
+        .register(router, openapi);
+
+    OperationBuilder::delete("/v1/roles/{id}")
+        .operation_id("identity_resolution.roles.delete")
+        .summary("Delete a role (admin)")
+        .authenticated()
+        .no_license_required()
+        .no_content_response(StatusCode::NO_CONTENT, "Role deleted")
+        .standard_errors(openapi)
+        .handler(roles::delete_role)
         .register(router, openapi)
 }
