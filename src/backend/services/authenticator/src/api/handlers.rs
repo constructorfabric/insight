@@ -528,18 +528,33 @@ pub async fn refresh(Extension(state): Extension<Arc<AppState>>, jar: CookieJar)
 
     let new_token = csprng_token();
     let new_expires_at = (now + state.cfg.session_ttl_seconds).min(record.absolute_expires_at);
-    if let Err(e) = state
+    let rotated = match state
         .sessions
         .rotate_session(
             &session_id,
             &record,
+            &token,
             &new_token,
             new_expires_at,
             state.cfg.refresh_grace_ms,
         )
         .await
     {
-        return internal_problem("rotate_session", &e);
+        Ok(rotated) => rotated,
+        Err(e) => return internal_problem("rotate_session", &e),
+    };
+    if !rotated {
+        // Lost the compare-and-swap: a concurrent refresh already rotated this
+        // credential (multi-tab). Answer the grace path with the now-current
+        // credential rather than minting a second one. Re-load to read it.
+        tracing::debug!(session_id = %session_id, "refresh lost the rotation CAS: answering grace path");
+        return match state.sessions.load_session(&session_id).await {
+            Ok(Some(current)) => {
+                refresh_ok(&state, jar, &current.current_token, current.expires_at, now)
+            }
+            Ok(None) => unauthenticated_clear_cookie(jar),
+            Err(e) => internal_problem("session_store", &e),
+        };
     }
     tracing::debug!(session_id = %session_id, expires_at = new_expires_at, "session refreshed (credential rotated)");
     refresh_ok(&state, jar, &new_token, new_expires_at, now)
