@@ -383,7 +383,7 @@ fn select_available_row(
     Ok(None)
 }
 
-async fn fetch_dimensions(
+pub(super) async fn fetch_dimensions(
     db: &DatabaseConnection,
     definition_ids: &[Uuid],
 ) -> Result<HashMap<Uuid, Vec<String>>, sea_orm::DbErr> {

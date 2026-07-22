@@ -512,6 +512,102 @@
         ],
         "type": "object"
       },
+      "MetricDefinitionListResponse": {
+        "description": "Response body for `GET /v1/metric-definitions`. Metrics are sorted by\n`metric_key` ascending so the payload is byte-stable for caching and\ndiff tooling.",
+        "properties": {
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDefinitionView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "metrics"
+        ],
+        "type": "object"
+      },
+      "MetricDefinitionView": {
+        "description": "One metric definition, display fields only.",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dimensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/MetricDirection"
+          },
+          "explanation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
+            "$ref": "#/components/schemas/MetricFormat"
+          },
+          "is_enabled": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "metric_key": {
+            "type": "string"
+          },
+          "schema_status": {
+            "$ref": "#/components/schemas/SchemaStatus"
+          },
+          "short_label": {
+            "description": "Compact label for dense surfaces; absent when the full label is\nalready compact enough.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "metric_key",
+          "label",
+          "format",
+          "direction",
+          "dimensions",
+          "is_enabled",
+          "schema_status"
+        ],
+        "type": "object"
+      },
+      "MetricDirection": {
+        "enum": [
+          "higher_is_better",
+          "lower_is_better",
+          "neutral"
+        ],
+        "type": "string"
+      },
+      "MetricFormat": {
+        "enum": [
+          "integer",
+          "decimal",
+          "currency",
+          "percent"
+        ],
+        "type": "string"
+      },
       "MetricListResponse": {
         "description": "Response envelope for `GET /v1/metrics` (`{ \"items\": [MetricSummary] }`).\n\nDocs-only wrapper: the handler emits the same object shape via an inline\n`serde_json::json!` literal. Existing on the wire; this type just gives the\nlist endpoint a real OpenAPI schema instead of a generic object.",
         "properties": {
@@ -818,6 +914,14 @@
           "page_info"
         ],
         "type": "object"
+      },
+      "SchemaStatus": {
+        "enum": [
+          "ok",
+          "error",
+          "unchecked"
+        ],
+        "type": "string"
       },
       "Scope": {
         "description": "Canonical scope values for `metric_threshold.scope`. Mirrors the DB-side\nENUM declared in `migration/m20260522_000002_metric_threshold.rs` line\n102–106 and the resolver's `Scope` (kept as a separate type because the\nresolver's enum is private to that module).\n\nWire form is the dash-keyed string the DB stores — deserializing via\n`serde(rename_all = \"kebab-case\")` would NOT produce the right value for\n`team+role` (kebab would yield `team-role`), so we spell each variant\nexplicitly with `#[serde(rename = ...)]`.",
@@ -1853,6 +1957,99 @@
           }
         ],
         "summary": "List queryable columns for a table"
+      }
+    },
+    "/v1/metric-definitions": {
+      "get": {
+        "operationId": "analytics_api.metric_definitions.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricDefinitionListResponse"
+                }
+              }
+            },
+            "description": "Metric definitions"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List unified metric definitions"
       }
     },
     "/v1/metric-results": {
