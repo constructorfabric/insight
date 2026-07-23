@@ -1,10 +1,11 @@
 //! The identity-resolution gear.
 //!
 //! Runs on the `api-gateway` system gear (the REST host) under
-//! `toolkit::bootstrap::run_server`. Runtime construction (config, and — next
-//! step — the MariaDB pool) happens in [`IdentityResolutionGear::init`]. No
-//! domain routes yet: [`IdentityResolutionGear::register_rest`] returns the host
-//! router unchanged for now.
+//! `toolkit::bootstrap::run_server`. [`IdentityResolutionGear::init`] builds the
+//! runtime (MariaDB pool + persons-seed worker); [`register_rest`] mounts the
+//! profile-read and persons-seed routes on the host router.
+//!
+//! [`register_rest`]: IdentityResolutionGear::register_rest
 
 use std::sync::{Arc, OnceLock};
 
@@ -33,7 +34,21 @@ impl Gear for IdentityResolutionGear {
         // Self-managed MariaDB pool (same approach as the analytics gear).
         let db = crate::infra::db::connect(&config.database_url).await?;
 
-        let state = AppState { db, config };
+        // Persons-seed background worker: drains a job queue and runs each seed.
+        // A single spawned task (like the analytics validators) owns the queue.
+        // Capacity matches the .NET `PersonsSeedQueue` bound (100).
+        let (seed_tx, seed_rx) = tokio::sync::mpsc::channel(100);
+        let worker_db = db.clone();
+        let worker_config = config.clone();
+        tokio::spawn(async move {
+            crate::api::seed::run_worker(seed_rx, worker_db, worker_config).await;
+        });
+
+        let state = AppState {
+            db,
+            config,
+            seed_tx,
+        };
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;

@@ -8,14 +8,40 @@
     tags=['bitbucket-cloud', 'silver:class_git_file_changes']
 ) }}
 
+WITH generations AS (
+    SELECT
+        tenant_id,
+        source_id,
+        repository_uuid,
+        sha,
+        generation_id,
+        countIf(record_type = 'item') AS observed_count,
+        maxIf(snapshot_item_count, record_type = 'snapshot_complete') AS expected_count,
+        maxIf(_airbyte_extracted_at, record_type = 'snapshot_complete') AS completed_at,
+        countIf(record_type = 'snapshot_complete' AND snapshot_available) AS completion_count
+    FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }} FINAL
+    GROUP BY tenant_id, source_id, repository_uuid, sha, generation_id
+    HAVING completion_count > 0 AND observed_count = expected_count
+),
+latest AS (
+    SELECT
+        tenant_id,
+        source_id,
+        repository_uuid,
+        sha,
+        argMax(generation_id, completed_at) AS generation_id,
+        max(completed_at) AS completed_at
+    FROM generations
+    GROUP BY tenant_id, source_id, repository_uuid, sha
+)
 SELECT
-    tenant_id,
-    source_id,
-    unique_key,
-    COALESCE(workspace, '') AS project_key,
-    COALESCE(repo_slug, '') AS repo_slug,
-    COALESCE(sha, '') AS commit_hash,
-    COALESCE(filename, '') AS file_path,
+    change.tenant_id,
+    change.source_id,
+    change.entity_key AS unique_key,
+    COALESCE(change.workspace, '') AS project_key,
+    COALESCE(change.repo_slug, '') AS repo_slug,
+    COALESCE(change.sha, '') AS commit_hash,
+    COALESCE(change.filename, '') AS file_path,
     -- File extension: last segment after the final '.', empty when none.
     -- Earlier shape (issue #494) used `position('.', filename) > 0` as the
     -- guard — but ClickHouse `position` is function-style
@@ -27,18 +53,20 @@ SELECT
     -- `Makefile` (where the position-based guard would also fire 0 by
     -- accident, but the array-length guard is the explicit predicate).
     if(
-        length(splitByChar('.', COALESCE(filename, ''))) > 1,
-        arrayElement(splitByChar('.', COALESCE(filename, '')), -1),
+        length(splitByChar('.', COALESCE(change.filename, ''))) > 1,
+        arrayElement(splitByChar('.', COALESCE(change.filename, '')), -1),
         ''
     ) AS file_extension,
-    COALESCE(status, '') AS change_type,
-    COALESCE(additions, 0) AS lines_added,
-    COALESCE(deletions, 0) AS lines_removed,
-    COALESCE(source_type, '') AS source_type,
+    COALESCE(change.status, '') AS change_type,
+    change.additions AS lines_added,
+    change.deletions AS lines_removed,
+    COALESCE(change.source_type, '') AS source_type,
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    _airbyte_extracted_at
-FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }}
+    latest.completed_at AS _airbyte_extracted_at
+FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }} AS change FINAL
+INNER JOIN latest USING (tenant_id, source_id, repository_uuid, sha, generation_id)
+WHERE change.record_type = 'item'
 {% if is_incremental() %}
-WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+AND latest.completed_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}

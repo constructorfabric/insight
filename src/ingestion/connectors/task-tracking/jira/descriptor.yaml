@@ -9,7 +9,7 @@ name: jira
 # 2.0.2 (patch): widen jira_project_discovery cursor_datetime_formats so it can
 # parse child-stream cursor values carried in parent_state (was crashing with
 # "No format ['%Y-%m-%dT%H:%M:%S.%f%z'] matching 2026-06-15 02:00").
-version: "2.3.0"
+version: "2.4.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is

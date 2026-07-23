@@ -1,0 +1,65 @@
+spec_version: 1
+description: >
+  Metric: ai.dev_conversations.
+  How it's computed (bronze → silver → gold):
+    • bronze: Codex daily per-user leaderboard (thread count ≈ coding sessions)
+    • silver: deduped to one row per user/day carrying the session count
+    • gold:   metric = sum of Codex coding sessions over the window
+
+  Team (median/range = the person's department):
+    alice 12 · bob 6 · carol 3 → median 6, range [3, 12].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_chatgpt_team.chatgpt_team_codex_user_daily:
+    - $ref: templates/chatgpt_team_codex.yaml#/templates/alice
+      unique_key: codex-alice-20260105
+      date: "2026-01-05"
+      n_threads: 12
+    - $ref: templates/chatgpt_team_codex.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: codex-alice-20260105
+      date: "2026-01-05"
+      n_threads: 12
+    - $ref: templates/chatgpt_team_codex.yaml#/templates/bob
+      unique_key: codex-bob-20260105
+      date: "2026-01-05"
+      n_threads: 6
+    - $ref: templates/chatgpt_team_codex.yaml#/templates/carol
+      unique_key: codex-carol-20260105
+      date: "2026-01-05"
+      n_threads: 3
+
+cases:
+  - name: AI development conversations
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - metric_key: ai.dev_conversations
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.dev_conversations
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 12 }
+      - metric: ai.dev_conversations
+        view: peer
+        find: { entity_id: alice@example.com }
+        equal: { target_value: 12, p25: null, median: null, p75: null, min: null, max: null, n: 3 }
+      - metric: ai.dev_conversations
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 12.0))"
+      - metric: ai.dev_conversations
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'codex') && double(v.value) == 12.0)"

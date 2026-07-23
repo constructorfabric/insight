@@ -672,6 +672,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     merged_on         Nullable(DateTime),
     closed_on         Nullable(DateTime),
     data_source       String  DEFAULT '',
+    destination_branch String DEFAULT '',
     -- Non-Nullable on purpose. The git_bullet_rows view's UNION branch
     -- for `pr_size` declares the column as Float64 (non-null); a
     -- Nullable placeholder makes the UNION type Nullable, which then
@@ -695,6 +696,7 @@ ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS source_id St
 ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS project_key String DEFAULT '';
 ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS repo_slug String DEFAULT '';
 ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS data_source String DEFAULT '';
+ALTER TABLE silver.class_git_pull_requests ADD COLUMN IF NOT EXISTS destination_branch String DEFAULT '';
 SQL
   else
     echo "  Skipping placeholder schema reconciliation: silver.class_git_pull_requests is not a placeholder"
@@ -732,6 +734,8 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes (
     tenant_id         String,
     source_id         String DEFAULT '',
     file_path         String,
+    file_extension    String DEFAULT '',
+    change_type       String DEFAULT '',
     lines_added       Int64,
     lines_removed     Int64,
     _version          UInt64
@@ -747,6 +751,8 @@ else
     echo "  Reconciling placeholder schema: silver.class_git_file_changes"
     run_ch <<'SQL'
 ALTER TABLE silver.class_git_file_changes ADD COLUMN IF NOT EXISTS source_id String DEFAULT '';
+ALTER TABLE silver.class_git_file_changes ADD COLUMN IF NOT EXISTS file_extension String DEFAULT '';
+ALTER TABLE silver.class_git_file_changes ADD COLUMN IF NOT EXISTS change_type String DEFAULT '';
 SQL
   else
     echo "  Skipping placeholder schema reconciliation: silver.class_git_file_changes is not a placeholder"
@@ -1237,6 +1243,7 @@ CREATE TABLE IF NOT EXISTS bronze_m365.teams_activity (
     reportRefreshDate Nullable(String),
     reportPeriod Nullable(String),
     lastActivityDate Nullable(String),
+    isLicensed Nullable(Bool),
     teamChatMessageCount Nullable(Decimal(38, 9)),
     privateChatMessageCount Nullable(Decimal(38, 9)),
     postMessages Nullable(Decimal(38, 9)),
@@ -1300,6 +1307,7 @@ CREATE TABLE IF NOT EXISTS bronze_m365.onedrive_activity (
     reportRefreshDate Nullable(String),
     reportPeriod Nullable(String),
     lastActivityDate Nullable(String),
+    assignedProducts Nullable(String),
     viewedOrEditedFileCount Nullable(Decimal(38, 9)),
     syncedFileCount Nullable(Decimal(38, 9)),
     sharedInternallyFileCount Nullable(Decimal(38, 9)),
@@ -1323,6 +1331,7 @@ CREATE TABLE IF NOT EXISTS bronze_m365.sharepoint_activity (
     reportRefreshDate Nullable(String),
     reportPeriod Nullable(String),
     lastActivityDate Nullable(String),
+    assignedProducts Nullable(String),
     viewedOrEditedFileCount Nullable(Decimal(38, 9)),
     syncedFileCount Nullable(Decimal(38, 9)),
     sharedInternallyFileCount Nullable(Decimal(38, 9)),
