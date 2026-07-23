@@ -166,7 +166,9 @@ impl AuditEmitter {
         let meter = opentelemetry::global::meter("authenticator.audit");
         let dropped = meter
             .u64_counter("auth_audit_dropped_total")
-            .with_description("Audit events dropped (queue full or delivery failure)")
+            .with_description(
+                "Audit events dropped (queue full, serialization, or delivery failure)",
+            )
             .build();
 
         if brokers.trim().is_empty() {
@@ -219,7 +221,7 @@ impl AuditEmitter {
                         // Count + log like every other drop path, so a
                         // malformed event still moves auth_audit_dropped_total.
                         dropped_in_task.add(1, &[]);
-                        tracing::warn!(error = %e, action = env.action, "audit event serialization failed (dropped)");
+                        tracing::warn!(target: "audit", error = %e, action = env.action, "audit event serialization failed (dropped)");
                         continue;
                     }
                 };
@@ -229,7 +231,7 @@ impl AuditEmitter {
                     .payload(&payload);
                 if let Err((e, _)) = producer.send(record, SEND_TIMEOUT).await {
                     dropped_in_task.add(1, &[]);
-                    tracing::warn!(error = %e, action = env.action, "audit event delivery failed (dropped)");
+                    tracing::warn!(target: "audit", error = %e, action = env.action, "audit event delivery failed (dropped)");
                 }
             }
         });
@@ -256,7 +258,7 @@ impl AuditEmitter {
         let Some(tx) = &self.tx else { return };
         if let Err(e) = tx.try_send(event) {
             self.dropped.add(1, &[]);
-            tracing::warn!(error = %e, "audit queue full: event dropped");
+            tracing::warn!(target: "audit", error = %e, "audit queue full: event dropped");
         }
     }
 }

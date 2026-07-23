@@ -578,8 +578,12 @@ impl SessionManager {
 
     /// Per-session refresh lock (`SET NX PX`): refresh-token rotation is
     /// one-time-use at most IdPs; two workers racing the same rotation would
-    /// burn the grant and falsely kill the session. Returns `true` when this
-    /// caller holds the lock.
+    /// burn the grant and falsely kill the session. Returns `Some(owner_token)`
+    /// when this caller acquired the lock (a fresh, unique value stored under
+    /// the key) or `None` when another worker already holds it. Hand the token
+    /// back to [`Self::unlock_session_refresh`] so the release only removes our
+    /// own lock and can never clobber a lock a later worker took after ours
+    /// expired.
     ///
     /// # Errors
     /// Fails on a Redis error.
@@ -587,28 +591,44 @@ impl SessionManager {
         &self,
         session_id: &str,
         ttl_ms: u64,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<Option<String>> {
         let mut conn = self.conn.clone();
+        let token = uuid::Uuid::now_v7().to_string();
         let set: Option<String> = redis::cmd("SET")
             .arg(format!("asm:refresh_lock:{session_id}"))
-            .arg("1")
+            .arg(&token)
             .arg("NX")
             .arg("PX")
             .arg(ttl_ms.max(1))
             .query_async(&mut conn)
             .await
             .context("acquire per-session refresh lock")?;
-        Ok(set.is_some())
+        Ok(set.is_some().then_some(token))
     }
 
-    /// Release the per-session refresh lock.
+    /// Release the per-session refresh lock, but only if `owner_token` still
+    /// matches the stored value (compare-and-del via Lua). If our lock already
+    /// expired and a later worker re-acquired it, this is a no-op — we never
+    /// delete someone else's lock.
     ///
     /// # Errors
     /// Fails on a Redis error.
-    pub async fn unlock_session_refresh(&self, session_id: &str) -> anyhow::Result<()> {
+    pub async fn unlock_session_refresh(
+        &self,
+        session_id: &str,
+        owner_token: &str,
+    ) -> anyhow::Result<()> {
+        const UNLOCK: &str = r"
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                return redis.call('DEL', KEYS[1])
+            end
+            return 0
+        ";
         let mut conn = self.conn.clone();
-        let _: i64 = conn
-            .del(format!("asm:refresh_lock:{session_id}"))
+        let _: i64 = redis::Script::new(UNLOCK)
+            .key(format!("asm:refresh_lock:{session_id}"))
+            .arg(owner_token)
+            .invoke_async(&mut conn)
             .await
             .context("release per-session refresh lock")?;
         Ok(())
