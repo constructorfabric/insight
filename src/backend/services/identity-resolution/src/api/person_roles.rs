@@ -117,7 +117,11 @@ pub async fn create_person_role(
         ));
     }
     if req.role_id.is_nil() {
-        return Err(invalid_field("role_id", "role_id is required", "invalid_role_id"));
+        return Err(invalid_field(
+            "role_id",
+            "role_id is required",
+            "invalid_role_id",
+        ));
     }
     if !reason_valid(req.reason.as_deref()) {
         return Err(reason_too_long());
@@ -277,7 +281,11 @@ fn invalid_field(field: &str, message: &str, code: &str) -> CanonicalError {
 }
 
 fn reason_too_long() -> CanonicalError {
-    invalid_field("reason", "reason must be at most 500 characters", "invalid_reason")
+    invalid_field(
+        "reason",
+        "reason must be at most 500 characters",
+        "invalid_reason",
+    )
 }
 
 /// Clamp `?limit=` to `[1, 500]`; negatives → 1, absent → 50 (parity with the

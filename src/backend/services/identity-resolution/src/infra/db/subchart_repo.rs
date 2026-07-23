@@ -113,7 +113,11 @@ pub async fn is_target_in_visible_set(
     )?;
 
     let row = db
-        .query_one(Statement::from_sql_and_values(DbBackend::MySql, &sql, values))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            &sql,
+            values,
+        ))
         .await?;
     Ok(row.is_some())
 }
@@ -193,7 +197,11 @@ pub async fn get_subchart_flat(
     )?;
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(DbBackend::MySql, &sql, values))
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            &sql,
+            values,
+        ))
         .await?;
     rows.iter().map(row_to_flat).collect()
 }
@@ -338,7 +346,11 @@ pub async fn get_forest_flat(
     )?;
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(DbBackend::MySql, &sql, values))
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            &sql,
+            values,
+        ))
         .await?;
     rows.iter().map(row_to_flat).collect()
 }

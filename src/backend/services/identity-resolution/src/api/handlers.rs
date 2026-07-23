@@ -19,12 +19,12 @@ use uuid::Uuid;
 use super::AppState;
 use super::canonical_json::CanonicalJson;
 use super::error::ProfileError;
-use super::gate::require_service;
+use super::gate::{require_caller, require_service};
 use crate::domain::profile::{
     ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person, assemble_profile,
     latest_values,
 };
-use crate::infra::db::persons_repo;
+use crate::infra::db::{persons_repo, subchart_repo};
 
 /// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
 /// person, then assemble the profile.
@@ -38,6 +38,7 @@ pub async fn resolve_profile(
     CanonicalJson(req): CanonicalJson<ResolveProfileRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
+    let caller = require_caller(&ctx)?;
     let person_ids = resolve_person_ids(&state, tenant, &req).await?;
 
     match person_ids.as_slice() {
@@ -45,6 +46,29 @@ pub async fn resolve_profile(
             .with_resource(req.value)
             .create()),
         [person_id] => {
+            // Visibility gate (parity with .NET `VisibilityService.CanSeeAsync`):
+            // a caller may only resolve a profile they can see; a deny is masked
+            // as 404 so the target's existence does not leak. Reuses the subchart
+            // `visible_set` predicate (current state → `valid_at = None`).
+            let can_see = subchart_repo::is_target_in_visible_set(
+                &state.db,
+                tenant,
+                caller,
+                *person_id,
+                &state.config.org_chart_source_type,
+                None,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "profile visibility check failed");
+                CanonicalError::internal("profile assembly failed").create()
+            })?;
+            if !can_see {
+                return Err(ProfileError::not_found("person not found")
+                    .with_resource(req.value.clone())
+                    .create());
+            }
+
             let observations =
                 persons_repo::fetch_person_observations(&state.db, tenant, *person_id)
                     .await

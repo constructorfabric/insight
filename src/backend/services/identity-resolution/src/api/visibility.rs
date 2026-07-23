@@ -237,7 +237,11 @@ fn reason_valid(reason: Option<&str>) -> bool {
 
 fn reason_too_long() -> CanonicalError {
     VisibilityError::invalid_argument()
-        .with_field_violation("reason", "reason must be at most 500 characters", "invalid_reason")
+        .with_field_violation(
+            "reason",
+            "reason must be at most 500 characters",
+            "invalid_reason",
+        )
         .create()
 }
 

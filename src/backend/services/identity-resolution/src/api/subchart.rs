@@ -51,13 +51,17 @@ pub async fn get_forest(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let caller = require_caller(&ctx)?;
     let tenant = ctx.subject_tenant_id();
-    let max_depth = Some(effective_depth(validate_depth(params.depth)?, state.config.max_depth));
+    let max_depth = Some(effective_depth(
+        validate_depth(params.depth)?,
+        state.config.max_depth,
+    ));
     let valid_at = resolve_valid_at(params.valid_at.as_deref())?;
     let source = &state.config.org_chart_source_type;
 
-    let flat = subchart_repo::get_forest_flat(&state.db, tenant, caller, source, max_depth, valid_at)
-        .await
-        .map_err(read_err)?;
+    let flat =
+        subchart_repo::get_forest_flat(&state.db, tenant, caller, source, max_depth, valid_at)
+            .await
+            .map_err(read_err)?;
     Ok(Json(SubchartForestResponse {
         roots: assemble_forest(flat),
     }))
@@ -73,21 +77,26 @@ pub async fn get_subchart(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let caller = require_caller(&ctx)?;
     let tenant = ctx.subject_tenant_id();
-    let max_depth = Some(effective_depth(validate_depth(params.depth)?, state.config.max_depth));
+    let max_depth = Some(effective_depth(
+        validate_depth(params.depth)?,
+        state.config.max_depth,
+    ));
     let valid_at = resolve_valid_at(params.valid_at.as_deref())?;
     let source = &state.config.org_chart_source_type;
 
-    let can_see =
-        subchart_repo::is_target_in_visible_set(&state.db, tenant, caller, person_id, source, valid_at)
-            .await
-            .map_err(read_err)?;
+    let can_see = subchart_repo::is_target_in_visible_set(
+        &state.db, tenant, caller, person_id, source, valid_at,
+    )
+    .await
+    .map_err(read_err)?;
     if !can_see {
         return Err(not_found(person_id));
     }
 
-    let flat = subchart_repo::get_subchart_flat(&state.db, tenant, person_id, source, max_depth, valid_at)
-        .await
-        .map_err(read_err)?;
+    let flat =
+        subchart_repo::get_subchart_flat(&state.db, tenant, person_id, source, max_depth, valid_at)
+            .await
+            .map_err(read_err)?;
     match assemble_forest(flat).into_iter().next() {
         Some(root) => Ok(Json(SubchartResponse { root })),
         None => Err(not_found(person_id)),
@@ -145,7 +154,9 @@ fn resolve_valid_at(raw: Option<&str>) -> Result<Option<NaiveDateTime>, Canonica
         return Ok(None);
     };
     let ts = parse_valid_at(raw).ok_or_else(|| {
-        invalid_valid_at(format!("valid_at is not a recognised date/datetime: '{raw}'"))
+        invalid_valid_at(format!(
+            "valid_at is not a recognised date/datetime: '{raw}'"
+        ))
     })?;
     if ts > Utc::now().naive_utc() + TimeDelta::minutes(1) {
         return Err(invalid_valid_at(format!(
