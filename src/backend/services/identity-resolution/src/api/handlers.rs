@@ -29,9 +29,9 @@ use crate::infra::db::{persons_repo, subchart_repo};
 /// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
 /// person, then assemble the profile.
 ///
-/// 0 matches → 404; >1 → 409 (the .NET service used 422 `ambiguous_profile`;
-/// gears canonical errors have no 422, so we map to `aborted`/409 — flagged for
-/// review).
+/// 0 matches → 404; >1 → 409. (The .NET service returned 422 `ambiguous_profile`;
+/// the gears canonical model has no 422, so this maps to `aborted`/409 — an
+/// accepted status divergence, same as the roles / person-roles guards.)
 pub async fn resolve_profile(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -101,9 +101,22 @@ pub async fn resolve_profile(
                 subordinates,
             )))
         }
-        _ => Err(ProfileError::aborted("email resolves to multiple persons")
+        ids => {
+            // >1 match: include the resolved ids in the detail so operators can
+            // fix the data (the .NET 422 carried a `person_ids` array; the gears
+            // canonical model has no structured payload, so they go in the text).
+            let list = ids
+                .iter()
+                .map(Uuid::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(ProfileError::aborted(format!(
+                "identity resolves to {} persons: {list}",
+                ids.len()
+            ))
             .with_reason("AMBIGUOUS_PROFILE")
-            .create()),
+            .create())
+        }
     }
 }
 

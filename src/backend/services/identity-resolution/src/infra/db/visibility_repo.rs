@@ -5,7 +5,6 @@
 //! soft-delete (set `valid_to`). `viewed_person_id IS NULL` = viewer sees the
 //! whole tenant tree.
 
-#![allow(dead_code)]
 // `viewer_person_id` / `viewed_person_id` are the domain's own field names.
 #![allow(clippy::similar_names)]
 

@@ -6,8 +6,6 @@
 //! `admin` assignment is protected against removing the tenant's LAST active
 //! admin (lockout guard), enforced atomically in a single UPDATE.
 
-#![allow(dead_code)]
-
 use sea_orm::prelude::DateTime;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, IsolationLevel, Statement, TransactionTrait,

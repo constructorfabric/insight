@@ -267,10 +267,11 @@ pub struct OrgChartEdge {
 /// instance, ordered by source. The caller filters to the configured
 /// `org_chart` source. Ported from `Sql.OrgChart.cs::CurrentParentsForChild`.
 ///
-/// The `parent_person_id IS NOT NULL` filter intentionally diverges from .NET:
-/// the seed writes Path-B root/membership rows with a NULL parent, and decoding
-/// those into a non-nullable id would 500 the profile — a parent edge with no
-/// parent is not an edge, so it is skipped.
+/// The `parent_person_id IS NOT NULL` filter matches
+/// `Sql.OrgChart.cs::CurrentParentsForChild`: the seed writes Path-B
+/// root/membership rows with a NULL parent, and a parent edge with no parent is
+/// not an edge — skipping it also avoids decoding a NULL into the non-nullable
+/// `parent_person_id`.
 ///
 /// # Errors
 ///

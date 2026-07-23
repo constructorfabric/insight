@@ -4,8 +4,6 @@
 //! persons-seed admin gate — only admins may trigger a seed, matching the .NET
 //! `CallerAdminCheck`.
 
-#![allow(dead_code)]
-
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 

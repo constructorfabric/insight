@@ -159,7 +159,9 @@ impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedListResponse {}
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
     pub status: Option<String>,
-    pub limit: Option<u64>,
+    // Signed so a negative `?limit=` clamps to 1 (parity with the sibling list
+    // routes + the .NET `int?` clamp) rather than failing query deserialization.
+    pub limit: Option<i64>,
 }
 
 /// `POST /v1/persons-seed` — enqueue an async persons-seed run.
@@ -278,10 +280,9 @@ pub async fn list_persons_seed(
     // Same admin gate as POST (parity — the .NET service gates all three routes).
     require_admin(&state.db, &ctx).await?;
     let status = status_filter(params.status.as_deref());
-    let limit = params
-        .limit
-        .unwrap_or(LIST_DEFAULT_LIMIT)
-        .clamp(1, LIST_MAX_LIMIT);
+    let limit = params.limit.map_or(LIST_DEFAULT_LIMIT, |l| {
+        u64::try_from(l).unwrap_or(1).clamp(1, LIST_MAX_LIMIT)
+    });
     let ops = ops_repo::list(&state.db, tenant, Some(PERSONS_SEED_OP), status, limit)
         .await
         .map_err(|e| {

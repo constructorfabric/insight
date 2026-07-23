@@ -1,13 +1,16 @@
 # identity-resolution
 
-Rust port of the .NET `identity` service (epic #1602). **Iteration 1: read API.**
+Rust port of the .NET `identity` service (epic #1602).
 Built on the gears-rust framework — same host pattern as `services/analytics`
-(the `api-gateway` system gear is the REST host; auth disabled — the platform
-gateway authenticates upstream).
+(the `api-gateway` system gear is the REST host; auth ENABLED — the
+`oidc-authn-plugin` verifies the gateway JWT and maps its claims into the
+`SecurityContext`).
 
-Current state: boots as a gears host, connects to MariaDB on startup, serves
-`/health`, and implements the read API — `POST /v1/profiles` (attributes, `ids[]`,
-org tree) plus the deprecated `GET /v1/persons/{email}`.
+Current state: boots as a gears host, connects to MariaDB on startup, and
+implements the full ported surface — `POST /v1/profiles` (attributes, `ids[]`,
+org tree), persons-seed, roles / person-roles / visibility, org subchart, and
+the internal service-only `GET /internal/persons/by-email/{email}`. (The
+deprecated .NET `GET /v1/persons/{email}` is intentionally not carried.)
 
 ## Run locally against the dev cluster DB
 

@@ -27,6 +27,19 @@ pub(crate) fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalErr
             .with_reason("caller not identified: the gateway JWT carries no person subject")
             .create());
     }
+    // A nil tenant reaches here only from a misconfigured token (the gateway JWT
+    // should always carry a real tenant). Surface it as an explicit 400 instead
+    // of silently flowing a nil tenant into every query (→ empty/404), which is
+    // hard to diagnose. Rough parity with the .NET `tenant_unresolved` 400.
+    if ctx.subject_tenant_id().is_nil() {
+        return Err(AccessError::failed_precondition()
+            .with_precondition_violation(
+                "tenant",
+                "tenant not resolved from the gateway JWT",
+                "tenant_unresolved",
+            )
+            .create());
+    }
     Ok(caller)
 }
 
