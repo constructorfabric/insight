@@ -114,3 +114,11 @@ gears:
       expand_subordinates: true
       # Hard cap on org-tree recursion depth (cycle-safe).
       max_depth: 16
+      # ClickHouse (persons-seed input: identity.identity_inputs). URL/creds are
+      # injected per-deployment via env overrides
+      # APP__gears__identity-resolution__config__clickhouse_*. Empty here so no
+      # endpoint/credential is committed.
+      clickhouse_url: ""
+      clickhouse_database: "identity"
+      clickhouse_user: ""
+      clickhouse_password: ""
