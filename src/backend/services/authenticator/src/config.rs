@@ -152,6 +152,13 @@ pub struct AuditConfig {
     pub brokers: String,
     /// The platform audit topic.
     pub topic: String,
+    /// Retention (ms) the authenticator sets on the topic when it creates it,
+    /// default **1 day**. NOTE: there is **no consumer** yet — the Audit
+    /// Service (`cpt-insightspec-component-be-audit-service`: drain → ClickHouse)
+    /// is spec'd but unbuilt, so events are deliberately aged out after this
+    /// window (accepted data loss for now). Bump this / drop the bound once the
+    /// consumer lands. `0` = don't set retention (leave the cluster default).
+    pub retention_ms: u64,
 }
 
 impl Default for AuditConfig {
@@ -159,6 +166,7 @@ impl Default for AuditConfig {
         Self {
             brokers: String::new(),
             topic: "insight.audit.events".to_owned(),
+            retention_ms: 86_400_000, // 1 day — no consumer yet (see field doc)
         }
     }
 }

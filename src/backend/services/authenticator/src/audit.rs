@@ -17,6 +17,8 @@
 
 use opentelemetry::metrics::Counter;
 use rdkafka::ClientConfig;
+use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
+use rdkafka::client::DefaultClientContext;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -75,6 +77,51 @@ struct Envelope {
     details: String,
 }
 
+/// Best-effort: create the audit topic with `retention.ms` set, so its on-disk
+/// log is bounded while no consumer drains it. If the topic already exists this
+/// is a no-op (`TopicAlreadyExists` is expected and ignored) — we intentionally
+/// do NOT alter an existing topic's config. Any admin/transport error is logged
+/// and swallowed; auth never depends on this.
+async fn ensure_topic_retention(brokers: &str, topic: &str, retention_ms: u64) {
+    let admin: AdminClient<DefaultClientContext> = match ClientConfig::new()
+        .set("bootstrap.servers", brokers)
+        .create()
+    {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(error = %e, "audit: could not build admin client for topic retention (skipping)");
+            return;
+        }
+    };
+    let retention = retention_ms.to_string();
+    let new_topic =
+        NewTopic::new(topic, 1, TopicReplication::Fixed(1)).set("retention.ms", &retention);
+    match admin
+        .create_topics([&new_topic], &AdminOptions::new())
+        .await
+    {
+        Ok(results) => match results.into_iter().next() {
+            Some(Ok(_)) => tracing::info!(
+                topic,
+                retention_ms,
+                "audit topic created with retention (no consumer yet)"
+            ),
+            Some(Err((_, rdkafka::types::RDKafkaErrorCode::TopicAlreadyExists))) => {
+                tracing::debug!(
+                    topic,
+                    "audit topic already exists; leaving its retention as-is"
+                );
+            }
+            other => tracing::warn!(
+                ?other,
+                topic,
+                "audit topic create returned an unexpected result (ignored)"
+            ),
+        },
+        Err(e) => tracing::warn!(error = %e, topic, "audit topic create failed (ignored)"),
+    }
+}
+
 /// Build the platform envelope for one event (pure; unit-tested).
 fn envelope(event: &AuditEvent, event_id: String, timestamp: String) -> Envelope {
     let correlation_id = if event.correlation_id.is_empty() {
@@ -115,7 +162,7 @@ impl AuditEmitter {
     /// Fails when the Kafka producer cannot be constructed from the config
     /// (malformed broker list) — a misconfigured audit sink should fail the
     /// gear at boot, not silently drop every event.
-    pub fn new(brokers: &str, topic: &str) -> anyhow::Result<Self> {
+    pub fn new(brokers: &str, topic: &str, retention_ms: u64) -> anyhow::Result<Self> {
         let meter = opentelemetry::global::meter("authenticator.audit");
         let dropped = meter
             .u64_counter("auth_audit_dropped_total")
@@ -138,6 +185,22 @@ impl AuditEmitter {
             .set("acks", "1")
             .create()
             .map_err(|e| anyhow::anyhow!("build audit producer for '{brokers}': {e}"))?;
+
+        // Bound the topic's on-disk growth. There is NO consumer yet (the Audit
+        // Service that drains → ClickHouse is spec'd but unbuilt), so events
+        // would otherwise pile up at the cluster-default retention. We create
+        // the topic with a short retention (default 1 day) — accepted data loss
+        // until the consumer exists. Best-effort + spawned: never blocks or
+        // fails auth boot, and if the topic already exists (or admin is denied)
+        // it's a harmless no-op (we do NOT alter an existing topic's config,
+        // to avoid clobbering infra-managed settings).
+        if retention_ms > 0 {
+            let brokers_owned = brokers.to_owned();
+            let topic_owned = topic.to_owned();
+            tokio::spawn(async move {
+                ensure_topic_retention(&brokers_owned, &topic_owned, retention_ms).await;
+            });
+        }
 
         let (tx, mut rx) = mpsc::channel::<AuditEvent>(QUEUE_DEPTH);
         let topic = topic.to_owned();

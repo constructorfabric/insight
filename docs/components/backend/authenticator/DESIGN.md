@@ -461,7 +461,7 @@ Every auth-relevant action lands on the audit topic with the same envelope and c
 Publish login OK/fail, refresh, logout, revoke (single/all/admin), back-channel logout, `invalid_grant` kills, service-token issuance, bootstrap-admin creation.
 
 ##### Responsibility boundaries
-Does not run audit policy or retention -- Audit Service does.
+Does not run audit policy or long-term retention -- the Audit Service does. **Interim note (no consumer yet):** the Audit Service (`cpt-insightspec-component-be-audit-service`, drain -> ClickHouse) is not yet built, so nothing consumes `insight.audit.events`. To bound the undrained topic's disk growth the emitter creates it with a short `retention.ms` (`authenticator.audit.retention_ms`, default **1 day**) -- events are deliberately aged out after that window (accepted data loss for now; the structured `target: "audit"` logs, shipped to Loki, are the interim trail). Publishing itself is non-blocking (bounded channel -> drop + `auth_audit_dropped_total`), so auth availability never depends on Redpanda. Drop the short retention once the consumer lands.
 
 ##### Related components (by ID)
 - `cpt-insightspec-component-auth-controller`, `cpt-insightspec-component-auth-service-token-issuer`, `cpt-insightspec-component-auth-idp-refresher` -- callers.
@@ -881,6 +881,7 @@ Step-10 additions (all defaulted; the config struct mirrors them 1:1):
 | `authenticator.rate_limit.callback_burst` / `callback_per_minute` | `5` / `10` | Per-state `/auth/callback` token bucket. |
 | `authenticator.audit.brokers` | `""` | Redpanda bootstrap servers for audit events; empty = disabled (structured log only). |
 | `authenticator.audit.topic` | `insight.audit.events` | The platform audit topic. |
+| `authenticator.audit.retention_ms` | `86400000` (1 day) | `retention.ms` the emitter sets when it creates the topic — a disk bound while no consumer drains it (accepted data loss; see the Audit Emitter note). `0` = leave the cluster default. |
 
 The config struct mirrors this table 1:1 and deserializes from the gear's config section with `APP__gears__authenticator__config__<field>` env overrides -- the layering the toolkit host already owns (and why the dash-free gear name matters).
 

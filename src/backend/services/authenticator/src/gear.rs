@@ -93,7 +93,11 @@ impl Gear for AuthenticatorGear {
 
         // Audit sink (PRD nfr-auth-audit). Fails the gear on a malformed
         // broker config; unconfigured = disabled (structured log only).
-        let audit = crate::audit::AuditEmitter::new(&cfg.audit.brokers, &cfg.audit.topic)?;
+        let audit = crate::audit::AuditEmitter::new(
+            &cfg.audit.brokers,
+            &cfg.audit.topic,
+            cfg.audit.retention_ms,
+        )?;
 
         let state = Arc::new(AppState {
             cfg,
