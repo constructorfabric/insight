@@ -15,8 +15,6 @@
 //! .NET service split (`SqlSubchart` returns a flat set, `SubchartService`
 //! builds the tree). Roots always surface with `parent_person_id IS NULL`.
 
-#![allow(dead_code)]
-
 use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use uuid::Uuid;

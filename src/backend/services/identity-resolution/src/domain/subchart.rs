@@ -57,10 +57,23 @@ pub fn assemble_forest(flat: Vec<SubchartFlatNode>) -> Vec<SubchartNode> {
             Some(parent) => by_parent.entry(parent).or_default().push(row),
         }
     }
-    roots
+    let forest: Vec<SubchartNode> = roots
         .into_iter()
         .map(|r| build_tree(r, &mut by_parent))
-        .collect()
+        .collect();
+
+    // Anything still in `by_parent` was never reached from a root — orphaned or
+    // cyclic `org_chart` data. It is dropped from the response (a bounded tree,
+    // never an error), but surfaced in telemetry so the data-integrity problem is
+    // visible instead of a silently-shrunk tree.
+    if !by_parent.is_empty() {
+        let dropped: usize = by_parent.values().map(Vec::len).sum();
+        tracing::warn!(
+            dropped_rows = dropped,
+            "subchart: org rows unreachable from any root (orphaned or cyclic) — dropped from response"
+        );
+    }
+    forest
 }
 
 fn build_tree(
@@ -139,5 +152,21 @@ mod tests {
         let forest = assemble_forest(vec![node(1, None)]);
         assert_eq!(forest.len(), 1);
         assert!(forest[0].subordinates.is_empty());
+    }
+
+    #[test]
+    fn orphaned_rows_unreachable_from_a_root_are_dropped() {
+        // Row 2's parent (1) is absent and there is no NULL-parent root, so 2 is
+        // unreachable — dropped (and warn-logged), never an infinite loop.
+        let forest = assemble_forest(vec![node(2, Some(1))]);
+        assert!(forest.is_empty());
+    }
+
+    #[test]
+    fn two_node_cycle_without_root_is_dropped_not_looped() {
+        // 1→2 and 2→1, no NULL-parent root. Neither is reachable from a root;
+        // both are dropped. The point of the test is that this terminates.
+        let forest = assemble_forest(vec![node(1, Some(2)), node(2, Some(1))]);
+        assert!(forest.is_empty());
     }
 }

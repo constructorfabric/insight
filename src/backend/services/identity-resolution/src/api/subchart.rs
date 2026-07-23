@@ -6,8 +6,12 @@
 //! [`crate::infra::db::subchart_repo::is_target_in_visible_set`] and returns 404
 //! (not 403) on deny so the target's existence does not leak. `GET /v1/subchart`
 //! is the forest variant — every visible top, empty array (200) when the caller
-//! sees nothing. `depth` (>= 0, unbounded when absent) and `valid_at`
-//! (point-in-time lens, #582) mirror the .NET query contract.
+//! sees nothing. `depth` (>= 0) and `valid_at` (point-in-time lens, #582) mirror
+//! the .NET query contract, except `depth` is **capped at the server's
+//! `max_depth`** (and defaults to it when omitted) — the `UNION ALL` subtree CTEs
+//! would otherwise let a caller pull a whole large-tenant tree in one request, or
+//! recurse until `cte_max_recursion_depth` on cyclic `org_chart` data. (The
+//! visibility gate's CTE is `UNION`/distinct, so it self-terminates on cycles.)
 
 use std::sync::Arc;
 
@@ -32,7 +36,8 @@ use crate::infra::db::subchart_repo;
 /// Query params shared by both subchart routes.
 #[derive(Debug, Deserialize)]
 pub struct SubchartParams {
-    /// Max descent depth; `>= 0`, unbounded when omitted.
+    /// Max descent depth; `>= 0`. Capped at the server's `max_depth` and
+    /// defaulted to it when omitted (see [`effective_depth`]).
     pub depth: Option<i64>,
     /// Point-in-time lens (ISO-8601 / RFC-3339). Absent = current state.
     pub valid_at: Option<String>,
@@ -46,7 +51,7 @@ pub async fn get_forest(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let caller = require_caller(&ctx)?;
     let tenant = ctx.subject_tenant_id();
-    let max_depth = validate_depth(params.depth)?;
+    let max_depth = Some(effective_depth(validate_depth(params.depth)?, state.config.max_depth));
     let valid_at = resolve_valid_at(params.valid_at.as_deref())?;
     let source = &state.config.org_chart_source_type;
 
@@ -68,7 +73,7 @@ pub async fn get_subchart(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let caller = require_caller(&ctx)?;
     let tenant = ctx.subject_tenant_id();
-    let max_depth = validate_depth(params.depth)?;
+    let max_depth = Some(effective_depth(validate_depth(params.depth)?, state.config.max_depth));
     let valid_at = resolve_valid_at(params.valid_at.as_deref())?;
     let source = &state.config.org_chart_source_type;
 
@@ -102,9 +107,10 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
     CanonicalError::internal("failed to read subchart").create()
 }
 
-/// Validate the `depth` query param: `None` → unbounded; negative → 400
-/// `invalid_depth`; otherwise the value (saturating into `i32`, the DB column
-/// width). Mirrors the .NET `depth is < 0` guard.
+/// Validate the `depth` query param: `None` → unspecified (the caller omitted
+/// it — [`effective_depth`] then applies the server cap); negative → 400
+/// `invalid_depth`; out-of-`i32`-range → 400. Mirrors the .NET `depth is < 0`
+/// guard (with the extra range check the .NET `int?` binder does implicitly).
 fn validate_depth(depth: Option<i64>) -> Result<Option<i32>, CanonicalError> {
     match depth {
         None => Ok(None),
@@ -119,6 +125,16 @@ fn invalid_depth(detail: String) -> CanonicalError {
     SubchartError::invalid_argument()
         .with_field_violation("depth", detail, "invalid_depth")
         .create()
+}
+
+/// Resolve the effective descent cap: the caller's validated `depth` clamped to
+/// the server's `cap` (`config.max_depth`), defaulting to `cap` when omitted.
+/// Never `None`, so the `UNION ALL` subtree CTEs are always bounded — the caller
+/// cannot force an unbounded traversal, and cyclic `org_chart` data returns a
+/// bounded (partial) tree instead of erroring at `cte_max_recursion_depth`.
+fn effective_depth(requested: Option<i32>, cap: usize) -> i32 {
+    let cap = i32::try_from(cap).unwrap_or(i32::MAX);
+    requested.map_or(cap, |d| d.min(cap))
 }
 
 /// Parse + validate the optional `valid_at`: normalise to naive-UTC and reject
@@ -184,6 +200,13 @@ mod tests {
             validate_depth(Some(i64::from(i32::MAX) + 1)).is_err(),
             "overflow rejected"
         );
+    }
+
+    #[test]
+    fn depth_is_capped_by_server_max() {
+        assert_eq!(effective_depth(None, 16), 16, "omitted → server cap");
+        assert_eq!(effective_depth(Some(5), 16), 5, "under cap kept");
+        assert_eq!(effective_depth(Some(100), 16), 16, "over cap clamped");
     }
 
     #[test]
