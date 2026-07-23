@@ -244,6 +244,7 @@ ingestion:
 clickhouse:
   host: "" # MUST be set (external L2 ClickHouse host)
   port: 8123 # RFC standard for CH HTTP
+  nativePort: 9000 # native (Octonica) protocol port — the identity service uses this, not the HTTP port
   protocol: http # http|https for the Bronze airbyte/destination-clickhouse 2.x connection
   database: "" # MUST be set
   username: "" # MUST be set
