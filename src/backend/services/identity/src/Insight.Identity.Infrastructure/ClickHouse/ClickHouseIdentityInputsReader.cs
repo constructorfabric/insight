@@ -20,10 +20,27 @@ public sealed class ClickHouseIdentityInputsReader : IIdentityInputsReader
     // DELETE). DELETE rows are streamed too; they flag the account as
     // closed but never produce a persons observation.
     // identity_inputs stores insight_tenant_id / insight_source_id as
-    // Nullable(String) (dashed UUID text), so the tenant filter is a
-    // plain string compare. The `_str` aliases avoid shadowing the
-    // source columns referenced in WHERE (a same-name SELECT alias
-    // would otherwise be substituted into the WHERE clause).
+    // Nullable(String) (dashed UUID text). The `_str` aliases avoid
+    // shadowing the source columns referenced in WHERE (a same-name
+    // SELECT alias would otherwise be substituted into the WHERE clause).
+    //
+    // HOTFIX (#1550) — TEMPORARY, identity-scoped, pre-release. The dbt
+    // producer writes insight_tenant_id *hashed* — sipHash128(rawTenant)
+    // rendered as a dashed UUID string (identity_inputs_from_history.sql,
+    // documented there as a TEMPORARY cross-source join key). So a plain
+    // `= {tenant}` matched nothing when the service is configured with the raw
+    // tenant, and persons-seed silently read 0 rows.
+    //
+    // Match BOTH representations of the caller's tenant — the raw value AND its
+    // sipHash — so the read works whether the deployment is configured with the
+    // raw tenant (the hash term matches the hashed data) OR already with the
+    // hashed value (the raw term matches; some envs were worked around that
+    // way). This is strictly additive to the previous `= {tenant}`, so it
+    // cannot regress a currently-working deployment and needs no config /
+    // ingestion / re-seed change. Both terms derive from the single bound
+    // tenant, so tenant isolation holds (a collision would need a real tenant
+    // UUID to equal a sipHash output). Remove once the tenant representation is
+    // unified end to end.
     private const string StreamSql = """
         SELECT
             toString(insight_tenant_id) AS tenant_id_str,
@@ -35,7 +52,10 @@ public sealed class ClickHouseIdentityInputsReader : IIdentityInputsReader
             _synced_at,
             operation_type
         FROM identity.identity_inputs
-        WHERE insight_tenant_id = {tenant:String}
+        WHERE insight_tenant_id IN (
+                  {tenant:String},
+                  toString(toUUID(UUIDNumToString(sipHash128({tenant:String}))))
+              )
           AND operation_type    IN ('UPSERT', 'DELETE')
           AND value             IS NOT NULL
           AND value             != ''
