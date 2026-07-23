@@ -1,27 +1,30 @@
 spec_version: 1
 description: >
-  Regression: unlicensed M365 users must NOT leak into collaboration metrics (#736). #magic___^_^___line The M365 teams_activity report includes unlicensed users (guests, ex-employees, service accounts) flagged `isLicensed=false`. The silver feeder m365__collab_meeting_activity now filters them out with `coalesce(isLicensed, true) = true`, so their activity never reaches gold. #magic___^_^___line Setup — two Engineering people, both with a Teams meeting row dated 2026-12-25:
-    • alice  — isLicensed=true,  meetingsAttendedCount=3  → licensed CONTROL, value 3
-    • frank  — isLicensed=false, meetingsAttendedCount=99 → unlicensed, EXCLUDED (null)
+  Regression: unlicensed M365 users must NOT leak into collaboration metrics (#736). #magic___^_^___line The M365 teams_activity report includes unlicensed users (guests, ex-employees, service accounts) flagged isLicensed=false. The silver feeder m365__collab_meeting_activity filters them out with coalesce(isLicensed, false) = true, so an unlicensed OR unknown-license user never reaches gold; only an explicit isLicensed=true row is kept. #magic___^_^___line Setup — three Engineering people, each with a Teams meeting row dated 2026-12-25:
+    • alice — isLicensed=true,  meetingsAttendedCount=3  → licensed CONTROL, value 3
+    • frank — isLicensed=false, meetingsAttendedCount=99 → unlicensed, EXCLUDED (null)
+    • grace — isLicensed=null,  meetingsAttendedCount=77 → unknown, EXCLUDED (null)
 
-  If the license filter regressed, frank's period value would be 99 instead of null and this test would fail. alice proves the pipeline itself is healthy, so a failure isolates to the license filter rather than a broken build.
+  If the filter regressed, frank/grace would surface non-null values and this test would fail. alice proves the pipeline itself is healthy, so a failure isolates to the license predicate rather than a broken build.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
-    - {$ref: templates/people.yaml#/templates/bamboohr_employee, id: e099, unique_key: bamboohr-test-e099, firstName: Frank, lastName: Guest, displayName: Frank Guest, workEmail: frank@example.com,}
+    - {$ref: templates/people.yaml#/templates/bamboohr_employee, id: e099, unique_key: bamboohr-test-e099, firstName: Frank, lastName: Guest, displayName: Frank Guest, workEmail: frank@example.com}
+    - {$ref: templates/people.yaml#/templates/bamboohr_employee, id: e100, unique_key: bamboohr-test-e100, firstName: Grace, lastName: Ghost, displayName: Grace Ghost, workEmail: grace@example.com,}
 
   bronze_m365.teams_activity:
     - {$ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-alice-20261225, isLicensed: true, meetingsAttendedCount: 3}
-    - {$ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: frank@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-frank-20261225, isLicensed: false, meetingsAttendedCount: 99,}
+    - {$ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: frank@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-frank-20261225, isLicensed: false, meetingsAttendedCount: 99}
+    - {$ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: grace@example.com, reportRefreshDate: "2026-12-25", unique_key: tm-grace-20261225, isLicensed: null, meetingsAttendedCount: 77,}
 
 cases:
-  - name: Unlicensed user excluded, licensed control present
+  - name: Unlicensed and unknown-license users excluded, licensed control present
     request:
       url: /v1/metric-results
       method: POST
       body:
-        entity: {type: person, ids: [alice@example.com, frank@example.com]}
+        entity: {type: person, ids: [alice@example.com, frank@example.com, grace@example.com]}
         period: {from: "2026-12-01", to: "2026-12-31"}
         metrics:
           - metric_key: collab.meetings_count
@@ -34,8 +37,13 @@ cases:
         view: period
         find: {entity_id: alice@example.com}
         equal: {value: 3}
-      # Unlicensed user: filtered out at silver → no gold observation → null.
+      # Explicitly unlicensed: filtered out at silver → no gold observation → null.
       - metric: collab.meetings_count
         view: period
         find: {entity_id: frank@example.com}
+        equal: {value: null}
+      # Unknown license (isLicensed=null): coalesce(...,false) drops it too → null.
+      - metric: collab.meetings_count
+        view: period
+        find: {entity_id: grace@example.com}
         equal: {value: null}

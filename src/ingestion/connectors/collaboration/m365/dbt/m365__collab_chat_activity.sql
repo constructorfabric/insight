@@ -72,8 +72,9 @@ WHERE userPrincipalName IS NOT NULL
   -- with no matching insight.people entry. `isLicensed` = "Selected if the user
   -- is licensed to use Teams" (MS Graph getTeamsUserActivityUserDetail). Only the
   -- teams_activity report exposes this flag; the email/onedrive/sharepoint feeders
-  -- fall back to `assignedProducts`. Conservative on NULL (unknown -> keep). See #736.
-  AND coalesce(isLicensed, true) = true
+  -- fall back to `assignedProducts`. A NULL flag is treated as unlicensed and
+  -- dropped too, per the #736 proposal. See #736.
+  AND coalesce(isLicensed, false) = true
 {% if is_incremental() %}
   -- Watermark on the source EXTRACT time, not the business date (see zoom model header
   -- for the backfill-strand failure mode this fixes). Re-pulled rows carry a fresh
