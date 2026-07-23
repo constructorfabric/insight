@@ -161,6 +161,124 @@ SQL
 
 heal_task_users_table silver class_task_users
 
+echo "=== Reconciling legacy Bitbucket bronze placeholders (warm clusters) ==="
+# Warm clusters still hold the pre-rewrite FLAT bronze_bitbucket_cloud.{commits,
+# pull_requests}; the snapshot applicator's CREATE TABLE IF NOT EXISTS never
+# upgrades an existing table, so the git staging models would fail on the missing
+# envelope columns (record_type, generation_id, entity_key, ...). Add them
+# idempotently (ADD COLUMN IF NOT EXISTS), mirroring the other warm-cluster heals
+# above. On a fresh cluster the snapshot already created the full schema, so these
+# are no-ops. The sort key of an existing table cannot be altered in place;
+# commits/pull_requests carry no snapshot markers so their dedup key is not
+# load-bearing. Relocated here from create-bronze-placeholders (which became the
+# connectors-ddl snapshot applicator in #1831); originally added in #1880.
+heal_bitbucket_commits() {
+  ch_table_exists bronze_bitbucket_cloud commits || return 0
+  echo "  bronze_bitbucket_cloud.commits"
+  run_ch <<'SQL'
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS tenant_id String;
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS source_id String;
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS unique_key String;
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS entity_key Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS data_source Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS collected_at Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS record_type Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS generation_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS bucket_id Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS snapshot_item_count Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS snapshot_available Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS repository_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS workspace_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS hash Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS message Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS date Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_raw Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_email Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_display_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_account_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_raw Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_email Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_display_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_account_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS parent_hashes Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS workspace Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS repo_slug Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS branch_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS head_sha Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS _airbyte_raw_id String        DEFAULT toString(generateUUIDv4());
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS _airbyte_extracted_at DateTime64(3) DEFAULT now64(3);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS _airbyte_meta String        DEFAULT '{}';
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS _airbyte_generation_id UInt32        DEFAULT 0;
+SQL
+}
+
+heal_bitbucket_pull_requests() {
+  ch_table_exists bronze_bitbucket_cloud pull_requests || return 0
+  echo "  bronze_bitbucket_cloud.pull_requests"
+  run_ch <<'SQL'
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS tenant_id String;
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS source_id String;
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS unique_key String;
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS entity_key Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS data_source Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS collected_at Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS record_type Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS generation_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS bucket_id Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS snapshot_item_count Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS snapshot_available Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS repository_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS workspace_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS id Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS title Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS description Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS state Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS created_on Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS updated_on Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS author_display_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS author_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS author_account_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS closed_by_display_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS closed_by_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS closed_by_account_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS source_branch Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS destination_branch Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS source_commit_hash Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS destination_commit_hash Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS merge_commit_hash Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS task_count Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS draft Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS queued Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS close_source_branch Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS reason Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS reviewers Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS comment_count Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS participants Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS workspace Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS repo_slug Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS _airbyte_raw_id String        DEFAULT toString(generateUUIDv4());
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS _airbyte_extracted_at DateTime64(3) DEFAULT now64(3);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS _airbyte_meta String        DEFAULT '{}';
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS _airbyte_generation_id UInt32        DEFAULT 0;
+SQL
+}
+
+heal_bitbucket_commits
+heal_bitbucket_pull_requests
+
+# SKIP_DBT_GOLD=1 (set by bootstrap-db snapshot generation) skips this step:
+# generation already built every tag:gold model with the pinned dbt venv
+# (run-dbt.sh) BEFORE the migrations ran, and re-running here would need a `dbt`
+# on PATH — which outside the prod toolbox (local dev, the connectors-ddl CI
+# workflow) is absent or the wrong build (dbt-fusion 2.0). Real deploys leave it
+# unset and rely on this step to materialise gold at deploy time.
+if [[ "${SKIP_DBT_GOLD:-}" == "1" ]]; then
+  echo "=== Skipping gold dbt build (SKIP_DBT_GOLD=1; gold pre-built by generation) ==="
+else
 echo "=== Building gold models (dbt run --select tag:gold) ==="
 # Gold views are dbt-owned but must exist at DEPLOY time, not first-sync
 # time: the analytics service marks metric definitions schema-error while
@@ -201,6 +319,12 @@ profile = {
                 "send_receive_timeout": 1500,
                 "query_limit": 0,
                 "connect_timeout": 30,
+                # Correlated subqueries (LEFT ANTI JOIN in the identity seed
+                # models) are gated behind this experimental flag on CH 25.7.
+                # A model-level config() setting does NOT reach the SELECT plan
+                # in dbt-clickhouse, so it must be set at profile level. Parity
+                # with test/bootstrap.
+                "settings": {"allow_experimental_correlated_subqueries": 1},
             }
         },
     }
@@ -210,5 +334,6 @@ with open(os.path.join(os.environ["DBT_PROFILES_DIR"], "profiles.yml"), "w") as 
 PY
 (cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select tag:gold)
 rm -rf "$DBT_PROFILES_DIR"
+fi
 
 echo "=== ClickHouse migrations complete ==="

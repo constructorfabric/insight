@@ -14,10 +14,11 @@ bronze/silver layer (cpt-bronze-to-api-e2e-dod-yaml-bronze-seed).
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Iterable
+from typing import Any
 
 from lib import clickhouse as ch
 from lib.config import SessionConfig
@@ -94,9 +95,7 @@ class CHSeeder:
         for rec in rows:
             unknown = [k for k in rec if k not in column_types]
             if unknown:
-                raise SeederError(
-                    f"{schema}.{table}: record has columns not in the table: {unknown}"
-                )
+                raise SeederError(f"{schema}.{table}: record has columns not in the table: {unknown}")
             ch_rows.append(tuple(self._coerce(rec.get(c), column_types[c], c) for c in cols))
 
         LOG.info("seeding %s.%s: %d rows × %d cols", schema, table, len(ch_rows), len(cols))
@@ -121,50 +120,44 @@ class CHSeeder:
         ch.execute(self.cfg, f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
 
     def _fetch_engine(self, schema: str, table: str) -> str | None:
-        rows = ch.query(
-            self.cfg,
-            f"SELECT engine FROM system.tables WHERE database = '{schema}' AND name = '{table}'",
-        )
+        rows = ch.query(self.cfg, f"SELECT engine FROM system.tables WHERE database = '{schema}' AND name = '{table}'")
         return rows[0][0] if rows else None
 
     def _fetch_column_types(self, schema: str, table: str) -> dict[str, str]:
         rows = ch.query(
-            self.cfg,
-            f"SELECT name, type FROM system.columns WHERE database = '{schema}' AND table = '{table}'",
+            self.cfg, f"SELECT name, type FROM system.columns WHERE database = '{schema}' AND table = '{table}'"
         )
         return {name: ctype for name, ctype in rows}
 
     def _ensure_table(self, database: str, table: str, schema: dict[str, Any]) -> None:
-        expected = {
-            name: _clickhouse_type(definition)
-            for name, definition in schema.get("properties", {}).items()
-        }
+        expected = {name: _clickhouse_type(definition) for name, definition in schema.get("properties", {}).items()}
         existing = self._fetch_column_types(database, table)
-        if existing and existing.keys() == expected.keys() and all(
-            _types_compatible(expected[name], existing[name]) for name in expected
-        ):
-            return
         if existing:
+            # The real table (connectors-ddl snapshot / dbt) may carry MORE
+            # columns than the fixture declares: connectors emit raw API columns
+            # the dbt models never read (e.g. jira_issue.self/expand/fields),
+            # and a fixture only describes the columns a test seeds. Require the
+            # fixture's columns to all exist with a compatible type — seed_records
+            # leaves the extra real columns at their ClickHouse defaults. A column
+            # the fixture needs but the real table lacks (missing), or a type that
+            # no longer matches (mismatched), is still a hard error: that is
+            # genuine drift the snapshot regeneration is meant to surface.
             missing = sorted(expected.keys() - existing.keys())
-            unexpected = sorted(existing.keys() - expected.keys())
             mismatched = sorted(
                 name
                 for name in expected.keys() & existing.keys()
                 if not _types_compatible(expected[name], existing[name])
             )
-            raise SeederError(
-                f"table {database}.{table} does not match its fixture schema "
-                f"(missing={missing}, unexpected={unexpected}, type_mismatches="
-                f"{[(name, expected[name], existing[name]) for name in mismatched]})"
-            )
-        columns = ", ".join(
-            f"`{name}` {column_type}" for name, column_type in expected.items()
-        )
+            if missing or mismatched:
+                raise SeederError(
+                    f"table {database}.{table} does not match its fixture schema "
+                    f"(missing={missing}, type_mismatches="
+                    f"{[(name, expected[name], existing[name]) for name in mismatched]})"
+                )
+            return
+        columns = ", ".join(f"`{name}` {column_type}" for name, column_type in expected.items())
         ch.execute(self.cfg, f"CREATE DATABASE IF NOT EXISTS `{database}`")
-        ch.execute(
-            self.cfg,
-            f"CREATE TABLE `{database}`.`{table}` ({columns}) ENGINE = MergeTree ORDER BY tuple()",
-        )
+        ch.execute(self.cfg, f"CREATE TABLE `{database}`.`{table}` ({columns}) ENGINE = MergeTree ORDER BY tuple()")
 
     @staticmethod
     def _coerce(value: Any, ch_type: str, col: str) -> Any:
@@ -187,10 +180,14 @@ class CHSeeder:
                 return True
             if norm in ("false", "0"):
                 return False
-            raise SeederError(
-                f"column {col!r} ({ch_type}): non-boolean value {value!r} "
-                f"(use true/false)"
-            )
+            raise SeederError(f"column {col!r} ({ch_type}): non-boolean value {value!r} (use true/false)")
+        # Decimal columns: the connector types loosely-typed JSON `number` ids
+        # (status_id, worklog_id, changelog_id, *_seconds) as Decimal(38,9).
+        # Fixtures express them as either strings ("10001") or ints (3), neither
+        # of which clickhouse-connect serializes into a Decimal column directly —
+        # normalize both through Decimal(str(...)).
+        if base.startswith("Decimal") and isinstance(value, (int, float)):
+            return Decimal(str(value))
         # Numeric columns: connectors declare loosely-typed JSON `number`
         # fields (ids, counts, *_seconds), which the ClickHouse destination
         # maps to Decimal/Int/Float. YAML fixtures naturally express those as
@@ -232,14 +229,10 @@ def _types_compatible(expected: str, existing: str) -> bool:
     if {expected_base, existing_base} == {"Bool", "UInt8"}:
         return True
     integer_prefixes = ("Int", "UInt")
-    if expected_base.startswith(integer_prefixes) and existing_base.startswith(
-        integer_prefixes
-    ):
+    if expected_base.startswith(integer_prefixes) and existing_base.startswith(integer_prefixes):
         return True
     numeric_prefixes = ("Float", "Decimal")
-    return expected_base.startswith(numeric_prefixes) and existing_base.startswith(
-        numeric_prefixes
-    )
+    return expected_base.startswith(numeric_prefixes) and existing_base.startswith(numeric_prefixes)
 
 
 def _clickhouse_type(definition: dict[str, Any]) -> str:
@@ -249,13 +242,9 @@ def _clickhouse_type(definition: dict[str, Any]) -> str:
     if base == "array":
         item_type = _strip_nullable(_clickhouse_type(definition.get("items", {})))
         return f"Array({item_type})"
-    mapped = {
-        "boolean": "Bool",
-        "integer": "Int64",
-        "number": "Float64",
-        "string": "String",
-        "object": "String",
-    }.get(base, "String")
+    mapped = {"boolean": "Bool", "integer": "Int64", "number": "Float64", "string": "String", "object": "String"}.get(
+        base, "String"
+    )
     if base == "string" and definition.get("format") == "date-time":
         mapped = "DateTime64(3)"
     return f"Nullable({mapped})"

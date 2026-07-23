@@ -48,6 +48,12 @@ ingestion:
       send_receive_timeout: 1500
       query_limit: 0
       connect_timeout: 30
+      settings:
+        # Correlated subqueries (LEFT ANTI JOIN in the identity seed models)
+        # are gated behind this experimental flag on CH 25.7. A model-level
+        # config() setting does NOT reach the SELECT plan in dbt-clickhouse, so
+        # it must be set at profile level. Kept in parity with prod/test/e2e.
+        allow_experimental_correlated_subqueries: 1
 EOF
 
 cd "${DBT_DIR}"

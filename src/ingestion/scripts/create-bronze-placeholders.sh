@@ -23,7 +23,20 @@
 #
 # Required env (same contract as apply-ch-migrations.sh, via lib/ch-exec.sh):
 #   CLICKHOUSE_URL, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD
+#
+# Generation mode: when this script runs as part of bootstrap-db's snapshot
+# REGENERATION (dump-ddl workflow), the connectors-ddl/*.sql on disk are the
+# PREVIOUS (stale) snapshot — applying them would leak dropped relations into
+# the fresh dump and break convergence. bootstrap-db.sh therefore sets
+# BOOTSTRAP_SKIP_SNAPSHOT=1 so this applicator is a no-op during generation;
+# the real bronze/silver/gold are built from connectors + dbt + migrations
+# instead. It stays fully active on real deploys (fresh-cluster apply).
 set -euo pipefail
+
+if [[ "${BOOTSTRAP_SKIP_SNAPSHOT:-}" == "1" ]]; then
+  echo "=== Skipping connectors-ddl snapshot apply (BOOTSTRAP_SKIP_SNAPSHOT=1, generation mode) ==="
+  exit 0
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DDL_DIR="${SCRIPT_DIR}/connectors-ddl"

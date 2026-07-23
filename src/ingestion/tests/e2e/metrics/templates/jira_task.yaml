@@ -19,7 +19,6 @@ templates:
     jira_id: null
     unique_key: null
     id_readable: null
-    issue_type: ""
     created: ""
     updated: ""
     due_date: ""
@@ -53,7 +52,6 @@ templates:
     jira_id: T-1
     unique_key: jira-test-T-1
     id_readable: TST-1
-    issue_type: Task
     created: "2026-01-15T09:00:00"
     custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
 
@@ -63,7 +61,6 @@ templates:
     jira_id: T-2
     unique_key: jira-test-T-2
     id_readable: TST-2
-    issue_type: Task
     created: "2026-01-15T11:30:00"
     custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
 
@@ -208,20 +205,17 @@ templates:
 
   closed_task_alice:
     $ref: "#/templates/jira_issue"
-    issue_type: Task
     created: "2026-01-15T09:00:00"
     custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
 
   closed_task_bob:
     $ref: "#/templates/jira_issue"
-    issue_type: Task
     created: "2026-01-15T09:00:00"
     reporter_id: bob-jira-acct
     custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
 
   closed_task_carol:
     $ref: "#/templates/jira_issue"
-    issue_type: Task
     created: "2026-01-15T09:00:00"
     reporter_id: carol-jira-acct
     custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'

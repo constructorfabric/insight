@@ -243,7 +243,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_accounts
     `owner_id` Nullable(String),
     `parent_account_id` Nullable(String),
     `metadata` String,
-    `custom_fields` Nullable(String),
+    `custom_fields` String DEFAULT '{}',
     `created_at` Nullable(DateTime64(3)),
     `updated_at` Nullable(DateTime64(3)),
     `data_source` Nullable(String),
@@ -270,7 +270,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_activities
     `duration_seconds` Nullable(Int64),
     `outcome` Nullable(String),
     `metadata` String,
-    `custom_fields` Nullable(String),
+    `custom_fields` String DEFAULT '{}',
     `created_at` Nullable(DateTime64(3)),
     `data_source` Nullable(String),
     `_version` Int64
@@ -293,7 +293,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_contacts
     `account_id` Nullable(String),
     `lifecycle_stage` Nullable(String),
     `metadata` String,
-    `custom_fields` Nullable(String),
+    `custom_fields` String DEFAULT '{}',
     `created_at` Nullable(DateTime64(3)),
     `updated_at` Nullable(DateTime64(3)),
     `data_source` Nullable(String),
@@ -330,7 +330,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_deals
     `lost_reason` Nullable(String),
     `pipeline_id` Nullable(String),
     `metadata` String,
-    `custom_fields` Nullable(String),
+    `custom_fields` String DEFAULT '{}',
     `created_at` Nullable(DateTime64(3)),
     `updated_at` Nullable(DateTime64(3)),
     `data_source` Nullable(String),
@@ -355,7 +355,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_users
     `department` Nullable(String),
     `is_active` Nullable(Int64),
     `metadata` String,
-    `custom_fields` Nullable(String),
+    `custom_fields` String DEFAULT '{}',
     `collected_at` Nullable(DateTime64(3)),
     `data_source` Nullable(String),
     `_version` Int64
@@ -377,6 +377,89 @@ CREATE TABLE IF NOT EXISTS silver.class_focus_metrics
     `focus_time_pct` Nullable(Float64),
     `dev_time_h` Nullable(Float64),
     `_version` Int64
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_git_commits
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `branch` String,
+    `author_name` String,
+    `author_email` String,
+    `committer_name` String,
+    `committer_email` String,
+    `message` String,
+    `date` Nullable(DateTime),
+    `files_changed` Nullable(Int64),
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64),
+    `is_merge_commit` UInt8,
+    `data_source` String,
+    `_version` Int64,
+    `_airbyte_extracted_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_git_file_changes
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `file_path` String,
+    `file_extension` String,
+    `change_type` String,
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64),
+    `source_type` String,
+    `data_source` String,
+    `_version` Int64,
+    `_airbyte_extracted_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `pr_id` Int64,
+    `pr_number` Int64,
+    `title` String,
+    `description` String,
+    `state` String,
+    `author_name` String,
+    `author_email` String,
+    `source_branch` String,
+    `destination_branch` String,
+    `created_on` Nullable(DateTime),
+    `updated_on` Nullable(DateTime),
+    `closed_on` Nullable(DateTime),
+    `merge_commit_hash` String,
+    `files_changed` Nullable(Int64),
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64),
+    `data_source` String,
+    `_version` Int64,
+    `_airbyte_extracted_at` DateTime64(3)
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key
@@ -890,6 +973,99 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS silver.fct_git_commit
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `branch` String,
+    `author_name` String,
+    `author_email` String,
+    `person_key` String,
+    `committer_name` String,
+    `committer_email` String,
+    `message` String,
+    `date` Nullable(DateTime),
+    `week` Nullable(Date),
+    `files_changed` Nullable(Int64),
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64),
+    `is_merge_commit` UInt8,
+    `data_source` String,
+    `_version` Int64,
+    `_airbyte_extracted_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.fct_git_file_change
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `file_path` String,
+    `file_extension` String,
+    `change_type` String,
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64),
+    `file_category` String,
+    `author_name` String,
+    `author_email` String,
+    `person_key` String,
+    `committed_at` Nullable(DateTime),
+    `week` Nullable(Date),
+    `is_merge_commit` UInt8,
+    `data_source` String,
+    `_version` Int64,
+    `_airbyte_extracted_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.fct_git_pr
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `pr_id` Int64,
+    `pr_number` Int64,
+    `title` String,
+    `state` String,
+    `state_norm` String,
+    `author_name` String,
+    `author_email` String,
+    `person_key` String,
+    `source_branch` String,
+    `destination_branch` String,
+    `created_on` Nullable(DateTime),
+    `updated_on` Nullable(DateTime),
+    `closed_on` Nullable(DateTime),
+    `merge_commit_hash` String,
+    `files_changed` Nullable(Int64),
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64),
+    `cycle_time_h` Nullable(Float64),
+    `data_source` String,
+    `_version` Int64,
+    `_airbyte_extracted_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS silver.fct_git_review
 (
     `tenant_id` Nullable(String),
@@ -909,6 +1085,40 @@ CREATE TABLE IF NOT EXISTS silver.fct_git_review
     `_airbyte_extracted_at` DateTime64(3)
 )
 ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.mtr_git_person_totals
+(
+    `tenant_id` Nullable(String),
+    `person_key` String,
+    `unique_key` String,
+    `prs_created` UInt64,
+    `prs_merged` UInt64,
+    `avg_pr_cycle_time_h` Nullable(Float64),
+    `commits` UInt64,
+    `loc` Int64,
+    `clean_loc` Int64
+)
+ENGINE = ReplacingMergeTree
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.mtr_git_person_weekly
+(
+    `tenant_id` Nullable(String),
+    `person_key` String,
+    `week` Nullable(Date),
+    `unique_key` Nullable(String),
+    `commits` UInt64,
+    `prs_merged` UInt64,
+    `code_loc` Int64,
+    `spec_lines` Int64,
+    `config_loc` Int64
+)
+ENGINE = ReplacingMergeTree
 ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
