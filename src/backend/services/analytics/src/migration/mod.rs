@@ -52,6 +52,7 @@ mod m20260702_000002_seed_collab_messaging_catalog;
 mod m20260709_000001_metric_median_computation;
 mod m20260710_000001_metric_distinct_count_computation;
 mod m20260714_000001_metric_value_transform;
+mod m20260721_000001_metric_definition_short_label;
 
 use sea_orm_migration::prelude::*;
 
@@ -113,6 +114,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260709_000001_metric_median_computation::Migration),
             Box::new(m20260710_000001_metric_distinct_count_computation::Migration),
             Box::new(m20260714_000001_metric_value_transform::Migration),
+            Box::new(m20260721_000001_metric_definition_short_label::Migration),
         ]
     }
 }

@@ -211,6 +211,7 @@ pub fn build_metric_result(
     MetricResultDto {
         metric_key: def.base.key.clone(),
         label: def.base.label.clone(),
+        short_label: def.base.short_label.clone(),
         description: def.base.description.clone(),
         explanation: def.base.explanation.clone(),
         unit: def.base.unit.clone(),
@@ -298,6 +299,7 @@ mod tests {
         MetricBase {
             key: "ai.accepted_lines".to_owned(),
             label: "AI-added lines".to_owned(),
+            short_label: None,
             description: None,
             explanation: None,
             entity_type: "person".to_owned(),
