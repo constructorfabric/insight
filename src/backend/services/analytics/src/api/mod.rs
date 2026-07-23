@@ -215,7 +215,15 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Compute metric results")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Metric results")
+        .json_request::<crate::domain::metric_results::MetricResultsRequest>(
+            openapi,
+            "Metric result request",
+        )
+        .json_response_with_schema::<crate::domain::metric_results::MetricResultsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Metric results",
+        )
         .standard_errors(openapi)
         .handler(metric_results::query_metric_results)
         .register(router, openapi);

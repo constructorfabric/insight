@@ -8,18 +8,19 @@ schemas:
     type: object
     additionalProperties: false
     properties:
-      _airbyte_raw_id: { type: string }
-      _airbyte_extracted_at: { type: string, format: date-time }
-      _airbyte_meta: { type: string }
-      _airbyte_generation_id: { type: integer }
-      tenant_id: { type: [string, "null"] }
-      source_id: { type: [string, "null"] }
-      unique_key: { type: [string, "null"] }
-      userPrincipalName: { type: [string, "null"] }
-      reportRefreshDate: { type: [string, "null"] }
-      reportPeriod: { type: [string, "null"] }
-      lastActivityDate: { type: [string, "null"] }
-      viewedOrEditedFileCount: { type: [number, "null"] }
-      syncedFileCount: { type: [number, "null"] }
-      sharedInternallyFileCount: { type: [number, "null"] }
-      sharedExternallyFileCount: { type: [number, "null"] }
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      tenant_id: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      unique_key: {type: [string, "null"]}
+      userPrincipalName: {type: [string, "null"]}
+      reportRefreshDate: {type: [string, "null"]}
+      reportPeriod: {type: [string, "null"]}
+      lastActivityDate: {type: [string, "null"]}
+      assignedProducts: {type: [string, "null"]}
+      viewedOrEditedFileCount: {type: [number, "null"]}
+      syncedFileCount: {type: [number, "null"]}
+      sharedInternallyFileCount: {type: [number, "null"]}
+      sharedExternallyFileCount: {type: [number, "null"]}

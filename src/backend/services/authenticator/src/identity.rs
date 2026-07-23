@@ -95,18 +95,16 @@ impl IdentityPersonResolver {
         }
     }
 
-    /// Mint a short-lived service gateway JWT for the internal Identity call.
-    /// `sub` is the authenticator's stable service UUID; `sub_type = service`
-    /// is what the internal endpoint gates on. Tenant-agnostic, so `tenant_id`
-    /// is empty (the endpoint does not read it).
-    fn mint_service_token(&self) -> anyhow::Result<String> {
+    /// Mint a short-lived service gateway JWT (`sub_type = service`) for the
+    /// internal Identity lookup, scoped to `tenant_id`.
+    fn mint_service_token(&self, tenant_id: &str) -> anyhow::Result<String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock before epoch")?
             .as_secs();
         let claims = GatewayClaims {
             sub: Uuid::new_v5(&Uuid::NAMESPACE_URL, b"service:authenticator").to_string(),
-            tenant_id: String::new(),
+            tenant_id: tenant_id.to_owned(),
             roles: vec!["service".to_owned()],
             sub_type: "service".to_owned(),
             sid: "service:authenticator".to_owned(),
@@ -121,13 +119,13 @@ impl IdentityPersonResolver {
 
     /// Look up the internal person id for an email via Identity's internal
     /// service-only endpoint.
-    async fn lookup_person_id(&self, email: &str) -> anyhow::Result<Option<Uuid>> {
+    async fn lookup_person_id(&self, email: &str, tenant_id: &str) -> anyhow::Result<Option<Uuid>> {
         if self.base_url.is_empty() {
             return Ok(None);
         }
         let encoded = urlencoding_min(email);
         let url = format!("{}/internal/persons/by-email/{encoded}", self.base_url);
-        let token = self.mint_service_token()?;
+        let token = self.mint_service_token(tenant_id)?;
         let resp = self
             .http
             .get(&url)
@@ -151,7 +149,7 @@ impl IdentityPersonResolver {
 #[async_trait]
 impl PersonResolver for IdentityPersonResolver {
     async fn resolve(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>> {
-        let Some(person_id) = self.lookup_person_id(&id.email).await? else {
+        let Some(person_id) = self.lookup_person_id(&id.email, &id.tenant_id).await? else {
             return Ok(None);
         };
         Ok(Some(PersonResolution {
