@@ -160,8 +160,18 @@ impl KeyStore {
     /// Sign `claims` with the current key.
     ///
     /// # Errors
-    /// Fails only on an internal serialization/signing error.
+    /// Fails when `claims.tenant_id` is empty (the tenant invariant), or on an
+    /// internal serialization/signing error.
     pub fn sign(&self, claims: &GatewayClaims) -> anyhow::Result<String> {
+        // Invariant: never mint a gateway JWT without a tenant. `tenant_id` is
+        // the sole tenant authority downstream, which fails closed without it,
+        // so a tenant-less token is useless — refuse it at the one chokepoint
+        // every mint path (login, reissue, service tokens) goes through.
+        anyhow::ensure!(
+            !claims.tenant_id.trim().is_empty(),
+            "refusing to sign a gateway JWT with an empty tenant_id (sub={})",
+            claims.sub
+        );
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(self.current.kid.clone());
         encode(&header, claims, &self.current.encoding).context("sign gateway JWT")
@@ -264,6 +274,23 @@ mod tests {
         assert_eq!(claims.roles, vec!["user", "admin"]);
         assert_eq!(claims.sub_type, "user");
         assert_eq!(claims.aud, "internal-services");
+    }
+
+    #[test]
+    fn sign_refuses_empty_tenant() {
+        // The invariant: no gateway JWT is ever minted without a tenant.
+        let store = KeyStore::from_pem_for_test(&gen_pem()).unwrap();
+        let mut claims = sample_claims();
+        claims.tenant_id = String::new();
+        assert!(
+            store.sign(&claims).is_err(),
+            "empty tenant_id must be refused"
+        );
+        claims.tenant_id = "   ".to_owned();
+        assert!(
+            store.sign(&claims).is_err(),
+            "whitespace tenant_id must be refused"
+        );
     }
 
     #[test]
