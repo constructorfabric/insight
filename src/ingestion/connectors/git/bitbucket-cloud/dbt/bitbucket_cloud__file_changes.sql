@@ -30,7 +30,7 @@ latest AS (
         repository_uuid,
         sha,
         argMax(generation_id, completed_at) AS generation_id,
-        max(completed_at) AS completed_at
+        max(completed_at) AS latest_completed_at
     FROM generations
     GROUP BY tenant_id, source_id, repository_uuid, sha
 )
@@ -63,10 +63,10 @@ SELECT
     COALESCE(change.source_type, '') AS source_type,
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    latest.completed_at AS _airbyte_extracted_at
+    latest.latest_completed_at AS _airbyte_extracted_at
 FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }} AS change FINAL
 INNER JOIN latest USING (tenant_id, source_id, repository_uuid, sha, generation_id)
 WHERE change.record_type = 'item'
 {% if is_incremental() %}
-AND latest.completed_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+AND latest.latest_completed_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}

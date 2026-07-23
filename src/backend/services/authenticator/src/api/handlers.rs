@@ -190,6 +190,25 @@ pub async fn callback(
         }
     };
 
+    // A session without a tenant is unusable — the gateway JWT's `tenant_id` is
+    // the sole tenant authority and downstream fails closed without it. If the
+    // id_token named no tenant and no `default_tenant_id` is configured, deny
+    // the login here rather than minting a dead session (and never issue a
+    // tenant-less JWT — enforced again at the signing chokepoint).
+    if idp.identity.tenant_id.trim().is_empty() {
+        tracing::warn!(
+            target: "audit",
+            event = "login_denied_no_tenant",
+            idp_sub = %idp.identity.sub,
+            email = %idp.identity.email,
+            "login denied: id_token carried no tenant and no default_tenant_id is set"
+        );
+        return PersonError::permission_denied()
+            .with_reason("tenant_unresolved")
+            .create()
+            .into_response();
+    }
+
     // Session-fixation guard: never reuse an incoming session; revoke any live
     // one named by the presented cookie before minting the new session.
     if let Some(old_token) = cookie::read(&jar)

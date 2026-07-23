@@ -19,7 +19,11 @@ templates:
     reportPeriod: "D1"
     reportRefreshDate: null
     lastActivityDate: null
-    isLicensed: null
+    # Default to licensed: the meeting/chat feeders drop rows where
+    # coalesce(isLicensed, false) != true, so an unset flag would otherwise
+    # exclude every fixture row. Tests exercising the unlicensed path set this
+    # explicitly to false (or null). See #736.
+    isLicensed: true
     teamChatMessageCount: null
     privateChatMessageCount: null
     postMessages: null

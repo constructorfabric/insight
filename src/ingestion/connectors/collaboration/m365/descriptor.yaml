@@ -1,5 +1,11 @@
 name: m365
-version: "2026.05.04"
+# 1.0.0 (semver migration): adopt strict MAJOR.MINOR.PATCH (ADR-0015). The prior
+# value "2026.05.04" is not semver, so reconcile classifies current→1.0.0 as a
+# `migration` (republish + catalog re-discover, NO full-refresh). This only
+# establishes the semver baseline. A follow-up MAJOR bump (1.0.0 → 2.0.0) will
+# dispatch the one-shot `dbt --full-refresh` over `dbt_select` (tag:m365+) that
+# purges collab rows materialized before the #736 unlicensed-user filter landed.
+version: "1.0.0"
 schedule: 0 2 * * *
 dbt_select: tag:m365+
 workflow: sync

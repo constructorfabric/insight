@@ -1521,46 +1521,527 @@ CREATE TABLE IF NOT EXISTS bronze_bamboohr.employees (
 SQL
 fi
 
-# bronze_bitbucket_cloud.commits — git commits. Used by mtr_git_person_*
-# silver upstream and gold ic_chart_loc.
+# ---------------------------------------------------------------------------
+# bronze_bitbucket_cloud — CDK-native connector bronze envelope (record_type
+# item/snapshot_complete + generation_id gating; unique_key ORDER BY so FINAL
+# preserves distinct item/marker rows). Tables consumed by the bitbucket_cloud
+# staging models; promote_bronze_to_rmt keeps them ReplacingMergeTree.
+# ---------------------------------------------------------------------------
+# bronze_bitbucket_cloud.repositories
+if ! ch_table_exists bronze_bitbucket_cloud repositories; then
+  echo "  Creating placeholder: bronze_bitbucket_cloud.repositories"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repositories (
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    workspace                    Nullable(String),
+    slug                         Nullable(String),
+    name                         Nullable(String),
+    full_name                    Nullable(String),
+    uuid                         Nullable(String),
+    is_private                   Nullable(Bool),
+    description                  Nullable(String),
+    language                     Nullable(String),
+    size                         Nullable(Int64),
+    created_on                   Nullable(String),
+    updated_on                   Nullable(String),
+    has_issues                   Nullable(Bool),
+    has_wiki                     Nullable(Bool),
+    mainbranch_name              Nullable(String),
+    scm                          Nullable(String),
+    fork_policy                  Nullable(String),
+    website                      Nullable(String),
+    owner_uuid                   Nullable(String),
+    owner_account_id             Nullable(String),
+    owner_display_name           Nullable(String),
+    owner_nickname               Nullable(String),
+    workspace_slug               Nullable(String),
+    parent_uuid                  Nullable(String),
+    parent_full_name             Nullable(String),
+    project_key                  Nullable(String),
+    project_name                 Nullable(String),
+    project_uuid                 Nullable(String),
+    links                        Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+SQL
+fi
+
+# bronze_bitbucket_cloud.branches
+if ! ch_table_exists bronze_bitbucket_cloud branches; then
+  echo "  Creating placeholder: bronze_bitbucket_cloud.branches"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.branches (
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    workspace                    Nullable(String),
+    repo_slug                    Nullable(String),
+    name                         Nullable(String),
+    target_hash                  Nullable(String),
+    target_date                  Nullable(String),
+    mainbranch_name              Nullable(String),
+    default_branch_name          Nullable(String),
+    is_default                   Nullable(Bool),
+    updated_on                   Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+SQL
+fi
+
+# bronze_bitbucket_cloud.commits
 if ! ch_table_exists bronze_bitbucket_cloud commits; then
   echo "  Creating placeholder: bronze_bitbucket_cloud.commits"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commits (
-    hash                  String,
-    date                  String,
-    author_raw            Nullable(String),
-    author_email          Nullable(String),
-    author_name           Nullable(String),
-    project_key           Nullable(String),
-    repository            Nullable(String),
-    message               Nullable(String),
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    hash                         Nullable(String),
+    message                      Nullable(String),
+    date                         Nullable(String),
+    author_raw                   Nullable(String),
+    author_name                  Nullable(String),
+    author_email                 Nullable(String),
+    author_display_name          Nullable(String),
+    author_uuid                  Nullable(String),
+    author_account_id            Nullable(String),
+    committer_raw                Nullable(String),
+    committer_name               Nullable(String),
+    committer_email              Nullable(String),
+    committer_display_name       Nullable(String),
+    committer_uuid               Nullable(String),
+    committer_account_id         Nullable(String),
+    parent_hashes                Nullable(String),
+    workspace                    Nullable(String),
+    repo_slug                    Nullable(String),
+    branch_name                  Nullable(String),
+    head_sha                     Nullable(String),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
-) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY hash;
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+SQL
+else
+  # Reconcile a legacy placeholder (pre-rewrite flat schema) to the current
+  # envelope — the staging models read record_type/generation_id/entity_key
+  # etc., and a `CREATE TABLE IF NOT EXISTS` alone never adds them to a warm
+  # cluster's older table. Idempotent: ADD COLUMN IF NOT EXISTS. The sort key
+  # of an existing table cannot be altered in place; commits/pull_requests
+  # carry no snapshot markers so their dedup key is not load-bearing.
+  echo "  Reconciling placeholder schema: bronze_bitbucket_cloud.commits"
+  run_ch <<'SQL'
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS tenant_id String;
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS source_id String;
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS unique_key String;
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS entity_key Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS data_source Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS collected_at Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS record_type Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS generation_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS bucket_id Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS snapshot_item_count Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS snapshot_available Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS repository_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS workspace_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS hash Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS message Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS date Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_raw Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_email Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_display_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS author_account_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_raw Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_email Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_display_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS committer_account_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS parent_hashes Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS workspace Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS repo_slug Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS branch_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS head_sha Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS _airbyte_raw_id String        DEFAULT toString(generateUUIDv4());
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS _airbyte_extracted_at DateTime64(3) DEFAULT now64(3);
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS _airbyte_meta String        DEFAULT '{}';
+ALTER TABLE bronze_bitbucket_cloud.commits ADD COLUMN IF NOT EXISTS _airbyte_generation_id UInt32        DEFAULT 0;
 SQL
 fi
 
-# bronze_bitbucket_cloud.pull_requests — git PRs.
+# bronze_bitbucket_cloud.file_changes
+if ! ch_table_exists bronze_bitbucket_cloud file_changes; then
+  echo "  Creating placeholder: bronze_bitbucket_cloud.file_changes"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.file_changes (
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    source_type                  Nullable(String),
+    sha                          Nullable(String),
+    is_snapshot_marker           Nullable(Bool),
+    marker_type                  Nullable(String),
+    filename                     Nullable(String),
+    status                       Nullable(String),
+    additions                    Nullable(Int64),
+    deletions                    Nullable(Int64),
+    previous_filename            Nullable(String),
+    committed_date               Nullable(String),
+    workspace                    Nullable(String),
+    repo_slug                    Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+SQL
+fi
+
+# bronze_bitbucket_cloud.commit_branch_reachability
+if ! ch_table_exists bronze_bitbucket_cloud commit_branch_reachability; then
+  echo "  Creating placeholder: bronze_bitbucket_cloud.commit_branch_reachability"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commit_branch_reachability (
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    workspace                    Nullable(String),
+    repo_slug                    Nullable(String),
+    branch_name                  Nullable(String),
+    branch_head_sha              Nullable(String),
+    default_branch_name          Nullable(String),
+    commit_sha                   Nullable(String),
+    committed_at                 Nullable(String),
+    reachability_action          Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+SQL
+fi
+
+# bronze_bitbucket_cloud.pull_requests
 if ! ch_table_exists bronze_bitbucket_cloud pull_requests; then
   echo "  Creating placeholder: bronze_bitbucket_cloud.pull_requests"
   run_ch <<'SQL'
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_requests (
-    id                    String,
-    state                 Nullable(String),
-    author_email          Nullable(String),
-    author_name           Nullable(String),
-    created_on            Nullable(String),
-    updated_on            Nullable(String),
-    merged_on             Nullable(String),
-    repository            Nullable(String),
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    id                           Nullable(Int64),
+    title                        Nullable(String),
+    description                  Nullable(String),
+    state                        Nullable(String),
+    created_on                   Nullable(String),
+    updated_on                   Nullable(String),
+    author_display_name          Nullable(String),
+    author_uuid                  Nullable(String),
+    author_account_id            Nullable(String),
+    closed_by_display_name       Nullable(String),
+    closed_by_uuid               Nullable(String),
+    closed_by_account_id         Nullable(String),
+    source_branch                Nullable(String),
+    destination_branch           Nullable(String),
+    source_commit_hash           Nullable(String),
+    destination_commit_hash      Nullable(String),
+    merge_commit_hash            Nullable(String),
+    task_count                   Nullable(Int64),
+    draft                        Nullable(Bool),
+    queued                       Nullable(Bool),
+    close_source_branch          Nullable(Bool),
+    reason                       Nullable(String),
+    reviewers                    Nullable(String),
+    comment_count                Nullable(Int64),
+    participants                 Nullable(String),
+    workspace                    Nullable(String),
+    repo_slug                    Nullable(String),
     _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
     _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
     _airbyte_meta          String        DEFAULT '{}',
     _airbyte_generation_id UInt32        DEFAULT 0
-) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY id;
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+SQL
+else
+  # Reconcile a legacy placeholder (pre-rewrite flat schema) to the current
+  # envelope — the staging models read record_type/generation_id/entity_key
+  # etc., and a `CREATE TABLE IF NOT EXISTS` alone never adds them to a warm
+  # cluster's older table. Idempotent: ADD COLUMN IF NOT EXISTS. The sort key
+  # of an existing table cannot be altered in place; commits/pull_requests
+  # carry no snapshot markers so their dedup key is not load-bearing.
+  echo "  Reconciling placeholder schema: bronze_bitbucket_cloud.pull_requests"
+  run_ch <<'SQL'
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS tenant_id String;
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS source_id String;
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS unique_key String;
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS entity_key Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS data_source Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS collected_at Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS record_type Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS generation_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS bucket_id Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS snapshot_item_count Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS snapshot_available Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS repository_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS workspace_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS id Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS title Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS description Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS state Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS created_on Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS updated_on Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS author_display_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS author_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS author_account_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS closed_by_display_name Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS closed_by_uuid Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS closed_by_account_id Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS source_branch Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS destination_branch Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS source_commit_hash Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS destination_commit_hash Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS merge_commit_hash Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS task_count Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS draft Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS queued Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS close_source_branch Nullable(Bool);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS reason Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS reviewers Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS comment_count Nullable(Int64);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS participants Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS workspace Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS repo_slug Nullable(String);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS _airbyte_raw_id String        DEFAULT toString(generateUUIDv4());
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS _airbyte_extracted_at DateTime64(3) DEFAULT now64(3);
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS _airbyte_meta String        DEFAULT '{}';
+ALTER TABLE bronze_bitbucket_cloud.pull_requests ADD COLUMN IF NOT EXISTS _airbyte_generation_id UInt32        DEFAULT 0;
+SQL
+fi
+
+# bronze_bitbucket_cloud.pull_request_diffstat
+if ! ch_table_exists bronze_bitbucket_cloud pull_request_diffstat; then
+  echo "  Creating placeholder: bronze_bitbucket_cloud.pull_request_diffstat"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_diffstat (
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    pr_id                        Nullable(Int64),
+    is_snapshot_marker           Nullable(Bool),
+    status                       Nullable(String),
+    old_path                     Nullable(String),
+    new_path                     Nullable(String),
+    lines_added                  Nullable(Int64),
+    lines_removed                Nullable(Int64),
+    pull_request_updated_on      Nullable(String),
+    pull_request_source_commit_hash Nullable(String),
+    pull_request_destination_commit_hash Nullable(String),
+    workspace                    Nullable(String),
+    repo_slug                    Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+SQL
+fi
+
+# bronze_bitbucket_cloud.pull_request_activity
+if ! ch_table_exists bronze_bitbucket_cloud pull_request_activity; then
+  echo "  Creating placeholder: bronze_bitbucket_cloud.pull_request_activity"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_activity (
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    pr_id                        Nullable(Int64),
+    event_type                   Nullable(String),
+    activity_date                Nullable(String),
+    update_state                 Nullable(String),
+    actor_display_name           Nullable(String),
+    actor_uuid                   Nullable(String),
+    actor_account_id             Nullable(String),
+    pull_request_updated_on      Nullable(String),
+    pull_request_source_commit_hash Nullable(String),
+    pull_request_destination_commit_hash Nullable(String),
+    workspace                    Nullable(String),
+    repo_slug                    Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+SQL
+fi
+
+# bronze_bitbucket_cloud.pull_request_comments
+if ! ch_table_exists bronze_bitbucket_cloud pull_request_comments; then
+  echo "  Creating placeholder: bronze_bitbucket_cloud.pull_request_comments"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_comments (
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    comment_id                   Nullable(Int64),
+    pr_id                        Nullable(Int64),
+    body                         Nullable(String),
+    created_on                   Nullable(String),
+    updated_on                   Nullable(String),
+    author_display_name          Nullable(String),
+    author_uuid                  Nullable(String),
+    author_account_id            Nullable(String),
+    is_inline                    Nullable(Bool),
+    inline_path                  Nullable(String),
+    inline_from                  Nullable(Int64),
+    inline_to                    Nullable(Int64),
+    parent_comment_id            Nullable(Int64),
+    is_deleted                   Nullable(Bool),
+    pull_request_updated_on      Nullable(String),
+    pull_request_source_commit_hash Nullable(String),
+    pull_request_destination_commit_hash Nullable(String),
+    workspace                    Nullable(String),
+    repo_slug                    Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+SQL
+fi
+
+# bronze_bitbucket_cloud.pull_request_commits
+if ! ch_table_exists bronze_bitbucket_cloud pull_request_commits; then
+  echo "  Creating placeholder: bronze_bitbucket_cloud.pull_request_commits"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_commits (
+    tenant_id                    String,
+    source_id                    String,
+    unique_key                   String,
+    entity_key                   Nullable(String),
+    data_source                  Nullable(String),
+    collected_at                 Nullable(String),
+    record_type                  Nullable(String),
+    generation_id                Nullable(String),
+    bucket_id                    Nullable(Int64),
+    snapshot_item_count          Nullable(Int64),
+    snapshot_available           Nullable(Bool),
+    repository_uuid              Nullable(String),
+    workspace_uuid               Nullable(String),
+    pr_id                        Nullable(Int64),
+    hash                         Nullable(String),
+    commit_order                 Nullable(Int64),
+    author_uuid                  Nullable(String),
+    author_account_id            Nullable(String),
+    pull_request_updated_on      Nullable(String),
+    pull_request_source_commit_hash Nullable(String),
+    pull_request_destination_commit_hash Nullable(String),
+    workspace                    Nullable(String),
+    repo_slug                    Nullable(String),
+    _airbyte_raw_id        String        DEFAULT toString(generateUUIDv4()),
+    _airbyte_extracted_at  DateTime64(3) DEFAULT now64(3),
+    _airbyte_meta          String        DEFAULT '{}',
+    _airbyte_generation_id UInt32        DEFAULT 0
+) ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
 SQL
 fi
 
