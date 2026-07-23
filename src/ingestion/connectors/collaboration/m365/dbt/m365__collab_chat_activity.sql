@@ -44,22 +44,22 @@ SELECT
        lower(userPrincipalName),
        '') AS person_key,
     toDate(reportRefreshDate) AS date,
-    privateChatMessageCount AS direct_messages,
+    toInt64(privateChatMessageCount) AS direct_messages,
     -- #431: teamChatMessageCount is channel-post activity (not group DMs)
     -- per Microsoft Graph docs. Group-chat counts are not surfaced by this
     -- report endpoint. Emit NULL rather than the mislabeled channel count.
     CAST(NULL AS Nullable(Int64)) AS group_chat_messages,
     -- #266: for m365, only the DM portion of "direct + group" is available.
     -- Group chats unsurfaced — see header.
-    privateChatMessageCount AS direct_and_group_messages,
+    toInt64(privateChatMessageCount) AS direct_and_group_messages,
     -- total_chat_messages retains the existing semantics
     -- (DMs + team-channel messages) so existing Gold consumers do not see a
     -- discontinuity. This is "user engagement across DM + channel surfaces",
     -- not "DM + group DM". Documented in silver schema.
-    COALESCE(privateChatMessageCount, 0) + COALESCE(teamChatMessageCount, 0) AS total_chat_messages,
-    postMessages AS channel_posts,
-    replyMessages AS channel_replies,
-    urgentMessages AS urgent_messages,
+    toInt64(COALESCE(privateChatMessageCount, 0) + COALESCE(teamChatMessageCount, 0)) AS total_chat_messages,
+    toInt64(postMessages) AS channel_posts,
+    toInt64(replyMessages) AS channel_replies,
+    toInt64(urgentMessages) AS urgent_messages,
     reportPeriod AS report_period,
     now() AS collected_at,
     'insight_m365' AS data_source,

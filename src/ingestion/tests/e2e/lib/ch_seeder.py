@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable
 
 from lib import clickhouse as ch
@@ -190,8 +191,30 @@ class CHSeeder:
                 f"column {col!r} ({ch_type}): non-boolean value {value!r} "
                 f"(use true/false)"
             )
-        # String / Decimal / Float / Int / Array / JSON: pass through. clickhouse-connect
-        # accepts int→Decimal, str→JSON, list→Array, str→String as-is.
+        # Numeric columns: connectors declare loosely-typed JSON `number`
+        # fields (ids, counts, *_seconds), which the ClickHouse destination
+        # maps to Decimal/Int/Float. YAML fixtures naturally express those as
+        # strings (e.g. "10001"), which clickhouse-connect cannot serialize
+        # into a numeric column — coerce here so the fixture exercises exactly
+        # the value the connector would have written.
+        if isinstance(value, str) and value != "":
+            if base.startswith("Decimal"):
+                try:
+                    return Decimal(value)
+                except InvalidOperation as e:
+                    raise SeederError(f"column {col!r} ({ch_type}): bad decimal {value!r}") from e
+            if base.startswith(("Int", "UInt")):
+                try:
+                    return int(value)
+                except ValueError as e:
+                    raise SeederError(f"column {col!r} ({ch_type}): bad integer {value!r}") from e
+            if base.startswith("Float"):
+                try:
+                    return float(value)
+                except ValueError as e:
+                    raise SeederError(f"column {col!r} ({ch_type}): bad float {value!r}") from e
+        # String / Array / JSON: pass through. clickhouse-connect accepts
+        # str→JSON, list→Array, str→String as-is.
         return value
 
 

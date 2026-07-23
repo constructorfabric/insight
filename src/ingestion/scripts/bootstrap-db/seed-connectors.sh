@@ -13,7 +13,10 @@ while IFS= read -r name; do
   if yq -o=json ".connectors.\"${name}\".config" "${CONFIG_FILE}" \
       | jq 'with_entries(.value =
           (if .value | has("env")
-           then (env[.value.env] // error(.value.env + " is not set"))
+           then (if (env[.value.env] // "") == ""
+                 then error(.value.env + " is not set or empty")
+                 else env[.value.env]
+                 end)
            else .value.value
            end))' \
       > "${config_json}" \

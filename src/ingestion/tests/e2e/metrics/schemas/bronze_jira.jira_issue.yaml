@@ -1,6 +1,6 @@
 # Reusable JSON schema for the table (all real fields). Resolved by table name.
 # Mirrors the bronze_jira.jira_issue placeholder DDL in
-# scripts/create-bronze-placeholders.sh, which in turn mirrors the columns the
+# scripts/connectors-ddl/ (CI-generated DDL snapshot), which in turn mirrors the columns the
 # Jira staging dbt models read (jira__issue_field_snapshot.sql).
 schemas:
   bronze_jira.jira_issue:
@@ -13,7 +13,6 @@ schemas:
       jira_id: { type: string }
       unique_key: { type: string }
       id_readable: { type: string }
-      issue_type: { type: string }
       created: { type: string }
       updated: { type: string }
       due_date: { type: string }

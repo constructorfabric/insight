@@ -13,9 +13,9 @@ SELECT
     unique_key,
     COALESCE(repo_owner, '') AS project_key,
     COALESCE(repo_name, '') AS repo_slug,
-    COALESCE(pr_database_id, 0) AS pr_id,
-    COALESCE(commit_hash, '') AS commit_hash,
-    COALESCE(commit_order, 0) AS commit_order,
+    COALESCE(pull_request_id, 0) AS pr_id,
+    COALESCE(sha, '') AS commit_hash,
+    0 AS commit_order,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

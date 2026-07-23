@@ -13,7 +13,7 @@ SELECT
     unique_key,
     COALESCE(repo_owner, '') AS project_key,
     COALESCE(repo_name, '') AS repo_slug,
-    COALESCE(oid, '') AS commit_hash,
+    COALESCE(sha, '') AS commit_hash,
     COALESCE(branch_name, '') AS branch,
     COALESCE(author_name, '') AS author_name,
     COALESCE(author_email, '') AS author_email,

@@ -302,8 +302,8 @@ declarative `*.test.yaml` rig replaced the CSV rig.
 
 The seeder INSERTs into a table that MUST already exist (it reads
 `system.columns` and fails otherwise — it does NOT create from the schema YAML).
-Bronze tables come from `src/ingestion/scripts/create-bronze-placeholders.sh`
-(the rig parses the `run_ch <<'SQL' … SQL` heredocs out of it). So to seed a
+Bronze tables come from `src/ingestion/scripts/connectors-ddl/*.sql`
+(the CI-generated DDL snapshot the rig applies verbatim). So to seed a
 connector that isn't there yet:
 
 1. Add `CREATE DATABASE IF NOT EXISTS bronze_<snake>;` to the database heredoc.

@@ -316,7 +316,8 @@ src/ingestion/
 ├── scripts/                         # ClickHouse migrations + in-toolbox helpers
 │   ├── migrations/                  #   gold-view migrations (*.sql)
 │   ├── apply-ch-migrations.sh       #   migration runner (clickhouse-migrate Hook Job)
-│   ├── create-bronze-placeholders.sh #  ADR-0007 fresh-cluster placeholders
+│   ├── create-bronze-placeholders.sh #  applies connectors-ddl/ DDL snapshot
+│   ├── connectors-ddl/              #   CI-generated SHOW CREATE snapshot (#1831)
 │   ├── lib/ch-exec.sh               #   ClickHouse HTTP exec helpers
 │   └── wait-for-services.sh         #   kubectl wait for pods
 │

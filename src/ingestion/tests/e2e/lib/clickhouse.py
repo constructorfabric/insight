@@ -15,11 +15,8 @@ LOG = logging.getLogger("e2e.ch")
 def client(cfg: SessionConfig, *, database: str | None = None):
     """Return a clickhouse_connect HTTP client bound to the session's CH.
 
-    Defaults enable experimental features the prod migrations rely on
-    (`SET allow_experimental_refreshable_materialized_view = 1;` inside
-    20260429000000_task-delivery-silver-rewrite.sql). clickhouse-connect runs
-    each HTTP call in its own session, so per-statement SET inside a SQL file
-    is lost — we set them at the client level instead.
+    Refreshable materialized views are GA on the pinned ClickHouse (25.x),
+    so no experimental settings are needed here anymore.
     """
     return clickhouse_connect.get_client(
         host=cfg.ch_host,
@@ -27,9 +24,6 @@ def client(cfg: SessionConfig, *, database: str | None = None):
         username=cfg.ch_user,
         password=cfg.ch_password,
         database=database or "default",
-        settings={
-            "allow_experimental_refreshable_materialized_view": 1,
-        },
     )
 
 

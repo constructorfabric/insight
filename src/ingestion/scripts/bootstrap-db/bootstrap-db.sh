@@ -5,6 +5,10 @@ CONFIG_FILE="${1:?usage: bootstrap-db.sh <connectors-config.yaml>}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+set -a
+source "${SCRIPT_DIR}/pins.env"
+set +a
+
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
   set -a
   source "${SCRIPT_DIR}/.env"

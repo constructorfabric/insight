@@ -6,10 +6,10 @@ the seed does not reimplement any DDL. It runs the exact two scripts the
 k8s clickhouse-migrate Hook Job runs, from the ingestion tree bind-mounted
 at /ingestion (docker-compose.yml `seed-sample.volumes`):
 
-1. `create-bronze-placeholders.sh` — CREATE DATABASE + bronze/silver
-   placeholder tables (CREATE TABLE IF NOT EXISTS; each silver placeholder
-   carries the INSIGHT_PLACEHOLDER_v1 marker). This gives the generators
-   real tables to write into.
+1. `create-bronze-placeholders.sh` — applies the CI-generated DDL snapshot
+   from scripts/connectors-ddl/*.sql (CREATE DATABASE + every bronze/silver/
+   insight relation, all IF NOT EXISTS / OR REPLACE). This gives the
+   generators the real production schemas to write into.
 
 2. Generate per-team activity rows via `generators/*.py` INTO those silver
    tables. Volumes scale by team profile + persona; per-day caps live in
