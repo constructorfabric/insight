@@ -19,6 +19,7 @@ templates:
     reportPeriod: "D1"
     reportRefreshDate: null
     lastActivityDate: null
+    isLicensed: null
     teamChatMessageCount: null
     privateChatMessageCount: null
     postMessages: null

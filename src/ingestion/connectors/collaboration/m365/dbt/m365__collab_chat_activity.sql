@@ -67,6 +67,13 @@ SELECT
 FROM {{ source('bronze_m365', 'teams_activity') }}
 WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
+  -- Drop unlicensed users (guests, ex-employees, service accounts). Their Teams
+  -- activity inflates team-level collab counters and produces orphan gold rows
+  -- with no matching insight.people entry. `isLicensed` = "Selected if the user
+  -- is licensed to use Teams" (MS Graph getTeamsUserActivityUserDetail). Only the
+  -- teams_activity report exposes this flag; the email/onedrive/sharepoint feeders
+  -- fall back to `assignedProducts`. Conservative on NULL (unknown -> keep). See #736.
+  AND coalesce(isLicensed, true) = true
 {% if is_incremental() %}
   -- Watermark on the source EXTRACT time, not the business date (see zoom model header
   -- for the backfill-strand failure mode this fixes). Re-pulled rows carry a fresh
