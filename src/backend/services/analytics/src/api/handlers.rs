@@ -51,7 +51,7 @@ pub async fn get_person(
         .get_person(&email, authorization)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, email = %email, "identity resolution request failed");
+            tracing::error!(error = %e, "identity resolution request failed");
             CanonicalError::internal("identity resolution unavailable").create()
         })?;
 

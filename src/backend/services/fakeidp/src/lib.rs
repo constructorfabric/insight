@@ -101,7 +101,7 @@ struct UsersFile {
 /// `users.yaml`. Panics on malformed input — this is a test binary; loud is fine.
 ///
 /// If `FAKEIDP_DEV_USER_EMAIL` is set, it overrides the *first* user's email.
-/// Compose wires this from the wizard's `VITE_DEV_USER_EMAIL`, so the default
+/// Compose wires this from the wizard's `DEV_USER_EMAIL`, so the default
 /// login always matches the dev person the seeder wrote into identity — even
 /// when the operator picked a non-default dev email.
 pub fn load_users() -> Vec<User> {

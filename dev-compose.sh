@@ -102,6 +102,8 @@ Options:
   --from-ghcr=svc1,svc2     Pull these backend services from ghcr instead
                             of building. Recognised:
                             analytics, identity.
+  --watch=svc1,svc2         Run selected Rust services from source with
+                            cargo-watch. Recognised: analytics.
   --build-only=svc1,svc2    Build only these; everything else from ghcr.
   --frontend-mode=MODE      Override FRONTEND_MODE for this run.
                             (dev | built | ghcr)
@@ -225,7 +227,7 @@ detect_host_ip() {
 ensure_fakeidp_issuer() {
   [[ -n "${AUTHENTICATOR_OIDC_ISSUER:-}" ]] && return 0
   local ip
-  ip="$(detect_host_ip)"
+  ip="$(detect_host_ip || true)"
   if [[ -z "$ip" ]]; then
     echo "WARN: no host IP detected — fakeidp issuer stays http://fakeidp:8084." >&2
     echo "      curl/e2e still work; browser login needs the browser's HTTPS-upgrade off." >&2
@@ -236,9 +238,49 @@ ensure_fakeidp_issuer() {
   echo "fakeidp issuer → http://$ip:8084 (host IP; browser-reachable, no HTTPS upgrade)"
 }
 
+write_watch_override() {
+  local svc="$1"
+  case "$svc" in
+    analytics)
+      cat <<'YML'
+  analytics:
+    image: insight-rust-watch:dev
+    pull_policy: build
+    build:
+      context: deploy/compose
+      dockerfile: rust-watch.Dockerfile
+    entrypoint: !reset null
+    working_dir: /workspace
+    environment:
+      ENABLE_AUTO_RELOAD: ""
+      CARGO_TARGET_DIR: /target
+      CARGO_INCREMENTAL: "1"
+    volumes: !override
+      - ./src/backend:/workspace:ro
+      - rust-target:/target
+      - rust-cargo-registry:/usr/local/cargo/registry
+      - rust-cargo-git:/usr/local/cargo/git
+      - ./deploy/compose/analytics-fullauth.yaml:/app/config/insight.yaml:ro
+      - ./deploy/compose/authn-tls-certs:/certs:ro
+    command:
+      - cargo-watch
+      - --poll
+      - --exec
+      - run --bin analytics -- -c /app/config/insight.yaml run
+YML
+      ;;
+    *)
+      echo "ERROR: no watch configuration registered for service '$svc'." >&2
+      return 1
+      ;;
+  esac
+}
+
 cmd_up() {
   local env_file=".env.compose"
   local from_ghcr_csv=""
+  local watch_csv=""
+  local watch_option_set=false
   local build_only_csv=""
   local frontend_mode_override=""
   local auth_mode_override=""
@@ -251,6 +293,10 @@ cmd_up() {
       --env-file)        env_file="$2"; shift 2 ;;
       --from-ghcr=*)     from_ghcr_csv="${1#*=}"; shift ;;
       --from-ghcr)       from_ghcr_csv="$2"; shift 2 ;;
+      --watch=*)         watch_csv="${1#*=}"; watch_option_set=true; shift ;;
+      --watch)
+        [[ $# -ge 2 ]] || { echo "ERROR: --watch requires a value." >&2; return 2; }
+        watch_csv="$2"; watch_option_set=true; shift 2 ;;
       --build-only=*)    build_only_csv="${1#*=}"; shift ;;
       --build-only)      build_only_csv="$2"; shift 2 ;;
       --frontend-mode=*) frontend_mode_override="${1#*=}"; shift ;;
@@ -275,11 +321,20 @@ cmd_up() {
   # The wizard itself lives in deploy/compose/insight-init.sh, shared with the
   # k8s-local bring-up.
   if [[ "$env_file" == ".env.compose" && ! -f "$env_file" ]]; then
-    bash "$ROOT_DIR/deploy/compose/insight-init.sh" --target=compose || return $?
+    local init_args=(--target=compose)
+    [[ "$no_frontend" == "true" ]] && init_args+=(--no-frontend)
+    bash "$ROOT_DIR/deploy/compose/insight-init.sh" "${init_args[@]}" || return $?
   fi
 
   env_file="$(resolve_env_file "$env_file")"
   set -a; source "$env_file"; set +a
+
+  if [[ -n "${VITE_DEV_USER_EMAIL:-}" && -z "${DEV_USER_EMAIL:-}" ]]; then
+    echo "ERROR: VITE_DEV_USER_EMAIL was renamed to DEV_USER_EMAIL." >&2
+    echo "       Update $env_file before running the stack." >&2
+    return 1
+  fi
+  : "${DEV_USER_EMAIL:?DEV_USER_EMAIL must be set (for example, dev@company.nonpresent)}"
 
   [[ -n "$frontend_mode_override" ]] && FRONTEND_MODE="$frontend_mode_override"
   FRONTEND_MODE="${FRONTEND_MODE:-dev}"
@@ -304,7 +359,9 @@ cmd_up() {
   # The legacy Rust api-gateway is gone; the nginx `gateway` is the sole :8080
   # entry doing full auth via the authenticator (NGINX_BFF #1583 step 09).
   local all_backend="analytics identity"
+  local watchable_services="analytics"
   local ghcr_list=""
+  local watch_list=""
   local build_list=""
 
   [[ -n "${ANALYTICS_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" analytics)
@@ -314,6 +371,23 @@ cmd_up() {
     local OLD_IFS=$IFS; IFS=','
     local s
     for s in $from_ghcr_csv; do ghcr_list=$(add "$ghcr_list" "$(trim "$s")"); done
+    IFS=$OLD_IFS
+  fi
+  if [[ "$watch_option_set" == "true" ]]; then
+    case "$watch_csv" in
+      ""|,*|*,|*,,*) echo "ERROR: --watch requires a comma-separated service list without empty entries." >&2; return 2 ;;
+    esac
+    local OLD_IFS=$IFS; IFS=','
+    local s
+    for s in $watch_csv; do
+      s="$(trim "$s")"
+      [[ -n "$s" ]] || { echo "ERROR: --watch contains an empty service name." >&2; return 2; }
+      contains "$watchable_services" "$s" || {
+        echo "ERROR: service '$s' does not support --watch (supported: $watchable_services)." >&2
+        return 2
+      }
+      watch_list=$(add "$watch_list" "$s")
+    done
     IFS=$OLD_IFS
   fi
   if [[ -n "$build_only_csv" ]]; then
@@ -326,6 +400,14 @@ cmd_up() {
     done
   fi
 
+  local s
+  for s in $watch_list; do
+    if contains "$ghcr_list" "$s"; then
+      echo "ERROR: service '$s' cannot use both --watch and --from-ghcr/image override." >&2
+      return 2
+    fi
+  done
+
   contains "$ghcr_list" analytics && [[ -z "${ANALYTICS_IMAGE:-}" ]] && export ANALYTICS_IMAGE="ghcr.io/constructorfabric/insight-analytics:${ANALYTICS_GHCR_TAG:-latest}"
   contains "$ghcr_list" identity      && [[ -z "${IDENTITY_IMAGE:-}"      ]] && export IDENTITY_IMAGE="ghcr.io/constructorfabric/insight-identity:${IDENTITY_GHCR_TAG:-latest}"
   true
@@ -334,11 +416,10 @@ cmd_up() {
   local override="deploy/compose/override.generated.yml"
   mkdir -p compose
   local want_overrides=false
-  [[ -n "$ghcr_list" ]] && want_overrides=true
+  [[ -n "$ghcr_list" || -n "$watch_list" ]] && want_overrides=true
   {
     echo "# Auto-generated by dev-compose.sh — DO NOT EDIT BY HAND."
-    echo "# Per-run override: flips selected services to ghcr mode, and in"
-    echo "# keycloak auth mode turns off frontend dev-impersonation."
+    echo "# Per-run override for selected service execution modes."
     if [[ "$want_overrides" != true ]]; then
       echo "services: {}"
     else
@@ -359,6 +440,8 @@ cmd_up() {
     command: !reset null
     platform: linux/amd64
 YML
+        elif contains "$watch_list" "$svc"; then
+          write_watch_override "$svc"
         fi
       done
       # NGINX_BFF: no frontend dev-impersonation to disable — the cookie/BFF SPA
@@ -377,10 +460,9 @@ YML
   # missing at container-create time Docker creates an empty directory
   # at the mount path instead, so --import-realm silently imports nothing.
   if [[ "$AUTH_MODE" == keycloak ]]; then
-    # Roster anchor for the realm's dev-lead persona (passed explicitly so it's
-    # independent of any other VITE_DEV_USER_EMAIL role). It stays set — the
-    # realm roster and the seed step both need it.
-    local dev_lead_email="${VITE_DEV_USER_EMAIL:?VITE_DEV_USER_EMAIL must be set (roster anchor for the Keycloak realm; e.g. dev@company.nonpresent — see .env.compose)}"
+    # Roster anchor for the realm's dev-lead persona. The realm roster and the
+    # seed step both need it.
+    local dev_lead_email="${DEV_USER_EMAIL:?DEV_USER_EMAIL must be set (roster anchor for the Keycloak realm; e.g. dev@company.nonpresent — see .env.compose)}"
 
     # The authenticator (server-side) AND the browser must reach Keycloak at the
     # SAME issuer, or the id_token `iss` won't validate. Use the host IP (an IP
@@ -388,7 +470,7 @@ YML
     # the published :8085) — the same trick as ensure_fakeidp_issuer. A
     # `localhost` issuer is unreachable from inside the authenticator; a
     # `keycloak:8085` issuer wouldn't match the browser-facing `iss`.
-    local kc_ip; kc_ip="$(detect_host_ip)"
+    local kc_ip; kc_ip="$(detect_host_ip || true)"
     if [[ -z "$kc_ip" ]]; then
       echo "WARN: no host IP detected — Keycloak issuer stays localhost (browser-only; the authenticator can't reach it)." >&2
       kc_ip="localhost"
@@ -438,11 +520,15 @@ YML
   # ── Build phase ──────────────────────────────────────────────────
   if [[ "$skip_build" != "true" ]]; then
     echo "=== Building artefacts (skip with --skip-build) ==="
+    if [[ "$AUTH_MODE" == fakeidp ]]; then
+      echo "--- Image: fakeidp"
+      "${compose_cmd[@]}" --profile auth-fakeidp build fakeidp
+    fi
     # authenticator is always built from source (no ghcr flip for it) and its
     # binary is bind-mounted as a file — omit it and compose auto-creates the
     # mount source as an empty directory, failing container init.
     local rust_bins="authenticator"
-    contains "$ghcr_list" analytics   || rust_bins="$rust_bins analytics"
+    contains "$ghcr_list" analytics || contains "$watch_list" analytics || rust_bins="$rust_bins analytics"
     rust_bins=$(trim "$rust_bins")
     if [[ -n "$rust_bins" ]]; then
       echo "--- Rust:$rust_bins"
@@ -456,8 +542,14 @@ YML
             protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
           cargo build --release$bin_flags
           mkdir -p /out/analytics /out/authenticator
-          [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
-          [ -f /target/release/authenticator ]       && install -m 0755 /target/release/authenticator       /out/authenticator/authenticator || true
+          if [ -f /target/release/analytics ]; then
+            [ ! -d /out/analytics/analytics ] || rm -rf /out/analytics/analytics
+            install -m 0755 /target/release/analytics /out/analytics/analytics
+          fi
+          if [ -f /target/release/authenticator ]; then
+            [ ! -d /out/authenticator/authenticator ] || rm -rf /out/authenticator/authenticator
+            install -m 0755 /target/release/authenticator /out/authenticator/authenticator
+          fi
         "
     fi
     if ! contains "$ghcr_list" identity; then
@@ -568,12 +660,20 @@ report_service_urls() {
 
   echo
   echo "=== Sign in ==="
+  if [[ "$frontend_up" != "true" ]]; then
+    if [[ "$auth_mode" == keycloak ]]; then
+      echo "  Frontend is not running (--no-frontend); browser sign-in is unavailable."
+    else
+      echo "  fakeidp is configured to log in as ${DEV_USER_EMAIL:-dev@company.nonpresent}; frontend is not running (--no-frontend)."
+    fi
+    return
+  fi
   if [[ "$auth_mode" == keycloak ]]; then
     echo "  Open http://$h:${FRONTEND_PORT:-3000}, click Sign in, then at the Keycloak form enter"
     echo "  your dev persona (or any seeded user) + password insight-dev:"
-    echo "    ${VITE_DEV_USER_EMAIL:-dev@company.nonpresent}   /   insight-dev"
+    echo "    ${DEV_USER_EMAIL:-dev@company.nonpresent}   /   insight-dev"
   else
-    echo "  fakeidp auto-logs-in as ${VITE_DEV_USER_EMAIL:-dev@company.nonpresent} (no form) — just open http://$h:${FRONTEND_PORT:-3000}."
+    echo "  fakeidp auto-logs-in as ${DEV_USER_EMAIL:-dev@company.nonpresent} (no form) — just open http://$h:${FRONTEND_PORT:-3000}."
   fi
 }
 
@@ -691,8 +791,14 @@ cmd_build() {
         protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
       cargo build --release$bin_flags
       mkdir -p /out/analytics /out/authenticator
-      [ -f /target/release/analytics ]           && install -m 0755 /target/release/analytics           /out/analytics/analytics || true
-      [ -f /target/release/authenticator ]       && install -m 0755 /target/release/authenticator       /out/authenticator/authenticator || true
+      if [ -f /target/release/analytics ]; then
+        [ ! -d /out/analytics/analytics ] || rm -rf /out/analytics/analytics
+        install -m 0755 /target/release/analytics /out/analytics/analytics
+      fi
+      if [ -f /target/release/authenticator ]; then
+        [ ! -d /out/authenticator/authenticator ] || rm -rf /out/authenticator/authenticator
+        install -m 0755 /target/release/authenticator /out/authenticator/authenticator
+      fi
     "
   }
 

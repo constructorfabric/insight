@@ -22,7 +22,7 @@ schemas:
       last_editor_id: { type: [string, "null"] }
       last_editor_email: { type: [string, "null"] }
       parent_page_id: { type: [string, "null"] }
-      version_number: { type: [number, "null"] }
+      version_number: { type: [integer, "null"] }
       created_at: { type: [string, "null"] }
       updated_at: { type: [string, "null"] }
       collected_at: { type: [string, "null"] }
