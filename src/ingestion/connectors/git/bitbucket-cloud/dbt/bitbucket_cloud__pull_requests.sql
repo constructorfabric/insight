@@ -54,7 +54,6 @@ diffstat AS (
         countIf(diff.record_type = 'item') AS files_changed,
         if(countIf(diff.record_type = 'item' AND (diff.lines_added IS NULL OR diff.lines_removed IS NULL)) > 0, NULL, sumIf(diff.lines_added, diff.record_type = 'item')) AS lines_added,
         if(countIf(diff.record_type = 'item' AND (diff.lines_added IS NULL OR diff.lines_removed IS NULL)) > 0, NULL, sumIf(diff.lines_removed, diff.record_type = 'item')) AS lines_removed,
-        1 AS diffstat_available,
         latest.latest_completed_at AS completed_at
     FROM latest_diffstat_generation AS latest
     LEFT JOIN {{ source('bronze_bitbucket_cloud', 'pull_request_diffstat') }} AS diff FINAL
@@ -107,8 +106,8 @@ activity AS (
         latest.pull_request_updated_on, latest.latest_completed_at
 )
 SELECT
-    pr.tenant_id,
-    pr.source_id,
+    pr.tenant_id AS tenant_id,
+    pr.source_id AS source_id,
     pr.entity_key AS unique_key,
     COALESCE(pr.workspace, '') AS project_key,
     COALESCE(pr.repo_slug, '') AS repo_slug,
@@ -133,9 +132,6 @@ SELECT
     CAST(diffstat.files_changed, 'Nullable(Int64)') AS files_changed,
     CAST(diffstat.lines_added, 'Nullable(Int64)') AS lines_added,
     CAST(diffstat.lines_removed, 'Nullable(Int64)') AS lines_removed,
-    COALESCE(diffstat.diffstat_available, 0) AS diffstat_available,
-    0 AS diffstat_truncated,
-    if(COALESCE(diffstat.diffstat_available, 0), 'bitbucket_pull_request_diffstat', '') AS diffstat_source,
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     greatest(
