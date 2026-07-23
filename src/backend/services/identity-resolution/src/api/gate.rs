@@ -50,9 +50,51 @@ pub(crate) async fn require_admin(
             CanonicalError::internal("failed to verify caller permissions").create()
         })?;
     if !is_admin {
+        tracing::warn!(
+            caller = %caller,
+            tenant = %ctx.subject_tenant_id(),
+            "admin gate denied: caller has no active admin role"
+        );
         return Err(AccessError::permission_denied()
             .with_reason("admin role required for this operation")
             .create());
     }
     Ok(caller)
+}
+
+/// Require a SERVICE principal (gateway JWT `sub_type=service`). Used by the
+/// internal S2S endpoints that run before a tenant/caller identity exists (the
+/// login-bootstrap by-email lookup). 403 for any non-service caller.
+///
+/// # Errors
+///
+/// 403 if the caller is not a service principal.
+pub(crate) fn require_service(ctx: &SecurityContext) -> Result<(), CanonicalError> {
+    if ctx.subject_type() != Some("service") {
+        return Err(AccessError::permission_denied()
+            .with_reason("this endpoint is restricted to service principals (sub_type=service)")
+            .create());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx(subject_type: &str) -> anyhow::Result<SecurityContext> {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(1))
+            .subject_type(subject_type)
+            .subject_tenant_id(Uuid::from_u128(2))
+            .build()
+            .map_err(|e| anyhow::anyhow!("build security context: {e:?}"))
+    }
+
+    #[test]
+    fn require_service_allows_only_service_principals() -> anyhow::Result<()> {
+        assert!(require_service(&ctx("service")?).is_ok(), "service allowed");
+        assert!(require_service(&ctx("user")?).is_err(), "user rejected");
+        Ok(())
+    }
 }

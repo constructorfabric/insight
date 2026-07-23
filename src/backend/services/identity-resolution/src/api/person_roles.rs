@@ -204,13 +204,20 @@ pub async fn delete_person_role(
         _ => return Err(not_found(id)),
     };
 
-    let revoked = person_roles_repo::try_soft_delete_protecting_last_admin(
-        &state.db,
-        id,
-        ADMIN_ROLE_ID,
-        reason.as_deref(),
-    )
-    .await
+    // The last-admin guard only matters when revoking an `admin` assignment; for
+    // any other role it is a no-op, so skip the tenant-wide FOR UPDATE lock and
+    // do a plain soft-delete (avoids contention with concurrent admin changes).
+    let revoked = if existing.role_id == ADMIN_ROLE_ID {
+        person_roles_repo::try_soft_delete_protecting_last_admin(
+            &state.db,
+            id,
+            ADMIN_ROLE_ID,
+            reason.as_deref(),
+        )
+        .await
+    } else {
+        person_roles_repo::soft_delete(&state.db, tenant, id, reason.as_deref()).await
+    }
     .map_err(|e| {
         tracing::error!(error = %e, "revoke person_role failed");
         CanonicalError::internal("failed to revoke assignment").create()

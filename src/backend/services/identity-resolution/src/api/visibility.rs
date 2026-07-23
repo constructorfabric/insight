@@ -115,6 +115,17 @@ pub async fn create_visibility(
             )
             .create());
     }
+    // A present-but-nil target is nonsense (a grant to see person 000…0); only an
+    // ABSENT viewed_person_id means whole-tree visibility.
+    if req.viewed_person_id == Some(Uuid::nil()) {
+        return Err(VisibilityError::invalid_argument()
+            .with_field_violation(
+                "viewed_person_id",
+                "viewed_person_id must not be the nil UUID; omit it for whole-tree visibility",
+                "invalid_viewed_person_id",
+            )
+            .create());
+    }
     if !reason_valid(req.reason.as_deref()) {
         return Err(reason_too_long());
     }

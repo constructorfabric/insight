@@ -164,6 +164,43 @@ pub async fn insert(
     Ok(())
 }
 
+/// Plain soft-delete (revoke) of an assignment, tenant-scoped, WITHOUT the
+/// last-admin guard. Used for NON-`admin` revokes: the guard
+/// (`role_id <> admin OR count > 1`) is a no-op there, so we skip the tenant-wide
+/// `FOR UPDATE` lock [`try_soft_delete_protecting_last_admin`] takes and avoid
+/// contention with concurrent admin-roster changes. Returns rows affected
+/// (0 if already revoked / missing).
+///
+/// # Errors
+///
+/// Returns an error if the update fails.
+pub async fn soft_delete(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_role_id: Uuid,
+    reason: Option<&str>,
+) -> anyhow::Result<u64> {
+    // Positional binds: reason (SET), tenant_id, person_role_id (WHERE).
+    const SQL: &str = r"
+        UPDATE person_roles
+        SET valid_to = UTC_TIMESTAMP(6),
+            reason   = COALESCE(?, reason)
+        WHERE insight_tenant_id = ?
+          AND person_role_id    = ?
+          AND valid_to IS NULL
+    ";
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            reason.into(),
+            tenant_id.as_bytes().to_vec().into(),
+            person_role_id.as_bytes().to_vec().into(),
+        ],
+    );
+    Ok(db.execute(stmt).await?.rows_affected())
+}
+
 /// Revoke (soft-delete) an assignment, but REFUSE to remove the tenant's last
 /// active `admin` assignment (lockout guard). Returns rows affected: 1 =
 /// revoked, 0 = already revoked / vanished / would-be-last-admin.

@@ -67,7 +67,11 @@ pub async fn create_role(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let author = require_admin(&state.db, &ctx).await?;
 
-    let name = req.name;
+    // Trim before validating / storing / duplicate-checking so whitespace-only
+    // variants (" Admin " vs "Admin") don't accumulate as near-duplicates in the
+    // global catalogue. Stricter than the .NET service (which stored verbatim) —
+    // a deliberate data-hygiene deviation.
+    let name = req.name.trim().to_owned();
     if !role_name_valid(&name) {
         return Err(RoleError::invalid_argument()
             .with_field_violation(

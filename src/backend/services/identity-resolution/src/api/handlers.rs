@@ -18,7 +18,8 @@ use uuid::Uuid;
 
 use super::AppState;
 use super::canonical_json::CanonicalJson;
-use super::error::{AccessError, ProfileError};
+use super::error::ProfileError;
+use super::gate::require_service;
 use crate::domain::profile::{
     ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person, assemble_profile,
     latest_values,
@@ -105,11 +106,7 @@ pub async fn internal_person_by_email(
     Extension(ctx): Extension<SecurityContext>,
     Path(email): Path<String>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    if ctx.subject_type() != Some("service") {
-        return Err(AccessError::permission_denied()
-            .with_reason("this endpoint is restricted to service principals (sub_type=service)")
-            .create());
-    }
+    require_service(&ctx)?;
 
     let person_id = persons_repo::resolve_person_id_by_email_any_tenant(&state.db, &email)
         .await
