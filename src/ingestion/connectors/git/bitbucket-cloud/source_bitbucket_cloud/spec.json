@@ -30,7 +30,7 @@
       "bitbucket_token": {
         "type": "string",
         "title": "API Token",
-        "description": "Bitbucket Cloud API token (personal or workspace access token). For personal tokens, also provide your username/email.",
+        "description": "Bitbucket Cloud API token with repository, pull request, issue, and pipeline read permissions. For personal tokens, also provide your username/email.",
         "airbyte_secret": true,
         "order": 3
       },
@@ -57,6 +57,14 @@
         "description": "Skip forked repositories during collection.",
         "default": true,
         "order": 6
+      },
+      "bitbucket_api_base_url": {
+        "type": "string",
+        "title": "API Base URL",
+        "description": "Bitbucket Cloud REST API base URL.",
+        "format": "uri",
+        "default": "https://api.bitbucket.org/2.0/",
+        "order": 7
       }
     }
   }

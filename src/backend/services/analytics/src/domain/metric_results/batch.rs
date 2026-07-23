@@ -8,11 +8,13 @@ use toolkit_canonical_errors::CanonicalError;
 use crate::domain::metric_definitions::MetricDefinition;
 
 use super::compiler::{
-    CompiledQuery, PeerQueryRow, PeriodQueryRow, compile_breakdown_query, compile_histogram_query,
-    compile_peer_batch_query, compile_period_batch_query, compile_timeseries_query,
+    CompiledQuery, PeerQueryRow, PeriodQueryRow, compile_breakdown_query,
+    compile_group_ranking_query, compile_histogram_query, compile_peer_batch_query,
+    compile_period_batch_query, compile_timeseries_query,
 };
 use super::validation::{
-    ValidatedDimensionFilter, ValidatedMetricResultsRequest, ValidatedMetricView,
+    ValidatedDimensionFilter, ValidatedGroupLimit, ValidatedMetricRequest,
+    ValidatedMetricResultsRequest, ValidatedMetricView,
 };
 use super::view::Bucket;
 
@@ -37,6 +39,39 @@ pub enum UnbatchedView {
     Histogram,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankedDimension {
+    pub value: String,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankedGroup {
+    pub rank: u32,
+    pub dimensions: Vec<RankedDimension>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedGroupLimit {
+    pub groups: Vec<RankedGroup>,
+    pub include_remainder: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RankingPolicyKey {
+    pub rank_metric_key: String,
+    pub dimensions: Vec<String>,
+    pub filters: Vec<ValidatedDimensionFilter>,
+    pub count: usize,
+}
+
+#[derive(Debug)]
+pub struct PlannedRanking {
+    pub key: RankingPolicyKey,
+    pub dimensions: Vec<String>,
+    pub query: CompiledQuery,
+}
+
 #[derive(Debug)]
 pub enum PlannedQuery {
     PeriodBatch {
@@ -56,7 +91,44 @@ pub enum PlannedQuery {
     },
 }
 
-pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
+pub fn plan_rankings(req: &ValidatedMetricResultsRequest) -> Vec<PlannedRanking> {
+    let mut policies = BTreeMap::new();
+    for metric in &req.metrics {
+        for view in &metric.views {
+            let ValidatedMetricView::Timeseries {
+                dimensions,
+                group_limit: Some(limit),
+                ..
+            } = view
+            else {
+                continue;
+            };
+            let key = ranking_policy_key(limit, dimensions, &metric.filters);
+            policies.entry(key).or_insert_with(|| {
+                compile_group_ranking_query(
+                    &limit.rank_by,
+                    req,
+                    dimensions,
+                    &metric.filters,
+                    limit.count,
+                )
+            });
+        }
+    }
+    policies
+        .into_iter()
+        .map(|(key, query)| PlannedRanking {
+            dimensions: key.dimensions.clone(),
+            key,
+            query,
+        })
+        .collect()
+}
+
+pub fn plan_queries(
+    req: &ValidatedMetricResultsRequest,
+    rankings: &BTreeMap<RankingPolicyKey, Vec<RankedGroup>>,
+) -> Result<Vec<PlannedQuery>, CanonicalError> {
     let mut period_groups: BTreeMap<(String, Vec<ValidatedDimensionFilter>), Vec<BatchItem>> =
         BTreeMap::new();
     let mut peer_groups: BTreeMap<(String, String, Vec<ValidatedDimensionFilter>), Vec<BatchItem>> =
@@ -90,23 +162,14 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
                         .or_default()
                         .push(item());
                 }
-                ValidatedMetricView::Timeseries { bucket, dimensions } => {
-                    singles.push(PlannedQuery::Single {
-                        metric_index,
-                        view_index,
-                        def: Box::new(metric.def.clone()),
-                        view: UnbatchedView::Timeseries {
-                            bucket: *bucket,
-                            dimensions: dimensions.clone(),
-                        },
-                        query: compile_timeseries_query(
-                            &metric.def,
-                            req,
-                            *bucket,
-                            dimensions,
-                            &metric.filters,
-                        ),
-                    });
+                ValidatedMetricView::Timeseries { .. } => {
+                    singles.push(plan_timeseries(
+                        req,
+                        rankings,
+                        metric,
+                        (metric_index, view_index),
+                        view,
+                    )?);
                 }
                 ValidatedMetricView::Breakdown { dimensions } => {
                     singles.push(PlannedQuery::Single {
@@ -149,7 +212,76 @@ pub fn plan_queries(req: &ValidatedMetricResultsRequest) -> Vec<PlannedQuery> {
         planned.push(PlannedQuery::PeerBatch { items, query });
     }
     planned.extend(singles);
-    planned
+    Ok(planned)
+}
+
+fn plan_timeseries(
+    req: &ValidatedMetricResultsRequest,
+    rankings: &BTreeMap<RankingPolicyKey, Vec<RankedGroup>>,
+    metric: &ValidatedMetricRequest,
+    indexes: (usize, usize),
+    view: &ValidatedMetricView,
+) -> Result<PlannedQuery, CanonicalError> {
+    let ValidatedMetricView::Timeseries {
+        bucket,
+        dimensions,
+        group_limit,
+    } = view
+    else {
+        unreachable!("plan_timeseries requires a timeseries view")
+    };
+    let resolved =
+        resolve_group_limit(group_limit.as_ref(), dimensions, &metric.filters, rankings)?;
+    Ok(PlannedQuery::Single {
+        metric_index: indexes.0,
+        view_index: indexes.1,
+        def: Box::new(metric.def.clone()),
+        view: UnbatchedView::Timeseries {
+            bucket: *bucket,
+            dimensions: dimensions.clone(),
+        },
+        query: compile_timeseries_query(
+            &metric.def,
+            req,
+            *bucket,
+            dimensions,
+            &metric.filters,
+            resolved.as_ref(),
+        ),
+    })
+}
+
+fn resolve_group_limit(
+    limit: Option<&ValidatedGroupLimit>,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+    rankings: &BTreeMap<RankingPolicyKey, Vec<RankedGroup>>,
+) -> Result<Option<ResolvedGroupLimit>, CanonicalError> {
+    limit
+        .map(|limit| {
+            let key = ranking_policy_key(limit, dimensions, filters);
+            let groups = rankings.get(&key).cloned().ok_or_else(|| {
+                CanonicalError::internal("missing metric group ranking result").create()
+            })?;
+            Ok(ResolvedGroupLimit {
+                groups,
+                include_remainder: limit.include_remainder,
+            })
+        })
+        .transpose()
+}
+
+fn ranking_policy_key(
+    limit: &ValidatedGroupLimit,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+) -> RankingPolicyKey {
+    RankingPolicyKey {
+        rank_metric_key: limit.rank_by.key().to_owned(),
+        dimensions: dimensions.to_vec(),
+        filters: filters.to_vec(),
+        count: limit.count,
+    }
 }
 
 pub(crate) fn period_alias(item_index: usize) -> String {
@@ -256,6 +388,8 @@ fn decode_narrow_row<T: serde::de::DeserializeOwned>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use chrono::NaiveDate;
     use serde_json::json;
@@ -313,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_groups_period_and_peer_views_into_batches() {
+    fn plan_groups_period_and_peer_views_into_batches() -> Result<(), CanonicalError> {
         let req = request(
             ["m_a", "m_b", "m_c"]
                 .into_iter()
@@ -327,6 +461,7 @@ mod tests {
                             ValidatedMetricView::Timeseries {
                                 bucket: Bucket::Day,
                                 dimensions: vec![],
+                                group_limit: None,
                             },
                         ],
                         key,
@@ -334,7 +469,7 @@ mod tests {
                 })
                 .collect(),
         );
-        let planned = plan_queries(&req);
+        let planned = plan_queries(&req, &BTreeMap::new())?;
         assert_eq!(planned.len(), 5);
         let (mut period_batches, mut peer_batches, mut singles) = (0, 0, 0);
         for query in &planned {
@@ -373,10 +508,11 @@ mod tests {
             }
         }
         assert_eq!((period_batches, peer_batches, singles), (1, 1, 3));
+        Ok(())
     }
 
     #[test]
-    fn plan_splits_peer_batches_by_cohort_key() {
+    fn plan_splits_peer_batches_by_cohort_key() -> Result<(), CanonicalError> {
         let req = request(vec![
             views(
                 vec![ValidatedMetricView::Peer {
@@ -391,13 +527,46 @@ mod tests {
                 "m_b",
             ),
         ]);
-        let planned = plan_queries(&req);
+        let planned = plan_queries(&req, &BTreeMap::new())?;
         assert_eq!(planned.len(), 2);
         assert!(
             planned
                 .iter()
                 .all(|q| matches!(q, PlannedQuery::PeerBatch { items, .. } if items.len() == 1))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ranking_plans_are_shared_only_for_identical_policies() {
+        let rank_by = def("m_rank", Some("org_unit"));
+        let limited = |count| ValidatedMetricView::Timeseries {
+            bucket: Bucket::Week,
+            dimensions: vec!["tool".to_owned()],
+            group_limit: Some(ValidatedGroupLimit {
+                count,
+                rank_by: Box::new(rank_by.clone()),
+                include_remainder: true,
+            }),
+        };
+        let req = request(vec![
+            views(vec![limited(10)], "m_a"),
+            views(vec![limited(10)], "m_b"),
+            views(vec![limited(5)], "m_c"),
+        ]);
+        let rankings = plan_rankings(&req);
+        assert_eq!(rankings.len(), 2);
+        assert_eq!(
+            rankings
+                .iter()
+                .map(|ranking| ranking.key.count)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([5, 10])
+        );
+        assert!(rankings.iter().all(|ranking| {
+            ranking.key.rank_metric_key == "m_rank"
+                && ranking.query.params.iter().any(|value| value == "a@x.io")
+        }));
     }
 
     fn items(count: usize) -> Vec<BatchItem> {

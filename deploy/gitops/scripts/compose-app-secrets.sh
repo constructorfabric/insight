@@ -59,6 +59,10 @@ MDB_USER=$(yq -r '.mariadb.username'         "$VALUES")
 MDB_DB=$(  yq -r '.mariadb.database'         "$VALUES")
 CH_HOST=$( yq -r '.clickhouse.host'          "$VALUES")
 CH_PORT=$( yq -r '.clickhouse.port  // 8123' "$VALUES")
+# Native (Octonica) port for the identity service — it speaks the native
+# protocol, not HTTP (CH_PORT above, used by analytics-api). Overridable via
+# .clickhouse.nativePort; defaults to the standard 9000.
+CH_NATIVE_PORT=$( yq -r '.clickhouse.nativePort // 9000' "$VALUES")
 CH_USER=$( yq -r '.clickhouse.username'      "$VALUES")
 CH_DB=$(   yq -r '.clickhouse.database'      "$VALUES")
 RD_HOST=$( yq -r '.redis.host'               "$VALUES")
@@ -253,6 +257,14 @@ stringData:
   # port (identity validates iss as a string, RequireHttpsMetadata=false).
   IDENTITY__identity__auth_gateway_issuer: "${GATEWAY_ISSUER}"
   IDENTITY__identity__auth_gateway_jwks_url: "${GATEWAY_JWKS_URL}"
+  # ClickHouse for persons-seed (reads identity.identity_inputs). The identity
+  # service uses the NATIVE protocol (Octonica client, port 9000) — NOT the HTTP
+  # port (8123) analytics-api uses. Section \`clickhouse\` -> IDENTITY__clickhouse__*.
+  IDENTITY__clickhouse__host: "${CH_HOST}"
+  IDENTITY__clickhouse__port: "${CH_NATIVE_PORT}"
+  IDENTITY__clickhouse__user: "${CH_USER}"
+  IDENTITY__clickhouse__password: "${CH_PW}"
+  IDENTITY__clickhouse__database: "${CH_DB}"
 EOF
   if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
     echo "  IDENTITY__identity__tenant_default_id: \"${TENANT_DEFAULT}\""

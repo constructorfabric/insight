@@ -21,9 +21,9 @@
    than an empty group `(?i)()`, which would match every path and flag all
    files as vendored. `[^\s\S]` is the RE2-safe never-match (RE2 has no
    lookahead), doubled-escaped for the ClickHouse string literal. #}
-'[^\\s\\S]'
+{{ return("'[^\\\\s\\\\S]'") }}
 {%- else -%}
-{{ "'(?i)(" ~ (patterns | join('|')) ~ ")'" }}
+{{ return("'(?i)(" ~ (patterns | join('|')) ~ ")'") }}
 {%- endif -%}
 {%- endmacro %}
 

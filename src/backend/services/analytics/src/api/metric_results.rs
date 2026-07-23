@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,10 +13,10 @@ use super::error::MetricError;
 use crate::domain::metric_results::{
     BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
     MetricResultsRequest, MetricResultsResponse, PeerWideRow, PeriodWideRow, PlannedQuery,
-    TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest, build_breakdown_view,
-    build_histogram_view, build_metric_result, build_peer_view, build_period_view,
-    build_timeseries_view, demux_peer_rows, demux_period_rows, enforce_row_limit, plan_queries,
-    validate_request,
+    RankingQueryRow, TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest,
+    build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,
+    build_period_view, build_ranked_groups, build_timeseries_view, demux_peer_rows,
+    demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings, validate_request,
 };
 use toolkit_security::SecurityContext;
 
@@ -32,7 +33,23 @@ pub async fn query_metric_results(
     Json(req): Json<MetricResultsRequest>,
 ) -> Result<Json<MetricResultsResponse>, CanonicalError> {
     let req = validate_request(&state.db, ctx.subject_tenant_id(), req).await?;
-    let planned = plan_queries(&req);
+    let mut ranking_results = BTreeMap::new();
+    let mut rankings = stream::iter(plan_rankings(&req))
+        .map(|ranking| {
+            let state = Arc::clone(&state);
+            async move {
+                let comment = format!("metric-results:ranking:{}", ranking.key.rank_metric_key);
+                let rows = fetch_rows::<RankingQueryRow>(&state, ranking.query, &comment).await?;
+                let groups = build_ranked_groups(&ranking.dimensions, rows)?;
+                Ok::<_, CanonicalError>((ranking.key, groups))
+            }
+        })
+        .buffer_unordered(QUERY_CONCURRENCY);
+    while let Some(result) = rankings.next().await {
+        let (key, groups) = result?;
+        ranking_results.insert(key, groups);
+    }
+    let planned = plan_queries(&req, &ranking_results)?;
 
     let mut views_by_metric: Vec<Vec<Option<MetricResultViewDto>>> = req
         .metrics
@@ -54,17 +71,17 @@ pub async fn query_metric_results(
     let mut metrics = Vec::with_capacity(req.metrics.len());
     for (idx, metric) in req.metrics.iter().enumerate() {
         let mut views = Vec::with_capacity(metric.views.len());
-        for view in views_by_metric[idx].drain(..) {
+        for (view_index, view) in views_by_metric[idx].drain(..).enumerate() {
             let Some(view) = view else {
                 return Err(CanonicalError::internal("missing metric view result").create());
             };
+            enforce_view_row_limit(&view, format!("metrics[{idx}].views[{view_index}]"))?;
             views.push(view);
         }
         metrics.push(build_metric_result(&metric.def, views));
     }
 
     let response = MetricResultsResponse { metrics };
-    enforce_row_limit(&response)?;
     Ok(Json(response))
 }
 
@@ -108,7 +125,9 @@ async fn execute_planned(
             query,
         } => {
             let view = match view {
-                UnbatchedView::Timeseries { bucket, dimensions } => {
+                UnbatchedView::Timeseries {
+                    bucket, dimensions, ..
+                } => {
                     let comment = format!("metric-results:timeseries:{}", def.key());
                     let rows = fetch_rows::<TimeseriesQueryRow>(state, query, &comment).await?;
                     build_timeseries_view(&def, req, bucket, &dimensions, rows)?

@@ -1,5 +1,5 @@
 name: bitbucket-cloud
-version: "1.3.0"
+version: "1.4.0"
 type: cdk
 # 05:00 — dedicated slot: the 02:00 slot is shared with cursor + m365 and the
 # single-worker node starves replication pods there (Broken-pipe startup
@@ -12,7 +12,7 @@ images:
     name: source-bitbucket-cloud-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-bitbucket-cloud-insight:2026.07.07.14.23-a50d35d"
+    image: "ghcr.io/constructorfabric/source-bitbucket-cloud-insight:2026.07.23.04.32-1b6b4a7"
 dbt_select: "tag:bitbucket-cloud+"
 connection:
   namespace: "bronze_bitbucket_cloud"

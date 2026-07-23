@@ -48,6 +48,14 @@ tracing = { workspace = true }
 sea-orm = { workspace = true }
 # UUIDs: person_id / tenant / source ids (binary(16) in the DB).
 uuid = { workspace = true }
+# Timestamps: `now` for the in-memory 202 body + the zombie-sweep cutoff.
+chrono = { workspace = true }
+
+# ClickHouse: read the raw `identity_inputs` stream (persons-seed input source).
+# `insight-clickhouse` wraps the client; the direct `clickhouse` dep is for the
+# `Row` derive on the query row struct.
+insight-clickhouse = { workspace = true }
+clickhouse = { workspace = true }
 
 # HTTP surface: tenant SecurityContext, RFC-9457 canonical errors, OpenAPI schemas.
 toolkit-security = { workspace = true }

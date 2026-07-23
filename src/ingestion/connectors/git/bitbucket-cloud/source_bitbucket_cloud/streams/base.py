@@ -1,249 +1,264 @@
-"""Base stream for Bitbucket Cloud REST API v2.0.
+from __future__ import annotations
 
-Stock Airbyte CDK primitives only. No custom read_records overrides, no
-response-swallowing, no blocking sleeps. Errors raise by default and CDK
-retries via should_retry/backoff_time.
-"""
-
+import hashlib
+import json
 import logging
-import random
+import re
+import uuid
 from abc import ABC
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, MutableMapping, Optional
+from typing import Any
 
-import requests
-from airbyte_cdk.sources.streams.http import HttpStream
-from airbyte_cdk.sources.streams.http.error_handlers import (
-    ErrorHandler,
-    HttpStatusErrorHandler,
-)
-from airbyte_cdk.sources.streams.http.error_handlers.default_error_mapping import (
-    DEFAULT_ERROR_MAPPING,
-)
-from airbyte_cdk.sources.streams.http.error_handlers.response_models import (
-    ErrorResolution,
-    ResponseAction,
-)
-from airbyte_cdk.models import FailureType
+from airbyte_cdk.models import SyncMode
+from airbyte_cdk.sources.streams import CheckpointMixin, Stream
 
-from source_bitbucket_cloud.auth import auth_headers
+from source_bitbucket_cloud.client import BitbucketClient, RepositoryCatalog, RepositoryRef
 
-_logger = logging.getLogger("airbyte")
+logger = logging.getLogger("airbyte")
+
+BUCKET_COUNT = 8
+MAX_TEXT_BYTES = 16_384
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _normalize_start_date(value: Optional[str]) -> Optional[str]:
-    """Accept YYYY-MM-DD or full ISO 8601; return YYYY-MM-DD.
-
-    start_date is compared against `record_timestamp[:10]` in streams, so the
-    RHS must be exactly 10 chars. Caller may hand us a bare date or a full
-    ISO timestamp — normalize once at startup so the comparison is sound.
-    Raises ValueError on unparseable input: fail config rather than drift cursors.
-    """
+def normalize_start_date(value: str | None) -> str | None:
     if not value:
         return None
-    if len(value) == 10 and value[4] == "-" and value[7] == "-":
-        datetime.strptime(value, "%Y-%m-%d")
-        return value
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return dt.date().isoformat()
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"bitbucket_start_date must be an ISO date (YYYY-MM-DD), got {value!r}"
+        ) from exc
+    return parsed.date().isoformat()
 
 
-def _make_unique_key(tenant_id: str, source_id: str, *parts: str) -> str:
-    return f"{tenant_id}:{source_id}:{':'.join(parts)}"
-
-
-_TRUNCATE_SUFFIX = "…[truncated]"
-_TRUNCATE_LIMIT = 1_024  # 1 KB UTF-8
-
-
-def _truncate(text: Optional[str], limit: int = _TRUNCATE_LIMIT) -> Optional[str]:
-    """Cap text at `limit` UTF-8 bytes, appending a suffix when cut.
-
-    Bitbucket PR bodies, commit messages and review comments are unbounded;
-    a pathological record would otherwise balloon destination aggregation
-    buffers and OOM the ClickHouse pod (job 89 root cause).
-    """
-    if text is None:
+def truncate(value: Any, limit: int = MAX_TEXT_BYTES) -> str | None:
+    if value is None:
         return None
-    suffix = _TRUNCATE_SUFFIX
-    suffix_bytes = suffix.encode("utf-8")
-    budget = limit - len(suffix_bytes)
-    if budget <= 0:
-        # Limit smaller than suffix itself — byte-slice the suffix directly.
-        return suffix_bytes[:limit].decode("utf-8", errors="ignore")
-    encoded = text.encode("utf-8", errors="replace")
+    encoded = str(value).encode("utf-8", errors="replace")
     if len(encoded) <= limit:
-        return text
-    # Trim dangling partial multi-byte char.
-    return encoded[:budget].decode("utf-8", errors="ignore") + suffix
+        return str(value)
+    return encoded[:limit].decode("utf-8", errors="ignore")
 
 
-class BitbucketCloudStream(HttpStream, ABC):
-    """Base for all Bitbucket Cloud streams.
+def unique_key(tenant_id: str, source_id: str, *parts: Any) -> str:
+    encoded = [str(part).replace(":", "%3A") for part in parts]
+    return ":".join([tenant_id, source_id, *encoded])
 
-    Keeps request/response handling as close to CDK defaults as possible:
-    - raise_on_http_errors stays True (default) — exhausted retries fail the stream.
-    - should_retry only distinguishes retryable vs terminal status codes.
-    - backoff_time honours Retry-After on 429 and a fixed 30s on transient 5xx.
-    """
 
-    url_base = "https://api.bitbucket.org/2.0/"
+def repository_bucket(repository_uuid: str) -> int:
+    digest = hashlib.sha256(repository_uuid.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") % BUCKET_COUNT
+
+
+def schema(properties: Mapping[str, Any], *, additional: bool = False) -> Mapping[str, Any]:
+    base = {
+        "tenant_id": {"type": "string"},
+        "source_id": {"type": "string"},
+        "unique_key": {"type": "string"},
+        "entity_key": {"type": ["null", "string"]},
+        "data_source": {"type": "string"},
+        "collected_at": {"type": "string"},
+        "record_type": {"type": ["null", "string"]},
+        "generation_id": {"type": ["null", "string"]},
+        "bucket_id": {"type": ["null", "integer"]},
+        "snapshot_item_count": {"type": ["null", "integer"]},
+        "snapshot_available": {"type": ["null", "boolean"]},
+        "repository_uuid": {"type": ["null", "string"]},
+        "workspace_uuid": {"type": ["null", "string"]},
+    }
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": additional,
+        "properties": {**base, **properties},
+    }
+
+
+class BitbucketStream(Stream, ABC):
     primary_key = "unique_key"
-    page_size = 100
-
-    # Sub-streams that iterate per-PR or per-commit slices set this True so
-    # an orphaned 404 (PR references deleted branch, commit diffstat gone)
-    # skips the one slice instead of failing the whole stream.
-    ignore_404: bool = False
+    data_source = "insight_bitbucket_cloud"
+    state_checkpoint_interval = None
 
     def __init__(
         self,
+        *,
         token: str,
         tenant_id: str,
         source_id: str,
+        workspaces: Sequence[str],
         username: str = "",
-        **kwargs: Any,
+        skip_forks: bool = True,
+        start_date: str | None = None,
+        client: BitbucketClient | None = None,
+        catalog: RepositoryCatalog | None = None,
     ) -> None:
-        super().__init__(**kwargs)
-        self._token = token
-        self._username = username
+        self._client = client or BitbucketClient(token, username)
         self._tenant_id = tenant_id
         self._source_id = source_id
+        self._workspaces = tuple(workspaces)
+        self._skip_forks = skip_forks
+        self._start_date = normalize_start_date(start_date)
+        self._run_id = uuid.uuid4().hex
+        self._catalog = catalog or RepositoryCatalog(self._client, self._workspaces, self._skip_forks)
+        self._repositories_by_bucket: dict[int, list[RepositoryRef]] = {}
+        self._failed_repositories: list[str] = []
 
-    # ------------------------------------------------------------------
-    # Requests
-    # ------------------------------------------------------------------
-
-    def request_headers(self, **kwargs: Any) -> Mapping[str, Any]:
-        return auth_headers(self._token, self._username)
-
-    def request_params(
+    def stream_slices(
         self,
-        stream_state: Optional[Mapping[str, Any]] = None,
-        stream_slice: Optional[Mapping[str, Any]] = None,
-        next_page_token: Optional[Mapping[str, Any]] = None,
-    ) -> MutableMapping[str, Any]:
-        # When following a next_url the URL already carries the params.
-        if next_page_token:
-            return {}
-        return {"pagelen": str(self.page_size)}
+        *,
+        sync_mode: SyncMode,
+        cursor_field: list[str] | None = None,
+        stream_state: Mapping[str, Any] | None = None,
+    ) -> Iterable[Mapping[str, Any]]:
+        del sync_mode, cursor_field, stream_state
+        self._bucket_repositories()
+        for bucket in range(BUCKET_COUNT):
+            yield {"bucket_id": bucket}
 
-    def next_page_token(self, response: requests.Response) -> Optional[Mapping[str, Any]]:
-        try:
-            data = response.json()
-        except ValueError:
-            return None
-        nxt = data.get("next")
-        return {"next_url": nxt} if nxt else None
-
-    def path(
+    def read_records(
         self,
-        stream_state: Optional[Mapping[str, Any]] = None,
-        stream_slice: Optional[Mapping[str, Any]] = None,
-        next_page_token: Optional[Mapping[str, Any]] = None,
-    ) -> str:
-        if next_page_token and "next_url" in next_page_token:
-            full_url = next_page_token["next_url"]
-            if full_url.startswith(self.url_base):
-                return full_url[len(self.url_base):]
-            return full_url.replace("https://api.bitbucket.org/2.0/", "")
-        return self._path(stream_slice=stream_slice)
+        sync_mode: SyncMode,
+        cursor_field: list[str] | None = None,
+        stream_slice: Mapping[str, Any] | None = None,
+        stream_state: Mapping[str, Any] | None = None,
+    ) -> Iterable[Mapping[str, Any]]:
+        del sync_mode, cursor_field, stream_state
+        bucket_id, repositories = self.bucket(stream_slice)
+        for repo in repositories:
+            try:
+                yield from self.repository_records(repo, bucket_id)
+            except Exception:
+                self.record_failure(repo)
+        self.finish_bucket(bucket_id, repositories)
 
-    def _path(self, stream_slice: Optional[Mapping[str, Any]] = None) -> str:
+    def repository_records(self, repo: RepositoryRef, bucket_id: int) -> Iterable[Mapping[str, Any]]:
         raise NotImplementedError
 
-    # ------------------------------------------------------------------
-    # Retry
-    # ------------------------------------------------------------------
+    def bucket(self, stream_slice: Mapping[str, Any] | None) -> tuple[int, list[RepositoryRef]]:
+        bucket_id = int((stream_slice or {}).get("bucket_id", 0))
+        return bucket_id, self.repositories_for_slice(stream_slice)
 
-    def should_retry(self, response: requests.Response) -> bool:
-        # 401/403/404 are terminal — do not retry and do not silently swallow.
-        if response.status_code in (401, 403, 404):
-            _logger.warning(
-                f"{self.name}: terminal {response.status_code} on {response.url} "
-                f"body={response.text[:200]!r}"
-            )
-            return False
-        retry = response.status_code in (429, 500, 502, 503, 504)
-        if retry:
-            _logger.warning(
-                f"{self.name}: retryable {response.status_code} on {response.url}"
-            )
-        return retry
+    def record_failure(self, repo: RepositoryRef) -> None:
+        name = f"{repo.workspace}/{repo.slug}"
+        self._failed_repositories.append(name)
+        logger.exception(f"{self.name}: repository {name} failed; its state was not advanced, continuing")
 
-    def get_error_handler(self) -> Optional[ErrorHandler]:
-        if not self.ignore_404:
-            return super().get_error_handler()
-        mapping = {
-            **DEFAULT_ERROR_MAPPING,
-            404: ErrorResolution(
-                response_action=ResponseAction.IGNORE,
-                failure_type=FailureType.transient_error,
-                error_message="404: resource missing, skipping slice",
-            ),
+    def finish_bucket(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
+        del repositories
+        if bucket_id == BUCKET_COUNT - 1 and self._failed_repositories:
+            raise RuntimeError(
+                f"{self.name}: {len(self._failed_repositories)} repositories failed this sync: "
+                + ", ".join(self._failed_repositories[:10])
+            )
+
+    def repositories_for_slice(self, stream_slice: Mapping[str, Any] | None) -> list[RepositoryRef]:
+        bucket = int((stream_slice or {}).get("bucket_id", 0))
+        if not self._repositories_by_bucket:
+            self._bucket_repositories()
+        return self._repositories_by_bucket[bucket]
+
+    def _bucket_repositories(self) -> None:
+        self._repositories_by_bucket = {bucket: [] for bucket in range(BUCKET_COUNT)}
+        for repo in self._catalog.repositories():
+            self._repositories_by_bucket[repository_bucket(repo.uuid)].append(repo)
+
+    def envelope(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            **record,
+            "tenant_id": self._tenant_id,
+            "source_id": self._source_id,
+            "data_source": self.data_source,
+            "collected_at": now_iso(),
         }
-        return HttpStatusErrorHandler(
-            logger=_logger,
-            error_mapping=mapping,
-            max_retries=self.max_retries,
+
+    def item(self, *, entity_key: str, generation_id: str | None = None, **record: Any) -> dict[str, Any]:
+        storage_key = f"{entity_key}:{generation_id}" if generation_id else entity_key
+        return self.envelope(
+            {
+                **record,
+                "unique_key": storage_key,
+                "entity_key": entity_key,
+                "record_type": "item",
+                "generation_id": generation_id,
+            }
         )
 
-    def backoff_time(self, response: requests.Response) -> Optional[float]:
-        if response.status_code == 429:
-            retry_after = response.headers.get("Retry-After")
-            try:
-                wait = max(float(retry_after), 1.0) if retry_after else 60.0
-            except (TypeError, ValueError):
-                wait = 60.0
-            _logger.warning(
-                f"{self.name}: 429 throttled, backing off {wait}s "
-                f"(Retry-After={retry_after!r})"
-            )
-            return wait
-        if response.status_code in (500, 502, 503, 504):
-            # Honor Retry-After on 5xx if the origin/CDN supplies one; otherwise
-            # 30s + small jitter to avoid thundering-herd on recovery.
-            retry_after = response.headers.get("Retry-After")
-            if retry_after:
-                try:
-                    wait = max(float(retry_after), 1.0)
-                except (TypeError, ValueError):
-                    wait = 30.0 + random.uniform(0, 10)
-            else:
-                wait = 30.0 + random.uniform(0, 10)
-            _logger.warning(
-                f"{self.name}: {response.status_code}, backing off {wait:.1f}s "
-                f"(Retry-After={retry_after!r})"
-            )
-            return wait
-        return None
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _envelope(self, record: Mapping[str, Any]) -> MutableMapping[str, Any]:
-        out = dict(record)
-        out["tenant_id"] = self._tenant_id
-        out["source_id"] = self._source_id
-        out["data_source"] = "insight_bitbucket_cloud"
-        out["collected_at"] = _now_iso()
-        return out
-
-    def _iter_values(self, response: requests.Response) -> Iterable[Mapping[str, Any]]:
-        try:
-            data = response.json()
-        except ValueError:
-            _logger.warning(
-                f"{self.name}: non-JSON response {response.status_code} on {response.url}"
-            )
-            return []
-        values = data.get("values", []) or []
-        _logger.debug(
-            f"{self.name}: {len(values)} values on page (url={response.url})"
+    def complete(
+        self,
+        *,
+        scope_parts: Sequence[Any],
+        generation_id: str,
+        item_count: int,
+        bucket_id: int | None = None,
+        available: bool = True,
+        **record: Any,
+    ) -> dict[str, Any]:
+        return self.envelope(
+            {
+                **record,
+                "unique_key": unique_key(
+                    self._tenant_id, self._source_id, *scope_parts, "snapshot_complete", generation_id
+                ),
+                "entity_key": None,
+                "record_type": "snapshot_complete",
+                "generation_id": generation_id,
+                "bucket_id": bucket_id,
+                "snapshot_item_count": item_count,
+                "snapshot_available": available,
+            }
         )
-        return values
+
+    def generation(self, *parts: Any) -> str:
+        value = ":".join([self._run_id, *(str(part) for part in parts)])
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+class BitbucketIncrementalStream(BitbucketStream, CheckpointMixin, ABC):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._state: MutableMapping[str, Any] = {}
+
+    @property
+    def state(self) -> MutableMapping[str, Any]:
+        return self._state
+
+    @state.setter
+    def state(self, value: MutableMapping[str, Any]) -> None:
+        if value and value.get("version") == 2 and value.get("bucket_count") == BUCKET_COUNT:
+            self._state = value
+        else:
+            self._state = {"version": 2, "bucket_count": BUCKET_COUNT, "repositories": {}}
+
+    def repository_state(self, repo: RepositoryRef) -> MutableMapping[str, Any]:
+        repositories = self._state.setdefault("repositories", {})
+        return dict(repositories.get(repo.uuid) or {})
+
+    def commit_repository_state(self, repo: RepositoryRef, value: Mapping[str, Any]) -> None:
+        self._state.setdefault("repositories", {})[repo.uuid] = dict(value)
+
+    def prune_bucket_state(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
+        current = {repo.uuid for repo in repositories}
+        state_repositories = self._state.setdefault("repositories", {})
+        stale = [key for key in state_repositories if repository_bucket(key) == bucket_id and key not in current]
+        for key in stale:
+            del state_repositories[key]
+
+    def finish_bucket(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
+        self.prune_bucket_state(bucket_id, repositories)
+        self.log_state_size()
+        super().finish_bucket(bucket_id, repositories)
+
+    def log_state_size(self) -> None:
+        encoded = json.dumps(self._state, separators=(",", ":")).encode("utf-8")
+        logger.info(
+            f"{self.name}: state_repositories={len(self._state.get('repositories', {}))} state_bytes={len(encoded)}"
+        )
+
+
+AUTHOR_RE = re.compile(r"^(.*?)\s*<([^>]+)>\s*$")

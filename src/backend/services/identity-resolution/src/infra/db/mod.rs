@@ -1,11 +1,28 @@
 //! `MariaDB` connection.
 //!
-//! Self-managed `SeaORM` pool (same approach as the analytics gear — we do NOT
-//! use the toolkit `db` capability). The `identity` database is owned by the
-//! .NET service today; we read `persons` / `account_person_map` from it.
+//! **Self-managed `SeaORM` pool — we deliberately do NOT use the toolkit `db`
+//! capability** (same as the analytics gear). The identity queries need SQL that
+//! `cf-gears-toolkit-db` (v0.8.4) can neither express via its scoped
+//! entity-builder nor run as raw SQL (it intentionally exposes no raw-SQL path —
+//! `DbConn`/`DbTx` are builder-only). Specifically:
+//!   * window functions (`ROW_NUMBER()` / `LEAD() OVER (…)`) — the resolver reads
+//!     and the SCD2 `account_person_map` / `org_chart` rebuilds;
+//!   * `WITH RECURSIVE` — the org-subchart / visibility traversals;
+//!   * atomic conditional DML with a correlated subquery — the role in-use and
+//!     last-admin lockout guards.
+//!
+//! See constructorfabric/gears-rust#4239 for the capability request.
+//!
+//! All SQL here is **verbatim from the .NET service** (cutover parity). It is
+//! injection-safe despite being raw: every value is a **bound parameter**
+//! (`Statement::from_sql_and_values`, no string interpolation) and the tenant is
+//! always pinned in the `WHERE`. The `identity` database is owned by .NET today.
 
 pub mod entities;
+pub mod ops_repo;
 pub mod persons_repo;
+pub mod roles_repo;
+pub mod seed_repo;
 
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 

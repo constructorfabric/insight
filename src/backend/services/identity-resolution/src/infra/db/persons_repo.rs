@@ -2,9 +2,11 @@
 //!
 //! Ported from the .NET service's `Sql.Profiles.cs`. The resolution queries use
 //! window functions (`ROW_NUMBER()` over the canonical partition) that have no
-//! first-class SeaORM query-builder form, so we run them as **raw SQL** via
-//! SeaORM's `Statement` and read columns off the `QueryResult`. Running the same
-//! SQL as the .NET service keeps resolution behaviour identical.
+//! first-class SeaORM query-builder form and no `toolkit-db` equivalent (see
+//! `infra::db` module docs + constructorfabric/gears-rust#4239), so we run them
+//! as **raw SQL** via SeaORM's `Statement` and read columns off the
+//! `QueryResult`. Running the same SQL as the .NET service keeps resolution
+//! behaviour identical.
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
@@ -62,60 +64,6 @@ pub async fn resolve_person_ids_by_email(
 
     let rows = db.query_all(stmt).await?;
     person_ids_from_rows(rows)
-}
-
-/// Resolve a single `person_id` for an email — the most recently observed
-/// `value_type='email'` row with `value_id = email` in the tenant (`LIMIT 1`).
-/// Used by the deprecated `GET /v1/persons/{email}`; distinct from the plural
-/// resolver, which finds every person whose CURRENT email matches (for
-/// ambiguity detection). Ported from `Sql.cs::ResolvePersonIdByEmail`.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
-pub async fn resolve_person_id_by_email(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-    email: &str,
-) -> anyhow::Result<Option<Uuid>> {
-    const SQL: &str = r"
-        WITH ranked AS (
-            SELECT
-                person_id,
-                id,
-                ROW_NUMBER() OVER (
-                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, value_type, value_id
-                    ORDER BY created_at DESC, id DESC
-                ) AS rn,
-                created_at
-            FROM persons
-            WHERE insight_tenant_id = ?
-              AND value_type = 'email'
-              AND value_id = ?
-        )
-        SELECT person_id
-        FROM ranked
-        WHERE rn = 1
-        ORDER BY created_at DESC, id DESC
-        LIMIT 1
-    ";
-
-    let stmt = Statement::from_sql_and_values(
-        DbBackend::MySql,
-        SQL,
-        [
-            tenant_id.as_bytes().to_vec().into(),
-            email.trim().to_owned().into(),
-        ],
-    );
-
-    match db.query_one(stmt).await? {
-        Some(row) => {
-            let bytes: Vec<u8> = row.try_get("", "person_id")?;
-            Ok(Some(Uuid::from_slice(&bytes)?))
-        }
-        None => Ok(None),
-    }
 }
 
 /// Resolve the set of `person_id`s whose CURRENT `value_type='id'` observation
@@ -271,6 +219,11 @@ pub struct OrgChartEdge {
 /// instance, ordered by source. The caller filters to the configured
 /// `org_chart` source. Ported from `Sql.OrgChart.cs::CurrentParentsForChild`.
 ///
+/// The `parent_person_id IS NOT NULL` filter intentionally diverges from .NET:
+/// the seed writes Path-B root/membership rows with a NULL parent, and decoding
+/// those into a non-nullable id would 500 the profile — a parent edge with no
+/// parent is not an edge, so it is skipped.
+///
 /// # Errors
 ///
 /// Returns an error if the query fails or a stored id column is not 16 bytes.
@@ -285,6 +238,7 @@ pub async fn current_parents_for_child(
         WHERE insight_tenant_id = ?
           AND child_person_id   = ?
           AND valid_to IS NULL
+          AND parent_person_id IS NOT NULL
         ORDER BY insight_source_type, insight_source_id
     ";
 

@@ -1,0 +1,16 @@
+templates:
+  revision:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-05-07T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    unique_key: null
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: wiki-test
+    page_id: null
+    revision_id: null
+    author_id: null
+    author_email: null
+    created_at: null
+    message: null
+    collected_at: "2026-05-07T00:00:00Z"
