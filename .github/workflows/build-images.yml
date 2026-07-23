@@ -902,7 +902,7 @@ jobs:
       && github.event_name == 'push'
       && github.ref == 'refs/heads/main'
       && needs.discover-images.outputs.any == 'true'
-      && needs.merge-image.result == 'success'
+      && (needs.merge-image.result == 'success' || needs.merge-image.result == 'skipped')
       && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
       && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
