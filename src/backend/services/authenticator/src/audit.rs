@@ -213,8 +213,15 @@ impl AuditEmitter {
                     uuid::Uuid::now_v7().to_string(),
                     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
                 );
-                let Ok(payload) = serde_json::to_vec(&env) else {
-                    continue;
+                let payload = match serde_json::to_vec(&env) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        // Count + log like every other drop path, so a
+                        // malformed event still moves auth_audit_dropped_total.
+                        dropped_in_task.add(1, &[]);
+                        tracing::warn!(error = %e, action = env.action, "audit event serialization failed (dropped)");
+                        continue;
+                    }
                 };
                 // Key by tenant: per-tenant ordering, balanced partitions.
                 let record = FutureRecord::to(&topic)

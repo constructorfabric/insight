@@ -37,6 +37,10 @@ use crate::session::SessionManager;
 const LEADER_KEY: &str = "asm:leader:idp_refresher";
 /// Per-session lock TTL — covers one grant round-trip with generous margin.
 const SESSION_LOCK_TTL_MS: u64 = 30_000;
+/// Post-grant store retries (exponential backoff 200ms→3.2s, ~6s total) — the
+/// grant is already rotated, so we must persist the new token or the next
+/// attempt burns it; wide enough to ride a Redis blip, under the lock TTL.
+const STORE_RETRY_ATTEMPTS: u32 = 6;
 /// Backoff for transient failures: `min(base << failures, max)` seconds.
 const BACKOFF_BASE_SECONDS: u64 = 15;
 const BACKOFF_MAX_SECONDS: u64 = 300;
@@ -231,8 +235,12 @@ async fn do_refresh(
             // token → invalid_grant → false logout (review M3). So retry the
             // store a few times before giving up; the guard returns false only
             // when the session was concurrently revoked (then just unschedule).
+            // Retry generously: exponential backoff 200ms→3.2s over STORE_RETRY
+            // attempts (~6s total), to ride out a realistic Redis failover/blip
+            // rather than only a sub-second hiccup. Still far under the 30s
+            // per-session lock TTL, so the lock/permit is never held past it.
             let mut stored = false;
-            for attempt in 0..3u32 {
+            for attempt in 0..STORE_RETRY_ATTEMPTS {
                 match sessions
                     .store_idp_refresh(
                         session_id,
@@ -252,12 +260,13 @@ async fn do_refresh(
                         stored = true;
                         break;
                     }
-                    Err(e) if attempt == 2 => {
+                    Err(e) if attempt == STORE_RETRY_ATTEMPTS - 1 => {
                         tracing::error!(error = %e, session_id, "idp refresh: store failed after retries — the rotated token is lost, session will be logged out on the next attempt");
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, session_id, attempt, "idp refresh store failed, retrying");
-                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        let backoff_ms = 200u64 << attempt;
+                        tracing::warn!(error = %e, session_id, attempt, backoff_ms, "idp refresh store failed, retrying");
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
                     }
                 }
             }
