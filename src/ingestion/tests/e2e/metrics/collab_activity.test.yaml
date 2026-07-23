@@ -1,0 +1,113 @@
+spec_version: 1
+description: >
+  Metric: m365_active_days — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily M365 reports — email, Teams chat, OneDrive/SharePoint files
+    • silver: deduped to one row per person/day carrying each signal's count
+    • gold:   a DAY is "active" if any deliberate signal (email sent, chat sent,
+              file engaged/shared) > 0 that day; the metric is the COUNT of active
+              days in the window — passive emails (received/read) are excluded.
+              value = the requested member's active-day count; median/p25/p75/range
+              = the distribution of those per-person counts across the member's
+              DEPARTMENT (same org_unit_id).
+
+  Count-of-days design (this metric counts DAYS, not magnitudes): each member m ∈
+  {alice:1, bob:2, carol:3, dave:4, erin:5} is seeded m deliberate-activity rows —
+  an email with sendCount:1 — on m distinct days inside the queried window, so the
+  per-person active-day count = m → department {1,2,3,4,5}. The IC case requests
+  erin (m=5), so value = 5; the department of 5 yields the median/p25/p75/range
+  below (a reviewer can verify by counting each member's seeded dates).
+  Cases: custom scope (department of 5) · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_m365.email_activity:
+    # ── alice: 1 active day(s) in window
+    - { $ref: templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-23", unique_key: ad-alice-20261223, sendCount: 1 }
+    # ── bob: 2 active day(s) in window
+    - { $ref: templates/m365_email.yaml#/templates/bob_email, reportRefreshDate: "2026-12-23", unique_key: ad-bob-20261223, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/bob_email, reportRefreshDate: "2026-12-24", unique_key: ad-bob-20261224, sendCount: 1 }
+    # ── carol: 3 active day(s) in window
+    - { $ref: templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-12-23", unique_key: ad-carol-20261223, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-12-24", unique_key: ad-carol-20261224, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-12-25", unique_key: ad-carol-20261225, sendCount: 1 }
+    # ── dave: 4 active day(s) in window
+    - { $ref: templates/m365_email.yaml#/templates/dave_email, reportRefreshDate: "2026-12-23", unique_key: ad-dave-20261223, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/dave_email, reportRefreshDate: "2026-12-24", unique_key: ad-dave-20261224, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/dave_email, reportRefreshDate: "2026-12-25", unique_key: ad-dave-20261225, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/dave_email, reportRefreshDate: "2026-12-26", unique_key: ad-dave-20261226, sendCount: 1 }
+    # ── erin: 5 active day(s) in window
+    - { $ref: templates/m365_email.yaml#/templates/erin_email, reportRefreshDate: "2026-12-23", unique_key: ad-erin-20261223, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/erin_email, reportRefreshDate: "2026-12-24", unique_key: ad-erin-20261224, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/erin_email, reportRefreshDate: "2026-12-25", unique_key: ad-erin-20261225, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/erin_email, reportRefreshDate: "2026-12-26", unique_key: ad-erin-20261226, sendCount: 1 }
+    - { $ref: templates/m365_email.yaml#/templates/erin_email, reportRefreshDate: "2026-12-27", unique_key: ad-erin-20261227, sendCount: 1 }
+
+cases:
+  - name: Unified collaboration activity
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-12-23", to: "2026-12-29" }
+        metrics:
+          - metric_key: collab.active_days
+            views: &activity_views
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+          - metric_key: collab.breadth
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      - metric: collab.active_days
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      - metric: collab.active_days
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: collab.active_days
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-23' && double(p.value) == 1.0))"
+      - metric: collab.active_days
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'm365') && double(v.value) == 5.0)"
+      - metric: collab.breadth
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 1 }
+      - metric: collab.breadth
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5 }
+      - metric: collab.breadth
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-23' && double(p.value) == 1.0))"
+
+  - name: Unified collaboration activity empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - { metric_key: collab.active_days, views: [{ view: period }] }
+          - { metric_key: collab.breadth, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - { metric: collab.active_days, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
+      - { metric: collab.breadth, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
