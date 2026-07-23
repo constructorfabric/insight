@@ -120,8 +120,12 @@ jobs:
         with:
           persist-credentials: false # don't leave the token in .git/config
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install protoc + librdkafka build deps
+        # protobuf-compiler: grpc-hub -> prost-build. cmake + libcurl headers:
+        # the authenticator vendors librdkafka (audit events, step 10.8) via
+        # rdkafka's cmake-build; librdkafka's OAUTHBEARER path needs curl/curl.h
+        # even with WITH_CURL=0.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:
