@@ -87,10 +87,13 @@ commits_source AS (
         toDate(date) AS metric_date,
         lines_added,
         lines_removed,
-        if(project_key = '', '__unknown__', concat(toString(source_id), ':', project_key)) AS project_value,
-        if(project_key = '', 'Unknown', project_key) AS project_label,
-        concat(toString(source_id), ':', project_key, '/', repo_slug) AS repository_value,
-        if(project_key = '', repo_slug, concat(project_key, '/', repo_slug)) AS repository_label,
+        -- coalesce nullable inputs to '': source_id (and project_key/repo_slug)
+        -- can be NULL (e.g. GitHub silver), which made these concat() results
+        -- NULL — rejected by the non-Nullable tuple `value` field on CH 25.7 (#1858).
+        if(coalesce(project_key, '') = '', '__unknown__', concat(coalesce(toString(source_id), ''), ':', project_key)) AS project_value,
+        if(coalesce(project_key, '') = '', 'Unknown', project_key) AS project_label,
+        concat(coalesce(toString(source_id), ''), ':', coalesce(project_key, ''), '/', coalesce(repo_slug, '')) AS repository_value,
+        if(coalesce(project_key, '') = '', coalesce(repo_slug, ''), concat(project_key, '/', repo_slug)) AS repository_label,
         replaceOne(data_source, 'insight_', '') AS source_value,
         {{ git_source_label('source_value') }} AS source_label,
         CAST(

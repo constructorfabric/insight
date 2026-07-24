@@ -51,6 +51,14 @@ spec:
             - name: signing-keys
               mountPath: {{ .Values.signingKeysPath | quote }}
               readOnly: true
+            {{- if .Values.tlsDiscovery.enabled }}
+            # CA of the in-pod TLS discovery front — the oidc-authn-plugin
+            # verifies the `.authenticated()` admin surface against our own
+            # issuer through it.
+            - name: authn-tls-cert
+              mountPath: /app/authn-ca
+              readOnly: true
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

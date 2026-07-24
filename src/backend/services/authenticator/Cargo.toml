@@ -28,6 +28,7 @@ toolkit-canonical-errors = { workspace = true }
 # via inventory; mirrors the analytics service's gear set.
 api_gateway = { workspace = true }
 authn-resolver = { workspace = true }
+oidc-authn-plugin = { workspace = true }
 authz-resolver = { workspace = true }
 tenant-resolver = { workspace = true }
 single-tenant-tr-plugin = { workspace = true }
@@ -51,6 +52,10 @@ futures = { workspace = true }
 uuid = { workspace = true, features = ["v5"] }
 chrono = { workspace = true }
 tracing = { workspace = true }
+opentelemetry = "0.31"
+# Audit events to the platform Redpanda topic (Kafka-compatible rdkafka API
+# only — backend PRD migration constraint). cmake-build vendors librdkafka.
+rdkafka = { version = "0.38", features = ["cmake-build", "tokio"] }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 reqwest = { workspace = true }

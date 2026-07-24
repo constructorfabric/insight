@@ -22,24 +22,32 @@
 #![allow(clippy::doc_markdown)]
 
 mod api;
+mod audit;
+mod backchannel;
 mod config;
 mod cookie;
+mod csrf;
 mod gear;
 mod identity;
+mod janitor;
 mod jwt;
 mod local_client;
 mod oidc;
+mod ratelimit;
+mod refresher;
 mod service_token;
 mod session;
 
 // System gears — linked via inventory for the REST host + auth pipeline.
-// Mirrors the analytics service's set (the authenticator authenticates its own
-// admin surface with the same pipeline in a later step).
+// Mirrors the analytics service's set. The oidc-authn-plugin verifies gateway
+// JWTs on the `.authenticated()` admin surface (session revoke-by-user) — the
+// authenticator trusts its own tokens exactly like any downstream service.
 use api_gateway as _;
 use authn_resolver as _;
 use authz_resolver as _;
 use gear_orchestrator as _;
 use grpc_hub as _;
+use oidc_authn_plugin as _;
 use single_tenant_tr_plugin as _;
 use static_authz_plugin as _;
 use tenant_resolver as _;

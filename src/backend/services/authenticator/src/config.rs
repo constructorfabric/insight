@@ -50,6 +50,11 @@ pub struct IdpConfig {
     pub refresh_concurrency: u32,
     /// Behavior when the IdP issues no refresh token.
     pub no_refresh_token_policy: NoRefreshTokenPolicy,
+    /// Refresher pass interval (leader polls the due schedule this often).
+    pub refresher_tick_seconds: u64,
+    /// Jitter (± this window) applied to due-times when WRITTEN to the
+    /// schedule, so sessions do not herd after a deploy or Redis restore (G5).
+    pub refresh_due_jitter_seconds: u64,
 }
 
 impl Default for IdpConfig {
@@ -64,6 +69,8 @@ impl Default for IdpConfig {
             refresh_safety_margin_seconds: 60,
             refresh_concurrency: 128,
             no_refresh_token_policy: NoRefreshTokenPolicy::Strict,
+            refresher_tick_seconds: 5,
+            refresh_due_jitter_seconds: 30,
         }
     }
 }
@@ -136,6 +143,69 @@ impl Default for ServiceTokensConfig {
     }
 }
 
+/// Audit publishing (PRD `nfr-auth-audit`): the Redpanda sink for auth events.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuditConfig {
+    /// Kafka-compatible bootstrap servers (`host:port[,host:port]`). Empty
+    /// (default) disables publishing — events stay in the structured log.
+    pub brokers: String,
+    /// The platform audit topic.
+    pub topic: String,
+    /// Retention (ms) the authenticator sets on the topic when it creates it,
+    /// default **1 day**. NOTE: there is **no consumer** yet — the Audit
+    /// Service (`cpt-insightspec-component-be-audit-service`: drain → ClickHouse)
+    /// is spec'd but unbuilt, so events are deliberately aged out after this
+    /// window (accepted data loss for now). Bump this / drop the bound once the
+    /// consumer lands. `0` = don't set retention (leave the cluster default).
+    pub retention_ms: u64,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            brokers: String::new(),
+            topic: "insight.audit.events".to_owned(),
+            retention_ms: 86_400_000, // 1 day — no consumer yet (see field doc)
+        }
+    }
+}
+
+/// Layer-2 rate limiting (DESIGN §4.4, G8): the precise, multi-replica-correct
+/// guards behind the gateway's coarse per-IP zone. Buckets key on what
+/// identifies the caller (session / OIDC state), never IP. A burst of 0
+/// disables that bucket.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RateLimitConfig {
+    /// Cap on concurrent live `asm:login_state:*` entries; excess
+    /// `/auth/login` gets 429 before any state is written (stops a
+    /// slow-trickle Redis-exhaustion attack the edge cannot see).
+    pub login_state_max: u64,
+    /// `/auth/refresh` bucket per session: burst size.
+    pub refresh_burst: u32,
+    /// `/auth/refresh` bucket per session: sustained refills per minute.
+    pub refresh_per_minute: u32,
+    /// `/auth/callback` bucket per OIDC `state`: burst size.
+    pub callback_burst: u32,
+    /// `/auth/callback` bucket per OIDC `state`: sustained refills per minute.
+    pub callback_per_minute: u32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            login_state_max: 1000,
+            // The SPA refreshes about once per 8 min; 5-burst + 6/min absorbs
+            // multi-tab races and retries with an order of magnitude to spare.
+            refresh_burst: 5,
+            refresh_per_minute: 6,
+            callback_burst: 5,
+            callback_per_minute: 10,
+        }
+    }
+}
+
 /// The authenticator gear configuration. Deserialized from
 /// `gears.authenticator.config`.
 #[derive(Debug, Clone, Deserialize)]
@@ -188,6 +258,24 @@ pub struct AuthenticatorConfig {
     // ── Cross-cutting ────────────────────────────────────────────────────
     /// CSRF `Origin` allowlist (empty = token-required, fail closed).
     pub csrf_origins: Vec<String>,
+    /// Janitor pass interval (leader-elected trim of expired index members).
+    pub janitor_interval_seconds: u64,
+    /// Layer-2 rate limiting knobs (DESIGN §4.4).
+    pub rate_limit: RateLimitConfig,
+    /// Audit publishing (Redpanda).
+    pub audit: AuditConfig,
+    /// Back-channel logout: tolerated clock skew on the `logout_token`'s `iat`
+    /// (future-dated tokens inside this window are accepted).
+    pub backchannel_clock_skew_seconds: u64,
+    /// Back-channel logout: how long after `iat` a `logout_token` stays
+    /// acceptable. Also sizes the `jti` replay-guard TTL
+    /// (`iat + max_age + skew − now`).
+    pub backchannel_token_max_age_seconds: u64,
+    /// Roles (gateway-JWT `roles` scopes) authorized to call the admin
+    /// revoke-by-user operation. The service registry grants one of these to
+    /// the services that may force-logout users (e.g. the future permissions
+    /// service on grant changes, DD-AUTH-07).
+    pub admin_revoke_roles: Vec<String>,
 
     // ── Dependencies ─────────────────────────────────────────────────────
     /// Redis connection URL (`redis://host:port`).
@@ -253,6 +341,12 @@ impl Default for AuthenticatorConfig {
             ],
             default_return_to: "/".to_owned(),
             csrf_origins: Vec::new(),
+            janitor_interval_seconds: 30,
+            rate_limit: RateLimitConfig::default(),
+            audit: AuditConfig::default(),
+            backchannel_clock_skew_seconds: 60,
+            backchannel_token_max_age_seconds: 300,
+            admin_revoke_roles: vec!["session_admin".to_owned()],
             redis_url: String::new(),
             signing_keys_path: String::new(),
             identity_url: String::new(),

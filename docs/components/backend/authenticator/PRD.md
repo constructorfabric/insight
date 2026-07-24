@@ -58,7 +58,7 @@ date: 2026-07-06
 
 The authenticator is the auth core of Insight: a standalone service that implements the BFF / token-handler pattern. It runs the OIDC login flow against the customer's identity provider, holds the user session server-side in Redis, and exposes a small `/auth/*` API the SPA uses to log in, refresh, and log out. IdP tokens never leave the authenticator; the browser holds only an opaque session cookie.
 
-At login the authenticator mints a signed **gateway JWT linked 1:1 to the session** -- the complete, signed description of the request author (`sub` = person_id, `tenants`, `roles`, `sid`). On every API request the nginx gateway (see [Gateway DESIGN](../gateway/DESIGN.md)) exchanges the session cookie for that JWT via an `auth_request` subrequest to `GET /internal/authz`; only the JWT travels to downstream services, which verify it against the authenticator's JWKS. The authenticator also issues **service tokens** for no-user workloads, so downstream services keep exactly one verification path.
+At login the authenticator mints a signed **gateway JWT linked 1:1 to the session** -- the complete, signed description of the request author (`sub` = person_id, `tenant_id`, `roles`, `sid`). On every API request the nginx gateway (see [Gateway DESIGN](../gateway/DESIGN.md)) exchanges the session cookie for that JWT via an `auth_request` subrequest to `GET /internal/authz`; only the JWT travels to downstream services, which verify it against the authenticator's JWKS. The authenticator also issues **service tokens** for no-user workloads, so downstream services keep exactly one verification path.
 
 ### 1.2 Background / Problem Statement
 
@@ -82,7 +82,7 @@ The previously specified remedy -- a single Rust API Gateway binary combining a 
 | Session token | The opaque cookie value -- a rotating **credential** mapping to the `session_id`. Generated from a CSPRNG; no claims, no meaning outside Redis. Rotation writes a new mapping and lets the old one expire after a grace TTL. |
 | Gateway JWT | Short-lived signed JWT minted by the authenticator **at login**, stored server-side, linked 1:1 to the session, reissued ahead of expiry. The only credential downstream services ever see. |
 | Exchange | The gateway's `auth_request` subrequest to `GET /internal/authz`: session cookie in, `X-Gateway-Jwt` header out. |
-| Service token | A gateway JWT with `sub = service:<name>`, issued at `POST /internal/token` against an RFC 7523 signed assertion, for workloads with no user context. |
+| Service token | A gateway JWT for workloads with no user context (`sub_type = "service"`, `sid = service:<name>`), issued at `POST /internal/token` against an RFC 7523 signed assertion. |
 | IdP tokens | Tokens issued by the customer's identity provider. Stored only inside the authenticator's session record; refreshed by a background worker; never sent to the browser or downstream services. |
 | Downstream service | Any internal Insight service behind the gateway (Analytics API, Identity Service, etc.). Verifies the gateway JWT itself -- mandatory, fail closed, no production disable knob. |
 
@@ -169,7 +169,7 @@ Defined in the [parent backend PRD](../specs/PRD.md) as `cpt-insightspec-actor-o
 
 #### Authorization Code with PKCE
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-oidc-login`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-oidc-login`
 
 The system **MUST** implement OIDC authorization code flow with PKCE as a confidential client. The authenticator **MUST** generate `state`, `nonce`, and PKCE verifier per login attempt and validate them on callback. The browser **MUST NOT** receive or transmit the IdP code, ID token, access token, or refresh token at any point.
 
@@ -185,7 +185,7 @@ At login the system **MUST** resolve the authenticated person via Identity Servi
 
 #### Stable Session Identity, Rotating Credential
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-session-model`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-session-model`
 
 The system **MUST** separate the session's identity from its credential:
 
@@ -202,7 +202,7 @@ The system **MUST NOT** use the cookie value as a Redis session key, **MUST NOT*
 
 #### Session Cookie Issuance
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-session-cookie`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-session-cookie`
 
 After a successful OIDC callback, the system **MUST** issue an opaque session cookie with these attributes:
 
@@ -225,7 +225,7 @@ The cookie value **MUST** be opaque -- no claims, no JWT, no user-identifying da
 
 #### Explicit Session Refresh Endpoint
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-session-refresh`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-session-refresh`
 
 The system **MUST** expose `POST /auth/refresh`. The cookie value rotates on every successful refresh. Behaviour:
 
@@ -249,7 +249,7 @@ The system **MUST NOT** extend the session on any other endpoint. A stale cookie
 
 #### Redis-Backed Session Storage
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-session-store`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-session-store`
 
 The system **MUST**:
 
@@ -272,7 +272,7 @@ The exact Redis schema is specified in [DESIGN section 3.7](./DESIGN.md#37-datab
 
 #### Login-Minted, Session-Linked JWT
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-linked-jwt`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-linked-jwt`
 
 The system **MUST** mint the gateway JWT at `/auth/callback`, in the same pipeline that creates the session, and store it keyed by the stable `session_id`. From then on the JWT is **reissued ahead of expiry**: while its age is under `authenticator.jwt_reissue_after_seconds` (default 240 s of the 300 s TTL) the stored JWT is served as-is; past that age the system rebuilds claims from the session record, signs a fresh JWT, and stores it with `SET ... NX EX` so parallel requests converge on one canonical JWT (stampede-safe).
 
@@ -282,8 +282,8 @@ The JWT **MUST** carry exactly:
 
 | Claim | Value |
 |---|---|
-| `sub` | internal **person_id** (or `service:<name>` for service tokens, see 5.13) |
-| `tenants` | array of tenant ids the person belongs to (1..N), resolved at login. The JWT is the only tenant **authority**; per-request **selection** among them is an unsigned attribute (e.g. `X-Tenant-ID`) that downstream validates against this signed set |
+| `sub` | internal **person_id** (for service tokens: a stable per-service UUIDv5, see 5.13) |
+| `tenant_id` | the **single** tenant this token is scoped to — the sole tenant authority (one and only one tenant per token, EPIC #1583; supersedes the earlier `tenants` array + `X-Tenant-ID` selector sketch — see [DESIGN section 3.8](./DESIGN.md#38-gateway-jwt-claim-contract)) |
 | `roles` | present from day one, default from `authenticator.default_roles` (`["user"]`). Once the separate permissions service exists, its answer -- fetched once at login -- replaces the default. Claim shape is fixed now so extending costs nothing |
 | `sid` | the **stable** `session_id` (UUIDv7) -- survives cookie rotations; one id from login to logout for tracing, audit, and the JWT/session linkage |
 | `iss`, `aud`, `iat`, `exp`, `jti` | `exp = iat + 60..300 s`; `jti` UUIDv7 |
@@ -300,7 +300,7 @@ Session revoke/logout **MUST** delete the session and the linked JWT in one pipe
 
 #### `/internal/authz` Exchange Endpoint
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-authz-exchange`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-authz-exchange`
 
 The system **MUST** expose `GET /internal/authz` on the main listener as the gateway's `auth_request` target:
 
@@ -319,7 +319,7 @@ The response carries no correlation id -- it is cacheable, so per-request correl
 
 #### JWKS Endpoint
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-jwks`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-jwks`
 
 The system **MUST** publish the public verification key set at `GET /.well-known/jwks.json` (RFC 7517), served through the gateway. Each downstream service is configured with the absolute JWKS URL (Helm value, env `GATEWAY_JWKS_URL`); services fetch at startup, cache, and re-fetch on unknown `kid`. Key rotation keeps `current` + `previous` published for the documented overlap window.
 
@@ -331,7 +331,7 @@ The system **MUST** publish the public verification key set at `GET /.well-known
 
 #### List Active Sessions
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-session-list`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-session-list`
 
 The system **MUST** expose an authenticated endpoint returning the calling user's active sessions (created_at, expires_at, user_agent, ip, current=true/false), read from the per-user index with score > now.
 
@@ -339,7 +339,7 @@ The system **MUST** expose an authenticated endpoint returning the calling user'
 
 #### Revoke Sessions
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-session-revoke`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-session-revoke`
 
 The system **MUST** support: (1) revoke the current session (logout); (2) revoke a specific other session; (3) revoke all sessions for a user (self "log out everywhere", admin-initiated, or permissions-service-initiated on grant change). Each operation deletes the session record, the linked JWT, the token mapping(s), and the index entries atomically.
 
@@ -355,11 +355,11 @@ The admin surface (revoke by user) **MUST** itself require a valid gateway JWT w
 
 #### Logout (Local, RP-Initiated, Back-Channel)
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-logout`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-logout`
 
 The system **MUST** provide `POST /auth/logout` that revokes the current session, clears the cookie (`Max-Age=0`), and redirects (or returns a redirect URL) to the OIDC `end_session_endpoint` for RP-initiated logout.
 
-The system **MUST** accept OIDC back-channel logout tokens at a dedicated endpoint, validate the `logout_token` per spec, locate sessions by `(iss, sid)` (via the sid index) or `(iss, sub)` (resolve via Identity Service, then walk the per-user index), and revoke them.
+The system **MUST** accept OIDC back-channel logout tokens at a dedicated endpoint, validate the `logout_token` per spec, locate sessions by `(iss, sid)` (via the sid index) or `(iss, sub)` (via the sub index `asm:sub_index:*`, maintained at login — Identity cannot resolve a `sub` without an email, and the logout path must not depend on another service), and revoke them.
 
 The system **MUST** protect the back-channel endpoint against replay: every accepted `logout_token` **MUST** be recorded by `(iss, jti)` with a TTL of at least `iat + max_clock_skew`, and any subsequent delivery of the same `(iss, jti)` **MUST** short-circuit to a successful response without performing another revoke.
 
@@ -373,7 +373,7 @@ The system **MUST** document and accept that a `logout_token` carrying only `sub
 
 #### CSRF Defense
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-csrf`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-csrf`
 
 For state-changing methods (POST, PUT, PATCH, DELETE) on `/auth/*`, the system **MUST** require either:
 
@@ -390,7 +390,7 @@ For state-changing methods (POST, PUT, PATCH, DELETE) on `/auth/*`, the system *
 
 #### Background IdP Token Refresh
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-idp-refresh`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-idp-refresh`
 
 The session must not outlive the IdP's willingness to vouch for the user. Therefore, deliberately reversing the earlier "no IdP token refresh in v1" carve-out:
 
@@ -409,14 +409,14 @@ The session must not outlive the IdP's willingness to vouch for the user. Theref
 
 #### Service Token Issuance
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-service-tokens`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-service-tokens`
 
 For workloads with no user context (background jobs, seeds, the future permissions service), the system **MUST** expose `POST /internal/token` on the dedicated token listener:
 
 1. The caller proves its identity with a short-lived signed assertion (`private_key_jwt`, RFC 7523): `iss = sub = <service>`, `aud = authenticator`, `jti`, `exp` at most 60 s.
 2. The authenticator validates the signature against a **service registry** -- a gitops-reviewable config mapping service name to public key(s), allowed extra roles, and whether the service may request a tenant-scoped token. Onboarding a service is a PR adding its public key; rotation ships key n+1 alongside n.
 3. The assertion `jti` **MUST** be replay-guarded (same `SET NX` pattern as the back-channel logout guard). Every issuance is audited.
-4. Out comes a **normal gateway JWT**: `sub = service:<name>`, `roles: ["service", ...]` per the registry, TTL 300 s, signed with the same key, published in the same JWKS -- downstream services keep exactly one verification path for user and service traffic. A tenant-scoped request sets `tenants: [t]`; no `tenants` claim means cross-tenant service work, which downstream authorizes against the `service` role.
+4. Out comes a **normal gateway JWT**: `sub` = a stable per-service UUIDv5, `sub_type = "service"`, `sid = service:<name>`, `roles: ["service", ...]` per the registry, TTL 300 s, signed with the same key, published in the same JWKS -- downstream services keep exactly one verification path for user and service traffic. Service tokens are always tenant-scoped: the request names exactly one tenant, carried as the signed `tenant_id`.
 5. Services cache the token and re-request before expiry -- the same reissue-ahead pattern as everything else.
 
 User-context fan-out (service A calls service B while serving a user request) does **not** use this endpoint: internal services propagate the incoming `Authorization` header on outbound calls made on behalf of the request -- that is what the 60 s reissue-ahead travel margin buys.
@@ -446,7 +446,7 @@ Login resolves the person via Identity Service; unknown person means 403. A fres
 
 #### Two Listeners, Network Scopes, Credentials Everywhere
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-auth-internal-reachability`
+- [x] `p1` - **ID**: `cpt-insightspec-fr-auth-internal-reachability`
 
 `/internal/authz` turns a stolen cookie value into a signed JWT, so its reachability is layered:
 
@@ -474,7 +474,7 @@ The `/internal/authz` exchange (token mapping + session + JWT reads) **MUST** co
 
 #### Session TTL Bounds
 
-- [ ] `p1` - **ID**: `cpt-insightspec-nfr-auth-session-ttl`
+- [x] `p1` - **ID**: `cpt-insightspec-nfr-auth-session-ttl`
 
 Session TTL and absolute lifetime **MUST** be configurable via Helm values without code change. Defaults: 600 s TTL (reasonable range 300-600 s), 8 h absolute cap.
 
@@ -482,7 +482,7 @@ Session TTL and absolute lifetime **MUST** be configurable via Helm values witho
 
 #### Cookie Hardening
 
-- [ ] `p1` - **ID**: `cpt-insightspec-nfr-auth-cookie-attrs`
+- [x] `p1` - **ID**: `cpt-insightspec-nfr-auth-cookie-attrs`
 
 Every session cookie response **MUST** include `__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, and no `Domain` attribute. A code path that would set a session cookie without all of these **MUST** fail closed.
 
@@ -490,7 +490,7 @@ Every session cookie response **MUST** include `__Host-` prefix, `HttpOnly`, `Se
 
 #### Audit of Auth Events
 
-- [ ] `p1` - **ID**: `cpt-insightspec-nfr-auth-audit`
+- [x] `p1` - **ID**: `cpt-insightspec-nfr-auth-audit`
 
 Every login, logout, session refresh, session revocation, back-channel logout, IdP-refresh verdict (`invalid_grant` kill), service-token issuance, and bootstrap-admin creation **MUST** emit an audit event consumed by the Audit Service.
 
@@ -498,7 +498,7 @@ Every login, logout, session refresh, session revocation, back-channel logout, I
 
 #### Rate Limiting on `/auth/*` (Layer 2)
 
-- [ ] `p1` - **ID**: `cpt-insightspec-nfr-auth-rate-limit`
+- [x] `p1` - **ID**: `cpt-insightspec-nfr-auth-rate-limit`
 
 The gateway carries a coarse per-IP flood guard (layer 1). The authenticator **MUST** enforce the precise layer: a Redis token bucket keyed by session/user (not IP -- corporate NAT makes per-IP limits at the precise layer wrong), and a global cap on concurrent live `asm:login_state:*` entries (default 1000 per pod) rejecting excess `/auth/login` with 429 before any Redis write.
 
@@ -506,7 +506,7 @@ The gateway carries a coarse per-IP flood guard (layer 1). The authenticator **M
 
 #### Fail Closed on Redis
 
-- [ ] `p1` - **ID**: `cpt-insightspec-nfr-auth-fail-closed`
+- [x] `p1` - **ID**: `cpt-insightspec-nfr-auth-fail-closed`
 
 If Redis is unreachable, `/internal/authz` and `/auth/*` mutations **MUST** fail (401/503) and the readiness probe **MUST** fail. No local session cache, no degraded mode.
 
@@ -524,7 +524,7 @@ If Redis is unreachable, `/internal/authz` and `/auth/*` mutations **MUST** fail
 
 #### Auth API
 
-- [ ] `p1` - **ID**: `cpt-insightspec-interface-auth-api`
+- [x] `p1` - **ID**: `cpt-insightspec-interface-auth-api`
 
 **Type**: REST API
 
@@ -554,19 +554,19 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### Gateway JWT Claim Contract
 
-- [ ] `p1` - **ID**: `cpt-insightspec-contract-auth-gateway-jwt`
+- [x] `p1` - **ID**: `cpt-insightspec-contract-auth-gateway-jwt`
 
 **Direction**: defined and minted by the authenticator, consumed by every downstream service.
 
-**Format**: signed JWT (algorithm decision EdDSA vs ES256 open, see [DESIGN section 5](./DESIGN.md#5-design-decisions)).
+**Format**: signed JWT, ES256 (decided — see [DESIGN section 5](./DESIGN.md#resolved-step-07-es256-for-the-gateway-jwt)).
 
-**Claims**: `iss`, `aud`, `sub`, `iat`, `exp`, `jti` plus `tenants`, `roles`, `sid` -- exactly as specified in 5.6.
+**Claims**: `iss`, `aud`, `sub`, `iat`, `exp`, `jti` plus `tenant_id`, `roles`, `sub_type`, `sid` -- exactly as specified in 5.6.
 
 **Compatibility**: Additive custom claims only without a major version. The permissions service later changes claim *values* (roles), never the contract shape.
 
 #### Authz Exchange Contract
 
-- [ ] `p1` - **ID**: `cpt-insightspec-contract-auth-authz-exchange`
+- [x] `p1` - **ID**: `cpt-insightspec-contract-auth-authz-exchange`
 
 **Direction**: provided to the nginx gateway.
 
@@ -576,7 +576,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### JWKS Distribution Contract
 
-- [ ] `p1` - **ID**: `cpt-insightspec-contract-auth-jwks-url`
+- [x] `p1` - **ID**: `cpt-insightspec-contract-auth-jwks-url`
 
 **Direction**: configuration -- each downstream service is given the JWKS URL.
 
@@ -586,7 +586,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### OIDC Provider Contract
 
-- [ ] `p1` - **ID**: `cpt-insightspec-contract-auth-oidc`
+- [x] `p1` - **ID**: `cpt-insightspec-contract-auth-oidc`
 
 **Direction**: required from customer.
 
@@ -596,7 +596,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### Service Registry Contract
 
-- [ ] `p1` - **ID**: `cpt-insightspec-contract-auth-service-registry`
+- [x] `p1` - **ID**: `cpt-insightspec-contract-auth-service-registry`
 
 **Direction**: required from operators (gitops-reviewable config).
 
@@ -606,7 +606,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### Authenticator SDK
 
-- [ ] `p2` - **ID**: `cpt-insightspec-contract-auth-sdk`
+- [x] `p2` - **ID**: `cpt-insightspec-contract-auth-sdk`
 
 **Direction**: provided to internal consumers (e.g. the future permissions service).
 
@@ -620,7 +620,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### Login
 
-- [ ] `p1` - **ID**: `cpt-insightspec-usecase-auth-login`
+- [x] `p1` - **ID**: `cpt-insightspec-usecase-auth-login`
 
 **Actor**: `cpt-insightspec-actor-browser-user`
 
@@ -644,7 +644,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### API Request (Cookie In, JWT Out)
 
-- [ ] `p1` - **ID**: `cpt-insightspec-usecase-auth-exchange`
+- [x] `p1` - **ID**: `cpt-insightspec-usecase-auth-exchange`
 
 **Actor**: `cpt-insightspec-actor-nginx-gateway`
 
@@ -665,7 +665,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### Log Out Everywhere
 
-- [ ] `p1` - **ID**: `cpt-insightspec-usecase-auth-logout-everywhere`
+- [x] `p1` - **ID**: `cpt-insightspec-usecase-auth-logout-everywhere`
 
 **Actor**: `cpt-insightspec-actor-browser-user`
 
@@ -680,7 +680,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### IdP Refresh Kill Path
 
-- [ ] `p1` - **ID**: `cpt-insightspec-usecase-auth-idp-refresh-kill`
+- [x] `p1` - **ID**: `cpt-insightspec-usecase-auth-idp-refresh-kill`
 
 **Actor**: `cpt-insightspec-actor-oidc-provider`
 
@@ -700,7 +700,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 #### Service Token Issuance
 
-- [ ] `p1` - **ID**: `cpt-insightspec-usecase-auth-service-token`
+- [x] `p1` - **ID**: `cpt-insightspec-usecase-auth-service-token`
 
 **Actor**: `cpt-insightspec-actor-downstream-service`
 
@@ -719,14 +719,14 @@ All endpoints are registered through the toolkit operation builder and land in t
 
 ## 9. Acceptance Criteria
 
-- [ ] `cpt-insightspec-fr-auth-oidc-login`, `cpt-insightspec-fr-auth-session-cookie`: After login, no IdP token is present in anything delivered to the browser; the only auth artifact is the opaque `__Host-sid` cookie with the full attribute set and `Max-Age` matching the configured TTL.
-- [ ] `cpt-insightspec-fr-auth-session-model`: The JWT `sid` claim and all Redis session keys are unchanged across any number of cookie rotations within one session.
-- [ ] `cpt-insightspec-fr-auth-linked-jwt`, `cpt-insightspec-fr-auth-authz-exchange`: Every 200 from `/internal/authz` carries a JWT with at least 60 s of remaining validity and a `Cache-Control: max-age` no greater than `authz_cache_max_age`; every non-200 carries `no-store`.
-- [ ] `cpt-insightspec-fr-auth-session-revoke`: After "revoke all", every device returns 401 within one gateway-JWT TTL (at most 300 s); at the authenticator itself, immediately.
-- [ ] `cpt-insightspec-fr-auth-idp-refresh`: With the fake IdP's revoke control hook fired, all linked sessions die on the next scheduled refresh; with its outage hook fired, no session dies.
-- [ ] `cpt-insightspec-fr-auth-service-tokens`: A registered service obtains a `sub = service:<name>` JWT verifiable via the same JWKS; an unregistered caller gets 401.
+- [x] `cpt-insightspec-fr-auth-oidc-login`, `cpt-insightspec-fr-auth-session-cookie`: After login, no IdP token is present in anything delivered to the browser; the only auth artifact is the opaque `__Host-sid` cookie with the full attribute set and `Max-Age` matching the configured TTL.
+- [x] `cpt-insightspec-fr-auth-session-model`: The JWT `sid` claim and all Redis session keys are unchanged across any number of cookie rotations within one session.
+- [x] `cpt-insightspec-fr-auth-linked-jwt`, `cpt-insightspec-fr-auth-authz-exchange`: Every 200 from `/internal/authz` carries a JWT with at least 60 s of remaining validity and a `Cache-Control: max-age` no greater than `authz_cache_max_age`; every non-200 carries `no-store`.
+- [x] `cpt-insightspec-fr-auth-session-revoke`: After "revoke all", every device returns 401 within one gateway-JWT TTL (at most 300 s); at the authenticator itself, immediately.
+- [x] `cpt-insightspec-fr-auth-idp-refresh`: With the fake IdP's revoke control hook fired, all linked sessions die on the next scheduled refresh; with its outage hook fired, no session dies.
+- [x] `cpt-insightspec-fr-auth-service-tokens`: A registered service obtains a `sub = service:<name>` JWT verifiable via the same JWKS; an unregistered caller gets 401.
 - [ ] `cpt-insightspec-fr-auth-bootstrap`: On an empty persons table with bootstrap enabled, the first IdP login creates a universe admin and emits the audit event; the second login does not.
-- [ ] `cpt-insightspec-fr-auth-logout`, `cpt-insightspec-fr-auth-csrf`: Local, RP-initiated, and back-channel logout all converge on the same revoke pipeline; state-changing `/auth/*` requests without CSRF token or matching `Origin` are rejected 403.
+- [x] `cpt-insightspec-fr-auth-logout`, `cpt-insightspec-fr-auth-csrf`: Local, RP-initiated, and back-channel logout all converge on the same revoke pipeline; state-changing `/auth/*` requests without CSRF token or matching `Origin` are rejected 403.
 
 ## 10. Dependencies
 
