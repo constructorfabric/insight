@@ -1,15 +1,6 @@
 spec_version: 1
 description: "Unified Git metrics cover authored commits, file categories, pull requests, cohort merge rate, medians, and histograms."
 
-# These fixtures predate the github-v2 connector rewrite: the bronze_github
-# schemas here still use the legacy flat shape (commit.oid, file_change.commit_hash,
-# array parent_hashes) while the real github-v2 bronze — now carried verbatim in
-# the connectors-ddl snapshot — uses sha / envelope columns. Seeding fails the
-# schema check until the git_activity template + bronze_github schemas are
-# refreshed to github-v2. Tracked as a follow-up; the git silver/gold pipeline
-# itself builds fine now that bitbucket-cloud is fixed (#1877, merged).
-skip: "git_metrics fixtures predate github-v2 bronze schema (oid/commit_hash → sha); needs fixture refresh"
-
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
@@ -18,17 +9,17 @@ bronze:
     - $ref: templates/people.yaml#/templates/dave
     - $ref: templates/people.yaml#/templates/erin
   bronze_github.commits:
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-alice, oid: hash-alice, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob, oid: hash-bob, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 20}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-carol, oid: hash-carol, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 30}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-dave, oid: hash-dave, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 40}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-erin, oid: hash-erin, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 50}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-alice, sha: hash-alice, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob, sha: hash-bob, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 20}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-carol, sha: hash-carol, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 30}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-dave, sha: hash-dave, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 40}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-erin, sha: hash-erin, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 50}
   bronze_github.file_changes:
-    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-alice, commit_hash: hash-alice, additions: 10, deletions: 2}
-    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-bob, commit_hash: hash-bob, additions: 20, deletions: 4}
-    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-carol, commit_hash: hash-carol, additions: 30, deletions: 6}
-    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-dave, commit_hash: hash-dave, additions: 40, deletions: 8}
-    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-erin, commit_hash: hash-erin, additions: 50, deletions: 10}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-alice, sha: hash-alice, additions: 10, deletions: 2}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-bob, sha: hash-bob, additions: 20, deletions: 4}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-carol, sha: hash-carol, additions: 30, deletions: 6}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-dave, sha: hash-dave, additions: 40, deletions: 8}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-erin, sha: hash-erin, additions: 50, deletions: 10}
   bronze_github.pull_requests:
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-alice, database_id: 1, number: 1, author_login: alice, author_email: alice@example.com, closed_at: "2026-10-01T09:00:00Z", merge_commit_sha: merge-alice, additions: 10}
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob, database_id: 2, number: 2, author_login: bob, author_email: bob@example.com, closed_at: "2026-10-01T10:00:00Z", merge_commit_sha: merge-bob, additions: 20}
