@@ -186,6 +186,20 @@ identity:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 512Mi }
+# Identity Resolution — Rust port of the .NET identity service (epic
+# #1602). Runs SIDE-BY-SIDE with `identity` above against the same
+# MariaDB `identity` database (schema still owned by the .NET DbUp).
+# Receives no traffic until the gateway route + analytics/authenticator
+# identity URLs are flipped to `<release>-identity-resolution:8082`;
+# rollback = flip those values back. The composed
+# `insight-identity-resolution-config` Secret is produced by
+# scripts/compose-app-secrets.sh from insight-db-creds.
+identityResolution:
+  image: { repository: insight-identity-resolution, tag: dev, pullPolicy: IfNotPresent }
+  deploy: true
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
 
 frontend:
   # The SPA image is pulled from ghcr (ghcr.io/constructorfabric/insight-front,
