@@ -303,14 +303,26 @@ declarative `*.test.yaml` rig replaced the CSV rig.
 The seeder INSERTs into a table that MUST already exist (it reads
 `system.columns` and fails otherwise — it does NOT create from the schema YAML).
 Bronze tables come from `src/ingestion/scripts/connectors-ddl/*.sql`
-(the CI-generated DDL snapshot the rig applies verbatim). So to seed a
-connector that isn't there yet:
+(the generated DDL snapshot the rig applies verbatim). That snapshot is NOT
+hand-edited — it is regenerated from real connectors + dbt by bootstrap-db, so
+adding a table by hand to a `connectors-ddl/*.sql` (or to a bootstrap heredoc)
+does not survive the next regeneration. To seed a connector whose bronze tables
+aren't in the snapshot yet:
 
-1. Add `CREATE DATABASE IF NOT EXISTS bronze_<snake>;` to the database heredoc.
-2. Add a `CREATE TABLE IF NOT EXISTS bronze_<snake>.<stream> (…)` block (inside a
-   `run_ch <<'SQL' … SQL` heredoc) with the columns your dbt model reads + the 4
-   `_airbyte_*` CDK columns. Real Airbyte overwrites it on first sync.
-3. Add a matching `schemas/bronze_<snake>.<stream>.yaml` (every column;
+1. Make sure the connector is listed in `bootstrap-db/connectors-config.yaml`,
+   then regenerate and commit the snapshot (see
+   `src/ingestion/scripts/bootstrap-db/README.md`):
+
+   ```bash
+   cd src/ingestion/scripts/bootstrap-db
+   set -a; source pins.env; source .env; set +a
+   ./bootstrap-db.sh connectors-config.yaml   # fresh ClickHouse 25.7.5
+   ./dump-ddl.sh                              # writes ../connectors-ddl/*.sql
+   ```
+
+   Commit the resulting `connectors-ddl/*.sql` diff so the new
+   `bronze_<snake>.<stream>` tables ship in the snapshot the rig applies.
+2. Add a matching `schemas/bronze_<snake>.<stream>.yaml` (every column;
    `additionalProperties: false`) and a base template covering all of them.
 
 ## Gotchas (rig operations + cross-test impact)

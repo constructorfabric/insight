@@ -73,7 +73,7 @@ Throw it away with `docker rm -f bootstrap-db-clickhouse`.
 | `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog → `destination-clickhouse write` with a zero-record stream-status input (creates empty tables) → `dbt run --select <name>__bronze_promoted` (MergeTree → ReplacingMergeTree). |
 | `bootstrap-db.sh <config.yaml>` | Sources `pins.env` and `.env` (if present), runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
 | `run-dbt.sh [dbt args]` | Helper: generates a profiles.yml from the `CLICKHOUSE_*` variables and runs `dbt run` in `src/ingestion/dbt`. |
-| `dump-ddl.sh` | Dumps `SHOW CREATE` for every `bronze_*` table plus the `silver` and `insight` databases (tables and views) into `../connectors-ddl/*.sql` — the committed snapshot that `../create-bronze-placeholders.sh` applies on fresh clusters. Regenerated automatically by `.github/workflows/connectors-ddl.yml` on PRs. |
+| `dump-ddl.sh` | Dumps `SHOW CREATE` for every `bronze_*` table, the `person`/`identity`/`silver`/`insight` databases (tables and views), and the gold-referenced `staging` tables into `../connectors-ddl/*.sql` — the committed snapshot that `../create-bronze-placeholders.sh` applies on fresh clusters. **Run it manually** after `bootstrap-db.sh` (see step above) whenever a schema changes, and commit the diff; `.github/workflows/connectors-ddl-reminder.yml` only posts a reminder on `src/ingestion/**` PRs — it does not regenerate anything. |
 
 ## Image pins (pins.env)
 
