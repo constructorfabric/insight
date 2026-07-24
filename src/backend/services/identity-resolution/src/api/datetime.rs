@@ -85,4 +85,42 @@ mod tests {
         assert_eq!(parse_flexible("not-a-date"), None);
         Ok(())
     }
+
+    #[derive(Deserialize)]
+    struct OptWrapper {
+        #[serde(default, deserialize_with = "deserialize_opt")]
+        at: Option<NaiveDateTime>,
+    }
+
+    #[test]
+    fn deserialize_opt_boundary_cases() -> anyhow::Result<()> {
+        let missing: OptWrapper = serde_json::from_value(serde_json::json!({}))?;
+        assert_eq!(missing.at, None, "missing field");
+
+        let null: OptWrapper = serde_json::from_value(serde_json::json!({ "at": null }))?;
+        assert_eq!(null.at, None, "null");
+
+        let empty: OptWrapper = serde_json::from_value(serde_json::json!({ "at": "" }))?;
+        assert_eq!(empty.at, None, "empty string");
+
+        let blank: OptWrapper = serde_json::from_value(serde_json::json!({ "at": "   " }))?;
+        assert_eq!(blank.at, None, "blank string");
+
+        let valid: OptWrapper = serde_json::from_value(serde_json::json!({
+            "at": "2026-07-23T10:00:00Z"
+        }))?;
+        assert_eq!(
+            valid.at,
+            Some(ymd_hms(2026, 7, 23, 10, 0, 0)?),
+            "valid RFC-3339"
+        );
+
+        let invalid: Result<OptWrapper, _> =
+            serde_json::from_value(serde_json::json!({ "at": "not-a-date" }));
+        assert!(
+            invalid.is_err(),
+            "invalid string is a deserialization error"
+        );
+        Ok(())
+    }
 }

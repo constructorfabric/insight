@@ -18,13 +18,14 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Extension, Path, Query};
 use axum::response::IntoResponse;
-use chrono::{DateTime as ChronoDateTime, NaiveDate, NaiveDateTime, TimeDelta, Utc};
+use chrono::{NaiveDateTime, TimeDelta, Utc};
 use serde::Deserialize;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::AppState;
+use super::datetime::parse_flexible;
 use super::error::SubchartError;
 use super::gate::require_caller;
 use crate::domain::subchart::assemble_forest;
@@ -153,7 +154,7 @@ fn resolve_valid_at(raw: Option<&str>) -> Result<Option<NaiveDateTime>, Canonica
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
-    let ts = parse_valid_at(raw).ok_or_else(|| {
+    let ts = parse_flexible(raw).ok_or_else(|| {
         invalid_valid_at(format!(
             "valid_at is not a recognised date/datetime: '{raw}'"
         ))
@@ -172,34 +173,9 @@ fn invalid_valid_at(detail: String) -> CanonicalError {
         .create()
 }
 
-/// Accept the same forms as the .NET `DateTime` binder, normalising to UTC:
-/// RFC-3339 with `Z`/offset, a zone-less datetime (treated as UTC), or a
-/// date-only value (midnight UTC).
-fn parse_valid_at(raw: &str) -> Option<NaiveDateTime> {
-    if let Ok(dt) = ChronoDateTime::parse_from_rfc3339(raw) {
-        return Some(dt.with_timezone(&Utc).naive_utc());
-    }
-    if let Ok(ndt) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f") {
-        return Some(ndt);
-    }
-    if let Ok(ndt) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S") {
-        return Some(ndt);
-    }
-    NaiveDate::parse_from_str(raw, "%Y-%m-%d")
-        .ok()
-        .and_then(|d| d.and_hms_opt(0, 0, 0))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn ymd_hms(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> anyhow::Result<NaiveDateTime> {
-        use anyhow::Context;
-        NaiveDate::from_ymd_opt(y, mo, d)
-            .and_then(|date| date.and_hms_opt(h, mi, s))
-            .context("valid datetime")
-    }
 
     #[test]
     fn depth_validation() {
@@ -218,25 +194,6 @@ mod tests {
         assert_eq!(effective_depth(None, 16), 16, "omitted → server cap");
         assert_eq!(effective_depth(Some(5), 16), 5, "under cap kept");
         assert_eq!(effective_depth(Some(100), 16), 16, "over cap clamped");
-    }
-
-    #[test]
-    fn parses_valid_at_forms() -> anyhow::Result<()> {
-        let expected = ymd_hms(2026, 5, 17, 10, 30, 45)?;
-        assert_eq!(parse_valid_at("2026-05-17T10:30:45Z"), Some(expected));
-        assert_eq!(parse_valid_at("2026-05-17T10:30:45"), Some(expected));
-        // +03:00 offset → 07:30:45 UTC.
-        assert_eq!(
-            parse_valid_at("2026-05-17T10:30:45+03:00"),
-            Some(ymd_hms(2026, 5, 17, 7, 30, 45)?)
-        );
-        // date-only → midnight.
-        assert_eq!(
-            parse_valid_at("2026-05-17"),
-            Some(ymd_hms(2026, 5, 17, 0, 0, 0)?)
-        );
-        assert_eq!(parse_valid_at("not-a-date"), None);
-        Ok(())
     }
 
     #[test]

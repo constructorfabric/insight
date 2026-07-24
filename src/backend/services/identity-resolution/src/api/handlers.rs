@@ -39,36 +39,19 @@ pub async fn resolve_profile(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
     let caller = require_caller(&ctx)?;
-    let person_ids = resolve_person_ids(&state, tenant, &req).await?;
+    let candidate_ids = resolve_person_ids(&state, tenant, &req).await?;
+    // Visibility gate (parity with .NET `VisibilityService.CanSeeAsync`): a
+    // caller may only resolve profiles they can see. Filter BEFORE deciding
+    // between not-found / resolved / ambiguous, so a hidden candidate neither
+    // leaks its existence through an `AMBIGUOUS_PROFILE` id list nor causes a
+    // uniquely-visible candidate to be misreported as ambiguous.
+    let person_ids = visible_person_ids(&state, tenant, caller, candidate_ids).await?;
 
     match person_ids.as_slice() {
         [] => Err(ProfileError::not_found("person not found")
             .with_resource(req.value)
             .create()),
         [person_id] => {
-            // Visibility gate (parity with .NET `VisibilityService.CanSeeAsync`):
-            // a caller may only resolve a profile they can see; a deny is masked
-            // as 404 so the target's existence does not leak. Reuses the subchart
-            // `visible_set` predicate (current state → `valid_at = None`).
-            let can_see = subchart_repo::is_target_in_visible_set(
-                &state.db,
-                tenant,
-                caller,
-                *person_id,
-                &state.config.org_chart_source_type,
-                None,
-            )
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "profile visibility check failed");
-                CanonicalError::internal("profile assembly failed").create()
-            })?;
-            if !can_see {
-                return Err(ProfileError::not_found("person not found")
-                    .with_resource(req.value.clone())
-                    .create());
-            }
-
             let observations =
                 persons_repo::fetch_person_observations(&state.db, tenant, *person_id)
                     .await
@@ -118,6 +101,38 @@ pub async fn resolve_profile(
             .create())
         }
     }
+}
+
+/// Narrow `candidate_ids` down to the ones `caller` can see (current state —
+/// `valid_at = None`), preserving order. Run before the not-found / resolved /
+/// ambiguous decision so a candidate the caller cannot see never surfaces —
+/// neither as a false single match nor as an id in the ambiguous-profile list.
+async fn visible_person_ids(
+    state: &AppState,
+    tenant: Uuid,
+    caller: Uuid,
+    candidate_ids: Vec<Uuid>,
+) -> Result<Vec<Uuid>, CanonicalError> {
+    let mut visible = Vec::with_capacity(candidate_ids.len());
+    for person_id in candidate_ids {
+        let can_see = subchart_repo::is_target_in_visible_set(
+            &state.db,
+            tenant,
+            caller,
+            person_id,
+            &state.config.org_chart_source_type,
+            None,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "profile visibility check failed");
+            CanonicalError::internal("profile assembly failed").create()
+        })?;
+        if can_see {
+            visible.push(person_id);
+        }
+    }
+    Ok(visible)
 }
 
 /// Wire shape of the internal S2S lookup response. Mirrors the .NET anonymous
