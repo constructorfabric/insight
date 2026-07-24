@@ -30,10 +30,18 @@
    ------------------------------------------------------------------------- #}
 
 -- @cpt-principle:cpt-dataflow-principle-promote-bronze:p1
+{# `staging` tag (not just `jira`): the prod pipeline's staging step selects
+   `tag:staging,tag:jira` (an AND-intersection — see render_cronworkflow.py /
+   render_sync_trigger.py). Tagged only `jira`, this promote model was excluded
+   from that selection (and, with no `+` in the selector, not pulled in as an
+   upstream either), so on a real Airbyte sync bronze stayed plain MergeTree and
+   the downstream `jira-enrich` step crashed with `Storage MergeTree doesn't
+   support FINAL` (issue #1886). `schema='staging'` sets the target DATABASE, not
+   a dbt tag, so it does not participate in tag selection. #}
 {{ config(
     materialized='view',
     schema='staging',
-    tags=['jira']
+    tags=['jira', 'staging']
 ) }}
 
 {# All Jira bronze tables carry a `unique_key` column added by the connector
