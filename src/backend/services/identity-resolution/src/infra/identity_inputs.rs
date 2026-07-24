@@ -49,17 +49,21 @@ use crate::domain::seed_service::IdentityInputsReader;
 ///
 /// The text columns have mixed nullability in `identity_inputs` (e.g.
 /// `insight_source_type` is `String`, `source_account_id` is `Nullable(String)`),
-/// and the clickhouse decoder is strict in both directions — so each is coerced
-/// to a non-null `String` with `ifNull(col, '')` and decoded uniformly. Crucially
-/// the aliases DIFFER from the source column names (`val`, `op_type`, …): a
-/// same-name `ifNull(value,'') AS value` would shadow the `value` referenced in
-/// `WHERE` and can trip a ClickHouse "Cyclic aliases" error (the .NET reader
-/// avoids this the same way). `is_delete` is derived from `operation_type`.
+/// and the clickhouse decoder is strict in both directions — so most are coerced
+/// to a non-null `String` with `ifNull(col, '')` and decoded uniformly.
+/// `source_account_id` is the exception: it is decoded as `Option<String>` and a
+/// NULL fails the read — parity with .NET, whose `reader.GetString()` throws on
+/// NULL and fails the seed, instead of silently minting a `''` pseudo-account.
+/// Crucially the aliases DIFFER from the source column names (`val`, `op_type`,
+/// …): a same-name `ifNull(value,'') AS value` would shadow the `value`
+/// referenced in `WHERE` and can trip a ClickHouse "Cyclic aliases" error (the
+/// .NET reader avoids this the same way). `is_delete` is derived from
+/// `operation_type`.
 const STREAM_SQL: &str = r"
     SELECT
         ifNull(insight_source_type, '')  AS source_type,
         toString(insight_source_id)      AS source_id,
-        ifNull(source_account_id, '')    AS account_id,
+        source_account_id                AS account_id,
         ifNull(value_type, '')           AS val_type,
         ifNull(value, '')                AS val,
         toString(_synced_at)             AS synced_at,
@@ -81,7 +85,7 @@ const STREAM_SQL: &str = r"
 struct InputRow {
     source_type: String,
     source_id: String,
-    account_id: String,
+    account_id: Option<String>,
     val_type: String,
     val: String,
     synced_at: String,
@@ -127,10 +131,19 @@ impl IdentityInputsReader for ClickHouseIdentityInputsReader {
 }
 
 fn map_row(r: InputRow) -> anyhow::Result<IdentityInputRow> {
+    let account_id = r.account_id.ok_or_else(|| {
+        anyhow::anyhow!(
+            "NULL source_account_id in identity_inputs (source_type={}, source_id={}, \
+             value_type={}): refusing to fold it into a '' pseudo-account; fix the producer row",
+            r.source_type,
+            r.source_id,
+            r.val_type,
+        )
+    })?;
     Ok(IdentityInputRow {
         source_type: r.source_type,
         source_id: Uuid::parse_str(&r.source_id)?,
-        source_account_id: r.account_id,
+        source_account_id: account_id,
         value_type: r.val_type,
         value: r.val,
         synced_at: parse_ch_datetime(&r.synced_at)?,
