@@ -1,0 +1,62 @@
+# Reminds contributors to regenerate the committed connectors-ddl snapshot when a
+# PR touches src/ingestion. The snapshot (scripts/connectors-ddl/*.sql) is
+# regenerated MANUALLY (see src/ingestion/scripts/bootstrap-db/), so this workflow
+# is only a nudge — it does NOT run the regeneration and pushes nothing.
+#
+# Uses pull_request_target so the token can comment on fork PRs too (a plain
+# pull_request from a fork gets a read-only token). This is safe here because the
+# job never checks out or executes PR code and uses no secrets — it only reads the
+# changed-file list (via the paths filter) and posts a single sticky comment.
+#
+# NB: pull_request_target always uses the workflow file from the base branch, so
+# this takes effect only once merged to main.
+name: connectors-ddl reminder
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "src/ingestion/**"
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  remind:
+    name: Remind to regenerate connectors-ddl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            // Sticky marker: post the reminder at most once per PR (not per push).
+            const marker = '<!-- connectors-ddl-regen-reminder -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const existing = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            if (existing.some((c) => c.body && c.body.includes(marker))) return;
+            const body = [
+              marker,
+              '### ⚠️ Regenerate the connectors-ddl snapshot',
+              '',
+              'This PR changes `src/ingestion/**`. If your change affects any',
+              'bronze / silver / gold schema, regenerate the committed DDL snapshot',
+              'and include it in this PR:',
+              '',
+              '```bash',
+              'cd src/ingestion/scripts/bootstrap-db',
+              'set -a; source pins.env; source .env; set +a',
+              './bootstrap-db.sh connectors-config.yaml   # fresh ClickHouse 25.7.5',
+              './dump-ddl.sh                              # writes scripts/connectors-ddl/*.sql',
+              '```',
+              '',
+              'Commit the resulting `scripts/connectors-ddl/*.sql` diff. If nothing',
+              'changed, no snapshot update is needed. (Regeneration is manual for now.)',
+            ].join('\n');
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
