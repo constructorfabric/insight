@@ -5,6 +5,7 @@ pub(crate) mod canonical_json;
 mod catalog;
 pub(crate) mod error;
 mod handlers;
+mod metric_definitions;
 mod metric_results;
 
 #[cfg(test)]
@@ -26,6 +27,7 @@ use crate::domain::auth::TenantAuthorization;
 use crate::domain::catalog::CatalogReader;
 use crate::domain::catalog::response as catalog_response;
 use crate::domain::metric;
+use crate::domain::metric_definitions::listing as metric_definitions_listing;
 use crate::domain::query;
 use crate::domain::schema_validator::SchemaValidator;
 use crate::domain::threshold;
@@ -344,6 +346,23 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(catalog::get_metrics)
+        .register(router, openapi);
+
+    // Unified metric definitions listing — display fields only, tenant
+    // scope resolved server-side from the session. GET is safe here: no
+    // request-context fields exist to leak into access logs.
+    router = OperationBuilder::get("/v1/metric-definitions")
+        .operation_id("analytics_api.metric_definitions.list")
+        .summary("List unified metric definitions")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<metric_definitions_listing::MetricDefinitionListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Metric definitions",
+        )
+        .standard_errors(openapi)
+        .handler(metric_definitions::list_metric_definitions)
         .register(router, openapi);
 
     // Admin threshold CRUD (Refs #525) — DESIGN §3.2 admin-crud.
