@@ -53,6 +53,21 @@ COMPONENTS = [
         "cover_ignore_regex": "src/backend/libs/",
         "paths": ["src/backend/services/analytics"],
     },
+    # cover=False (mirrors authenticator/identity): the crate's business logic
+    # is exercised by env-gated live tests (IDENTITY_TEST_* against a dev
+    # MariaDB/ClickHouse) that skip cleanly in CI, so only the pure-logic unit
+    # tests would count — gating the crate far below the 80% line. fmt + clippy
+    # + tests still run and gate the pipeline. Re-enable coverage when the
+    # HTTP+MariaDB integration suite lands (#1753).
+    {
+        "name": "identity-resolution",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "identity-resolution",
+        "cover": False,
+        "cover_ignore_regex": "src/backend/libs/",
+        "paths": ["src/backend/services/identity-resolution"],
+    },
     # fakeidp is a dev/e2e test double (see cf/NGINX_BFF.md §10 G6), not shipped
     # code — but it has real integration tests, so it is covered + gated like any
     # other crate. Its only cross-crate files are none (standalone deps), so no

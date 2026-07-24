@@ -9,8 +9,8 @@
 # image that exists.
 #
 # Env: BUILD_TAG (required), FULL_REBUILD (default false), and one flag per
-# service (ANALYTICS/AUTHENTICATOR/GATEWAY/IDENTITY) carrying the paths-filter
-# output ('true' when that service changed).
+# service (ANALYTICS/AUTHENTICATOR/GATEWAY/IDENTITY/IDENTITY_RESOLUTION)
+# carrying the paths-filter output ('true' when that service changed).
 set -euo pipefail
 
 : "${BUILD_TAG:?BUILD_TAG is required}"
@@ -22,6 +22,7 @@ services=(
   "AUTHENTICATOR:src/backend/services/authenticator/helm/Chart.yaml"
   "GATEWAY:src/backend/services/gateway/helm/Chart.yaml"
   "IDENTITY:src/backend/services/identity/helm/Chart.yaml"
+  "IDENTITY_RESOLUTION:src/backend/services/identity-resolution/helm/Chart.yaml"
 )
 
 for entry in "${services[@]}"; do

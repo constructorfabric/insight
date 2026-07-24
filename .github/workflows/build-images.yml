@@ -60,6 +60,7 @@ jobs:
       authenticator: ${{ steps.filter.outputs.authenticator }}
       gateway: ${{ steps.filter.outputs.gateway }}
       identity: ${{ steps.filter.outputs.identity }}
+      identity_resolution: ${{ steps.filter.outputs.identity_resolution }}
       toolbox: ${{ steps.filter.outputs.toolbox }}
       umbrella: ${{ steps.filter.outputs.umbrella }}
       build_tag: ${{ steps.tag.outputs.build_tag }}
@@ -85,6 +86,10 @@ jobs:
               - 'src/backend/Cargo.lock'
             identity:
               - 'src/backend/services/identity/**'
+            identity_resolution:
+              - 'src/backend/services/identity-resolution/**'
+              - 'src/backend/Cargo.toml'
+              - 'src/backend/Cargo.lock'
             toolbox:
               - 'src/ingestion/**'
             umbrella:
@@ -586,6 +591,104 @@ jobs:
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
 
+  # ─── Identity Resolution (Rust port of identity, epic #1602) ───────────────
+  backend-identity-resolution:
+    needs: changes
+    if: |
+      needs.changes.outputs.identity_resolution == 'true'
+      || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
+        with:
+          context: src/backend
+          file: src/backend/services/identity-resolution/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          cache-from: type=gha,scope=identity-resolution-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=identity-resolution-${{ matrix.arch }},ignore-error=true
+      - name: Export digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-identity-resolution-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-identity-resolution:
+    needs: [changes, backend-identity-resolution]
+    if: |
+      always()
+      && needs.backend-identity-resolution.result == 'success'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-identity-resolution-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/insight-identity-resolution
+          tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-identity-resolution@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-identity-resolution:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-identity-resolution
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+
   # ─── Toolbox build (with dbt parse smoke) ──────────────────────────────────
   # Toolbox is special — it bakes every connector's descriptor.yaml and dbt
   # project at build time, so a descriptor-only change (commit A from
@@ -886,6 +989,7 @@ jobs:
       - merge-authenticator
       - merge-gateway
       - merge-identity
+      - merge-identity-resolution
       - merge-toolbox
       - merge-image
     # All siblings must finish first — bump-descriptors auto-commits to main
@@ -907,6 +1011,7 @@ jobs:
       && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
       && (needs.merge-identity.result      == 'success' || needs.merge-identity.result      == 'skipped')
+      && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
     runs-on: ubuntu-latest
     outputs:
@@ -988,6 +1093,7 @@ jobs:
           AUTHENTICATOR: ${{ needs.changes.outputs.authenticator }}
           GATEWAY: ${{ needs.changes.outputs.gateway }}
           IDENTITY: ${{ needs.changes.outputs.identity }}
+          IDENTITY_RESOLUTION: ${{ needs.changes.outputs.identity_resolution }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
       - name: Commit descriptor patches (no [skip ci])
@@ -1068,6 +1174,7 @@ jobs:
       - merge-authenticator
       - merge-gateway
       - merge-identity
+      - merge-identity-resolution
       - merge-toolbox
       - merge-image
       - bump-descriptors
@@ -1079,6 +1186,7 @@ jobs:
       && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
       && (needs.merge-identity.result      == 'success' || needs.merge-identity.result      == 'skipped')
+      && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
       && (needs.merge-image.result         == 'success' || needs.merge-image.result         == 'skipped')
       && (needs.bump-descriptors.result    == 'success' || needs.bump-descriptors.result    == 'skipped')
@@ -1164,6 +1272,7 @@ jobs:
           AUTHENTICATOR: ${{ needs.changes.outputs.authenticator }}
           GATEWAY: ${{ needs.changes.outputs.gateway }}
           IDENTITY: ${{ needs.changes.outputs.identity }}
+          IDENTITY_RESOLUTION: ${{ needs.changes.outputs.identity_resolution }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
       # Cross-repo frontend bump. The frontend lives in
@@ -1223,6 +1332,7 @@ jobs:
             src/backend/services/authenticator/helm/Chart.yaml \
             src/backend/services/gateway/helm/Chart.yaml \
             src/backend/services/identity/helm/Chart.yaml \
+            src/backend/services/identity-resolution/helm/Chart.yaml \
             src/frontend/helm/Chart.yaml \
             | grep -Ev '^(---|null)$' \
             | sort -V | tail -1)
