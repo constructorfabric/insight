@@ -17,8 +17,11 @@ dependencies:
 - name: insight-identity
   repository: file://../../src/backend/services/identity/helm
   version: 0.1.0
+- name: insight-identity-resolution
+  repository: file://../../src/backend/services/identity-resolution/helm
+  version: 0.1.0
 - name: insight-frontend
   repository: file://../../src/frontend/helm
   version: 0.1.0
-digest: sha256:3e5bb801b6b74d639fa2209e5ae039fb3b14488669cf2ebfdbd4740913b7123e
-generated: "2026-07-20T12:43:38.603586+08:00"
+digest: sha256:7d5a54cb18e4610874b33023ecbd415a857e9a69d34632665972588be0f7c205
+generated: "2026-07-24T06:55:02.532633+03:00"

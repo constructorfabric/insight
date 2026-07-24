@@ -33,7 +33,21 @@ gated block below following the identity pattern: read the service's
 The list lives HERE; do not mirror it elsewhere.
 ==============================================================================
 */}}
-{{- if .Values.identity.deploy }}
+{{- /*
+Transition guards (identity .NET → identity-resolution Rust, epic #1602):
+the Rust service does NOT run schema migrations yet — the .NET service's
+DbUp owns the `identity` database schema. A Rust-only install would get a
+pod with no schema; diverging database names would split the two services
+onto different databases. Both are misconfigurations — fail the render.
+Drop these guards when identity-resolution gains its own migrate step.
+*/}}
+{{- if and .Values.identityResolution.deploy (not .Values.identity.deploy) }}
+{{- fail "identityResolution.deploy=true requires identity.deploy=true during the transition: the .NET identity service owns the DbUp schema migrations (identity-resolution runs no DDL yet), so a Rust-only install would start against an empty database." }}
+{{- end }}
+{{- if and .Values.identity.deploy .Values.identityResolution.deploy (ne .Values.identity.databaseName .Values.identityResolution.databaseName) }}
+{{- fail (printf "identity.databaseName (%q) and identityResolution.databaseName (%q) must be equal: both services must share the one database the .NET DbUp migrates." .Values.identity.databaseName .Values.identityResolution.databaseName) }}
+{{- end }}
+{{- if or .Values.identity.deploy .Values.identityResolution.deploy }}
 apiVersion: batch/v1
 kind: Job
 metadata:
