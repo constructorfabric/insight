@@ -19,7 +19,12 @@ class PRActivityStream(PullRequestStateStream):
         generation = self.generation(repo.uuid, pr_id, "activity")
         entity_keys: set[str] = set()
         path = self._client.repo_path(repo, f"pullrequests/{pr_id}/activity")
-        present, entries = self._client.paginate_optional(path, params={"pagelen": "100"})
+        # The PR-activity endpoint caps pagelen at 50 and rejects larger values
+        # with HTTP 400 "Invalid pagelen" (Atlassian BCLOUD-13229) instead of
+        # clamping — a 400 the client does not tolerate, so pagelen=100 aborted
+        # the whole sync for any repo with a PR. Match the 50 used by the PR
+        # listing in pr_base.py.
+        present, entries = self._client.paginate_optional(path, params={"pagelen": "50"})
         for entry in entries:
             update = entry.get("update") or {}
             approval = entry.get("approval") or {}

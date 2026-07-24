@@ -7,7 +7,7 @@
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
-    tags=['jira', 'silver:class_task_comments']
+    tags=['jira', 'staging', 'silver:class_task_comments']
 ) }}
 
 -- `body` is raw ADF JSON at Bronze level; plaintext extraction deferred.

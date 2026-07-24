@@ -3,7 +3,7 @@
     materialized='view',
     alias='jira__task_sprints',
     schema='staging',
-    tags=['jira', 'silver:class_task_sprints']
+    tags=['jira', 'staging', 'silver:class_task_sprints']
 ) }}
 
 -- View, not table: bronze `jira_sprints` is MergeTree (full_refresh + overwrite),
