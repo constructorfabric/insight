@@ -52,18 +52,21 @@ shift || true
 
 case "$cmd" in
     build)
-        # Builds the runner image; its `additional_contexts` pull each connector's
-        # enrich binary from that connector's own build-only service (compiled FROM
-        # ITS OWN Dockerfile) and bake it in via COPY --from. No docker-in-docker.
+        # Builds the runner image; its `service:` additional_contexts pull each
+        # component binary from that component's own build-only service
+        # (compiled FROM ITS OWN Dockerfile). No docker-in-docker.
         docker compose "${COMPOSE_FILES[@]}" build runner
         ;;
     test|run)
         # `--rm` removes the runner container on exit; clickhouse + mariadb keep
         # running so a follow-up `test` invocation is fast (no re-init).
-        docker compose "${COMPOSE_FILES[@]}" run --rm runner pytest "$@"
+        # The norebuild overlay strips the runner's build section — compose
+        # v2.36-desktop chokes on resolving `service:` build contexts during
+        # `run`, and no build is wanted here anyway.
+        docker compose "${COMPOSE_FILES[@]}" -f compose/docker-compose.norebuild.yml run --rm runner pytest "$@"
         ;;
     shell)
-        docker compose "${COMPOSE_FILES[@]}" run --rm runner bash
+        docker compose "${COMPOSE_FILES[@]}" -f compose/docker-compose.norebuild.yml run --rm runner bash
         ;;
     up)
         # Bring up CH+MariaDB without launching the runner — useful when
@@ -91,9 +94,9 @@ case "$cmd" in
         # e2e-bronze-to-api.yml).
         which=${1:-all}
         case "$which" in
-            all|metrics|api) ;;
+            all|metrics|api|identity) ;;
             *)
-                echo "usage: $0 gates [api|metrics]" >&2
+                echo "usage: $0 gates [api|metrics|identity]" >&2
                 exit 2
                 ;;
         esac
@@ -109,8 +112,15 @@ case "$cmd" in
                 exit 2
             fi
         fi
+        if [ "$which" = all ] || [ "$which" = identity ]; then
+            if [ ! -f .artifacts/observed_identity_endpoints.json ]; then
+                echo "no .artifacts/observed_identity_endpoints.json — run './e2e.sh test identity/' first (it collects the identity endpoint ledger)" >&2
+                exit 2
+            fi
+        fi
         spec=/workspace/docs/components/backend/analytics/openapi.json
-        run=(docker compose "${COMPOSE_FILES[@]}" run --rm --no-deps -T runner)
+        identity_spec=/workspace/docs/components/backend/identity/openapi.json
+        run=(docker compose "${COMPOSE_FILES[@]}" -f compose/docker-compose.norebuild.yml run --rm --no-deps -T runner)
         rc=0
         if [ "$which" = all ] || [ "$which" = metrics ]; then
             echo "── metric coverage (gate) ──"
@@ -119,6 +129,17 @@ case "$cmd" in
         if [ "$which" = all ] || [ "$which" = api ]; then
             echo "── api endpoint coverage (gate) ──"
             "${run[@]}" python3 lib/api_coverage.py --observed .artifacts/observed_endpoints.json --spec "$spec" || rc=1
+        fi
+        if [ "$which" = all ] || [ "$which" = identity ]; then
+            echo "── identity endpoint coverage (gate) ──"
+            # The suppression lists are implementation-aware: a Rust run may
+            # legitimately skip the dropped legacy endpoint, a dotnet run must
+            # not. Match the gate to whichever implementation the suite ran.
+            identity_suite=identity
+            if [ "${E2E_IDENTITY_IMPLEMENTATION:-dotnet}" = "rust" ]; then
+                identity_suite=identity-rust
+            fi
+            "${run[@]}" python3 lib/api_coverage.py --suite "$identity_suite" --observed .artifacts/observed_identity_endpoints.json --spec "$identity_spec" || rc=1
         fi
         exit "$rc"
         ;;

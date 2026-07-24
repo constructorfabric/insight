@@ -1,0 +1,12 @@
+# Run-time overlay: strip the runner's `build:` section for `compose run`.
+#
+# The runner's build uses `service:` additional_contexts (see
+# docker-compose.runner.yml) — required by the CI buildx/gha-cache driver.
+# Docker compose v2.36-desktop fails `compose run` while resolving those
+# contexts ("no such service: jira-enrich" — run narrows the project to the
+# target service), even though no build is needed. Overlaying this file on
+# every run-type command (test/run/shell/gates — see ../e2e.sh) drops the
+# build section entirely: the image was already built by `./e2e.sh build`.
+services:
+  runner:
+    build: !reset null

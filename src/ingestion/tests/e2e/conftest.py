@@ -313,6 +313,19 @@ def pytest_sessionfinish(session, exitstatus):
     except OSError as e:
         LOG.warning("could not write API-endpoint ledger %s: %s", out, e)
 
+    # Identity suite ledger (identity/ tests; separate spec, separate gate —
+    # see lib/api_coverage.py on why the two are never mixed).
+    identity_out = Path(__file__).parent / ".artifacts" / "observed_identity_endpoints.json"
+    try:
+        api_coverage.dump_observed_identity(identity_out)
+        LOG.info(
+            "wrote identity-endpoint ledger (%d ops): %s",
+            len(api_coverage._OBSERVED_IDENTITY),
+            identity_out,
+        )
+    except OSError as e:
+        LOG.warning("could not write identity-endpoint ledger %s: %s", identity_out, e)
+
 
 def pytest_generate_tests(metafunc):
     """Generate one `test_metric_smoke` invocation per discovered `*.test.yaml`."""
