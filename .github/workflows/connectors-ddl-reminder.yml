@@ -30,7 +30,7 @@ jobs:
     name: Remind to regenerate connectors-ddl
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             // Sticky marker: post the reminder at most once per PR (not per push).
