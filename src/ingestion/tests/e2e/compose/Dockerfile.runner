@@ -69,6 +69,9 @@ COPY --from=analytics /app/analytics /usr/local/bin/analytics
 COPY --from=jira-enrich /usr/local/bin/jira-enrich /usr/local/bin/jira-enrich
 # The .NET identity published app (framework-dependent; spawned via `dotnet`).
 COPY --from=identity /app /opt/insight-identity
+# The Rust identity-resolution binary — the successor implementation the
+# identity contract suite runs via E2E_IDENTITY_IMPLEMENTATION=rust.
+COPY --from=identity-resolution /app/identity-resolution /usr/local/bin/identity-resolution
 
 # ── Defaults ────────────────────────────────────────────────────────────
 ENV E2E_RUN_MODE=docker
