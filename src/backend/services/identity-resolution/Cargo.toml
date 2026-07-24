@@ -46,6 +46,7 @@ tracing = { workspace = true }
 
 # MariaDB via SeaORM — connection pool + entities + raw resolve queries.
 sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
 # UUIDs: person_id / tenant / source ids (binary(16) in the DB).
 uuid = { workspace = true }
 # Timestamps: `now` for the in-memory 202 body + the zombie-sweep cutoff.

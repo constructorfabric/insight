@@ -13,6 +13,7 @@ mod config;
 mod domain;
 mod gear;
 mod infra;
+mod migration;
 
 // System gears — linked via inventory for the REST host and the gateway-JWT auth
 // pipeline. `use … as _;` is load-bearing: the gears register through `inventory`
@@ -32,7 +33,7 @@ use types_registry as _;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use toolkit::bootstrap::{AppConfig, run_server};
 
 /// Identity Resolution service.
@@ -44,6 +45,19 @@ struct Cli {
     /// Path to YAML configuration file.
     #[arg(short, long)]
     config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Start the server (default).
+    Run,
+    /// Apply pending schema migrations + the first-admin bootstrap and exit.
+    /// The Helm chart runs this as an initContainer before the server pod
+    /// (same pattern as the analytics service).
+    Migrate,
 }
 
 #[tokio::main]
@@ -52,5 +66,8 @@ async fn main() -> Result<()> {
     // Layered config: defaults -> YAML -> env (APP__*). Logging/OTel are
     // initialized by the bootstrap runtime, not here.
     let config = AppConfig::load_or_default(cli.config.as_ref())?;
-    run_server(config).await
+    match cli.command.unwrap_or(Commands::Run) {
+        Commands::Run => run_server(config).await,
+        Commands::Migrate => gear::run_migrate(&config).await,
+    }
 }

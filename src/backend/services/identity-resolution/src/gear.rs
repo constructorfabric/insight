@@ -56,6 +56,42 @@ impl Gear for IdentityResolutionGear {
     }
 }
 
+/// Pull `gears.identity-resolution.config` out of the loaded `AppConfig` and
+/// deserialize it into [`GearConfig`] — for subcommands that run outside the
+/// gear lifecycle (same helper shape as the analytics service).
+fn extract_gear_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<GearConfig> {
+    let raw = app
+        .gears
+        .get("identity-resolution")
+        .and_then(|v| v.get("config"))
+        .ok_or_else(|| {
+            anyhow::anyhow!("missing `gears.identity-resolution.config` section in configuration")
+        })?;
+    let cfg: GearConfig = serde_json::from_value(raw.clone())?;
+    Ok(cfg)
+}
+
+/// `migrate` subcommand: apply pending schema migrations + the first-admin
+/// bootstrap, then exit. Runs on a dedicated single-connection session (the
+/// advisory lock in `run_migrations` is session-scoped).
+///
+/// # Errors
+///
+/// Returns an error when the config section or `database_url` is missing, the
+/// migration lock cannot be acquired, or a migration/bootstrap step fails.
+pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
+    tracing::info!("running migrations");
+    let cfg = extract_gear_config(app)?;
+    anyhow::ensure!(
+        !cfg.database_url.is_empty(),
+        "`gears.identity-resolution.config.database_url` is required for migrate"
+    );
+    let db = crate::infra::db::connect_single(&cfg.database_url).await?;
+    crate::infra::db::run_migrations(&db).await?;
+    crate::infra::db::bootstrap::bootstrap_admin(&db, &cfg).await?;
+    Ok(())
+}
+
 impl RestApiCapability for IdentityResolutionGear {
     fn register_rest(
         &self,
