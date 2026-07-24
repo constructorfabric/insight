@@ -72,6 +72,7 @@ jobs:
           filters: |
             analytics:
               - 'src/backend/services/analytics/**'
+              - 'src/backend/libs/insight-clickhouse/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             authenticator:
@@ -88,6 +89,9 @@ jobs:
               - 'src/backend/services/identity/**'
             identity_resolution:
               - 'src/backend/services/identity-resolution/**'
+              # The image compiles the path-dependency lib in — a lib change
+              # must republish this image (same for analytics above).
+              - 'src/backend/libs/insight-clickhouse/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             toolbox:

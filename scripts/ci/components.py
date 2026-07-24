@@ -66,7 +66,12 @@ COMPONENTS = [
         "package": "identity-resolution",
         "cover": False,
         "cover_ignore_regex": "src/backend/libs/",
-        "paths": ["src/backend/services/identity-resolution"],
+        # insight-clickhouse is compiled in as a path dependency: a lib change
+        # must re-run this crate's tests too, not only the lib's own component.
+        "paths": [
+            "src/backend/services/identity-resolution",
+            "src/backend/libs/insight-clickhouse",
+        ],
     },
     # fakeidp is a dev/e2e test double (see cf/NGINX_BFF.md §10 G6), not shipped
     # code — but it has real integration tests, so it is covered + gated like any
