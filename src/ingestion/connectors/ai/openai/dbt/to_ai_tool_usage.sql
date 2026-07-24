@@ -27,7 +27,7 @@ SELECT
     num_model_requests,
     coalesce(batch, false)                          AS is_batch,
     service_tier,
-    NULL                                            AS person_id,
+    CAST(NULL, 'Nullable(String)')                  AS person_id,
     'openai'                                        AS provider,
     'openai_api'                                    AS client,
     'insight_openai'                                AS data_source

@@ -8,15 +8,19 @@ schemas:
     type: object
     additionalProperties: false
     properties:
-      unique_key: { type: string }
-      source_id: { type: string }
-      status_id: { type: string }
-      name: { type: string }
-      category_id: { type: integer }
-      category_name: { type: string }
-      category_key: { type: string }
-      collected_at: { type: string }
-      _airbyte_raw_id: { type: string }
-      _airbyte_extracted_at: { type: string, format: date-time }
-      _airbyte_meta: { type: string }
-      _airbyte_generation_id: { type: integer }
+      unique_key: {type: string}
+      source_id: {type: string}
+      # The jira connector types status/category ids as JSON numbers, which the
+      # ClickHouse destination stores as Decimal(38,9). Accept number|string|null
+      # so the fixture (which writes them as strings) matches the real column via
+      # the seeder's Decimal coercion.
+      status_id: {type: [number, string, "null"]}
+      name: {type: string}
+      category_id: {type: [number, string, "null"]}
+      category_name: {type: string}
+      category_key: {type: string}
+      collected_at: {type: string}
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}

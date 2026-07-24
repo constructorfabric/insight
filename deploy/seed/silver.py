@@ -6,10 +6,10 @@ the seed does not reimplement any DDL. It runs the exact two scripts the
 k8s clickhouse-migrate Hook Job runs, from the ingestion tree bind-mounted
 at /ingestion (docker-compose.yml `seed-sample.volumes`):
 
-1. `create-bronze-placeholders.sh` — CREATE DATABASE + bronze/silver
-   placeholder tables (CREATE TABLE IF NOT EXISTS; each silver placeholder
-   carries the INSIGHT_PLACEHOLDER_v1 marker). This gives the generators
-   real tables to write into.
+1. `create-bronze-placeholders.sh` — applies the CI-generated DDL snapshot
+   from scripts/connectors-ddl/*.sql (CREATE DATABASE + every bronze/silver/
+   insight relation, all IF NOT EXISTS / OR REPLACE). This gives the
+   generators the real production schemas to write into.
 
 2. Generate per-team activity rows via `generators/*.py` INTO those silver
    tables. Volumes scale by team profile + persona; per-day caps live in
@@ -91,7 +91,10 @@ def _ch_client() -> clickhouse_connect.driver.client.Client:
     # (deploy/compose/clickhouse-user-defaults.xml) so those CREATE VIEWs
     # type-check server-side. This client only INSERTs silver rows.
     return clickhouse_connect.get_client(
-        host=host, port=port, username=user, password=pwd,
+        host=host,
+        port=port,
+        username=user,
+        password=pwd,
     )
 
 
@@ -137,15 +140,15 @@ def generate_rows(
     client: clickhouse_connect.driver.client.Client,
 ) -> None:
     """Populate silver tables with per-team activity for the demo roster."""
-    tenant_uuid = os.environ.get(
-        "TENANT_DEFAULT_ID", "00000000-df51-5b42-9538-d2b56b7ee953"
-    )
+    tenant_uuid = os.environ.get("TENANT_DEFAULT_ID", "00000000-df51-5b42-9538-d2b56b7ee953")
     dev_email = get_dev_user_email()
     roster = build_roster(dev_email)
     days = int(os.environ.get("SEED_DAYS", DEFAULT_DAYS))
     LOG.info(
         "generating silver rows: tenant=%s days=%d persons=%d",
-        tenant_uuid, days, len(roster),
+        tenant_uuid,
+        days,
+        len(roster),
     )
 
     totals: dict[str, int] = {}
@@ -160,8 +163,7 @@ def generate_rows(
 
     for table, n in sorted(totals.items()):
         LOG.info("  %-46s %6d rows", table, n)
-    LOG.info("silver rows: %d total across %d tables",
-             sum(totals.values()), len(totals))
+    LOG.info("silver rows: %d total across %d tables", sum(totals.values()), len(totals))
 
 
 def run() -> None:

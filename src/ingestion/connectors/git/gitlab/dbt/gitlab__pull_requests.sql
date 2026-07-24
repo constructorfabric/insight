@@ -56,9 +56,9 @@ SELECT
     parseDateTimeBestEffortOrNull(mr.updated_at) AS updated_on,
     parseDateTimeBestEffortOrNull(COALESCE(mr.closed_at, mr.merged_at)) AS closed_on,
     COALESCE(mr.merge_commit_sha, '') AS merge_commit_hash,
-    0 AS files_changed,
-    0 AS lines_added,
-    0 AS lines_removed,
+    toInt64(0) AS files_changed,
+    toInt64(0) AS lines_added,
+    toInt64(0) AS lines_removed,
     'insight_gitlab' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     mr._airbyte_extracted_at

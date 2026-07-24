@@ -101,7 +101,7 @@ services:
     # ClickHouse, point CLICKHOUSE_HOST / CLICKHOUSE_INTERNAL_HTTP_PORT at
     # the real host and leave this profile inactive.
     profiles: ["local-clickhouse"]
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:25.7.5
     container_name: insight-clickhouse
     networks: [insight]
     environment:

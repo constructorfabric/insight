@@ -9,7 +9,7 @@
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8.4.13
+    image: clickhouse/clickhouse-server:25.7.5
     container_name: insight-e2e-clickhouse
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB}

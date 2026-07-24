@@ -126,7 +126,7 @@ SELECT
     CAST(u.collected_at_max AS Nullable(DateTime64(3)))     AS collected_at,
     -- _version: aggregating model uses max(collected_at) as version proxy (epoch-ms).
     -- NULL collected_at falls back to 0 to keep _version non-nullable.
-    coalesce(toUnixTimestamp64Milli(u.collected_at_max), toUInt64(0)) AS _version
+    coalesce(toUnixTimestamp64Milli(u.collected_at_max), toInt64(0)) AS _version
 FROM usage_agg u
 LEFT JOIN api_keys k
     ON u.actor_type = 'api_actor'

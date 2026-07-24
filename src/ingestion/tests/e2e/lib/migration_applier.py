@@ -2,16 +2,17 @@
 
 Migrations CREATE VIEW objects that reference bronze_*, silver, and staging
 databases. ClickHouse 24.x validates these references at CREATE-time, so we
-must materialize the bronze placeholder schemas BEFORE running migrations —
+must materialize the bronze/silver schemas BEFORE running migrations —
 mirroring the prod order from src/ingestion/scripts/apply-ch-migrations.sh:
 
     1. CREATE DATABASE staging | silver | insight
-    2. Run src/ingestion/scripts/create-bronze-placeholders.sh
+    2. Apply the scripts/connectors-ddl/*.sql snapshot
+       (what create-bronze-placeholders.sh does in prod)
     3. Run scripts/migrations/*.sql
 
-This module does (1)+(2)+(3) in the test ClickHouse. We parse the bash
-heredocs out of `create-bronze-placeholders.sh` rather than duplicating the
-DDL — keeps the test rig in lock-step with prod schema evolution.
+The connectors-ddl snapshot is CI-generated from the real connectors and dbt
+models (see .github/workflows/connectors-ddl.yml), so the test rig stays in
+lock-step with prod schema evolution by construction.
 
 Idempotent: every statement uses CREATE OR REPLACE / IF NOT EXISTS / DROP IF
 EXISTS. We split multi-statement files on `;` because clickhouse-connect's
@@ -78,20 +79,40 @@ def reapply_migrations(cfg: SessionConfig) -> int:
 
 
 def apply_bronze_placeholders(cfg: SessionConfig) -> int:
-    """Parse `create-bronze-placeholders.sh` heredocs and run the SQL.
+    """Apply the scripts/connectors-ddl/*.sql snapshot.
 
-    The prod script talks to the external CH over HTTP (via lib/ch-exec.sh);
-    we extract just the SQL between `run_ch <<'SQL'` ... `SQL` markers and run
-    it via our HTTP client.
+    Same order and retry semantics as prod's create-bronze-placeholders.sh:
+    per-connector bronze files first, then silver.sql, then insight.sql.
+    Views may reference other views, so failed statements are retried in
+    additional passes until a pass makes no progress.
     """
-    script = cfg.repo_root / "src/ingestion/scripts/create-bronze-placeholders.sh"
-    if not script.exists():
-        raise RuntimeError(f"placeholder script missing: {script}")
+    ddl_dir = cfg.repo_root / "src/ingestion/scripts/connectors-ddl"
+    files = sorted(ddl_dir.glob("*.sql"))
+    if not files:
+        raise RuntimeError(f"no DDL snapshot files under {ddl_dir}")
 
-    statements = _extract_heredoc_sql(script.read_text(encoding="utf-8"))
-    for stmt in statements:
-        ch.execute(cfg, stmt)
-    return len(statements)
+    ordered = [f for f in files if f.stem not in ("silver", "insight")] + [
+        ddl_dir / "silver.sql",
+        ddl_dir / "insight.sql",
+    ]
+    pending: list[str] = []
+    for f in ordered:
+        pending.extend(_split_statements(f.read_text(encoding="utf-8")))
+
+    applied = 0
+    while pending:
+        failed: list[tuple[str, Exception]] = []
+        for stmt in pending:
+            try:
+                ch.execute(cfg, stmt)
+                applied += 1
+            except Exception as exc:  # noqa: BLE001 — retried next pass
+                failed.append((stmt, exc))
+        if len(failed) == len(pending):
+            summary = "\n".join(f"  {s[:120]!r}: {e}" for s, e in failed[:5])
+            raise RuntimeError(f"DDL snapshot stuck; {len(failed)} statement(s) keep failing:\n{summary}")
+        pending = [s for s, _ in failed]
+    return applied
 
 
 def discover_refreshable_views(cfg: SessionConfig) -> list[str]:
@@ -101,107 +122,32 @@ def discover_refreshable_views(cfg: SessionConfig) -> list[str]:
     migrations add a new refreshable MV, the rig picks it up automatically
     on the next test run — no edits to the framework needed.
     """
-    rows = ch.query(
-        cfg,
-        "SELECT concat(database, '.', view) FROM system.view_refreshes ORDER BY database, view",
-    )
+    rows = ch.query(cfg, "SELECT concat(database, '.', view) FROM system.view_refreshes ORDER BY database, view")
     return [r[0] for r in rows]
 
 
-def refresh_intermediates(cfg: SessionConfig, *, timeout_s: float = 30.0) -> int:
+def refresh_intermediates(cfg: SessionConfig) -> int:
     """Trigger a synchronous refresh of every refreshable MV downstream of silver.
 
     Called by the per-test fixture AFTER seeding silver and BEFORE calling the
-    API. `SYSTEM REFRESH VIEW` is fire-and-forget in CH 24.8 — we poll
-    `system.view_refreshes` until each MV's status is `Finished`.
-    `SYSTEM WAIT VIEW` only landed in CH 24.10+; this implementation is
-    compatible with 24.8 (prod version pinned in compose/docker-compose.yml).
+    API. `SYSTEM REFRESH VIEW` schedules the refresh and `SYSTEM WAIT VIEW`
+    blocks until it completes (and raises if it failed). Verified against the
+    pinned ClickHouse 25.7.5: REFRESH→WAIT→read shows no stale-read race
+    (40/40 iterations); the refresh_count polling this replaces was only
+    needed on 24.8, where SYSTEM WAIT VIEW did not exist yet.
     """
-    import time
-
     views = discover_refreshable_views(cfg)
     if not views:
         return 0
 
-    in_list = ", ".join(f"'{v}'" for v in views)
-
-    # Capture each view's refresh_count BEFORE triggering. Between tests a view
-    # sits at status='Scheduled', last_refresh_result='Finished' from the PRIOR
-    # refresh, so a naive "status settled AND result=Finished" check matches that
-    # stale state and returns before the refresh we just asked for has run —
-    # leaving the MV holding the previous test's rows (a flaky cross-test bleed).
-    # refresh_count is monotonic per successful refresh, so we wait for it to
-    # advance past its pre-trigger value. (`SYSTEM WAIT VIEW` would be cleaner but
-    # only exists in CH 24.10+; prod is pinned to 24.8.)
-    before = {
-        v: int(cnt)
-        for (v, cnt) in ch.query(
-            cfg,
-            "SELECT concat(database, '.', view), refresh_count "
-            f"FROM system.view_refreshes WHERE concat(database, '.', view) IN ({in_list})",
-        )
-    }
-
     for view in views:
         LOG.debug("SYSTEM REFRESH VIEW %s", view)
         ch.execute(cfg, f"SYSTEM REFRESH VIEW {view}")
+    for view in views:
+        ch.execute(cfg, f"SYSTEM WAIT VIEW {view}")
 
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        rows = ch.query(
-            cfg,
-            "SELECT concat(database, '.', view), status, last_refresh_result, refresh_count "
-            f"FROM system.view_refreshes WHERE concat(database, '.', view) IN ({in_list})",
-        )
-        all_done = (
-            len(rows) == len(views)
-            and all(
-                result == "Finished"
-                and status in ("Scheduled", "Finished")
-                and int(cnt) > before.get(v, 0)
-                for (v, status, result, cnt) in rows
-            )
-        )
-        if all_done:
-            LOG.info("refreshed %d intermediate views: %s", len(views), views)
-            return len(views)
-        time.sleep(0.2)
-
-    # Final state for diagnostics
-    rows = ch.query(
-        cfg,
-        "SELECT concat(database, '.', view), status, last_refresh_result, exception "
-        "FROM system.view_refreshes",
-    )
-    raise RuntimeError(
-        f"refresh of intermediates timed out after {timeout_s}s; current state:\n"
-        + "\n".join(f"  {r}" for r in rows)
-    )
-
-
-def _extract_heredoc_sql(bash_source: str) -> list[str]:
-    """Pull the body of every `run_ch <<'SQL' ... SQL` heredoc, then split on `;`."""
-    parts: list[str] = []
-    in_block = False
-    buf: list[str] = []
-    for line in bash_source.splitlines():
-        if not in_block and re.match(r"^\s*run_ch\s+<<'SQL'\s*$", line):
-            in_block = True
-            buf = []
-            continue
-        if in_block and re.match(r"^SQL\s*$", line):
-            in_block = False
-            parts.append("\n".join(buf))
-            continue
-        if in_block:
-            buf.append(line)
-    # Each part may contain multiple statements separated by `;`
-    statements: list[str] = []
-    for part in parts:
-        for stmt in _split_statements(part):
-            if stmt:
-                statements.append(stmt)
-    return statements
+    LOG.info("refreshed %d intermediate views: %s", len(views), views)
+    return len(views)
 
 
 def _apply_file(cfg: SessionConfig, path: Path) -> int:

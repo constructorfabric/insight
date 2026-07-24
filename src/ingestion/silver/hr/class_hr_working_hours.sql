@@ -1,3 +1,6 @@
+-- depends_on: {{ ref('workday__working_hours') }}
+-- depends_on: {{ ref('bamboohr__working_hours') }}
+
 {{ config(
     materialized='table',
     schema='silver',
@@ -6,8 +9,6 @@
     settings={'allow_nullable_key': 1},
     tags=['silver']
 ) }}
-
--- depends_on: {{ ref('bamboohr__working_hours') }}
 
 SELECT * FROM (
     {{ union_by_tag('silver:class_hr_working_hours', dedup_version_col=none) }}

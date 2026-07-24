@@ -25,7 +25,6 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from pathlib import Path
 
 import yaml
 from dbt.cli.main import dbtRunner
@@ -60,12 +59,7 @@ class DbtRunner:
         self._runner = dbtRunner()
         self._parse()
 
-    def build(
-        self,
-        selector: str,
-        *,
-        worker_ctx: WorkerContext,
-    ) -> None:
+    def build(self, selector: str, *, worker_ctx: WorkerContext) -> None:
         """Build the selected models via the in-process runner.
 
         Reuses the session runner (no interpreter cold-start), and dbt's
@@ -76,11 +70,7 @@ class DbtRunner:
         """
         if self._runner is None:
             raise DbtError("dbt_runner.setup() must be called before build()")
-        worker_n = (
-            worker_ctx.worker_id.removeprefix("gw")
-            if worker_ctx.worker_id != "master"
-            else "0"
-        )
+        worker_n = worker_ctx.worker_id.removeprefix("gw") if worker_ctx.worker_id != "master" else "0"
         LOG.info("dbt build --select %s (worker=%s)", selector, worker_ctx.worker_id)
         res = self._runner.invoke(
             [
@@ -98,25 +88,13 @@ class DbtRunner:
         if not res.success:
             failed = self._extract_failed_model_summary()
             raise DbtError(
-                f"dbt build failed for selector {selector!r}\n"
-                f"failed models: {failed}\n"
-                f"exception: {res.exception!r}"
+                f"dbt build failed for selector {selector!r}\nfailed models: {failed}\nexception: {res.exception!r}"
             )
 
-    def run(
-        self,
-        selector: str,
-        *,
-        worker_ctx: WorkerContext,
-        full_refresh: bool = False,
-    ) -> None:
+    def run(self, selector: str, *, worker_ctx: WorkerContext, full_refresh: bool = False) -> None:
         if self._runner is None:
             raise DbtError("dbt_runner.setup() must be called before run()")
-        worker_n = (
-            worker_ctx.worker_id.removeprefix("gw")
-            if worker_ctx.worker_id != "master"
-            else "0"
-        )
+        worker_n = worker_ctx.worker_id.removeprefix("gw") if worker_ctx.worker_id != "master" else "0"
         LOG.info(
             "dbt run --select %s%s (worker=%s)",
             selector,
@@ -140,9 +118,7 @@ class DbtRunner:
         if not res.success:
             failed = self._extract_failed_model_summary()
             raise DbtError(
-                f"dbt run failed for selector {selector!r}\n"
-                f"failed models: {failed}\n"
-                f"exception: {res.exception!r}"
+                f"dbt run failed for selector {selector!r}\nfailed models: {failed}\nexception: {res.exception!r}"
             )
 
     def derive_selectors(self, tables: set[tuple[str, str]]) -> tuple[list[str], list[str]]:
@@ -160,20 +136,15 @@ class DbtRunner:
         wanted_sources = {
             source_id
             for source_id, source in manifest.get("sources", {}).items()
-            if (source.get("schema"), source.get("identifier") or source.get("name"))
-            in tables
+            if (source.get("schema"), source.get("identifier") or source.get("name")) in tables
         }
         existing_tables = set(
-            ch.query(
-                self.cfg,
-                "SELECT database, name FROM system.tables WHERE database LIKE 'bronze_%'",
-            )
+            ch.query(self.cfg, "SELECT database, name FROM system.tables WHERE database LIKE 'bronze_%'")
         )
         available_sources = {
             source_id
             for source_id, source in manifest.get("sources", {}).items()
-            if (source.get("schema"), source.get("identifier") or source.get("name"))
-            in existing_tables | tables
+            if (source.get("schema"), source.get("identifier") or source.get("name")) in existing_tables | tables
         }
         nodes = manifest.get("nodes", {})
         children: dict[str, set[str]] = {}
@@ -186,16 +157,11 @@ class DbtRunner:
             if node.get("resource_type") != "model":
                 continue
             deps = node.get("depends_on", {}).get("nodes", [])
-            source_deps = {
-                dependency
-                for dependency in deps
-                if dependency.startswith("source.")
-            }
+            source_deps = {dependency for dependency in deps if dependency.startswith("source.")}
             matched_sources = {
                 dependency
                 for dependency in source_deps
-                if dependency in wanted_sources
-                or any(dependency.endswith(suffix) for suffix in wanted)
+                if dependency in wanted_sources or any(dependency.endswith(suffix) for suffix in wanted)
             }
             if matched_sources and source_deps <= available_sources:
                 direct.add(node_id)
@@ -332,6 +298,12 @@ class DbtRunner:
                         "settings": {
                             "allow_nullable_key": 1,
                             "allow_experimental_refreshable_materialized_view": 1,
+                            # Correlated subqueries (LEFT ANTI JOIN in the identity
+                            # seed models) are gated behind this experimental flag
+                            # on CH 25.7. A model-level config() setting does NOT
+                            # reach the SELECT plan in dbt-clickhouse, so it must be
+                            # set at profile level. Parity with prod/bootstrap.
+                            "allow_experimental_correlated_subqueries": 1,
                         },
                     }
                 },
@@ -351,14 +323,7 @@ class DbtRunner:
         if self._runner is None:
             raise DbtError("dbt_runner.setup() must create the runner before _parse()")
         LOG.info("dbt parse (one-time, in-process)")
-        res = self._runner.invoke(
-            [
-                "parse",
-                *self._base_flags(),
-                "--vars",
-                json.dumps({"worker_id": "0"}),
-            ]
-        )
+        res = self._runner.invoke(["parse", *self._base_flags(), "--vars", json.dumps({"worker_id": "0"})])
         if not res.success:
             raise DbtError(f"dbt parse failed: {res.exception!r}")
         manifest = self.target_dir / "manifest.json"

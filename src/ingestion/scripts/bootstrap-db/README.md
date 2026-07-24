@@ -11,23 +11,13 @@ How it works: for every connector the source image runs `discover` (schemas are 
 
 ## Local ClickHouse for testing
 
-Start a throwaway ClickHouse in docker (one migration needs the refreshable-MV setting, enabled on real clusters):
+Start a throwaway ClickHouse in docker, on the same version production runs (pinned in `pins.env`, must match the bitnami chart's appVersion in `deploy/gitops/Makefile`):
 
 ```bash
-cat > /tmp/clickhouse-bootstrap-settings.xml <<'EOF'
-<clickhouse>
-  <profiles>
-    <default>
-      <allow_experimental_refreshable_materialized_view>1</allow_experimental_refreshable_materialized_view>
-    </default>
-  </profiles>
-</clickhouse>
-EOF
-
+source pins.env
 docker run -d --name bootstrap-db-clickhouse -p 8123:8123 \
   -e CLICKHOUSE_USER=insight -e CLICKHOUSE_PASSWORD=insight -e CLICKHOUSE_DB=insight \
-  -v /tmp/clickhouse-bootstrap-settings.xml:/etc/clickhouse-server/users.d/bootstrap-settings.xml:ro \
-  clickhouse/clickhouse-server:24.8.4.13
+  "${CLICKHOUSE_SERVER_IMAGE}"
 ```
 
 Point `.env` at it: `CLICKHOUSE_HOST=host.docker.internal`, `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_PROTOCOL=http`, user/password/database `insight` — the host name works both for dbt on this machine and for the connector containers. Check what got created:
@@ -81,18 +71,22 @@ Throw it away with `docker rm -f bootstrap-db-clickhouse`.
 | `generate-connectors-config.sh [pattern]` | Finds `descriptor.yaml` files, extracts every required config field from the connector spec, writes the config YAML with fake values to stdout. |
 | `seed-connectors.sh <config.yaml>` | Iterates over the config file, resolves `value`/`env` fields into a config JSON, calls `create-connector-tables.sh` per connector. Errors are printed and skipped. |
 | `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog → `destination-clickhouse write` with a zero-record stream-status input (creates empty tables) → `dbt run --select <name>__bronze_promoted` (MergeTree → ReplacingMergeTree). |
-| `bootstrap-db.sh <config.yaml>` | Sources `.env` if present, runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
+| `bootstrap-db.sh <config.yaml>` | Sources `pins.env` and `.env` (if present), runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
 | `run-dbt.sh [dbt args]` | Helper: generates a profiles.yml from the `CLICKHOUSE_*` variables and runs `dbt run` in `src/ingestion/dbt`. |
+| `dump-ddl.sh` | Dumps `SHOW CREATE` for every `bronze_*` table plus the `silver` and `insight` databases (tables and views) into `../connectors-ddl/*.sql` — the committed snapshot that `../create-bronze-placeholders.sh` applies on fresh clusters. Regenerated automatically by `.github/workflows/connectors-ddl.yml` on PRs. |
 
-## Pinning DESTINATION_CLICKHOUSE_IMAGE
+## Image pins (pins.env)
 
-The tag must match the ClickHouse destination version your Airbyte installation actually runs — Airbyte seeds connector versions from its registry at install time, so the platform chart version does not determine it. Ask your Airbyte instance:
+`pins.env` is committed and sourced by `bootstrap-db.sh` and CI:
 
-```bash
-curl -s -X POST "${AIRBYTE_URL}/api/v1/destination_definitions/list" \
-  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
-  -d "{\"workspaceId\": \"${WORKSPACE_ID}\"}" \
-  | jq -r '.destinationDefinitions[] | select(.name == "ClickHouse") | .dockerImageTag'
-```
+- `CLICKHOUSE_SERVER_IMAGE` — must match production: the appVersion of the bitnami chart pinned as `CLICKHOUSE_VERSION` in `deploy/gitops/Makefile`.
+- `DESTINATION_CLICKHOUSE_IMAGE` — must match the ClickHouse destination version your Airbyte installation actually runs. Airbyte seeds connector versions from its registry at install time, so the platform chart version does not determine it; ask the instance:
 
-Put the result into `DESTINATION_CLICKHOUSE_IMAGE` in `.env`.
+  ```bash
+  curl -s -X POST "${AIRBYTE_URL}/api/v1/destination_definitions/list" \
+    -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+    -d "{\"workspaceId\": \"${WORKSPACE_ID}\"}" \
+    | jq -r '.destinationDefinitions[] | select(.name == "ClickHouse") | .dockerImageTag'
+  ```
+
+- `SOURCE_DECLARATIVE_MANIFEST_IMAGE` — runtime for nocode (declarative YAML) connectors.

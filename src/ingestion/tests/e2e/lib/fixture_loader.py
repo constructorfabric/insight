@@ -44,6 +44,10 @@ class TestYaml:
     bronze: dict[str, list[dict]] = field(default_factory=dict)
     schemas: dict[str, dict] = field(default_factory=dict)
     cases: list[dict] = field(default_factory=list)
+    # Optional top-level `skip: <reason>` in the .test.yaml. When set, the runner
+    # skips the test (pytest.skip) instead of executing it — used for metrics
+    # blocked on an external fix (e.g. git metrics until bitbucket-cloud #1877).
+    skip: str | None = None
 
     @property
     def touched_tables(self) -> set[tuple[str, str]]:
@@ -118,6 +122,7 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
         bronze=bronze,
         schemas=schemas,
         cases=cases,
+        skip=doc.get("skip"),
     )
 
 

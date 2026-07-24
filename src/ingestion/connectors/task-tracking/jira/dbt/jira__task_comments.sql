@@ -16,7 +16,7 @@ SELECT
     c.unique_key                                        AS unique_key,
     c.source_id                                         AS insight_source_id,
     CAST('jira' AS String)                              AS data_source,
-    c.comment_id                                        AS comment_id,
+    toString(c.comment_id)                              AS comment_id,
     c.id_readable                                       AS id_readable,
     c.author_account_id                                 AS author_id,
     parseDateTime64BestEffortOrNull(c.created, 3)       AS created_at,
