@@ -24,6 +24,11 @@ pub struct SubchartNode {
     pub display_name: Option<String>,
     pub job_title: Option<String>,
     pub status: Option<String>,
+    // `no_recursion`: self-referential — without it utoipa's schema generation
+    // recurses forever and overflows the stack at route registration (same fix
+    // as `PersonResponse.subordinates`). OpenAPI-only ($ref); the serialized
+    // JSON still carries the full nested tree.
+    #[schema(no_recursion)]
     pub subordinates: Vec<SubchartNode>,
 }
 

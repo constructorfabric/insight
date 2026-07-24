@@ -26,7 +26,12 @@ use crate::domain::seed_service::IdentityInputsReader;
 
 /// Verbatim shape from `ClickHouseIdentityInputsReader`: rows ordered so the
 /// FIRST per account is the latest (`_synced_at DESC`), which is exactly what
-/// `build_profiles` expects. `insight_source_id` is `toString`-ed and reparsed.
+/// `build_profiles` expects. `insight_source_id` is `toString`-ed and reparsed
+/// — wrapped in `ifNull` because the column is `Nullable(String)` in the dbt
+/// table (`toString` of a Nullable stays Nullable, which the strict decoder
+/// rejects against the non-null `String` field); a NULL becomes `''` and fails
+/// the UUID reparse, failing the seed exactly like the .NET reader's
+/// `Guid.Parse(GetString(...))` throw.
 ///
 /// HOTFIX (#1550) — TEMPORARY, ported from the .NET reader (3256f707). The dbt
 /// producer writes `insight_tenant_id` *hashed* — sipHash128 of whatever raw
@@ -62,7 +67,7 @@ use crate::domain::seed_service::IdentityInputsReader;
 const STREAM_SQL: &str = r"
     SELECT
         ifNull(insight_source_type, '')  AS source_type,
-        toString(insight_source_id)      AS source_id,
+        ifNull(toString(insight_source_id), '') AS source_id,
         source_account_id                AS account_id,
         ifNull(value_type, '')           AS val_type,
         ifNull(value, '')                AS val,
