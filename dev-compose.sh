@@ -442,6 +442,20 @@ cmd_up() {
     command: !reset null
     platform: linux/amd64
 YML
+          if [[ "$svc" == "identity-resolution" ]]; then
+            # The one-shot migrate companion must flip to the ghcr image too:
+            # left alone it keeps the build + local-binary bind mount (which
+            # was intentionally not built in ghcr mode), never starts, and the
+            # server blocks forever on service_completed_successfully. The
+            # base command (…migrate) is kept — only build/volumes/platform
+            # change; the image's baked config supplies /app/config/insight.yaml.
+            cat <<YML
+  identity-resolution-migrate:
+    build: !reset null
+    volumes: !override []
+    platform: linux/amd64
+YML
+          fi
         elif contains "$watch_list" "$svc"; then
           write_watch_override "$svc"
         fi
