@@ -67,6 +67,11 @@ spec:
               value: {{ include "insight.airbyte.url" . | quote }}
             - name: INSIGHT_NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            # Namespace where airbyte-auth-secrets actually lives — only
+            # differs from INSIGHT_NAMESPACE in split-namespace envs (see
+            # airbyte.namespace in values.yaml).
+            - name: AIRBYTE_NAMESPACE
+              value: {{ include "insight.airbyte.namespace" . | quote }}
             # CONNECTORS_DIR — where the toolbox image keeps connectors/
             # (Dockerfile builds with context=src/ingestion and
             # `COPY . /ingestion`, so descriptors land at
