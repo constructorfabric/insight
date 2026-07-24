@@ -3,7 +3,7 @@
     materialized='view',
     alias='jira__task_statuses',
     schema='staging',
-    tags=['jira', 'silver:class_task_statuses']
+    tags=['jira', 'staging', 'silver:class_task_statuses']
 ) }}
 
 -- Per-source status dimension; unioned into `silver.class_task_statuses` via `union_by_tag`.
