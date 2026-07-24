@@ -8,8 +8,6 @@
 //! streaming row-by-row like the .NET `IAsyncEnumerable`. Fine at current tenant
 //! sizes; row-streaming is deferred to the hardening pass (#1753).
 
-#![allow(dead_code)]
-
 use std::time::Duration;
 
 use async_trait::async_trait;

@@ -5,10 +5,10 @@
 //! linked JWT, indexes, and refresh schedule stay consistent. The store fails
 //! closed: a Redis error surfaces to the handler, which answers 401/503.
 //!
-//! Step 04 implements create / resolve / exchange-reissue / revoke and the
-//! login-state store. Rotation (`/auth/refresh`), the sid-index consumer
-//! (back-channel logout), and the refresh-due consumer (IdP refresher) are
-//! wired into the schema here but their *consumers* land in later steps.
+//! Owns create / resolve / rotate (`/auth/refresh`) / exchange-reissue /
+//! revoke and the login-state store. The sid-index consumer (back-channel
+//! logout) and the refresh-due consumer (IdP refresher) key off the schema
+//! written here.
 
 use std::collections::HashMap;
 
@@ -166,9 +166,18 @@ fn user_sessions_key(person_id: &str) -> String {
 fn sid_index_key(iss: &str, idp_sid: &str) -> String {
     format!("asm:sid_index:{iss}:{idp_sid}")
 }
+fn sub_index_key(iss: &str, idp_sub: &str) -> String {
+    format!("asm:sub_index:{iss}:{idp_sub}")
+}
+fn logout_jti_key(iss: &str, jti: &str) -> String {
+    format!("asm:logout_jti:{iss}:{jti}")
+}
 fn login_state_key(state: &str) -> String {
     format!("asm:login_state:{state}")
 }
+/// Live login-state index (ZSET, score = expiry) backing the layer-2 cap:
+/// counting `asm:login_state:*` cheaply requires an index, not SCAN-per-login.
+const LOGIN_STATE_LIVE_KEY: &str = "asm:login_state_live";
 fn service_jti_key(service: &str, jti: &str) -> String {
     format!("asm:svc_jti:{service}:{jti}")
 }
@@ -220,6 +229,7 @@ impl SessionManager {
         state: &str,
         ls: &LoginState,
         ttl_seconds: u64,
+        now: u64,
     ) -> anyhow::Result<()> {
         let mut conn = self.conn.clone();
         let key = login_state_key(state);
@@ -229,10 +239,43 @@ impl SessionManager {
             .ignore()
             .expire(&key, i64::try_from(ttl_seconds).unwrap_or(300))
             .ignore()
+            // Live index (score = expiry) backing the layer-2 login cap.
+            .zadd(
+                LOGIN_STATE_LIVE_KEY,
+                state,
+                i64::try_from(now + ttl_seconds).unwrap_or(i64::MAX),
+            )
+            .ignore()
             .query_async::<()>(&mut conn)
             .await
             .context("store login state")?;
         Ok(())
+    }
+
+    /// Count live (unexpired) login states — the layer-2 cap input.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn live_login_states(&self, now: u64) -> anyhow::Result<u64> {
+        let mut conn = self.conn.clone();
+        conn.zcount(LOGIN_STATE_LIVE_KEY, format!("({now}"), "+inf")
+            .await
+            .context("count live login states")
+    }
+
+    /// Take one token from the `class`/`key` bucket (layer-2 rate limit).
+    ///
+    /// # Errors
+    /// Fails on a Redis error — callers fail open (the coarse gateway layer
+    /// still guards) rather than turning a Redis blip into a lockout.
+    pub async fn rate_limit_take(
+        &self,
+        class: &str,
+        key: &str,
+        spec: crate::ratelimit::BucketSpec,
+        now: u64,
+    ) -> anyhow::Result<bool> {
+        crate::ratelimit::take(&self.conn, class, key, spec, now).await
     }
 
     /// Atomically read and delete the login state for `state` (one-shot).
@@ -244,10 +287,11 @@ impl SessionManager {
         let mut conn = self.conn.clone();
         let key = login_state_key(state);
         // HGETALL then DEL in one atomic transaction.
-        let (map, _deleted): (HashMap<String, String>, i64) = redis::pipe()
+        let (map, _deleted, _unindexed): (HashMap<String, String>, i64, i64) = redis::pipe()
             .atomic()
             .hgetall(&key)
             .del(&key)
+            .zrem(LOGIN_STATE_LIVE_KEY, state)
             .query_async(&mut conn)
             .await
             .context("take login state")?;
@@ -319,15 +363,18 @@ impl SessionManager {
         // User-session index (score = expiry).
         pipe.zadd(user_sessions_key(&r.person_id), &s.session_id, expires_at)
             .ignore();
-        // Back-channel logout index (only when the IdP supplies `sid`).
+        // Back-channel logout indexes: by OIDC `sid` (when the IdP supplies
+        // one) and by `(iss, sub)` — the sub-only fallback path.
+        let absolute = i64::try_from(r.absolute_expires_at).unwrap_or(i64::MAX);
         if let Some(sid) = &r.idp_sid {
             let idx = sid_index_key(&r.idp_iss, sid);
             pipe.sadd(&idx, &s.session_id).ignore();
-            pipe.expire_at(
-                &idx,
-                i64::try_from(r.absolute_expires_at).unwrap_or(i64::MAX),
-            )
-            .ignore();
+            pipe.expire_at(&idx, absolute).ignore();
+        }
+        if !r.idp_sub.is_empty() {
+            let idx = sub_index_key(&r.idp_iss, &r.idp_sub);
+            pipe.sadd(&idx, &s.session_id).ignore();
+            pipe.expire_at(&idx, absolute).ignore();
         }
         // IdP refresh schedule (consumer lands in step 10).
         if let Some(due) = s.refresh_due_at {
@@ -419,6 +466,458 @@ impl SessionManager {
         Ok(set.is_some())
     }
 
+    /// Rotate the session credential (`POST /auth/refresh`, DESIGN §3.6
+    /// "Session refresh — rotation without churn"): write the new token
+    /// mapping, shorten the superseded mapping's TTL to the rotation grace,
+    /// advance the session's `expires_at` (record field, key TTL, and per-user
+    /// index score). The stable `session_id`, the linked JWT, and every other
+    /// index stay untouched (G10).
+    ///
+    /// **Compare-and-swap on `current_token`** (atomic Lua): the whole
+    /// rotation runs only if the session's stored `current_token` still equals
+    /// the credential the caller presented. Two concurrent refreshes of the
+    /// same cookie (multi-tab) therefore cannot both rotate — the loser gets
+    /// `Ok(false)` and the handler answers the grace path with the winner's
+    /// credential, so no orphan full-TTL token mapping is ever minted.
+    ///
+    /// # Errors
+    /// Fails on a Redis error. `Ok(false)` = the presented token was no longer
+    /// current (lost the race / already rotated); nothing was written.
+    pub async fn rotate_session(
+        &self,
+        session_id: &str,
+        record: &SessionRecord,
+        presented_token: &str,
+        new_token: &str,
+        new_expires_at: u64,
+        grace_ms: u64,
+    ) -> anyhow::Result<bool> {
+        // KEYS: session hash, new-token mapping, old-token mapping, user ZSET.
+        // ARGV: expected current_token, session_id, expireAt (s), grace (ms).
+        const ROTATE_LUA: &str = r"
+            if redis.call('HGET', KEYS[1], 'current_token') ~= ARGV[1] then return 0 end
+            redis.call('SET', KEYS[2], ARGV[2])
+            redis.call('EXPIREAT', KEYS[2], ARGV[3])
+            redis.call('PEXPIRE', KEYS[3], ARGV[4])
+            redis.call('HSET', KEYS[1], 'expires_at', ARGV[3], 'current_token', ARGV[5])
+            redis.call('EXPIREAT', KEYS[1], ARGV[3])
+            redis.call('ZADD', KEYS[4], ARGV[3], ARGV[2])
+            return 1
+        ";
+        let mut conn = self.conn.clone();
+        let expires_at = i64::try_from(new_expires_at).unwrap_or(i64::MAX);
+        let rotated: i64 = redis::Script::new(ROTATE_LUA)
+            .key(session_key(session_id))
+            .key(token_key(new_token))
+            .key(token_key(&record.current_token))
+            .key(user_sessions_key(&record.person_id))
+            .arg(presented_token)
+            .arg(session_id)
+            .arg(expires_at)
+            .arg(i64::try_from(grace_ms).unwrap_or(250))
+            .arg(new_token)
+            .invoke_async(&mut conn)
+            .await
+            .context("rotate session (CAS)")?;
+        Ok(rotated == 1)
+    }
+
+    // ── Background workers (G5 refresher, janitor) ─────────────────────────
+
+    /// Try to take (or renew) a leader lock. `SET key holder NX PX ttl` wins a
+    /// free lock; an already-held lock renews only for the same `holder`
+    /// (DD-BFF-09 — one leader per pass, Redis is already a hard dependency).
+    ///
+    /// # Errors
+    /// Fails on a Redis error (the worker then skips this pass).
+    pub async fn try_lead(&self, key: &str, holder: &str, ttl_ms: u64) -> anyhow::Result<bool> {
+        // Atomic acquire-or-renew: SET NX wins a free lock; otherwise renew the
+        // TTL **only if we still hold it** — compare-and-pexpire in one script
+        // so the lock can't expire between a GET and a PEXPIRE and let a stale
+        // holder extend the new leader's key (brief dual leadership).
+        const LEAD_LUA: &str = r"
+            if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then return 1 end
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                redis.call('PEXPIRE', KEYS[1], ARGV[2])
+                return 1
+            end
+            return 0
+        ";
+        let mut conn = self.conn.clone();
+        let led: i64 = redis::Script::new(LEAD_LUA)
+            .key(key)
+            .arg(holder)
+            .arg(ttl_ms.max(1))
+            .invoke_async(&mut conn)
+            .await
+            .context("acquire/renew leader lock")?;
+        Ok(led == 1)
+    }
+
+    /// Sessions due for IdP refresh (`ZRANGEBYSCORE asm:idp_refresh_due 0 now`,
+    /// bounded).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn due_refresh_sessions(
+        &self,
+        now: u64,
+        limit: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut conn = self.conn.clone();
+        conn.zrangebyscore_limit(
+            REFRESH_DUE_KEY,
+            0,
+            i64::try_from(now).unwrap_or(i64::MAX),
+            0,
+            isize::try_from(limit).unwrap_or(isize::MAX),
+        )
+        .await
+        .context("read refresh schedule")
+    }
+
+    /// Per-session refresh lock (`SET NX PX`): refresh-token rotation is
+    /// one-time-use at most IdPs; two workers racing the same rotation would
+    /// burn the grant and falsely kill the session. Returns `Some(owner_token)`
+    /// when this caller acquired the lock (a fresh, unique value stored under
+    /// the key) or `None` when another worker already holds it. Hand the token
+    /// back to [`Self::unlock_session_refresh`] so the release only removes our
+    /// own lock and can never clobber a lock a later worker took after ours
+    /// expired.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn lock_session_refresh(
+        &self,
+        session_id: &str,
+        ttl_ms: u64,
+    ) -> anyhow::Result<Option<String>> {
+        let mut conn = self.conn.clone();
+        let token = uuid::Uuid::now_v7().to_string();
+        let set: Option<String> = redis::cmd("SET")
+            .arg(format!("asm:refresh_lock:{session_id}"))
+            .arg(&token)
+            .arg("NX")
+            .arg("PX")
+            .arg(ttl_ms.max(1))
+            .query_async(&mut conn)
+            .await
+            .context("acquire per-session refresh lock")?;
+        Ok(set.is_some().then_some(token))
+    }
+
+    /// Release the per-session refresh lock, but only if `owner_token` still
+    /// matches the stored value (compare-and-del via Lua). If our lock already
+    /// expired and a later worker re-acquired it, this is a no-op — we never
+    /// delete someone else's lock.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn unlock_session_refresh(
+        &self,
+        session_id: &str,
+        owner_token: &str,
+    ) -> anyhow::Result<()> {
+        const UNLOCK: &str = r"
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                return redis.call('DEL', KEYS[1])
+            end
+            return 0
+        ";
+        let mut conn = self.conn.clone();
+        let _: i64 = redis::Script::new(UNLOCK)
+            .key(format!("asm:refresh_lock:{session_id}"))
+            .arg(owner_token)
+            .invoke_async(&mut conn)
+            .await
+            .context("release per-session refresh lock")?;
+        Ok(())
+    }
+
+    /// Persist a successful IdP refresh: rotated refresh token (when the IdP
+    /// returned one), new access-token expiry, reset failure counter, and the
+    /// next schedule entry — one atomic Lua step, **guarded on the session
+    /// still existing**. Returns `false` when the session was revoked while the
+    /// grant was in flight: without the guard, `HSET` on the deleted key would
+    /// resurrect a TTL-less hash holding the freshly-rotated (live) IdP refresh
+    /// token — a permanent, janitor-invisible secret for a logged-out user
+    /// (review H2). On `false` the caller drops the schedule entry.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn store_idp_refresh(
+        &self,
+        session_id: &str,
+        new_refresh_token: Option<&str>,
+        access_expires_at: Option<u64>,
+        next_due: u64,
+    ) -> anyhow::Result<bool> {
+        // KEYS: session hash, refresh-due ZSET.
+        // ARGV: session_id, next_due, refresh_token|"", access_exp|"".
+        const STORE_LUA: &str = r"
+            if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+            if ARGV[3] ~= '' then redis.call('HSET', KEYS[1], 'idp_refresh_token', ARGV[3]) end
+            if ARGV[4] ~= '' then redis.call('HSET', KEYS[1], 'idp_access_expires_at', ARGV[4]) end
+            redis.call('HSET', KEYS[1], 'idp_refresh_failures', '0')
+            redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
+            return 1
+        ";
+        let mut conn = self.conn.clone();
+        let stored: i64 = redis::Script::new(STORE_LUA)
+            .key(session_key(session_id))
+            .key(REFRESH_DUE_KEY)
+            .arg(session_id)
+            .arg(i64::try_from(next_due).unwrap_or(i64::MAX))
+            .arg(new_refresh_token.unwrap_or(""))
+            .arg(access_expires_at.map(|e| e.to_string()).unwrap_or_default())
+            .invoke_async(&mut conn)
+            .await
+            .context("store IdP refresh (guarded)")?;
+        Ok(stored == 1)
+    }
+
+    /// Bump the per-session transient-failure counter; returns the new count
+    /// (sizes the exponential backoff), or `None` if the session no longer
+    /// exists (so a revoke mid-flight can't resurrect a counter-only zombie).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn bump_refresh_failures(&self, session_id: &str) -> anyhow::Result<Option<u64>> {
+        const BUMP_LUA: &str = r"
+            if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
+            return redis.call('HINCRBY', KEYS[1], 'idp_refresh_failures', 1)
+        ";
+        let mut conn = self.conn.clone();
+        let failures: i64 = redis::Script::new(BUMP_LUA)
+            .key(session_key(session_id))
+            .invoke_async(&mut conn)
+            .await
+            .context("bump refresh failures (guarded)")?;
+        Ok((failures >= 0).then(|| u64::try_from(failures).unwrap_or(0)))
+    }
+
+    /// Re-schedule a session's next refresh attempt.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn reschedule_refresh(&self, session_id: &str, due_at: u64) -> anyhow::Result<()> {
+        let mut conn = self.conn.clone();
+        let _: i64 = conn
+            .zadd(
+                REFRESH_DUE_KEY,
+                session_id,
+                i64::try_from(due_at).unwrap_or(i64::MAX),
+            )
+            .await
+            .context("reschedule refresh")?;
+        Ok(())
+    }
+
+    /// Drop a session from the refresh schedule (dead session, or nothing to
+    /// refresh).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn unschedule_refresh(&self, session_id: &str) -> anyhow::Result<()> {
+        let mut conn = self.conn.clone();
+        let _: i64 = conn
+            .zrem(REFRESH_DUE_KEY, session_id)
+            .await
+            .context("unschedule refresh")?;
+        Ok(())
+    }
+
+    /// One janitor pass (DESIGN §4.3): trim expired members from every
+    /// `asm:user_sessions:*` ZSET (`ZREMRANGEBYSCORE 0 now` — per-key TTLs
+    /// removed the records, the index members linger) and drop long-overdue
+    /// orphans from the refresh schedule (live sessions are re-scheduled by
+    /// the refresher; an entry still due after `orphan_grace` has no owner).
+    /// Returns (removed members, overdue-backlog size before trimming).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn janitor_pass(&self, now: u64, orphan_grace: u64) -> anyhow::Result<(u64, u64)> {
+        let mut conn = self.conn.clone();
+        let now_i = i64::try_from(now).unwrap_or(i64::MAX);
+        let mut removed = 0u64;
+        let mut backlog = 0u64;
+
+        // SCAN, never KEYS — bounded batches on a shared Redis.
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg("asm:user_sessions:*")
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await
+                .context("scan user-session indexes")?;
+            for key in keys {
+                let expired: u64 = conn
+                    .zcount(&key, 0, now_i)
+                    .await
+                    .context("count expired index members")?;
+                if expired > 0 {
+                    backlog += expired;
+                    let n: u64 = conn
+                        .zrembyscore(&key, 0, now_i)
+                        .await
+                        .context("trim expired index members")?;
+                    removed += n;
+                }
+            }
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        // Expired login-state index members (the HASH keys expired via TTL).
+        let stale_states: u64 = conn
+            .zrembyscore(LOGIN_STATE_LIVE_KEY, 0, now_i)
+            .await
+            .context("trim expired login-state index")?;
+        removed += stale_states;
+
+        // Refresh-schedule orphans: an entry overdue by more than the grace
+        // window is trimmed **only if its session hash is actually gone**
+        // (review M4). Blind ZREMRANGEBYSCORE would silently delete live-but-
+        // behind entries — after a Redis restore from an old backup, or while
+        // the refresher is disabled/wedged — permanently stopping IdP refresh
+        // for those sessions with no signal (voiding the G5 guarantee).
+        let orphan_cutoff = i64::try_from(now.saturating_sub(orphan_grace)).unwrap_or(0);
+        let overdue: Vec<String> = conn
+            .zrangebyscore(REFRESH_DUE_KEY, 0, now_i)
+            .await
+            .context("list overdue refresh entries")?;
+        backlog += overdue.len() as u64;
+        for sid in &overdue {
+            // Only past the grace window, and only when the owner is gone.
+            let score: Option<i64> = conn
+                .zscore(REFRESH_DUE_KEY, sid)
+                .await
+                .context("read refresh-due score")?;
+            if score.is_none_or(|s| s > orphan_cutoff) {
+                continue;
+            }
+            let exists: bool = conn
+                .exists(session_key(sid))
+                .await
+                .context("check session existence for orphan")?;
+            if !exists {
+                let n: u64 = conn
+                    .zrem(REFRESH_DUE_KEY, sid)
+                    .await
+                    .context("trim refresh-schedule orphan")?;
+                removed += n;
+            }
+        }
+
+        Ok((removed, backlog))
+    }
+
+    // ── Back-channel logout (PRD 5.10) ─────────────────────────────────────
+
+    /// One-shot replay guard for a back-channel `logout_token` `jti`
+    /// (`asm:logout_jti:{iss}:{jti}`, `SET NX EX`). Returns `true` on first
+    /// delivery; `false` when this `(iss, jti)` was already accepted.
+    ///
+    /// # Errors
+    /// Fails on a Redis error (the handler then fails closed).
+    pub async fn guard_logout_jti(
+        &self,
+        iss: &str,
+        jti: &str,
+        ttl_seconds: u64,
+    ) -> anyhow::Result<bool> {
+        let mut conn = self.conn.clone();
+        let set: Option<String> = redis::cmd("SET")
+            .arg(logout_jti_key(iss, jti))
+            .arg("1")
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl_seconds.max(1))
+            .query_async(&mut conn)
+            .await
+            .context("guard logout jti (NX EX)")?;
+        Ok(set.is_some())
+    }
+
+    /// Release a back-channel `jti` guard (`DEL`). Called when the revoke that
+    /// followed a first-delivery claim then failed — otherwise the IdP's retry
+    /// of the same `logout_token` would hit the still-set guard and get an
+    /// idempotent 200 without ever revoking (review M1). Revoke is idempotent,
+    /// so re-processing on retry is safe.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn release_logout_jti(&self, iss: &str, jti: &str) -> anyhow::Result<()> {
+        let mut conn = self.conn.clone();
+        let _: i64 = conn
+            .del(logout_jti_key(iss, jti))
+            .await
+            .context("release logout jti")?;
+        Ok(())
+    }
+
+    /// Sessions indexed under a back-channel `(iss, sid)` pair.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn sessions_by_idp_sid(
+        &self,
+        iss: &str,
+        idp_sid: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut conn = self.conn.clone();
+        conn.smembers(sid_index_key(iss, idp_sid))
+            .await
+            .context("read sid index")
+    }
+
+    /// Sessions indexed under a back-channel `(iss, sub)` pair (the sub-only
+    /// fallback).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn sessions_by_idp_sub(
+        &self,
+        iss: &str,
+        idp_sub: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut conn = self.conn.clone();
+        conn.smembers(sub_index_key(iss, idp_sub))
+            .await
+            .context("read sub index")
+    }
+
+    /// List a person's live sessions from the per-user index (score > `now`),
+    /// loading each record. Index members whose record has already expired are
+    /// skipped (the janitor trims them).
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn list_user_sessions(
+        &self,
+        person_id: &str,
+        now: u64,
+    ) -> anyhow::Result<Vec<(String, SessionRecord)>> {
+        let mut conn = self.conn.clone();
+        let session_ids: Vec<String> = conn
+            .zrangebyscore(user_sessions_key(person_id), format!("({now}"), "+inf")
+            .await
+            .context("list user sessions by score")?;
+        let mut out = Vec::with_capacity(session_ids.len());
+        for sid in session_ids {
+            if let Some(record) = self.load_session(&sid).await? {
+                out.push((sid, record));
+            }
+        }
+        Ok(out)
+    }
+
     /// Revoke one session — delete session, linked JWT, live token mapping,
     /// ZSET member, sid-index member, and refresh-due member in one pipeline
     /// (DESIGN §3.2 "Revoke"). Idempotent. Returns `true` if a session existed.
@@ -439,6 +938,10 @@ impl SessionManager {
             .ignore();
         if let Some(sid) = &r.idp_sid {
             pipe.srem(sid_index_key(&r.idp_iss, sid), session_id)
+                .ignore();
+        }
+        if !r.idp_sub.is_empty() {
+            pipe.srem(sub_index_key(&r.idp_iss, &r.idp_sub), session_id)
                 .ignore();
         }
         pipe.zrem(REFRESH_DUE_KEY, session_id).ignore();

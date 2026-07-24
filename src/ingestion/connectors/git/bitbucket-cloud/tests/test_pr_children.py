@@ -98,6 +98,26 @@ def test_activity_classifies_every_event_type(stream_args, client, repo):
     assert records[-1]["snapshot_item_count"] == 3
 
 
+def test_activity_requests_accepted_pagelen(stream_args, client, repo):
+    # Regression for #1888: the PR-activity endpoint caps pagelen at 50 and
+    # rejects larger values with HTTP 400 "Invalid pagelen", which aborted the
+    # whole sync. The request must ask for pagelen=50, not 100.
+    stream = PRActivityStream(**stream_args)
+    path = client.repo_path(repo, "pullrequests/42/activity")
+    client.optional_values[path] = (True, [])
+    captured: dict[str, object] = {}
+    original = client.paginate_optional
+
+    def spy(requested_path, **kwargs):
+        if requested_path == path:
+            captured["params"] = kwargs.get("params")
+        return original(requested_path, **kwargs)
+
+    client.paginate_optional = spy
+    list(stream.pull_request_records(repo, pr()))
+    assert captured["params"] == {"pagelen": "50"}
+
+
 def test_pipeline_cursor_uses_observed_provider_time(stream_args, client, repo):
     stream = PipelinesStream(**stream_args)
     path = client.repo_path(repo, "pipelines")

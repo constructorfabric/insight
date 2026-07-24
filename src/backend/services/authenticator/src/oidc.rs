@@ -50,6 +50,22 @@ pub struct AuthenticatedIdp {
     pub expires_in: Option<u64>,
 }
 
+/// One background-refresh attempt's outcome (G5 transient-vs-definitive).
+#[derive(Debug)]
+pub enum RefreshOutcome {
+    /// The grant succeeded; store the rotated token + new expiry back.
+    Refreshed {
+        /// The rotated refresh token; `None` = the IdP kept the old one valid.
+        new_refresh_token: Option<String>,
+        /// New access-token lifetime (drives the next schedule entry).
+        expires_in: Option<u64>,
+    },
+    /// Definitive refusal (revoked / expired / user disabled): kill the session.
+    InvalidGrant(String),
+    /// Transport / 5xx / 429: back off and retry, never revoke.
+    Transient(String),
+}
+
 /// The OIDC client — holds config; builds the `openidconnect` client per op
 /// (discovery is a cold-path login/callback concern).
 #[derive(Clone)]
@@ -70,9 +86,18 @@ impl OidcClient {
     /// Fails when the underlying `reqwest` client cannot be constructed.
     pub fn new(idp: &IdpConfig) -> anyhow::Result<Self> {
         // Do not follow redirects: the RP must never chase the IdP's 3xx itself
-        // (SSRF-safety guidance from the openidconnect docs).
+        // (SSRF-safety guidance from the openidconnect docs). A total timeout is
+        // mandatory (reqwest has none by default): the background refresher runs
+        // each grant under a 30 s per-session lock, so a hung IdP connection
+        // (half-open TCP, no RST) must fail well before that — otherwise the
+        // request outlives its lock, a second worker re-runs the grant with the
+        // same one-time-use refresh token, and the IdP burns it → false logout.
+        // It also caps semaphore-permit hold time so hung calls can't wedge the
+        // whole refresher (G5).
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(5))
             .build()
             .context("build OIDC HTTP client")?;
         Ok(Self {
@@ -220,6 +245,97 @@ impl OidcClient {
             refresh_token: token.refresh_token().map(|r| r.secret().clone()),
             expires_in: token.expires_in().map(|d| d.as_secs()),
         })
+    }
+
+    /// Run a `refresh_token` grant for the background refresher (G5). The
+    /// outcome distinguishes a **definitive** IdP verdict (`invalid_grant`:
+    /// revoked / expired / user disabled → the caller kills the session) from
+    /// **transient** failures (network, 5xx, 429 → the caller backs off and
+    /// retries; nobody is logged out by a blip).
+    pub async fn refresh_grant(&self, refresh_token: &str) -> RefreshOutcome {
+        use openidconnect::RequestTokenError::ServerResponse;
+        use openidconnect::core::CoreErrorResponseType;
+
+        let metadata = match self.metadata().await {
+            Ok(m) => m,
+            Err(e) => return RefreshOutcome::Transient(format!("discovery: {e:#}")),
+        };
+        let client = CoreClient::from_provider_metadata(
+            metadata,
+            ClientId::new(self.client_id.clone()),
+            self.secret(),
+        );
+        let rt = openidconnect::RefreshToken::new(refresh_token.to_owned());
+        let request = match client.exchange_refresh_token(&rt) {
+            Ok(r) => r,
+            Err(e) => return RefreshOutcome::Transient(format!("build refresh request: {e}")),
+        };
+        let result = request.request_async(&self.http).await;
+
+        match result {
+            Ok(token) => RefreshOutcome::Refreshed {
+                // Most IdPs rotate (one-time-use); keeping the old token when
+                // none is returned matches RFC 6749 §6.
+                new_refresh_token: token.refresh_token().map(|r| r.secret().clone()),
+                expires_in: token.expires_in().map(|d| d.as_secs()),
+            },
+            Err(ServerResponse(r)) if *r.error() == CoreErrorResponseType::InvalidGrant => {
+                RefreshOutcome::InvalidGrant(
+                    r.error_description()
+                        .map(ToString::to_string)
+                        .unwrap_or_default(),
+                )
+            }
+            // Every other token-endpoint error (invalid_client, 5xx-shaped
+            // bodies, 429) and all transport/parse errors are transient: fail
+            // open on transport, fail closed only on the definitive verdict.
+            Err(e) => RefreshOutcome::Transient(format!("{e}")),
+        }
+    }
+
+    /// The IdP issuer URL this client trusts (back-channel `iss` check).
+    #[must_use]
+    pub fn issuer(&self) -> &str {
+        &self.issuer_url
+    }
+
+    /// The registered client id (back-channel `aud` check).
+    #[must_use]
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    /// Fetch the IdP's JWKS (via discovery) for back-channel `logout_token`
+    /// verification. Cold path — back-channel logout is rare — so no cache:
+    /// a fresh fetch also picks up IdP key rotation immediately.
+    ///
+    /// # Errors
+    /// Fails when discovery or the JWKS endpoint is unreachable / malformed.
+    pub async fn idp_jwks(&self) -> anyhow::Result<jsonwebtoken::jwk::JwkSet> {
+        #[derive(serde::Deserialize)]
+        struct Disco {
+            jwks_uri: String,
+        }
+        let disco: Disco = self
+            .http
+            .get(format!(
+                "{}/.well-known/openid-configuration",
+                self.issuer_url
+            ))
+            .send()
+            .await
+            .context("fetch IdP discovery")?
+            .json()
+            .await
+            .context("decode IdP discovery")?;
+        self.http
+            .get(&disco.jwks_uri)
+            .send()
+            .await
+            .context("fetch IdP JWKS")?
+            .json()
+            .await
+            .context("decode IdP JWKS")
     }
 
     /// Build the RP-initiated logout URL. `end_session_endpoint` is not part of

@@ -15,10 +15,13 @@ data:
   # NOT the Insight platform gateway that nginx replaces. The authenticator
   # hosts on it, behind the nginx edge.
   #
-  # Every step-04 endpoint is `.public()` (the credential is the session cookie,
-  # checked in the handler), so the REST host runs with auth disabled and no
-  # OIDC plugin. The signing keys come from the mounted Secret at
-  # `signingKeysPath`.
+  # Browser endpoints are `.public()` (the credential is the session cookie,
+  # checked in the handler); the `.authenticated()` admin surface (session
+  # revoke-by-user) is verified by the oidc-authn-plugin against the
+  # authenticator's OWN issuer — through the TLS discovery front when enabled
+  # (the plugin resolves discovery over HTTPS only), else against a
+  # fail-closed `.invalid` placeholder. The signing keys come from the mounted
+  # Secret at `signingKeysPath`.
   authenticator.yaml: |
     server:
       home_dir: "/app/data"
@@ -31,7 +34,7 @@ data:
       api-gateway:
         config:
           bind_addr: "0.0.0.0:{{ .Values.service.port }}"
-          auth_disabled: true
+          auth_disabled: false
           cors_enabled: false
           enable_docs: false
           openapi:
@@ -49,6 +52,52 @@ data:
       authn-resolver:
         config:
           vendor: "hyperspot"
+
+      # Gateway-JWT verification for the `.authenticated()` admin surface. The
+      # issuer is the authenticator's own gateway_issuer; with the TLS
+      # discovery front on, discovery resolves in-pod over HTTPS with the
+      # front's CA. Without it there is no HTTPS discovery source, so a
+      # fail-closed placeholder keeps the admin surface dark (public endpoints
+      # are unaffected).
+      oidc-authn-plugin:
+        config:
+          vendor: "hyperspot"
+          priority: 50
+          jwt:
+            supported_algorithms: ["ES256"]
+            clock_skew_leeway: 60s
+            require_audience: true
+            expected_audience:
+              - "internal-services"
+            trusted_issuers:
+{{- if .Values.tlsDiscovery.enabled }}
+              - issuer: "https://{{ include "insight-authenticator.fullname" . }}:{{ .Values.tlsDiscovery.port }}"
+{{- else }}
+              - issuer: "https://gateway.invalid"
+{{- end }}
+            claim_mapping:
+              subject_id: "sub"
+              subject_tenant_id: "tenant_id"
+              subject_type: "sub_type"
+              token_scopes: "roles"
+            required_claims: []
+          http_client:
+            request_timeout: 5s
+{{- if .Values.tlsDiscovery.enabled }}
+            custom_ca_certificate_paths: ["/app/authn-ca/ca.crt"]
+{{- end }}
+          # Client-credentials exchange is UNUSED here but the block is
+          # required config; never fetched unless an exchange is performed.
+          s2s_oauth:
+{{- if .Values.tlsDiscovery.enabled }}
+            discovery_url: "https://{{ include "insight-authenticator.fullname" . }}:{{ .Values.tlsDiscovery.port }}"
+{{- else }}
+            discovery_url: "https://gateway.invalid"
+{{- end }}
+            default_subject_type: "service"
+            token_cache:
+              ttl: 300s
+              max_entries: 100
 
       authz-resolver:
         config:
@@ -74,6 +123,16 @@ data:
       authenticator:
         config:
           signing_keys_path: {{ .Values.signingKeysPath | quote }}
+          # Audit events to the platform Redpanda topic (PRD nfr-auth-audit).
+          audit:
+            brokers: {{ .Values.audit.brokers | quote }}
+            topic: {{ .Values.audit.topic | quote }}
+          # CSRF Origin-allowlist fallback for state-changing /auth/* requests;
+          # empty = fail closed (X-CSRF-Token required).
+          {{- with .Values.csrfOrigins }}
+          csrf_origins:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           # Service tokens (§10 G1). The registry is gitops-reviewable config
           # (public keys are not secrets) rendered from .Values.serviceTokens.
           service_tokens:

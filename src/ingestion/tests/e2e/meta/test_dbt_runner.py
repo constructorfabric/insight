@@ -9,13 +9,10 @@ silver placeholder table — to keep the test fast.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
-
 from lib.dbt_runner import DbtError, DbtRunner
 from lib.worker import WorkerContext
-
 
 pytestmark = pytest.mark.smoke
 
@@ -42,13 +39,131 @@ def test_dbt_profiles_written(dbt_runner: DbtRunner) -> None:
     assert "ReplacingMergeTree" in body
 
 
+def test_jira_staging_selector_includes_bronze_promoted(dbt_runner: DbtRunner) -> None:
+    """Regression guard for issue #1886.
+
+    The prod jira pipeline runs its staging dbt step with the selector
+    ``tag:staging,tag:jira`` (an AND-intersection of both tags — hardcoded in
+    ``reconcile-connectors/python/render_cronworkflow.py`` and
+    ``render_sync_trigger.py``). The MergeTree -> ReplacingMergeTree promotion
+    lives in the ``jira__bronze_promoted`` model, and the enrich step that runs
+    right after reads ``bronze_jira.jira_issue FINAL`` — illegal unless that
+    promotion already flipped bronze to ReplacingMergeTree.
+
+    When ``jira__bronze_promoted`` was tagged only ``['jira']`` the AND-selector
+    excluded it (and, with no ``+`` in the selector, it was not pulled in as an
+    upstream either), so prod never promoted, bronze stayed MergeTree, and enrich
+    crashed with ``Storage MergeTree doesn't support FINAL`` on every real sync.
+    Assert the promote model carries BOTH tags so the prod selector picks it up.
+    """
+    manifest = dbt_runner.target_dir / "manifest.json"
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+
+    # Reproduce `tag:staging,tag:jira` (AND) against the parsed manifest: a model
+    # is selected iff its config tags contain every tag in the intersection.
+    required = {"staging", "jira"}
+    selected = {
+        node["name"]
+        for node in data["nodes"].values()
+        if node.get("resource_type") == "model" and required.issubset(set(node.get("config", {}).get("tags", [])))
+    }
+
+    assert "jira__bronze_promoted" in selected, (
+        "jira__bronze_promoted is not selected by the prod staging selector "
+        "'tag:staging,tag:jira'; it must be tagged both 'jira' and 'staging' or "
+        "the MergeTree->ReplacingMergeTree promotion never runs on a real sync "
+        "and jira-enrich crashes with ILLEGAL_FINAL (issue #1886)."
+    )
+
+
+def test_every_jira_model_is_built_by_some_prod_pass(dbt_runner: DbtRunner) -> None:
+    """Regression guard for issue #1893 (and the whole #1886/#1893 class).
+
+    Unlike other connectors — which build via the legacy single pass
+    ``tag:<connector>+`` that pulls every connector-tagged model plus its
+    descendants — the jira pipeline builds in three narrow tag-scoped passes and
+    has NO ``tag:jira`` catch-all:
+
+      * staging: ``tag:staging,tag:jira``            (render_*.py, no ``+``)
+      * silver:  ``tag:silver,tag:jira+``            (jira descriptor dbt_select)
+      * gold:    ``tag:gold,tag:jira+``              (jira descriptor dbt_select)
+
+    A jira model tagged only ``['jira']`` (or ``['jira', 'silver:class_*']`` —
+    note ``silver:class_*`` is a routing tag, not the bare ``silver`` tag) matches
+    none of these passes, so it is never materialized. Its silver consumers then
+    fail: ``jira__users_fields_history`` ``ref()``s ``jira__users_snapshot`` and
+    dies with ``code: 60 Unknown table 'staging.jira__users_snapshot'`` (#1893),
+    and the ``class_task_*`` silver models lose their jira rows (or hit the
+    ``union_by_tag`` empty-target compiler error on a fresh install).
+
+    Assert every jira connector model is selected by at least one prod pass.
+    Ephemeral models are exempt: they have no DB relation and are inlined into
+    their consumers via ``ref()``, so no pass needs to build them standalone.
+    """
+    manifest = dbt_runner.target_dir / "manifest.json"
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    nodes = data["nodes"]
+    child_map = data.get("child_map", {})
+
+    def _tags(uid: str) -> set[str]:
+        return set(nodes[uid].get("config", {}).get("tags", []) or [])
+
+    def _descendants(seed: set[str]) -> set[str]:
+        seen: set[str] = set()
+        stack = list(seed)
+        while stack:
+            cur = stack.pop()
+            for child in child_map.get(cur, []):
+                if child not in seen:
+                    seen.add(child)
+                    stack.append(child)
+        return seen
+
+    def _select(expr: str) -> set[str]:
+        # Minimal dbt selector semantics: space = union of terms, comma =
+        # intersection of atoms, atom = ``tag:X`` optionally suffixed ``+``
+        # (the node plus all its graph descendants).
+        union: set[str] = set()
+        for term in expr.split():
+            inter: set[str] | None = None
+            for atom in term.split(","):
+                plus = atom.endswith("+")
+                tag = atom[:-1] if plus else atom
+                assert tag.startswith("tag:"), atom
+                base = {uid for uid in nodes if tag[4:] in _tags(uid)}
+                atom_set = base | _descendants(base) if plus else base
+                inter = atom_set if inter is None else (inter & atom_set)
+            union |= inter or set()
+        return union
+
+    covered = _select("tag:staging,tag:jira") | _select("tag:silver,tag:jira+") | _select("tag:gold,tag:jira+")
+
+    def _is_jira_model(node: dict) -> bool:
+        return node.get("resource_type") == "model" and (
+            "/connectors/task-tracking/jira/dbt/" in node.get("original_file_path", "")
+        )
+
+    gaps = sorted(
+        node["name"]
+        for uid, node in nodes.items()
+        if _is_jira_model(node) and node.get("config", {}).get("materialized") != "ephemeral" and uid not in covered
+    )
+
+    assert not gaps, (
+        "These non-ephemeral jira models are built by no prod pass "
+        "(tag:staging,tag:jira / tag:silver,tag:jira+ / tag:gold,tag:jira+), so on "
+        f"a real sync they are never materialized and their silver consumers fail: {gaps}. "
+        "Add the 'staging' tag (like jira__issue_field_snapshot) so the staging pass "
+        "builds them before enrich/silver (issue #1893)."
+    )
+
+
 def test_dbt_build_unknown_selector_raises(dbt_runner: DbtRunner) -> None:
     """A selector that matches no models surfaces a clear DbtError."""
     # `dbt build --select <nonsense>` is NOT an error in dbt — it just runs
     # zero models. So we instead pass an invalid selector syntax that dbt
     # rejects. The point of the test is that the wrapper surfaces failures
     # without swallowing the dbt output.
-    runner = dbt_runner
     # Use a deliberately broken --vars to force a non-zero exit
     # (more reliable than guessing bad selector syntax across dbt versions).
     with pytest.raises(DbtError):
@@ -74,7 +189,6 @@ def test_dbt_build_with_worker_context_passes_var(dbt_runner: DbtRunner) -> None
     Running a real dbt build is exercised end-to-end by feature-yaml-rig; here we
     only verify that worker context produces a deterministic --vars payload.
     """
-    runner = dbt_runner
     ctx = WorkerContext(worker_id="gw0", schema_suffix="_w0")
     # We don't call .build() (which would shell out); we just check the worker
     # id translation works as advertised.

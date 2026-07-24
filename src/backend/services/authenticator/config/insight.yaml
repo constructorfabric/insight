@@ -9,10 +9,11 @@
 # in this EPIC. The authenticator hosts its endpoints on this REST-host gear and
 # runs behind the nginx edge.
 #
-# Auth is DISABLED on the host because every step-04 endpoint is `.public()`
-# (the credential is the session cookie, checked in the handler), so no OIDC
-# plugin is registered. The admin session-revoke surface (later step) will flip
-# to an authenticated pipeline verifying gateway JWTs.
+# Auth is ENABLED on the host for the `.authenticated()` admin surface
+# (session revoke-by-user): the oidc-authn-plugin verifies the ES256 gateway
+# JWT — the authenticator trusts its own tokens exactly like any downstream
+# service. Every browser endpoint stays `.public()` (the credential is the
+# session cookie, checked in the handler) and bypasses the plugin.
 #
 # Deployment-specific leaf values are injected via env overrides
 # (APP__gears__authenticator__config__*) from the umbrella Secret / compose;
@@ -43,7 +44,7 @@ gears:
         title: "Insight Authenticator"
         version: "0.1.0"
         description: "OIDC login, opaque sessions, and the cookie-to-JWT exchange (BFF / token-handler)"
-      auth_disabled: true
+      auth_disabled: false
 
   gear-orchestrator:
     config: {}
@@ -55,6 +56,40 @@ gears:
   authn-resolver:
     config:
       vendor: "hyperspot"
+
+  # Gateway-JWT verification for the `.authenticated()` admin surface. Verifies
+  # the ES256 gateway JWT against our own JWKS (resolved via OIDC discovery on
+  # the issuer) and maps claims into the SecurityContext. The deployment
+  # supplies the real issuer + self-signed CA (dev/e2e) via the config layer;
+  # the placeholders below (`.invalid`, never resolvable) fail closed.
+  oidc-authn-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 50
+      jwt:
+        supported_algorithms: ["ES256"]
+        clock_skew_leeway: 60s
+        require_audience: true
+        expected_audience:
+          - "internal-services"
+        trusted_issuers:
+          - issuer: "https://gateway.invalid"
+        claim_mapping:
+          subject_id: "sub"
+          subject_tenant_id: "tenant_id"
+          subject_type: "sub_type"
+          token_scopes: "roles"
+        required_claims: []
+      http_client:
+        request_timeout: 5s
+      # Client-credentials exchange is UNUSED here (the authenticator makes no
+      # outbound S2S calls through the plugin) but the block is required config.
+      s2s_oauth:
+        discovery_url: "https://gateway.invalid"
+        default_subject_type: "service"
+        token_cache:
+          ttl: 300s
+          max_entries: 100
 
   authz-resolver:
     config:
@@ -88,6 +123,9 @@ gears:
       jwt_audience: "internal-services"
       redirect_uri: ""
       default_return_to: "/"
+      # CSRF Origin-allowlist fallback for state-changing /auth/* (10.5).
+      # Empty = fail closed: the X-CSRF-Token header is required.
+      csrf_origins: []
       # Login scopes. offline_access is omitted (survives-logout token, wrong for a
       # BFF); add it only for an IdP that needs it for a refresh token, e.g. Entra.
       oidc_scopes: ["openid", "email", "profile"]
@@ -121,4 +159,6 @@ gears:
         services:
           testclient:
             public_key_paths: ["testclient.pub.pem"]
-            roles: ["service"]
+            # session_admin authorizes the admin revoke-by-user operation —
+            # dev/e2e only; real registry entries earn it via a gitops PR.
+            roles: ["service", "session_admin"]

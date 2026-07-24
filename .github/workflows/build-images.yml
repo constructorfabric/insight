@@ -899,10 +899,10 @@ jobs:
     # only safely point at those tags once the merge completes.
     if: |
       always()
-      && github.event_name == 'push'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && github.ref == 'refs/heads/main'
       && needs.discover-images.outputs.any == 'true'
-      && needs.merge-image.result == 'success'
+      && (needs.merge-image.result == 'success' || needs.merge-image.result == 'skipped')
       && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
       && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
@@ -972,6 +972,24 @@ jobs:
               .github/workflows/scripts/bump-descriptor-version.sh --descriptor "$desc"
             done
 
+      # Pin backend service subchart appVersions here too. This job commits
+      # WITHOUT [skip ci] and re-triggers the workflow; because publish-chart
+      # is deferred to that follow-up run (see its `committed != 'true'`
+      # gate), a backend built alongside a connector — or every backend on a
+      # manual full rebuild — would otherwise never get pinned: the follow-up
+      # run doesn't see the backend source as changed. Bumping the subchart
+      # Chart.yaml here makes the follow-up run rebuild that backend and
+      # publish-chart persist its tag. Uses the same script as publish-chart.
+      - name: Bump per-service subchart appVersions (built this run)
+        env:
+          BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
+          FULL_REBUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '' }}
+          ANALYTICS: ${{ needs.changes.outputs.analytics }}
+          AUTHENTICATOR: ${{ needs.changes.outputs.authenticator }}
+          GATEWAY: ${{ needs.changes.outputs.gateway }}
+          IDENTITY: ${{ needs.changes.outputs.identity }}
+        run: .github/workflows/scripts/bump-service-appversions.sh
+
       - name: Commit descriptor patches (no [skip ci])
         id: commit
         env:
@@ -988,6 +1006,13 @@ jobs:
             | jq -r '.[].connector_dir + "/descriptor.yaml"' \
             | sort -u \
             | xargs -r git add
+
+          # Stage any backend subchart appVersion bumps from the step above.
+          # git add of an unchanged file is a harmless no-op.
+          git add src/backend/services/analytics/helm/Chart.yaml \
+                  src/backend/services/authenticator/helm/Chart.yaml \
+                  src/backend/services/gateway/helm/Chart.yaml \
+                  src/backend/services/identity/helm/Chart.yaml
 
           if git diff --staged --quiet; then
             echo "no descriptor changes to commit"
@@ -1125,31 +1150,21 @@ jobs:
       # only if the matching image was rebuilt this run. Services whose
       # source didn't change keep their previous appVersion → their image
       # tag in the published chart still resolves to an image that exists.
+      # A manual full rebuild (workflow_dispatch, no frontend_tag) rebuilds
+      # every service image, so it bumps every service — mirroring the build
+      # jobs' own `workflow_dispatch && frontend_tag == ''` trigger. When
+      # bump-descriptors runs (connectors changed / full rebuild) it does the
+      # bump instead, in its re-triggering commit; this step is the canonical
+      # path when no connector changed and bump-descriptors was skipped.
       - name: Bump per-service subchart appVersions
         env:
           BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
+          FULL_REBUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '' }}
           ANALYTICS: ${{ needs.changes.outputs.analytics }}
           AUTHENTICATOR: ${{ needs.changes.outputs.authenticator }}
           GATEWAY: ${{ needs.changes.outputs.gateway }}
           IDENTITY: ${{ needs.changes.outputs.identity }}
-        run: |
-          set -euo pipefail
-          if [ "$ANALYTICS" = "true" ]; then
-            echo "Bumping analytics subchart appVersion → $BUILD_TAG"
-            yq -i ".appVersion = \"$BUILD_TAG\"" src/backend/services/analytics/helm/Chart.yaml
-          fi
-          if [ "$AUTHENTICATOR" = "true" ]; then
-            echo "Bumping authenticator subchart appVersion → $BUILD_TAG"
-            yq -i ".appVersion = \"$BUILD_TAG\"" src/backend/services/authenticator/helm/Chart.yaml
-          fi
-          if [ "$GATEWAY" = "true" ]; then
-            echo "Bumping gateway subchart appVersion → $BUILD_TAG"
-            yq -i ".appVersion = \"$BUILD_TAG\"" src/backend/services/gateway/helm/Chart.yaml
-          fi
-          if [ "$IDENTITY" = "true" ]; then
-            echo "Bumping identity subchart appVersion → $BUILD_TAG"
-            yq -i ".appVersion = \"$BUILD_TAG\"" src/backend/services/identity/helm/Chart.yaml
-          fi
+        run: .github/workflows/scripts/bump-service-appversions.sh
 
       # Cross-repo frontend bump. The frontend lives in
       # constructorfabric/insight-front and builds its own image; on
@@ -1291,6 +1306,8 @@ jobs:
                   charts/insight/Chart.lock \
                   charts/insight/values.yaml \
                   src/backend/services/analytics/helm/Chart.yaml \
+                  src/backend/services/authenticator/helm/Chart.yaml \
+                  src/backend/services/gateway/helm/Chart.yaml \
                   src/backend/services/identity/helm/Chart.yaml \
                   src/frontend/helm/Chart.yaml \
                   deploy/gitops/.insight-version

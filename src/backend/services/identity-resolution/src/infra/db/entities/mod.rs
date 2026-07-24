@@ -9,5 +9,4 @@
 // not yet read) that aren't all directly referenced — standard for SeaORM codegen.
 #![allow(dead_code)]
 
-pub mod account_person_map;
 pub mod persons;

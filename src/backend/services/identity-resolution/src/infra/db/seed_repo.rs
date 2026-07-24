@@ -12,8 +12,6 @@
 //! rebuilds — constructs `toolkit-db` cannot express, hence the raw-SQL /
 //! self-managed pool (see `infra::db` module docs + constructorfabric/gears-rust#4239).
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use async_trait::async_trait;
