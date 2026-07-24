@@ -11,3 +11,20 @@ pub struct ProfileError;
 
 #[resource_error("gts.cf.insight.identity_resolution.persons_seed.v1~")]
 pub struct PersonsSeedError;
+
+/// Shared admin-gate errors (401 no caller / 403 not admin), used by every
+/// admin-gated endpoint via [`crate::api::gate`].
+#[resource_error("gts.cf.insight.identity_resolution.access.v1~")]
+pub struct AccessError;
+
+#[resource_error("gts.cf.insight.identity_resolution.role.v1~")]
+pub struct RoleError;
+
+#[resource_error("gts.cf.insight.identity_resolution.person_role.v1~")]
+pub struct PersonRoleError;
+
+#[resource_error("gts.cf.insight.identity_resolution.visibility.v1~")]
+pub struct VisibilityError;
+
+#[resource_error("gts.cf.insight.identity_resolution.subchart.v1~")]
+pub struct SubchartError;

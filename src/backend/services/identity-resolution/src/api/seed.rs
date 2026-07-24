@@ -30,10 +30,10 @@ use uuid::Uuid;
 use super::AppState;
 use super::canonical_json::CanonicalJson;
 use super::error::PersonsSeedError;
+use super::gate::require_admin;
 use crate::config::GearConfig;
 use crate::domain::seed_service::run_seed;
 use crate::infra::db::ops_repo::{self, Operation, OperationStatus};
-use crate::infra::db::roles_repo;
 use crate::infra::db::seed_repo::MariaDbSeedStore;
 use crate::infra::identity_inputs::ClickHouseIdentityInputsReader;
 
@@ -159,7 +159,9 @@ impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedListResponse {}
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
     pub status: Option<String>,
-    pub limit: Option<u64>,
+    // Signed so a negative `?limit=` clamps to 1 (parity with the sibling list
+    // routes + the .NET `int?` clamp) rather than failing query deserialization.
+    pub limit: Option<i64>,
 }
 
 /// `POST /v1/persons-seed` — enqueue an async persons-seed run.
@@ -278,10 +280,9 @@ pub async fn list_persons_seed(
     // Same admin gate as POST (parity — the .NET service gates all three routes).
     require_admin(&state.db, &ctx).await?;
     let status = status_filter(params.status.as_deref());
-    let limit = params
-        .limit
-        .unwrap_or(LIST_DEFAULT_LIMIT)
-        .clamp(1, LIST_MAX_LIMIT);
+    let limit = params.limit.map_or(LIST_DEFAULT_LIMIT, |l| {
+        u64::try_from(l).unwrap_or(1).clamp(1, LIST_MAX_LIMIT)
+    });
     let ops = ops_repo::list(&state.db, tenant, Some(PERSONS_SEED_OP), status, limit)
         .await
         .map_err(|e| {
@@ -293,34 +294,6 @@ pub async fn list_persons_seed(
         .map(PersonsSeedOperationResponse::from)
         .collect();
     Ok(Json(PersonsSeedListResponse { items }))
-}
-
-/// The persons-seed admin gate (parity with the .NET `CallerAdminCheck`): the
-/// caller is the gateway-JWT subject (`SecurityContext::subject_id`, verified by
-/// the host authn pipeline), which must hold an active `admin` role in the
-/// tenant. Returns the caller `person_id`, or 401 (no subject) / 403 (not admin).
-async fn require_admin(
-    db: &DatabaseConnection,
-    ctx: &SecurityContext,
-) -> Result<Uuid, CanonicalError> {
-    let caller = ctx.subject_id();
-    if caller.is_nil() {
-        return Err(CanonicalError::unauthenticated()
-            .with_reason("caller not identified: the gateway JWT carries no person subject")
-            .create());
-    }
-    let is_admin = roles_repo::has_active_admin(db, ctx.subject_tenant_id(), caller)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "admin role check failed");
-            CanonicalError::internal("failed to verify caller permissions").create()
-        })?;
-    if !is_admin {
-        return Err(PersonsSeedError::permission_denied()
-            .with_reason("admin role required for this operation")
-            .create());
-    }
-    Ok(caller)
 }
 
 /// Map the `?status=` query to a filter. An unknown/blank value is ignored

@@ -66,6 +66,54 @@ pub async fn resolve_person_ids_by_email(
     person_ids_from_rows(rows)
 }
 
+/// Tenant-AGNOSTIC email → `person_id` resolution for the login bootstrap (the
+/// authenticator's service-only `GET /internal/persons/by-email/{email}` call):
+/// at login the caller's tenant is not yet known, so the tenant filter is
+/// dropped and any matching tenant's latest observation wins. Returns the single
+/// winning `person_id`, or `None` when the email is unknown. Ported verbatim from
+/// `Sql.cs::ResolvePersonIdByEmailAnyTenant` (window `ROW_NUMBER()` → raw SQL,
+/// see `infra::db` module docs + constructorfabric/gears-rust#4239).
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn resolve_person_id_by_email_any_tenant(
+    db: &DatabaseConnection,
+    email: &str,
+) -> anyhow::Result<Option<Uuid>> {
+    const SQL: &str = r"
+        WITH ranked AS (
+            SELECT
+                person_id,
+                id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, value_type, value_id
+                    ORDER BY created_at DESC, id DESC
+                ) AS rn,
+                created_at
+            FROM persons
+            WHERE value_type = 'email'
+              AND value_id = ?
+        )
+        SELECT person_id
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+    ";
+
+    let stmt =
+        Statement::from_sql_and_values(DbBackend::MySql, SQL, [email.trim().to_owned().into()]);
+
+    match db.query_one(stmt).await? {
+        Some(row) => {
+            let bytes: Vec<u8> = row.try_get("", "person_id")?;
+            Ok(Some(Uuid::from_slice(&bytes)?))
+        }
+        None => Ok(None),
+    }
+}
+
 /// Resolve the set of `person_id`s whose CURRENT `value_type='id'` observation
 /// on the given source instance (`source_type` + `source_id`) equals `value`.
 /// Source-instance scoped, ported from .NET `Sql.Profiles.cs::ResolvePersonIdsBySourceId`.
@@ -219,10 +267,11 @@ pub struct OrgChartEdge {
 /// instance, ordered by source. The caller filters to the configured
 /// `org_chart` source. Ported from `Sql.OrgChart.cs::CurrentParentsForChild`.
 ///
-/// The `parent_person_id IS NOT NULL` filter intentionally diverges from .NET:
-/// the seed writes Path-B root/membership rows with a NULL parent, and decoding
-/// those into a non-nullable id would 500 the profile — a parent edge with no
-/// parent is not an edge, so it is skipped.
+/// The `parent_person_id IS NOT NULL` filter matches
+/// `Sql.OrgChart.cs::CurrentParentsForChild`: the seed writes Path-B
+/// root/membership rows with a NULL parent, and a parent edge with no parent is
+/// not an edge — skipping it also avoids decoding a NULL into the non-nullable
+/// `parent_person_id`.
 ///
 /// # Errors
 ///

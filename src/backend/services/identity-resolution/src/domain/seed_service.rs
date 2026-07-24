@@ -3,9 +3,6 @@
 //! The input source and the store are behind traits so this is unit-testable
 //! with fakes (no `ClickHouse` / MariaDB).
 
-// Consumed by the async job/worker + API slices (not wired yet).
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use async_trait::async_trait;
