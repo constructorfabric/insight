@@ -30,34 +30,44 @@ connector_for_namespace() {
 }
 
 dump_tables() {
-  local database="$1" outfile="$2" table
+  local database="$1" outfile="$2" table tables
+  # Capture the row list first (not `done < <(ch ...)`): a `ch()` failure inside
+  # a process substitution is invisible to `set -e` — the loop just sees EOF and
+  # the script keeps going, silently truncating the snapshot. Command
+  # substitution lets the non-zero exit abort loudly instead.
+  tables="$(ch "SELECT name FROM system.tables
+                WHERE database = '${database}' AND engine NOT IN ('View', 'MaterializedView')
+                  AND name NOT LIKE '.inner%'
+                ORDER BY name FORMAT TSVRaw")"
   while IFS= read -r table; do
     [[ -n "${table}" ]] || continue
     ch "SHOW CREATE TABLE \`${database}\`.\`${table}\` FORMAT TSVRaw" \
       | sed -e '1s/^CREATE TABLE /CREATE TABLE IF NOT EXISTS /' >> "${outfile}"
     printf ';\n\n' >> "${outfile}"
-  done < <(ch "SELECT name FROM system.tables
-               WHERE database = '${database}' AND engine NOT IN ('View', 'MaterializedView')
-                 AND name NOT LIKE '.inner%'
-               ORDER BY name FORMAT TSVRaw")
+  done <<< "${tables}"
 }
 
 dump_views() {
-  local database="$1" outfile="$2" view
+  local database="$1" outfile="$2" view views
+  # Capture first so a ch() failure aborts under `set -e` (see dump_tables).
+  views="$(ch "SELECT name FROM system.tables
+               WHERE database = '${database}' AND engine IN ('View', 'MaterializedView')
+               ORDER BY name FORMAT TSVRaw")"
   while IFS= read -r view; do
     [[ -n "${view}" ]] || continue
     ch "SHOW CREATE TABLE \`${database}\`.\`${view}\` FORMAT TSVRaw" \
       | sed -e '1s/^CREATE VIEW /CREATE OR REPLACE VIEW /' \
             -e '1s/^CREATE MATERIALIZED VIEW /CREATE MATERIALIZED VIEW IF NOT EXISTS /' >> "${outfile}"
     printf ';\n\n' >> "${outfile}"
-  done < <(ch "SELECT name FROM system.tables
-               WHERE database = '${database}' AND engine IN ('View', 'MaterializedView')
-               ORDER BY name FORMAT TSVRaw")
+  done <<< "${views}"
 }
 
 mkdir -p "${DDL_DIR}"
 rm -f "${DDL_DIR}"/*.sql
 
+# Capture first so a ch() failure aborts under `set -e` (see dump_tables).
+bronze_databases="$(ch "SELECT DISTINCT database FROM system.tables
+             WHERE database LIKE 'bronze\\_%' ORDER BY database FORMAT TSVRaw")"
 while IFS= read -r database; do
   [[ -n "${database}" ]] || continue
   connector="$(connector_for_namespace "${database}")"
@@ -65,8 +75,7 @@ while IFS= read -r database; do
   echo "dumping ${database} -> $(basename "${outfile}")"
   printf 'CREATE DATABASE IF NOT EXISTS `%s`;\n\n' "${database}" > "${outfile}"
   dump_tables "${database}" "${outfile}"
-done < <(ch "SELECT DISTINCT database FROM system.tables
-             WHERE database LIKE 'bronze\\_%' ORDER BY database FORMAT TSVRaw")
+done <<< "${bronze_databases}"
 
 # Dump one relation (table or view) with the right CREATE prefix.
 dump_relation() {

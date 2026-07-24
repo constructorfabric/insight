@@ -60,7 +60,12 @@ echo "=== 2. Creating connector tables (bronze + promote) ==="
 "${SCRIPT_DIR}/seed-connectors.sh" "${CONFIG_FILE}"
 
 echo "=== 3. Running all dbt models ==="
-"${SCRIPT_DIR}/run-dbt.sh" || echo "dbt run finished with errors, continuing" >&2
+# Fail loud: a partial dbt run means missing staging/silver/gold relations, and
+# because step 4 sets SKIP_DBT_GOLD=1 (gold is already built here, not there),
+# a swallowed failure would silently ship an incomplete connectors-ddl snapshot
+# while bootstrap still "succeeds". A complete dbt run is a precondition for the
+# dump, so let its non-zero exit abort under `set -e`.
+"${SCRIPT_DIR}/run-dbt.sh"
 
 echo "=== 4. Applying ClickHouse migrations (gold views) + dbt gold ==="
 # Snapshot applicator is a no-op here (generation mode); the real relations
