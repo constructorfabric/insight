@@ -99,6 +99,16 @@ dependencies:
     version: "0.1.0"
     repository: "file://../../src/backend/services/identity/helm"
     condition: identity.deploy
+  # Identity Resolution — Rust port of the .NET identity service (epic #1602).
+  # Deployed SIDE-BY-SIDE with `identity` during the cutover: both read the
+  # same MariaDB `identity` database; traffic stays on the .NET service until
+  # the gateway/consumer identity URLs are flipped (and can be flipped back
+  # for rollback). Off by default.
+  - name: insight-identity-resolution
+    alias: identityResolution
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/identity-resolution/helm"
+    condition: identityResolution.deploy
   # Frontend SPA. Conditional: the gateway serves it at "/", but the backend
   # (/api/*) is fully usable without it (the gateway's front upstream resolves
   # lazily), so a backend-only bring-up can run frontend.deploy=false.

@@ -100,7 +100,7 @@ spec:
               done
 
               echo "Provisioning per-service databases..."
-              {{- if .Values.identity.deploy }}
+              {{- if or .Values.identity.deploy .Values.identityResolution.deploy }}
               IDENTITY_DB={{ required "identity.databaseName is required" .Values.identity.databaseName | quote }}
               SQL=$(printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON `%s`.* TO `%s`@`%%`; FLUSH PRIVILEGES;' \
                 "$IDENTITY_DB" "$IDENTITY_DB" "$MARIADB_USER")

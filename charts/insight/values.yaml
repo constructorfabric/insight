@@ -463,6 +463,41 @@ identity:
   # with IDENTITY__* env vars sourced from the auto-generated MariaDB
   # credentials in `insight-db-creds`.
   existingSecret: "insight-identity-config"
+# ─── Identity Resolution (Rust port of identity, epic #1602) ─────────────
+# Deployed SIDE-BY-SIDE with the .NET `identity` service during the cutover:
+# both serve the same API surface over the same MariaDB `identity` database.
+# Traffic stays on the .NET service until the gateway route + the analytics/
+# authenticator identity URLs are flipped to
+# `http://<release>-identity-resolution:8082`; rollback = revert those values.
+# Schema (DbUp migrations) + bootstrap-admin remain owned by the .NET service
+# while both run.
+identityResolution:
+  deploy: false
+  replicaCount: 1
+  image:
+    repository: ghcr.io/constructorfabric/insight-identity-resolution
+    tag: "" # MUST be set (e.g. "0.1.0")
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  # MariaDB database — the SAME one the .NET identity service owns (and
+  # migrates) during the transition.
+  databaseName: "identity"
+  # The umbrella generates `insight-identity-resolution-config` with every
+  # APP__gears__identity-resolution__config__* env var filled in from the
+  # auto-generated credentials (see templates/secrets.yaml). The subchart
+  # consumes it via envFrom (overriding its mounted config ConfigMap).
+  existingSecret: "insight-identity-resolution-config"
+  # Gateway-JWT verification (NGINX_BFF R1) — same wiring as analytics: the
+  # oidc-authn-plugin resolves the authenticator's JWKS via OIDC discovery
+  # over https on `issuer` and trusts its CA from the authn-tls cert Secret.
+  gateway:
+    issuer: 'https://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.cluster.local:8443'
+    audience: "internal-services"
+    caCertSecret: "insight-authenticator-authn-tls-cert"
+    caCertPaths:
+      - /etc/insight/authn-ca/ca.crt
 # ─── Frontend (SPA) ──────────────────────────────────────────────────────
 frontend:
   # Served through the gateway edge at "/". Set deploy=false for a backend-only
