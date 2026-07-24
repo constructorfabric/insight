@@ -1,0 +1,157 @@
+"""Contract: the persons-seed write path — POST /v1/persons-seed + the
+operation-tracking reads.
+
+The seed streams ClickHouse `identity.identity_inputs` and rebuilds the
+caller-tenant's persons / account_person_map / org_chart. It runs here under
+its own SEED_TENANT (see lib/identity_seed.py) so the rebuild never touches
+the fixture tree the read tests depend on. The module fixture provisions the
+`identity.identity_inputs` table with a deterministic three-account roster:
+two accounts sharing an email (one person, two bindings) + one solo account.
+
+KNOWN LOCAL LIMITATION (macOS Docker Desktop): the .NET service's Octonica
+native-protocol handshake deadlocks against a containerized ClickHouse when
+the traffic crosses Docker Desktop's VM networking — reproduced in isolation
+(client hello arrives complete on the wire; both sides then wait forever;
+same code + CH 24.8.4.13 work on the dev cluster and native Linux). On a Mac,
+deselect the end-to-end case:
+    ./e2e.sh test identity/ --deselect \
+        identity/test_persons_seed.py::test_persons_seed_end_to_end
+CI (native Linux Docker) runs it unconditionally.
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+
+import pytest
+
+from identity.contract import items_of
+from lib import clickhouse
+from lib import identity_seed as seed
+from lib.config import SessionConfig
+
+pytestmark = [pytest.mark.identity, pytest.mark.mutating]
+
+SEED_SOURCE_ID = uuid.UUID("55555555-5555-5555-5555-555555555555")
+SHARED_EMAIL = "seeded.person@e2e.test"
+SOLO_EMAIL = "solo.person@e2e.test"
+
+_OPERATION_TIMEOUT_S = 120.0
+
+
+@pytest.fixture(scope="module")
+def identity_inputs(compose_stack: SessionConfig):
+    """Create + fill `identity.identity_inputs` (schema mirrors the dbt model's
+    reader-relevant columns; extra dbt bookkeeping columns included so the
+    service's `SELECT` never meets a missing column)."""
+    clickhouse.ensure_database(compose_stack, "identity")
+    clickhouse.execute(
+        compose_stack,
+        """
+        CREATE TABLE IF NOT EXISTS identity.identity_inputs (
+            unique_key          String,
+            insight_tenant_id   Nullable(String),
+            insight_source_type String,
+            insight_source_id   Nullable(String),
+            source_account_id   Nullable(String),
+            value_type          Nullable(String),
+            value               Nullable(String),
+            operation_type      String,
+            _synced_at          DateTime64(3, 'UTC'),
+            _version            UInt64
+        ) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key
+        """,
+    )
+    clickhouse.execute(compose_stack, "TRUNCATE TABLE identity.identity_inputs")
+
+    rows: list[tuple[str, str, str, str]] = [
+        # (account, value_type, value) — two accounts share SHARED_EMAIL.
+        ("seed-acc-1", "email", SHARED_EMAIL),
+        ("seed-acc-1", "display_name", "Seeded Person"),
+        ("seed-acc-2", "email", SHARED_EMAIL),
+        ("seed-acc-3", "email", SOLO_EMAIL),
+        ("seed-acc-3", "display_name", "Solo Person"),
+    ]
+    values = []
+    for i, (account, value_type, value) in enumerate(rows):
+        values.append(
+            "("
+            f"'{account}:{value_type}', "
+            f"'{seed.SEED_TENANT}', 'e2e-source', '{SEED_SOURCE_ID}', "
+            f"'{account}', '{value_type}', '{value}', "
+            f"'UPSERT', now64(3), {i + 1}"
+            ")"
+        )
+    clickhouse.execute(
+        compose_stack,
+        "INSERT INTO identity.identity_inputs "
+        "(unique_key, insight_tenant_id, insight_source_type, insight_source_id,"
+        " source_account_id, value_type, value, operation_type, _synced_at, _version) VALUES "
+        + ", ".join(values),
+    )
+    return compose_stack
+
+
+@pytest.fixture
+def seed_api(identity_svc):
+    """Client authenticated as the SEED_TENANT admin (see identity_seed)."""
+    with identity_svc.client(sub=str(seed.SEED_ADMIN), tenant=str(seed.SEED_TENANT)) as c:
+        yield c
+
+
+def _wait_completed(client, operation_id: str) -> dict:
+    deadline = time.monotonic() + _OPERATION_TIMEOUT_S
+    last: dict = {}
+    while time.monotonic() < deadline:
+        r = client.get(f"/v1/persons-seed/{operation_id}")
+        assert r.status_code == 200, f"status={r.status_code} body={r.text}"
+        last = r.json()
+        if last.get("status") in {"completed", "failed"}:
+            return last
+        time.sleep(0.5)
+    raise AssertionError(f"seed operation did not finish in {_OPERATION_TIMEOUT_S:.0f}s: {last}")
+
+
+def test_persons_seed_end_to_end(identity_inputs, seed_api, identity_svc) -> None:
+    """202 + Location → operation completes → the seeded person resolves,
+    with BOTH same-email accounts bound to one person."""
+    r = seed_api.post("/v1/persons-seed", json={"mode": "link-by-email"})
+    assert r.status_code == 202, f"status={r.status_code} body={r.text}"
+    operation_id = r.json()["operation_id"]
+    assert r.headers.get("location"), r.headers
+
+    op = _wait_completed(seed_api, operation_id)
+    assert op["status"] == "completed", op
+    summary = op.get("summary") or {}
+    assert summary, op
+
+    # The two same-email accounts collapsed into ONE person...
+    resolved = seed_api.post("/v1/profiles", json={"value_type": "email", "value": SHARED_EMAIL})
+    assert resolved.status_code == 200, f"status={resolved.status_code} body={resolved.text}"
+    person = resolved.json()
+    accounts = {entry["value"] for entry in person.get("ids") or []}
+    assert accounts == {"seed-acc-1", "seed-acc-2"}, person.get("ids")
+
+    # ...and the solo account minted its own.
+    solo = seed_api.post("/v1/profiles", json={"value_type": "email", "value": SOLO_EMAIL})
+    assert solo.status_code == 200, f"status={solo.status_code} body={solo.text}"
+    assert solo.json()["person_id"] != person["person_id"]
+
+
+def test_persons_seed_operations_listed(identity_inputs, seed_api) -> None:
+    r = seed_api.get("/v1/persons-seed")
+    assert r.status_code == 200, f"status={r.status_code} body={r.text}"
+    ops = items_of(r.json())
+    assert ops, "expected at least the operation from the end-to-end test"
+    assert all(op.get("operation_type", "persons-seed") for op in ops)
+
+
+def test_persons_seed_403_non_admin(bob_api) -> None:
+    """bob is not an admin anywhere — the seed trigger is refused."""
+    r = bob_api.post("/v1/persons-seed", json={"mode": "link-by-email"})
+    assert r.status_code == 403, f"status={r.status_code} body={r.text}"
+
+
+def test_persons_seed_401_unauthenticated(anon_api) -> None:
+    assert anon_api.post("/v1/persons-seed", json={"mode": "link-by-email"}).status_code == 401
