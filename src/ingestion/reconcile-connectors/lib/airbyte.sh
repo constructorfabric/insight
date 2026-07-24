@@ -558,6 +558,19 @@ ab_delete_source() {
 }
 
 # ---------------------------------------------------------------------------
+# ab_delete_connection <connection_id>
+# POST /api/v1/connections/delete — removes a single connection (leaves its
+# source/destination intact). Used to prune duplicate connections created by
+# overlapping reconcile executions racing the same source's bootstrap.
+# ---------------------------------------------------------------------------
+ab_delete_connection() {
+  local connection_id="$1"
+  local body
+  body=$(printf '{"connectionId":"%s"}' "${connection_id}")
+  ab__curl POST /api/v1/connections/delete "${body}"
+}
+
+# ---------------------------------------------------------------------------
 # ab_list_connections <workspace_id>
 # Returns JSON array of connections in workspace.
 # ---------------------------------------------------------------------------
