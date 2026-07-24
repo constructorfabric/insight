@@ -1,11 +1,17 @@
 name: m365
-# 1.0.0 (semver migration): adopt strict MAJOR.MINOR.PATCH (ADR-0015). The prior
-# value "2026.05.04" is not semver, so reconcile classifies current→1.0.0 as a
-# `migration` (republish + catalog re-discover, NO full-refresh). This only
-# establishes the semver baseline. A follow-up MAJOR bump (1.0.0 → 2.0.0) will
-# dispatch the one-shot `dbt --full-refresh` over `dbt_select` (tag:m365+) that
-# purges collab rows materialized before the #736 unlicensed-user filter landed.
-version: "1.0.0"
+# 1.0.0 (semver migration): adopted strict MAJOR.MINOR.PATCH (ADR-0015) from the
+# legacy "2026.05.04". Classified as `migration` (republish + re-discover, NO
+# full-refresh) — established the semver baseline only.
+# 2.0.0 (major): breaking bronze->silver semantics — the #736 unlicensed-user
+# filter changes which rows the collab feeders emit. Per ADR-0015 a MAJOR bump
+# makes reconcile dispatch a one-shot `dbt --full-refresh` over `dbt_select`
+# (tag:m365+), which re-materializes the m365 staging + downstream silver from
+# append-only bronze and thereby purges the unlicensed rows that were already
+# materialized before the filter landed (incremental models don't retro-delete).
+# PREREQUISITE: 1.0.0 must already be the reconciled/live version, otherwise the
+# current side is still non-semver and this bump degrades to `migration` (no
+# full-refresh). Deploy this only after the 1.0.0 release has reconciled.
+version: "2.0.0"
 schedule: 0 2 * * *
 dbt_select: tag:m365+
 workflow: sync
