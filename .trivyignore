@@ -1,0 +1,28 @@
+# .trivyignore — Trivy misconfiguration waivers.
+#
+# POLICY: every entry below MUST be a documented, tracked waiver. No undocumented
+# suppressions. Each waiver is tracked in constructorfabric/insight#1340 and MUST
+# be removed as its underlying issue is fixed. See issue #1796 for context.
+
+# AVD-DS-0002 — image runs as root (build/test/tooling images that set no USER):
+#   deploy/seed/Dockerfile
+#   src/ingestion/tools/toolbox/Dockerfile
+#   src/ingestion/tools/declarative-connector/Dockerfile
+#   src/ingestion/tests/e2e/compose/Dockerfile.runner
+#   Tracked: #1340. Remove once these images drop to a non-root USER.
+AVD-DS-0002
+
+# AVD-DS-0029 — apt-get install without --no-install-recommends
+#   (src/ingestion/tools/toolbox/Dockerfile: the `apt-get install -y nodejs` line).
+#   Tracked: #1340. Remove once that line adds --no-install-recommends.
+AVD-DS-0029
+
+# AVD-KSV-0118 — Deployment missing securityContext
+#   (src/frontend/helm/templates/deployment.yaml). Tracked: #1340.
+#   Remove once a securityContext is set on the pod/containers.
+AVD-KSV-0118
+
+# AVD-KSV-0014 — root filesystem not read-only
+#   (src/frontend/helm/templates/deployment.yaml). Tracked: #1340.
+#   Remove once readOnlyRootFilesystem: true is set.
+AVD-KSV-0014

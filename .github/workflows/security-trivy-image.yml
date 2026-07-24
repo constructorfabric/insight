@@ -1,0 +1,95 @@
+# Security — Trivy image scanning (umbrella #1478; sibling to #1796's config+fs gate).
+#
+# Scans the BUILT container images this repo publishes for OS-package + installed-
+# library vulnerabilities (Trivy `image`) — the coverage that config (Dockerfile
+# text) and fs (source lockfiles) scans cannot see.
+#
+# STATUS: REPORT-ONLY (exit-code "0") — findings surface in the job summary but
+# never fail the build. This is the first stage of its own ratchet; flip to
+# exit-code "1" + a required check once an image baseline is triaged and agreed.
+#
+# Runs on the nightly schedule + manual dispatch ONLY: images are published to
+# GHCR on `main` by build-images.yml, so there is nothing new to scan per-PR.
+# Images are enumerated (5 backend/toolbox services + descriptor-discovered
+# connectors, ADR-0016) and pulled from ghcr.io/constructorfabric/<name>:latest.
+# (Frontend builds in a separate repo and is out of scope here.) Honors
+# .trivyignore when present.
+name: Security — Trivy image
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # nightly, 04:00 UTC (offset from the config/fs gate at 03:00)
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Enumerate the container images this repo builds: the 5 static backend/toolbox
+  # services plus every descriptor-discovered connector image (ADR-0016), reusing
+  # the repo's own discovery script so the list never drifts from build-images.yml.
+  discover-images:
+    name: Discover built image names
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.list.outputs.images }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+      - name: Enumerate images (static services + discovered connectors)
+        id: list
+        run: |
+          set -euo pipefail
+          STATIC='["insight-api-gateway","insight-analytics","insight-authenticator","insight-identity","insight-toolbox"]'
+          CONNECTORS="$(python3 .github/workflows/scripts/discover-image-matrix.py \
+            --connectors-root src/ingestion/connectors --all \
+            | jq -c '[.[].name] | unique')"
+          IMAGES="$(jq -cn --argjson a "$STATIC" --argjson b "$CONNECTORS" '($a + $b) | unique')"
+          echo "images=$IMAGES" >> "$GITHUB_OUTPUT"
+          echo "Images to scan:"; echo "$IMAGES" | jq -r '.[]'
+
+  # One matrix leg per image so a single noisy image doesn't hide the rest.
+  # GITHUB_TOKEN + packages:read pulls the org's private GHCR images.
+  trivy-image:
+    name: Trivy image (${{ matrix.image }})
+    needs: discover-images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJson(needs.discover-images.outputs.images) }}
+    steps:
+      - uses: actions/checkout@v5 # provides .trivyignore when present
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trivy image scan (report-only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/constructorfabric/${{ matrix.image }}:latest
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0" # report-only; flip to "1" once the image baseline is agreed
+          format: table
+          output: trivy-image.txt
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Trivy image — ${{ matrix.image }}:latest (report-only)"
+            echo '```'
+            cat trivy-image.txt 2>/dev/null || echo "(no output produced)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

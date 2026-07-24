@@ -1,0 +1,83 @@
+# Security — Trivy (issue #1796, part of security-scanner umbrella #1478).
+#
+# Two scans over the whole repo at CRITICAL,HIGH severity:
+#   - trivy-config: IaC + Dockerfile misconfiguration (Trivy `config`).
+#   - trivy-fs:     filesystem vulnerabilities (Trivy `fs`, unfixed suppressed).
+#
+# STATUS: REPORT-ONLY (both jobs, exit-code "0") — findings are surfaced in the
+# job summary but never fail the build. This is the first stage of the #1796
+# ratchet: report-only first, then flip to blocking once the team agrees on the
+# baseline. A local baseline triage (#1796) found all config misconfigs covered
+# by .trivyignore waivers and the fs scan clean, so the follow-up flip to
+# exit-code "1" on CRITICAL,HIGH is expected to be zero-disruption. When flipping,
+# also add "Trivy config (IaC + Dockerfile misconfig)" and "Trivy fs (filesystem
+# vulnerabilities)" as REQUIRED status checks on main (branch protection).
+# Waivers live in .trivyignore (tracked in #1340).
+name: Security — Trivy
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * *" # nightly, 03:00 UTC
+  workflow_dispatch:
+
+# A new push obsoletes any run still in flight for the same ref — cancel it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only: report-only scanning needs no write scopes. Add security-events:
+# write only if a SARIF upload to code-scanning is introduced later.
+permissions:
+  contents: read
+
+jobs:
+  trivy-config:
+    name: Trivy config (IaC + Dockerfile misconfig)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Trivy config scan (report-only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          exit-code: "0" # report-only; flip to "1" once the baseline is agreed (#1796)
+          format: table
+          output: trivy-config.txt
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Trivy config findings (report-only)"
+            echo '```'
+            cat trivy-config.txt 2>/dev/null || echo "(no output produced)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  trivy-fs:
+    name: Trivy fs (filesystem vulnerabilities)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Trivy fs scan (report-only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0" # report-only; flip to "1" once the baseline is agreed (#1796)
+          format: table
+          output: trivy-fs.txt
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Trivy fs findings (report-only)"
+            echo '```'
+            cat trivy-fs.txt 2>/dev/null || echo "(no output produced)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
