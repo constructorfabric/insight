@@ -325,6 +325,9 @@ services:
       # Resolves the testclient public_key_paths against the mounted dev keys
       # (dev-compose.sh generates testclient.pub.pem there; nothing committed).
       APP__gears__authenticator__config__service_tokens__public_key_dir: "/app/keys"
+      # Audit events to the platform topic (step 10.8). Delivery failures are
+      # dropped + counted, so a stack without Redpanda still works.
+      APP__gears__authenticator__config__audit__brokers: "${AUDIT_BROKERS:-redpanda:9092}"
     volumes:
       - type: bind
         source: ./deploy/compose/build/authenticator/authenticator
@@ -333,6 +336,12 @@ services:
         bind:
           create_host_path: false
       - ./src/backend/services/authenticator/config:/app/config:ro
+      # Full-auth plugin config (issuer + CA) — bind-mounted over the committed
+      # placeholder config so the `.authenticated()` admin surface verifies real
+      # gateway JWTs in dev (the authenticator trusts its own tokens).
+      - ./deploy/compose/authenticator-fullauth.yaml:/app/config/insight.yaml:ro
+      # Self-signed CA for the authn-tls discovery front.
+      - ./deploy/compose/authn-tls-certs:/certs:ro
       # dev signing key (current.pem) + dev service-token pubkey, both generated
       # by dev-compose.sh into this gitignored dir and mounted at signing_keys_path.
       - ./deploy/compose/authenticator-dev-keys:/app/keys:ro

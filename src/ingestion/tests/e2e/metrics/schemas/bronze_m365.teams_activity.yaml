@@ -8,31 +8,32 @@ schemas:
     type: object
     additionalProperties: false
     properties:
-      _airbyte_raw_id: { type: string }
-      _airbyte_extracted_at: { type: string, format: date-time }
-      _airbyte_meta: { type: string }
-      _airbyte_generation_id: { type: integer }
-      tenant_id: { type: [string, "null"] }
-      source_id: { type: [string, "null"] }
-      unique_key: { type: [string, "null"] }
-      userPrincipalName: { type: [string, "null"] }
-      reportRefreshDate: { type: [string, "null"] }
-      reportPeriod: { type: [string, "null"] }
-      lastActivityDate: { type: [string, "null"] }
-      teamChatMessageCount: { type: [number, "null"] }
-      privateChatMessageCount: { type: [number, "null"] }
-      postMessages: { type: [number, "null"] }
-      replyMessages: { type: [number, "null"] }
-      urgentMessages: { type: [number, "null"] }
-      callCount: { type: [number, "null"] }
-      meetingsAttendedCount: { type: [number, "null"] }
-      meetingsOrganizedCount: { type: [number, "null"] }
-      adHocMeetingsAttendedCount: { type: [number, "null"] }
-      adHocMeetingsOrganizedCount: { type: [number, "null"] }
-      scheduledOneTimeMeetingsAttendedCount: { type: [number, "null"] }
-      scheduledOneTimeMeetingsOrganizedCount: { type: [number, "null"] }
-      scheduledRecurringMeetingsAttendedCount: { type: [number, "null"] }
-      scheduledRecurringMeetingsOrganizedCount: { type: [number, "null"] }
-      audioDuration: { type: [string, "null"] }
-      videoDuration: { type: [string, "null"] }
-      screenShareDuration: { type: [string, "null"] }
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      tenant_id: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      unique_key: {type: [string, "null"]}
+      userPrincipalName: {type: [string, "null"]}
+      reportRefreshDate: {type: [string, "null"]}
+      reportPeriod: {type: [string, "null"]}
+      lastActivityDate: {type: [string, "null"]}
+      isLicensed: {type: [boolean, "null"]}
+      teamChatMessageCount: {type: [number, "null"]}
+      privateChatMessageCount: {type: [number, "null"]}
+      postMessages: {type: [number, "null"]}
+      replyMessages: {type: [number, "null"]}
+      urgentMessages: {type: [number, "null"]}
+      callCount: {type: [number, "null"]}
+      meetingsAttendedCount: {type: [number, "null"]}
+      meetingsOrganizedCount: {type: [number, "null"]}
+      adHocMeetingsAttendedCount: {type: [number, "null"]}
+      adHocMeetingsOrganizedCount: {type: [number, "null"]}
+      scheduledOneTimeMeetingsAttendedCount: {type: [number, "null"]}
+      scheduledOneTimeMeetingsOrganizedCount: {type: [number, "null"]}
+      scheduledRecurringMeetingsAttendedCount: {type: [number, "null"]}
+      scheduledRecurringMeetingsOrganizedCount: {type: [number, "null"]}
+      audioDuration: {type: [string, "null"]}
+      videoDuration: {type: [string, "null"]}
+      screenShareDuration: {type: [string, "null"]}

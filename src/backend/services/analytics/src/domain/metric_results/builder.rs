@@ -4,14 +4,15 @@ use toolkit_canonical_errors::CanonicalError;
 
 use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition};
 
+use super::batch::{RankedDimension, RankedGroup};
 use super::compiler::{
-    BreakdownQueryRow, HistogramQueryRow, PeerQueryRow, PeriodQueryRow, TimeseriesQueryRow,
-    UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE, dimension_aliases,
+    BreakdownQueryRow, HistogramQueryRow, PeerQueryRow, PeriodQueryRow, RankingQueryRow,
+    TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE, dimension_aliases,
 };
 use super::dto::{
     BreakdownValueDto, ComputationDto, HistogramBinDto, HistogramValueDto, MetricDimensionDto,
-    MetricResultDto, MetricResultViewDto, MetricResultsResponse, PeerValueDto, PeriodValueDto,
-    TimeseriesDto, TimeseriesPointDto,
+    MetricResultDto, MetricResultViewDto, PeerValueDto, PeriodValueDto, TimeseriesDto,
+    TimeseriesPointDto,
 };
 use super::validation::{
     HISTOGRAM_BINS, ValidatedMetricResultsRequest, enumerate_buckets, metric_result_too_large,
@@ -20,8 +21,28 @@ use super::validation::{
 use super::view::Bucket;
 
 type DimensionKey = Vec<(String, String, Option<String>)>;
-type SeriesKey = (String, DimensionKey);
+type SeriesKey = (String, bool, DimensionKey);
 type PointsByBucket = HashMap<String, Option<f64>>;
+
+struct SeriesData {
+    points: PointsByBucket,
+    total: Option<f64>,
+    rank: Option<u32>,
+    remainder: bool,
+    label: Option<String>,
+}
+
+impl SeriesData {
+    fn new(rank: Option<u32>, remainder: bool, label: Option<String>) -> Self {
+        Self {
+            points: HashMap::new(),
+            total: None,
+            rank,
+            remainder,
+            label,
+        }
+    }
+}
 
 pub fn build_period_view(
     _def: &MetricDefinition,
@@ -51,32 +72,41 @@ pub fn build_timeseries_view(
     rows: Vec<TimeseriesQueryRow>,
 ) -> Result<MetricResultViewDto, CanonicalError> {
     let buckets = enumerate_buckets(req.from, req.to, bucket);
-    let mut by_series: BTreeMap<SeriesKey, PointsByBucket> = BTreeMap::new();
+    let mut by_series: BTreeMap<SeriesKey, SeriesData> = BTreeMap::new();
 
     if dimensions.is_empty() {
         for entity_id in &req.entity_ids {
             by_series
-                .entry((entity_id.clone(), Vec::new()))
-                .or_default();
+                .entry((entity_id.clone(), false, Vec::new()))
+                .or_insert_with(|| SeriesData::new(None, false, None));
         }
     }
 
     for row in rows {
-        let dims = row_dimensions(&row.extra, dimensions)?;
-        by_series
-            .entry((row.entity_id, dims.clone()))
-            .or_default()
-            .insert(row.bucket_start, row.value);
+        let remainder = row.remainder != 0;
+        let dims = if remainder {
+            Vec::new()
+        } else {
+            row_dimensions(&row.extra, dimensions)?
+        };
+        let data = by_series
+            .entry((row.entity_id, remainder, dims))
+            .or_insert_with(|| SeriesData::new(row.rank, remainder, row.group_label.clone()));
+        if row.is_total != 0 {
+            data.total = row.value;
+        } else {
+            data.points.insert(row.bucket_start, row.value);
+        }
     }
 
-    let series = by_series
+    let mut series = by_series
         .into_iter()
-        .map(|((entity_id, dims), points_by_bucket)| {
+        .map(|((entity_id, _, dims), data)| {
             let points = buckets
                 .iter()
                 .map(|bucket| TimeseriesPointDto {
                     bucket_start: bucket.clone(),
-                    value: points_by_bucket.get(bucket).copied().flatten(),
+                    value: data.points.get(bucket).copied().flatten(),
                 })
                 .collect();
             TimeseriesDto {
@@ -85,12 +115,46 @@ pub fn build_timeseries_view(
                     .into_iter()
                     .map(|(key, value, label)| MetricDimensionDto { key, value, label })
                     .collect(),
+                total: data.total,
+                rank: data.rank,
+                remainder: data.remainder.then_some(true),
+                label: data.label,
                 points,
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    series.sort_by(|left, right| {
+        left.entity_id
+            .cmp(&right.entity_id)
+            .then_with(|| left.remainder.cmp(&right.remainder))
+            .then_with(|| left.rank.cmp(&right.rank))
+            .then_with(|| {
+                left.dimensions
+                    .iter()
+                    .map(|dimension| &dimension.value)
+                    .cmp(right.dimensions.iter().map(|dimension| &dimension.value))
+            })
+    });
 
     Ok(MetricResultViewDto::Timeseries { bucket, series })
+}
+
+pub fn build_ranked_groups(
+    dimensions: &[String],
+    rows: Vec<RankingQueryRow>,
+) -> Result<Vec<RankedGroup>, CanonicalError> {
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let rank = u32::try_from(index + 1)
+                .map_err(|_| CanonicalError::internal("ranking result overflow").create())?;
+            let dimensions = row_dimensions(&row.extra, dimensions)?
+                .into_iter()
+                .map(|(_, value, label)| RankedDimension { value, label })
+                .collect();
+            Ok(RankedGroup { rank, dimensions })
+        })
+        .collect()
 }
 
 pub fn build_peer_view(rows: Vec<PeerQueryRow>) -> MetricResultViewDto {
@@ -222,30 +286,28 @@ pub fn build_metric_result(
     }
 }
 
-pub fn enforce_row_limit(response: &MetricResultsResponse) -> Result<(), CanonicalError> {
-    if response_size(response) > row_limit() {
-        return Err(metric_result_too_large());
+pub fn enforce_view_row_limit(
+    view: &MetricResultViewDto,
+    field: impl Into<String>,
+) -> Result<(), CanonicalError> {
+    if view_size(view) > row_limit() {
+        return Err(metric_result_too_large(field));
     }
     Ok(())
 }
 
-fn response_size(response: &MetricResultsResponse) -> usize {
-    response
-        .metrics
-        .iter()
-        .flat_map(|metric| &metric.views)
-        .map(|view| match view {
-            MetricResultViewDto::Period { values } => values.len(),
-            MetricResultViewDto::Timeseries { series, .. } => {
-                series.iter().map(|s| s.points.len()).sum()
-            }
-            MetricResultViewDto::Peer { values } => values.len(),
-            MetricResultViewDto::Breakdown { values, .. } => values.len(),
-            MetricResultViewDto::Histogram { values } => {
-                values.iter().map(|value| value.bins.len()).sum()
-            }
-        })
-        .sum()
+fn view_size(view: &MetricResultViewDto) -> usize {
+    match view {
+        MetricResultViewDto::Period { values } => values.len(),
+        MetricResultViewDto::Timeseries { series, .. } => {
+            series.iter().map(|series| series.points.len() + 1).sum()
+        }
+        MetricResultViewDto::Peer { values } => values.len(),
+        MetricResultViewDto::Breakdown { values, .. } => values.len(),
+        MetricResultViewDto::Histogram { values } => {
+            values.iter().map(|value| value.bins.len()).sum()
+        }
+    }
 }
 
 fn row_dimensions(
@@ -498,6 +560,10 @@ mod tests {
             entity_id: "a@x.io".to_owned(),
             bucket_start: "2026-01-02".to_owned(),
             value: Some(3.0),
+            is_total: 0,
+            rank: None,
+            remainder: 0,
+            group_label: None,
             extra: HashMap::new(),
         }];
         let Ok(MetricResultViewDto::Timeseries { series, .. }) =
@@ -540,6 +606,10 @@ mod tests {
             entity_id: "a@x.io".to_owned(),
             bucket_start: "2026-01-01".to_owned(),
             value: Some(2.0),
+            is_total: 0,
+            rank: None,
+            remainder: 0,
+            group_label: None,
             extra,
         }];
         let dimensions = vec!["tool".to_owned()];
@@ -556,12 +626,109 @@ mod tests {
     }
 
     #[test]
+    fn bounded_timeseries_carries_totals_ranks_and_remainder_metadata() {
+        let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-02");
+        let mut dimensions = HashMap::new();
+        dimensions.insert("dim_0_value".to_owned(), json!("cursor"));
+        dimensions.insert("dim_0_label".to_owned(), json!("Cursor"));
+        let rows = vec![
+            TimeseriesQueryRow {
+                entity_id: "a@x.io".to_owned(),
+                bucket_start: "2026-01-01".to_owned(),
+                value: Some(2.0),
+                is_total: 0,
+                rank: Some(1),
+                remainder: 0,
+                group_label: None,
+                extra: dimensions.clone(),
+            },
+            TimeseriesQueryRow {
+                entity_id: "a@x.io".to_owned(),
+                bucket_start: String::new(),
+                value: Some(3.0),
+                is_total: 1,
+                rank: Some(1),
+                remainder: 0,
+                group_label: None,
+                extra: dimensions,
+            },
+            TimeseriesQueryRow {
+                entity_id: "a@x.io".to_owned(),
+                bucket_start: "2026-01-01".to_owned(),
+                value: Some(4.0),
+                is_total: 0,
+                rank: None,
+                remainder: 1,
+                group_label: Some("Other".to_owned()),
+                extra: HashMap::new(),
+            },
+            TimeseriesQueryRow {
+                entity_id: "a@x.io".to_owned(),
+                bucket_start: String::new(),
+                value: Some(5.0),
+                is_total: 1,
+                rank: None,
+                remainder: 1,
+                group_label: Some("Other".to_owned()),
+                extra: HashMap::new(),
+            },
+        ];
+        let Ok(MetricResultViewDto::Timeseries { series, .. }) =
+            build_timeseries_view(&sum_metric(), &req, Bucket::Day, &["tool".to_owned()], rows)
+        else {
+            panic!("expected timeseries view");
+        };
+        assert_eq!(series.len(), 2);
+        assert_eq!(series[0].rank, Some(1));
+        assert_eq!(series[0].total, Some(3.0));
+        assert_eq!(series[0].remainder, None);
+        assert_eq!(series[1].dimensions.len(), 0);
+        assert_eq!(series[1].total, Some(5.0));
+        assert_eq!(series[1].remainder, Some(true));
+        assert_eq!(series[1].label.as_deref(), Some("Other"));
+    }
+
+    #[test]
+    fn ranking_rows_keep_query_order_and_unknown_dimensions() {
+        let rows = vec![
+            RankingQueryRow {
+                extra: HashMap::from([
+                    ("dim_0_value".to_owned(), json!("cursor")),
+                    ("dim_0_label".to_owned(), json!("Cursor")),
+                    ("value".to_owned(), json!(10)),
+                ]),
+            },
+            RankingQueryRow {
+                extra: HashMap::from([
+                    ("dim_0_value".to_owned(), serde_json::Value::Null),
+                    ("dim_0_label".to_owned(), serde_json::Value::Null),
+                    ("value".to_owned(), json!(0)),
+                ]),
+            },
+        ];
+        let groups = build_ranked_groups(&["tool".to_owned()], rows)
+            .unwrap_or_else(|error| panic!("expected ranking groups: {error}"));
+        assert_eq!(groups[0].rank, 1);
+        assert_eq!(groups[0].dimensions[0].value, "cursor");
+        assert_eq!(groups[1].rank, 2);
+        assert_eq!(groups[1].dimensions[0].value, UNKNOWN_DIMENSION_VALUE);
+        assert_eq!(
+            groups[1].dimensions[0].label.as_deref(),
+            Some(UNKNOWN_DIMENSION_LABEL)
+        );
+    }
+
+    #[test]
     fn missing_dimension_alias_is_internal_error() {
         let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-02");
         let rows = vec![TimeseriesQueryRow {
             entity_id: "a@x.io".to_owned(),
             bucket_start: "2026-01-01".to_owned(),
             value: Some(2.0),
+            is_total: 0,
+            rank: None,
+            remainder: 0,
+            group_label: None,
             extra: HashMap::new(),
         }];
         let dimensions = vec!["tool".to_owned()];
@@ -631,26 +798,32 @@ mod tests {
     }
 
     #[test]
-    fn response_size_counts_histogram_bins() {
+    fn view_size_counts_histogram_bins() {
         let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-31");
         let view = build_histogram_view(&req, vec![histogram_row("a@x.io", 2, 0.0, 10.0, 1)]);
-        let response = MetricResultsResponse {
-            metrics: vec![build_metric_result(&median_metric(), vec![view])],
-        };
-        assert_eq!(response_size(&response), 10);
+        assert_eq!(view_size(&view), 10);
     }
 
     #[test]
-    fn response_size_counts_densified_points() {
+    fn view_size_counts_densified_points() {
         let req = request(vec!["a@x.io"], "2026-01-01", "2026-01-10");
         let Ok(view) = build_timeseries_view(&sum_metric(), &req, Bucket::Day, &[], Vec::new())
         else {
             panic!("expected timeseries view");
         };
-        let response = MetricResultsResponse {
-            metrics: vec![build_metric_result(&sum_metric(), vec![view])],
-        };
-        assert_eq!(response_size(&response), 10);
+        assert_eq!(view_size(&view), 11);
+    }
+
+    #[test]
+    fn view_limit_rejects_cardinality_dependent_results() {
+        let values = (0..=row_limit())
+            .map(|index| PeriodValueDto {
+                entity_id: format!("p{index}@x.io"),
+                value: Some(1.0),
+            })
+            .collect();
+        let view = MetricResultViewDto::Period { values };
+        assert!(enforce_view_row_limit(&view, "metrics[0].views[0]").is_err());
     }
 
     #[test]

@@ -20,9 +20,13 @@
 
 pub mod entities;
 pub mod ops_repo;
+pub mod person_roles_repo;
 pub mod persons_repo;
 pub mod roles_repo;
 pub mod seed_repo;
+pub mod sql_named;
+pub mod subchart_repo;
+pub mod visibility_repo;
 
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 

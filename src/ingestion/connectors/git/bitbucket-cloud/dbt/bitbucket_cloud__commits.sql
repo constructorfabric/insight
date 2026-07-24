@@ -30,7 +30,7 @@ latest_file_change_generation AS (
         repository_uuid,
         sha,
         argMax(generation_id, completed_at) AS generation_id,
-        max(completed_at) AS completed_at
+        max(completed_at) AS latest_completed_at
     FROM file_change_generations
     GROUP BY tenant_id, source_id, repository_uuid, sha
 ),
@@ -43,7 +43,7 @@ file_changes AS (
         count() AS files_changed,
         if(countIf(change.additions IS NULL OR change.deletions IS NULL) > 0, NULL, sum(change.additions)) AS lines_added,
         if(countIf(change.additions IS NULL OR change.deletions IS NULL) > 0, NULL, sum(change.deletions)) AS lines_removed,
-        max(latest.completed_at) AS completed_at
+        max(latest.latest_completed_at) AS completed_at
     FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }} AS change FINAL
     INNER JOIN latest_file_change_generation AS latest
         USING (tenant_id, source_id, repository_uuid, sha, generation_id)
@@ -59,7 +59,7 @@ empty_file_changes AS (
         0 AS files_changed,
         CAST(0, 'Nullable(Int64)') AS lines_added,
         CAST(0, 'Nullable(Int64)') AS lines_removed,
-        latest.completed_at
+        latest.latest_completed_at AS completed_at
     FROM latest_file_change_generation AS latest
     LEFT ANTI JOIN file_changes AS change
         USING (tenant_id, source_id, repository_uuid, sha)

@@ -11,8 +11,6 @@
 //! express, so the whole repo stays on raw SQL for consistency. Values are
 //! bound params; see `infra::db` module docs + constructorfabric/gears-rust#4239.
 
-#![allow(dead_code)]
-
 use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;

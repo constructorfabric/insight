@@ -398,6 +398,21 @@ async fn token_handler(
         tenant_id = %claims.tenant_id,
         "service token issued"
     );
+    state.audit.emit(crate::audit::AuditEvent {
+        action: "service_token_issued",
+        outcome: "success",
+        tenant_id: claims.tenant_id.clone(),
+        actor_person_id: String::new(),
+        actor_ip: String::new(),
+        actor_user_agent: String::new(),
+        correlation_id: String::new(),
+        resource_type: "service_token",
+        resource_id: verified.service.clone(),
+        details: serde_json::json!({
+            "roles": claims.roles,
+            "jti": verified.jti,
+        }),
+    });
 
     Json(TokenResponse {
         access_token: jwt,

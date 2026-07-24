@@ -3,10 +3,6 @@
 //! only looks up). Pure logic, no DB / IO, mirroring the .NET
 //! `EmailProfileResolver` + `PersonAssignmentResolver`.
 
-// Built incrementally: the infra/API slices that consume these types land in
-// later commits, so allow dead_code until they're wired in.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use sea_orm::prelude::DateTime;

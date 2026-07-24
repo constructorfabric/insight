@@ -6350,7 +6350,7 @@ streams:
             type: string
           jira_id:
             type:
-              - number
+              - string
               - "null"
           id_readable:
             type:

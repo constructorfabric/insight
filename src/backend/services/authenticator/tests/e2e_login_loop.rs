@@ -76,7 +76,9 @@ struct Jwk {
 struct Claims {
     sub: String,
     tenant_id: String,
-    roles: Vec<String>,
+    /// Space-delimited on the wire (OAuth `scope` shape — the downstream
+    /// verifier's `token_scopes` mapping splits on whitespace).
+    roles: String,
     sid: String,
     aud: String,
 }
@@ -174,7 +176,7 @@ async fn full_login_exchange_logout_loop() {
     assert!(!claims.sub.is_empty(), "JWT sub (person_id) must be set");
     assert_eq!(claims.aud, "internal-services");
     assert!(
-        claims.roles.contains(&"user".to_owned()),
+        claims.roles.split_whitespace().any(|r| r == "user"),
         "default role present"
     );
     assert!(!claims.sid.is_empty(), "stable sid present");
@@ -192,10 +194,13 @@ async fn full_login_exchange_logout_loop() {
     assert!(me_body.get("user").is_some());
     assert!(me_body.get("refresh_at").is_some());
 
-    // 7. /auth/logout revokes the session and clears the cookie.
+    // 7. /auth/logout revokes the session and clears the cookie. State-changing
+    //    /auth/* requires the CSRF token (step 10.5) — /auth/me echoed it.
+    let csrf = me_body["csrf_token"].as_str().unwrap().to_owned();
     let logout = http
         .post(format!("{auth_base}/auth/logout"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
+        .header("X-CSRF-Token", &csrf)
         .send()
         .await
         .unwrap();
