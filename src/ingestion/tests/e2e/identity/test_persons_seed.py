@@ -16,9 +16,9 @@ same code + CH 24.8.4.13 work on the dev cluster and native Linux). On a Mac,
 deselect the end-to-end case:
     ./e2e.sh test identity/ --deselect \
         identity/test_persons_seed.py::test_persons_seed_end_to_end
-CI (native Linux Docker) runs it unconditionally. NB: a deselected run leaves
-`./e2e.sh gates identity` legitimately RED (GET /v1/persons-seed/{id} missing
-+ the 202 REQUIRED_EXTRA unproven) — the gate is only meaningful on a full run.
+CI (native Linux Docker) runs it unconditionally. (The other tests in this
+module create their own operations, so the coverage gate stays green even on
+a deselected run — only the completed-seed data verification is lost.)
 """
 
 from __future__ import annotations
@@ -176,27 +176,37 @@ def test_persons_seed_list_limit(seed_operation, seed_api) -> None:
 
 
 def test_persons_seed_list_status_filter(seed_operation, seed_api) -> None:
-    """The status filter both includes the created operation under its CURRENT
-    status and excludes it under a different one — proving the filter filters
-    without requiring a terminal state (the worker may still be running)."""
-    r = seed_api.get(f"/v1/persons-seed/{seed_operation}")
-    assert r.status_code == 200, f"status={r.status_code} body={r.text}"
-    current = r.json()["status"]
+    """The status filter includes the created operation under its current
+    status and excludes it under a status it can no longer hold.
 
-    included = items_of(seed_api.get(f"/v1/persons-seed?status={current}").json())
-    ids = {op["operation_id"] for op in included}
-    # The operation may transition between the two GETs (queued → running →
-    # completed); re-read once before judging an absence.
-    if seed_operation not in ids:
-        current = seed_api.get(f"/v1/persons-seed/{seed_operation}").json()["status"]
+    The lifecycle is one-way (queued → running → completed|failed), so the
+    inclusion check retries until a status read and the filtered list agree
+    (the operation may transition between the two GETs — on a fast CI worker
+    it can cross two states in milliseconds), and the exclusion check uses
+    `queued`, which the operation can never re-enter once it was observed
+    past it. No terminal state is required — the worker may legitimately
+    still be running (or, on macOS Docker Desktop, stuck — see the module
+    docstring)."""
+    deadline = time.monotonic() + 30.0
+    while True:
+        r = seed_api.get(f"/v1/persons-seed/{seed_operation}")
+        assert r.status_code == 200, f"status={r.status_code} body={r.text}"
+        current = r.json()["status"]
         included = items_of(seed_api.get(f"/v1/persons-seed?status={current}").json())
-        ids = {op["operation_id"] for op in included}
-    assert seed_operation in ids, (current, included)
+        if seed_operation in {op["operation_id"] for op in included}:
+            break
+        assert time.monotonic() < deadline, (
+            f"status read and ?status= filter never agreed within 30s "
+            f"(last read: {current}; filtered: {included})"
+        )
+        time.sleep(0.2)
     assert all(op["status"] == current for op in included), included
 
-    other = "failed" if current != "failed" else "completed"
-    excluded = items_of(seed_api.get(f"/v1/persons-seed?status={other}").json())
-    assert seed_operation not in {op["operation_id"] for op in excluded}, excluded
+    if current != "queued":
+        # One-way lifecycle: once past `queued` it can never be queued again,
+        # so this exclusion cannot race with a transition.
+        excluded = items_of(seed_api.get("/v1/persons-seed?status=queued").json())
+        assert seed_operation not in {op["operation_id"] for op in excluded}, excluded
 
 
 def test_persons_seed_403_non_admin(bob_api) -> None:

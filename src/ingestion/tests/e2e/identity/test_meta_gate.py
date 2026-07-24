@@ -180,3 +180,37 @@ def test_external_url_mode_is_refused(monkeypatch) -> None:
 def test_deprecated_lookup_is_a_dotnet_capability() -> None:
     assert identity_lib.supports_deprecated_person_lookup("dotnet")
     assert not identity_lib.supports_deprecated_person_lookup("rust")
+
+
+def test_rust_gate_suite_skips_legacy_endpoint_dotnet_requires_it() -> None:
+    """Implementation-aware gate universes: an unexercised legacy endpoint is
+    a legitimate SKIP on identity-rust but a blocking MISSING on identity —
+    so the removal never hides a .NET regression, and the Rust run doesn't
+    fail on an approved removal (nor count a fallback 404 as coverage)."""
+    saved = (
+        api_coverage.SKIP_LIST,
+        api_coverage.BLOCKED,
+        api_coverage.UNIVERSAL_BOILERPLATE,
+        api_coverage.REQUIRED_EXTRA,
+    )
+    spec = _spec({"/v1/persons/{email}": {"get": [200, 404]}})
+    ledger = _ledger({})  # legacy endpoint never touched
+    try:
+        api_coverage.select_suite("identity-rust")
+        api_coverage.REQUIRED_EXTRA = {}
+        report = api_coverage.build_report(spec, ledger)
+        assert report.passed, api_coverage.gate_violations(report)
+        assert "GET /v1/persons/{email}" in report.skipped
+
+        api_coverage.select_suite("identity")
+        api_coverage.REQUIRED_EXTRA = {}
+        report = api_coverage.build_report(spec, ledger)
+        assert not report.passed
+        assert any("MISSING" in v for v in api_coverage.gate_violations(report))
+    finally:
+        (
+            api_coverage.SKIP_LIST,
+            api_coverage.BLOCKED,
+            api_coverage.UNIVERSAL_BOILERPLATE,
+            api_coverage.REQUIRED_EXTRA,
+        ) = saved

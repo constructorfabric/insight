@@ -344,6 +344,11 @@ class IdentityProcess:
         env = self._rust_env()
         # The Rust service does NOT migrate at server start — run its migrate
         # subcommand first (schema + first-admin bootstrap), synchronously.
+        # NB: this CLI (`-c <cfg> migrate`; bare = server) exists on the
+        # cutover branch (feat/identity-resolution-cutover-prep, commit
+        # b9984cd5) — the main-branch binary has no subcommands yet, so rust
+        # mode becomes runnable once that branch lands (together with the
+        # runner-image bake of the binary).
         migrate = subprocess.run(  # noqa: S603 — harness-controlled argv
             [*cmd, "-c", str(config_path), "migrate"],
             env=env,

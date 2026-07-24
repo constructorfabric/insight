@@ -91,6 +91,11 @@ services:
       # Root creds: the identity suite provisions the service's own database
       # (CREATE DATABASE + GRANT — lib/identity.py) before spawning it.
       E2E_MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      # Which identity implementation the contract suite spawns (see
+      # lib/identity.py). Forwarded from the caller's shell so
+      # `E2E_IDENTITY_IMPLEMENTATION=rust ./e2e.sh test identity/` reaches
+      # the harness inside the container.
+      E2E_IDENTITY_IMPLEMENTATION: ${E2E_IDENTITY_IMPLEMENTATION:-dotnet}
       E2E_MARIADB_DATABASE: ${MARIADB_DATABASE:-analytics}
       RUST_BACKTRACE: "1"
     volumes:

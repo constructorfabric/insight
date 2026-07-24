@@ -110,6 +110,15 @@ IDENTITY_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
     "DELETE /v1/visibility/{id}": frozenset({204}),
 }
 
+# The Rust implementation dropped the deprecated persons lookup (approved
+# removal, zero callers), but the gate universe is still the committed .NET
+# spec until the Rust service publishes its own. The SKIP entry lets the
+# operation be legitimately unexercised on a Rust run — while the dotnet
+# suite (no such skip) still REQUIRES it, so a .NET regression can't hide.
+IDENTITY_RUST_SKIP_LIST: list[tuple[str, str]] = [
+    ("GET /v1/persons/{email}", "dropped in the Rust successor (approved removal; tests skip via capabilities)"),
+]
+
 # Codes the suite must observe DESPITE the spec not declaring them (a known
 # spec-fidelity gap, per suite). Unlike ordinary uncovered codes (advisory),
 # a missing REQUIRED_EXTRA code BLOCKS — it exists precisely because the
@@ -117,18 +126,20 @@ IDENTITY_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
 REQUIRED_EXTRA: dict[str, frozenset[int]] = {}
 
 _SUITES = {
-    # (skip_list, blocked, universal_boilerplate) per service-under-test; the
-    # gate is spec-scoped, so its suppression lists must be too.
+    # (skip_list, blocked, universal_boilerplate, required_extra) per
+    # service-under-test AND per implementation where the surface differs;
+    # the gate is spec-scoped, so its suppression lists must be too.
     "analytics": None,  # the module-level defaults above
-    "identity": None,  # rebound in select_suite
+    "identity": None,  # rebound in select_suite (the .NET implementation)
+    "identity-rust": None,  # same, plus the approved legacy-endpoint removal
 }
 
 
 def select_suite(name: str) -> None:
     """Rebind the suppression lists to the named suite's (CLI --suite)."""
     global SKIP_LIST, BLOCKED, UNIVERSAL_BOILERPLATE, REQUIRED_EXTRA  # noqa: PLW0603 — CLI-scoped rebinding
-    if name == "identity":
-        SKIP_LIST = IDENTITY_SKIP_LIST
+    if name in ("identity", "identity-rust"):
+        SKIP_LIST = IDENTITY_RUST_SKIP_LIST if name == "identity-rust" else IDENTITY_SKIP_LIST
         BLOCKED = IDENTITY_BLOCKED
         UNIVERSAL_BOILERPLATE = IDENTITY_UNIVERSAL_BOILERPLATE
         REQUIRED_EXTRA = IDENTITY_REQUIRED_EXTRA

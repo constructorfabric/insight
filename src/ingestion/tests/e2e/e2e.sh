@@ -131,7 +131,14 @@ case "$cmd" in
         fi
         if [ "$which" = all ] || [ "$which" = identity ]; then
             echo "── identity endpoint coverage (gate) ──"
-            "${run[@]}" python3 lib/api_coverage.py --suite identity --observed .artifacts/observed_identity_endpoints.json --spec "$identity_spec" || rc=1
+            # The suppression lists are implementation-aware: a Rust run may
+            # legitimately skip the dropped legacy endpoint, a dotnet run must
+            # not. Match the gate to whichever implementation the suite ran.
+            identity_suite=identity
+            if [ "${E2E_IDENTITY_IMPLEMENTATION:-dotnet}" = "rust" ]; then
+                identity_suite=identity-rust
+            fi
+            "${run[@]}" python3 lib/api_coverage.py --suite "$identity_suite" --observed .artifacts/observed_identity_endpoints.json --spec "$identity_spec" || rc=1
         fi
         exit "$rc"
         ;;
