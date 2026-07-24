@@ -121,11 +121,7 @@ impl IdentityInputsReader for ClickHouseIdentityInputsReader {
         // tenant filter — kept so the `IdentityInputsReader` trait (and the
         // .NET reader tracking it) stays stable for when the filter comes back.
         let _ = tenant_id;
-        let rows: Vec<InputRow> = self
-            .client
-            .query(STREAM_SQL)
-            .fetch_all()
-            .await?;
+        let rows: Vec<InputRow> = self.client.query(STREAM_SQL).fetch_all().await?;
         rows.into_iter().map(map_row).collect()
     }
 }
