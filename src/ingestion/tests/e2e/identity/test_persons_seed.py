@@ -102,6 +102,15 @@ def seed_api(identity_svc):
         yield c
 
 
+@pytest.fixture
+def seed_operation(identity_inputs, seed_api) -> str:
+    """A freshly created seed operation's id — each dependent test owns its
+    own operation instead of leaning on another test having run first."""
+    r = seed_api.post("/v1/persons-seed", json={"mode": "link-by-email"})
+    assert r.status_code == 202, f"status={r.status_code} body={r.text}"
+    return r.json()["operation_id"]
+
+
 def _wait_completed(client, operation_id: str) -> dict:
     deadline = time.monotonic() + _OPERATION_TIMEOUT_S
     last: dict = {}
@@ -141,12 +150,53 @@ def test_persons_seed_end_to_end(identity_inputs, seed_api, identity_svc) -> Non
     assert solo.json()["person_id"] != person["person_id"]
 
 
-def test_persons_seed_operations_listed(identity_inputs, seed_api) -> None:
+def test_persons_seed_operations_listed(seed_operation, seed_api) -> None:
+    """The list carries the operation THIS test created — order-independent,
+    green on a fresh database, no reliance on the end-to-end test."""
     r = seed_api.get("/v1/persons-seed")
     assert r.status_code == 200, f"status={r.status_code} body={r.text}"
     ops = items_of(r.json())
-    assert ops, "expected at least the operation from the end-to-end test"
-    assert all(op.get("operation_type", "persons-seed") for op in ops)
+    matching = [op for op in ops if op["operation_id"] == seed_operation]
+    assert len(matching) == 1, ops
+    assert matching[0]["operation_type"] == "persons-seed", matching[0]
+    assert matching[0]["insight_tenant_id"] == str(seed.SEED_TENANT), matching[0]
+
+
+def test_persons_seed_list_limit(seed_operation, seed_api) -> None:
+    """With at least two operations present (the fixture's + one more),
+    limit=1 returns exactly one — an empty list would mean the filter is
+    vacuously 'passing'."""
+    second = seed_api.post("/v1/persons-seed", json={"mode": "link-by-email"})
+    assert second.status_code == 202, f"status={second.status_code} body={second.text}"
+    r = seed_api.get("/v1/persons-seed?limit=1")
+    assert r.status_code == 200, f"status={r.status_code} body={r.text}"
+    rows = items_of(r.json())
+    assert len(rows) == 1, rows
+    assert rows[0]["insight_tenant_id"] == str(seed.SEED_TENANT), rows[0]
+
+
+def test_persons_seed_list_status_filter(seed_operation, seed_api) -> None:
+    """The status filter both includes the created operation under its CURRENT
+    status and excludes it under a different one — proving the filter filters
+    without requiring a terminal state (the worker may still be running)."""
+    r = seed_api.get(f"/v1/persons-seed/{seed_operation}")
+    assert r.status_code == 200, f"status={r.status_code} body={r.text}"
+    current = r.json()["status"]
+
+    included = items_of(seed_api.get(f"/v1/persons-seed?status={current}").json())
+    ids = {op["operation_id"] for op in included}
+    # The operation may transition between the two GETs (queued → running →
+    # completed); re-read once before judging an absence.
+    if seed_operation not in ids:
+        current = seed_api.get(f"/v1/persons-seed/{seed_operation}").json()["status"]
+        included = items_of(seed_api.get(f"/v1/persons-seed?status={current}").json())
+        ids = {op["operation_id"] for op in included}
+    assert seed_operation in ids, (current, included)
+    assert all(op["status"] == current for op in included), included
+
+    other = "failed" if current != "failed" else "completed"
+    excluded = items_of(seed_api.get(f"/v1/persons-seed?status={other}").json())
+    assert seed_operation not in {op["operation_id"] for op in excluded}, excluded
 
 
 def test_persons_seed_403_non_admin(bob_api) -> None:

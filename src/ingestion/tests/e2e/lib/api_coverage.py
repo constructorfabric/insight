@@ -8,9 +8,10 @@ event-hook on the single client every suite request flows through; it records
 
 Gate half (`python3 lib/api_coverage.py`, stdlib only; blocking in `./e2e.sh
 gates` and CI): loads that ledger plus the committed OpenAPI spec and reports
-per-operation coverage. The gate FAILS only when a documented operation is
-exercised by no test, or a SKIP_LIST entry rots. Per-status-code coverage is
-REPORTED, not enforced: each declared code is `✓` observed / `✗` unobserved /
+per-operation coverage. The gate FAILS when a documented operation is
+exercised by no test, a SKIP_LIST entry rots, or a REQUIRED_EXTRA code is
+unproven/stale/redundant (see gate_violations). Ordinary per-status-code
+coverage is REPORTED, not enforced: each declared code is `✓` observed / `✗` unobserved /
 `·` excluded (5xx + UNIVERSAL_BOILERPLATE + BLOCKED[op], see below). Excluded-set
 hygiene is a non-blocking advisory. Rationale: docs/domain/bronze-to-api-e2e/specs.
 
@@ -350,10 +351,12 @@ class CoverageReport:
 
     @property
     def passed(self) -> bool:
-        # Gate blocks ONLY on a documented operation that no test exercises (a
-        # new endpoint), plus SKIP_LIST rot. Per-status-code coverage and
-        # excluded-set hygiene are REPORTED (advisories), never enforced.
-        return not (self.missing or self.redundant_skips or self.stale_skips)
+        # Single source of truth: the gate fails iff gate_violations() finds
+        # anything — missing operations, SKIP_LIST rot, and REQUIRED_EXTRA
+        # violations (unproven/stale/redundant). Verdict, markdown, and the
+        # CLI exit code all derive from this one predicate, so the report can
+        # never say PASS while listing a blocking violation.
+        return not gate_violations(self)
 
 
 def build_report(spec: dict, observed: list[dict]) -> CoverageReport:
@@ -367,8 +370,10 @@ def _statuses(codes) -> str:
 
 
 def gate_violations(r: CoverageReport) -> list[str]:
-    """BLOCKING findings — a non-empty list fails the gate (exit 1). Only a
-    documented operation no test exercises (a new endpoint), plus SKIP_LIST rot."""
+    """BLOCKING findings — a non-empty list fails the gate (exit 1): a
+    documented operation no test exercises, SKIP_LIST rot, and REQUIRED_EXTRA
+    violations (an unproven mutation success path, or a stale/redundant
+    entry). `CoverageReport.passed` is defined as `not gate_violations(...)`."""
     out = []
     for op in r.missing:
         out.append(
@@ -433,7 +438,7 @@ def render_markdown(r: CoverageReport) -> str:
         f"· registered-code coverage **{r.coverage_pct}%** "
         f"({r.total_covered}/{r.total_coverable} coverable codes seen).",
         "",
-        "_The gate blocks ONLY on a missing operation (a new endpoint without a "
+        "_The gate blocks on a missing operation, SKIP_LIST rot, or a REQUIRED_EXTRA violation (a new endpoint without a "
         "test). Per-status-code coverage below is REPORTED, not enforced: "
         "`✓` observed · `✗` declared but not yet observed · `·` excluded "
         f"(5xx / {sorted(UNIVERSAL_BOILERPLATE)} boilerplate / BLOCKED) · "

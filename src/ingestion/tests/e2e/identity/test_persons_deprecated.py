@@ -17,17 +17,16 @@ pytestmark = pytest.mark.identity
 
 
 @pytest.fixture(autouse=True)
-def _skip_when_endpoint_dropped(api) -> None:
-    """Capability probe: the successor implementation does not register this
-    route at all (approved removal — zero callers). A 404 for an email that
-    /v1/profiles CAN resolve means the route is gone, not the person."""
-    probe = api.get(f"/v1/persons/{seed.BOB_EMAIL}")
-    if probe.status_code == 404:
-        resolvable = api.post(
-            "/v1/profiles", json={"value_type": "email", "value": seed.BOB_EMAIL}
+def _legacy_dotnet_only(identity_svc) -> None:
+    """Capability of the EXPLICIT implementation selection — never probed
+    from runtime behavior (a probe would turn a real .NET 404 regression into
+    a skip, and would land the fallback 404 in the coverage ledger as fake
+    proof the route exists). Skips BEFORE any HTTP request."""
+    if not identity_svc.supports_deprecated_person_lookup:
+        pytest.skip(
+            "GET /v1/persons/{email} is .NET-only (approved removal in the "
+            "Rust successor; zero callers)"
         )
-        if resolvable.status_code == 200:
-            pytest.skip("GET /v1/persons/{email} dropped in this implementation (approved removal)")
 
 
 def test_deprecated_person_lookup_200(api) -> None:

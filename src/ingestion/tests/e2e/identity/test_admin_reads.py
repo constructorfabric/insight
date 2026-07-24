@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from identity.contract import items_of, problem
+from identity.contract import items_of, list_response, problem
 from lib import identity_seed as seed
 
 pytestmark = pytest.mark.identity
@@ -21,7 +21,9 @@ pytestmark = pytest.mark.identity
 def test_roles_list_200_contains_admin(api) -> None:
     r = api.get("/v1/roles")
     assert r.status_code == 200, f"status={r.status_code} body={r.text}"
-    roles = items_of(r.json())
+    # Strict wire envelope: {"items": [...], "next_cursor": null|str}.
+    roles, cursor = list_response(r.json())
+    assert cursor is None, cursor
     by_id = {row["role_id"]: row for row in roles}
     assert str(seed.ADMIN_ROLE_ID) in by_id, roles
     assert by_id[str(seed.ADMIN_ROLE_ID)]["name"] == "admin"

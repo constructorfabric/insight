@@ -39,9 +39,23 @@ def problem(response: httpx.Response) -> dict[str, Any]:
     return body
 
 
+def list_response(body: Any) -> tuple[list[dict[str, Any]], str | None]:
+    """Assert the EXACT list wire envelope and return (items, next_cursor).
+
+    Every .NET list endpoint (roles, person-roles, visibility, persons-seed)
+    answers `{"items": [...], "next_cursor": null|str}` — verified against the
+    live service. This is the consumer contract: a bare JSON array or a
+    missing `next_cursor` is a wire break, not a tolerable variation, so no
+    normalization happens here.
+    """
+    assert isinstance(body, dict), f"list envelope must be an object, got: {body!r}"
+    assert set(body) >= {"items", "next_cursor"}, f"envelope keys: {sorted(body)}"
+    assert isinstance(body["items"], list), body
+    cursor = body["next_cursor"]
+    assert cursor is None or isinstance(cursor, str), body
+    return body["items"], cursor
+
+
 def items_of(body: Any) -> list[dict[str, Any]]:
-    """Normalize a list response: `{items: [...]}` or a bare JSON array."""
-    if isinstance(body, dict) and "items" in body:
-        return list(body["items"] or [])
-    assert isinstance(body, list), f"expected a list response, got: {body!r}"
-    return body
+    """Items of a strict list envelope (see `list_response`)."""
+    return list_response(body)[0]

@@ -1,24 +1,37 @@
 """identity service lifecycle for the contract suite (issue #1753).
 
 The identity service is the system-under-test here (unlike lib/identity_stub.py,
-which fakes it FOR analytics). The suite is implementation-agnostic: today the
-harness boots the .NET `Insight.Identity.Api` published app (baked into the
-runner image, see compose/Dockerfile.runner); when the Rust `identity-resolution`
-port takes over, only this module's spawn path changes — the tests target
-whatever answers the base URL. `E2E_IDENTITY_URL` short-circuits the spawn
-entirely and points the suite at an already-running deployment.
+which fakes it FOR analytics). The suite is implementation-agnostic; the
+implementation is selected EXPLICITLY via `E2E_IDENTITY_IMPLEMENTATION`
+(default `dotnet`):
+
+  dotnet  — the .NET `Insight.Identity.Api` published app baked into the
+            runner image (compose/Dockerfile.runner). Self-migrates its
+            schema at startup (DbUp).
+  rust    — the `identity-resolution` binary. The harness runs its
+            `migrate` subcommand first (the Rust service does not migrate at
+            server start), then boots the server with an analytics-style
+            gears rig config. Requires the binary baked into the runner image
+            (a build-only compose service + COPY, added together with the
+            Rust service's Dockerfile on the cutover branch).
+
+Both run against the same throwaway `identity_e2e` MariaDB database and the
+same seed — one command per implementation, no test-file changes:
+
+    E2E_IDENTITY_IMPLEMENTATION=dotnet ./e2e.sh test identity/
+    E2E_IDENTITY_IMPLEMENTATION=rust   ./e2e.sh test identity/
+
+Implementation-specific surface (e.g. the deprecated persons lookup the Rust
+port dropped) is gated by the explicit `capabilities` of the selection —
+NEVER probed from the service's runtime behavior, so a product regression
+cannot masquerade as a capability gap.
 
 Auth is the same gateway-JWT rig analytics uses (lib/gateway_jwt.py): the .NET
 service verifies the ES256 JWT against the rig's JWKS — fetched from the rig's
-plain-HTTP twin (the .NET verifier takes an explicit `auth_gateway_jwks_url`
-with RequireHttpsMetadata=false, no CA plumbing needed). Claims contract:
-`sub` = the CALLER's person_id, `tenant_id` = the sole tenant authority,
-`sub_type` user|service, `roles` scopes.
-
-The service self-migrates its `identity` MariaDB database at startup (DbUp),
-so the harness only has to CREATE DATABASE + GRANT (root creds from the compose
-.env) before the spawn; the seed fixture (lib/identity_seed.py) fills it after
-the first /health.
+plain-HTTP twin (explicit `auth_gateway_jwks_url`, RequireHttpsMetadata=false);
+the Rust host's oidc-authn-plugin uses the rig's TLS discovery front + CA.
+Claims contract: `sub` = the CALLER's person_id, `tenant_id` = the sole tenant
+authority, `sub_type` user|service, `roles` scopes.
 """
 
 from __future__ import annotations
@@ -36,16 +49,49 @@ from typing import Any
 import httpx
 import pymysql
 
+import yaml
+
 from lib import api_coverage
 from lib.analytics import ApiSpawnError, find_free_port
 from lib.config import TEST_TENANT_ID, SessionConfig
-from lib.gateway_jwt import GatewayAuth
+from lib.gateway_jwt import AUDIENCE, GatewayAuth
 
 LOG = logging.getLogger("e2e.identity")
 
 # The identity service owns its own MariaDB database — separate from the
 # analytics one the compose stack pre-creates.
 IDENTITY_DATABASE = "identity_e2e"
+
+IMPLEMENTATIONS = ("dotnet", "rust")
+
+
+def implementation_from_env() -> str:
+    """The EXPLICIT implementation selection (E2E_IDENTITY_IMPLEMENTATION).
+
+    Fails fast on an unknown value, and on the removed E2E_IDENTITY_URL
+    external mode: pointing the suite at an arbitrary URL while seeding the
+    local throwaway database would silently test one deployment's HTTP
+    surface against another's data.
+    """
+    if os.environ.get("E2E_IDENTITY_URL"):
+        raise ApiSpawnError(
+            "E2E_IDENTITY_URL is not supported: the harness seeds its own throwaway "
+            "database, so an external target would answer from different data. Use "
+            "E2E_IDENTITY_IMPLEMENTATION=dotnet|rust (the harness boots the service)."
+        )
+    impl = os.environ.get("E2E_IDENTITY_IMPLEMENTATION", "dotnet")
+    if impl not in IMPLEMENTATIONS:
+        raise ApiSpawnError(
+            f"unknown E2E_IDENTITY_IMPLEMENTATION={impl!r} (expected one of {IMPLEMENTATIONS})"
+        )
+    return impl
+
+
+def supports_deprecated_person_lookup(implementation: str) -> bool:
+    """GET /v1/persons/{email} exists only in the .NET service — the Rust port
+    dropped it (approved removal, zero callers). A capability of the EXPLICIT
+    selection, never probed from runtime behavior."""
+    return implementation == "dotnet"
 
 _HEALTH_TIMEOUT_S = float(
     os.environ.get(
@@ -55,12 +101,12 @@ _HEALTH_TIMEOUT_S = float(
 
 
 def locate_app(cfg: SessionConfig) -> list[str]:
-    """Resolve the spawn command for the identity implementation under test.
+    """Spawn command for the .NET published app.
 
-    The .NET published app is baked into the runner image at
-    /opt/insight-identity (compose/Dockerfile.runner COPY --from=identity, plus
-    the aspnetcore runtime). Host-mode fallback: a manual `dotnet publish`
-    output under src/backend/services/identity/publish/.
+    Baked into the runner image at /opt/insight-identity
+    (compose/Dockerfile.runner COPY --from=identity, plus the aspnetcore
+    runtime). Host-mode fallback: a manual `dotnet publish` output under
+    src/backend/services/identity/publish/.
     """
     candidates = [
         Path("/opt/insight-identity/Insight.Identity.Api.dll"),  # runner image
@@ -77,6 +123,32 @@ def locate_app(cfg: SessionConfig) -> list[str]:
         "identity app not found — it should be baked into the runner image at "
         "/opt/insight-identity (docker-compose.runner.yml `identity` service + "
         "Dockerfile.runner COPY --from). Rebuild with `./e2e.sh build`."
+    )
+
+
+def locate_rust_app(cfg: SessionConfig) -> list[str]:
+    """Spawn command for the Rust `identity-resolution` binary.
+
+    Baked into the runner image the same way the analytics binary is (a
+    build-only compose service from the Rust service's own Dockerfile + a
+    Dockerfile.runner COPY — both land with the cutover branch). Host-mode
+    fallback: a manual `cargo build --release`.
+    """
+    candidates: list[Path] = []
+    which = shutil.which("identity-resolution")
+    if which:
+        candidates.append(Path(which))
+    candidates.append(Path("/usr/local/bin/identity-resolution"))  # runner image
+    candidates.append(cfg.repo_root / "src/backend/target/release/identity-resolution")
+    for c in candidates:
+        if c.exists():
+            LOG.info("using identity-resolution binary at %s", c)
+            return [str(c)]
+    raise ApiSpawnError(
+        "identity-resolution binary not found — bake it into the runner image "
+        "(docker-compose.runner.yml build-only service + Dockerfile.runner COPY, "
+        "added with the Rust service's Dockerfile on the cutover branch) or "
+        "`cargo build --release -p identity-resolution` for host mode."
     )
 
 
@@ -117,28 +189,34 @@ def create_identity_database(cfg: SessionConfig) -> None:
 
 
 class IdentityProcess:
-    """A spawned, health-checked identity service bound to loopback.
+    """A spawned, health-checked identity service bound to loopback."""
 
-    When `external_url` is set (E2E_IDENTITY_URL), nothing is spawned — the
-    instance only owns the auth rig and the recording client factory.
-    """
-
-    def __init__(self, cfg: SessionConfig, port: int, external_url: str = ""):
+    def __init__(self, cfg: SessionConfig, port: int, implementation: str = "dotnet"):
+        if implementation not in IMPLEMENTATIONS:
+            raise ApiSpawnError(f"unknown implementation {implementation!r}")
         self.cfg = cfg
         self.port = port
-        self.base_url = external_url or f"http://127.0.0.1:{port}"
-        self._external = bool(external_url)
+        self.implementation = implementation
+        self.base_url = f"http://127.0.0.1:{port}"
         self.auth = GatewayAuth()
         self._proc: subprocess.Popen[str] | None = None
         self._log_fh: Any = None
         self._log_path: Path | None = None
+        self._rig_config_path: Path | None = None
+
+    @property
+    def supports_deprecated_person_lookup(self) -> bool:
+        return supports_deprecated_person_lookup(self.implementation)
 
     def start(self) -> None:
-        if self._external:
-            LOG.info("targeting external identity at %s (no spawn)", self.base_url)
-            self._wait_healthy(timeout_s=_HEALTH_TIMEOUT_S)
-            return
         create_identity_database(self.cfg)
+        if self.implementation == "rust":
+            self._start_rust()
+        else:
+            self._start_dotnet()
+        self._wait_healthy(timeout_s=_HEALTH_TIMEOUT_S)
+
+    def _start_dotnet(self) -> None:
         cmd = locate_app(self.cfg)
         env = os.environ.copy()
         env.update(
@@ -163,11 +241,137 @@ class IdentityProcess:
                 "DOTNET_ENVIRONMENT": "Production",
             }
         )
+        self._spawn(cmd, env)
+
+    # -- rust ---------------------------------------------------------------
+
+    def _rust_env(self) -> dict[str, str]:
+        """Leaf-config env overrides for the gears host (direct Popen execve
+        preserves the hyphenated gear-name segments)."""
+        env = os.environ.copy()
+        env.update(
+            {
+                "APP__gears__api-gateway__config__bind_addr": f"127.0.0.1:{self.port}",
+                "APP__gears__grpc-hub__config__listen_addr": f"uds:///tmp/identity-resolution-grpc-{self.port}.sock",
+                "APP__gears__identity-resolution__config__database_url": identity_dsn(self.cfg),
+                # The Rust service reads ClickHouse over HTTP (insight-clickhouse
+                # client), not the native port the .NET service uses.
+                "APP__gears__identity-resolution__config__clickhouse_url": self.cfg.ch_http_url,
+                "APP__gears__identity-resolution__config__clickhouse_database": self.cfg.ch_database,
+                "APP__gears__identity-resolution__config__clickhouse_user": self.cfg.ch_user,
+                "APP__gears__identity-resolution__config__clickhouse_password": self.cfg.ch_password,
+                "RUST_LOG": env.get("RUST_LOG", "info"),
+            }
+        )
+        return env
+
+    def _write_rust_rig_config(self) -> Path:
+        """Per-spawn gears host config with the oidc-authn-plugin wired to the
+        rig's TLS discovery front — the same shape AnalyticsProcess writes."""
+        cfg = {
+            "server": {"home_dir": "/tmp"},
+            "logging": {"default": {"console_level": "info"}},
+            "gears": {
+                "api-gateway": {
+                    "config": {
+                        "bind_addr": f"127.0.0.1:{self.port}",
+                        "enable_docs": False,
+                        "cors_enabled": False,
+                        "auth_disabled": False,
+                    }
+                },
+                "gear-orchestrator": {"config": {}},
+                "grpc-hub": {"config": {"listen_addr": f"uds:///tmp/identity-resolution-grpc-{self.port}.sock"}},
+                "authn-resolver": {"config": {"vendor": "hyperspot"}},
+                "oidc-authn-plugin": {
+                    "config": {
+                        "vendor": "hyperspot",
+                        "priority": 50,
+                        "jwt": {
+                            "supported_algorithms": ["ES256"],
+                            "clock_skew_leeway": "60s",
+                            "require_audience": True,
+                            "expected_audience": [AUDIENCE],
+                            "trusted_issuers": [{"issuer": self.auth.issuer}],
+                            "claim_mapping": {
+                                "subject_id": "sub",
+                                "subject_tenant_id": "tenant_id",
+                                "subject_type": "sub_type",
+                                "token_scopes": "roles",
+                            },
+                            "required_claims": [],
+                        },
+                        "http_client": {
+                            "request_timeout": "5s",
+                            "custom_ca_certificate_paths": [self.auth.ca_path],
+                        },
+                        "s2s_oauth": {
+                            "discovery_url": self.auth.issuer,
+                            "default_subject_type": "service",
+                            "token_cache": {"ttl": "300s", "max_entries": 100},
+                        },
+                    }
+                },
+                "authz-resolver": {"config": {"vendor": "hyperspot"}},
+                "static-authz-plugin": {"config": {"vendor": "hyperspot", "priority": 100}},
+                "tenant-resolver": {"config": {"vendor": "hyperspot"}},
+                "single-tenant-tr-plugin": {"config": {"vendor": "hyperspot", "priority": 20}},
+                "identity-resolution": {
+                    "config": {
+                        "database_url": "",
+                        "org_chart_source_type": "bamboohr",
+                        "expand_subordinates": True,
+                        "max_depth": 16,
+                        "clickhouse_url": "",
+                        "clickhouse_database": "identity",
+                        "clickhouse_user": "",
+                        "clickhouse_password": "",
+                    }
+                },
+            },
+        }
+        fh = tempfile.NamedTemporaryFile(  # noqa: SIM115 — path used by the spawned binary
+            mode="w", suffix=".yaml", prefix=f"identity-resolution-cfg-{self.port}-", delete=False
+        )
+        yaml.safe_dump(cfg, fh, sort_keys=False)
+        fh.close()
+        self._rig_config_path = Path(fh.name)
+        return self._rig_config_path
+
+    def _start_rust(self) -> None:
+        cmd = locate_rust_app(self.cfg)
+        config_path = self._write_rust_rig_config()
+        env = self._rust_env()
+        # The Rust service does NOT migrate at server start — run its migrate
+        # subcommand first (schema + first-admin bootstrap), synchronously.
+        migrate = subprocess.run(  # noqa: S603 — harness-controlled argv
+            [*cmd, "-c", str(config_path), "migrate"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        if migrate.returncode != 0:
+            raise ApiSpawnError(
+                f"identity-resolution migrate failed (rc={migrate.returncode}):\n"
+                f"{migrate.stdout[-2000:]}\n{migrate.stderr[-2000:]}"
+            )
+        self._spawn([*cmd, "-c", str(config_path)], env)
+
+    # -- shared spawn ---------------------------------------------------------
+
+    def _spawn(self, cmd: list[str], env: dict[str, str]) -> None:
         self._log_fh = tempfile.NamedTemporaryFile(  # noqa: SIM115 — handle lives until stop()
             mode="w", suffix=".log", prefix=f"identity-{self.port}-", delete=False
         )
         self._log_path = Path(self._log_fh.name)
-        LOG.info("spawning identity on 127.0.0.1:%d (startup log: %s)", self.port, self._log_path)
+        LOG.info(
+            "spawning identity (%s) on 127.0.0.1:%d (startup log: %s)",
+            self.implementation,
+            self.port,
+            self._log_path,
+        )
         self._proc = subprocess.Popen(
             cmd,
             env=env,
@@ -175,7 +379,6 @@ class IdentityProcess:
             stderr=subprocess.STDOUT,
             text=True,
         )
-        self._wait_healthy(timeout_s=_HEALTH_TIMEOUT_S)
 
     def stop(self) -> None:
         if self._proc is not None:
@@ -201,10 +404,14 @@ class IdentityProcess:
                 pass
             self._log_path = None
         self.auth.stop()
+        if self._rig_config_path is not None:
+            try:
+                self._rig_config_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._rig_config_path = None
 
     def is_running(self) -> bool:
-        if self._external:
-            return True
         return self._proc is not None and self._proc.poll() is None
 
     # -- tokens ------------------------------------------------------------
@@ -266,9 +473,12 @@ class IdentityProcess:
 
 @contextmanager
 def spawn(cfg: SessionConfig):
-    """Context manager: provision DB, spawn (or attach), yield, stop."""
-    external = os.environ.get("E2E_IDENTITY_URL", "")
-    proc = IdentityProcess(cfg, find_free_port(), external_url=external)
+    """Context manager: provision DB, migrate (rust), spawn, yield, stop.
+
+    The implementation comes from E2E_IDENTITY_IMPLEMENTATION (explicit,
+    default dotnet) — see the module docstring.
+    """
+    proc = IdentityProcess(cfg, find_free_port(), implementation=implementation_from_env())
     proc.start()
     try:
         yield proc
