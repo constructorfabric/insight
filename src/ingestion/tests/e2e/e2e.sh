@@ -52,20 +52,21 @@ shift || true
 
 case "$cmd" in
     build)
-        # Builds the build-only component images FIRST (each compiled FROM ITS
-        # OWN Dockerfile), then the runner, whose `additional_contexts`
-        # (docker-image:// refs) bake the binaries in via COPY --from.
-        # No docker-in-docker.
-        docker compose "${COMPOSE_FILES[@]}" build jira-enrich analytics identity
+        # Builds the runner image; its `service:` additional_contexts pull each
+        # component binary from that component's own build-only service
+        # (compiled FROM ITS OWN Dockerfile). No docker-in-docker.
         docker compose "${COMPOSE_FILES[@]}" build runner
         ;;
     test|run)
         # `--rm` removes the runner container on exit; clickhouse + mariadb keep
         # running so a follow-up `test` invocation is fast (no re-init).
-        docker compose "${COMPOSE_FILES[@]}" run --rm runner pytest "$@"
+        # The norebuild overlay strips the runner's build section — compose
+        # v2.36-desktop chokes on resolving `service:` build contexts during
+        # `run`, and no build is wanted here anyway.
+        docker compose "${COMPOSE_FILES[@]}" -f compose/docker-compose.norebuild.yml run --rm runner pytest "$@"
         ;;
     shell)
-        docker compose "${COMPOSE_FILES[@]}" run --rm runner bash
+        docker compose "${COMPOSE_FILES[@]}" -f compose/docker-compose.norebuild.yml run --rm runner bash
         ;;
     up)
         # Bring up CH+MariaDB without launching the runner — useful when
@@ -119,7 +120,7 @@ case "$cmd" in
         fi
         spec=/workspace/docs/components/backend/analytics/openapi.json
         identity_spec=/workspace/docs/components/backend/identity/openapi.json
-        run=(docker compose "${COMPOSE_FILES[@]}" run --rm --no-deps -T runner)
+        run=(docker compose "${COMPOSE_FILES[@]}" -f compose/docker-compose.norebuild.yml run --rm --no-deps -T runner)
         rc=0
         if [ "$which" = all ] || [ "$which" = metrics ]; then
             echo "── metric coverage (gate) ──"

@@ -57,15 +57,18 @@ services:
       # Bake each connector's enrich binary into the runner image via a named
       # build context backed by the connector's own build-only service above.
       # `COPY --from=<name>` in Dockerfile.runner pulls the compiled binary.
-      # NB: `docker-image://` refs, not `service:` refs — docker compose
-      # v2.36 fails `compose run` on `service:` contexts ("no such service")
-      # because run narrows the project to the target service. The images are
-      # built by the SAME `compose build` invocation (e2e.sh builds the
-      # build-only services together with the runner), so the refs resolve.
+      # `service:` refs — compose builds the referenced build-only services
+      # first and hands them to BuildKit as named contexts (works with the
+      # CI buildx/gha-cache driver, which cannot see local daemon images the
+      # way `docker-image://` refs would need). Docker compose v2.36-desktop
+      # fails `compose run` while RESOLVING these ("no such service": run
+      # narrows the project to the target service) — the run-time paths in
+      # ../e2e.sh sidestep that by overlaying docker-compose.norebuild.yml,
+      # which resets the runner's `build:` (the image is already built).
       additional_contexts:
-        jira-enrich: "docker-image://insight-e2e-enrich-jira:local"
-        analytics: "docker-image://insight-e2e-analytics:local"
-        identity: "docker-image://insight-e2e-identity:local"
+        jira-enrich: "service:jira-enrich"
+        analytics: "service:analytics"
+        identity: "service:identity"
     image: insight-e2e-runner:latest
     container_name: insight-e2e-runner
     working_dir: /workspace/src/ingestion/tests/e2e
