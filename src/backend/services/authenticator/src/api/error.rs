@@ -17,3 +17,9 @@ pub struct OidcError;
 /// client assertion, replay, or a refused tenant scope.
 #[resource_error("gts.cf.insight.authenticator.service_token.v1~")]
 pub struct ServiceTokenError;
+
+/// Session-management failures (`/auth/sessions*`): an absent (or not-owned —
+/// deliberately indistinguishable) session, or a caller without the authorized
+/// admin role.
+#[resource_error("gts.cf.insight.authenticator.session.v1~")]
+pub struct SessionError;

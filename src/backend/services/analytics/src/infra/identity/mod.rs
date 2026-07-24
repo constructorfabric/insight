@@ -180,8 +180,8 @@ impl IdentityClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            tracing::warn!(email = %email, status = %status, body = %body, "identity lookup failed");
+            // No email/body in the log: both are PII (#1846); status is enough.
+            tracing::warn!(status = %status, "identity lookup failed");
             anyhow::bail!("identity service returned {status}");
         }
 

@@ -229,6 +229,39 @@
           }
         ]
       },
+      "BreakdownValueDto": {
+        "properties": {
+          "dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDimensionDto"
+            },
+            "type": "array"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "entity_id",
+          "dimensions"
+        ],
+        "type": "object"
+      },
+      "Bucket": {
+        "enum": [
+          "day",
+          "week",
+          "month"
+        ],
+        "type": "string"
+      },
       "CatalogResponse": {
         "description": "Top-level response body. `tenant_id` is echoed for client-side cache\nreasoning AND re-asserted on cache hydrate as defense in depth against a\nmisconfigured cache backend serving a sibling tenant's payload.\n\n`links` carries the `metric_query_catalog` M:N mapping per ADR-003. The\nmapping is time/filter-invariant, so consumers cache it for the same TTL as\nthe catalog itself; see [`MetricQueryLink`].",
         "properties": {
@@ -317,6 +350,71 @@
           "items"
         ],
         "type": "object"
+      },
+      "ComputationDto": {
+        "oneOf": [
+          {
+            "properties": {
+              "computation": {
+                "enum": [
+                  "sum"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "computation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "computation": {
+                "enum": [
+                  "ratio"
+                ],
+                "type": "string"
+              },
+              "scale": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "scale",
+              "computation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "computation": {
+                "enum": [
+                  "median"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "computation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "computation": {
+                "enum": [
+                  "distinct_count"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "computation"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "CreateMetricRequest": {
         "description": "Request to create a new metric.",
@@ -451,6 +549,48 @@
         },
         "type": "object"
       },
+      "HistogramBinDto": {
+        "properties": {
+          "count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hi": {
+            "format": "double",
+            "type": "number"
+          },
+          "lo": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lo",
+          "hi",
+          "count"
+        ],
+        "type": "object"
+      },
+      "HistogramValueDto": {
+        "properties": {
+          "bins": {
+            "description": "Empty when the entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.",
+            "items": {
+              "$ref": "#/components/schemas/HistogramBinDto"
+            },
+            "type": "array"
+          },
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "bins"
+        ],
+        "type": "object"
+      },
       "ListResponse": {
         "description": "`GET /v1/admin/metric-thresholds` response envelope.\n\nWraps `items` in an object (instead of a bare array) so future\nadditions (pagination cursor, count, generated-at) are additive and\nnon-breaking. Mirrors the catalog read endpoint's envelope shape.",
         "properties": {
@@ -512,6 +652,84 @@
         ],
         "type": "object"
       },
+      "MetricDimensionDto": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "type": "object"
+      },
+      "MetricDimensionFilterRequest": {
+        "properties": {
+          "dimension": {
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "dimension",
+          "values"
+        ],
+        "type": "object"
+      },
+      "MetricDirection": {
+        "enum": [
+          "higher_is_better",
+          "lower_is_better",
+          "neutral"
+        ],
+        "type": "string"
+      },
+      "MetricFormat": {
+        "enum": [
+          "integer",
+          "decimal",
+          "currency",
+          "percent"
+        ],
+        "type": "string"
+      },
+      "MetricGroupLimitRequest": {
+        "properties": {
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "include_remainder": {
+            "type": "boolean"
+          },
+          "rank_by_metric": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "count",
+          "include_remainder"
+        ],
+        "type": "object"
+      },
       "MetricListResponse": {
         "description": "Response envelope for `GET /v1/metrics` (`{ \"items\": [MetricSummary] }`).\n\nDocs-only wrapper: the handler emits the same object shape via an inline\n`serde_json::json!` literal. Existing on the wire; this type just gives the\nlist endpoint a real OpenAPI schema instead of a generic object.",
         "properties": {
@@ -547,6 +765,280 @@
         "required": [
           "query_id",
           "catalog_metric_ids"
+        ],
+        "type": "object"
+      },
+      "MetricRequest": {
+        "properties": {
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDimensionFilterRequest"
+            },
+            "type": "array"
+          },
+          "metric_key": {
+            "type": "string"
+          },
+          "views": {
+            "items": {
+              "$ref": "#/components/schemas/MetricViewRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "metric_key",
+          "views"
+        ],
+        "type": "object"
+      },
+      "MetricResultDto": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ComputationDto"
+          },
+          {
+            "properties": {
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "direction": {
+                "$ref": "#/components/schemas/MetricDirection"
+              },
+              "explanation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "format": {
+                "$ref": "#/components/schemas/MetricFormat"
+              },
+              "label": {
+                "type": "string"
+              },
+              "metric_key": {
+                "type": "string"
+              },
+              "short_label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "unit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "views": {
+                "items": {
+                  "$ref": "#/components/schemas/MetricResultViewDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "metric_key",
+              "label",
+              "format",
+              "direction",
+              "views"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MetricResultViewDto": {
+        "oneOf": [
+          {
+            "properties": {
+              "values": {
+                "items": {
+                  "$ref": "#/components/schemas/PeriodValueDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "period"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "values",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bucket": {
+                "$ref": "#/components/schemas/Bucket"
+              },
+              "series": {
+                "items": {
+                  "$ref": "#/components/schemas/TimeseriesDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "timeseries"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bucket",
+              "series",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "values": {
+                "items": {
+                  "$ref": "#/components/schemas/PeerValueDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "peer"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "values",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "dimensions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "values": {
+                "items": {
+                  "$ref": "#/components/schemas/BreakdownValueDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "breakdown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "dimensions",
+              "values",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "values": {
+                "items": {
+                  "$ref": "#/components/schemas/HistogramValueDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "histogram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "values",
+              "view"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MetricResultsEntity": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "ids"
+        ],
+        "type": "object"
+      },
+      "MetricResultsPeriod": {
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "MetricResultsRequest": {
+        "properties": {
+          "entity": {
+            "$ref": "#/components/schemas/MetricResultsEntity"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequest"
+            },
+            "type": "array"
+          },
+          "period": {
+            "$ref": "#/components/schemas/MetricResultsPeriod"
+          }
+        },
+        "required": [
+          "entity",
+          "period",
+          "metrics"
+        ],
+        "type": "object"
+      },
+      "MetricResultsResponse": {
+        "properties": {
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/MetricResultDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "metrics"
         ],
         "type": "object"
       },
@@ -650,6 +1142,119 @@
         ],
         "type": "object"
       },
+      "MetricViewRequest": {
+        "oneOf": [
+          {
+            "properties": {
+              "view": {
+                "enum": [
+                  "period"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "cohort_key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "view": {
+                "enum": [
+                  "peer"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bucket": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Bucket"
+                  }
+                ]
+              },
+              "dimensions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "group_limit": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MetricGroupLimitRequest"
+                  }
+                ]
+              },
+              "view": {
+                "enum": [
+                  "timeseries"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "dimensions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "breakdown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "dimensions",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "view": {
+                "enum": [
+                  "histogram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "view"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "PageInfo": {
         "description": "Pagination info.",
         "properties": {
@@ -665,6 +1270,83 @@
         },
         "required": [
           "has_next"
+        ],
+        "type": "object"
+      },
+      "PeerValueDto": {
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "max": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "median": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "min": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "n": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "p25": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "p75": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "target_value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "entity_id",
+          "n"
+        ],
+        "type": "object"
+      },
+      "PeriodValueDto": {
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "entity_id"
         ],
         "type": "object"
       },
@@ -946,6 +1628,77 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "TimeseriesDto": {
+        "properties": {
+          "dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDimensionDto"
+            },
+            "type": "array"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/TimeseriesPointDto"
+            },
+            "type": "array"
+          },
+          "rank": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "remainder": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "total": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "entity_id",
+          "dimensions",
+          "total",
+          "points"
+        ],
+        "type": "object"
+      },
+      "TimeseriesPointDto": {
+        "properties": {
+          "bucket_start": {
+            "type": "string"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "bucket_start"
         ],
         "type": "object"
       },
@@ -1858,12 +2611,23 @@
     "/v1/metric-results": {
       "post": {
         "operationId": "analytics_api.metric_results.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricResultsRequest"
+              }
+            }
+          },
+          "description": "Metric result request",
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/MetricResultsResponse"
                 }
               }
             },

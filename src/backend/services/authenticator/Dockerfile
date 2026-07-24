@@ -6,9 +6,11 @@
 # Stage 1: Builder
 FROM rust:1.95-bookworm AS builder
 
-# protobuf-compiler is required by grpc-hub -> prost-build.
+# protobuf-compiler is required by grpc-hub -> prost-build; cmake + the libcurl
+# headers build the vendored librdkafka (audit events to Redpanda, step 10.8 —
+# librdkafka's OAUTHBEARER path pulls in curl/curl.h even with WITH_CURL=0).
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev && \
+    apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev cmake libcurl4-openssl-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build

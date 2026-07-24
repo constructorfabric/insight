@@ -56,7 +56,8 @@ struct Jwk {
 struct Claims {
     sub: String,
     tenant_id: String,
-    roles: Vec<String>,
+    /// Space-delimited on the wire (OAuth `scope` shape).
+    roles: String,
     sid: String,
     aud: String,
 }
@@ -104,11 +105,15 @@ async fn service_token_full_loop() {
         .strip_prefix("Bearer ")
         .expect("bearer() returns a Bearer value");
     let claims = verify_against_jwks(jwt).await;
-    assert_eq!(claims.sub, "service:testclient", "sub is service:<name>");
+    // `sub` is the stable per-service UUID (v5 over "service:<name>"); `sid`
+    // carries the service:<name> correlation handle.
+    let expected_sub =
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"service:testclient").to_string();
+    assert_eq!(claims.sub, expected_sub, "sub is the per-service UUIDv5");
     assert_eq!(claims.sid, "service:testclient", "sid is service:<name>");
     assert_eq!(claims.aud, "internal-services");
     assert!(
-        claims.roles.contains(&"service".to_owned()),
+        claims.roles.split_whitespace().any(|r| r == "service"),
         "service role always present, got {:?}",
         claims.roles
     );

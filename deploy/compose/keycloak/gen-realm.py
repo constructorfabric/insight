@@ -179,10 +179,8 @@ def main() -> None:
         "--dev-email",
         default=None,
         help=(
-            "Roster-anchor email for the dev-lead persona. Decouples the realm's "
-            "roster anchor from VITE_DEV_USER_EMAIL (which the frontend/gateway also "
-            "read as the impersonation trigger). Falls back to VITE_DEV_USER_EMAIL "
-            "when omitted."
+            "Roster-anchor email for the dev-lead persona. Falls back to "
+            "DEV_USER_EMAIL when omitted."
         ),
     )
     parser.add_argument(
@@ -205,7 +203,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Explicit --dev-email wins; otherwise fall back to VITE_DEV_USER_EMAIL via
+    # Explicit --dev-email wins; otherwise fall back to DEV_USER_EMAIL via
     # get_dev_user_email() (which fail-fasts if that is also unset).
     dev_user_email = args.dev_email if args.dev_email else get_dev_user_email()
     # Same fallback value as deploy/seed/identity.py's run() — that script's

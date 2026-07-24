@@ -30,6 +30,7 @@ from pathlib import Path
 import yaml
 from dbt.cli.main import dbtRunner
 
+from lib import clickhouse as ch
 from lib.config import SessionConfig
 from lib.worker import WorkerContext
 
@@ -75,7 +76,11 @@ class DbtRunner:
         """
         if self._runner is None:
             raise DbtError("dbt_runner.setup() must be called before build()")
-        worker_n = worker_ctx.worker_id.removeprefix("gw") if worker_ctx.worker_id != "master" else "0"
+        worker_n = (
+            worker_ctx.worker_id.removeprefix("gw")
+            if worker_ctx.worker_id != "master"
+            else "0"
+        )
         LOG.info("dbt build --select %s (worker=%s)", selector, worker_ctx.worker_id)
         res = self._runner.invoke(
             [
@@ -98,6 +103,48 @@ class DbtRunner:
                 f"exception: {res.exception!r}"
             )
 
+    def run(
+        self,
+        selector: str,
+        *,
+        worker_ctx: WorkerContext,
+        full_refresh: bool = False,
+    ) -> None:
+        if self._runner is None:
+            raise DbtError("dbt_runner.setup() must be called before run()")
+        worker_n = (
+            worker_ctx.worker_id.removeprefix("gw")
+            if worker_ctx.worker_id != "master"
+            else "0"
+        )
+        LOG.info(
+            "dbt run --select %s%s (worker=%s)",
+            selector,
+            " --full-refresh" if full_refresh else "",
+            worker_ctx.worker_id,
+        )
+        res = self._runner.invoke(
+            [
+                "run",
+                "--select",
+                selector,
+                *(["--full-refresh"] if full_refresh else []),
+                *self._base_flags(),
+                "--defer",
+                "--state",
+                str(self.target_dir),
+                "--vars",
+                json.dumps({"worker_id": worker_n}),
+            ]
+        )
+        if not res.success:
+            failed = self._extract_failed_model_summary()
+            raise DbtError(
+                f"dbt run failed for selector {selector!r}\n"
+                f"failed models: {failed}\n"
+                f"exception: {res.exception!r}"
+            )
+
     def derive_selectors(self, tables: set[tuple[str, str]]) -> tuple[list[str], list[str]]:
         """From the seeded bronze tables, find the dbt models to build.
 
@@ -110,14 +157,67 @@ class DbtRunner:
         manifest_path = self.target_dir / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         wanted = {f".{schema}.{table}" for schema, table in tables}
-        staging: list[str] = []
-        silver: set[str] = set()
-        for node in manifest.get("nodes", {}).values():
+        wanted_sources = {
+            source_id
+            for source_id, source in manifest.get("sources", {}).items()
+            if (source.get("schema"), source.get("identifier") or source.get("name"))
+            in tables
+        }
+        existing_tables = set(
+            ch.query(
+                self.cfg,
+                "SELECT database, name FROM system.tables WHERE database LIKE 'bronze_%'",
+            )
+        )
+        available_sources = {
+            source_id
+            for source_id, source in manifest.get("sources", {}).items()
+            if (source.get("schema"), source.get("identifier") or source.get("name"))
+            in existing_tables | tables
+        }
+        nodes = manifest.get("nodes", {})
+        children: dict[str, set[str]] = {}
+        for node_id, node in nodes.items():
+            for dependency in node.get("depends_on", {}).get("nodes", []):
+                children.setdefault(dependency, set()).add(node_id)
+
+        direct: set[str] = set()
+        for node_id, node in nodes.items():
             if node.get("resource_type") != "model":
                 continue
             deps = node.get("depends_on", {}).get("nodes", [])
-            if not any(d.startswith("source.") and d.endswith(suffix) for d in deps for suffix in wanted):
-                continue
+            source_deps = {
+                dependency
+                for dependency in deps
+                if dependency.startswith("source.")
+            }
+            matched_sources = {
+                dependency
+                for dependency in source_deps
+                if dependency in wanted_sources
+                or any(dependency.endswith(suffix) for suffix in wanted)
+            }
+            if matched_sources and source_deps <= available_sources:
+                direct.add(node_id)
+
+        staging_ids = set(direct)
+        pending = list(direct)
+        while pending:
+            parent = pending.pop()
+            for child in children.get(parent, set()):
+                node = nodes.get(child, {})
+                if node.get("resource_type") != "model":
+                    continue
+                if node.get("config", {}).get("schema") != "staging":
+                    continue
+                if child not in staging_ids:
+                    staging_ids.add(child)
+                    pending.append(child)
+
+        staging: list[str] = []
+        silver: set[str] = set()
+        for node_id in staging_ids:
+            node = nodes[node_id]
             staging.append(node["name"])
             for tag in node.get("tags", []):
                 if tag.startswith("silver:"):

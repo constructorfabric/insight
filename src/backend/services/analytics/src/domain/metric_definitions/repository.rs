@@ -18,6 +18,7 @@ struct DefinitionRow {
     tenant_id: Option<Uuid>,
     metric_key: String,
     label: String,
+    short_label: Option<String>,
     description: Option<String>,
     explanation: Option<String>,
     unit: Option<String>,
@@ -190,6 +191,7 @@ async fn fetch_definition_rows(
             d.tenant_id AS tenant_id, \
             d.metric_key AS metric_key, \
             d.label AS label, \
+            d.short_label AS short_label, \
             d.description AS description, \
             d.explanation AS explanation, \
             d.unit AS unit, \
@@ -494,6 +496,7 @@ fn build_base(
     Ok(MetricBase {
         key: row.metric_key.clone(),
         label: row.label.clone(),
+        short_label: row.short_label.clone(),
         description: row.description.clone(),
         explanation: row.explanation.clone(),
         entity_type: row.entity_type.clone(),
@@ -679,6 +682,7 @@ mod tests {
             tenant_id: tenant,
             metric_key: metric_key.to_owned(),
             label: "Label".to_owned(),
+            short_label: None,
             description: None,
             explanation: None,
             unit: None,
@@ -936,5 +940,16 @@ mod tests {
         assert!(one_input("ai.x", &[], MetricInputRole::Value).is_err());
         assert!(one_input("ai.x", std::slice::from_ref(&input), MetricInputRole::Value).is_ok());
         assert!(one_input("ai.x", &[input.clone(), input], MetricInputRole::Value).is_err());
+    }
+
+    #[test]
+    fn build_base_maps_short_label_and_full_fields() {
+        let mut row = definition_row("git.commits", None, true, "ok");
+        row.short_label = Some("Commits".to_owned());
+        let base = build_base(&row, vec!["repository".to_owned()])
+            .unwrap_or_else(|_| panic!("valid row maps to a base"));
+        assert_eq!(base.key, "git.commits");
+        assert_eq!(base.short_label.as_deref(), Some("Commits"));
+        assert_eq!(base.allowed_dimensions, vec!["repository".to_owned()]);
     }
 }

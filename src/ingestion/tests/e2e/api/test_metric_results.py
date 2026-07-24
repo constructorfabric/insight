@@ -3,9 +3,7 @@
   POST /v1/metric-results   200 compute · 400 (empty/bad-period/unknown-key) · 415 wrong-ct
 
 Added when the `feat/unified-metrics` merge (#1656) introduced this operation to
-the committed spec. It computes results for CATALOG metrics (`metric_key` +
-computation spec over the observation gold-views) — a different system from the
-legacy `query_ref` metrics the `/v1/metrics` CRUD and the scratch fixtures use.
+the committed spec. It computes builtin metrics over unified observation models.
 
 The endpoint validates its request body in `domain::metric_results::validate_request`
 BEFORE touching ClickHouse, so the whole 400 family is deterministic in the rig:
@@ -13,12 +11,8 @@ an empty `metrics`, a malformed/reversed `period`, and an unknown `metric_key`
 (which is a 400 via `unavailable`, NOT a 404) all reject up front. Wrong
 Content-Type is a 415 at the `axum::Json` extractor.
 
-The 200 happy-path is deferred: a deterministic compute needs a seeded catalog
-metric whose observation gold-view is built in the rig, which this branch does
-not yet stand up — the coverage report marks metric-results' 200 as a `✗` gap
-until that fixture lands. The endpoint-coverage gate blocks on an *unexercised*
-operation, not on that per-code gap, so these error-path cases are enough to
-keep the new endpoint covered.
+The declarative metric suite exercises deterministic 200 responses for every
+builtin metric; this module retains the endpoint contract error cases.
 """
 
 from __future__ import annotations

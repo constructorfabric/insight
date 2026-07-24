@@ -98,8 +98,8 @@ case "$cmd" in
                 ;;
         esac
         if [ "$which" = all ] || [ "$which" = metrics ]; then
-            if [ ! -f .artifacts/catalog_metrics.json ]; then
-                echo "no .artifacts/catalog_metrics.json — run './e2e.sh test metrics/' first (it collects the metric catalog)" >&2
+            if [ ! -f .artifacts/metric_definitions.json ]; then
+                echo "no .artifacts/metric_definitions.json — run './e2e.sh test metrics/' first" >&2
                 exit 2
             fi
         fi
@@ -114,7 +114,7 @@ case "$cmd" in
         rc=0
         if [ "$which" = all ] || [ "$which" = metrics ]; then
             echo "── metric coverage (gate) ──"
-            "${run[@]}" python3 lib/metric_coverage.py --universe-file .artifacts/catalog_metrics.json || rc=1
+            "${run[@]}" python3 lib/metric_coverage.py --universe-file .artifacts/metric_definitions.json || rc=1
         fi
         if [ "$which" = all ] || [ "$which" = api ]; then
             echo "── api endpoint coverage (gate) ──"

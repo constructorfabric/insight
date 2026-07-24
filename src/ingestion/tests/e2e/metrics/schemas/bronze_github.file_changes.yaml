@@ -1,0 +1,21 @@
+schemas:
+  bronze_github.file_changes:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: string }
+      source_id: { type: string }
+      unique_key: { type: string }
+      repo_owner: { type: string }
+      repo_name: { type: string }
+      commit_hash: { type: string }
+      filename: { type: string }
+      status: { type: string }
+      additions: { type: integer }
+      deletions: { type: integer }
+      source_type: { type: string }

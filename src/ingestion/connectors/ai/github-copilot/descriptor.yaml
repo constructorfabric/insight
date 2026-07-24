@@ -10,7 +10,7 @@ name: github-copilot
 #   reconcile detects the version change and re-runs. The lookback re-fetch is
 #   consistent with that freshness work: re-emitting late `day` reports keeps
 #   max(day) fresh, satisfying the freshness anchor's "API re-emits a window".
-version: "2.5.0"
+version: "2.7.0"
 type: cdk
 schedule: "0 2 * * *" # daily at 02:00 UTC (data for day D available ~24h after end-of-day D UTC)
 workflow: sync
@@ -22,7 +22,7 @@ images:
     name: source-github-copilot-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-github-copilot-insight:2026.07.16.06.28-75cc793"
+    image: "ghcr.io/constructorfabric/source-github-copilot-insight:2026.07.24.06.57-6a45eaa"
 # Silver routing: `copilot__ai_dev_usage` feeds class_ai_dev_usage with
 # tool='copilot' (active). `copilot__ai_org_usage` is deferred until
 # class_ai_org_usage is created — it ships with `enabled=false` and is

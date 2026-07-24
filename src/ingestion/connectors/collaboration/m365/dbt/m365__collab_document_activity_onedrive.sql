@@ -36,6 +36,15 @@ SELECT
 FROM {{ source('bronze_m365', 'onedrive_activity') }}
 WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
+  -- Drop unlicensed users (see #736 / teams feeder). This MS Graph report
+  -- (getOneDriveActivityUserDetail) exposes no `isLicensed`; the only license signal
+  -- is `assignedProducts` — the products assigned to the user, empty for unlicensed
+  -- accounts. Airbyte stores the array as a JSON string, so an empty list is '[]'.
+  -- Conservative on NULL/unknown (keep); drop only explicitly-empty product lists.
+  AND (
+    assignedProducts IS NULL
+    OR replaceRegexpAll(assignedProducts, '[[:space:]]', '') NOT IN ('', '[]')
+  )
 {% if is_incremental() %}
   -- Watermark on the source EXTRACT time, not the business date (see zoom model header
   -- for the backfill-strand failure mode this fixes). Re-pulled rows carry a fresh

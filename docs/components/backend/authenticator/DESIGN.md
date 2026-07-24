@@ -461,7 +461,7 @@ Every auth-relevant action lands on the audit topic with the same envelope and c
 Publish login OK/fail, refresh, logout, revoke (single/all/admin), back-channel logout, `invalid_grant` kills, service-token issuance, bootstrap-admin creation.
 
 ##### Responsibility boundaries
-Does not run audit policy or retention -- Audit Service does.
+Does not run audit policy or long-term retention -- the Audit Service does. **Interim note (no consumer yet):** the Audit Service (`cpt-insightspec-component-be-audit-service`, drain -> ClickHouse) is not yet built, so nothing consumes `insight.audit.events`. To bound the undrained topic's disk growth the emitter creates it with a short `retention.ms` (`authenticator.audit.retention_ms`, default **1 day**) -- events are deliberately aged out after that window (accepted data loss for now; the structured `target: "audit"` logs, shipped to Loki, are the interim trail). Publishing itself is non-blocking (bounded channel -> drop + `auth_audit_dropped_total`), so auth availability never depends on Redpanda. Drop the short retention once the consumer lands.
 
 ##### Related components (by ID)
 - `cpt-insightspec-component-auth-controller`, `cpt-insightspec-component-auth-service-token-issuer`, `cpt-insightspec-component-auth-idp-refresher` -- callers.
@@ -663,13 +663,13 @@ sequenceDiagram
     alt replay (NX failed)
         B-->>I: 200 (idempotent, no revoke)
     else first delivery
-        B->>R: resolve sessions via asm:sid_index (or per-user index on sub-only fallback)
+        B->>R: resolve sessions via asm:sid_index (or asm:sub_index on sub-only fallback)
         B->>R: standard revoke pipeline per session
         B-->>I: 200
     end
 ```
 
-**Description**: Salvaged unchanged from the deleted BFF spec, including the `jti` replay guard and the documented sub-only blast-radius fallback.
+**Description**: Salvaged from the deleted BFF spec, including the `jti` replay guard and the documented sub-only blast-radius fallback — resolved via the `asm:sub_index` written at login (Identity cannot resolve a bare `sub`, and the logout path must not depend on another service).
 
 #### Service token issuance
 
@@ -795,6 +795,30 @@ graph LR
 
 **Purpose**: The refresher's schedule -- `ZRANGEBYSCORE ... 0 now`, no scanning. Maintained in the same pipelines as the session record.
 
+#### Key: `asm:sub_index:{iss}:{idp_sub}`
+
+**Type**: Redis SET of `session_id`. Maintained in the create/revoke pipelines like the sid index.
+
+**Purpose**: Resolve a back-channel `logout_token` that carries only `(iss, sub)` (no `sid`) to the user's sessions — the documented log-out-everywhere fallback.
+
+#### Key: `asm:login_state_live`
+
+**Type**: Redis ZSET. Member: OIDC `state`. Score: login-state expiry.
+
+**Purpose**: Counts live `asm:login_state:*` entries for the layer-2 login cap (counting via SCAN per login would be pathological). Written/removed in the login-state pipelines; the janitor trims expired members.
+
+#### Key: `asm:rl:{class}:{key}`
+
+**Type**: Redis HASH (`tokens`, `ts`), driven by an atomic Lua token-bucket script; self-expiring.
+
+**Purpose**: Layer-2 rate-limit buckets — `asm:rl:refresh:{session_id}` and `asm:rl:callback:{state}` (DESIGN section 4.4).
+
+#### Keys: `asm:leader:{worker}`, `asm:refresh_lock:{session_id}`
+
+**Type**: Redis STRING locks (`SET NX PX`).
+
+**Purpose**: Leader election for the refresher/janitor (DD-BFF-09) and the per-session refresh-rotation lock (one-time-use refresh tokens must never race).
+
 ### 3.8 Gateway JWT Claim Contract
 
 - [ ] `p2` - **ID**: `cpt-insightspec-design-auth-jwt-claim-spec`
@@ -839,7 +863,25 @@ All tunable via Helm values; defaults chosen so everything holds without touchin
 | `authenticator.bootstrap_first_admin` | *(deferred)* | First-admin bootstrap is out of step-04 scope and not implemented — no such config exists in the shipped gear; unknown persons are denied (403). Retained here as design intent for the separate universe-admin initiative (see 4.6). |
 | `authenticator.authz_cache_max_age_seconds` | `30` | Upper bound for the gateway-side cookie-to-JWT exchange cache, emitted as `Cache-Control: max-age` on `/internal/authz` 200s (actual value = `min(this, jwt_exp - now - 60 s)`; non-200 = `no-store`). Bounds revocation staleness at the gateway. `0` = per-request checks, instant revocation. |
 
-Inherited from the deleted BFF spec unchanged: `authenticator.refresh_grace_ms` (default `250`) -- the TTL applied to the superseded token mapping on rotation; plus the CSRF origin allowlist, back-channel clock-skew tolerance, layer-2 rate-limit knobs, and OIDC client settings (`issuer_url`, `client_id`, `client_secret`).
+Inherited from the deleted BFF spec unchanged: `authenticator.refresh_grace_ms` (default `250`) -- the TTL applied to the superseded token mapping on rotation; plus the OIDC client settings (`issuer_url`, `client_id`, `client_secret`).
+
+Step-10 additions (all defaulted; the config struct mirrors them 1:1):
+
+| Value | Default | Meaning |
+|---|---|---|
+| `authenticator.csrf_origins` | `[]` | CSRF `Origin`-allowlist fallback for state-changing `/auth/*`; empty = fail closed (`X-CSRF-Token` required). |
+| `authenticator.admin_revoke_roles` | `["session_admin"]` | Gateway-JWT roles authorized to call the admin revoke-by-user operation. |
+| `authenticator.backchannel_clock_skew_seconds` | `60` | Tolerated clock skew on the `logout_token` `iat`. |
+| `authenticator.backchannel_token_max_age_seconds` | `300` | Acceptability window after `iat`; also sizes the `jti` replay-guard TTL. |
+| `authenticator.janitor_interval_seconds` | `30` | Janitor pass interval (leader-elected). |
+| `authenticator.idp.refresher_tick_seconds` | `5` | Refresher schedule-poll interval (leader-elected). |
+| `authenticator.idp.refresh_due_jitter_seconds` | `30` | ± jitter applied to due-times when written (anti-herding, G5). |
+| `authenticator.rate_limit.login_state_max` | `1000` | Cap on concurrent live login states; excess `/auth/login` → 429. |
+| `authenticator.rate_limit.refresh_burst` / `refresh_per_minute` | `5` / `6` | Per-session `/auth/refresh` token bucket (burst 0 disables). |
+| `authenticator.rate_limit.callback_burst` / `callback_per_minute` | `5` / `10` | Per-state `/auth/callback` token bucket. |
+| `authenticator.audit.brokers` | `""` | Redpanda bootstrap servers for audit events; empty = disabled (structured log only). |
+| `authenticator.audit.topic` | `insight.audit.events` | The platform audit topic. |
+| `authenticator.audit.retention_ms` | `86400000` (1 day) | `retention.ms` the emitter sets when it creates the topic — a disk bound while no consumer drains it (accepted data loss; see the Audit Emitter note). `0` = leave the cluster default. |
 
 The config struct mirrors this table 1:1 and deserializes from the gear's config section with `APP__gears__authenticator__config__<field>` env overrides -- the layering the toolkit host already owns (and why the dash-free gear name matters).
 

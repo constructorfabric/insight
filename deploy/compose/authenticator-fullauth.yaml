@@ -1,0 +1,148 @@
+# dev-compose full-auth authenticator host config (bind-mounted over
+# /app/config/insight.yaml). Same structure as
+# services/authenticator/config/insight.yaml, but with the oidc-authn-plugin
+# wired to the dev TLS discovery front (`authn-tls`, i.e. the authenticator's
+# own issuer) + its self-signed CA at /certs/ca.pem, so the `.authenticated()`
+# admin surface (session revoke-by-user) verifies real gateway JWTs in dev.
+# Redis/Identity/OIDC leaves come from APP__ env in docker-compose.yml.
+
+server:
+  home_dir: "/tmp/authenticator"
+
+logging:
+  default:
+    console_level: info
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "0.0.0.0:8083"
+      enable_docs: true
+      cors_enabled: true
+      openapi:
+        title: "Insight Authenticator"
+        version: "0.1.0"
+        description: "OIDC login, opaque sessions, and the cookie-to-JWT exchange (BFF / token-handler)"
+      auth_disabled: false
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/authenticator-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "hyperspot"
+
+  # Gateway-JWT verification for the `.authenticated()` admin surface. Verifies
+  # the ES256 gateway JWT against our own JWKS (resolved via OIDC discovery on
+  # the issuer) and maps claims into the SecurityContext. The deployment
+  # supplies the real issuer + self-signed CA (dev/e2e) via the config layer;
+  # the placeholders below (`.invalid`, never resolvable) fail closed.
+  oidc-authn-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 50
+      jwt:
+        supported_algorithms: ["ES256"]
+        clock_skew_leeway: 60s
+        require_audience: true
+        expected_audience:
+          - "internal-services"
+        trusted_issuers:
+          # = the authenticator's own gateway_issuer (the token `iss`);
+          # discovery_url omitted → {issuer}/.well-known/openid-configuration,
+          # served by the authn-tls front.
+          - issuer: "https://authn-tls:8443"
+        claim_mapping:
+          subject_id: "sub"
+          subject_tenant_id: "tenant_id"
+          subject_type: "sub_type"
+          token_scopes: "roles"
+        required_claims: []
+      http_client:
+        request_timeout: 5s
+        custom_ca_certificate_paths: ["/certs/ca.pem"]
+      # Client-credentials exchange is UNUSED here (the authenticator makes no
+      # outbound S2S calls through the plugin) but the block is required config.
+      s2s_oauth:
+        discovery_url: "https://authn-tls:8443"
+        default_subject_type: "service"
+        token_cache:
+          ttl: 300s
+          max_entries: 100
+
+  authz-resolver:
+    config:
+      vendor: "hyperspot"
+
+  static-authz-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "hyperspot"
+
+  single-tenant-tr-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 20
+
+  authenticator:
+    config:
+      # HTTP bind is owned by api-gateway above; retained for diagnostics only.
+      bind_addr: "0.0.0.0:8083"
+      # Session + JWT lifecycle defaults are the §4.1 table (baked into the
+      # config struct); overridden here only when a deployment needs to.
+      # Connection strings + OIDC client secret are injected via env.
+      redis_url: ""
+      signing_keys_path: ""
+      identity_url: ""
+      gateway_issuer: ""
+      jwt_audience: "internal-services"
+      redirect_uri: ""
+      default_return_to: "/"
+      # CSRF Origin-allowlist fallback (10.5): the browser sends Origin on all
+      # state-changing fetches, so dev flows keep working until the SPA sends
+      # X-CSRF-Token. Vite dev origin + the gateway entry.
+      csrf_origins: ["http://localhost:3000", "http://localhost:8080"]
+      # Login scopes. offline_access is omitted (survives-logout token, wrong for a
+      # BFF); add it only for an IdP that needs it for a refresh token, e.g. Entra.
+      oidc_scopes: ["openid", "email", "profile"]
+      idp:
+        issuer_url: ""
+        client_id: ""
+        client_secret: ""
+        # id_token claim naming the user's single tenant (string; an array is
+        # tolerated — first entry wins). fakeidp/Keycloak emit `tenant_id`;
+        # Entra emits `tid`.
+        tenant_claim: "tenant_id"
+        # Fallback tenant for a claim-less IdP (e.g. Okta); empty = fail closed.
+        default_tenant_id: ""
+      # Service tokens (§10 G1 / DD-AUTH-05). The token endpoint runs on its own
+      # listener (token_bind_addr) so it never shares the main port. Service
+      # tokens are always tenant-scoped; the caller names the tenant.
+      #
+      # `testclient` is DEV/TEST ONLY. No key material is committed: dev-compose
+      # and run-e2e generate a throwaway keypair (like the gateway signing key)
+      # and drop its public half in public_key_dir; the private half is handed
+      # to the calling client. Real services land their public key via a gitops
+      # PR (chart ConfigMap uses inline public_keys), never this test entry.
+      service_tokens:
+        token_bind_addr: "0.0.0.0:8093"
+        audience: "http://localhost:8093/internal/token"
+        assertion_max_lifetime_seconds: 60
+        token_ttl_seconds: 300
+        # Set via env in dev/e2e to the generated-key dir (see run-e2e.sh /
+        # dev-compose.sh): APP__gears__authenticator__config__service_tokens__public_key_dir
+        public_key_dir: ""
+        services:
+          testclient:
+            public_key_paths: ["testclient.pub.pem"]
+            # session_admin authorizes the admin revoke-by-user operation —
+            # dev/e2e only; real registry entries earn it via a gitops PR.
+            roles: ["service", "session_admin"]

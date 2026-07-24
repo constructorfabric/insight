@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricDirection {
     HigherIsBetter,
@@ -8,7 +8,7 @@ pub enum MetricDirection {
     Neutral,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricFormat {
     Integer,
@@ -141,6 +141,9 @@ impl ValueTransform {
 pub struct MetricBase {
     pub key: String,
     pub label: String,
+    /// Compact label for dense surfaces (member grids, heatmap columns);
+    /// None = the full label is already compact enough.
+    pub short_label: Option<String>,
     pub description: Option<String>,
     pub explanation: Option<String>,
     pub entity_type: String,
