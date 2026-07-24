@@ -22,12 +22,15 @@ import datetime as _dt
 import hashlib
 import http.server
 import ipaddress
+import logging
 import ssl
 import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
+
+LOG = logging.getLogger("e2e.gwauth")
 
 import jwt as _jwt
 from cryptography import x509
@@ -207,5 +210,5 @@ class GatewayAuth:
             try:
                 server.shutdown()
                 server.server_close()
-            except Exception:  # noqa: BLE001 — best-effort teardown
-                pass
+            except Exception as e:  # noqa: BLE001 — best-effort teardown
+                LOG.debug("gateway auth server teardown failed: %s", e)

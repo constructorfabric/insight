@@ -86,7 +86,7 @@ def identity_inputs(compose_stack: SessionConfig):
         )
     clickhouse.execute(
         compose_stack,
-        "INSERT INTO identity.identity_inputs "
+        "INSERT INTO identity.identity_inputs "  # noqa: S608 — every value is a fixed test literal above, no untrusted input
         "(unique_key, insight_tenant_id, insight_source_type, insight_source_id,"
         " source_account_id, value_type, value, operation_type, _synced_at, _version) VALUES "
         + ", ".join(values),

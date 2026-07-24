@@ -125,26 +125,46 @@ IDENTITY_RUST_SKIP_LIST: list[tuple[str, str]] = [
 # success path would otherwise be invisible to the gate.
 REQUIRED_EXTRA: dict[str, frozenset[int]] = {}
 
+# Frozen references to the analytics defaults, so suite selection is
+# reversible (select_suite("analytics") genuinely restores them).
+_ANALYTICS_SKIP_LIST, _ANALYTICS_BLOCKED = SKIP_LIST, BLOCKED
+_ANALYTICS_UNIVERSAL_BOILERPLATE, _ANALYTICS_REQUIRED_EXTRA = UNIVERSAL_BOILERPLATE, REQUIRED_EXTRA
+
 _SUITES = {
     # (skip_list, blocked, universal_boilerplate, required_extra) per
     # service-under-test AND per implementation where the surface differs;
     # the gate is spec-scoped, so its suppression lists must be too.
-    "analytics": None,  # the module-level defaults above
-    "identity": None,  # rebound in select_suite (the .NET implementation)
-    "identity-rust": None,  # same, plus the approved legacy-endpoint removal
+    "analytics": (
+        _ANALYTICS_SKIP_LIST,
+        _ANALYTICS_BLOCKED,
+        _ANALYTICS_UNIVERSAL_BOILERPLATE,
+        _ANALYTICS_REQUIRED_EXTRA,
+    ),
+    "identity": (
+        IDENTITY_SKIP_LIST,
+        IDENTITY_BLOCKED,
+        IDENTITY_UNIVERSAL_BOILERPLATE,
+        IDENTITY_REQUIRED_EXTRA,
+    ),
+    "identity-rust": (
+        IDENTITY_RUST_SKIP_LIST,
+        IDENTITY_BLOCKED,
+        IDENTITY_UNIVERSAL_BOILERPLATE,
+        IDENTITY_REQUIRED_EXTRA,
+    ),
 }
 
 
 def select_suite(name: str) -> None:
-    """Rebind the suppression lists to the named suite's (CLI --suite)."""
+    """Rebind the suppression lists to the named suite's (CLI --suite).
+
+    A pure lookup — selecting "analytics" after another suite restores the
+    genuine analytics defaults, so the switch is reversible in-process.
+    """
     global SKIP_LIST, BLOCKED, UNIVERSAL_BOILERPLATE, REQUIRED_EXTRA  # noqa: PLW0603 — CLI-scoped rebinding
-    if name in ("identity", "identity-rust"):
-        SKIP_LIST = IDENTITY_RUST_SKIP_LIST if name == "identity-rust" else IDENTITY_SKIP_LIST
-        BLOCKED = IDENTITY_BLOCKED
-        UNIVERSAL_BOILERPLATE = IDENTITY_UNIVERSAL_BOILERPLATE
-        REQUIRED_EXTRA = IDENTITY_REQUIRED_EXTRA
-    elif name != "analytics":
+    if name not in _SUITES:
         raise ValueError(f"unknown suite: {name}")
+    SKIP_LIST, BLOCKED, UNIVERSAL_BOILERPLATE, REQUIRED_EXTRA = _SUITES[name]
 
 
 # ── recording half (imported by the rig) ──────────────────────────────────
@@ -439,8 +459,13 @@ def advisories(r: CoverageReport) -> list[str]:
 def render_markdown(r: CoverageReport) -> str:
     total = len(r.spec_ops)
     verdict = "✅ PASS" if r.passed else "❌ FAIL"
-    # Columns = every REGISTERED (declared) status code across the spec.
-    all_codes = sorted({c for codes in r.spec_ops.values() for c in codes})
+    # Columns = every REGISTERED (declared) status code across the spec, plus
+    # the REQUIRED_EXTRA codes — enforced despite not being declared, so a
+    # reader can see them in the matrix instead of only in the violations text.
+    all_codes = sorted(
+        {c for codes in r.spec_ops.values() for c in codes}
+        | {c for codes in REQUIRED_EXTRA.values() for c in codes}
+    )
     lines = [
         "# API endpoint coverage — by method+path",
         "",
@@ -459,7 +484,9 @@ def render_markdown(r: CoverageReport) -> str:
         "|---|" + "---|" * (len(all_codes) + 1),
     ]
     for op in sorted(r.spec_ops):
-        declared = set(r.spec_ops[op])
+        # REQUIRED_EXTRA codes render like declared ones (they are coverable
+        # members of r.required already).
+        declared = set(r.spec_ops[op]) | set(REQUIRED_EXTRA.get(op, frozenset()))
         coverable = r.required[op]
         observed = r.validated.get(op, set())
         row = []

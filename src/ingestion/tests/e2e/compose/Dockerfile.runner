@@ -34,10 +34,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (the Rust binary will bake in like analytics does).
 # Installed via the official dotnet-install script — Microsoft's Debian apt
 # feed does not carry the 9.0 runtime packages. libicu is the runtime's only
-# system dependency the slim base lacks.
+# system dependency the slim base lacks. The script is fetched to a file over
+# TLS from dot.net (Microsoft's canonical host; no stable published checksum
+# exists to verify against). `--channel 9.0` deliberately patch-floats: the
+# channel is pinned to the identity service's TargetFramework (net9.0), and
+# this is a disposable test-runner image, not a shipped artifact — a stale
+# pinned patch would only delay security fixes here. The runtime (and this
+# whole block) leaves with the frozen .NET service at the Rust cutover.
 RUN apt-get update && apt-get install -y --no-install-recommends curl libicu72 \
-    && curl -sSL https://dot.net/v1/dotnet-install.sh \
-        | bash -s -- --channel 9.0 --runtime aspnetcore --install-dir /usr/share/dotnet \
+    && curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
+    && bash /tmp/dotnet-install.sh --channel 9.0 --runtime aspnetcore --install-dir /usr/share/dotnet \
+    && rm /tmp/dotnet-install.sh \
     && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
     && apt-get purge -y curl && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*

@@ -186,6 +186,13 @@ def create_identity_database(cfg: SessionConfig) -> None:
     its (empty) database to exist and self-migrates the schema on boot.
     Idempotent — IF NOT EXISTS + re-GRANT are no-ops on re-runs.
     """
+    if not cfg.mariadb_root_password:
+        raise ApiSpawnError(
+            "MariaDB root password is empty — the identity suite needs it to "
+            "provision its own database. In docker mode it flows compose/.env "
+            "MARIADB_ROOT_PASSWORD → runner env E2E_MARIADB_ROOT_PASSWORD "
+            "(docker-compose.runner.yml) → SessionConfig; check that chain."
+        )
     conn = pymysql.connect(
         host=cfg.mariadb_host,
         port=cfg.mariadb_port,
@@ -448,16 +455,25 @@ class IdentityProcess:
         """A signed gateway JWT for caller `sub` (a person_id) in `tenant`."""
         return self.auth.mint(tenant, sub=sub, sub_type=sub_type)
 
-    def client(self, *, sub: str, tenant: str = str(TEST_TENANT_ID)) -> httpx.Client:
-        """Recording httpx client authenticated as person `sub` in `tenant`.
+    def client(
+        self,
+        *,
+        sub: str,
+        tenant: str = str(TEST_TENANT_ID),
+        sub_type: str = "user",
+        roles: str = "analyst",
+    ) -> httpx.Client:
+        """Recording httpx client authenticated as person `sub` in `tenant`
+        (`sub_type="service"` for the S2S principal shape).
 
         Every response is recorded into the IDENTITY coverage ledger (separate
         from the analytics one — the coverage gate is spec-scoped).
         """
+        token = self.auth.mint(tenant, sub=sub, sub_type=sub_type, roles=roles)
         return httpx.Client(
             base_url=self.base_url,
             timeout=30.0,
-            headers={"Authorization": f"Bearer {self.bearer(sub=sub, tenant=tenant)}"},
+            headers={"Authorization": f"Bearer {token}"},
             event_hooks={"response": [api_coverage.record_identity_response]},
         )
 

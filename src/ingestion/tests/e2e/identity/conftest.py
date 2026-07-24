@@ -49,21 +49,11 @@ def bob_api(identity_svc):
 def service_api(identity_svc):
     """Recording client with a SERVICE-principal token (sub_type=service) —
     the shape the authenticator uses for /internal/* lookups."""
-    import httpx
-
-    from lib import api_coverage
-
-    token = identity_svc.auth.mint(
-        str(identity_seed.OTHER_TENANT),  # tenant-agnostic endpoints; any real UUID
+    with identity_svc.client(
         sub=str(identity_seed.ALICE),
+        tenant=str(identity_seed.OTHER_TENANT),  # tenant-agnostic endpoints; any real UUID
         sub_type="service",
         roles="service",
-    )
-    with httpx.Client(
-        base_url=identity_svc.base_url,
-        timeout=30.0,
-        headers={"Authorization": f"Bearer {token}"},
-        event_hooks={"response": [api_coverage.record_identity_response]},
     ) as c:
         yield c
 

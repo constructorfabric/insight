@@ -21,22 +21,11 @@ pytestmark = pytest.mark.identity
 
 @pytest.fixture
 def identity_suite():
-    """Select the identity suite lists, restoring the defaults afterwards
-    (module globals are CLI-scoped state)."""
-    saved = (
-        api_coverage.SKIP_LIST,
-        api_coverage.BLOCKED,
-        api_coverage.UNIVERSAL_BOILERPLATE,
-        api_coverage.REQUIRED_EXTRA,
-    )
+    """Select the identity suite lists; `select_suite` is a reversible pure
+    lookup, so restoring = selecting the analytics defaults back."""
     api_coverage.select_suite("identity")
     yield
-    (
-        api_coverage.SKIP_LIST,
-        api_coverage.BLOCKED,
-        api_coverage.UNIVERSAL_BOILERPLATE,
-        api_coverage.REQUIRED_EXTRA,
-    ) = saved
+    api_coverage.select_suite("analytics")
 
 
 def _spec(paths: dict[str, dict[str, list[int]]]) -> dict:
@@ -192,12 +181,6 @@ def test_rust_gate_suite_skips_legacy_endpoint_dotnet_requires_it() -> None:
     a legitimate SKIP on identity-rust but a blocking MISSING on identity —
     so the removal never hides a .NET regression, and the Rust run doesn't
     fail on an approved removal (nor count a fallback 404 as coverage)."""
-    saved = (
-        api_coverage.SKIP_LIST,
-        api_coverage.BLOCKED,
-        api_coverage.UNIVERSAL_BOILERPLATE,
-        api_coverage.REQUIRED_EXTRA,
-    )
     spec = _spec({"/v1/persons/{email}": {"get": [200, 404]}})
     ledger = _ledger({})  # legacy endpoint never touched
     try:
@@ -213,9 +196,16 @@ def test_rust_gate_suite_skips_legacy_endpoint_dotnet_requires_it() -> None:
         assert not report.passed
         assert any("MISSING" in v for v in api_coverage.gate_violations(report))
     finally:
-        (
-            api_coverage.SKIP_LIST,
-            api_coverage.BLOCKED,
-            api_coverage.UNIVERSAL_BOILERPLATE,
-            api_coverage.REQUIRED_EXTRA,
-        ) = saved
+        api_coverage.select_suite("analytics")
+
+
+def test_select_suite_is_reversible() -> None:
+    """Selecting analytics back genuinely restores the analytics defaults
+    (previously a silent no-op that left identity lists active)."""
+    analytics_blocked = api_coverage.BLOCKED
+    try:
+        api_coverage.select_suite("identity")
+        assert api_coverage.BLOCKED is api_coverage.IDENTITY_BLOCKED
+    finally:
+        api_coverage.select_suite("analytics")
+    assert api_coverage.BLOCKED is analytics_blocked
