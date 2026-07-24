@@ -472,6 +472,12 @@ identity:
 # SCHEMA OWNER: identity-resolution's migrate initContainer applies the
 # ported migrations + first-admin bootstrap (idempotent over what the .NET
 # DbUp already applied; the frozen .NET service applies nothing new).
+# Fresh SIDE-BY-SIDE install caveat: the .NET startup DbUp takes no shared
+# lock with the Rust migrator, so on a brand-new database the two may
+# interleave the same idempotent DDL; every statement is guarded
+# (IF [NOT] EXISTS), so the worst case is a transient .NET pod restart that
+# converges on the next attempt. Existing databases (full DbUp ledger) and
+# Rust-only installs have a single migrator and no race at all.
 identityResolution:
   deploy: false
   replicaCount: 1

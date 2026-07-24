@@ -71,6 +71,10 @@ IDENTITY_DB=$(yq -r '.identity.databaseName       // "identity"' "$VALUES")
 TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
 IDENTITY_ORG_CHART_SOURCE=$(yq -r '.identity.orgChartSourceType // ""' "$VALUES")
 IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminPersonId // ""' "$VALUES")
+# Falls back to the .NET identity databaseName — the umbrella render fails
+# when both deploy with diverging names, so the fallback only fires on
+# Rust-only installs that didn't set it.
+IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // .identity.databaseName // "identity"' "$VALUES")
 
 # ── Authenticator OIDC (NGINX_BFF). issuerUrl/redirectUri may be Helm template
 #    strings in values.yaml; render {{ .Release.Name }}/{{ .Release.Namespace }}
@@ -293,7 +297,7 @@ metadata:
     helm.sh/resource-policy: keep   # see analytics-config rationale above
 type: Opaque
 stringData:
-  APP__gears__identity-resolution__config__database_url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${IDENTITY_DB}"
+  APP__gears__identity-resolution__config__database_url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${IDENTITY_RESOLUTION_DB}"
   APP__gears__identity-resolution__config__clickhouse_url: "http://${CH_HOST}:${CH_PORT}"
   APP__gears__identity-resolution__config__clickhouse_database: "${CH_DB}"
   APP__gears__identity-resolution__config__clickhouse_user: "${CH_USER}"

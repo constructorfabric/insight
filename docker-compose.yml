@@ -286,6 +286,37 @@ services:
   # by .NET DbUp), same internal port 8082 — published on a different HOST
   # port. Consumers keep calling `identity:8082` until the cutover flips
   # their URLs to `identity-resolution:8082` (rollback = flip back).
+  # One-shot schema migration (mirrors the k8s migrate initContainer): the
+  # Rust service owns the identity schema — incl. 014, which the frozen .NET
+  # DbUp set no longer carries — so compose must run `migrate` before the
+  # server. Exits 0 and stays exited; the server below gates on it.
+  identity-resolution-migrate:
+    image: ${IDENTITY_RESOLUTION_IMAGE:-insight-identity-resolution:dev}
+    container_name: insight-identity-resolution-migrate
+    build:
+      context: src/backend
+      dockerfile: services/identity-resolution/Dockerfile
+    restart: "no"
+    depends_on:
+      mariadb: {condition: service_healthy, required: false}
+    environment:
+      APP__gears__identity-resolution__config__database_url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/identity"
+    volumes:
+      - type: bind
+        source: ./deploy/compose/build/identity-resolution/identity-resolution
+        target: /app/identity-resolution
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./deploy/compose/identity-resolution-fullauth.yaml:/app/config/insight.yaml:ro
+    command:
+      - "/app/identity-resolution" # <watched path — unused, one-shot>
+      - "--"
+      - "/app/identity-resolution"
+      - "-c"
+      - "/app/config/insight.yaml"
+      - "migrate"
+
   identity-resolution:
     !!merge <<: *backend-common
     image: ${IDENTITY_RESOLUTION_IMAGE:-insight-identity-resolution:dev}
@@ -298,6 +329,7 @@ services:
       # profile isn't active (external MariaDB / ClickHouse modes).
       mariadb: {condition: service_healthy, required: false}
       clickhouse: {condition: service_healthy, required: false}
+      identity-resolution-migrate: {condition: service_completed_successfully}
     environment:
       !!merge <<: *backend-env
       # gears-rust host: structural config (gears list, oidc-authn-plugin

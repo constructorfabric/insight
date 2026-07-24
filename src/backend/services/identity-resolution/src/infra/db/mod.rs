@@ -119,3 +119,82 @@ pub async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
     tracing::info!("migrations applied");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use sea_orm_migration::MigratorTrait;
+
+    use super::*;
+    use crate::config::GearConfig;
+
+    async fn count(db: &DatabaseConnection, sql: &str) -> anyhow::Result<i64> {
+        let row = db
+            .query_one(Statement::from_string(DbBackend::MySql, sql))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("count query returned no row"))?;
+        Ok(row.try_get_by_index::<i64>(0)?)
+    }
+
+    /// Live migration + bootstrap test against the CI-provisioned MariaDB
+    /// (`INTEGRATION_TESTS_MARIADB_URL`; the CI job applies migrations once
+    /// via the CLI before tests, so the first `run_migrations` here is
+    /// already a re-run). Skips cleanly when the env var is unset.
+    #[tokio::test]
+    async fn migrations_and_bootstrap_are_idempotent_against_live_mariadb() -> anyhow::Result<()> {
+        let Ok(url) = std::env::var("INTEGRATION_TESTS_MARIADB_URL") else {
+            eprintln!("skip: set INTEGRATION_TESTS_MARIADB_URL to run");
+            return Ok(());
+        };
+        let db = connect_single(&url).await?;
+
+        run_migrations(&db).await?;
+        run_migrations(&db).await?;
+
+        let applied = count(&db, "SELECT COUNT(*) FROM seaql_migrations").await?;
+        let embedded = i64::try_from(crate::migration::Migrator::migrations().len())?;
+        assert_eq!(
+            applied, embedded,
+            "ledger must hold exactly the embedded set"
+        );
+
+        // Crash-recovery regression (012): a migrator killed between the DROP
+        // and ADD CONSTRAINT statements leaves the constraint absent — a
+        // re-run must converge, not fail on the unconditional DROP.
+        db.execute(Statement::from_string(
+            DbBackend::MySql,
+            "ALTER TABLE org_chart DROP CONSTRAINT IF EXISTS chk_no_self_loop",
+        ))
+        .await?;
+        db.execute(Statement::from_string(
+            DbBackend::MySql,
+            "DELETE FROM seaql_migrations WHERE version = 'm20260724_000012_org_chart_nullable_parent'",
+        ))
+        .await?;
+        run_migrations(&db).await?;
+        let checks = count(
+            &db,
+            "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS \
+             WHERE CONSTRAINT_NAME = 'chk_no_self_loop'",
+        )
+        .await?;
+        assert_eq!(checks, 1, "012 re-run must restore the constraint");
+
+        // Bootstrap admin: two runs, one active assignment.
+        let cfg = GearConfig {
+            tenant_default_id: "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab".to_owned(),
+            bootstrap_admin_person_id: "019e27bc-dec0-7626-81a9-c5524662a6a9".to_owned(),
+            ..GearConfig::default()
+        };
+        bootstrap::bootstrap_admin(&db, &cfg).await?;
+        bootstrap::bootstrap_admin(&db, &cfg).await?;
+        let admins = count(
+            &db,
+            "SELECT COUNT(*) FROM person_roles \
+             WHERE reason = 'bootstrap' AND valid_to IS NULL",
+        )
+        .await?;
+        assert_eq!(admins, 1, "bootstrap must be idempotent");
+        Ok(())
+    }
+}

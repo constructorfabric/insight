@@ -169,11 +169,11 @@ jobs:
       # ~15s startup. ClickHouse is intentionally not provisioned — CH-gated
       # tests skip themselves (see cf/insight#1564).
       - name: Start MariaDB (${{ matrix.entry.name }})
-        if: ${{ matrix.entry.cover && matrix.entry.live_db }}
+        if: ${{ matrix.entry.live_db }}
         run: |
           set -euo pipefail
           docker run -d --name insight-maria \
-            -e MARIADB_DATABASE=analytics \
+            -e MARIADB_DATABASE=${{ matrix.entry.live_db_name }} \
             -e MARIADB_USER=insight -e MARIADB_PASSWORD=insight \
             -e MARIADB_ROOT_PASSWORD=root \
             -p 3306:3306 mariadb:11.4
@@ -193,7 +193,7 @@ jobs:
         # #[ignore]d live_tests in parallel — they are tenant/metric-key
         # isolated and never reset the DB, so parallel runs don't collide.
         env:
-          INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && 'mysql://insight:insight@127.0.0.1:3306/analytics' || '' }}
+          INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/coverage"
@@ -227,10 +227,22 @@ jobs:
       - name: Test (${{ matrix.entry.name }}, no coverage)
         if: ${{ matrix.entry.test && !matrix.entry.cover }}
         working-directory: ${{ matrix.entry.root }}
+        env:
+          INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
         run: |
           set -euo pipefail
           feats=""
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
+          if [ "${{ matrix.entry.live_db }}" = "true" ]; then
+            # Apply migrations once up front (a failed migration fails the
+            # job); the live tests then re-run the migrator to prove
+            # idempotency. The gear name may contain a dash
+            # (identity-resolution), so the env override is passed via
+            # `env` — a plain NAME=VALUE prefix is not a valid sh assignment.
+            env "APP__gears__${{ matrix.entry.name }}__config__database_url=$INTEGRATION_TESTS_MARIADB_URL" \
+              cargo run -p ${{ matrix.entry.package }} $feats -- \
+                -c "services/${{ matrix.entry.name }}/config/insight.yaml" migrate
+          fi
           cargo test -p ${{ matrix.entry.package }} $feats
 
       - name: Upload Cobertura

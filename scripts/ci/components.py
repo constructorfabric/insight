@@ -65,6 +65,13 @@ COMPONENTS = [
         "root": "src/backend",
         "package": "identity-resolution",
         "cover": False,
+        # DB-backed migration/bootstrap tests: the CI rust job provisions a
+        # MariaDB (database `identity` — this service owns that schema), runs
+        # `identity-resolution migrate` up front, then `cargo test` with
+        # INTEGRATION_TESTS_MARIADB_URL set (the live tests re-run the
+        # migrator to prove idempotency and skip cleanly when unset).
+        "live_db": True,
+        "live_db_name": "identity",
         "cover_ignore_regex": "src/backend/libs/",
         "paths": ["src/backend/services/identity-resolution"],
         # insight-clickhouse is compiled in as a path dependency: a lib change
