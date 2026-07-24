@@ -79,6 +79,10 @@ impl From<Visibility> for VisibilityResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct VisibilityListResponse {
     pub items: Vec<VisibilityResponse>,
+    /// Wire parity with the .NET `ListResponse`: the cursor is declared
+    /// but pagination is not implemented — always `null` (both
+    /// implementations return every row; consumers already tolerate it).
+    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for VisibilityListResponse {}
 
@@ -185,7 +189,10 @@ pub async fn list_visibility(
     .await
     .map_err(read_err)?;
     let items = rows.into_iter().map(VisibilityResponse::from).collect();
-    Ok(Json(VisibilityListResponse { items }))
+    Ok(Json(VisibilityListResponse {
+        items,
+        next_cursor: None,
+    }))
 }
 
 /// `DELETE /v1/visibility/{id}` — revoke a grant (admin only).

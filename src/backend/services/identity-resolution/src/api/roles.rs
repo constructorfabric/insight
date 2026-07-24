@@ -3,9 +3,10 @@
 //! Admin-gated. Hard-DELETE with an atomic in-use guard (a role with active
 //! `person_roles` assignments cannot be deleted). Ported 1:1 from the .NET
 //! `RolesEndpoints` (ADR-0013). Note: the .NET "role in use" case is a 422
-//! `role_in_use`; gears canonical errors have no 422, so it is surfaced as a
-//! `failed_precondition` (400) — a documented status-code divergence, same
-//! spirit as the `gts://` vs `urn:` error-type divergence.
+//! `role_in_use`; gears canonical errors have no 422, so it is surfaced as
+//! `aborted` (409) — the SAME mapping every .NET-422 guard uses
+//! (`ambiguous_profile`, `last_admin_protected`), pinned by the identity
+//! contract suite's `UNPROCESSABLE_OR_CONFLICT` = {422, 409}.
 
 use std::sync::Arc;
 
@@ -56,6 +57,10 @@ impl From<Role> for RoleResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RoleListResponse {
     pub items: Vec<RoleResponse>,
+    /// Wire parity with the .NET `ListResponse`: the cursor is declared
+    /// but pagination is not implemented — always `null` (both
+    /// implementations return every row; consumers already tolerate it).
+    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for RoleListResponse {}
 
@@ -123,7 +128,10 @@ pub async fn list_roles(
 
     let roles = roles_repo::list_all(&state.db).await.map_err(read_err)?;
     let items = roles.into_iter().map(RoleResponse::from).collect();
-    Ok(Json(RoleListResponse { items }))
+    Ok(Json(RoleListResponse {
+        items,
+        next_cursor: None,
+    }))
 }
 
 /// `DELETE /v1/roles/{id}` — hard-delete a role (admin only); refuses with a
@@ -163,13 +171,11 @@ pub async fn delete_role(
     let live = roles_repo::count_active_assignments_any_tenant(&state.db, id)
         .await
         .map_err(read_err)?;
-    Err(RoleError::failed_precondition()
-        .with_precondition_violation(
-            id.to_string(),
-            format!("role has {live} active assignment(s); revoke them before deletion"),
-            "role_in_use",
-        )
-        .create())
+    Err(RoleError::aborted(format!(
+        "role has {live} active assignment(s); revoke them before deletion"
+    ))
+    .with_reason("role_in_use")
+    .create())
 }
 
 fn not_found(id: Uuid) -> CanonicalError {

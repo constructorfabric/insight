@@ -2,8 +2,9 @@
 //!
 //! Admin-gated; ported 1:1 from the .NET `PersonRolesEndpoints` (ADR-0014).
 //! Revoke refuses to remove the tenant's LAST active `admin` assignment
-//! (lockout protection). As in the roles domain, the .NET last-admin 422 has no
-//! gears canonical equivalent → surfaced as `failed_precondition` (400).
+//! (lockout protection). As in the roles domain, the .NET last-admin 422 has
+//! no gears canonical equivalent → surfaced as `aborted` (409), the same
+//! mapping as every .NET-422 guard (contract-suite pinned).
 
 use std::sync::Arc;
 
@@ -79,6 +80,10 @@ impl From<PersonRole> for PersonRoleResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonRoleListResponse {
     pub items: Vec<PersonRoleResponse>,
+    /// Wire parity with the .NET `ListResponse`: the cursor is declared
+    /// but pagination is not implemented — always `null` (both
+    /// implementations return every row; consumers already tolerate it).
+    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonRoleListResponse {}
 
@@ -182,7 +187,10 @@ pub async fn list_person_roles(
     .await
     .map_err(read_err)?;
     let items = rows.into_iter().map(PersonRoleResponse::from).collect();
-    Ok(Json(PersonRoleListResponse { items }))
+    Ok(Json(PersonRoleListResponse {
+        items,
+        next_cursor: None,
+    }))
 }
 
 /// `DELETE /v1/person-roles/{id}` — revoke an assignment (admin only); refuses
@@ -239,13 +247,11 @@ pub async fn delete_person_role(
     if refetched.is_none_or(|pr| pr.valid_to.is_some()) {
         return Err(not_found(id));
     }
-    Err(PersonRoleError::failed_precondition()
-        .with_precondition_violation(
-            id.to_string(),
-            "cannot revoke the last active admin assignment in this tenant",
-            "last_admin_protected",
-        )
-        .create())
+    Err(
+        PersonRoleError::aborted("cannot revoke the last active admin assignment in this tenant")
+            .with_reason("last_admin_protected")
+            .create(),
+    )
 }
 
 fn not_found(id: Uuid) -> CanonicalError {
