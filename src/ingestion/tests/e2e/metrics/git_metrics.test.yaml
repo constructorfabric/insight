@@ -9,23 +9,23 @@ bronze:
     - $ref: templates/people.yaml#/templates/dave
     - $ref: templates/people.yaml#/templates/erin
   bronze_github.commits:
-    - { $ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-alice, oid: hash-alice, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10 }
-    - { $ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob, oid: hash-bob, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 20 }
-    - { $ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-carol, oid: hash-carol, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 30 }
-    - { $ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-dave, oid: hash-dave, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 40 }
-    - { $ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-erin, oid: hash-erin, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 50 }
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-alice, sha: hash-alice, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob, sha: hash-bob, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 20}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-carol, sha: hash-carol, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 30}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-dave, sha: hash-dave, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 40}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-erin, sha: hash-erin, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 50}
   bronze_github.file_changes:
-    - { $ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-alice, commit_hash: hash-alice, additions: 10, deletions: 2 }
-    - { $ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-bob, commit_hash: hash-bob, additions: 20, deletions: 4 }
-    - { $ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-carol, commit_hash: hash-carol, additions: 30, deletions: 6 }
-    - { $ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-dave, commit_hash: hash-dave, additions: 40, deletions: 8 }
-    - { $ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-erin, commit_hash: hash-erin, additions: 50, deletions: 10 }
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-alice, sha: hash-alice, additions: 10, deletions: 2}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-bob, sha: hash-bob, additions: 20, deletions: 4}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-carol, sha: hash-carol, additions: 30, deletions: 6}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-dave, sha: hash-dave, additions: 40, deletions: 8}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-erin, sha: hash-erin, additions: 50, deletions: 10}
   bronze_github.pull_requests:
-    - { $ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-alice, database_id: 1, number: 1, author_login: alice, author_email: alice@example.com, closed_at: "2026-10-01T09:00:00Z", merge_commit_sha: merge-alice, additions: 10 }
-    - { $ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob, database_id: 2, number: 2, author_login: bob, author_email: bob@example.com, closed_at: "2026-10-01T10:00:00Z", merge_commit_sha: merge-bob, additions: 20 }
-    - { $ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol, database_id: 3, number: 3, author_login: carol, author_email: carol@example.com, closed_at: "2026-10-01T11:00:00Z", merge_commit_sha: merge-carol, additions: 30 }
-    - { $ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-dave, database_id: 4, number: 4, author_login: dave, author_email: dave@example.com, closed_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-dave, additions: 40 }
-    - { $ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-erin, database_id: 5, number: 5, author_login: erin, author_email: erin@example.com, closed_at: "2026-10-01T13:00:00Z", merge_commit_sha: merge-erin, additions: 50 }
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-alice, database_id: 1, number: 1, author_login: alice, author_email: alice@example.com, closed_at: "2026-10-01T09:00:00Z", merge_commit_sha: merge-alice, additions: 10}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob, database_id: 2, number: 2, author_login: bob, author_email: bob@example.com, closed_at: "2026-10-01T10:00:00Z", merge_commit_sha: merge-bob, additions: 20}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol, database_id: 3, number: 3, author_login: carol, author_email: carol@example.com, closed_at: "2026-10-01T11:00:00Z", merge_commit_sha: merge-carol, additions: 30}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-dave, database_id: 4, number: 4, author_login: dave, author_email: dave@example.com, closed_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-dave, additions: 40}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-erin, database_id: 5, number: 5, author_login: erin, author_email: erin@example.com, closed_at: "2026-10-01T13:00:00Z", merge_commit_sha: merge-erin, additions: 50,}
 
 cases:
   - name: Unified Git metrics
@@ -33,262 +33,262 @@ cases:
       url: /v1/metric-results
       method: POST
       body:
-        entity: { type: person, ids: [erin@example.com] }
-        period: { from: "2026-10-01", to: "2026-10-02" }
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
         metrics:
           - metric_key: git.commits
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [source] }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
           - metric_key: git.code_lines
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [source] }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
           - metric_key: git.lines_added
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [category, source] }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [category, source]}
           - metric_key: git.lines_removed
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [category, source] }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [category, source]}
           - metric_key: git.prs_created
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [source] }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
           - metric_key: git.prs_merged
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [source] }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
           - metric_key: git.merge_rate
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [source] }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
           - metric_key: git.commits_per_active_day
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
           - metric_key: git.commit_size
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [source] }
-              - { view: histogram }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+              - {view: histogram}
           - metric_key: git.pr_size
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [source] }
-              - { view: histogram }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+              - {view: histogram}
           - metric_key: git.pr_cycle_time_h
             views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [source] }
-              - { view: histogram }
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+              - {view: histogram}
     expect:
       - assert: "status == 200"
       - metric: git.commits
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 1 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 1}
       - metric: git.commits
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5}
       - metric: git.commits
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 1 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
       - metric: git.commits
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: source, value: github } }
-        equal: { value: 1 }
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 1}
       - metric: git.code_lines
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 50 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 50}
       - metric: git.code_lines
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5}
       - metric: git.code_lines
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 50 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 50}}
       - metric: git.code_lines
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: source, value: github } }
-        equal: { value: 50 }
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 50}
       - metric: git.lines_added
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 50 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 50}
       - metric: git.lines_added
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5}
       - metric: git.lines_added
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 50 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 50}}
       - metric: git.lines_added
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: category, value: code } }
-        equal: { value: 50 }
+        find: {entity_id: erin@example.com, dimensions: {key: category, value: code}}
+        equal: {value: 50}
       - metric: git.lines_removed
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 10 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 10}
       - metric: git.lines_removed
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 10, p25: 4, median: 6, p75: 8, min: 2, max: 10, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 10, p25: 4, median: 6, p75: 8, min: 2, max: 10, n: 5}
       - metric: git.lines_removed
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 10 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 10}}
       - metric: git.lines_removed
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: category, value: code } }
-        equal: { value: 10 }
+        find: {entity_id: erin@example.com, dimensions: {key: category, value: code}}
+        equal: {value: 10}
       - metric: git.prs_created
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 1 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 1}
       - metric: git.prs_created
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5}
       - metric: git.prs_created
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 1 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
       - metric: git.prs_created
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: source, value: github } }
-        equal: { value: 1 }
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 1}
       - metric: git.prs_merged
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 1 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 1}
       - metric: git.prs_merged
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5}
       - metric: git.prs_merged
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 1 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
       - metric: git.prs_merged
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: source, value: github } }
-        equal: { value: 1 }
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 1}
       - metric: git.merge_rate
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 100 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 100}
       - metric: git.merge_rate
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 100, p25: 100, median: 100, p75: 100, min: 100, max: 100, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 100, p25: 100, median: 100, p75: 100, min: 100, max: 100, n: 5}
       - metric: git.merge_rate
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 100 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 100}}
       - metric: git.merge_rate
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: source, value: github } }
-        equal: { value: 100 }
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 100}
       - metric: git.commits_per_active_day
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 1 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 1}
       - metric: git.commits_per_active_day
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 5}
       - metric: git.commits_per_active_day
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 1 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
       - metric: git.commit_size
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 50 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 50}
       - metric: git.commit_size
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5}
       - metric: git.commit_size
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 50 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 50}}
       - metric: git.commit_size
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: source, value: github } }
-        equal: { value: 50 }
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 50}
       - metric: git.commit_size
         view: histogram
-        find: { entity_id: erin@example.com }
+        find: {entity_id: erin@example.com}
         nonempty: [bins]
       - metric: git.pr_size
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 50 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 50}
       - metric: git.pr_size
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5}
       - metric: git.pr_size
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 50 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 50}}
       - metric: git.pr_size
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: source, value: github } }
-        equal: { value: 50 }
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 50}
       - metric: git.pr_size
         view: histogram
-        find: { entity_id: erin@example.com }
+        find: {entity_id: erin@example.com}
         nonempty: [bins]
       - metric: git.pr_cycle_time_h
         view: period
-        find: { entity_id: erin@example.com }
-        equal: { value: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {value: 5}
       - metric: git.pr_cycle_time_h
         view: peer
-        find: { entity_id: erin@example.com }
-        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5}
       - metric: git.pr_cycle_time_h
         view: timeseries
-        find: { entity_id: erin@example.com }
-        contains: { points: { bucket_start: "2026-10-01", value: 5 } }
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 5}}
       - metric: git.pr_cycle_time_h
         view: breakdown
-        find: { entity_id: erin@example.com, dimensions: { key: source, value: github } }
-        equal: { value: 5 }
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 5}
       - metric: git.pr_cycle_time_h
         view: histogram
-        find: { entity_id: erin@example.com }
+        find: {entity_id: erin@example.com}
         nonempty: [bins]
 
   - name: Unified Git metrics empty window
@@ -296,28 +296,28 @@ cases:
       url: /v1/metric-results
       method: POST
       body:
-        entity: { type: person, ids: [erin@example.com] }
-        period: { from: "2025-01-01", to: "2025-01-31" }
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2025-01-01", to: "2025-01-31"}
         metrics:
-          - { metric_key: git.commits, views: [{ view: period }] }
-          - { metric_key: git.code_lines, views: [{ view: period }] }
-          - { metric_key: git.lines_added, views: [{ view: period }] }
-          - { metric_key: git.prs_created, views: [{ view: period }] }
-          - { metric_key: git.prs_merged, views: [{ view: period }] }
-          - { metric_key: git.merge_rate, views: [{ view: period }] }
-          - { metric_key: git.commits_per_active_day, views: [{ view: period }] }
-          - { metric_key: git.commit_size, views: [{ view: period }] }
-          - { metric_key: git.pr_size, views: [{ view: period }] }
-          - { metric_key: git.pr_cycle_time_h, views: [{ view: period }] }
+          - {metric_key: git.commits, views: [{view: period}]}
+          - {metric_key: git.code_lines, views: [{view: period}]}
+          - {metric_key: git.lines_added, views: [{view: period}]}
+          - {metric_key: git.prs_created, views: [{view: period}]}
+          - {metric_key: git.prs_merged, views: [{view: period}]}
+          - {metric_key: git.merge_rate, views: [{view: period}]}
+          - {metric_key: git.commits_per_active_day, views: [{view: period}]}
+          - {metric_key: git.commit_size, views: [{view: period}]}
+          - {metric_key: git.pr_size, views: [{view: period}]}
+          - {metric_key: git.pr_cycle_time_h, views: [{view: period}]}
     expect:
       - assert: "status == 200"
-      - { metric: git.commits, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
-      - { metric: git.code_lines, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
-      - { metric: git.lines_added, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
-      - { metric: git.prs_created, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
-      - { metric: git.prs_merged, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
-      - { metric: git.merge_rate, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
-      - { metric: git.commits_per_active_day, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
-      - { metric: git.commit_size, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
-      - { metric: git.pr_size, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
-      - { metric: git.pr_cycle_time_h, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
+      - {metric: git.commits, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.code_lines, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.lines_added, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.prs_created, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.prs_merged, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.merge_rate, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.commits_per_active_day, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.commit_size, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.pr_size, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.pr_cycle_time_h, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}

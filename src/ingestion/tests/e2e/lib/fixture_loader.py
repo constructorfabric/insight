@@ -44,6 +44,10 @@ class TestYaml:
     bronze: dict[str, list[dict]] = field(default_factory=dict)
     schemas: dict[str, dict] = field(default_factory=dict)
     cases: list[dict] = field(default_factory=list)
+    # Optional top-level `skip: <reason>` in the .test.yaml. When set, the runner
+    # skips the test (pytest.skip) instead of executing it — used for metrics
+    # blocked on an external fix (e.g. git metrics until bitbucket-cloud #1877).
+    skip: str | None = None
 
     @property
     def touched_tables(self) -> set[tuple[str, str]]:
@@ -75,6 +79,19 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
         raise FixtureError(f"{path}: invalid YAML: {e}") from e
     if not isinstance(doc, dict):
         raise FixtureError(f"{path}: top-level must be a mapping")
+
+    # Resolve `skip` BEFORE validating cases or resolving bronze schemas/data.
+    # A skipped fixture (a metric blocked on an external fix) may legitimately
+    # carry stale or invalid schemas/data, and must still skip cleanly instead
+    # of failing pytest collection. Reject non-string `skip` at the boundary:
+    # the contract is `str | None`, and e.g. `skip: false` would otherwise be
+    # silently swallowed by the runner's truthiness check in conftest.
+    skip = doc.get("skip")
+    if skip is not None and not isinstance(skip, str):
+        raise FixtureError(f"{path}: `skip` must be a string reason (got {type(skip).__name__})")
+    if skip:
+        return TestYaml(name=path.name[: -len(".test.yaml")], path=path, skip=skip)
+
     if "cases" not in doc:
         raise FixtureError(f"{path}: a test must define `cases`")
 
@@ -113,11 +130,7 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
             raise FixtureError(f"{path}: cases[{i}] must be a mapping with `request` and `expect`")
 
     return TestYaml(
-        name=path.name[: -len(".test.yaml")],
-        path=path,
-        bronze=bronze,
-        schemas=schemas,
-        cases=cases,
+        name=path.name[: -len(".test.yaml")], path=path, bronze=bronze, schemas=schemas, cases=cases, skip=skip
     )
 
 

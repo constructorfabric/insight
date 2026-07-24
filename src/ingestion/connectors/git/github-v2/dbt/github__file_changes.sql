@@ -13,7 +13,7 @@ SELECT
     unique_key,
     COALESCE(repo_owner, '') AS project_key,
     COALESCE(repo_name, '') AS repo_slug,
-    COALESCE(commit_hash, '') AS commit_hash,
+    COALESCE(sha, '') AS commit_hash,
     COALESCE(filename, '') AS file_path,
     -- File extension: last segment after the final '.', empty when none.
     -- Earlier shape (issue #494) used `position('.', filename) > 0` as the

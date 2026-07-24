@@ -17,6 +17,7 @@ sources:
       - name: pull_requests
       - name: pull_request_reviews
       - name: pull_request_comments
+      - name: pull_request_review_comments
       - name: pull_request_commits
 
 models:

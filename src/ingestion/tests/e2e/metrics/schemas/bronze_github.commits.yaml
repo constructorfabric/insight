@@ -4,24 +4,24 @@ schemas:
     type: object
     additionalProperties: false
     properties:
-      _airbyte_raw_id: { type: string }
-      _airbyte_extracted_at: { type: string, format: date-time }
-      _airbyte_meta: { type: string }
-      _airbyte_generation_id: { type: integer }
-      tenant_id: { type: string }
-      source_id: { type: string }
-      unique_key: { type: string }
-      repo_owner: { type: string }
-      repo_name: { type: string }
-      oid: { type: string }
-      branch_name: { type: string }
-      author_name: { type: string }
-      author_email: { type: string }
-      committer_name: { type: string }
-      committer_email: { type: string }
-      message: { type: string }
-      committed_date: { type: string }
-      changed_files: { type: integer }
-      additions: { type: integer }
-      deletions: { type: integer }
-      parent_hashes: { type: array, items: { type: string } }
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      tenant_id: {type: string}
+      source_id: {type: string}
+      unique_key: {type: string}
+      repo_owner: {type: string}
+      repo_name: {type: string}
+      sha: {type: string}
+      branch_name: {type: string}
+      author_name: {type: string}
+      author_email: {type: string}
+      committer_name: {type: string}
+      committer_email: {type: string}
+      message: {type: string}
+      committed_date: {type: string}
+      changed_files: {type: integer}
+      additions: {type: integer}
+      deletions: {type: integer}
+      parent_hashes: {type: string}

@@ -13,7 +13,7 @@ SELECT
     unique_key,
     COALESCE(repo_owner, '') AS project_key,
     COALESCE(repo_name, '') AS repo_slug,
-    COALESCE(oid, '') AS commit_hash,
+    COALESCE(sha, '') AS commit_hash,
     COALESCE(branch_name, '') AS branch,
     COALESCE(author_name, '') AS author_name,
     COALESCE(author_email, '') AS author_email,
@@ -24,7 +24,11 @@ SELECT
     COALESCE(changed_files, 0) AS files_changed,
     COALESCE(additions, 0) AS lines_added,
     COALESCE(deletions, 0) AS lines_removed,
-    if(length(parent_hashes) > 1, 1, 0) AS is_merge_commit,
+    -- parent_hashes arrives as a JSON-array string (Airbyte serializes the
+    -- connector's array field into the Nullable(String) bronze column), so
+    -- count elements with JSONLength — plain length() would count characters
+    -- and flag every commit with a parent (e.g. `["sha"]`) as a merge.
+    if(JSONLength(COALESCE(parent_hashes, '')) > 1, 1, 0) AS is_merge_commit,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

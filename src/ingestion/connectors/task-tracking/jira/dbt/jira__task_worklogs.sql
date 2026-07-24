@@ -14,7 +14,7 @@ SELECT
     w.unique_key                                      AS unique_key,
     w.source_id                                       AS insight_source_id,
     CAST('jira' AS String)                            AS data_source,
-    w.worklog_id                                      AS worklog_id,
+    toString(w.worklog_id)                            AS worklog_id,
     w.id_readable                                     AS id_readable,
     w.author_account_id                               AS author_id,
     parseDateTime64BestEffortOrNull(w.started, 3)     AS work_date,

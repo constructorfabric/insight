@@ -32,7 +32,7 @@ from lib import clickhouse as ch
 from lib import compose, mariadb
 from lib.analytics import AnalyticsProcess, find_free_port, locate_binary
 from lib.ch_seeder import CHSeeder
-from lib.config import TEST_TENANT_ID, SessionConfig
+from lib.config import SessionConfig
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
 from lib.fixture_loader import TestYaml, discover_tests
@@ -234,10 +234,7 @@ def identity_stub():
 
 @pytest.fixture(scope="session")
 def analytics(
-    ch_migrations_applied: SessionConfig,
-    dbt_runner: DbtRunner,
-    worker_ctx: WorkerContext,
-    identity_stub: IdentityStub,
+    ch_migrations_applied: SessionConfig, dbt_runner: DbtRunner, worker_ctx: WorkerContext, identity_stub: IdentityStub
 ):
     """Spawn the analytics binary baked into the runner image. Its SeaORM
     migrations run on startup; we then upsert test-specific metrics from
@@ -337,4 +334,7 @@ def pytest_generate_tests(metafunc):
 @pytest.fixture
 def test_yaml(test_path: Path) -> TestYaml:
     """Load + resolve the test file; malformed files fail here as a test failure."""
-    return load_test(test_path)
+    ty = load_test(test_path)
+    if ty.skip:
+        pytest.skip(ty.skip)
+    return ty
