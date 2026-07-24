@@ -6,9 +6,11 @@
 //! decommissioned once the Rust service is validated — from here on, schema
 //! changes are authored HERE, as new `mNNN_*` modules.
 //!
-//! The `sql/` files are byte-for-byte copies of the `DbUp` scripts
+//! `sql/001…013` are byte-for-byte copies of the `DbUp` scripts
 //! (`services/identity/src/Insight.Identity.Infrastructure/Migrations/`) —
-//! review parity with `diff -r`. Every script is idempotent (`CREATE … IF NOT
+//! review parity with `diff -r`. `014` is the first Rust-authored migration
+//! (deliberately NOT added to the frozen .NET set — one applier, no
+//! concurrent-ALTER window). Every script is idempotent (`CREATE … IF NOT
 //! EXISTS`, `MODIFY COLUMN` to the same type is a no-op, index/constraint
 //! drops recreate under the same name), so the first Rust `migrate` run on an
 //! environment whose schema `DbUp` already applied passes through as a no-op
