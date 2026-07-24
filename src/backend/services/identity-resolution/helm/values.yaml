@@ -1,0 +1,86 @@
+replicaCount: 1
+
+podAnnotations: {}
+
+image:
+  repository: ghcr.io/constructorfabric/insight-identity-resolution
+  tag: "" # MUST be set by the operator. No `:latest` default.
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  # Same port as the .NET identity service this replaces (consumers reach
+  # identity at <host>:8082, so the cutover flips only the hostname).
+  port: 8082
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Pre-provisioned Secret carrying the gears-rust host's leaf-config overrides
+# (injected via envFrom; they override the mounted config ConfigMap):
+#   APP__gears__identity-resolution__config__database_url
+#   APP__gears__identity-resolution__config__clickhouse_url|_database|_user|_password
+#
+# The umbrella populates `insight-identity-resolution-config` automatically;
+# for standalone installs the operator pre-creates an equivalent Secret and
+# sets `existingSecret` to its name.
+existingSecret: ""
+
+# Gateway-JWT verification (cf-gears-oidc-authn-plugin, NGINX_BFF R1). These
+# render into the plugin's `jwt.trusted_issuers` / `expected_audience` in the
+# ConfigMap (nested/list-shaped, so not env-injectable). The plugin resolves the
+# JWKS via OIDC discovery on the issuer over https ONLY.
+gateway:
+  # `iss` the token carries = the authenticator's gateway_issuer (gateway
+  # origin). The plugin fetches `{issuer}/.well-known/openid-configuration`.
+  issuer: ""
+  # Optional discovery override: where to fetch the discovery document, when the
+  # public `issuer` is not reachable from in-cluster. `{issuer}` is substituted
+  # with the matched `iss`. Leave empty to use the issuer directly.
+  discoveryUrl: ""
+  # Expected `aud`. Fixed by the authenticator's claim contract.
+  audience: "internal-services"
+  # Optional extra TLS trust roots (PEM paths inside the pod) for the discovery/
+  # JWKS fetch — e.g. an internal CA. Empty for a publicly-trusted issuer cert.
+  caCertPaths: []
+  # Secret holding the discovery issuer's CA under key `ca.crt` (the
+  # authenticator's authn-tls cert Secret). When set, it is mounted read-only at
+  # /etc/insight/authn-ca and `caCertPaths` should include
+  # `/etc/insight/authn-ca/ca.crt`. The umbrella wires both automatically.
+  caCertSecret: ""
+
+# Org-chart source + subordinates expansion (mirrors the .NET AppOptions;
+# rendered into the gear config in the ConfigMap).
+identityResolution:
+  orgChartSourceType: "bamboohr"
+  expandSubordinates: true
+  maxDepth: 16
+
+# TCP gate before start: the service connects to MariaDB at boot. Same
+# busybox wait as the .NET identity chart.
+waitForMariadb:
+  enabled: true
+  image:
+    repository: busybox
+    tag: "1.36"
+  timeoutSeconds: 180
+
+# Health probes (host-provided endpoints, parity with the .NET service).
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5

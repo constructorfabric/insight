@@ -1,0 +1,141 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insight-identity-resolution.fullname" . }}
+  labels:
+    {{- include "insight-identity-resolution.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "insight-identity-resolution.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insight-identity-resolution.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll pods when the gears config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global }}
+      {{- with .imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
+      # kubelet auto-injects for every Service in the namespace at pod-start
+      # (see api-gateway deployment for the longer explanation).
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      {{- if .Values.waitForMariadb.enabled }}
+      # The service connects to MariaDB at boot; gate on it like the .NET
+      # identity chart does. Schema (DbUp) is still owned by the .NET service
+      # during the transition — no migrate initContainer here yet.
+      initContainers:
+        - name: wait-for-mariadb
+          image: "{{ .Values.waitForMariadb.image.repository }}:{{ .Values.waitForMariadb.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            # The umbrella publishes MARIADB_HOST + MARIADB_PORT here via
+            # `insight.mariadb.host` / `.port` helpers — works for both
+            # mariadb.deploy=true and =false. The chart is published only
+            # as part of the umbrella, so this ref is hardcoded.
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              host="$MARIADB_HOST"
+              port="${MARIADB_PORT:-3306}"
+              timeout={{ .Values.waitForMariadb.timeoutSeconds }}
+              elapsed=0
+              echo "wait-for-mariadb: ${host}:${port} (timeout=${timeout}s)"
+              until nc -z "${host}" "${port}"; do
+                if [ "${elapsed}" -ge "${timeout}" ]; then
+                  echo "wait-for-mariadb: ERROR — ${host}:${port} not reachable within ${timeout}s" >&2
+                  exit 1
+                fi
+                sleep 2
+                elapsed=$((elapsed + 2))
+              done
+              echo "wait-for-mariadb: ${host}:${port} is up after ${elapsed}s"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      {{- end }}
+      containers:
+        - name: identity-resolution
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # gears-rust host: structural config from the mounted ConfigMap;
+          # leaf values (DB/ClickHouse) from the Secret via envFrom below.
+          command: ["/app/identity-resolution"]
+          args: ["-c", "/app/config/insight.yaml"]
+          volumeMounts:
+            - name: identity-resolution-config
+              mountPath: /app/config/insight.yaml
+              subPath: insight.yaml
+              readOnly: true
+            {{- if .Values.gateway.caCertSecret }}
+            # Discovery-issuer CA for the oidc-authn-plugin's https JWKS fetch.
+            - name: authn-ca
+              mountPath: /etc/insight/authn-ca
+              readOnly: true
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          # Gateway-JWT verification (NGINX_BFF R1): the plugin's verification
+          # config is nested/list-shaped and rendered into the ConfigMap from
+          # `.Values.gateway.*` (issuer / discoveryUrl / audience / caCertPaths),
+          # so there are no APP__ env overrides for it here.
+          envFrom:
+            # Operator MUST pre-create this Secret (umbrella does it
+            # automatically as `insight-identity-resolution-config`). Provides
+            # the APP__gears__identity-resolution__config__* leaf overrides.
+            - secretRef:
+                name: {{ required "existingSecret is required (umbrella provides `insight-identity-resolution-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: identity-resolution-config
+          configMap:
+            name: {{ include "insight-identity-resolution.fullname" . }}-gears-config
+        {{- if .Values.gateway.caCertSecret }}
+        - name: authn-ca
+          secret:
+            secretName: {{ .Values.gateway.caCertSecret | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
