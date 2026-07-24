@@ -86,7 +86,10 @@ IDENTITY_UNIVERSAL_BOILERPLATE = frozenset({429})
 # The committed .NET spec declares a generic `200` on the mutating routes,
 # but the handlers actually answer 201 (create) / 202 (accepted) / 204
 # (delete) — same `.standard_errors`-style spec-fidelity gap as analytics
-# #1669. Self-cleaning: fails the hygiene advisory once the spec is fixed.
+# #1669. The wrong 200 is BLOCKED (never answered), and the REAL success code
+# is REQUIRED_EXTRA (must be observed even though the spec doesn't declare
+# it) — so the gate cannot report 100% while no mutation success was ever
+# seen. Both are self-cleaning once the spec is fixed.
 IDENTITY_BLOCKED: dict[str, frozenset[int]] = {
     "POST /v1/roles": frozenset({200}),  # answers 201
     "POST /v1/person-roles": frozenset({200}),  # answers 201
@@ -96,6 +99,21 @@ IDENTITY_BLOCKED: dict[str, frozenset[int]] = {
     "DELETE /v1/person-roles/{id}": frozenset({200}),  # answers 204
     "DELETE /v1/visibility/{id}": frozenset({200}),  # answers 204
 }
+IDENTITY_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
+    "POST /v1/roles": frozenset({201}),
+    "POST /v1/person-roles": frozenset({201}),
+    "POST /v1/visibility": frozenset({201}),
+    "POST /v1/persons-seed": frozenset({202}),
+    "DELETE /v1/roles/{id}": frozenset({204}),
+    "DELETE /v1/person-roles/{id}": frozenset({204}),
+    "DELETE /v1/visibility/{id}": frozenset({204}),
+}
+
+# Codes the suite must observe DESPITE the spec not declaring them (a known
+# spec-fidelity gap, per suite). Unlike ordinary uncovered codes (advisory),
+# a missing REQUIRED_EXTRA code BLOCKS — it exists precisely because the
+# success path would otherwise be invisible to the gate.
+REQUIRED_EXTRA: dict[str, frozenset[int]] = {}
 
 _SUITES = {
     # (skip_list, blocked, universal_boilerplate) per service-under-test; the
@@ -107,11 +125,12 @@ _SUITES = {
 
 def select_suite(name: str) -> None:
     """Rebind the suppression lists to the named suite's (CLI --suite)."""
-    global SKIP_LIST, BLOCKED, UNIVERSAL_BOILERPLATE  # noqa: PLW0603 — CLI-scoped rebinding
+    global SKIP_LIST, BLOCKED, UNIVERSAL_BOILERPLATE, REQUIRED_EXTRA  # noqa: PLW0603 — CLI-scoped rebinding
     if name == "identity":
         SKIP_LIST = IDENTITY_SKIP_LIST
         BLOCKED = IDENTITY_BLOCKED
         UNIVERSAL_BOILERPLATE = IDENTITY_UNIVERSAL_BOILERPLATE
+        REQUIRED_EXTRA = IDENTITY_REQUIRED_EXTRA
     elif name != "analytics":
         raise ValueError(f"unknown suite: {name}")
 
@@ -327,7 +346,7 @@ class CoverageReport:
             {c for c in declared if c < SERVER_FAULT_FLOOR}
             - UNIVERSAL_BOILERPLATE
             - set(excluded)
-        )
+        ) | set(REQUIRED_EXTRA.get(op, frozenset()))
 
     @property
     def passed(self) -> bool:
@@ -360,6 +379,25 @@ def gate_violations(r: CoverageReport) -> list[str]:
         out.append(f"REDUNDANT SKIP: {op} is now exercised — drop it from SKIP_LIST")
     for op in r.stale_skips:
         out.append(f"STALE SKIP: {op} is no longer in the spec — drop it from SKIP_LIST")
+    # REQUIRED_EXTRA codes exist because the spec under-declares the success
+    # path — a suite that never observes them has no proof the mutation works,
+    # so (unlike ordinary uncovered codes) this BLOCKS.
+    for op, extra in sorted(REQUIRED_EXTRA.items()):
+        if op not in r.spec_ops:
+            out.append(f"STALE REQUIRED_EXTRA: {op} is no longer in the spec — drop the entry")
+            continue
+        declared_now = set(extra) & set(r.spec_ops[op])
+        if declared_now:
+            out.append(
+                f"REDUNDANT REQUIRED_EXTRA: {op} now declares {sorted(declared_now)} "
+                f"in the spec — drop them from REQUIRED_EXTRA"
+            )
+        unseen = set(extra) - r.validated.get(op, set())
+        if unseen:
+            out.append(
+                f"MISSING REQUIRED_EXTRA: {op} never answered {sorted(unseen)} — the "
+                f"mutation success path is unproven"
+            )
     return out
 
 

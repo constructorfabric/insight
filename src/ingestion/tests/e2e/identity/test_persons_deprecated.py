@@ -16,6 +16,20 @@ from lib import identity_seed as seed
 pytestmark = pytest.mark.identity
 
 
+@pytest.fixture(autouse=True)
+def _skip_when_endpoint_dropped(api) -> None:
+    """Capability probe: the successor implementation does not register this
+    route at all (approved removal — zero callers). A 404 for an email that
+    /v1/profiles CAN resolve means the route is gone, not the person."""
+    probe = api.get(f"/v1/persons/{seed.BOB_EMAIL}")
+    if probe.status_code == 404:
+        resolvable = api.post(
+            "/v1/profiles", json={"value_type": "email", "value": seed.BOB_EMAIL}
+        )
+        if resolvable.status_code == 200:
+            pytest.skip("GET /v1/persons/{email} dropped in this implementation (approved removal)")
+
+
 def test_deprecated_person_lookup_200(api) -> None:
     r = api.get(f"/v1/persons/{seed.BOB_EMAIL}")
     assert r.status_code == 200, f"status={r.status_code} body={r.text}"

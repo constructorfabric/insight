@@ -69,6 +69,14 @@ def service_api(identity_svc):
 
 
 @pytest.fixture
+def seed_ops_api(identity_svc):
+    """Client for the persons-seed operations surface — authenticated as the
+    SEED_TENANT admin (the operations log is tenant-scoped)."""
+    with identity_svc.client(sub=str(identity_seed.SEED_ADMIN), tenant=str(identity_seed.SEED_TENANT)) as c:
+        yield c
+
+
+@pytest.fixture
 def anon_api(identity_svc):
     """Recording client with NO Authorization header (401 cases)."""
     import httpx

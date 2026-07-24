@@ -16,7 +16,9 @@ same code + CH 24.8.4.13 work on the dev cluster and native Linux). On a Mac,
 deselect the end-to-end case:
     ./e2e.sh test identity/ --deselect \
         identity/test_persons_seed.py::test_persons_seed_end_to_end
-CI (native Linux Docker) runs it unconditionally.
+CI (native Linux Docker) runs it unconditionally. NB: a deselected run leaves
+`./e2e.sh gates identity` legitimately RED (GET /v1/persons-seed/{id} missing
++ the 202 REQUIRED_EXTRA unproven) — the gate is only meaningful on a full run.
 """
 
 from __future__ import annotations

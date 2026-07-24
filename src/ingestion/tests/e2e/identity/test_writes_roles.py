@@ -20,18 +20,20 @@ pytestmark = [pytest.mark.identity, pytest.mark.mutating]
 
 
 def test_role_create_delete_lifecycle(api) -> None:
-    """POST /v1/roles mints a catalogue row; DELETE removes an unused one."""
+    """POST /v1/roles mints a catalogue row (201); DELETE removes an unused
+    one (204). The delete runs in `finally` so a failed assertion never leaks
+    the scratch role into later tests."""
     r = api.post("/v1/roles", json={"name": "e2e-scratch-role"})
-    assert r.status_code in {200, 201}, f"status={r.status_code} body={r.text}"
+    assert r.status_code == 201, f"status={r.status_code} body={r.text}"
     role = r.json()
     role_id = role["role_id"]
-    assert role["name"] == "e2e-scratch-role"
-
-    listed = items_of(api.get("/v1/roles").json())
-    assert any(row["role_id"] == role_id for row in listed)
-
-    d = api.delete(f"/v1/roles/{role_id}")
-    assert d.status_code in {200, 204}, f"status={d.status_code} body={d.text}"
+    try:
+        assert role["name"] == "e2e-scratch-role"
+        listed = items_of(api.get("/v1/roles").json())
+        assert any(row["role_id"] == role_id for row in listed)
+    finally:
+        d = api.delete(f"/v1/roles/{role_id}")
+    assert d.status_code == 204, f"status={d.status_code} body={d.text}"
     listed = items_of(api.get("/v1/roles").json())
     assert not any(row["role_id"] == role_id for row in listed)
 
@@ -60,19 +62,23 @@ def test_role_create_403_non_admin(bob_api) -> None:
 
 
 def test_person_role_grant_revoke_lifecycle(api) -> None:
-    """Grant bob the admin role, see it active, revoke it, see it gone."""
+    """Grant bob the admin role (201), see it active, revoke it (204), see it
+    gone. The revoke runs in `finally` — a leaked second admin would silently
+    defuse the last-admin lockout test below."""
     g = api.post(
         "/v1/person-roles",
         json={"person_id": str(seed.BOB), "role_id": str(seed.ADMIN_ROLE_ID)},
     )
-    assert g.status_code in {200, 201}, f"status={g.status_code} body={g.text}"
+    assert g.status_code == 201, f"status={g.status_code} body={g.text}"
     assignment_id = g.json()["person_role_id"]
-
-    rows = items_of(api.get("/v1/person-roles").json())
-    assert any(row.get("person_role_id") == assignment_id and row.get("valid_to") is None for row in rows)
-
-    d = api.delete(f"/v1/person-roles/{assignment_id}")
-    assert d.status_code in {200, 204}, f"status={d.status_code} body={d.text}"
+    try:
+        rows = items_of(api.get("/v1/person-roles").json())
+        assert any(
+            row.get("person_role_id") == assignment_id and row.get("valid_to") is None for row in rows
+        )
+    finally:
+        d = api.delete(f"/v1/person-roles/{assignment_id}")
+    assert d.status_code == 204, f"status={d.status_code} body={d.text}"
 
     rows = items_of(api.get("/v1/person-roles").json())
     active = [row for row in rows if row.get("person_role_id") == assignment_id and row.get("valid_to") is None]

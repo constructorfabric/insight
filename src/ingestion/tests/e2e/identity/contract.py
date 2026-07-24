@@ -28,11 +28,14 @@ ERROR_TYPE_PREFIXES = ("urn:insight:error:", "gts://")
 
 
 def problem(response: httpx.Response) -> dict[str, Any]:
-    """Parse an RFC-9457 problem body and assert its common shape."""
+    """Parse an RFC-9457 problem body and assert its common shape:
+    type (scheme-agnostic), matching status, a non-empty title, and detail."""
     body = response.json()
     assert isinstance(body, dict), f"problem body is not an object: {body!r}"
     assert body.get("status") == response.status_code, body
     assert str(body.get("type", "")).startswith(ERROR_TYPE_PREFIXES), body
+    assert isinstance(body.get("title"), str) and body["title"].strip(), body
+    assert "detail" in body, body
     return body
 
 

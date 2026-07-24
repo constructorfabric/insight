@@ -26,7 +26,7 @@ def test_visibility_grant_changes_resolution_then_revoke_restores(api) -> None:
         "/v1/visibility",
         json={"viewer_person_id": str(seed.ALICE), "viewed_person_id": str(seed.HIDDEN)},
     )
-    assert g.status_code in {200, 201}, f"status={g.status_code} body={g.text}"
+    assert g.status_code == 201, f"status={g.status_code} body={g.text}"
     grant_id = g.json()["visibility_id"]
 
     try:
@@ -35,7 +35,7 @@ def test_visibility_grant_changes_resolution_then_revoke_restores(api) -> None:
         assert r.json()["person_id"] == str(seed.HIDDEN)
     finally:
         d = api.delete(f"/v1/visibility/{grant_id}")
-        assert d.status_code in {200, 204}, f"status={d.status_code} body={d.text}"
+        assert d.status_code == 204, f"status={d.status_code} body={d.text}"
 
     assert _resolve_hidden(api).status_code == 404
 
