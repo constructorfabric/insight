@@ -6,10 +6,11 @@
     alias='git_metric_observations',
     tags=['gold'],
     query_settings={
-        'max_memory_usage': 1610612736,
+        'max_memory_usage': 3221225472,
         'max_threads': 4,
         'max_bytes_before_external_group_by': 805306368,
-        'max_bytes_before_external_sort': 805306368
+        'max_bytes_before_external_sort': 805306368,
+        'join_algorithm': 'grace_hash,hash'
     }
 ) }}
 
@@ -29,7 +30,7 @@
 -- queries read index-pruned ranges rather than the whole relation.
 --
 -- query_settings bound the CREATE-AS-SELECT for every runner: an
--- over-limit build spills aggregation/sort state to disk instead of
+-- over-limit build spills aggregation/sort/join state to disk instead of
 -- failing on the server memory tracker.
 --
 -- Grain per measure:

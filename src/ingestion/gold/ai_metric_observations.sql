@@ -1,8 +1,17 @@
 {{ config(
-    materialized='view',
+    materialized='table',
+    engine='MergeTree',
+    order_by=['source_key', 'measure_key', 'entity_id', 'metric_date'],
     schema='insight',
     alias='ai_metric_observations',
-    tags=['gold']
+    tags=['gold'],
+    query_settings={
+        'max_memory_usage': 3221225472,
+        'max_threads': 4,
+        'max_bytes_before_external_group_by': 805306368,
+        'max_bytes_before_external_sort': 805306368,
+        'join_algorithm': 'grace_hash,hash'
+    }
 ) }}
 
 -- Source measure observations for the unified metrics runtime. Reads only
