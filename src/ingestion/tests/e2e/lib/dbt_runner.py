@@ -297,7 +297,6 @@ class DbtRunner:
                         "engine": "ReplacingMergeTree(_version)",
                         "settings": {
                             "allow_nullable_key": 1,
-                            "allow_experimental_refreshable_materialized_view": 1,
                             # Correlated subqueries (LEFT ANTI JOIN in the identity
                             # seed models) are gated behind this experimental flag
                             # on CH 25.7. A model-level config() setting does NOT
