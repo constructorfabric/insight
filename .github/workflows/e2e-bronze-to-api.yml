@@ -235,6 +235,67 @@ jobs:
         if: always()
         run: ./e2e.sh down || true
 
+  # Identity contract lane (#1753): the identity service is the
+  # system-under-test (spawned in-process from the runner image, exactly like
+  # analytics in the api lane). Implementation-agnostic — the same suite runs
+  # against the .NET service today and the Rust identity-resolution port after
+  # the cutover. Feeds identity-endpoint-coverage-gate via its own ledger.
+  e2e-identity:
+    name: identity
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: src/ingestion/tests/e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download runner image
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-runner-image
+          path: src/ingestion/tests/e2e
+
+      - name: Ensure zstd is available
+        run: command -v zstd >/dev/null || (sudo apt-get update && sudo apt-get install -y zstd)
+
+      - name: Load runner image
+        run: zstd -d < runner-image.tar.zst | docker load
+
+      - name: Reset coverage artifacts
+        run: rm -rf .artifacts
+
+      - name: E2E suite — identity
+        run: ./e2e.sh test identity/ --tb=short -q
+
+      - name: Upload coverage inputs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-inputs-identity
+          path: src/ingestion/tests/e2e/.artifacts/
+          overwrite: true
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: |
+          echo "::group::clickhouse logs"
+          ./e2e.sh logs clickhouse || true
+          echo "::endgroup::"
+          echo "::group::mariadb logs"
+          ./e2e.sh logs mariadb || true
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always()
+        run: ./e2e.sh down || true
+
   e2e-metrics:
     name: metrics
     needs: build
@@ -404,6 +465,35 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "::error::API endpoint coverage gate failed — a spec operation is exercised by no test and not in SKIP_LIST (or a skip is stale). See the api/ contract tests (src/ingestion/tests/e2e/api/)."; fi
           exit "$rc"
 
+  identity-endpoint-coverage-gate:
+    name: Identity endpoint coverage gate
+    needs: e2e-identity
+    if: ${{ !cancelled() && needs.e2e-identity.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The spec universe is the committed .NET identity spec (kept fresh by
+      # the openapi-specs drift gate) — the same contract the Rust port must
+      # serve after the cutover.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs-identity
+          path: coverage-inputs
+      - name: Analyse identity endpoint coverage
+        run: |
+          python3 src/ingestion/tests/e2e/lib/api_coverage.py \
+            --suite identity \
+            --observed coverage-inputs/observed_identity_endpoints.json \
+            --spec docs/components/backend/identity/openapi.json | tee identity_coverage.md
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat identity_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Identity endpoint coverage gate failed — a spec operation is exercised by no test and not in SKIP_LIST (or a skip is stale). See the identity/ contract tests (src/ingestion/tests/e2e/identity/)."; fi
+          exit "$rc"
+
   # Umbrella status check. The `main` ruleset ("Soft Protection") requires a
   # check named "Run E2E suite" — the pre-split job name. This job re-supplies
   # that context by aggregating the suite lanes into one pass/fail. It runs even
@@ -413,18 +503,24 @@ jobs:
   # were on main; fold them in here — or make them required directly — later.)
   e2e-suite:
     name: Run E2E suite
-    needs: [build, e2e-api, e2e-metrics]
+    # The identity coverage gate is part of the required check: it is the
+    # migration-acceptance gate for the .NET→Rust cutover, so a red gate must
+    # block the merge. (The analytics/metric gates stay separate as they were
+    # on main — folding them in is a separate, repo-wide decision.)
+    needs: [build, e2e-api, e2e-identity, e2e-metrics, identity-endpoint-coverage-gate]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require the build and both suite lanes to have succeeded
+      - name: Require the build, every suite lane, and the identity gate to have succeeded
         run: |
           echo "build=${{ needs.build.result }}"
           echo "api=${{ needs.e2e-api.result }}"
+          echo "identity=${{ needs.e2e-identity.result }}"
           echo "metrics=${{ needs.e2e-metrics.result }}"
+          echo "identity-gate=${{ needs.identity-endpoint-coverage-gate.result }}"
           if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "true" ]; then
-            echo "::error::E2E suite did not fully pass — the build or a suite lane (api/metrics) failed, was cancelled, or was skipped."
+            echo "::error::E2E suite did not fully pass — the build, a suite lane (api/identity/metrics), or the identity coverage gate failed, was cancelled, or was skipped."
             exit 1
           fi
-          echo "E2E suite passed: build + api + metrics all succeeded."
+          echo "E2E suite passed: build + api + identity + metrics + identity gate all succeeded."

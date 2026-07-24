@@ -37,6 +37,16 @@ services:
       dockerfile: services/analytics/Dockerfile
     image: insight-e2e-analytics:local
 
+  # Build-only helper: publishes the .NET identity service FROM ITS OWN
+  # Dockerfile. The runner bakes the published app (COPY --from=identity) and
+  # spawns it via the aspnetcore runtime — the identity contract suite
+  # (identity/, #1753) treats it as the system-under-test.
+  identity:
+    build:
+      context: ${INSIGHT_REPO_ROOT:-../../../..}/src/backend
+      dockerfile: services/identity/Dockerfile
+    image: insight-e2e-identity:local
+
   runner:
     build:
       # Resolved by ../e2e.sh; CI workflow also exports this. We use an
@@ -47,9 +57,18 @@ services:
       # Bake each connector's enrich binary into the runner image via a named
       # build context backed by the connector's own build-only service above.
       # `COPY --from=<name>` in Dockerfile.runner pulls the compiled binary.
+      # `service:` refs — compose builds the referenced build-only services
+      # first and hands them to BuildKit as named contexts (works with the
+      # CI buildx/gha-cache driver, which cannot see local daemon images the
+      # way `docker-image://` refs would need). Docker compose v2.36-desktop
+      # fails `compose run` while RESOLVING these ("no such service": run
+      # narrows the project to the target service) — the run-time paths in
+      # ../e2e.sh sidestep that by overlaying docker-compose.norebuild.yml,
+      # which resets the runner's `build:` (the image is already built).
       additional_contexts:
         jira-enrich: "service:jira-enrich"
         analytics: "service:analytics"
+        identity: "service:identity"
     image: insight-e2e-runner:latest
     container_name: insight-e2e-runner
     working_dir: /workspace/src/ingestion/tests/e2e
@@ -72,6 +91,14 @@ services:
       E2E_CH_PASSWORD: ${CLICKHOUSE_PASSWORD}
       E2E_MARIADB_USER: ${MARIADB_USER:-insight}
       E2E_MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      # Root creds: the identity suite provisions the service's own database
+      # (CREATE DATABASE + GRANT — lib/identity.py) before spawning it.
+      E2E_MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      # Which identity implementation the contract suite spawns (see
+      # lib/identity.py). Forwarded from the caller's shell so
+      # `E2E_IDENTITY_IMPLEMENTATION=rust ./e2e.sh test identity/` reaches
+      # the harness inside the container.
+      E2E_IDENTITY_IMPLEMENTATION: ${E2E_IDENTITY_IMPLEMENTATION:-dotnet}
       E2E_MARIADB_DATABASE: ${MARIADB_DATABASE:-analytics}
       RUST_BACKTRACE: "1"
     volumes:
