@@ -34,18 +34,15 @@ The list lives HERE; do not mirror it elsewhere.
 ==============================================================================
 */}}
 {{- /*
-Transition guards (identity .NET → identity-resolution Rust, epic #1602):
-the Rust service does NOT run schema migrations yet — the .NET service's
-DbUp owns the `identity` database schema. A Rust-only install would get a
-pod with no schema; diverging database names would split the two services
-onto different databases. Both are misconfigurations — fail the render.
-Drop these guards when identity-resolution gains its own migrate step.
+Transition guard (identity .NET → identity-resolution Rust, epic #1602):
+while both services deploy side-by-side they MUST share one database —
+identity-resolution's migrate initContainer owns the schema (idempotent
+over what the .NET DbUp applied), and diverging names would silently
+split them onto different databases. Rust-only installs are fine: the
+migrate initContainer brings a fresh database up from scratch.
 */}}
-{{- if and .Values.identityResolution.deploy (not .Values.identity.deploy) }}
-{{- fail "identityResolution.deploy=true requires identity.deploy=true during the transition: the .NET identity service owns the DbUp schema migrations (identity-resolution runs no DDL yet), so a Rust-only install would start against an empty database." }}
-{{- end }}
 {{- if and .Values.identity.deploy .Values.identityResolution.deploy (ne .Values.identity.databaseName .Values.identityResolution.databaseName) }}
-{{- fail (printf "identity.databaseName (%q) and identityResolution.databaseName (%q) must be equal: both services must share the one database the .NET DbUp migrates." .Values.identity.databaseName .Values.identityResolution.databaseName) }}
+{{- fail (printf "identity.databaseName (%q) and identityResolution.databaseName (%q) must be equal: both identity services must share one database." .Values.identity.databaseName .Values.identityResolution.databaseName) }}
 {{- end }}
 {{- if or .Values.identity.deploy .Values.identityResolution.deploy }}
 apiVersion: batch/v1
@@ -115,7 +112,8 @@ spec:
 
               echo "Provisioning per-service databases..."
               {{- if or .Values.identity.deploy .Values.identityResolution.deploy }}
-              IDENTITY_DB={{ required "identity.databaseName is required" .Values.identity.databaseName | quote }}
+              {{- $identityDb := ternary .Values.identity.databaseName .Values.identityResolution.databaseName .Values.identity.deploy }}
+              IDENTITY_DB={{ required "identity(.Resolution).databaseName is required" $identityDb | quote }}
               SQL=$(printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON `%s`.* TO `%s`@`%%`; FLUSH PRIVILEGES;' \
                 "$IDENTITY_DB" "$IDENTITY_DB" "$MARIADB_USER")
               mariadb -h"$MARIADB_HOST" -P"$MARIADB_PORT" -uroot -e "$SQL"

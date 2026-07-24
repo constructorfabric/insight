@@ -25,6 +25,12 @@ resources:
 # (injected via envFrom; they override the mounted config ConfigMap):
 #   APP__gears__identity-resolution__config__database_url
 #   APP__gears__identity-resolution__config__clickhouse_url|_database|_user|_password
+#   APP__gears__identity-resolution__config__tenant_default_id       (optional)
+#   APP__gears__identity-resolution__config__bootstrap_admin_person_id (optional)
+#
+# The two optional fields drive the first-admin bootstrap in the migrate
+# initContainer (port of the .NET BootstrapAdminRunner): the configured person
+# gets an active `admin` assignment in the default tenant, idempotently.
 #
 # The umbrella populates `insight-identity-resolution-config` automatically;
 # for standalone installs the operator pre-creates an equivalent Secret and

@@ -35,11 +35,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
-      {{- if .Values.waitForMariadb.enabled }}
-      # The service connects to MariaDB at boot; gate on it like the .NET
-      # identity chart does. Schema (DbUp) is still owned by the .NET service
-      # during the transition — no migrate initContainer here yet.
       initContainers:
+        {{- if .Values.waitForMariadb.enabled }}
         - name: wait-for-mariadb
           image: "{{ .Values.waitForMariadb.image.repository }}:{{ .Values.waitForMariadb.image.tag }}"
           imagePullPolicy: IfNotPresent
@@ -81,7 +78,27 @@ spec:
             limits:
               cpu: 50m
               memory: 32Mi
-      {{- end }}
+        {{- end }}
+        # Schema owner (epic #1602 ownership transfer): applies pending
+        # migrations + the first-admin bootstrap before the server starts —
+        # same pattern as the analytics chart. Idempotent on a database the
+        # .NET DbUp already migrated (no-op sweep), and serialized against
+        # concurrent migrators via a GET_LOCK advisory lock.
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/identity-resolution"]
+          args: ["-c", "/app/config/insight.yaml", "migrate"]
+          volumeMounts:
+            - name: identity-resolution-config
+              mountPath: /app/config/insight.yaml
+              subPath: insight.yaml
+              readOnly: true
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
       containers:
         - name: identity-resolution
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"

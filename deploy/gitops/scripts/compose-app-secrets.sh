@@ -70,6 +70,7 @@ RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
 IDENTITY_DB=$(yq -r '.identity.databaseName       // "identity"' "$VALUES")
 TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
 IDENTITY_ORG_CHART_SOURCE=$(yq -r '.identity.orgChartSourceType // ""' "$VALUES")
+IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminPersonId // ""' "$VALUES")
 
 # ── Authenticator OIDC (NGINX_BFF). issuerUrl/redirectUri may be Helm template
 #    strings in values.yaml; render {{ .Release.Name }}/{{ .Release.Namespace }}
@@ -298,6 +299,14 @@ stringData:
   APP__gears__identity-resolution__config__clickhouse_user: "${CH_USER}"
   APP__gears__identity-resolution__config__clickhouse_password: "${CH_PW}"
 EOF
+  # First-admin bootstrap inputs (migrate initContainer): mirror the
+  # chart-side block in charts/insight/templates/secrets.yaml.
+  if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
+    echo "  APP__gears__identity-resolution__config__tenant_default_id: \"${TENANT_DEFAULT}\""
+  fi
+  if [ -n "$IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN" ] && [ "$IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN" != "null" ]; then
+    echo "  APP__gears__identity-resolution__config__bootstrap_admin_person_id: \"${IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN}\""
+  fi
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
 echo "composed → $NS_APP/insight-identity-resolution-config"
 

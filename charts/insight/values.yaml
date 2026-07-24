@@ -469,8 +469,9 @@ identity:
 # Traffic stays on the .NET service until the gateway route + the analytics/
 # authenticator identity URLs are flipped to
 # `http://<release>-identity-resolution:8082`; rollback = revert those values.
-# Schema (DbUp migrations) + bootstrap-admin remain owned by the .NET service
-# while both run.
+# SCHEMA OWNER: identity-resolution's migrate initContainer applies the
+# ported migrations + first-admin bootstrap (idempotent over what the .NET
+# DbUp already applied; the frozen .NET service applies nothing new).
 identityResolution:
   deploy: false
   replicaCount: 1
@@ -481,9 +482,14 @@ identityResolution:
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
-  # MariaDB database — the SAME one the .NET identity service owns (and
-  # migrates) during the transition.
+  # MariaDB database — the SAME one the .NET identity service uses during
+  # the transition (the render fails if the two names diverge).
   databaseName: "identity"
+  # First-admin seed (port of the .NET BootstrapAdminRunner): on migrate,
+  # this person UUID gets an active `admin` assignment in
+  # `global.tenantDefaultId`, idempotently. The person row must already
+  # exist in `persons` for that tenant. Empty string disables the runner.
+  bootstrapAdminPersonId: ""
   # The umbrella generates `insight-identity-resolution-config` with every
   # APP__gears__identity-resolution__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart
