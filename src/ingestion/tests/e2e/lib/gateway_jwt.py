@@ -114,6 +114,17 @@ class GatewayAuth:
 
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
+
+        # Plain-HTTP twin of the discovery front, same documents. The .NET
+        # identity service fetches its JWKS from an EXPLICIT URL with
+        # RequireHttpsMetadata=false (it never does https discovery), so it can
+        # consume this listener without any CA trust plumbing. The gears
+        # oidc-authn-plugin keeps using the TLS front above (https-only).
+        self._http_server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+        self._http_port = self._http_server.server_address[1]
+        self.http_jwks_url = f"http://127.0.0.1:{self._http_port}/.well-known/jwks.json"
+        self._http_thread = threading.Thread(target=self._http_server.serve_forever, daemon=True)
+        self._http_thread.start()
         # Bind the doc bodies now that the issuer/port are known.
         _ = auth.issuer
 
@@ -163,14 +174,20 @@ class GatewayAuth:
     def ca_path(self) -> str:
         return str(self._ca_path)
 
-    def mint(self, tenant_id: str, *, sub: str | None = None, roles: str = "analyst") -> str:
-        """Sign an ES256 gateway JWT scoped to `tenant_id`."""
+    def mint(
+        self, tenant_id: str, *, sub: str | None = None, roles: str = "analyst", sub_type: str = "user"
+    ) -> str:
+        """Sign an ES256 gateway JWT scoped to `tenant_id`.
+
+        `sub_type="service"` mints a service-principal token (what the
+        authenticator sends to identity's `/internal/*` S2S endpoints).
+        """
         now = int(time.time())
         claims = {
             "sub": sub or str(uuid.uuid4()),
             "tenant_id": tenant_id,
             "roles": roles,  # space-delimited scope string
-            "sub_type": "user",
+            "sub_type": sub_type,
             "sid": str(uuid.uuid4()),
             "iss": self.issuer,
             "aud": AUDIENCE,
@@ -184,8 +201,11 @@ class GatewayAuth:
         return {"Authorization": f"Bearer {self.mint(tenant_id)}"}
 
     def stop(self) -> None:
-        try:
-            self._server.shutdown()
-            self._server.server_close()
-        except Exception:  # noqa: BLE001 — best-effort teardown
-            pass
+        for server in (getattr(self, "_server", None), getattr(self, "_http_server", None)):
+            if server is None:
+                continue
+            try:
+                server.shutdown()
+                server.server_close()
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass

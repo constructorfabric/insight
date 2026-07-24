@@ -26,6 +26,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
     && rm -rf /var/lib/apt/lists/*
 
+# ── ASP.NET runtime (for the .NET identity service under test) ──────────
+# The identity contract suite (identity/, #1753) spawns the published
+# Insight.Identity.Api in-process, exactly like the analytics binary — a
+# framework-dependent .NET app needs the aspnetcore runtime. TEMPORARY: goes
+# away with the .NET service once the Rust identity-resolution cutover lands
+# (the Rust binary will bake in like analytics does).
+# Installed via the official dotnet-install script — Microsoft's Debian apt
+# feed does not carry the 9.0 runtime packages. libicu is the runtime's only
+# system dependency the slim base lacks.
+RUN apt-get update && apt-get install -y --no-install-recommends curl libicu72 \
+    && curl -sSL https://dot.net/v1/dotnet-install.sh \
+        | bash -s -- --channel 9.0 --runtime aspnetcore --install-dir /usr/share/dotnet \
+    && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
+    && apt-get purge -y curl && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
 # ── Python deps (cached layer: only invalidates when pyproject changes) ─
 # Build context is the repo root, so we copy from src/ingestion/tests/e2e/
 # explicitly. Only pyproject is needed at build time — code lives at
@@ -44,6 +60,8 @@ RUN mkdir -p lib && touch lib/__init__.py \
 # (matches the `additional_contexts` entries).
 COPY --from=analytics /app/analytics /usr/local/bin/analytics
 COPY --from=jira-enrich /usr/local/bin/jira-enrich /usr/local/bin/jira-enrich
+# The .NET identity published app (framework-dependent; spawned via `dotnet`).
+COPY --from=identity /app /opt/insight-identity
 
 # ── Defaults ────────────────────────────────────────────────────────────
 ENV E2E_RUN_MODE=docker

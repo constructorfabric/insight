@@ -52,9 +52,11 @@ shift || true
 
 case "$cmd" in
     build)
-        # Builds the runner image; its `additional_contexts` pull each connector's
-        # enrich binary from that connector's own build-only service (compiled FROM
-        # ITS OWN Dockerfile) and bake it in via COPY --from. No docker-in-docker.
+        # Builds the build-only component images FIRST (each compiled FROM ITS
+        # OWN Dockerfile), then the runner, whose `additional_contexts`
+        # (docker-image:// refs) bake the binaries in via COPY --from.
+        # No docker-in-docker.
+        docker compose "${COMPOSE_FILES[@]}" build jira-enrich analytics identity
         docker compose "${COMPOSE_FILES[@]}" build runner
         ;;
     test|run)
@@ -91,9 +93,9 @@ case "$cmd" in
         # e2e-bronze-to-api.yml).
         which=${1:-all}
         case "$which" in
-            all|metrics|api) ;;
+            all|metrics|api|identity) ;;
             *)
-                echo "usage: $0 gates [api|metrics]" >&2
+                echo "usage: $0 gates [api|metrics|identity]" >&2
                 exit 2
                 ;;
         esac
@@ -109,7 +111,14 @@ case "$cmd" in
                 exit 2
             fi
         fi
+        if [ "$which" = all ] || [ "$which" = identity ]; then
+            if [ ! -f .artifacts/observed_identity_endpoints.json ]; then
+                echo "no .artifacts/observed_identity_endpoints.json — run './e2e.sh test identity/' first (it collects the identity endpoint ledger)" >&2
+                exit 2
+            fi
+        fi
         spec=/workspace/docs/components/backend/analytics/openapi.json
+        identity_spec=/workspace/docs/components/backend/identity/openapi.json
         run=(docker compose "${COMPOSE_FILES[@]}" run --rm --no-deps -T runner)
         rc=0
         if [ "$which" = all ] || [ "$which" = metrics ]; then
@@ -119,6 +128,10 @@ case "$cmd" in
         if [ "$which" = all ] || [ "$which" = api ]; then
             echo "── api endpoint coverage (gate) ──"
             "${run[@]}" python3 lib/api_coverage.py --observed .artifacts/observed_endpoints.json --spec "$spec" || rc=1
+        fi
+        if [ "$which" = all ] || [ "$which" = identity ]; then
+            echo "── identity endpoint coverage (gate) ──"
+            "${run[@]}" python3 lib/api_coverage.py --suite identity --observed .artifacts/observed_identity_endpoints.json --spec "$identity_spec" || rc=1
         fi
         exit "$rc"
         ;;

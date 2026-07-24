@@ -77,12 +77,56 @@ BLOCKED: dict[str, frozenset[int]] = {
     "POST /v1/metric-results": frozenset({403, 404, 409}),
 }
 
+# ── identity suite (identity/, #1753) ──────────────────────────────────────
+# The identity service runs auth-ENABLED in the rig (a real gateway JWT on
+# every request), so 401 is exercised and REQUIRED — only 429 (no rate
+# limiter) is universally unobservable.
+IDENTITY_SKIP_LIST: list[tuple[str, str]] = []
+IDENTITY_UNIVERSAL_BOILERPLATE = frozenset({429})
+# The committed .NET spec declares a generic `200` on the mutating routes,
+# but the handlers actually answer 201 (create) / 202 (accepted) / 204
+# (delete) — same `.standard_errors`-style spec-fidelity gap as analytics
+# #1669. Self-cleaning: fails the hygiene advisory once the spec is fixed.
+IDENTITY_BLOCKED: dict[str, frozenset[int]] = {
+    "POST /v1/roles": frozenset({200}),  # answers 201
+    "POST /v1/person-roles": frozenset({200}),  # answers 201
+    "POST /v1/visibility": frozenset({200}),  # answers 201
+    "POST /v1/persons-seed": frozenset({200}),  # answers 202
+    "DELETE /v1/roles/{id}": frozenset({200}),  # answers 204
+    "DELETE /v1/person-roles/{id}": frozenset({200}),  # answers 204
+    "DELETE /v1/visibility/{id}": frozenset({200}),  # answers 204
+}
+
+_SUITES = {
+    # (skip_list, blocked, universal_boilerplate) per service-under-test; the
+    # gate is spec-scoped, so its suppression lists must be too.
+    "analytics": None,  # the module-level defaults above
+    "identity": None,  # rebound in select_suite
+}
+
+
+def select_suite(name: str) -> None:
+    """Rebind the suppression lists to the named suite's (CLI --suite)."""
+    global SKIP_LIST, BLOCKED, UNIVERSAL_BOILERPLATE  # noqa: PLW0603 — CLI-scoped rebinding
+    if name == "identity":
+        SKIP_LIST = IDENTITY_SKIP_LIST
+        BLOCKED = IDENTITY_BLOCKED
+        UNIVERSAL_BOILERPLATE = IDENTITY_UNIVERSAL_BOILERPLATE
+    elif name != "analytics":
+        raise ValueError(f"unknown suite: {name}")
+
 
 # ── recording half (imported by the rig) ──────────────────────────────────
 
 # (method, path) -> set of observed status codes. Module-level so the single
 # serial pytest process accumulates across every test (xdist is off in CI).
 _OBSERVED: dict[tuple[str, str], set[int]] = {}
+
+# Separate ledger for the identity service suite (identity/). The gate is
+# spec-scoped (one --spec per invocation), so each service-under-test keeps
+# its own ledger — mixing identity paths into the analytics ledger would show
+# them as unmatched noise against the analytics spec and vice versa.
+_OBSERVED_IDENTITY: dict[tuple[str, str], set[int]] = {}
 
 
 def record_response(response) -> None:
@@ -96,8 +140,16 @@ def record_response(response) -> None:
     _OBSERVED.setdefault(key, set()).add(int(response.status_code))
 
 
+def record_identity_response(response) -> None:
+    """`record_response` twin writing to the identity ledger."""
+    req = response.request
+    key = (req.method.upper(), req.url.path)
+    _OBSERVED_IDENTITY.setdefault(key, set()).add(int(response.status_code))
+
+
 def reset_observed() -> None:
     _OBSERVED.clear()
+    _OBSERVED_IDENTITY.clear()
 
 
 def dump_observed(path: str | Path) -> Path:
@@ -111,6 +163,15 @@ def dump_observed(path: str | Path) -> Path:
     unions statuses per (method, path) across those local sessions. Delete
     `.artifacts/` first for a from-scratch measurement.
     """
+    return _dump(path, _OBSERVED)
+
+
+def dump_observed_identity(path: str | Path) -> Path:
+    """`dump_observed` twin for the identity ledger (same merge semantics)."""
+    return _dump(path, _OBSERVED_IDENTITY)
+
+
+def _dump(path: str | Path, observed: dict[tuple[str, str], set[int]]) -> Path:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     merged: dict[tuple[str, str], set[int]] = {}
@@ -119,7 +180,7 @@ def dump_observed(path: str | Path) -> Path:
             merged.setdefault((row["method"], row["path"]), set()).update(
                 int(s) for s in row["statuses"]
             )
-    for key, codes in _OBSERVED.items():
+    for key, codes in observed.items():
         merged.setdefault(key, set()).update(codes)
     rows = [
         {"method": m, "path": p, "statuses": sorted(codes)}
@@ -397,7 +458,14 @@ def main() -> int:
     p = argparse.ArgumentParser(description="API endpoint coverage report.")
     p.add_argument("--observed", required=True, help="path to observed_endpoints.json from the suite")
     p.add_argument("--spec", required=True, help="path to the committed OpenAPI spec")
+    p.add_argument(
+        "--suite",
+        default="analytics",
+        choices=sorted(_SUITES),
+        help="which service-under-test's suppression lists (SKIP/BLOCKED/boilerplate) apply",
+    )
     args = p.parse_args()
+    select_suite(args.suite)
 
     observed_path = Path(args.observed)
     if not observed_path.exists():
