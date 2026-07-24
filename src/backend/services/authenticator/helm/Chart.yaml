@@ -2,5 +2,5 @@ apiVersion: v2
 name: insight-authenticator
 description: Insight Authenticator — OIDC login, sessions, and the cookie-to-JWT exchange (BFF)
 version: 0.1.0
-appVersion: "2026.07.24.07.45-d744a44"
+appVersion: "2026.07.24.08.31-c9cb954"
 type: application
