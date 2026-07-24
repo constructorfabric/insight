@@ -279,6 +279,58 @@ services:
     ports:
       - "${IDENTITY_PORT:-8082}:8082"
 
+  # ── Identity Resolution (Rust port of identity, epic #1602) ────────────
+  #
+  # Runs SIDE-BY-SIDE with the .NET `identity` service during the cutover:
+  # same API surface, same MariaDB `identity` database (schema still owned
+  # by .NET DbUp), same internal port 8082 — published on a different HOST
+  # port. Consumers keep calling `identity:8082` until the cutover flips
+  # their URLs to `identity-resolution:8082` (rollback = flip back).
+  identity-resolution:
+    !!merge <<: *backend-common
+    image: ${IDENTITY_RESOLUTION_IMAGE:-insight-identity-resolution:dev}
+    container_name: insight-identity-resolution
+    build:
+      context: src/backend
+      dockerfile: services/identity-resolution/Dockerfile
+    depends_on:
+      # required: false → compose skips this dependency when the local
+      # profile isn't active (external MariaDB / ClickHouse modes).
+      mariadb: {condition: service_healthy, required: false}
+      clickhouse: {condition: service_healthy, required: false}
+    environment:
+      !!merge <<: *backend-env
+      # gears-rust host: structural config (gears list, oidc-authn-plugin
+      # full-auth wiring) lives in the bind-mounted
+      # deploy/compose/identity-resolution-fullauth.yaml; these
+      # APP__gears__identity-resolution__config__* env vars override the
+      # deployment-specific leaf values.
+      APP__gears__identity-resolution__config__database_url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/identity"
+      APP__gears__identity-resolution__config__clickhouse_url: "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
+      APP__gears__identity-resolution__config__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
+      APP__gears__identity-resolution__config__clickhouse_user: "${CLICKHOUSE_USER:-insight}"
+      APP__gears__identity-resolution__config__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
+    volumes:
+      - type: bind
+        source: ./deploy/compose/build/identity-resolution/identity-resolution
+        target: /app/identity-resolution
+        read_only: true
+        bind:
+          create_host_path: false
+      # Full-auth plugin config (issuer + CA) — bind-mounted over the committed
+      # placeholder config so the service verifies real gateway JWTs in dev.
+      - ./deploy/compose/identity-resolution-fullauth.yaml:/app/config/insight.yaml:ro
+      # Self-signed CA for the authn-tls discovery front.
+      - ./deploy/compose/authn-tls-certs:/certs:ro
+    command:
+      - "/app/identity-resolution" # <watched path>
+      - "--"
+      - "/app/identity-resolution"
+      - "-c"
+      - "/app/config/insight.yaml"
+    ports:
+      - "${IDENTITY_RESOLUTION_PORT:-8086}:8082"
+
   # ── Authenticator (OIDC login + sessions + cookie-to-JWT exchange) ─────
   #
   # The BFF / token-handler service (nginx+auth step 04). Runs the OIDC

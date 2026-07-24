@@ -101,7 +101,7 @@ services to ghcr images, then `docker compose up -d`.
 Options:
   --from-ghcr=svc1,svc2     Pull these backend services from ghcr instead
                             of building. Recognised:
-                            analytics, identity.
+                            analytics, identity, identity-resolution.
   --watch=svc1,svc2         Run selected Rust services from source with
                             cargo-watch. Recognised: analytics.
   --build-only=svc1,svc2    Build only these; everything else from ghcr.
@@ -358,7 +358,7 @@ cmd_up() {
   # ── Resolve which services go to ghcr ────────────────────────────
   # The legacy Rust api-gateway is gone; the nginx `gateway` is the sole :8080
   # entry doing full auth via the authenticator (NGINX_BFF #1583 step 09).
-  local all_backend="analytics identity"
+  local all_backend="analytics identity identity-resolution"
   local watchable_services="analytics"
   local ghcr_list=""
   local watch_list=""
@@ -366,6 +366,7 @@ cmd_up() {
 
   [[ -n "${ANALYTICS_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" analytics)
   [[ -n "${IDENTITY_IMAGE:-}"      ]] && ghcr_list=$(add "$ghcr_list" identity)
+  [[ -n "${IDENTITY_RESOLUTION_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" identity-resolution)
 
   if [[ -n "$from_ghcr_csv" ]]; then
     local OLD_IFS=$IFS; IFS=','
@@ -410,6 +411,7 @@ cmd_up() {
 
   contains "$ghcr_list" analytics && [[ -z "${ANALYTICS_IMAGE:-}" ]] && export ANALYTICS_IMAGE="ghcr.io/constructorfabric/insight-analytics:${ANALYTICS_GHCR_TAG:-latest}"
   contains "$ghcr_list" identity      && [[ -z "${IDENTITY_IMAGE:-}"      ]] && export IDENTITY_IMAGE="ghcr.io/constructorfabric/insight-identity:${IDENTITY_GHCR_TAG:-latest}"
+  contains "$ghcr_list" identity-resolution && [[ -z "${IDENTITY_RESOLUTION_IMAGE:-}" ]] && export IDENTITY_RESOLUTION_IMAGE="ghcr.io/constructorfabric/insight-identity-resolution:${IDENTITY_RESOLUTION_GHCR_TAG:-latest}"
   true
 
   # ── Generate per-run override ────────────────────────────────────
@@ -529,6 +531,7 @@ YML
     # mount source as an empty directory, failing container init.
     local rust_bins="authenticator"
     contains "$ghcr_list" analytics || contains "$watch_list" analytics || rust_bins="$rust_bins analytics"
+    contains "$ghcr_list" identity-resolution || rust_bins="$rust_bins identity-resolution"
     rust_bins=$(trim "$rust_bins")
     if [[ -n "$rust_bins" ]]; then
       echo "--- Rust:$rust_bins"
@@ -541,7 +544,7 @@ YML
           apt-get update && apt-get install -y --no-install-recommends \
             protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
           cargo build --release$bin_flags
-          mkdir -p /out/analytics /out/authenticator
+          mkdir -p /out/analytics /out/authenticator /out/identity-resolution
           if [ -f /target/release/analytics ]; then
             [ ! -d /out/analytics/analytics ] || rm -rf /out/analytics/analytics
             install -m 0755 /target/release/analytics /out/analytics/analytics
@@ -549,6 +552,10 @@ YML
           if [ -f /target/release/authenticator ]; then
             [ ! -d /out/authenticator/authenticator ] || rm -rf /out/authenticator/authenticator
             install -m 0755 /target/release/authenticator /out/authenticator/authenticator
+          fi
+          if [ -f /target/release/identity-resolution ]; then
+            [ ! -d /out/identity-resolution/identity-resolution ] || rm -rf /out/identity-resolution/identity-resolution
+            install -m 0755 /target/release/identity-resolution /out/identity-resolution/identity-resolution
           fi
         "
     fi
@@ -760,12 +767,13 @@ Rebuild one host-side artefact and let the already-running container
 pick it up via ENABLE_AUTO_RELOAD.
 
 Targets:
-  analytics          Rust analytics binary only.
-  authenticator      Rust authenticator binary only.
-  identity           .NET 9 publish output.
-  frontend           pnpm build → dist/.
-  rust               All three Rust services.
-  all                Everything (Rust + .NET + frontend).
+  analytics            Rust analytics binary only.
+  authenticator        Rust authenticator binary only.
+  identity-resolution  Rust identity-resolution binary only.
+  identity             .NET 9 publish output.
+  frontend             pnpm build → dist/.
+  rust                 All Rust services.
+  all                  Everything (Rust + .NET + frontend).
 EOF
 }
 
@@ -790,7 +798,7 @@ cmd_build() {
       apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
       cargo build --release$bin_flags
-      mkdir -p /out/analytics /out/authenticator
+      mkdir -p /out/analytics /out/authenticator /out/identity-resolution
       if [ -f /target/release/analytics ]; then
         [ ! -d /out/analytics/analytics ] || rm -rf /out/analytics/analytics
         install -m 0755 /target/release/analytics /out/analytics/analytics
@@ -798,6 +806,10 @@ cmd_build() {
       if [ -f /target/release/authenticator ]; then
         [ ! -d /out/authenticator/authenticator ] || rm -rf /out/authenticator/authenticator
         install -m 0755 /target/release/authenticator /out/authenticator/authenticator
+      fi
+      if [ -f /target/release/identity-resolution ]; then
+        [ ! -d /out/identity-resolution/identity-resolution ] || rm -rf /out/identity-resolution/identity-resolution
+        install -m 0755 /target/release/identity-resolution /out/identity-resolution/identity-resolution
       fi
     "
   }
@@ -807,12 +819,13 @@ cmd_build() {
   local rust_bins="" want_dotnet=false want_frontend=false t
   for t in "$@"; do
     case "$t" in
-      analytics)     rust_bins="$rust_bins analytics" ;;
-      authenticator) rust_bins="$rust_bins authenticator" ;;
-      rust)          rust_bins="$rust_bins analytics authenticator" ;;
-      identity)      want_dotnet=true ;;
-      frontend)      want_frontend=true ;;
-      all)           rust_bins="$rust_bins analytics authenticator"; want_dotnet=true; want_frontend=true ;;
+      analytics)           rust_bins="$rust_bins analytics" ;;
+      authenticator)       rust_bins="$rust_bins authenticator" ;;
+      identity-resolution) rust_bins="$rust_bins identity-resolution" ;;
+      rust)                rust_bins="$rust_bins analytics authenticator identity-resolution" ;;
+      identity)            want_dotnet=true ;;
+      frontend)            want_frontend=true ;;
+      all)                 rust_bins="$rust_bins analytics authenticator identity-resolution"; want_dotnet=true; want_frontend=true ;;
       *) echo "ERROR: unknown target: $t" >&2; cmd_build_help; return 2 ;;
     esac
   done
