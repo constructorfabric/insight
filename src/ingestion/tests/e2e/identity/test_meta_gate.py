@@ -182,6 +182,11 @@ def test_deprecated_lookup_is_a_dotnet_capability() -> None:
     assert not identity_lib.supports_deprecated_person_lookup("rust")
 
 
+def test_containerized_clickhouse_is_a_rust_capability() -> None:
+    assert identity_lib.supports_containerized_clickhouse("rust")
+    assert not identity_lib.supports_containerized_clickhouse("dotnet")
+
+
 def test_rust_gate_suite_skips_legacy_endpoint_dotnet_requires_it() -> None:
     """Implementation-aware gate universes: an unexercised legacy endpoint is
     a legitimate SKIP on identity-rust but a blocking MISSING on identity —

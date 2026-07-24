@@ -93,6 +93,25 @@ def supports_deprecated_person_lookup(implementation: str) -> bool:
     selection, never probed from runtime behavior."""
     return implementation == "dotnet"
 
+
+def supports_containerized_clickhouse(implementation: str) -> bool:
+    """Whether the implementation's ClickHouse reader works against the
+    harness's containerized ClickHouse.
+
+    The .NET seed reader (Octonica native protocol) deadlocks in the wire
+    handshake against every containerized ClickHouse tried — official
+    24.3/24.8/25.3 and bitnami 25.5 images, arm64 and amd64, macOS Docker
+    Desktop and native-Linux CI alike. Reproduced in an isolated minimal
+    client: the complete client hello arrives on the wire, then both sides
+    wait until the client's 10s read timeout. The SAME code and driver work
+    against the dev cluster's ClickHouse (live-verified, 36k rows), so this
+    is an environment-specific incompatibility of the frozen, outgoing .NET
+    service — not worth fixing there. The Rust implementation reads
+    ClickHouse over HTTP and runs the seed e2e normally, which is the run
+    that matters as cutover acceptance.
+    """
+    return implementation == "rust"
+
 _HEALTH_TIMEOUT_S = float(
     os.environ.get(
         "E2E_IDENTITY_HEALTH_TIMEOUT_S", "120"
@@ -207,6 +226,10 @@ class IdentityProcess:
     @property
     def supports_deprecated_person_lookup(self) -> bool:
         return supports_deprecated_person_lookup(self.implementation)
+
+    @property
+    def supports_containerized_clickhouse(self) -> bool:
+        return supports_containerized_clickhouse(self.implementation)
 
     def start(self) -> None:
         create_identity_database(self.cfg)
