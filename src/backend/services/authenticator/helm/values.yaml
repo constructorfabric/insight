@@ -82,6 +82,25 @@ existingSecret: ""
 signingKeysSecret: ""
 signingKeysPath: /app/keys
 
+# Extra CA trust for the IdP's TLS connection. Needed when
+# `idp.issuer_url` sits behind an internal/corporate CA that the
+# container's default trust store does not chain to — the authenticator's
+# HTTP client validates the IdP cert against its compiled-in roots and does
+# not consult the OS trust store or SSL_CERT_FILE, so the CA must be handed
+# to it explicitly via this path. Leave `extraCaCertSecret` empty to trust
+# only the default roots.
+#
+#   extraCaCertSecret: name of a Secret holding the PEM bundle (may contain a
+#                      full chain: intermediate + root).
+#   extraCaCertSecretKey: key within that Secret whose value is the PEM.
+#   extraCaCertPath: mount path the bundle is exposed at inside the pod; this
+#                    exact path is also passed to the binary as
+#                    APP__gears__authenticator__config__idp__extra_ca_cert_path.
+idp:
+  extraCaCertSecret: ""
+  extraCaCertSecretKey: ca-bundle.pem
+  extraCaCertPath: /etc/ssl/authenticator-ca/ca-bundle.pem
+
 # TLS discovery front (NGINX_BFF R1). Downstream verifiers (analytics /
 # identity-resolution) run the oidc-authn-plugin, which resolves the JWKS via
 # OIDC discovery over HTTPS ONLY. When enabled, an `authn-tls` nginx sidecar

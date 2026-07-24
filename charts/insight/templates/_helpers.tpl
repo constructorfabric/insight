@@ -114,8 +114,12 @@ redis://{{ include "insight.redis.host" . }}:{{ include "insight.redis.port" . }
 {{- if .Values.airbyte.apiUrl -}}
 {{- .Values.airbyte.apiUrl -}}
 {{- else -}}
-http://{{ .Values.airbyte.releaseName }}-airbyte-server-svc.{{ .Release.Namespace }}.svc.cluster.local:8001
+http://{{ .Values.airbyte.releaseName }}-airbyte-server-svc.{{ include "insight.airbyte.namespace" . }}.svc.cluster.local:8001
 {{- end -}}
+{{- end -}}
+
+{{- define "insight.airbyte.namespace" -}}
+{{- .Values.airbyte.namespace | default .Release.Namespace -}}
 {{- end -}}
 
 {{/*

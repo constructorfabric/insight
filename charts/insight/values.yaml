@@ -135,11 +135,17 @@ observability:
     endpoint: "" # empty = stdout only; set = services export OTLP here
     protocol: grpc # grpc | http/protobuf
 # ═══════════════════════════════════════════════════════════════════════════
-#  EXTERNAL — Airbyte (installed as a separate Helm release, SAME namespace)
+#  EXTERNAL — Airbyte (installed as a separate Helm release, typically the
+#  SAME namespace — but see `namespace:` below for split-namespace envs)
 # ═══════════════════════════════════════════════════════════════════════════
 airbyte:
   releaseName: airbyte # Helm release name of the L2 Airbyte system release
-  apiUrl: "" # "" = compute from releaseName + .Release.Namespace
+  apiUrl: "" # "" = compute from releaseName + namespace
+  namespace: "" # "" = .Release.Namespace (single-namespace umbrella default).
+    # Set explicitly when Airbyte runs in a different namespace than this
+    # release (e.g. a shared "infra" namespace) — the reconcile loop reads
+    # authSecret.name from THIS namespace to mint its Airbyte API token,
+    # not from where connector Secrets/CronWorkflows live.
   jwtSecret:
     name: airbyte-auth-secrets # created by the Airbyte chart itself
     key: jwt-signature-secret

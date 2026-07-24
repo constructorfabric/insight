@@ -618,8 +618,15 @@ system-airbyte: vpn-up kube-ctx
 		bash scripts/airbyte-setup.sh
 
 # Argo Workflows: install the chart with workflowNamespaces+instanceID
-# scoped to NS_INFRA, then apply the supplemental RBAC templated for
-# $(NS_INFRA).
+# scoped to NS_INFRA *and* NS_APP, then apply the supplemental RBAC
+# templated for each namespace.
+#
+# NS_APP is required here too because `ingestion.templates.enabled=true`
+# (insight chart) renders the reconcile CronWorkflow/WorkflowTemplates into
+# NS_APP, not NS_INFRA — the two-namespace split (services vs. shared infra)
+# is this repo's standard topology (see environments/*/inventory.yaml), not
+# a one-off. A controller scoped to workflowNamespaces=[NS_INFRA] only can
+# never see or run those objects, regardless of RBAC.
 .PHONY: system-argo
 system-argo: vpn-up kube-ctx
 	@$(call _helm_repo_add,argo,https://argoproj.github.io/argo-helm)
@@ -629,14 +636,18 @@ system-argo: vpn-up kube-ctx
 		--version $(ARGO_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,argo-workflows) \
 		--set controller.workflowNamespaces[0]=$(NS_INFRA) \
+		--set controller.workflowNamespaces[1]=$(NS_APP) \
 		--set controller.instanceID.enabled=true \
 		--set controller.instanceID.explicitID=$(ARGO_RELEASE)-$(NS_INFRA) \
 		--wait --timeout 5m
 	@command -v envsubst >/dev/null \
 		|| { echo "$(C_RED)ERROR$(C_RST): envsubst not found (install gettext)"; exit 1; }
-	@NAMESPACE=$(NS_INFRA) WORKFLOW_SA=$(ARGO_WORKFLOW_SA) \
+	@NAMESPACE=$(NS_INFRA) SA_NAMESPACE=$(NS_INFRA) WORKFLOW_SA=$(ARGO_WORKFLOW_SA) \
 		envsubst < $(ARGO_RBAC_TMPL) \
 		| kubectl apply -n $(NS_INFRA) -f -
+	@NAMESPACE=$(NS_APP) SA_NAMESPACE=$(NS_INFRA) WORKFLOW_SA=$(ARGO_WORKFLOW_SA) \
+		envsubst < $(ARGO_RBAC_TMPL) \
+		| kubectl apply -n $(NS_APP) -f -
 
 .PHONY: system-status
 system-status: vpn-up kube-ctx
