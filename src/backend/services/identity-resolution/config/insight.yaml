@@ -24,7 +24,9 @@ logging:
 gears:
   api-gateway:
     config:
-      bind_addr: "0.0.0.0:8083"
+      # Same port as the .NET identity service it replaces: consumers reach
+      # identity at <host>:8082, so the cutover flips only the hostname.
+      bind_addr: "0.0.0.0:8082"
       enable_docs: true
       cors_enabled: true
       openapi:

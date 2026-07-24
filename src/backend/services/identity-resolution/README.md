@@ -42,17 +42,18 @@ cd src/backend
 env "APP__gears__identity-resolution__config__database_url=$URL" \
   cargo run -p identity-resolution -- -c services/identity-resolution/config/insight.yaml
 ```
-Startup log should show `connected to MariaDB` and `HTTP server bound on 0.0.0.0:8083`.
+Startup log should show `connected to MariaDB` and `HTTP server bound on 0.0.0.0:8082`.
 
 ### 4. Verify — terminal 3
 ```bash
-curl -s localhost:8083/health     # {"status":"healthy", ...}
-curl -s localhost:8083/healthz    # ok
-open http://localhost:8083/docs   # OpenAPI docs page
+curl -s localhost:8082/health     # {"status":"healthy", ...}
+curl -s localhost:8082/healthz    # ok
+open http://localhost:8082/docs   # OpenAPI docs page
 ```
 
 ## Notes
-- HTTP port **8083** (owned by the `api-gateway` host gear).
+- HTTP port **8082** (owned by the `api-gateway` host gear) — same port as the
+  .NET identity service it replaces, so the cutover flips only the hostname.
 - `database_url` is left **empty** in `config/insight.yaml` — no credentials are
   committed. It is injected via the env override above (or, in a real deploy,
   from the umbrella Secret).
