@@ -51,6 +51,19 @@ Next steps:
             authenticator.oidc.issuerUrl at your real IdP for anything else.
 {{- end }}
 
+{{- if and .Values.ingestion.templates.enabled (not .Values.ingestion.reconcile.argoInstanceId) }}
+⚠  WARNING: ingestion.templates.enabled=true but ingestion.reconcile.argoInstanceId
+            is empty. If this cluster's Argo workflow-controller runs with an
+            `instanceID` configured (e.g. installed via `make system-argo`, which
+            sets one), it will only schedule CronWorkflows carrying a matching
+            `workflows.argoproj.io/controller-instanceid` label. With this value
+            empty the label is omitted, so the reconcile loop is SILENTLY ignored
+            — lastScheduled stays `never` and no connectors sync, with no error.
+            Set ingestion.reconcile.argoInstanceId to the controller's instanceID
+            to match. Leave it empty ONLY if your controller runs without an
+            instanceID.
+{{- end }}
+
 {{- if .Values.credentials.autoGenerate }}
 
 Auto-generated DB credentials (stored in Secret insight-db-creds — fixed name):
