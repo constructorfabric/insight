@@ -135,23 +135,17 @@ observability:
     endpoint: "" # empty = stdout only; set = services export OTLP here
     protocol: grpc # grpc | http/protobuf
 # ═══════════════════════════════════════════════════════════════════════════
-#  EXTERNAL — Airbyte (installed as a separate Helm release)
+#  EXTERNAL — Airbyte (installed as a separate Helm release, typically the
+#  SAME namespace — but see `namespace:` below for split-namespace envs)
 # ═══════════════════════════════════════════════════════════════════════════
 airbyte:
   releaseName: airbyte # Helm release name of the L2 Airbyte system release
-  # Namespace of the Airbyte release. "" = same namespace as this chart.
-  # When Airbyte runs in its own namespace (e.g. insight-infra), set it here:
-  # the sync/reconcile jobs then read `authSecret` from that namespace via
-  # the K8s API (a Role/RoleBinding is rendered there — see
-  # templates/ingestion/airbyte-auth-rbac.yaml), and the computed apiUrl
-  # points at it. No copy of the Secret in the app namespace is needed.
-  namespace: ""
-  # "" = compute from releaseName + airbyte namespace. If you point apiUrl
-  # at an Airbyte in ANOTHER namespace, set `namespace` too — it controls
-  # where the auth Secret is read from. Leaving it empty makes the jobs
-  # read a copy in the app namespace, which goes stale when Airbyte
-  # regenerates its credentials (issue #1885).
-  apiUrl: ""
+  apiUrl: "" # "" = compute from releaseName + namespace
+  namespace: "" # "" = .Release.Namespace (single-namespace umbrella default).
+    # Set explicitly when Airbyte runs in a different namespace than this
+    # release (e.g. a shared "infra" namespace) — the reconcile loop reads
+    # authSecret.name from THIS namespace to mint its Airbyte API token,
+    # not from where connector Secrets/CronWorkflows live.
   jwtSecret:
     name: airbyte-auth-secrets # created by the Airbyte chart itself
     key: jwt-signature-secret

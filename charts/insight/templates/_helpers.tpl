@@ -122,6 +122,10 @@ http://{{ .Values.airbyte.releaseName }}-airbyte-server-svc.{{ include "insight.
 {{- end -}}
 {{- end -}}
 
+{{- define "insight.airbyte.namespace" -}}
+{{- .Values.airbyte.namespace | default .Release.Namespace -}}
+{{- end -}}
+
 {{/*
 ==============================================================================
  APP SERVICE HOSTS
