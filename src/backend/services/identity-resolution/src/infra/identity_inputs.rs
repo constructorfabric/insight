@@ -4,9 +4,9 @@
 //! `ClickHouseIdentityInputsReader`. Verified against a live dev ClickHouse
 //! (the persons-seed reads its whole input through this).
 //!
-//! NOTE: this materializes the tenant's filtered input into a `Vec` rather than
-//! streaming row-by-row like the .NET `IAsyncEnumerable`. Fine at current tenant
-//! sizes; row-streaming is deferred to the hardening pass (#1753).
+//! NOTE: this materializes the filtered input into a `Vec` rather than
+//! streaming row-by-row like the .NET `IAsyncEnumerable`. Fine at current
+//! deployment sizes; row-streaming is deferred to the hardening pass (#1753).
 
 use std::time::Duration;
 
@@ -17,8 +17,8 @@ use sea_orm::prelude::DateTime;
 use serde::Deserialize;
 use uuid::Uuid;
 
-/// A full tenant input scan can outrun the client's 30s default; the seed run as
-/// a whole is bounded by `SEED_TIMEOUT`, so give the read generous headroom.
+/// A full input scan can outrun the client's 30s default; the seed run as a
+/// whole is bounded by `SEED_TIMEOUT`, so give the read generous headroom.
 const READ_TIMEOUT: Duration = Duration::from_mins(5);
 
 use crate::domain::seed::IdentityInputRow;
@@ -26,28 +26,55 @@ use crate::domain::seed_service::IdentityInputsReader;
 
 /// Verbatim shape from `ClickHouseIdentityInputsReader`: rows ordered so the
 /// FIRST per account is the latest (`_synced_at DESC`), which is exactly what
-/// `build_profiles` expects. `insight_source_id` is `toString`-ed and reparsed.
+/// `build_profiles` expects. `insight_source_id` is `toString`-ed and reparsed
+/// — wrapped in `ifNull` because the column is `Nullable(String)` in the dbt
+/// table (`toString` of a Nullable stays Nullable, which the strict decoder
+/// rejects against the non-null `String` field); a NULL becomes `''` and fails
+/// the UUID reparse, failing the seed exactly like the .NET reader's
+/// `Guid.Parse(GetString(...))` throw.
+///
+/// HOTFIX (#1550) — TEMPORARY, ported from the .NET reader (3256f707). The dbt
+/// producer writes `insight_tenant_id` *hashed* — sipHash128 of whatever raw
+/// string the connector was configured with (`identity_inputs_from_history.sql`,
+/// documented there as a TEMPORARY cross-source join key) — so the stored tenant
+/// never equals the caller's tenant and persons-seed silently read 0 rows. There
+/// is no reliable representation to match against (connector configs are
+/// free-form strings), so the tenant filter is DROPPED for now: Insight
+/// deployments are single-tenant, all `identity_inputs` rows belong to the
+/// deployment, and the seed writes its output under the caller's tenant
+/// regardless of what the rows carry (`run_seed` binds the request tenant,
+/// never the row's).
+///
+/// MULTI-TENANT PREREQUISITE: the tenant filter MUST come back before any
+/// multi-tenant deployment — without it every tenant's seed would read (and
+/// re-file under itself) all other tenants' rows. Restoring it requires the
+/// producer side to be fixed first (dbt resolves real tenant UUIDs instead of
+/// hashing free-form connector strings), then reinstate
+/// `WHERE insight_tenant_id = ?` here and in the .NET reader.
 ///
 /// The text columns have mixed nullability in `identity_inputs` (e.g.
 /// `insight_source_type` is `String`, `source_account_id` is `Nullable(String)`),
-/// and the clickhouse decoder is strict in both directions — so each is coerced
-/// to a non-null `String` with `ifNull(col, '')` and decoded uniformly. Crucially
-/// the aliases DIFFER from the source column names (`val`, `op_type`, …): a
-/// same-name `ifNull(value,'') AS value` would shadow the `value` referenced in
-/// `WHERE` and can trip a ClickHouse "Cyclic aliases" error (the .NET reader
-/// avoids this the same way). `is_delete` is derived from `operation_type`.
+/// and the clickhouse decoder is strict in both directions — so most are coerced
+/// to a non-null `String` with `ifNull(col, '')` and decoded uniformly.
+/// `source_account_id` is the exception: it is decoded as `Option<String>` and a
+/// NULL fails the read — parity with .NET, whose `reader.GetString()` throws on
+/// NULL and fails the seed, instead of silently minting a `''` pseudo-account.
+/// Crucially the aliases DIFFER from the source column names (`val`, `op_type`,
+/// …): a same-name `ifNull(value,'') AS value` would shadow the `value`
+/// referenced in `WHERE` and can trip a ClickHouse "Cyclic aliases" error (the
+/// .NET reader avoids this the same way). `is_delete` is derived from
+/// `operation_type`.
 const STREAM_SQL: &str = r"
     SELECT
         ifNull(insight_source_type, '')  AS source_type,
-        toString(insight_source_id)      AS source_id,
-        ifNull(source_account_id, '')    AS account_id,
+        ifNull(toString(insight_source_id), '') AS source_id,
+        source_account_id                AS account_id,
         ifNull(value_type, '')           AS val_type,
         ifNull(value, '')                AS val,
         toString(_synced_at)             AS synced_at,
         ifNull(operation_type, '')       AS op_type
     FROM identity.identity_inputs
-    WHERE insight_tenant_id = ?
-      AND operation_type IN ('UPSERT', 'DELETE')
+    WHERE operation_type IN ('UPSERT', 'DELETE')
       AND value IS NOT NULL
       AND value != ''
     ORDER BY
@@ -63,7 +90,7 @@ const STREAM_SQL: &str = r"
 struct InputRow {
     source_type: String,
     source_id: String,
-    account_id: String,
+    account_id: Option<String>,
     val_type: String,
     val: String,
     synced_at: String,
@@ -95,21 +122,29 @@ impl ClickHouseIdentityInputsReader {
 #[async_trait]
 impl IdentityInputsReader for ClickHouseIdentityInputsReader {
     async fn stream(&self, tenant_id: Uuid) -> anyhow::Result<Vec<IdentityInputRow>> {
-        let rows: Vec<InputRow> = self
-            .client
-            .query(STREAM_SQL)
-            .bind(tenant_id.to_string())
-            .fetch_all()
-            .await?;
+        // tenant_id is intentionally unused while the HOTFIX (#1550) drops the
+        // tenant filter — kept so the `IdentityInputsReader` trait (and the
+        // .NET reader tracking it) stays stable for when the filter comes back.
+        let _ = tenant_id;
+        let rows: Vec<InputRow> = self.client.query(STREAM_SQL).fetch_all().await?;
         rows.into_iter().map(map_row).collect()
     }
 }
 
 fn map_row(r: InputRow) -> anyhow::Result<IdentityInputRow> {
+    let account_id = r.account_id.ok_or_else(|| {
+        anyhow::anyhow!(
+            "NULL source_account_id in identity_inputs (source_type={}, source_id={}, \
+             value_type={}): refusing to fold it into a '' pseudo-account; fix the producer row",
+            r.source_type,
+            r.source_id,
+            r.val_type,
+        )
+    })?;
     Ok(IdentityInputRow {
         source_type: r.source_type,
         source_id: Uuid::parse_str(&r.source_id)?,
-        source_account_id: r.account_id,
+        source_account_id: account_id,
         value_type: r.val_type,
         value: r.val,
         synced_at: parse_ch_datetime(&r.synced_at)?,

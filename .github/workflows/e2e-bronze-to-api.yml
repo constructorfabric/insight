@@ -268,7 +268,10 @@ jobs:
       - name: Reset coverage artifacts
         run: rm -rf .artifacts
 
-      - name: E2E suite — identity
+      # The dotnet lane keeps gating the DEPLOYED implementation until the
+      # .NET decommission; the e2e-identity-rust lane below runs the same
+      # suite against the successor.
+      - name: E2E suite — identity (dotnet)
         run: ./e2e.sh test identity/ --tb=short -q
 
       - name: Upload coverage inputs
@@ -276,6 +279,68 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-inputs-identity
+          path: src/ingestion/tests/e2e/.artifacts/
+          overwrite: true
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: |
+          echo "::group::clickhouse logs"
+          ./e2e.sh logs clickhouse || true
+          echo "::endgroup::"
+          echo "::group::mariadb logs"
+          ./e2e.sh logs mariadb || true
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always()
+        run: ./e2e.sh down || true
+
+  # The SAME identity contract suite against the Rust identity-resolution
+  # implementation (the cutover successor) — the standing parity proof. Its
+  # gate uses the identity-rust suppression lists (the dropped legacy
+  # endpoint is an approved SKIP there, still REQUIRED on the dotnet lane).
+  e2e-identity-rust:
+    name: identity-rust
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: src/ingestion/tests/e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download runner image
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-runner-image
+          path: src/ingestion/tests/e2e
+
+      - name: Ensure zstd is available
+        run: command -v zstd >/dev/null || (sudo apt-get update && sudo apt-get install -y zstd)
+
+      - name: Load runner image
+        run: zstd -d < runner-image.tar.zst | docker load
+
+      - name: Reset coverage artifacts
+        run: rm -rf .artifacts
+
+      - name: E2E suite — identity (rust)
+        env:
+          E2E_IDENTITY_IMPLEMENTATION: rust
+        run: ./e2e.sh test identity/ --tb=short -q
+
+      - name: Upload coverage inputs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-inputs-identity-rust
           path: src/ingestion/tests/e2e/.artifacts/
           overwrite: true
           include-hidden-files: true
@@ -494,6 +559,34 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "::error::Identity endpoint coverage gate failed — a spec operation is exercised by no test and not in SKIP_LIST (or a skip is stale). See the identity/ contract tests (src/ingestion/tests/e2e/identity/)."; fi
           exit "$rc"
 
+  identity-rust-endpoint-coverage-gate:
+    name: Identity (rust) endpoint coverage gate
+    needs: e2e-identity-rust
+    if: ${{ !cancelled() && needs.e2e-identity-rust.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Same spec universe as the dotnet gate; the identity-rust suppression
+      # lists mark the dropped legacy endpoint as an approved SKIP.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs-identity-rust
+          path: coverage-inputs
+      - name: Analyse identity (rust) endpoint coverage
+        run: |
+          python3 src/ingestion/tests/e2e/lib/api_coverage.py \
+            --suite identity-rust \
+            --observed coverage-inputs/observed_identity_endpoints.json \
+            --spec docs/components/backend/identity/openapi.json | tee identity_rust_coverage.md
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat identity_rust_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Identity (rust) endpoint coverage gate failed — see the identity/ contract tests (src/ingestion/tests/e2e/identity/)."; fi
+          exit "$rc"
+
   # Umbrella status check. The `main` ruleset ("Soft Protection") requires a
   # check named "Run E2E suite" — the pre-split job name. This job re-supplies
   # that context by aggregating the suite lanes into one pass/fail. It runs even
@@ -507,20 +600,29 @@ jobs:
     # migration-acceptance gate for the .NET→Rust cutover, so a red gate must
     # block the merge. (The analytics/metric gates stay separate as they were
     # on main — folding them in is a separate, repo-wide decision.)
-    needs: [build, e2e-api, e2e-identity, e2e-metrics, identity-endpoint-coverage-gate]
+    needs:
+      - build
+      - e2e-api
+      - e2e-identity
+      - e2e-identity-rust
+      - e2e-metrics
+      - identity-endpoint-coverage-gate
+      - identity-rust-endpoint-coverage-gate
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require the build, every suite lane, and the identity gate to have succeeded
+      - name: Require the build, every suite lane, and the identity gates to have succeeded
         run: |
           echo "build=${{ needs.build.result }}"
           echo "api=${{ needs.e2e-api.result }}"
           echo "identity=${{ needs.e2e-identity.result }}"
+          echo "identity-rust=${{ needs.e2e-identity-rust.result }}"
           echo "metrics=${{ needs.e2e-metrics.result }}"
           echo "identity-gate=${{ needs.identity-endpoint-coverage-gate.result }}"
+          echo "identity-rust-gate=${{ needs.identity-rust-endpoint-coverage-gate.result }}"
           if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "true" ]; then
-            echo "::error::E2E suite did not fully pass — the build, a suite lane (api/identity/metrics), or the identity coverage gate failed, was cancelled, or was skipped."
+            echo "::error::E2E suite did not fully pass — the build, a suite lane (api/identity/identity-rust/metrics), or an identity coverage gate failed, was cancelled, or was skipped."
             exit 1
           fi
-          echo "E2E suite passed: build + api + identity + metrics + identity gate all succeeded."
+          echo "E2E suite passed: build + all lanes + both identity gates succeeded."

@@ -47,6 +47,15 @@ services:
       dockerfile: services/identity/Dockerfile
     image: insight-e2e-identity:local
 
+  # Build-only helper: compiles the Rust identity-resolution service FROM ITS
+  # OWN Dockerfile — the successor implementation the same contract suite runs
+  # against via E2E_IDENTITY_IMPLEMENTATION=rust (the cutover parity proof).
+  identity-resolution:
+    build:
+      context: ${INSIGHT_REPO_ROOT:-../../../..}/src/backend
+      dockerfile: services/identity-resolution/Dockerfile
+    image: insight-e2e-identity-resolution:local
+
   runner:
     build:
       # Resolved by ../e2e.sh; CI workflow also exports this. We use an
@@ -69,6 +78,7 @@ services:
         jira-enrich: "service:jira-enrich"
         analytics: "service:analytics"
         identity: "service:identity"
+        identity-resolution: "service:identity-resolution"
     image: insight-e2e-runner:latest
     container_name: insight-e2e-runner
     working_dir: /workspace/src/ingestion/tests/e2e
