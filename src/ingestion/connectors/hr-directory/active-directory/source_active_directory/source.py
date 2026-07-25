@@ -43,7 +43,8 @@ class SourceActiveDirectory(AbstractSource):
     ) -> Tuple[bool, Optional[Any]]:
         """Validate config end-to-end:
 
-          1. insight_source_id is non-empty (composite unique_key collisions otherwise).
+          1. insight_source_id and insight_tenant_id are non-empty (composite
+             unique_key collisions and tenant-isolation leaks otherwise).
           2. LDAP bind succeeds against the configured DC with the bind credentials.
           3. The search base is readable (size-limited probe returns without error).
         """
@@ -53,6 +54,14 @@ class SourceActiveDirectory(AbstractSource):
                 "insight_source_id MUST be set via the "
                 "`insight.cyberfabric.com/source-id` annotation; an empty value "
                 "would cause silent dedup collisions in the users stream."
+            )
+
+        insight_tenant_id = (config.get("insight_tenant_id") or "").strip()
+        if not insight_tenant_id:
+            return False, (
+                "insight_tenant_id MUST be set to a non-empty tenant UUID; an "
+                "empty value would stamp every record with an unscoped tenant, "
+                "breaking tenant isolation."
             )
 
         # Import here so a missing ldap3 surfaces as a clean check error, not an
@@ -70,18 +79,18 @@ class SourceActiveDirectory(AbstractSource):
             )
 
         try:
+            # BASE scope against the search base itself matches at most one entry,
+            # so it can never trigger `LDAPSizeLimitExceededResult` (result code 4)
+            # the way a SUBTREE probe with size_limit=1 can when the base contains
+            # more than one user — that exception (raised because `connect()` sets
+            # raise_exceptions=True) would otherwise be mis-read as an unreadable base.
             ok = conn.search(
                 search_base=config["ad_search_base"],
-                search_filter=config.get(
-                    "ad_user_filter",
-                    "(&(objectClass=user)(objectCategory=person)(!(sAMAccountName=krbtgt)))",
-                ),
-                search_scope="SUBTREE",
-                attributes=["sAMAccountName"],
-                size_limit=1,
+                search_filter="(objectClass=*)",
+                search_scope="BASE",
+                attributes=["distinguishedName"],
             )
-            if not ok and conn.result and conn.result.get("result") not in (0, 4):
-                # result 0 = success, 4 = sizeLimitExceeded (expected with size_limit=1)
+            if not ok and conn.result and conn.result.get("result") != 0:
                 return False, (
                     f"Search base '{config['ad_search_base']}' not readable: "
                     f"{conn.result.get('description')} ({conn.result.get('message')})."

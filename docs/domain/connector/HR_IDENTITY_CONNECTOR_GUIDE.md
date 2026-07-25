@@ -27,7 +27,7 @@ is the canonical example of a **CDK connector for a non-HTTP source** — see be
 Every HR/identity connector, regardless of transport, MUST emit the **same** Silver
 surface so the Identity Manager and the unified person registry work across sources:
 
-```
+```text
 bronze_{name}.users (or .employees)        ← extraction writes here
         │  (connector AddFields / parse: tenant_id, source_id, unique_key)
         ▼
@@ -73,7 +73,7 @@ source (LDAP, SOAP, JDBC, file) is the clearest such case. The CDK's `HttpStream
 **also** assumes HTTP — so do **not** subclass it. Subclass the plain
 `airbyte_cdk.sources.streams.Stream` and drive the transport yourself:
 
-```
+```text
 source_{name}/
   __init__.py
   spec.json                 # insight_tenant_id + insight_source_id required; prefix others ({name}_*)
