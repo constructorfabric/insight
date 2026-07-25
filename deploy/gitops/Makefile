@@ -102,6 +102,10 @@ REDPANDA_CONSOLE_RELEASE ?= redpanda-console
 REDPANDA_CONSOLE_CHART   ?= redpanda/console
 REDPANDA_CONSOLE_VERSION ?= 3.7.0
 
+# Airbyte 1.8+ merged the webapp service into server and stopped publishing
+# a separate webapp image — UI is served by the server service. Bumping below
+# 1.8 (or rolling back) requires re-adding the webapp subchart/routing that
+# system/airbyte/values.yaml removed; see issue #1910.
 AIRBYTE_RELEASE  ?= airbyte
 AIRBYTE_VERSION  ?= 1.9.2
 
