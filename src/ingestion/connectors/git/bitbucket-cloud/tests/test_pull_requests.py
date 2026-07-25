@@ -68,6 +68,33 @@ def test_existing_state_replays_open_and_terminal_prs(pull_requests_stream, clie
     assert {record["id"] for record in records} == {1, 2}
 
 
+def test_all_pullrequests_queries_use_accepted_pagelen(pull_requests_stream, client, repo):
+    # Regression for the /pullrequests pagelen cap (BCLOUD-13229, follows #1888):
+    # every query against /pullrequests — the listing, the open-PR refetch, and
+    # the reconcile sweep — must request pagelen<=50. The reconcile query used
+    # 100, which 400s "Invalid pagelen" and aborts the sync from the 2nd run on
+    # (it only fires once a watermark exists).
+    pull_requests_stream.state = {
+        "version": 2,
+        "bucket_count": 8,
+        "repositories": {repo.uuid: {"updated_on": "2026-06-01T00:00:00+00:00", "reconcile_after_id": 0}},
+    }
+    client.pr_values = [pr(2, state="MERGED")]
+    seen_pagelens: list[str | None] = []
+    original = client.paginate
+
+    def spy(path, **kwargs):
+        if path.endswith("pullrequests"):
+            seen_pagelens.append(dict(kwargs.get("params") or []).get("pagelen"))
+        return original(path, **kwargs)
+
+    client.paginate = spy
+    read(pull_requests_stream, repo)
+
+    assert seen_pagelens  # listing + open refetch + reconcile all hit /pullrequests
+    assert all(value == "50" for value in seen_pagelens), seen_pagelens
+
+
 def test_description_is_bounded(pull_requests_stream, repo):
     record = pull_requests_stream._record(repo, pr(description="x" * 20_000))
     assert len(record["description"].encode()) <= 16_384

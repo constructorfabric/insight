@@ -132,6 +132,27 @@ class TestPipelineChildren:
         assert items(records)[0]["pipeline_uuid"] == "p1"
         assert marker(records)["snapshot_item_count"] == 1
 
+    def test_steps_request_uses_safe_pagelen(self, repo):
+        # The pipeline-steps endpoint's pagelen ceiling is unverifiable
+        # (BCLOUD-13229); request the 50 safe-floor rather than 100.
+        client = FakeClient()
+        self._pipeline(client)
+        steps_path = "repositories/ws/repo/pipelines/p1/steps"
+        client.optional_values[steps_path] = (True, [{"uuid": "s1"}])
+        captured: dict[str, object] = {}
+        original = client.paginate_optional
+
+        def spy(path, **kwargs):
+            if path == steps_path:
+                captured["params"] = kwargs.get("params")
+            return original(path, **kwargs)
+
+        client.paginate_optional = spy
+        stream = PipelineStepsStream(**args(repo, client))
+        stream.state = {}
+        read(stream, repo)
+        assert (captured.get("params") or {}).get("pagelen") == "50"
+
     def test_test_reports_present(self, repo):
         client = FakeClient()
         self._pipeline(client)
