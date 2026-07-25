@@ -66,22 +66,31 @@ def identity_inputs(compose_stack: SessionConfig):
     )
     clickhouse.execute(compose_stack, "TRUNCATE TABLE identity.identity_inputs")
 
-    rows: list[tuple[str, str, str, str]] = [
+    rows: list[tuple[str, str, str]] = [
         # (account, value_type, value) — two accounts share SHARED_EMAIL.
+        # Connectors emit a source-native `id` observation per account; the
+        # profile's `ids[]` is built from exactly those.
         ("seed-acc-1", "email", SHARED_EMAIL),
+        ("seed-acc-1", "id", "seed-acc-1"),
         ("seed-acc-1", "display_name", "Seeded Person"),
         ("seed-acc-2", "email", SHARED_EMAIL),
+        ("seed-acc-2", "id", "seed-acc-2"),
         ("seed-acc-3", "email", SOLO_EMAIL),
+        ("seed-acc-3", "id", "seed-acc-3"),
         ("seed-acc-3", "display_name", "Solo Person"),
     ]
     values = []
     for i, (account, value_type, value) in enumerate(rows):
+        # Distinct _synced_at per row (production reality): the seed derives
+        # observation created_at from it, and the persons UNIQUE key
+        # (…, value_type, created_at) silently drops same-instant collisions —
+        # e.g. two accounts' `id` observations for the same person.
         values.append(
             "("
             f"'{account}:{value_type}', "
             f"'{seed.SEED_TENANT}', 'e2e-source', '{SEED_SOURCE_ID}', "
             f"'{account}', '{value_type}', '{value}', "
-            f"'UPSERT', now64(3), {i + 1}"
+            f"'UPSERT', now64(3) - INTERVAL {len(rows) - i} SECOND, {i + 1}"
             ")"
         )
     clickhouse.execute(
@@ -142,17 +151,45 @@ def test_persons_seed_end_to_end(identity_inputs, seed_api, identity_svc) -> Non
     summary = op.get("summary") or {}
     assert summary, op
 
-    # The two same-email accounts collapsed into ONE person...
-    resolved = seed_api.post("/v1/profiles", json={"value_type": "email", "value": SHARED_EMAIL})
-    assert resolved.status_code == 200, f"status={resolved.status_code} body={resolved.text}"
-    person = resolved.json()
-    accounts = {entry["value"] for entry in person.get("ids") or []}
-    assert accounts == {"seed-acc-1", "seed-acc-2"}, person.get("ids")
+    # Freshly minted person_ids come from the tenant-agnostic internal lookup
+    # (no visibility gate — at this point NOBODY is in the seed admin's
+    # subtree, so /v1/profiles would correctly answer 404 for the admin).
+    with identity_svc.client(
+        sub=str(seed.SEED_ADMIN), tenant=str(seed.SEED_TENANT), sub_type="service", roles="service"
+    ) as svc:
+        shared = svc.get(f"/internal/persons/by-email/{SHARED_EMAIL}")
+        assert shared.status_code == 200, f"status={shared.status_code} body={shared.text}"
+        shared_id = shared.json()["insight_source_id"]
+        solo = svc.get(f"/internal/persons/by-email/{SOLO_EMAIL}")
+        assert solo.status_code == 200, f"status={solo.status_code} body={solo.text}"
+        # The solo account minted its own person.
+        assert solo.json()["insight_source_id"] != shared_id
 
-    # ...and the solo account minted its own.
-    solo = seed_api.post("/v1/profiles", json={"value_type": "email", "value": SOLO_EMAIL})
-    assert solo.status_code == 200, f"status={solo.status_code} body={solo.text}"
-    assert solo.json()["person_id"] != person["person_id"]
+    # The two same-email accounts collapsed into ONE person — proven through
+    # the read contract, resolved AS that person (a seeded top-of-tree sees
+    # itself): the shared email resolves to a single profile (NOT ambiguous),
+    # and the by-id/`ids[]` surface carries the CURRENT id observation per
+    # source instance (the rn=1 reduction both implementations share) — for
+    # two accounts in one source that is the newest one, seed-acc-2.
+    with identity_svc.client(sub=shared_id, tenant=str(seed.SEED_TENANT)) as pc:
+        by_email = pc.post("/v1/profiles", json={"value_type": "email", "value": SHARED_EMAIL})
+        assert by_email.status_code == 200, f"status={by_email.status_code} body={by_email.text}"
+        person = by_email.json()
+        assert person["person_id"] == shared_id, person
+        accounts = {entry["value"] for entry in person.get("ids") or []}
+        assert accounts == {"seed-acc-2"}, person.get("ids")
+
+        by_id = pc.post(
+            "/v1/profiles",
+            json={
+                "value_type": "id",
+                "value": "seed-acc-2",
+                "insight_source_type": "e2e-source",
+                "insight_source_id": str(SEED_SOURCE_ID),
+            },
+        )
+        assert by_id.status_code == 200, f"status={by_id.status_code} body={by_id.text}"
+        assert by_id.json()["person_id"] == shared_id, by_id.json()
 
 
 def test_persons_seed_operations_listed(seed_operation, seed_api) -> None:

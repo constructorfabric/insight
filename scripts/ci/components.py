@@ -53,6 +53,33 @@ COMPONENTS = [
         "cover_ignore_regex": "src/backend/libs/",
         "paths": ["src/backend/services/analytics"],
     },
+    # cover=False (mirrors authenticator/identity): the crate's business logic
+    # is exercised by env-gated live tests (IDENTITY_TEST_* against a dev
+    # MariaDB/ClickHouse) that skip cleanly in CI, so only the pure-logic unit
+    # tests would count — gating the crate far below the 80% line. fmt + clippy
+    # + tests still run and gate the pipeline. Re-enable coverage when the
+    # HTTP+MariaDB integration suite lands (#1753).
+    {
+        "name": "identity-resolution",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "identity-resolution",
+        "cover": False,
+        # DB-backed migration/bootstrap tests: the CI rust job provisions a
+        # MariaDB (database `identity` — this service owns that schema), runs
+        # `identity-resolution migrate` up front, then `cargo test` with
+        # INTEGRATION_TESTS_MARIADB_URL set (the live tests re-run the
+        # migrator to prove idempotency and skip cleanly when unset).
+        "live_db": True,
+        "live_db_name": "identity",
+        "cover_ignore_regex": "src/backend/libs/",
+        "paths": ["src/backend/services/identity-resolution"],
+        # insight-clickhouse is compiled in as a path dependency: a lib change
+        # must re-run this crate's tests too. A shared path in `paths` would
+        # NOT do that (component_for() picks a single owner — always the lib's
+        # own component); `triggered_by` is the registry's co-trigger for this.
+        "triggered_by": ["insight-clickhouse"],
+    },
     # fakeidp is a dev/e2e test double (see cf/NGINX_BFF.md §10 G6), not shipped
     # code — but it has real integration tests, so it is covered + gated like any
     # other crate. Its only cross-crate files are none (standalone deps), so no

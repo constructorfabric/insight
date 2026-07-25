@@ -179,7 +179,7 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.07.24.12.09-942af77" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.07.25.07.16-a122f77" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -463,6 +463,53 @@ identity:
   # with IDENTITY__* env vars sourced from the auto-generated MariaDB
   # credentials in `insight-db-creds`.
   existingSecret: "insight-identity-config"
+# ─── Identity Resolution (Rust port of identity, epic #1602) ─────────────
+# Deployed SIDE-BY-SIDE with the .NET `identity` service during the cutover:
+# both serve the same API surface over the same MariaDB `identity` database.
+# Traffic stays on the .NET service until the gateway route + the analytics/
+# authenticator identity URLs are flipped to
+# `http://<release>-identity-resolution:8082`; rollback = revert those values.
+# SCHEMA OWNER: identity-resolution's migrate initContainer applies the
+# ported migrations + first-admin bootstrap (idempotent over what the .NET
+# DbUp already applied; the frozen .NET service applies nothing new).
+# Fresh SIDE-BY-SIDE install caveat: the .NET startup DbUp takes no shared
+# lock with the Rust migrator, so on a brand-new database the two may
+# interleave the same idempotent DDL; every statement is guarded
+# (IF [NOT] EXISTS), so the worst case is a transient .NET pod restart that
+# converges on the next attempt. Existing databases (full DbUp ledger) and
+# Rust-only installs have a single migrator and no race at all.
+identityResolution:
+  deploy: false
+  replicaCount: 1
+  image:
+    repository: ghcr.io/constructorfabric/insight-identity-resolution
+    tag: "" # MUST be set (e.g. "0.1.0")
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  # MariaDB database — the SAME one the .NET identity service uses during
+  # the transition (the render fails if the two names diverge).
+  databaseName: "identity"
+  # First-admin seed (port of the .NET BootstrapAdminRunner): on migrate,
+  # this person UUID gets an active `admin` assignment in
+  # `global.tenantDefaultId`, idempotently. The person row must already
+  # exist in `persons` for that tenant. Empty string disables the runner.
+  bootstrapAdminPersonId: ""
+  # The umbrella generates `insight-identity-resolution-config` with every
+  # APP__gears__identity-resolution__config__* env var filled in from the
+  # auto-generated credentials (see templates/secrets.yaml). The subchart
+  # consumes it via envFrom (overriding its mounted config ConfigMap).
+  existingSecret: "insight-identity-resolution-config"
+  # Gateway-JWT verification (NGINX_BFF R1) — same wiring as analytics: the
+  # oidc-authn-plugin resolves the authenticator's JWKS via OIDC discovery
+  # over https on `issuer` and trusts its CA from the authn-tls cert Secret.
+  gateway:
+    issuer: 'https://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.cluster.local:8443'
+    audience: "internal-services"
+    caCertSecret: "insight-authenticator-authn-tls-cert"
+    caCertPaths:
+      - /etc/insight/authn-ca/ca.crt
 # ─── Frontend (SPA) ──────────────────────────────────────────────────────
 frontend:
   # Served through the gateway edge at "/". Set deploy=false for a backend-only
