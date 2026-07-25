@@ -1,4 +1,4 @@
-version: "7.0.4"
+version: "6.60.9"
 type: DeclarativeSource
 
 check:
@@ -248,8 +248,15 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%dT00:00:00Z')) }}"
         datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      # cursor_granularity: P0D so each slice sends ending_at = starting_at + step
+      # = the next UTC midnight. The Admin usage/cost API treats ending_at as
+      # EXCLUSIVE ("buckets that end before this timestamp") and snaps starting_at
+      # to the UTC day start, so a midnight→midnight window selects exactly one
+      # daily bucket — no gap, no double-count. A positive granularity (the old
+      # PT1S) pulls ending_at back to 23:59:59Z, which is not before the bucket's
+      # midnight end, so zero buckets qualify. See ADR-0002 (supersedes ADR-0001).
       step: P1D
-      cursor_granularity: PT1S
+      cursor_granularity: P0D
       start_time_option:
         type: RequestOption
         field_name: starting_at
@@ -364,8 +371,15 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%dT00:00:00Z')) }}"
         datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      # cursor_granularity: P0D so each slice sends ending_at = starting_at + step
+      # = the next UTC midnight. The Admin usage/cost API treats ending_at as
+      # EXCLUSIVE ("buckets that end before this timestamp") and snaps starting_at
+      # to the UTC day start, so a midnight→midnight window selects exactly one
+      # daily bucket — no gap, no double-count. A positive granularity (the old
+      # PT1S) pulls ending_at back to 23:59:59Z, which is not before the bucket's
+      # midnight end, so zero buckets qualify. See ADR-0002 (supersedes ADR-0001).
       step: P1D
-      cursor_granularity: PT1S
+      cursor_granularity: P0D
       start_time_option:
         type: RequestOption
         field_name: starting_at

@@ -1,11 +1,19 @@
 ---
-status: accepted
+status: superseded
 date: 2026-04-08
+superseded-by: 0002-cost-report-exclusive-ending-boundary.md
 ---
 
 # ADR-0001: Cursor granularity `PT1S` to avoid empty date-boundary windows
 
 **ID**: `cpt-insightspec-adr-claude-admin-cursor-granularity`
+
+> **Superseded by [ADR-0002](0002-cost-report-exclusive-ending-boundary.md).**
+> `PT1S` still 400s the `cost_report` stream: the Admin API treats `ending_at`
+> as exclusive, so `23:59:59Z` selects zero daily buckets. The
+> `messages_usage` and `cost_report` streams now use `cursor_granularity: P0D`
+> (`ending_at = starting_at + P1D` = next midnight). `code_usage` keeps `PT1S`
+> because it does not send `ending_at`. See ADR-0002.
 
 <!-- toc -->
 
