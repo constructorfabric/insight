@@ -34,10 +34,11 @@ SELECT
     u.jobTitle                                      AS job_title,
     u.department                                    AS department_name,
     CAST(NULL AS Nullable(UUID))                    AS org_unit_id,
-    -- Resolve managerDn (a Distinguished Name) to the manager's objectGUID
-    -- via a self-join on distinguishedName. This mirrors how BambooHR maps
-    -- supervisorEId → manager_person_id.
-    mgr.id                                          AS manager_person_id,
+    -- manager_person_id is the resolved unified person ID, not an AD source ID.
+    -- Leave it null here; Silver Step 2 (Identity Manager) resolves it from the
+    -- parent_id/parent_email identity_inputs signals emitted by
+    -- active_directory__manager_identity_inputs.sql.
+    CAST(NULL AS Nullable(UUID))                    AS manager_person_id,
     CASE
         WHEN u.accountEnabled IS NOT NULL AND u.accountEnabled THEN 'active'
         WHEN u.accountEnabled IS NOT NULL AND NOT u.accountEnabled THEN 'terminated'
@@ -58,5 +59,3 @@ SELECT
     CAST(map() AS Map(String, Float64))             AS custom_num_attrs,
     u._airbyte_extracted_at                         AS ingested_at
 FROM {{ source('bronze_active_directory', 'users') }} u
-LEFT JOIN {{ source('bronze_active_directory', 'users') }} mgr
-    ON u.managerDn = mgr.distinguishedName

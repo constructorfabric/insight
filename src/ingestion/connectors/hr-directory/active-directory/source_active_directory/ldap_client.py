@@ -13,6 +13,7 @@ This module centralises everything transport-specific:
 """
 
 import logging
+import ssl
 import uuid
 from datetime import datetime, timezone
 from typing import Any, List, Mapping, Optional
@@ -52,6 +53,24 @@ _LDAPS_PORT = 636
 _LDAP_PORT = 389
 
 
+def _as_bool(value: Any, default: bool) -> bool:
+    """Coerce a config value to bool. K8s Secrets/env vars always deliver strings
+    (e.g. `"false"`), which are truthy in Python — a plain `if value` check would
+    always select LDAPS/636 regardless of the operator's intent."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes"):
+            return True
+        if normalized in ("false", "0", "no"):
+            return False
+        raise ValueError(f"ad_use_ssl must be a boolean-like value, got {value!r}")
+    return bool(value)
+
+
 def _port(config: Mapping[str, Any], use_ssl: bool) -> int:
     port = config.get("ad_port")
     if port:
@@ -61,8 +80,12 @@ def _port(config: Mapping[str, Any], use_ssl: bool) -> int:
 
 def build_server(config: Mapping[str, Any]) -> Server:
     """Construct an `ldap3.Server` from connector config."""
-    use_ssl = config.get("ad_use_ssl", True)
-    tls = Tls(validate=0) if use_ssl else None  # validate=0: CERT_NONE — many AD DCs use private CAs
+    use_ssl = _as_bool(config.get("ad_use_ssl"), default=True)
+    # Require server certificate validation. Private AD CAs are supported via
+    # `ad_ca_cert_path` (a CA bundle mounted into the connector pod) — never fall
+    # back to CERT_NONE, which skips hostname/certificate checking entirely.
+    ca_cert_path = config.get("ad_ca_cert_path") or None
+    tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=ca_cert_path) if use_ssl else None
     return Server(
         host=config["ad_server_host"],
         port=_port(config, use_ssl),

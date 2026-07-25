@@ -12,6 +12,6 @@
     check_cols=[
         'userPrincipalName', 'mail', 'displayName', 'givenName', 'surname',
         'employeeId', 'department', 'jobTitle', 'accountEnabled', 'status',
-        'sAMAccountName'
+        'sAMAccountName', 'managerDn'
     ]
 ) }}
