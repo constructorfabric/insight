@@ -106,9 +106,8 @@ impl OidcClient {
         // an OS-level trust-store file/env-var (e.g. SSL_CERT_FILE), which
         // only applies if native-tls won and cannot be relied on here.
         if !idp.extra_ca_cert_path.is_empty() {
-            let pem = std::fs::read(&idp.extra_ca_cert_path).with_context(|| {
-                format!("read extra_ca_cert_path {:?}", idp.extra_ca_cert_path)
-            })?;
+            let pem = std::fs::read(&idp.extra_ca_cert_path)
+                .with_context(|| format!("read extra_ca_cert_path {:?}", idp.extra_ca_cert_path))?;
             // `from_pem_bundle`, not `from_pem`: the file may carry a full
             // chain (e.g. intermediate + root); `from_pem` only parses the
             // first certificate in the blob and silently drops the rest.
@@ -118,6 +117,14 @@ impl OidcClient {
                     idp.extra_ca_cert_path
                 )
             })?;
+            // A whitespace/comment-only file parses to zero certs without
+            // erroring, silently leaving only the default trust store —
+            // reject it so a misconfigured mount fails loudly at startup.
+            anyhow::ensure!(
+                !certs.is_empty(),
+                "extra_ca_cert_path {:?} contained no certificates",
+                idp.extra_ca_cert_path
+            );
             for cert in certs {
                 builder = builder.add_root_certificate(cert);
             }
