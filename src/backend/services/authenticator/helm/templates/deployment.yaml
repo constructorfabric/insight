@@ -59,6 +59,15 @@ spec:
               mountPath: /app/authn-ca
               readOnly: true
             {{- end }}
+            {{- if .Values.idp.extraCaCertSecret }}
+            # Extra CA bundle the binary trusts for the IdP TLS connection
+            # (idp.extraCaCertPath). Mounted read-only from the operator's
+            # Secret; the file's mount path is passed to the binary via the
+            # env var below.
+            - name: idp-extra-ca
+              mountPath: {{ dir .Values.idp.extraCaCertPath | quote }}
+              readOnly: true
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -73,6 +82,15 @@ spec:
             # APP__gears__authenticator__config__* leaf overrides.
             - secretRef:
                 name: {{ required "existingSecret is required (umbrella provides `insight-authenticator-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+          {{- if .Values.idp.extraCaCertSecret }}
+          env:
+            # Point the binary at the mounted extra-CA bundle. Set here (not
+            # via the config Secret) because the path is chart-derived from
+            # idp.extraCaCertPath and must stay in lockstep with the volume
+            # mount above. Overrides any value carried in the config Secret.
+            - name: APP__gears__authenticator__config__idp__extra_ca_cert_path
+              value: {{ .Values.idp.extraCaCertPath | quote }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
           {{- with .Values.livenessProbe }}
@@ -116,6 +134,14 @@ spec:
         - name: signing-keys
           secret:
             secretName: {{ required "signingKeysSecret is required (mount the ES256 current.pem/previous.pem)" .Values.signingKeysSecret | quote }}
+        {{- if .Values.idp.extraCaCertSecret }}
+        - name: idp-extra-ca
+          secret:
+            secretName: {{ .Values.idp.extraCaCertSecret | quote }}
+            items:
+              - key: {{ .Values.idp.extraCaCertSecretKey | quote }}
+                path: {{ base .Values.idp.extraCaCertPath | quote }}
+        {{- end }}
         {{- if .Values.tlsDiscovery.enabled }}
         - name: authn-tls-conf
           configMap:
