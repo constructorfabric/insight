@@ -99,7 +99,9 @@ class SessionConfig:
                 mariadb_database=os.environ.get("E2E_MARIADB_DATABASE", "analytics"),
                 mariadb_user=os.environ.get("E2E_MARIADB_USER", "insight"),
                 mariadb_password=os.environ["E2E_MARIADB_PASSWORD"],
-                # root pw not used in docker mode — leave as default random
+                # Root creds provision per-service databases (the identity
+                # suite CREATEs the service's own DB — lib/identity.py).
+                mariadb_root_password=os.environ.get("E2E_MARIADB_ROOT_PASSWORD", ""),
             )
         return cls(
             repo_root=repo_root,

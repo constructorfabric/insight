@@ -28,6 +28,20 @@ services:
       cache_to:
         - type=gha,mode=max,scope=e2e-analytics
 
+  identity:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-identity
+      cache_to:
+        - type=gha,mode=max,scope=e2e-identity
+
+  identity-resolution:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-identity-resolution
+      cache_to:
+        - type=gha,mode=max,scope=e2e-identity-resolution
+
   runner:
     build:
       cache_from:

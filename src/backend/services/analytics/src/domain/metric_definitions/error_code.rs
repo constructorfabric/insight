@@ -1,6 +1,7 @@
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum MetricSchemaErrorCode {
     TableNotFound,
     ColumnNotFound,
@@ -26,6 +27,16 @@ impl MetricSchemaErrorCode {
             Self::Unknown => "unknown",
         }
     }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "table_not_found" => Some(Self::TableNotFound),
+            "column_not_found" => Some(Self::ColumnNotFound),
+            "dimension_not_covered" => Some(Self::DimensionNotCovered),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for MetricSchemaErrorCode {
@@ -34,7 +45,8 @@ impl fmt::Display for MetricSchemaErrorCode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum SchemaStatus {
     Ok,
     Error,
@@ -74,6 +86,14 @@ mod tests {
             assert_eq!(SchemaStatus::from_db(status.as_db()), Some(status));
         }
         assert_eq!(SchemaStatus::from_db("nope"), None);
+    }
+
+    #[test]
+    fn error_code_db_strings_round_trip() {
+        for code in ALL_METRIC_SCHEMA_ERROR_CODES {
+            assert_eq!(MetricSchemaErrorCode::from_db(code.as_db()), Some(*code));
+        }
+        assert_eq!(MetricSchemaErrorCode::from_db("nope"), None);
     }
 
     #[test]

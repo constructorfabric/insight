@@ -173,8 +173,12 @@ class PipelineStepsStream(PipelineStateStream):
     def pipeline_records(self, repo, pipeline: Mapping[str, Any]):
         pipeline_uuid = pipeline.get("uuid")
         generation = self.generation(repo.uuid, pipeline_uuid, "steps")
+        # Per-endpoint pagelen maxima are undocumented and inconsistent
+        # (BCLOUD-13229); the steps endpoint is not verifiable against a public
+        # repo. 50 is the lowest max observed across all probed endpoints, so it
+        # is a safe floor here, and a pipeline has few steps regardless.
         present, steps = self._client.paginate_optional(
-            self._client.repo_path(repo, f"pipelines/{pipeline_uuid}/steps"), params={"pagelen": "100"}
+            self._client.repo_path(repo, f"pipelines/{pipeline_uuid}/steps"), params={"pagelen": "50"}
         )
         entity_keys: set[str] = set()
         for step in steps:
@@ -217,8 +221,10 @@ class PipelineStepTestReportsStream(PipelineStateStream):
 
     def pipeline_records(self, repo, pipeline: Mapping[str, Any]):
         pipeline_uuid = pipeline.get("uuid")
+        # See PipelineStepsStream: steps pagelen is capped at the safe floor of
+        # 50 because the endpoint's true maximum is unverifiable (BCLOUD-13229).
         _, steps = self._client.paginate_optional(
-            self._client.repo_path(repo, f"pipelines/{pipeline_uuid}/steps"), params={"pagelen": "100"}
+            self._client.repo_path(repo, f"pipelines/{pipeline_uuid}/steps"), params={"pagelen": "50"}
         )
         for step in steps:
             step_uuid = step.get("uuid")

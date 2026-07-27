@@ -124,36 +124,28 @@ connectors:
         value: http://10.0.0.1:9999/api
       zulip_proxy_start_date:
         value: "2024-01-01"
-        # hubspot and salesforce are disabled: their stream schemas are built
-        # from the live describe APIs, so `discover` needs real credentials —
-        # fake values cannot create their tables. To enable, uncomment and
-        # replace the token/secret values with env references resolved at run
-        # time, e.g. `hubspot_access_token: { env: HUBSPOT_ACCESS_TOKEN }`,
-        # so secrets never land in this file.
-        # hubspot:
-        #   path: crm/hubspot
-        #   config:
-        #     hubspot_access_token:
-        #       value: fake
-        #     insight_source_id:
-        #       value: hubspot-acme-prod
-        #     insight_tenant_id:
-        #       value: fake
-        # salesforce:
-        #   path: crm/salesforce
-        #   config:
-        #     insight_source_id:
-        #       value: salesforce-acme-prod
-        #     insight_tenant_id:
-        #       value: fake
-        #     salesforce_client_id:
-        #       value: fake
-        #     salesforce_client_secret:
-        #       value: fake
-        #     salesforce_instance_url:
-        #       value: https://mycompany.my.salesforce.com
-        #     salesforce_start_date:
-        #       value: "2024-01-01"
+  hubspot:
+    path: crm/hubspot
+    config:
+      hubspot_access_token:
+        env: HUBSPOT_ACCESS_TOKEN
+      insight_source_id:
+        value: hubspot-acme-prod
+      insight_tenant_id:
+        value: fake
+  salesforce:
+    path: crm/salesforce
+    config:
+      insight_source_id:
+        value: salesforce-acme-prod
+      insight_tenant_id:
+        value: fake
+      salesforce_client_id:
+        env: SALESFORCE_CLIENT_ID
+      salesforce_client_secret:
+        env: SALESFORCE_CLIENT_SECRET
+      salesforce_instance_url:
+        env: SALESFORCE_INSTANCE_URL
   bitbucket-cloud:
     path: git/bitbucket-cloud
     config:

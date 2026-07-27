@@ -8,9 +8,10 @@ event-hook on the single client every suite request flows through; it records
 
 Gate half (`python3 lib/api_coverage.py`, stdlib only; blocking in `./e2e.sh
 gates` and CI): loads that ledger plus the committed OpenAPI spec and reports
-per-operation coverage. The gate FAILS only when a documented operation is
-exercised by no test, or a SKIP_LIST entry rots. Per-status-code coverage is
-REPORTED, not enforced: each declared code is `✓` observed / `✗` unobserved /
+per-operation coverage. The gate FAILS when a documented operation is
+exercised by no test, a SKIP_LIST entry rots, or a REQUIRED_EXTRA code is
+unproven/stale/redundant (see gate_violations). Ordinary per-status-code
+coverage is REPORTED, not enforced: each declared code is `✓` observed / `✗` unobserved /
 `·` excluded (5xx + UNIVERSAL_BOILERPLATE + BLOCKED[op], see below). Excluded-set
 hygiene is a non-blocking advisory. Rationale: docs/domain/bronze-to-api-e2e/specs.
 
@@ -77,12 +78,106 @@ BLOCKED: dict[str, frozenset[int]] = {
     "POST /v1/metric-results": frozenset({403, 404, 409}),
 }
 
+# ── identity suite (identity/, #1753) ──────────────────────────────────────
+# The identity service runs auth-ENABLED in the rig (a real gateway JWT on
+# every request), so 401 is exercised and REQUIRED — only 429 (no rate
+# limiter) is universally unobservable.
+IDENTITY_SKIP_LIST: list[tuple[str, str]] = []
+IDENTITY_UNIVERSAL_BOILERPLATE = frozenset({429})
+# The committed .NET spec declares a generic `200` on the mutating routes,
+# but the handlers actually answer 201 (create) / 202 (accepted) / 204
+# (delete) — same `.standard_errors`-style spec-fidelity gap as analytics
+# #1669. The wrong 200 is BLOCKED (never answered), and the REAL success code
+# is REQUIRED_EXTRA (must be observed even though the spec doesn't declare
+# it) — so the gate cannot report 100% while no mutation success was ever
+# seen. Both are self-cleaning once the spec is fixed.
+IDENTITY_BLOCKED: dict[str, frozenset[int]] = {
+    "POST /v1/roles": frozenset({200}),  # answers 201
+    "POST /v1/person-roles": frozenset({200}),  # answers 201
+    "POST /v1/visibility": frozenset({200}),  # answers 201
+    "POST /v1/persons-seed": frozenset({200}),  # answers 202
+    "DELETE /v1/roles/{id}": frozenset({200}),  # answers 204
+    "DELETE /v1/person-roles/{id}": frozenset({200}),  # answers 204
+    "DELETE /v1/visibility/{id}": frozenset({200}),  # answers 204
+}
+IDENTITY_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
+    "POST /v1/roles": frozenset({201}),
+    "POST /v1/person-roles": frozenset({201}),
+    "POST /v1/visibility": frozenset({201}),
+    "POST /v1/persons-seed": frozenset({202}),
+    "DELETE /v1/roles/{id}": frozenset({204}),
+    "DELETE /v1/person-roles/{id}": frozenset({204}),
+    "DELETE /v1/visibility/{id}": frozenset({204}),
+}
+
+# The Rust implementation dropped the deprecated persons lookup (approved
+# removal, zero callers), but the gate universe is still the committed .NET
+# spec until the Rust service publishes its own. The SKIP entry lets the
+# operation be legitimately unexercised on a Rust run — while the dotnet
+# suite (no such skip) still REQUIRES it, so a .NET regression can't hide.
+IDENTITY_RUST_SKIP_LIST: list[tuple[str, str]] = [
+    ("GET /v1/persons/{email}", "dropped in the Rust successor (approved removal; tests skip via capabilities)"),
+]
+
+# Codes the suite must observe DESPITE the spec not declaring them (a known
+# spec-fidelity gap, per suite). Unlike ordinary uncovered codes (advisory),
+# a missing REQUIRED_EXTRA code BLOCKS — it exists precisely because the
+# success path would otherwise be invisible to the gate.
+REQUIRED_EXTRA: dict[str, frozenset[int]] = {}
+
+# Frozen references to the analytics defaults, so suite selection is
+# reversible (select_suite("analytics") genuinely restores them).
+_ANALYTICS_SKIP_LIST, _ANALYTICS_BLOCKED = SKIP_LIST, BLOCKED
+_ANALYTICS_UNIVERSAL_BOILERPLATE, _ANALYTICS_REQUIRED_EXTRA = UNIVERSAL_BOILERPLATE, REQUIRED_EXTRA
+
+_SUITES = {
+    # (skip_list, blocked, universal_boilerplate, required_extra) per
+    # service-under-test AND per implementation where the surface differs;
+    # the gate is spec-scoped, so its suppression lists must be too.
+    "analytics": (
+        _ANALYTICS_SKIP_LIST,
+        _ANALYTICS_BLOCKED,
+        _ANALYTICS_UNIVERSAL_BOILERPLATE,
+        _ANALYTICS_REQUIRED_EXTRA,
+    ),
+    "identity": (
+        IDENTITY_SKIP_LIST,
+        IDENTITY_BLOCKED,
+        IDENTITY_UNIVERSAL_BOILERPLATE,
+        IDENTITY_REQUIRED_EXTRA,
+    ),
+    "identity-rust": (
+        IDENTITY_RUST_SKIP_LIST,
+        IDENTITY_BLOCKED,
+        IDENTITY_UNIVERSAL_BOILERPLATE,
+        IDENTITY_REQUIRED_EXTRA,
+    ),
+}
+
+
+def select_suite(name: str) -> None:
+    """Rebind the suppression lists to the named suite's (CLI --suite).
+
+    A pure lookup — selecting "analytics" after another suite restores the
+    genuine analytics defaults, so the switch is reversible in-process.
+    """
+    global SKIP_LIST, BLOCKED, UNIVERSAL_BOILERPLATE, REQUIRED_EXTRA  # noqa: PLW0603 — CLI-scoped rebinding
+    if name not in _SUITES:
+        raise ValueError(f"unknown suite: {name}")
+    SKIP_LIST, BLOCKED, UNIVERSAL_BOILERPLATE, REQUIRED_EXTRA = _SUITES[name]
+
 
 # ── recording half (imported by the rig) ──────────────────────────────────
 
 # (method, path) -> set of observed status codes. Module-level so the single
 # serial pytest process accumulates across every test (xdist is off in CI).
 _OBSERVED: dict[tuple[str, str], set[int]] = {}
+
+# Separate ledger for the identity service suite (identity/). The gate is
+# spec-scoped (one --spec per invocation), so each service-under-test keeps
+# its own ledger — mixing identity paths into the analytics ledger would show
+# them as unmatched noise against the analytics spec and vice versa.
+_OBSERVED_IDENTITY: dict[tuple[str, str], set[int]] = {}
 
 
 def record_response(response) -> None:
@@ -96,8 +191,16 @@ def record_response(response) -> None:
     _OBSERVED.setdefault(key, set()).add(int(response.status_code))
 
 
+def record_identity_response(response) -> None:
+    """`record_response` twin writing to the identity ledger."""
+    req = response.request
+    key = (req.method.upper(), req.url.path)
+    _OBSERVED_IDENTITY.setdefault(key, set()).add(int(response.status_code))
+
+
 def reset_observed() -> None:
     _OBSERVED.clear()
+    _OBSERVED_IDENTITY.clear()
 
 
 def dump_observed(path: str | Path) -> Path:
@@ -111,6 +214,15 @@ def dump_observed(path: str | Path) -> Path:
     unions statuses per (method, path) across those local sessions. Delete
     `.artifacts/` first for a from-scratch measurement.
     """
+    return _dump(path, _OBSERVED)
+
+
+def dump_observed_identity(path: str | Path) -> Path:
+    """`dump_observed` twin for the identity ledger (same merge semantics)."""
+    return _dump(path, _OBSERVED_IDENTITY)
+
+
+def _dump(path: str | Path, observed: dict[tuple[str, str], set[int]]) -> Path:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     merged: dict[tuple[str, str], set[int]] = {}
@@ -119,7 +231,7 @@ def dump_observed(path: str | Path) -> Path:
             merged.setdefault((row["method"], row["path"]), set()).update(
                 int(s) for s in row["statuses"]
             )
-    for key, codes in _OBSERVED.items():
+    for key, codes in observed.items():
         merged.setdefault(key, set()).update(codes)
     rows = [
         {"method": m, "path": p, "statuses": sorted(codes)}
@@ -266,14 +378,16 @@ class CoverageReport:
             {c for c in declared if c < SERVER_FAULT_FLOOR}
             - UNIVERSAL_BOILERPLATE
             - set(excluded)
-        )
+        ) | set(REQUIRED_EXTRA.get(op, frozenset()))
 
     @property
     def passed(self) -> bool:
-        # Gate blocks ONLY on a documented operation that no test exercises (a
-        # new endpoint), plus SKIP_LIST rot. Per-status-code coverage and
-        # excluded-set hygiene are REPORTED (advisories), never enforced.
-        return not (self.missing or self.redundant_skips or self.stale_skips)
+        # Single source of truth: the gate fails iff gate_violations() finds
+        # anything — missing operations, SKIP_LIST rot, and REQUIRED_EXTRA
+        # violations (unproven/stale/redundant). Verdict, markdown, and the
+        # CLI exit code all derive from this one predicate, so the report can
+        # never say PASS while listing a blocking violation.
+        return not gate_violations(self)
 
 
 def build_report(spec: dict, observed: list[dict]) -> CoverageReport:
@@ -287,8 +401,10 @@ def _statuses(codes) -> str:
 
 
 def gate_violations(r: CoverageReport) -> list[str]:
-    """BLOCKING findings — a non-empty list fails the gate (exit 1). Only a
-    documented operation no test exercises (a new endpoint), plus SKIP_LIST rot."""
+    """BLOCKING findings — a non-empty list fails the gate (exit 1): a
+    documented operation no test exercises, SKIP_LIST rot, and REQUIRED_EXTRA
+    violations (an unproven mutation success path, or a stale/redundant
+    entry). `CoverageReport.passed` is defined as `not gate_violations(...)`."""
     out = []
     for op in r.missing:
         out.append(
@@ -299,6 +415,25 @@ def gate_violations(r: CoverageReport) -> list[str]:
         out.append(f"REDUNDANT SKIP: {op} is now exercised — drop it from SKIP_LIST")
     for op in r.stale_skips:
         out.append(f"STALE SKIP: {op} is no longer in the spec — drop it from SKIP_LIST")
+    # REQUIRED_EXTRA codes exist because the spec under-declares the success
+    # path — a suite that never observes them has no proof the mutation works,
+    # so (unlike ordinary uncovered codes) this BLOCKS.
+    for op, extra in sorted(REQUIRED_EXTRA.items()):
+        if op not in r.spec_ops:
+            out.append(f"STALE REQUIRED_EXTRA: {op} is no longer in the spec — drop the entry")
+            continue
+        declared_now = set(extra) & set(r.spec_ops[op])
+        if declared_now:
+            out.append(
+                f"REDUNDANT REQUIRED_EXTRA: {op} now declares {sorted(declared_now)} "
+                f"in the spec — drop them from REQUIRED_EXTRA"
+            )
+        unseen = set(extra) - r.validated.get(op, set())
+        if unseen:
+            out.append(
+                f"MISSING REQUIRED_EXTRA: {op} never answered {sorted(unseen)} — the "
+                f"mutation success path is unproven"
+            )
     return out
 
 
@@ -324,8 +459,13 @@ def advisories(r: CoverageReport) -> list[str]:
 def render_markdown(r: CoverageReport) -> str:
     total = len(r.spec_ops)
     verdict = "✅ PASS" if r.passed else "❌ FAIL"
-    # Columns = every REGISTERED (declared) status code across the spec.
-    all_codes = sorted({c for codes in r.spec_ops.values() for c in codes})
+    # Columns = every REGISTERED (declared) status code across the spec, plus
+    # the REQUIRED_EXTRA codes — enforced despite not being declared, so a
+    # reader can see them in the matrix instead of only in the violations text.
+    all_codes = sorted(
+        {c for codes in r.spec_ops.values() for c in codes}
+        | {c for codes in REQUIRED_EXTRA.values() for c in codes}
+    )
     lines = [
         "# API endpoint coverage — by method+path",
         "",
@@ -334,7 +474,7 @@ def render_markdown(r: CoverageReport) -> str:
         f"· registered-code coverage **{r.coverage_pct}%** "
         f"({r.total_covered}/{r.total_coverable} coverable codes seen).",
         "",
-        "_The gate blocks ONLY on a missing operation (a new endpoint without a "
+        "_The gate blocks on a missing operation, SKIP_LIST rot, or a REQUIRED_EXTRA violation (a new endpoint without a "
         "test). Per-status-code coverage below is REPORTED, not enforced: "
         "`✓` observed · `✗` declared but not yet observed · `·` excluded "
         f"(5xx / {sorted(UNIVERSAL_BOILERPLATE)} boilerplate / BLOCKED) · "
@@ -344,7 +484,9 @@ def render_markdown(r: CoverageReport) -> str:
         "|---|" + "---|" * (len(all_codes) + 1),
     ]
     for op in sorted(r.spec_ops):
-        declared = set(r.spec_ops[op])
+        # REQUIRED_EXTRA codes render like declared ones (they are coverable
+        # members of r.required already).
+        declared = set(r.spec_ops[op]) | set(REQUIRED_EXTRA.get(op, frozenset()))
         coverable = r.required[op]
         observed = r.validated.get(op, set())
         row = []
@@ -397,7 +539,14 @@ def main() -> int:
     p = argparse.ArgumentParser(description="API endpoint coverage report.")
     p.add_argument("--observed", required=True, help="path to observed_endpoints.json from the suite")
     p.add_argument("--spec", required=True, help="path to the committed OpenAPI spec")
+    p.add_argument(
+        "--suite",
+        default="analytics",
+        choices=sorted(_SUITES),
+        help="which service-under-test's suppression lists (SKIP/BLOCKED/boilerplate) apply",
+    )
     args = p.parse_args()
+    select_suite(args.suite)
 
     observed_path = Path(args.observed)
     if not observed_path.exists():

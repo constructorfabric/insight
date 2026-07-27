@@ -56,8 +56,12 @@ class PullRequestStateStream(BitbucketIncrementalStream):
         reconcile_after = int(prior.get("reconcile_after_id") or 0)
         next_reconcile = reconcile_after
         if watermark:
+            # The /pullrequests endpoint caps pagelen at 50 and rejects larger
+            # values with HTTP 400 "Invalid pagelen" (Atlassian BCLOUD-13229),
+            # same as the listing query above. RECONCILE_LIMIT is still honoured
+            # across pages — paginate() accumulates until the caller stops.
             reconcile_params: list[tuple[str, Any]] = [
-                ("pagelen", str(min(100, RECONCILE_LIMIT + 1))),
+                ("pagelen", "50"),
                 ("sort", "id"),
                 ("fields", self._pr_fields()),
             ]

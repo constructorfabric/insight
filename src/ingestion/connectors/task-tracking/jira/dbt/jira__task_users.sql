@@ -3,7 +3,7 @@
     materialized='view',
     alias='jira__task_users',
     schema='staging',
-    tags=['jira', 'silver:class_task_users']
+    tags=['jira', 'staging', 'silver:class_task_users']
 ) }}
 
 -- Per-source staging view; unioned into `silver.class_task_users` via

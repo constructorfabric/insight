@@ -153,6 +153,10 @@ fn fmt_ts(dt: sea_orm::prelude::DateTime) -> String {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonsSeedListResponse {
     pub items: Vec<PersonsSeedOperationResponse>,
+    /// Wire parity with the .NET `ListResponse`: the cursor is declared
+    /// but pagination is not implemented — always `null` (both
+    /// implementations return every row; consumers already tolerate it).
+    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedListResponse {}
 
@@ -293,7 +297,10 @@ pub async fn list_persons_seed(
         .into_iter()
         .map(PersonsSeedOperationResponse::from)
         .collect();
-    Ok(Json(PersonsSeedListResponse { items }))
+    Ok(Json(PersonsSeedListResponse {
+        items,
+        next_cursor: None,
+    }))
 }
 
 /// Map the `?status=` query to a filter. An unknown/blank value is ignored

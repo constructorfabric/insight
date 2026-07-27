@@ -1,6 +1,6 @@
 # Reusable JSON schema for the table (all real fields). Resolved by table name.
 # Mirrors the bronze_m365.teams_activity placeholder DDL in
-# src/ingestion/scripts/create-bronze-placeholders.sh (additionalProperties:false
+# src/ingestion/scripts/connectors-ddl/ (CI-generated DDL snapshot) (additionalProperties:false
 # => every placeholder column must be listed, incl. the 4 _airbyte_* CDK cols).
 schemas:
   bronze_m365.teams_activity:

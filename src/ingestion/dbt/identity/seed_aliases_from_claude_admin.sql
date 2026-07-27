@@ -39,7 +39,10 @@ source AS (
         p.insight_tenant_id
     FROM latest l
     INNER JOIN person.persons p ON lower(trim(l.email)) = lower(p.email)
-        AND UUIDNumToString(sipHash128(coalesce(l.tenant_id, ''))) = p.insight_tenant_id  -- TEMPORARY: until tenants table
+        -- person.persons.insight_tenant_id is UUID; cast the derived UUID-text
+        -- String so CH 25.7 can compare the JOIN key (NO_COMMON_TYPE otherwise).
+        -- TEMPORARY: until tenants table
+        AND toUUID(UUIDNumToString(sipHash128(coalesce(l.tenant_id, '')))) = p.insight_tenant_id
 ),
 
 new_aliases AS (

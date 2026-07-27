@@ -14,7 +14,7 @@ import uuid
 import pytest
 from lib import mariadb
 from lib.analytics import AnalyticsProcess
-from lib.config import SessionConfig
+from lib.config import SessionConfig, TEST_TENANT_ID
 
 from api.endpoint_helpers import create_scratch_metric
 
@@ -111,6 +111,29 @@ def seeded_columns(session_cfg: SessionConfig) -> dict:
     mariadb.query(
         session_cfg, f"DELETE FROM table_columns WHERE id IN (UNHEX('{rows['ids'][0]}'), UNHEX('{rows['ids'][1]}'))"
     )
+
+
+@pytest.fixture
+def tenant_override_definition(api, session_cfg: SessionConfig) -> dict:
+    """A tenant-scoped `metric_definitions` row that overrides an existing
+    product metric_key with a distinguishable label, inserted directly into
+    MariaDB (definitions are migration-seeded; there is no write endpoint).
+    The listing must resolve the tenant label over the product default.
+    Removed in teardown so it never leaks into other cases."""
+    base = api.get("/v1/metric-definitions")
+    assert base.status_code == 200, f"override setup: status={base.status_code} body={base.text}"
+    metric_key = base.json()["metrics"][0]["metric_key"]
+    row_id = uuid.uuid4().hex.upper()
+    label = f"e2e-override-{uuid.uuid4().hex[:8]}"
+    mariadb.query(
+        session_cfg,
+        "INSERT INTO metric_definitions "
+        "(id, tenant_id, metric_key, label, format, direction, entity_type, computation_type, origin) "
+        f"VALUES (UNHEX('{row_id}'), UNHEX('{TEST_TENANT_ID.hex.upper()}'), '{metric_key}', "
+        f"'{label}', 'integer', 'higher_is_better', 'person', 'sum', 'custom')",
+    )
+    yield {"metric_key": metric_key, "label": label}
+    mariadb.query(session_cfg, f"DELETE FROM metric_definitions WHERE id = UNHEX('{row_id}')")
 
 
 @pytest.fixture
