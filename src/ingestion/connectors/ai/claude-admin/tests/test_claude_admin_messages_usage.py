@@ -40,6 +40,7 @@ _GROUP_BY = ["model", "api_key_id", "workspace_id", "service_tier", "context_win
 
 
 def _day_params(day: str, next_day: str) -> dict:
+    """Exact query matcher for one daily slice; ending_at is the next midnight (#1901)."""
     return {
         "group_by[]": _GROUP_BY,
         "bucket_width": "1d",
@@ -49,6 +50,7 @@ def _day_params(day: str, next_day: str) -> dict:
 
 
 def _bucket(day: str, next_day: str, results: list[dict]) -> HttpResponse:
+    """Build a single daily-bucket messages_usage response (midnight -> next midnight)."""
     body = {
         "data": [
             {
@@ -64,11 +66,13 @@ def _bucket(day: str, next_day: str, results: list[dict]) -> HttpResponse:
 
 
 def _next(day: str) -> str:
+    """Next day in _DAYS, or the frozen-now midnight past the last slice."""
     idx = _DAYS.index(day)
     return _DAYS[idx + 1] if idx + 1 < len(_DAYS) else "2026-04-27"
 
 
 def _register_all(mocker: HttpMocker, results_per_day: dict[str, list[dict]]) -> None:
+    """Register one exact-match mock response per day in _DAYS."""
     for day in _DAYS:
         nxt = _next(day)
         mocker.get(
@@ -79,6 +83,7 @@ def _register_all(mocker: HttpMocker, results_per_day: dict[str, list[dict]]) ->
 
 @freezegun.freeze_time(_NOW)
 def test_incremental_windows_send_next_midnight_ending_at(http_mocker: HttpMocker) -> None:
+    """Each daily slice sends ending_at = starting_at + P1D; a 23:59:59Z slice would go unmatched."""
     config = ClaudeAdminConfigBuilder().build()
     _register_all(http_mocker, {day: [load_fixture(__file__, "messages_result.json")] for day in _DAYS})
 
@@ -91,6 +96,7 @@ def test_incremental_windows_send_next_midnight_ending_at(http_mocker: HttpMocke
 
 @freezegun.freeze_time(_NOW)
 def test_full_refresh_single_page(http_mocker: HttpMocker) -> None:
+    """One day with data, the rest empty -> exactly one record for that day."""
     config = ClaudeAdminConfigBuilder().build()
     _register_all(http_mocker, {"2026-04-24": [load_fixture(__file__, "messages_result.json")]})
 
@@ -103,6 +109,7 @@ def test_full_refresh_single_page(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_NOW)
 def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
+    """Stamps tenant/source/data_source, lifts nested token fields, derives the unique key."""
     config = ClaudeAdminConfigBuilder().build()
     _register_all(http_mocker, {"2026-04-24": [load_fixture(__file__, "messages_result.json")]})
 
@@ -125,6 +132,7 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_NOW)
 def test_schema_conformance(http_mocker: HttpMocker) -> None:
+    """Records validate (non-strict) against the schema, tolerating raw token passthrough."""
     config = ClaudeAdminConfigBuilder().build()
     _register_all(http_mocker, {day: [load_fixture(__file__, "messages_result.json")] for day in _DAYS})
 
@@ -143,6 +151,7 @@ def test_schema_conformance(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_NOW)
 def test_empty_page(http_mocker: HttpMocker) -> None:
+    """All-empty buckets yield zero records and no errors."""
     config = ClaudeAdminConfigBuilder().build()
     _register_all(http_mocker, {})
 

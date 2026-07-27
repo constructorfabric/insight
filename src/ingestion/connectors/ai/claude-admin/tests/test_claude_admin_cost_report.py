@@ -56,6 +56,7 @@ def _day_params(day: str, next_day: str) -> dict:
 
 
 def _bucket(day: str, next_day: str, results: list[dict]) -> HttpResponse:
+    """Build a single daily-bucket cost_report response (midnight -> next midnight)."""
     body = {
         "data": [
             {
@@ -71,11 +72,13 @@ def _bucket(day: str, next_day: str, results: list[dict]) -> HttpResponse:
 
 
 def _next(day: str) -> str:
+    """Next day in _DAYS, or the frozen-now midnight past the last slice."""
     idx = _DAYS.index(day)
     return _DAYS[idx + 1] if idx + 1 < len(_DAYS) else "2026-04-27"
 
 
 def _register_all(mocker: HttpMocker, results_per_day: dict[str, list[dict]]) -> None:
+    """Register one exact-match mock response per day in _DAYS."""
     for day in _DAYS:
         nxt = _next(day)
         mocker.get(
@@ -101,6 +104,7 @@ def test_incremental_windows_send_next_midnight_ending_at(http_mocker: HttpMocke
 
 @freezegun.freeze_time(_NOW)
 def test_full_refresh_single_page(http_mocker: HttpMocker) -> None:
+    """One day with data, the rest empty -> exactly one record for that day."""
     config = ClaudeAdminConfigBuilder().build()
     # Only the first day carries data; the rest are empty buckets.
     _register_all(http_mocker, {"2026-04-24": [load_fixture(__file__, "cost_result.json")]})
@@ -114,6 +118,7 @@ def test_full_refresh_single_page(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_NOW)
 def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
+    """AddFields stamps tenant/source/data_source and derives the unique key."""
     config = ClaudeAdminConfigBuilder().build()
     _register_all(http_mocker, {"2026-04-24": [load_fixture(__file__, "cost_result.json")]})
 
@@ -131,6 +136,7 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_NOW)
 def test_schema_conformance(http_mocker: HttpMocker) -> None:
+    """Emitted records validate against the declared cost_report schema."""
     config = ClaudeAdminConfigBuilder().build()
     _register_all(http_mocker, {day: [load_fixture(__file__, "cost_result.json")] for day in _DAYS})
 
@@ -141,6 +147,7 @@ def test_schema_conformance(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_NOW)
 def test_empty_page(http_mocker: HttpMocker) -> None:
+    """All-empty buckets yield zero records and no errors."""
     config = ClaudeAdminConfigBuilder().build()
     _register_all(http_mocker, {})  # every day returns an empty results list
 

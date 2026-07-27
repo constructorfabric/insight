@@ -1,6 +1,6 @@
 ---
 status: accepted
-date: 2026-07-26
+date: 2026-07-25
 supersedes: 0001-cursor-granularity-boundary-fix.md
 ---
 

@@ -9,6 +9,7 @@ API_BASE = "https://api.anthropic.com"
 
 class ClaudeAdminConfigBuilder(ConfigBuilder):
     def __init__(self) -> None:
+        """Seed the base config with a test admin key and a fixed, time-full start_date."""
         super().__init__()
         self._config.update(
             {
