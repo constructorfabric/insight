@@ -56,14 +56,6 @@ server:
     requests: { cpu: 100m, memory: 256Mi }
     limits:   { cpu: "1",  memory: 1Gi }
 
-webapp:
-  replicaCount: 1
-  resources:
-    requests: { cpu: 50m,  memory: 128Mi }
-    limits:   { cpu: 500m, memory: 512Mi }
-  ingress:
-    enabled: false
-
 worker:
   replicaCount: 1
   resources:
