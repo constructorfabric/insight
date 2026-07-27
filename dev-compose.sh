@@ -556,7 +556,7 @@ YML
         build-rust bash -c "
           set -eux
           apt-get update && apt-get install -y --no-install-recommends \
-            protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
+            protobuf-compiler libprotobuf-dev pkg-config libssl-dev cmake > /dev/null
           cargo build --release$bin_flags
           mkdir -p /out/analytics /out/authenticator /out/identity-resolution
           if [ -f /target/release/analytics ]; then
@@ -810,7 +810,7 @@ cmd_build() {
     "${compose_cmd[@]}" run --rm build-rust bash -c "
       set -eux
       apt-get update && apt-get install -y --no-install-recommends \
-        protobuf-compiler libprotobuf-dev pkg-config libssl-dev > /dev/null
+        protobuf-compiler libprotobuf-dev pkg-config libssl-dev cmake > /dev/null
       cargo build --release$bin_flags
       mkdir -p /out/analytics /out/authenticator /out/identity-resolution
       if [ -f /target/release/analytics ]; then
