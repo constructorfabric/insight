@@ -75,6 +75,10 @@ spec:
               value: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
             - name: AIRBYTE_AUTH_SECRET_NAMESPACE
               value: {{ include "insight.airbyte.namespace" . | quote }}
+            - name: AIRBYTE_CLIENT_ID_KEY
+              value: {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
+            - name: AIRBYTE_CLIENT_SECRET_KEY
+              value: {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
             # CONNECTORS_DIR — where the toolbox image keeps connectors/
             # (Dockerfile builds with context=src/ingestion and
             # `COPY . /ingestion`, so descriptors land at

@@ -693,7 +693,7 @@ All infrastructure and connector credentials are stored in Kubernetes Secrets. N
 | `insight-mariadb` | `insight` | MariaDB root + app credentials (Bitnami subchart's own Secret — read-only mirror of the relevant keys from `insight-db-creds`) | `mariadb-root-password`, `mariadb-password` | Bitnami MariaDB subchart (auto) |
 | `insight-{connector}-{source-id}` | `insight` | Per-connector credentials (see [ADR-0003](ADR/0003-k8s-secrets-credentials.md)) | Connector-specific (e.g. `azure_client_id`, `azure_client_secret`) | `secrets/apply.sh` |
 
-All Insight components share the release namespace (default `insight`); override with `INSIGHT_NAMESPACE` for non-default installs. Argo UI uses `--auth-mode=client` in production — authentication via K8s ServiceAccount Bearer tokens, no Secret required.
+All Insight components share the release namespace (default `insight`); override with `INSIGHT_NAMESPACE` for non-default installs. Airbyte is the exception: it may run as a separate release in its own namespace (`airbyte.namespace` Helm value), in which case its auth Secret is read cross-namespace via the K8s API under a Role scoped to that one Secret — never copied into the release namespace. Argo UI uses `--auth-mode=client` in production — authentication via K8s ServiceAccount Bearer tokens, no Secret required.
 
 **Resolution order** (all scripts):
 1. Read from K8s Secret — sole credential source for all environments

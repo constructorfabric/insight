@@ -35,6 +35,9 @@
 #                              INSIGHT_NAMESPACE; set when Airbyte runs in
 #                              its own namespace (the Airbyte chart creates
 #                              the Secret there and nothing mirrors it).
+#   AIRBYTE_CLIENT_ID_KEY / AIRBYTE_CLIENT_SECRET_KEY — .data keys of the
+#                              OAuth client credentials in that Secret
+#                              (default instance-admin-client-{id,secret})
 # ---------------------------------------------------------------------------
 
 # NOTE: this file is sourced into callers' shells; do NOT enable
@@ -73,6 +76,8 @@ ab_get_token() {
   local ttl="${AIRBYTE_TOKEN_TTL:-300}"  # RULE-DEFAULTS-OK: cache window; Airbyte tokens last hours, this is just our re-fetch cadence
   local secret_name="${AIRBYTE_AUTH_SECRET_NAME:-airbyte-auth-secrets}"  # RULE-DEFAULTS-OK: name fixed by Airbyte Helm chart; override only for non-bundled Airbyte
   local secret_ns="${AIRBYTE_AUTH_SECRET_NAMESPACE:-$INSIGHT_NAMESPACE}"  # RULE-DEFAULTS-OK: same-namespace installs need no override
+  local id_key="${AIRBYTE_CLIENT_ID_KEY:-instance-admin-client-id}"  # RULE-DEFAULTS-OK: .data keys fixed by Airbyte Helm chart
+  local secret_key="${AIRBYTE_CLIENT_SECRET_KEY:-instance-admin-client-secret}"  # RULE-DEFAULTS-OK: .data keys fixed by Airbyte Helm chart
 
   # Cache hit — token still fresh enough.
   if [[ -r "$cache" ]]; then
@@ -100,10 +105,10 @@ ab_get_token() {
       "$secret_name" "$secret_ns" >&2
     return 1
   fi
-  client_id="$(printf '%s' "$secret_json" | python3 -c 'import sys,json,base64; d=json.load(sys.stdin); print(base64.b64decode(d["data"]["instance-admin-client-id"]).decode())')"
-  client_secret="$(printf '%s' "$secret_json" | python3 -c 'import sys,json,base64; d=json.load(sys.stdin); print(base64.b64decode(d["data"]["instance-admin-client-secret"]).decode())')"
+  client_id="$(printf '%s' "$secret_json" | python3 -c 'import sys,json,base64; d=json.load(sys.stdin); print(base64.b64decode(d["data"].get(sys.argv[1], b"")).decode())' "$id_key")"
+  client_secret="$(printf '%s' "$secret_json" | python3 -c 'import sys,json,base64; d=json.load(sys.stdin); print(base64.b64decode(d["data"].get(sys.argv[1], b"")).decode())' "$secret_key")"
   if [[ -z "$client_id" || -z "$client_secret" ]]; then
-    printf 'ab_get_token: secret/%s missing instance-admin-client-id or instance-admin-client-secret\n' "$secret_name" >&2
+    printf 'ab_get_token: secret/%s missing %s or %s\n' "$secret_name" "$id_key" "$secret_key" >&2
     return 1
   fi
 
