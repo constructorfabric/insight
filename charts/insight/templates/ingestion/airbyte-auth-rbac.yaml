@@ -1,26 +1,27 @@
 {{- /*
-Cross-namespace read access to Airbyte's auth Secret (issue #1885).
+Read access to Airbyte's auth Secret via the K8s API (issue #1885).
 
-The Airbyte chart creates `airbyte-auth-secrets` in its own namespace.
-When that namespace differs from the app's (airbyte.namespace set), the
-reconcile loop and the airbyte-sync workflow steps read the Secret from
-there via the K8s API — a pod's secretKeyRef cannot cross namespaces, and
-mirroring the Secret invites silent credential drift (Airbyte regenerates
-it on reinstall while a copy stays frozen).
+The Airbyte chart creates `airbyte-auth-secrets` in its own namespace
+(`airbyte.namespace`; defaults to the app's). The reconcile loop and the
+airbyte-sync workflow steps read the Secret from there via the K8s API —
+a pod's secretKeyRef cannot cross namespaces, and mirroring the Secret
+invites silent credential drift (Airbyte regenerates it on reinstall
+while a copy stays frozen).
 
-Rendered only for split-namespace installs; same-namespace installs are
-covered by the reconcile Role in reconcile-rbac.yaml. The Airbyte
-namespace must already exist at install time — the deploy order (L2
-systems before the umbrella) guarantees that.
+Rendered in BOTH modes: in a same-namespace install the API read still
+needs an RBAC grant (unlike the old secretKeyRef, which any pod in the
+namespace could use with no RBAC at all — the new model is strictly
+narrower). In split installs the Airbyte namespace must already exist at
+install time; the deploy order (L2 systems before the umbrella)
+guarantees that.
 
-Grant is `get` on the named Secret(s) only — deliberately narrower than a
-mirrored copy, which would expose the full credential set in a second
-namespace.
+Grant is `get` on the auth Secret only. Binding the shared argo-workflow
+SA (the WorkflowTemplates' fallback for manual submissions) means any
+workflow under it can fetch this one Secret — accepted trade-off,
+still tighter than the mount-without-RBAC exposure it replaces.
 */}}
 {{- if .Values.ingestion.templates.enabled }}
 {{- $airbyteNs := include "insight.airbyte.namespace" . }}
-{{- if ne $airbyteNs .Release.Namespace }}
-{{- $secretNames := list .Values.airbyte.authSecret.name .Values.airbyte.jwtSecret.name | uniq }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -32,7 +33,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: {{ $secretNames | toJson }}
+    resourceNames: [{{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -58,5 +59,4 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "insight.fullname" . }}-airbyte-auth-reader
-{{- end }}
 {{- end }}

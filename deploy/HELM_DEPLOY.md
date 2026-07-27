@@ -25,7 +25,7 @@ This path assumes your data infrastructure (ClickHouse, MariaDB, Redis, Redpanda
 
 ### Cluster and CLI tools
 
-- A Kubernetes cluster you can already reach with `kubectl`, with permission to create namespaces, Secrets, and workloads.
+- A Kubernetes cluster you can already reach with `kubectl`, with permission to create namespaces, Secrets, workloads, and Roles/RoleBindings — including in the Airbyte namespace when it differs from the app's (the chart installs a Role there that lets its jobs read Airbyte's auth Secret). That namespace must exist before the umbrella install.
 - `helm` ≥ 3.8 (OCI registry support is stable from 3.8 onward, since the chart is pulled as an OCI artifact).
 - `kubectl`.
 - `base64`, used when copying existing datastore passwords in Step 2 (most systems ship this by default).

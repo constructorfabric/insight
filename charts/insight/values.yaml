@@ -146,7 +146,12 @@ airbyte:
   # templates/ingestion/airbyte-auth-rbac.yaml), and the computed apiUrl
   # points at it. No copy of the Secret in the app namespace is needed.
   namespace: ""
-  apiUrl: "" # "" = compute from releaseName + airbyte namespace
+  # "" = compute from releaseName + airbyte namespace. If you point apiUrl
+  # at an Airbyte in ANOTHER namespace, set `namespace` too — it controls
+  # where the auth Secret is read from. Leaving it empty makes the jobs
+  # read a copy in the app namespace, which goes stale when Airbyte
+  # regenerates its credentials (issue #1885).
+  apiUrl: ""
   jwtSecret:
     name: airbyte-auth-secrets # created by the Airbyte chart itself
     key: jwt-signature-secret
