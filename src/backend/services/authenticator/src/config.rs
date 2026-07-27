@@ -276,6 +276,12 @@ pub struct AuthenticatorConfig {
     /// the services that may force-logout users (e.g. the future permissions
     /// service on grant changes, DD-AUTH-07).
     pub admin_revoke_roles: Vec<String>,
+    /// Honor the `__override=<email>` parameter on `/auth/login` (view-as,
+    /// #1941): the session is minted for that person instead of the
+    /// authenticated one, after a full IdP login. Dev/demo environments ONLY —
+    /// the flag marks the whole environment as impersonation-capable, so it
+    /// MUST stay `false` anywhere real users log in.
+    pub override_enabled: bool,
 
     // ── Dependencies ─────────────────────────────────────────────────────
     /// Redis connection URL (`redis://host:port`).
@@ -347,6 +353,7 @@ impl Default for AuthenticatorConfig {
             backchannel_clock_skew_seconds: 60,
             backchannel_token_max_age_seconds: 300,
             admin_revoke_roles: vec!["session_admin".to_owned()],
+            override_enabled: false,
             redis_url: String::new(),
             signing_keys_path: String::new(),
             identity_url: String::new(),

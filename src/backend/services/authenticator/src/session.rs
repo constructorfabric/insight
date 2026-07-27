@@ -22,6 +22,9 @@ pub struct LoginState {
     pub pkce_verifier: String,
     pub nonce: String,
     pub return_to: String,
+    /// View-as target from `__override=<email>` (#1941). Stored only when
+    /// `override_enabled`; empty on normal logins.
+    pub override_email: String,
 }
 
 impl LoginState {
@@ -31,6 +34,7 @@ impl LoginState {
             ("pkce_verifier", self.pkce_verifier.clone()),
             ("nonce", self.nonce.clone()),
             ("return_to", self.return_to.clone()),
+            ("override_email", self.override_email.clone()),
         ]
     }
 
@@ -41,6 +45,7 @@ impl LoginState {
             pkce_verifier: get("pkce_verifier"),
             nonce: get("nonce"),
             return_to: get("return_to"),
+            override_email: get("override_email"),
         }
     }
 }
@@ -68,6 +73,11 @@ pub struct SessionRecord {
     pub csrf_token: String,
     /// The live cookie credential mapping to this session (deleted on revoke).
     pub current_token: String,
+    /// The REAL authenticated principal behind a `__override` (view-as)
+    /// session (#1941) — the person who logged in at the IdP. Empty on normal
+    /// logins; `person_id`/`email` above are then the override target's.
+    pub impersonator_person_id: String,
+    pub impersonator_email: String,
 }
 
 impl SessionRecord {
@@ -101,6 +111,11 @@ impl SessionRecord {
             ("ip", self.ip.clone()),
             ("csrf_token", self.csrf_token.clone()),
             ("current_token", self.current_token.clone()),
+            (
+                "impersonator_person_id",
+                self.impersonator_person_id.clone(),
+            ),
+            ("impersonator_email", self.impersonator_email.clone()),
         ]
     }
 
@@ -133,6 +148,8 @@ impl SessionRecord {
             ip: get("ip"),
             csrf_token: get("csrf_token"),
             current_token: get("current_token"),
+            impersonator_person_id: get("impersonator_person_id"),
+            impersonator_email: get("impersonator_email"),
         }
     }
 }
@@ -366,6 +383,21 @@ impl SessionManager {
         // Back-channel logout indexes: by OIDC `sid` (when the IdP supplies
         // one) and by `(iss, sub)` — the sub-only fallback path.
         let absolute = i64::try_from(r.absolute_expires_at).unwrap_or(i64::MAX);
+        // A view-as session is ALSO indexed under the real principal, so
+        // revoke-by-person against the impersonator (admin deprovisioning,
+        // self "log out everywhere") reaches it. Scored at the absolute cap:
+        // rotation only re-scores the target's index, and a stale score here
+        // would let the janitor trim the member while the session lives on.
+        // Reads stay correct — a dead session's record is gone, so index
+        // readers skip it.
+        if !r.impersonator_person_id.is_empty() {
+            pipe.zadd(
+                user_sessions_key(&r.impersonator_person_id),
+                &s.session_id,
+                absolute,
+            )
+            .ignore();
+        }
         if let Some(sid) = &r.idp_sid {
             let idx = sid_index_key(&r.idp_iss, sid);
             pipe.sadd(&idx, &s.session_id).ignore();
@@ -936,6 +968,10 @@ impl SessionManager {
         pipe.del(token_key(&r.current_token)).ignore();
         pipe.zrem(user_sessions_key(&r.person_id), session_id)
             .ignore();
+        if !r.impersonator_person_id.is_empty() {
+            pipe.zrem(user_sessions_key(&r.impersonator_person_id), session_id)
+                .ignore();
+        }
         if let Some(sid) = &r.idp_sid {
             pipe.srem(sid_index_key(&r.idp_iss, sid), session_id)
                 .ignore();

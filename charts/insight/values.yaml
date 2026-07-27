@@ -365,6 +365,10 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
+  # Honor `/auth/login?__override=<email>` (view-as, #1941): the session is
+  # minted for that person instead of the authenticated one. Dev/demo
+  # environments ONLY — MUST stay false anywhere real users log in.
+  overrideEnabled: false
 # ─── fakeidp (dev/e2e OIDC provider — NEVER a real environment) ─────────────
 fakeidp:
   deploy: false
