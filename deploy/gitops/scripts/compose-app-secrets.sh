@@ -35,6 +35,10 @@
 #                                 single-tenant-tr-plugin.)
 #   .identity.orgChartSourceType (optional; empty falls back to the
 #                                 appsettings default `bamboohr`)
+#   .identityUrl                 (optional; the identity URL analytics +
+#                                 authenticator call — the .NET→Rust cutover
+#                                 switch. Empty = the historical .NET
+#                                 `http://<release>-identity:8082`.)
 #
 # Cleartext passwords live only in this shell's memory; they are never
 # written to disk and never echoed.
@@ -75,6 +79,15 @@ IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminP
 # when both deploy with diverging names, so the fallback only fires on
 # Rust-only installs that didn't set it.
 IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // .identity.databaseName // "identity"' "$VALUES")
+# Which identity implementation the CONSUMERS (analytics, authenticator) call —
+# the .NET→Rust cutover switch (constructorfabric/insight#1602). Empty keeps
+# the historical default (the .NET `<release>-identity` Service), so existing
+# environments are untouched; the flip sets it to
+# `http://<release>-identity-resolution:8082`, and the ROLLBACK is clearing it
+# back (plus a rollout restart of analytics + authenticator — they read the
+# composed Secret at pod start).
+IDENTITY_URL=$(yq -r '.identityUrl // ""' "$VALUES")
+[ -n "$IDENTITY_URL" ] && [ "$IDENTITY_URL" != "null" ] || IDENTITY_URL="http://${RELEASE}-identity:8082"
 
 # ── Authenticator OIDC (NGINX_BFF). issuerUrl/redirectUri may be Helm template
 #    strings in values.yaml; render {{ .Release.Name }}/{{ .Release.Namespace }}
@@ -196,7 +209,7 @@ stringData:
   APP__gears__analytics__config__clickhouse_database: "${CH_DB}"
   APP__gears__analytics__config__clickhouse_user: "${CH_USER}"
   APP__gears__analytics__config__clickhouse_password: "${CH_PW}"
-  APP__gears__analytics__config__identity_url: "http://${RELEASE}-identity:8082"
+  APP__gears__analytics__config__identity_url: "${IDENTITY_URL}"
   APP__gears__analytics__config__redis_url: "${REDIS_URL}"
 EOF
   # Metric Catalog single-tenant fallback. Mirrors the chart-side block
@@ -225,7 +238,7 @@ metadata:
 type: Opaque
 stringData:
   APP__gears__authenticator__config__redis_url: "${REDIS_URL}"
-  APP__gears__authenticator__config__identity_url: "http://${RELEASE}-identity:8082"
+  APP__gears__authenticator__config__identity_url: "${IDENTITY_URL}"
   APP__gears__authenticator__config__gateway_issuer: "${GATEWAY_ISSUER}"
   APP__gears__authenticator__config__idp__issuer_url: "${AUTH_IDP_ISSUER}"
   APP__gears__authenticator__config__idp__client_id: "${AUTH_CLIENT_ID}"
