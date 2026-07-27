@@ -161,6 +161,28 @@ SQL
 
 heal_task_users_table silver class_task_users
 
+echo "=== Healing jira task id column types (#1743) ==="
+# #1892 retyped the jira staging id projections (worklog_id, comment_id)
+# from raw bronze Decimal(38,9) to toString(...), but pre-existing
+# incremental-append staging tables keep the Decimal column, and the
+# positional union with the youtrack String twins fails with NO_COMMON_TYPE,
+# blanking Task Delivery / Code Quality. MODIFY converges warm tables (and
+# silver targets built from them) to the snapshot's String; Decimal->String
+# is lossless. Guarded: staging tables exist only after the first jira sync.
+heal_task_id_column() {
+  local db="$1" table="$2" column="$3"
+  ch_table_exists "$db" "$table" || return 0
+  echo "  ${db}.${table}.${column}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} MODIFY COLUMN IF EXISTS ${column} Nullable(String);
+SQL
+}
+
+heal_task_id_column staging jira__task_worklogs worklog_id
+heal_task_id_column staging jira__task_comments comment_id
+heal_task_id_column silver class_task_worklogs worklog_id
+heal_task_id_column silver class_task_comments comment_id
+
 echo "=== Reconciling legacy Bitbucket bronze placeholders (warm clusters) ==="
 # Warm clusters still hold the pre-rewrite FLAT bronze_bitbucket_cloud.{commits,
 # pull_requests}; the snapshot applicator's CREATE TABLE IF NOT EXISTS never
