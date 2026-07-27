@@ -21,17 +21,9 @@
 #
 # Required env (set by callers — main.sh / lib/env.sh):
 #   AIRBYTE_URL          — base URL, e.g. http://airbyte-server:8001
-<<<<<<< HEAD
 #   INSIGHT_NAMESPACE    — the app's K8s namespace (fallback location of
 #                          airbyte-auth-secrets; see AIRBYTE_AUTH_SECRET_NAMESPACE)
-=======
-#   INSIGHT_NAMESPACE    — K8s namespace for connector Secrets/CronWorkflows
->>>>>>> 95b315cc (fix(ingestion): read airbyte-auth-secrets from the Airbyte namespace)
 # Optional env (with documented defaults):
-#   AIRBYTE_NAMESPACE      — K8s namespace where airbyte-auth-secrets lives
-#                            (default: INSIGHT_NAMESPACE — same-namespace
-#                            umbrella installs; set explicitly when Airbyte
-#                            runs in a separate/shared infra namespace)
 #   AIRBYTE_TOKEN          — pre-supplied bearer token (skips OAuth call; for tests/CI)
 #   AIRBYTE_TOKEN_CACHE    — path to TTL-backed cache file
 #                            (default: per-UID file under /tmp)
@@ -79,13 +71,7 @@ ab_get_token() {
     printf '%s' "${AIRBYTE_TOKEN}"
     return 0
   fi
-  : "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set (the K8s namespace where Airbyte runs)}"
-  # AIRBYTE_NAMESPACE — namespace where airbyte-auth-secrets actually lives.
-  # Defaults to INSIGHT_NAMESPACE for single-namespace umbrella installs
-  # (the common case); split-namespace envs (Airbyte in a shared infra
-  # namespace, connectors/CronWorkflows in the app namespace) set it
-  # explicitly via the chart's `airbyte.namespace` value.
-  local airbyte_ns="${AIRBYTE_NAMESPACE:-$INSIGHT_NAMESPACE}"
+  : "${INSIGHT_NAMESPACE:?INSIGHT_NAMESPACE must be set (the app namespace; secret lookup falls back to it when AIRBYTE_AUTH_SECRET_NAMESPACE is unset)}"
   local cache="${AIRBYTE_TOKEN_CACHE:-/tmp/insight-airbyte-token-${UID:-$(id -u)}}"  # RULE-DEFAULTS-OK: per-UID tmp cache; mode 600 set below; not a config input
   local ttl="${AIRBYTE_TOKEN_TTL:-300}"  # RULE-DEFAULTS-OK: cache window; Airbyte tokens last hours, this is just our re-fetch cadence
   local secret_name="${AIRBYTE_AUTH_SECRET_NAME:-airbyte-auth-secrets}"  # RULE-DEFAULTS-OK: name fixed by Airbyte Helm chart; override only for non-bundled Airbyte
@@ -114,15 +100,9 @@ ab_get_token() {
   # RBAC: reconcile-rbac.yaml grants `secrets get/list/watch` on the namespace;
   # locally the user's kubeconfig provides the same.
   local secret_json client_id client_secret
-<<<<<<< HEAD
   if ! secret_json="$(kubectl -n "$secret_ns" get secret "$secret_name" -o json 2>/dev/null)"; then
     printf 'ab_get_token: kubectl failed reading secret/%s in ns %s (RBAC? wrong namespace? see AIRBYTE_AUTH_SECRET_NAMESPACE)\n' \
       "$secret_name" "$secret_ns" >&2
-=======
-  if ! secret_json="$(kubectl -n "$airbyte_ns" get secret "$secret_name" -o json 2>/dev/null)"; then
-    printf 'ab_get_token: kubectl failed reading secret/%s in ns %s (RBAC? wrong namespace? set AIRBYTE_NAMESPACE if Airbyte runs outside INSIGHT_NAMESPACE)\n' \
-      "$secret_name" "$airbyte_ns" >&2
->>>>>>> 95b315cc (fix(ingestion): read airbyte-auth-secrets from the Airbyte namespace)
     return 1
   fi
   client_id="$(printf '%s' "$secret_json" | python3 -c 'import sys,json,base64; d=json.load(sys.stdin); print(base64.b64decode(d["data"].get(sys.argv[1], b"")).decode())' "$id_key")"
