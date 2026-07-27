@@ -6,10 +6,11 @@
     alias='task_metric_observations',
     tags=['gold'],
     query_settings={
-        'max_memory_usage': 1610612736,
+        'max_memory_usage': 3221225472,
         'max_threads': 4,
         'max_bytes_before_external_group_by': 805306368,
-        'max_bytes_before_external_sort': 805306368
+        'max_bytes_before_external_sort': 805306368,
+        'join_algorithm': 'grace_hash,hash'
     }
 ) }}
 
