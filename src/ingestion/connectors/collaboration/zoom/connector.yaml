@@ -744,6 +744,28 @@ streams:
                   action: SUCCESS
                   http_codes:
                     - 404
+                # Cloudflare WAF false positive on a meeting uuid. Since
+                # 2026-07-23 Cloudflare in front of api.zoom.us blocks any
+                # request whose path contains the literal uuid
+                # "9XG9hLVrTtWhAK2A7TFO6w==" with HTTP 403 and an HTML
+                # "Sorry, you have been blocked" page instead of a Zoom JSON
+                # error (verified from inside the dev-vhc cluster: the block
+                # fires unauthenticated, in both single- and double-escaped
+                # encodings, while other uuids with the same "==" tail get a
+                # normal Zoom 401 JSON — so it is the uuid string itself, not
+                # quota or IP reputation). A meeting uuid is immutable, so the
+                # partition can never succeed; and because the parent
+                # _meetings cursor only persists via this stream's state
+                # (incremental_dependency above), one blocked meeting wedges
+                # every subsequent sync on the same partition. Skip exactly
+                # these responses: error_message_contains falls back to the
+                # raw body for non-JSON responses, so it matches the
+                # Cloudflare HTML page but never a genuine Zoom 403 (missing
+                # dashboard_meetings:read:admin scope — a JSON body), which
+                # must keep failing the sync loudly.
+                - type: HttpResponseFilter
+                  action: SUCCESS
+                  error_message_contains: "Sorry, you have been blocked"
             - type: DefaultErrorHandler
               response_filters:
                 - type: HttpResponseFilter
