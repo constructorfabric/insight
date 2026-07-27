@@ -1211,6 +1211,7 @@ jobs:
         || needs.changes.outputs.toolbox      == 'true'
         || needs.changes.outputs.umbrella     == 'true'
         || inputs.frontend_tag != ''
+        || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
       )
     runs-on: ubuntu-latest
     steps:
