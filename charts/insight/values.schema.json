@@ -58,6 +58,7 @@
       "type": "object",
       "properties": {
         "releaseName": { "type": "string", "default": "airbyte" },
+        "namespace": { "type": "string", "default": "" },
         "apiUrl": { "type": "string" },
         "jwtSecret": {
           "type": "object",
