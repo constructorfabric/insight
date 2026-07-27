@@ -8,7 +8,7 @@ This runbook shows a platform or DevOps engineer how to install the Insight busi
 - [Prerequisites](#prerequisites)
 - [Step 1 — Configure values/umbrella.yaml](#step-1--configure-valuesumbrellayaml)
 - [Step 2 — Fill the two secret files](#step-2--fill-the-two-secret-files)
-- [Step 3 — Create namespace, apply secrets, mirror Airbyte auth](#step-3--create-namespace-apply-secrets-mirror-airbyte-auth)
+- [Step 3 — Create namespace and apply secrets](#step-3--create-namespace-and-apply-secrets)
 - [Step 4 — Install with Helm](#step-4--install-with-helm)
 - [Step 5 — Verify the installation](#step-5--verify-the-install)
 - [Step 6 — Configure connectors (optional)](#step-6--configure-connectors-optional)
@@ -28,12 +28,11 @@ This path assumes your data infrastructure (ClickHouse, MariaDB, Redis, Redpanda
 - A Kubernetes cluster you can already reach with `kubectl`, with permission to create namespaces, Secrets, and workloads.
 - `helm` ≥ 3.8 (OCI registry support is stable from 3.8 onward, since the chart is pulled as an OCI artifact).
 - `kubectl`.
-- `jq`, used to mirror the Airbyte auth Secret in Step 3.
 - `base64`, used when copying existing datastore passwords in Step 2 (most systems ship this by default).
 
 ### Running external infrastructure
 
-All six systems below must be deployed and reachable from the cluster before you start. For the four datastores — ClickHouse, MariaDB, Redis, and Redpanda — the chart's `deploy: false` settings (see Step 1) tell it to dial these systems, not install them. Airbyte and Argo Workflows have no `deploy` key; the chart instead points at them via `airbyte.apiUrl` and `ingestion.reconcile.argoInstanceId`.
+All six systems below must be deployed and reachable from the cluster before you start. For the four datastores — ClickHouse, MariaDB, Redis, and Redpanda — the chart's `deploy: false` settings (see Step 1) tell it to dial these systems, not install them. Airbyte and Argo Workflows have no `deploy` key; the chart instead points at them via `airbyte.namespace` (or an explicit `airbyte.apiUrl`) and `ingestion.reconcile.argoInstanceId`.
 
 | System | Used for |
 |--------|----------|
@@ -92,7 +91,8 @@ ingestion:
     destinationName: clickhouse-bronze
     argoInstanceId: "<ARGO_INSTANCE_ID>"     # e.g. argo-workflows-<infra-ns>
 airbyte:
-  apiUrl: "<AIRBYTE_API_URL>"        # e.g. http://airbyte-airbyte-server-svc.<infra-ns>.svc.cluster.local:8001
+  namespace: "<AIRBYTE_NAMESPACE>"   # namespace of the Airbyte release, e.g. <infra-ns>; "" = same as the app
+  apiUrl: ""                         # "" = computed from airbyte.releaseName + airbyte.namespace; set only for a non-standard URL
 
 analytics:
   replicaCount: 1                    # chart default 2; bump for HA
@@ -152,7 +152,7 @@ The placeholder table below explains every `<...>` value in the skeleton:
 | `<MARIADB_HOST>` | MariaDB host, in `host:3306` form |
 | `<REDIS_HOST>` | Redis host, in `host:6379` form |
 | `<REDPANDA_BROKERS>` | Redpanda broker(s), in `host:9093` form |
-| `<AIRBYTE_API_URL>` | Airbyte server API URL, for example `http://host:8001` |
+| `<AIRBYTE_NAMESPACE>` | Namespace of the Airbyte release, for example `insight-infra`. Leave `""` if Airbyte shares the app namespace |
 | `<ARGO_INSTANCE_ID>` | Your Argo controller's instance ID, for example `argo-workflows-insight-infra` |
 | `<HOST>` | Public FQDN for the ingress, shared by the Router and Frontend, for example `insight.example.com` |
 | `<TLS_SECRET>` | Name of the Kubernetes TLS Secret that covers that domain |
@@ -239,7 +239,7 @@ Example issuer URLs by provider:
 | Keycloak | `https://<host>/realms/<realm>` |
 | Dex | `https://<APP_BASE_URL>/dex` |
 
-## Step 3 — Create namespace, apply secrets, mirror Airbyte auth
+## Step 3 — Create namespace and apply secrets
 
 Create the `insight` namespace and apply both secret files:
 
@@ -252,17 +252,7 @@ kubectl -n insight apply -f secrets/
 kubectl -n insight get secret insight-db-creds insight-oidc     # expect 4 keys / 7 keys
 ```
 
-The Analytic service also needs Airbyte's own auth credentials to talk to the Airbyte API. Mirror that Secret from your infrastructure namespace into `insight`:
-
-```sh
-# mirror the Airbyte auth secret from your infra namespace
-NS_INFRA=<your-infra-namespace>
-kubectl -n $NS_INFRA get secret airbyte-auth-secrets -o json \
-  | jq 'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.annotations,.metadata.labels) | .metadata.namespace="insight"' \
-  | kubectl -n insight apply -f -
-```
-
-The `jq` step strips the original Secret's identity fields (UID, resource version, owner references) and retargets it to the `insight` namespace, so Kubernetes accepts it as a new object.
+The Analytic service also needs Airbyte's own auth credentials (`airbyte-auth-secrets`, created by the Airbyte chart in the infrastructure namespace) to talk to the Airbyte API. Do **not** copy that Secret into `insight` — a copy silently breaks when Airbyte regenerates its credentials on reinstall. Instead, set `airbyte.namespace` in your values (Step 1); the chart reads the Secret from that namespace at run time and installs a Role/RoleBinding there that grants its jobs `get` on that one Secret.
 
 ## Step 4 — Install with Helm
 
@@ -762,7 +752,7 @@ stringData:
 | `insight-analytics` / `insight-identity` stuck in `CreateContainerConfigError` | The chart could not compose the `*-config` Secrets. Confirm `insight-db-creds` has all four keys and carries **no** `app.kubernetes.io/managed-by: Helm` label: `kubectl -n insight get secret insight-db-creds -o yaml \| grep managed-by` should return nothing |
 | Dashboards show "no peer data" (the benchmark/comparison panel is empty) | After Gold-layer data has loaded, restart Analytic: `kubectl -n insight rollout restart deploy/insight-analytics` |
 | Login breaks after changing the host | Update `insight-oidc` (issuer and redirect URI), then restart the Router: `kubectl -n insight rollout restart deploy/insight-api-gateway` |
-| Connectors are not syncing | Check reconcile logs: `kubectl -n insight logs deploy/insight-analytics \| grep -i reconcile`. Confirm `airbyte-auth-secrets` was mirrored into the `insight` namespace (Step 3) |
+| Connectors are not syncing | Check reconcile logs: `kubectl -n insight logs deploy/insight-analytics \| grep -i reconcile`. Confirm `airbyte.namespace` in your values points at the namespace that holds `airbyte-auth-secrets`, and that the `*-airbyte-auth-reader` RoleBinding exists there |
 
 ## Appendix — Reference
 
@@ -775,7 +765,7 @@ stringData:
 | `<MARIADB_HOST>` | `mariadb.host` | `deploy: false`; port fixed at `3306` |
 | `<REDIS_HOST>` | `redis.host` | `deploy: false`; port fixed at `6379` |
 | `<REDPANDA_BROKERS>` | `redpanda.brokers` | `deploy: false`; include port, e.g. `:9093` |
-| `<AIRBYTE_API_URL>` | `airbyte.apiUrl` | e.g. `http://host:8001` |
+| `<AIRBYTE_NAMESPACE>` | `airbyte.namespace` | Namespace of the Airbyte release; `""` = app namespace |
 | `<ARGO_INSTANCE_ID>` | `ingestion.reconcile.argoInstanceId` | Your Argo controller's instance ID |
 | `<HOST>` | `apiGateway.ingress.host`, `frontend.ingress.host` | Public FQDN, shared by Router and Frontend (`/api/*` → Router, `/*` → UI) |
 | `<TLS_SECRET>` | `apiGateway.ingress.tls.secretName` | Kubernetes TLS Secret name |

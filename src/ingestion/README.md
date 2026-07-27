@@ -499,7 +499,7 @@ Both passes are idempotent — re-run any time after a Secret or descriptor chan
 | Secret | Namespace | Keys | Created by |
 |--------|-----------|------|------------|
 | `clickhouse-credentials` | `insight` + `argo` | `username`, `password` | `secrets/apply.sh` |
-| `airbyte-auth-secrets` | `airbyte` | `instance-admin-password`, ... | Helm chart (auto) |
+| `airbyte-auth-secrets` | Airbyte's own (`airbyte.namespace`, defaults to the app's) | `instance-admin-password`, ... | Airbyte Helm chart (auto) |
 | `insight-{connector}-{source-id}` | `insight` | Connector-specific | `secrets/apply.sh` |
 
 ### Password Rotation

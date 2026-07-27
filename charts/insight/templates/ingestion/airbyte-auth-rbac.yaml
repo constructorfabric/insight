@@ -1,0 +1,62 @@
+{{- /*
+Cross-namespace read access to Airbyte's auth Secret (issue #1885).
+
+The Airbyte chart creates `airbyte-auth-secrets` in its own namespace.
+When that namespace differs from the app's (airbyte.namespace set), the
+reconcile loop and the airbyte-sync workflow steps read the Secret from
+there via the K8s API — a pod's secretKeyRef cannot cross namespaces, and
+mirroring the Secret invites silent credential drift (Airbyte regenerates
+it on reinstall while a copy stays frozen).
+
+Rendered only for split-namespace installs; same-namespace installs are
+covered by the reconcile Role in reconcile-rbac.yaml. The Airbyte
+namespace must already exist at install time — the deploy order (L2
+systems before the umbrella) guarantees that.
+
+Grant is `get` on the named Secret(s) only — deliberately narrower than a
+mirrored copy, which would expose the full credential set in a second
+namespace.
+*/}}
+{{- if .Values.ingestion.templates.enabled }}
+{{- $airbyteNs := include "insight.airbyte.namespace" . }}
+{{- if ne $airbyteNs .Release.Namespace }}
+{{- $secretNames := list .Values.airbyte.authSecret.name .Values.airbyte.jwtSecret.name | uniq }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "insight.fullname" . }}-airbyte-auth-reader
+  namespace: {{ $airbyteNs }}
+  labels:
+    app.kubernetes.io/component: reconcile-loop
+    {{- include "insight.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: {{ $secretNames | toJson }}
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "insight.fullname" . }}-airbyte-auth-reader
+  namespace: {{ $airbyteNs }}
+  labels:
+    app.kubernetes.io/component: reconcile-loop
+    {{- include "insight.labels" . | nindent 4 }}
+subjects:
+  # Reconcile cron + the workflows it renders (they run under
+  # ARGO_SERVICE_ACCOUNT = <release>-reconcile; see reconcile-cron.yaml).
+  - kind: ServiceAccount
+    name: {{ include "insight.fullname" . }}-reconcile
+    namespace: {{ .Release.Namespace }}
+  # Fallback SA of manually-submitted WorkflowTemplates
+  # (spec.serviceAccountName in airbyte-sync.yaml et al.).
+  - kind: ServiceAccount
+    name: argo-workflow
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "insight.fullname" . }}-airbyte-auth-reader
+{{- end }}
+{{- end }}

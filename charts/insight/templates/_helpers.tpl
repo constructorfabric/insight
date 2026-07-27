@@ -107,14 +107,18 @@ redis://{{ include "insight.redis.host" . }}:{{ include "insight.redis.port" . }
 
 {{/*
 ==============================================================================
- AIRBYTE (separate release, SAME namespace)
+ AIRBYTE (separate release; airbyte.namespace="" = same namespace as the app)
 ==============================================================================
 */}}
+{{- define "insight.airbyte.namespace" -}}
+{{- default .Release.Namespace .Values.airbyte.namespace -}}
+{{- end -}}
+
 {{- define "insight.airbyte.url" -}}
 {{- if .Values.airbyte.apiUrl -}}
 {{- .Values.airbyte.apiUrl -}}
 {{- else -}}
-http://{{ .Values.airbyte.releaseName }}-airbyte-server-svc.{{ .Release.Namespace }}.svc.cluster.local:8001
+http://{{ .Values.airbyte.releaseName }}-airbyte-server-svc.{{ include "insight.airbyte.namespace" . }}.svc.cluster.local:8001
 {{- end -}}
 {{- end -}}
 
