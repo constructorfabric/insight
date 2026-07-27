@@ -59,5 +59,8 @@ SELECT
 FROM latest l
 LEFT ANTI JOIN person.persons ex
     ON lower(trim(l.email)) = lower(ex.email)
-    AND UUIDNumToString(sipHash128(coalesce(l.tenant_id, ''))) = ex.insight_tenant_id
+    -- person.persons.insight_tenant_id is UUID; the derived hash is a UUID-text
+    -- String. CH 25.7 refuses String = UUID in a JOIN key (NO_COMMON_TYPE), so
+    -- cast to UUID — matching the value stored by the String→UUID insert coercion.
+    AND toUUID(UUIDNumToString(sipHash128(coalesce(l.tenant_id, '')))) = ex.insight_tenant_id
     AND ex.is_deleted = 0

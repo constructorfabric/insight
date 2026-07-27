@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('workday__to_class_people') }}
 {{ config(
     materialized='table',
     schema='silver',

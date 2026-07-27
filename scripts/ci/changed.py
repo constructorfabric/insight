@@ -43,6 +43,10 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True, test: b
         entry["test"] = test
         entry["clippy"] = comp.get("clippy", True)  # False ⇒ fmt-only (see #1512)
         entry["live_db"] = comp.get("live_db", False)  # DB-backed live_tests (see #1564)
+        # MariaDB database the CI provisions for live_db entries (defaults to
+        # the component name — analytics owns `analytics`, identity-resolution
+        # owns `identity`).
+        entry["live_db_name"] = comp.get("live_db_name", comp["name"])
         # Exclude dependency-crate files from this component's coverage report so
         # a service never counts a library it merely links (each lib self-reports).
         entry["cover_ignore_regex"] = comp.get("cover_ignore_regex", "")

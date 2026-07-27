@@ -47,7 +47,7 @@ SELECT
     COALESCE(c.committer_email, '') AS committer_email,
     COALESCE(c.message, '') AS message,
     parseDateTimeBestEffortOrNull(c.committed_date) AS date,
-    COALESCE(f.files_changed, 0) AS files_changed,
+    toInt64(COALESCE(f.files_changed, 0)) AS files_changed,
     COALESCE(c.stats_additions, 0) AS lines_added,
     COALESCE(c.stats_deletions, 0) AS lines_removed,
     if(COALESCE(c.parent_count, 0) > 1, 1, 0) AS is_merge_commit,

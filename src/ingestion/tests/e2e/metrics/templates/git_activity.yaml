@@ -11,7 +11,7 @@ templates:
     $ref: "#/templates/base"
     repo_owner: constructor
     repo_name: insight
-    oid: null
+    sha: null
     branch_name: main
     author_name: null
     author_email: null
@@ -22,12 +22,14 @@ templates:
     changed_files: 1
     additions: 0
     deletions: 0
-    parent_hashes: [parent]
+    # github-v2 bronze stores parent_hashes as a JSON-array string (one parent
+    # here => a normal, non-merge commit).
+    parent_hashes: '["parent"]'
   file_change:
     $ref: "#/templates/base"
     repo_owner: constructor
     repo_name: insight
-    commit_hash: null
+    sha: null
     filename: src/main.rs
     status: modified
     additions: 0

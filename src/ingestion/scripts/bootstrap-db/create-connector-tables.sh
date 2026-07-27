@@ -87,10 +87,17 @@ docker run --rm -i -v "${WORKDIR}:/work:ro" "${DESTINATION_CLICKHOUSE_IMAGE}" \
   > "${WORKDIR}/write.jsonl" \
   || { tail -n 5 "${WORKDIR}/write.jsonl" >&2; exit 1; }
 
-MODEL="${NAME//-/_}__bronze_promoted"
-if [[ -f "${CONNECTOR_DIR}/dbt/${MODEL}.sql" ]]; then
+# Guard the missing-dir case: a connector without a dbt/ directory makes `find`
+# exit nonzero, which under `set -e`/`pipefail` would abort before the skip
+# branch below can run.
+PROMOTED_FILE=""
+if [[ -d "${CONNECTOR_DIR}/dbt" ]]; then
+  PROMOTED_FILE="$(find "${CONNECTOR_DIR}/dbt" -maxdepth 1 -name "*__bronze_promoted.sql" -print -quit)"
+fi
+if [[ -n "${PROMOTED_FILE}" ]]; then
+  MODEL="$(basename "${PROMOTED_FILE}" .sql)"
   echo "[${NAME}] promote bronze to ReplacingMergeTree (${MODEL})"
   "${SCRIPT_DIR}/run-dbt.sh" --select "${MODEL}"
 else
-  echo "[${NAME}] no ${MODEL}.sql model, skipping promotion"
+  echo "[${NAME}] no *__bronze_promoted.sql model, skipping promotion"
 fi

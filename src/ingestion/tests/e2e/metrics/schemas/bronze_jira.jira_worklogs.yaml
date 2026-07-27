@@ -7,16 +7,18 @@ schemas:
     type: object
     additionalProperties: false
     properties:
-      unique_key: { type: string }
-      source_id: { type: string }
-      worklog_id: { type: string }
-      id_readable: { type: string }
-      author_account_id: { type: string }
-      started: { type: string }
-      time_spent_seconds: { type: [integer, "null"] }
-      comment: { type: [string, "null"] }
-      collected_at: { type: string }
-      _airbyte_raw_id: { type: string }
-      _airbyte_extracted_at: { type: string, format: date-time }
-      _airbyte_meta: { type: string }
-      _airbyte_generation_id: { type: integer }
+      unique_key: {type: string}
+      source_id: {type: string}
+      # Numeric JSON ids/counts the connector stores as Decimal(38,9); accept
+      # number|string|null to match the real column via the seeder's coercion.
+      worklog_id: {type: [number, string, "null"]}
+      id_readable: {type: string}
+      author_account_id: {type: string}
+      started: {type: string}
+      time_spent_seconds: {type: [number, string, "null"]}
+      comment: {type: [string, "null"]}
+      collected_at: {type: string}
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
