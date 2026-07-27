@@ -16,7 +16,10 @@ set +a
 
 VENV_DIR="${SCRIPT_DIR}/.venv"
 DBT_BIN="${VENV_DIR}/bin/dbt"
-if [[ ! -x "${DBT_BIN}" ]] || ! "${VENV_DIR}/bin/pip" show dbt-clickhouse 2>/dev/null | grep -q "Version: ${DBT_CLICKHOUSE_VERSION}"; then
+# No `pip show | grep -q`: grep -q exits at first match, pip dies on EPIPE and
+# pipefail fails the check for a perfectly good venv (which then gets rm -rf'd).
+INSTALLED="$("${VENV_DIR}/bin/pip" show dbt-clickhouse 2>/dev/null || true)"
+if [[ ! -x "${DBT_BIN}" ]] || [[ "${INSTALLED}" != *"Version: ${DBT_CLICKHOUSE_VERSION}"* ]]; then
   PYTHON_BIN="$(command -v python3.12 || command -v python3.11)"
   : "${PYTHON_BIN:?python3.12 or python3.11 is required to run dbt (same major as the toolbox image)}"
   rm -rf "${VENV_DIR}"
