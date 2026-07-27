@@ -29,6 +29,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         if self.path.startswith(self.PREFIX):
             email = unquote(self.path[len(self.PREFIX) :])
+            # Test seam for the unknown-person paths (e.g. a bad `__override`
+            # target): emails prefixed `unknown-` do not resolve.
+            if email.startswith("unknown-"):
+                self.send_response(404)
+                self.end_headers()
+                return
             body = json.dumps(
                 {
                     "value_type": "email",
