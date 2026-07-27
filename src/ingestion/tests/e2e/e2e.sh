@@ -4,6 +4,7 @@
 # Examples:
 #   ./e2e.sh test                       # full suite
 #   ./e2e.sh test -k collab_emails_sent -v  # one test
+#   ./e2e.sh test metrics/ --yaml-mask 'tasks_*'  # one metric domain (CI shards this way)
 #   ./e2e.sh shell                      # interactive bash inside the runner
 #   ./e2e.sh build                      # rebuild the runner image
 #   ./e2e.sh down                       # stop containers, clear volumes

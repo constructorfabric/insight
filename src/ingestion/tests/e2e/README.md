@@ -41,6 +41,7 @@ cd src/ingestion/tests/e2e
 ./e2e.sh test               # full suite (api + metrics + meta)
 ./e2e.sh test api/          # api suite: endpoint contract tests only (seconds)
 ./e2e.sh test metrics/      # metrics suite: the yaml fixture rig
+./e2e.sh test metrics/ --yaml-mask 'tasks_*'   # one metric domain (file-name mask; CI shards this way)
 ./e2e.sh test meta/         # rig framework self-tests (local-only; CI skips them)
 ./e2e.sh test -k collab_emails_sent -v   # one test
 ./e2e.sh test -n auto       # ⚠️ parallel (pytest-xdist) — NOT supported yet: workers race on shared CH/MariaDB/dbt target
@@ -48,7 +49,7 @@ cd src/ingestion/tests/e2e
 ./e2e.sh down               # tear down compose stack + volumes
 ```
 
-The same image is used in CI, which builds it ONCE in a shared upstream `build` job and hands it to two independent lanes (`e2e-api`, `e2e-metrics`) as a saved image artifact — each lane loads the image, boots its own stack, runs its own suite (meta/ is local-only: it tests the harness, not the product), and uploads its own coverage artifact (`coverage-inputs-api` / `coverage-inputs-metrics`) — see `.github/workflows/e2e-bronze-to-api.yml`. The lanes share nothing at runtime (only the build is shared); each gate consumes only its own lane's artifact.
+The same image is used in CI, which builds it ONCE in a shared upstream `build` job and hands it to the independent lanes (`e2e-api`, the identity lanes, and the `e2e-metrics` matrix) as a saved image artifact. The metrics lane fans out into one job per metric domain — the `*.test.yaml` file-name prefix up to the first `_` (ai/collab/git/tasks/wiki/…) — each running only its `--yaml-mask '<domain>_*'` slice; the shard list is derived by the `build` job from the checked-out file names, so a new domain shards itself automatically. Each lane/shard loads the image, boots its own stack, runs its own suite (meta/ is local-only: it tests the harness, not the product), and uploads its own coverage artifact (`coverage-inputs-api` / `coverage-inputs-metrics-<domain>`) — see `.github/workflows/e2e-bronze-to-api.yml`. The lanes share nothing at runtime (only the build is shared); each gate consumes only its own lane's artifact(s).
 
 First session bootstraps `cargo build --release -p analytics` (~3-5 min). Subsequent sessions reuse the named volume so cargo is incremental (~10s).
 

@@ -23,6 +23,7 @@ PYTEST_XDIST_WORKER) to avoid N processes on N workers.
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 from pathlib import Path
@@ -315,19 +316,42 @@ def pytest_sessionfinish(session, exitstatus):
     identity_out = Path(__file__).parent / ".artifacts" / "observed_identity_endpoints.json"
     try:
         api_coverage.dump_observed_identity(identity_out)
-        LOG.info(
-            "wrote identity-endpoint ledger (%d ops): %s",
-            len(api_coverage._OBSERVED_IDENTITY),
-            identity_out,
-        )
+        LOG.info("wrote identity-endpoint ledger (%d ops): %s", len(api_coverage._OBSERVED_IDENTITY), identity_out)
     except OSError as e:
         LOG.warning("could not write identity-endpoint ledger %s: %s", identity_out, e)
 
 
+def pytest_addoption(parser):
+    """`--yaml-mask GLOB` narrows the yaml rig to the metrics/*.test.yaml files
+    whose name (with or without the `.test.yaml` suffix) matches the fnmatch
+    mask — e.g. `--yaml-mask 'tasks_*'` runs only the task-tracking fixtures.
+
+    CI's metrics lane fans out into one job per metric domain (the file-name
+    prefix up to the first `_`), each running `--yaml-mask '<domain>_*'` — see
+    .github/workflows/e2e-bronze-to-api.yml. Only yaml-rig collection is
+    affected; api/, meta/ and identity/ collect as usual."""
+    parser.addoption(
+        "--yaml-mask",
+        default=None,
+        metavar="GLOB",
+        help="run only metrics/*.test.yaml fixtures whose file name matches this fnmatch mask (e.g. 'tasks_*')",
+    )
+
+
 def pytest_generate_tests(metafunc):
-    """Generate one `test_metric_smoke` invocation per discovered `*.test.yaml`."""
+    """Generate one `test_metric_smoke` invocation per discovered `*.test.yaml`
+    (optionally narrowed by `--yaml-mask`)."""
     if "test_yaml" in metafunc.fixturenames and metafunc.function.__name__ == "test_metric_smoke":
         paths = discover_tests(_METRICS_ROOT)
+        mask = metafunc.config.getoption("--yaml-mask")
+        if mask:
+            paths = [
+                p for p in paths if fnmatch.fnmatch(p.name, mask) or fnmatch.fnmatch(p.name[: -len(".test.yaml")], mask)
+            ]
+            # A mask that selects nothing is a misconfiguration (a CI shard
+            # would silently go green while testing nothing) — fail loudly.
+            if not paths:
+                raise pytest.UsageError(f"--yaml-mask {mask!r} matched no *.test.yaml under {_METRICS_ROOT}")
         metafunc.parametrize("test_path", paths, ids=[p.name[: -len(".test.yaml")] for p in paths])
 
 
