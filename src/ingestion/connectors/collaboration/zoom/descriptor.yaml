@@ -1,5 +1,12 @@
 name: zoom
-version: "1.2.0"
+# 1.2.1 (patch): republish the manifest carrying the Cloudflare-WAF skip filter
+# on the participants stream (#1933). The fix landed in connector.yaml without a
+# version bump, and reconcile publishes a new manifest only on descriptor-version
+# drift (current 1.2.0 == target 1.2.0 → noop), so Airbyte kept serving the
+# pre-fix manifest and every zoom sync kept dying on the blocked meeting UUID.
+# Patch bump per ADR-0015: republish + catalog re-discover, NO full-refresh
+# (bronze→silver semantics unchanged).
+version: "1.2.1"
 schedule: 0 3 * * *
 dbt_select: tag:zoom+
 workflow: sync
