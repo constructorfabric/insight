@@ -1128,7 +1128,8 @@ jobs:
           git add src/backend/services/analytics/helm/Chart.yaml \
                   src/backend/services/authenticator/helm/Chart.yaml \
                   src/backend/services/gateway/helm/Chart.yaml \
-                  src/backend/services/identity/helm/Chart.yaml
+                  src/backend/services/identity/helm/Chart.yaml \
+                  src/backend/services/identity-resolution/helm/Chart.yaml
 
           if git diff --staged --quiet; then
             echo "no descriptor changes to commit"
@@ -1429,6 +1430,7 @@ jobs:
                   src/backend/services/authenticator/helm/Chart.yaml \
                   src/backend/services/gateway/helm/Chart.yaml \
                   src/backend/services/identity/helm/Chart.yaml \
+                  src/backend/services/identity-resolution/helm/Chart.yaml \
                   src/frontend/helm/Chart.yaml \
                   deploy/gitops/.insight-version
           # Sample gitops starter under docs/deploy — pin moves with the
