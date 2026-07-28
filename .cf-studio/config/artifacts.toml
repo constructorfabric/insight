@@ -5,7 +5,7 @@ name = "InsightSpec"
 slug = "insightspec"
 kit = "sdlc"
 codebase = ["docs"]
-children = ["identity-svc", "ir", "person", "orgchart", "metric-cat", "dataflow"]
+children = ["identity-svc", "ir", "person", "orgchart", "presentation", "metric-cat", "dataflow"]
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -790,6 +790,24 @@ name = "Org-Chart Domain Design"
 kind = "PRD"
 path = "docs/domain/org-chart/specs/PRD.md"
 name = "Org-Chart Domain PRD"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Presentation Layer"
+slug = "presentation"
+kit = "sdlc"
+codebase = ["docs/domain/presentation-layer", "src/backend/services/analytics"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/presentation-layer/specs/DESIGN.md"
+name = "Presentation Layer Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/presentation-layer/specs/PRD.md"
+name = "Presentation Layer PRD"
 traceability = "DOCS-ONLY"
 
 [[systems]]
