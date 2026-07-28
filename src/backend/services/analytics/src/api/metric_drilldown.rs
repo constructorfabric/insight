@@ -125,7 +125,18 @@ pub async fn export_metric_drilldown(
         capacity = MAX_CONCURRENT_EXPORTS,
         "metric drilldown export completed"
     );
-    let filename = format!("{}-evidence.{extension}", safe_filename(&req.metric_key));
+    let filename = export_filename(
+        &validated.plan.definition.base.label,
+        &validated.selection.metric_key,
+        &validated.selection.period.from,
+        &validated.selection.period.to,
+        validated
+            .selection
+            .filters
+            .iter()
+            .any(|filter| !filter.values.is_empty()),
+        extension,
+    );
     Response::builder()
         .header(CONTENT_TYPE, HeaderValue::from_static(content_type))
         .header(
@@ -421,17 +432,45 @@ impl Seek for LimitedBuffer {
     }
 }
 
-fn safe_filename(metric_key: &str) -> String {
-    metric_key
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
-                character
-            } else {
-                '_'
+fn export_filename(
+    metric_label: &str,
+    metric_key: &str,
+    from: &str,
+    to: &str,
+    filtered: bool,
+    extension: &str,
+) -> String {
+    let metric = filename_slug(metric_label);
+    let metric = if metric.is_empty() {
+        filename_slug(metric_key)
+    } else {
+        metric
+    };
+    let suffix = if filtered { "_filtered" } else { "" };
+    format!("{metric}_{from}_{to}{suffix}.{extension}")
+}
+
+fn filename_slug(value: &str) -> String {
+    const MAX_BYTES: usize = 80;
+
+    let mut slug = String::with_capacity(value.len().min(MAX_BYTES));
+    let mut separated = true;
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() {
+            if slug.len() == MAX_BYTES {
+                break;
             }
-        })
-        .collect()
+            slug.push(character.to_ascii_lowercase());
+            separated = false;
+        } else if !separated && slug.len() < MAX_BYTES {
+            slug.push('-');
+            separated = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    slug
 }
 
 fn query_error(message: &str) -> CanonicalError {
