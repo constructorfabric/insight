@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum::{Extension, Router};
-use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder};
 
 use crate::config::AuthenticatorConfig;
 use crate::identity::PersonResolver;
@@ -131,6 +131,7 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .tag("auth")
         .public()
         .no_content_response(StatusCode::OK, "Logout processed (or idempotent replay)")
+        .error_400(openapi)
         .handler(handlers::back_channel_logout)
         .register(router, openapi);
 
@@ -237,4 +238,50 @@ fn register_well_known_routes(router: Router, openapi: &dyn OpenApiRegistry) -> 
         .text_response(StatusCode::OK, "JWKS document", "application/json")
         .handler(handlers::jwks)
         .register(router, openapi)
+}
+
+fn openapi_info() -> OpenApiInfo {
+    OpenApiInfo {
+        title: "Authenticator API".to_owned(),
+        version: "1.0.0".to_owned(),
+        description: Some(
+            "OIDC login, opaque sessions, and the cookie-to-JWT exchange behind \
+             the nginx gateway (the BFF / token-handler pattern). The gateway \
+             proxies /auth/* to this service and calls /internal/authz as its \
+             auth_request target; /.well-known/* serves the discovery document \
+             and JWKS downstream verifiers consume."
+                .to_owned(),
+        ),
+        servers: Vec::new(),
+    }
+}
+
+/// Build the authenticator `OpenAPI` document **offline** — no `AppState`,
+/// Redis, IdP, or HTTP listener. Backs the `authenticator openapi` subcommand
+/// (committed-doc regeneration + drift gate), reusing the exact
+/// `build_operations` route table the live gear serves, so the two can never
+/// diverge. The service-token listener (`POST /internal/token`, DD-AUTH-05) is
+/// a separate raw-axum port outside `build_operations`, so it is deliberately
+/// absent here.
+pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
+    let openapi = OpenApiRegistryImpl::new();
+    let _ = build_operations(Router::new(), &openapi);
+    openapi
+        .build_openapi(&openapi_info())
+        .map_err(|e| anyhow::anyhow!("failed to build authenticator OpenAPI document: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Exercises the full route table + `OpenAPI` registration with no
+    /// `AppState`, Redis, or IdP: handlers are only *registered* (state comes
+    /// in via `Extension` at serve time), never invoked. Guards against
+    /// overlapping-route panics / bad `OperationBuilder` state.
+    #[test]
+    fn build_operations_registers_the_full_table_without_state() {
+        let openapi = OpenApiRegistryImpl::new();
+        let _router: Router = build_operations(Router::new(), &openapi);
+    }
 }

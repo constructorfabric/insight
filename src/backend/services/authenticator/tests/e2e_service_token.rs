@@ -17,6 +17,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod common;
+
 use authenticator_sdk::ServiceTokenClient;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
@@ -64,7 +66,7 @@ struct Claims {
 
 /// Fetch + verify a gateway JWT against the authenticator's published JWKS.
 async fn verify_against_jwks(jwt: &str) -> Claims {
-    let http = reqwest::Client::new();
+    let http = common::client();
     let jwks: Jwks = http
         .get(format!("{}/.well-known/jwks.json", auth_base()))
         .send()

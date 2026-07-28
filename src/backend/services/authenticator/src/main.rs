@@ -87,6 +87,11 @@ enum Commands {
     Run,
     /// Validate configuration and exit.
     Check,
+    /// Print the OpenAPI document to stdout and exit. Built offline from the
+    /// route table — no Redis, IdP, or config needed. Used to regenerate
+    /// docs/components/backend/authenticator/openapi.json and to drift-check
+    /// it in CI.
+    Openapi,
 }
 
 #[tokio::main]
@@ -108,5 +113,16 @@ async fn main() -> Result<()> {
             println!("configuration OK");
             Ok(())
         }
+        // Emit the OpenAPI document offline (no backends) — see `print_openapi`.
+        Commands::Openapi => print_openapi(),
     }
+}
+
+/// Print the authenticator `OpenAPI` document as pretty JSON. Offline — see
+/// [`api::openapi_document`]. No config or backends are touched, and no logging
+/// subscriber is initialized on this path, so stdout stays pure JSON.
+fn print_openapi() -> Result<()> {
+    let doc = api::openapi_document()?;
+    println!("{}", serde_json::to_string_pretty(&doc)?);
+    Ok(())
 }
