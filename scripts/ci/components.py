@@ -237,7 +237,10 @@ COMPONENTS = [
         "pytest_args": "--suites-only",
         "cover": False,
         "triggered_by": ["connector-tests-harness"],
-        "paths": ["src/ingestion/connectors/task-tracking/jira"],
+        "paths": [
+            "src/ingestion/connectors/task-tracking/jira",
+            "src/ingestion/connectors/ai/claude-admin",
+        ],
     },
 ]
 

@@ -1,0 +1,10 @@
+{
+  "id": "user_01TESTAAAAAAAAAAAAAAAAAA",
+  "type": "user",
+  "email": "member@example.com",
+  "name": "Test Member",
+  "role": "developer",
+  "status": "active",
+  "added_at": "2026-01-01T00:00:00Z",
+  "last_active_at": "2026-04-24T12:00:00Z"
+}

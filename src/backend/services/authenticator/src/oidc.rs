@@ -94,14 +94,53 @@ impl OidcClient {
         // same one-time-use refresh token, and the IdP burns it → false logout.
         // It also caps semaphore-permit hold time so hung calls can't wedge the
         // whole refresher (G5).
-        let http = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(10))
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .build()
-            .context("build OIDC HTTP client")?;
+            .connect_timeout(std::time::Duration::from_secs(5));
+        // Trust an extra internal/corporate CA for the IdP connection, on
+        // top of whichever trust store this build's TLS backend resolves by
+        // default. Explicit `.add_root_certificate()` works regardless of
+        // whether Cargo's feature unification landed on native-tls (OS trust
+        // store) or rustls (bundled webpki-roots) for this binary — unlike
+        // an OS-level trust-store file/env-var (e.g. SSL_CERT_FILE), which
+        // only applies if native-tls won and cannot be relied on here.
+        if !idp.extra_ca_cert_path.is_empty() {
+            let pem = std::fs::read(&idp.extra_ca_cert_path)
+                .with_context(|| format!("read extra_ca_cert_path {:?}", idp.extra_ca_cert_path))?;
+            // `from_pem_bundle`, not `from_pem`: the file may carry a full
+            // chain (e.g. intermediate + root); `from_pem` only parses the
+            // first certificate in the blob and silently drops the rest.
+            let certs = reqwest::Certificate::from_pem_bundle(&pem).with_context(|| {
+                format!(
+                    "parse PEM cert bundle from extra_ca_cert_path {:?}",
+                    idp.extra_ca_cert_path
+                )
+            })?;
+            // A whitespace/comment-only file parses to zero certs without
+            // erroring, silently leaving only the default trust store —
+            // reject it so a misconfigured mount fails loudly at startup.
+            anyhow::ensure!(
+                !certs.is_empty(),
+                "extra_ca_cert_path {:?} contained no certificates",
+                idp.extra_ca_cert_path
+            );
+            for cert in certs {
+                builder = builder.add_root_certificate(cert);
+            }
+        }
+        let http = builder.build().context("build OIDC HTTP client")?;
         Ok(Self {
-            issuer_url: idp.issuer_url.trim_end_matches('/').to_owned(),
+            // Do NOT normalize a trailing slash: OIDC issuer comparison is a
+            // byte-exact string match against the `issuer` field the IdP's
+            // own discovery document returns (RFC 8414 / OIDC Discovery
+            // §4.3) — no trailing-slash equivalence is defined. Some
+            // spec-compliant IdPs report an issuer WITH a trailing slash;
+            // stripping it here makes every login fail with `unexpected
+            // issuer URI` even though the configured value and the IdP's
+            // real issuer are the same URL. Operators must set `issuer_url`
+            // to exactly what the IdP's discovery document reports.
+            issuer_url: idp.issuer_url.clone(),
             client_id: idp.client_id.clone(),
             client_secret: idp.client_secret.clone(),
             tenant_claim: idp.tenant_claim.clone(),
@@ -320,7 +359,7 @@ impl OidcClient {
             .http
             .get(format!(
                 "{}/.well-known/openid-configuration",
-                self.issuer_url
+                self.issuer_url.trim_end_matches('/')
             ))
             .send()
             .await
@@ -355,7 +394,7 @@ impl OidcClient {
             .http
             .get(format!(
                 "{}/.well-known/openid-configuration",
-                self.issuer_url
+                self.issuer_url.trim_end_matches('/')
             ))
             .send()
             .await
