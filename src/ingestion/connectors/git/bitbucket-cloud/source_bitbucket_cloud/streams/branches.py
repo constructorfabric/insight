@@ -5,7 +5,7 @@ from typing import Any
 
 from airbyte_cdk.models import SyncMode
 
-from source_bitbucket_cloud.streams.base import BitbucketStream, schema, unique_key
+from source_bitbucket_cloud.streams.base import BitbucketStream, repo_scope, schema, unique_key
 
 
 class BranchesStream(BitbucketStream):
@@ -26,7 +26,7 @@ class BranchesStream(BitbucketStream):
         for repo in repositories:
             try:
                 for branch in self._catalog.branches(repo):
-                    entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, branch.name)
+                    entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), branch.name)
                     entity_keys.add(entity_key)
                     yield self.item(
                         entity_key=entity_key,

@@ -1,10 +1,10 @@
 from airbyte_cdk.models import SyncMode
 from conftest import branch
-from source_bitbucket_cloud.streams.base import repository_bucket
+from source_bitbucket_cloud.streams.base import repo_state_key, repository_bucket
 
 
 def read(stream, repo):
-    return list(stream.read_records(SyncMode.incremental, stream_slice={"bucket_id": repository_bucket(repo.uuid)}))
+    return list(stream.read_records(SyncMode.incremental, stream_slice={"bucket_id": repository_bucket(repo_state_key(repo))}))
 
 
 def test_file_changes_independently_walk_commits(file_changes_stream, client, repo):
@@ -43,7 +43,7 @@ def test_file_change_snapshot_counts_distinct_paths(file_changes_stream, client,
 
 def test_unchanged_heads_do_not_refetch_diffs(file_changes_stream, client, repo):
     client.branch_values[repo.uuid] = [branch("main", "head")]
-    file_changes_stream.state = {"version": 2, "bucket_count": 8, "repositories": {repo.uuid: {"head_shas": ["head"]}}}
+    file_changes_stream.state = {"version": 3, "bucket_count": 8, "repositories": {repo_state_key(repo): {"head_shas": ["head"]}}}
     assert read(file_changes_stream, repo) == []
     assert client.commit_calls == []
 

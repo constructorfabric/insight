@@ -1,6 +1,6 @@
 from airbyte_cdk.models import SyncMode
 from conftest import FakeCatalog, repository
-from source_bitbucket_cloud.streams.base import repository_bucket
+from source_bitbucket_cloud.streams.base import repo_state_key, repository_bucket
 from source_bitbucket_cloud.streams.repositories import RepositoriesStream
 
 
@@ -12,7 +12,7 @@ def test_repository_snapshot_maps_provider_fields(stream_args, repo):
         language="Python",
     )
     stream = RepositoriesStream(**{**stream_args, "catalog": FakeCatalog([rich])})
-    records = list(stream.read_records(SyncMode.full_refresh, stream_slice={"bucket_id": repository_bucket(rich.uuid)}))
+    records = list(stream.read_records(SyncMode.full_refresh, stream_slice={"bucket_id": repository_bucket(repo_state_key(rich))}))
     item, complete = records
     assert item["repository_uuid"] == rich.uuid
     assert item["owner_account_id"] == "aid"
@@ -24,5 +24,5 @@ def test_repository_snapshot_maps_provider_fields(stream_args, repo):
 
 def test_snapshot_count_uses_distinct_entities(stream_args, repo):
     stream = RepositoriesStream(**{**stream_args, "catalog": FakeCatalog([repo, repo])})
-    records = list(stream.read_records(SyncMode.full_refresh, stream_slice={"bucket_id": repository_bucket(repo.uuid)}))
+    records = list(stream.read_records(SyncMode.full_refresh, stream_slice={"bucket_id": repository_bucket(repo_state_key(repo))}))
     assert records[-1]["snapshot_item_count"] == 1

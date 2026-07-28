@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from source_bitbucket_cloud.client import BitbucketApiError, BitbucketClient, RepositoryCatalog
-from source_bitbucket_cloud.streams.base import BUCKET_COUNT
+from source_bitbucket_cloud.streams.base import BUCKET_COUNT, repo_state_key
 from source_bitbucket_cloud.streams.commits import CommitsStream
 from source_bitbucket_cloud.streams.metric_events import IssuesStream
 from tests.conftest import SHARED, FakeCatalog, FakeClient, branch, repository
@@ -73,7 +73,7 @@ class TestRepositoryQuarantine:
 
         assert error is None
         assert len(records) == 1
-        assert stream.state["repositories"]["{good}"] == {"head_shas": ["a1"]}
+        assert stream.state["repositories"][repo_state_key(good)] == {"head_shas": ["a1"]}
 
 
 class TestIssuesDisabledRepos:
