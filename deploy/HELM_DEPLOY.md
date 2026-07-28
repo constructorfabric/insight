@@ -4,50 +4,170 @@ This runbook shows a platform or DevOps engineer how to install the Insight busi
 
 ## Contents
 
+<!-- toc -->
+
+- [Contents](#contents)
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
+  - [Cluster and CLI tools](#cluster-and-cli-tools)
+  - [Cluster-level dependencies](#cluster-level-dependencies)
+  - [Running external infrastructure](#running-external-infrastructure)
+- [Step 0 — Collect the values Step 1 needs](#step-0--collect-the-values-step-1-needs)
+  - [Generate the tenant ID](#generate-the-tenant-id)
+  - [Look up the external service addresses](#look-up-the-external-service-addresses)
+  - [Find the Airbyte namespace](#find-the-airbyte-namespace)
+  - [Compose the Redpanda brokers string](#compose-the-redpanda-brokers-string)
+  - [Get the OIDC client details](#get-the-oidc-client-details)
+  - [Read the Argo workflow-controller instance ID](#read-the-argo-workflow-controller-instance-id)
 - [Step 1 — Configure values/umbrella.yaml](#step-1--configure-valuesumbrellayaml)
-- [Step 2 — Fill the two secret files](#step-2--fill-the-two-secret-files)
-- [Step 3 — Create namespace and apply secrets](#step-3--create-namespace-and-apply-secrets)
+- [Step 2 — Fill the secret files](#step-2--fill-the-secret-files)
+  - [secrets/insight-db-creds.yaml](#secretsinsight-db-credsyaml)
+  - [secrets/insight-authenticator-signing-keys.yaml](#secretsinsight-authenticator-signing-keysyaml)
+- [Step 3 — Create the namespace and apply the secrets](#step-3--create-the-namespace-and-apply-the-secrets)
 - [Step 4 — Install with Helm](#step-4--install-with-helm)
-- [Step 5 — Verify the installation](#step-5--verify-the-install)
+- [Step 5 — Verify the install](#step-5--verify-the-install)
 - [Step 6 — Configure connectors (optional)](#step-6--configure-connectors-optional)
-- [Troubleshooting](#troubleshooting)
 - [Appendix — Reference](#appendix--reference)
+  - [values/umbrella.yaml placeholders](#valuesumbrellayaml-placeholders)
+  - [secrets/insight-db-creds.yaml keys](#secretsinsight-db-credsyaml-keys)
+  - [secrets/insight-authenticator-signing-keys.yaml keys](#secretsinsight-authenticator-signing-keysyaml-keys)
+
+<!-- /toc -->
 
 ## Overview
 
-Insight reads engineering and collaboration data from your tools (Jira, Slack, GitHub, and so on), pipelines it through ClickHouse, and serves metrics to a dashboard behind an OIDC login. It installs as four services in one Helm "umbrella" chart — bundled sub-charts, so a single `helm install` deploys everything — published at `oci://ghcr.io/constructorfabric/charts/insight`. The four are the Router (`insight-api-gateway`, public ingress + OIDC), Analytic (`insight-analytics`, metrics), Identity (`insight-identity`, person resolution), and the Frontend (`insight-frontend`, the web UI).
+Insight reads engineering and collaboration data from your tools (Jira, Slack, GitHub, and so on), pipelines it through ClickHouse, and serves metrics to a dashboard behind an OIDC (OpenID Connect, the login protocol) login. It installs as five first-party services in one Helm "umbrella" chart — bundled sub-charts, so a single `helm install` deploys everything — published at `oci://ghcr.io/constructorfabric/charts/insight`. The five are:
 
-This path assumes your data infrastructure (ClickHouse, MariaDB, Redis, Redpanda, Airbyte, Argo Workflows) already runs and is reachable from the cluster, in another namespace or external. The chart doesn't stand it up; it only wires the services to it. You supply one values file, two secret files, and optionally one Secret per connector. No GitOps repo, CI, or auto-reconciliation — you run the commands yourself.
+- **Gateway** (`insight-gateway`, alias `gateway`) — the OpenResty edge. It owns the public ingress and is the single entrance to the cluster: it routes `/*` to the Frontend and `/api/*` to Analytics/Identity, performing a cached cookie-to-JWT exchange against the Authenticator's `/internal/authz` endpoint (a per-pod Lua cosocket lookup, not nginx's `auth_request`) and injecting the resulting gateway JWT into upstream requests.
+- **Authenticator** (`insight-authenticator`, alias `authenticator`) — a separate pod that performs the OIDC login with your IdP, keeps Redis-backed sessions, and mints the ES256 gateway JWT the Gateway injects downstream.
+- **Analytics** (`insight-analytics`, alias `analytics`) — serves metrics from the ClickHouse Gold layer.
+- **Identity** (`insight-identity`, alias `identity`) — resolves people and org data from MariaDB; optional (`identity.deploy`, default `false`).
+- **Frontend** (`insight-frontend`, alias `frontend`) — the web UI (dashboard); optional (`frontend.deploy`, default `true`).
+
+A sixth first-party subchart, `insight-identity-resolution` (alias `identityResolution`), is bundled but off by default and is not part of this install — leave `identityResolution.deploy: false`.
+
+Two more subcharts are bundled for local development only, off by default: `keycloak` (dev mode, embedded database, known admin login) and `fakeidp` (a stateless stub). Neither is a stand's IdP — this runbook expects the real one from [Prerequisites](#cluster-level-dependencies).
+
+You supply one values file, secret files, and optionally one Secret per connector (see [deploy/CONNECTORS.md](./CONNECTORS.md)) — no GitOps repo, CI or auto-reconciliation. The data infrastructure is your side of the contract; see [Prerequisites](#running-external-infrastructure).
 
 ## Prerequisites
 
 ### Cluster and CLI tools
 
-- A Kubernetes cluster you can already reach with `kubectl`, with permission to create namespaces, Secrets, workloads, and Roles/RoleBindings — including in the Airbyte namespace when it differs from the app's (the chart installs a Role there that lets its jobs read Airbyte's auth Secret). That namespace must exist before the umbrella install.
-- `helm` ≥ 3.8 (OCI registry support is stable from 3.8 onward, since the chart is pulled as an OCI artifact).
-- `kubectl`.
-- `base64`, used when copying existing datastore passwords in Step 2 (most systems ship this by default).
+- A Kubernetes cluster you can already reach with `kubectl`, with permission to create namespaces, Secrets, workloads, and Roles/RoleBindings — including in Airbyte's namespace when it differs from the app's, where the chart installs a Role letting its jobs read Airbyte's auth Secret. That namespace must exist before you install.
+- `helm` ≥ 3.8 — the chart is pulled as an OCI artifact, and OCI support is stable from 3.8 onward.
+- `kubectl`, plus `openssl`, `uuidgen` (or `python3`) and `base64` for the commands in Steps 0–3.
+
+### Cluster-level dependencies
+
+Install all three of these before the chart — it bundles none of them:
+
+- **An ingress controller.** Install ingress-nginx, or point `gateway.ingress.className` at what you run (default `nginx`). The gateway owns the only Ingress: UI at `/`, APIs under `/api/`.
+- **A real OIDC identity provider** — Entra ID, Okta, Auth0, or your own. OIDC is mandatory and there is no auth-off switch. **No IdP on the stand? Install Keycloak as its own release**, on a hostname the browser and the authenticator pod resolve identically, then read its issuer, client ID and client secret in Step 0. The bundled `keycloak`/`fakeidp` subcharts are dev-mode servers for local development, not this.
+- **cert-manager, plus a `ClusterIssuer` of your own.** The authenticator's TLS-discovery sidecar (`authenticator.tlsDiscovery.enabled`, default `true`) creates a `cert-manager.io/v1` `Certificate`, and Analytics verifies the authenticator's JWKS against that CA — load-bearing, not optional. Point `authenticator.tlsDiscovery.issuerRef.name` at an issuer your cluster actually has: the chart's `local-ca` default exists only in this repo's local k3s sandbox (`deploy/gitops/bootstrap/local/selfsigned-issuer.yaml`). Any issuer works, self-signed included — the certificate is internal-only and unrelated to the ingress certificate in `<TLS_SECRET>`. (Identity fetches JWKS over plain HTTP and trusts no CA, so an Identity token rejection is never a CA problem.)
+
+Confirm the cluster-side pieces (the IdP gets verified in Step 0, once you have its issuer URL):
+
+```sh
+kubectl get ingressclass nginx                  # the className the gateway Ingress uses
+kubectl get crd certificates.cert-manager.io    # cert-manager CRDs installed
+kubectl get clusterissuer                       # pick one for tlsDiscovery.issuerRef.name
+```
 
 ### Running external infrastructure
 
-All six systems below must be deployed and reachable from the cluster before you start. For the four datastores — ClickHouse, MariaDB, Redis, and Redpanda — the chart's `deploy: false` settings (see Step 1) tell it to dial these systems, not install them. Airbyte and Argo Workflows have no `deploy` key; the chart instead points at them via `airbyte.namespace` (or an explicit `airbyte.apiUrl`) and `ingestion.reconcile.argoInstanceId`.
+All six systems below must already run and be reachable from the cluster. The chart installs none of them: ClickHouse, MariaDB, Redis and Redpanda are wired in by host/credentials, Airbyte and Argo via `airbyte.namespace` and `ingestion.reconcile.argoInstanceId` — Step 0 reads those off your cluster.
+
+Argo is the exception to "only wired in": the chart installs WorkflowTemplates and CronWorkflows into `insight`, so its CRDs must be present, at >= 3.5 for the plural `schedules:` field. Without Argo, set `ingestion.templates.enabled: false` or the install fails with `no matches for kind "WorkflowTemplate"`.
 
 | System | Used for |
 |--------|----------|
-| ClickHouse | Stores the Bronze (raw ingested data), Silver (cleaned/conformed), and Gold (query-ready) data layers; Analytic reads the Gold layer to serve metrics |
-| MariaDB | Owns the `identity` database that Identity uses to resolve people and org data |
-| Redis | Caching layer used by Analytic |
-| Redpanda | Event-streaming backbone (Kafka-compatible) used by the ingestion pipeline |
-| Airbyte | Runs the data connectors (Jira, Slack, GitHub, and so on) that load raw data into ClickHouse Bronze |
-| Argo Workflows | Runs the dbt transform workflows that turn Bronze into Silver and Gold, and runs the sync workflows Airbyte connections trigger |
+| ClickHouse | The Bronze (raw), Silver (conformed) and Gold (query-ready) layers; Analytics serves metrics from Gold |
+| MariaDB | The `identity` database Identity resolves people and org data from |
+| Redis | Analytics' cache and the authenticator's session store |
+| Redpanda | Kafka-compatible event stream |
+| Airbyte | Runs the connectors (Jira, Slack, GitHub, …) that load Bronze |
+| Argo Workflows | Runs the dbt transforms Bronze → Silver → Gold, and the Airbyte sync workflows |
 
-Run all commands here from the directory holding your `values/`, `secrets/`, and `connectors/` files. This document is self-contained: it shows the full `values/umbrella.yaml` skeleton, both secret files, and an example Secret for every connector, so you can assemble all three directories from what follows.
+Three things on those systems are yours to create:
+
+- **MariaDB: the `insight` database and login.** The pre-install hook creates only Identity's `identity`, and Analytics' blocking `migrate` initContainer needs this one — without it `--wait` burns its whole timeout and fails.
+
+  ```sql
+  CREATE DATABASE IF NOT EXISTS `insight`
+    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+  CREATE USER IF NOT EXISTS `insight`@`%` IDENTIFIED BY '<mariadb-password>';
+  GRANT ALL ON `insight`.* TO `insight`@`%`;
+  ```
+
+- **ClickHouse: the `clickhouse.username` account, holding CREATE DATABASE.** The pre-install hook creates the Bronze/Silver/Gold databases as that user; the chart has no separate admin account.
+- **Argo: an `argo-workflow` ServiceAccount in `insight`,** plus a Role granting create/patch on `workflowtaskresults.argoproj.io`. The chart pins every ingestion workflow to it and ships neither, so without them dbt transforms and data-quality checks fail with `serviceaccount "argo-workflow" not found` (connector provisioning still works).
+
+Run every command below from the directory holding your `values/` and `secrets/` files; Steps 1 and 2 give you their full contents.
+
+## Step 0 — Collect the values Step 1 needs
+
+Generate the tenant ID, then read the rest off the cluster. Each dependency may sit in its own namespace, or outside the cluster entirely.
+
+### Generate the tenant ID
+
+A lowercase UUID, used verbatim for both `global.tenantDefaultId` and `ingestion.reconcile.tenantId`, and never changed after the first sync. (Local/dev against the compose wizard, the seed generators or `fakeidp` reuses their fixed `00000000-df51-5b42-9538-d2b56b7ee953`.) `global.tenantDefaultId` is only a fallback — the request tenant comes from the id_token claim named by `authenticator.oidc.tenantClaim`, default `tenant_id` — so if your IdP asserts that claim, give it this same UUID.
+
+```sh
+uuidgen | tr '[:upper:]' '[:lower:]'    # no uuidgen? python3 -c 'import uuid; print(uuid.uuid4())'
+```
+
+### Look up the external service addresses
+
+Every host is `<svc>.<its-own-namespace>.svc.cluster.local`, or any resolvable host or IP off-cluster. The ClickHouse, MariaDB and Redis ports are already in the skeleton, so you supply only the host.
+
+```sh
+kubectl get svc -A | grep -Ei 'clickhouse|mariadb|redis|redpanda|airbyte'
+```
+
+### Find the Airbyte namespace
+
+Set `airbyte.namespace` to the namespace the Airbyte release runs in. It drives both the computed API URL and the namespace the jobs read `airbyte-auth-secrets` from, so `airbyte.apiUrl` stays empty unless your Airbyte sits behind a non-standard URL.
+
+```sh
+kubectl get svc -A | grep airbyte-server
+  # the namespace in that row is airbyte.namespace
+  # computed URL: http://<releaseName>-airbyte-server-svc.<that-namespace>.svc.cluster.local:8001
+```
+
+### Compose the Redpanda brokers string
+
+`redpanda.brokers` takes one comma-separated `host:port` bootstrap string, not the host/port pair the other datastores take, aimed at the internal Kafka API listener. Read the port rather than assuming `9093` — that is the `redpanda/redpanda` chart's default, while this repo's compose stack uses `9092`.
+
+```sh
+kubectl -n <redpanda-ns> get svc <redpanda-svc> -o jsonpath='{range .spec.ports[*]}{.name}={.port}{"\n"}{end}'
+  # compose <redpanda-svc>.<redpanda-ns>.svc.cluster.local:<kafka port>
+  # e.g. redpanda.insight-infra.svc.cluster.local:9093
+```
+
+### Get the OIDC client details
+
+In the IdP from Prerequisites, register a **confidential** client with redirect URI `https://<HOST>/auth/callback` and collect its issuer URL, client ID and client secret. On Keycloak the issuer is `<base-url>/realms/<realm>` and the secret is on the client's *Credentials* tab.
+
+```sh
+# the issuer must be the SAME URL the browser and the authenticator pod resolve, or `iss` won't validate
+kubectl run oidc-probe --rm -i --restart=Never --image=curlimages/curl -- \
+  curl -sS <OIDC_ISSUER>/.well-known/openid-configuration | head -c 200
+```
+
+### Read the Argo workflow-controller instance ID
+
+Set `ingestion.reconcile.argoInstanceId` to the controller's configured `instanceID` only when it is pinned to one; no match means leave it empty — the common case, where the reconcile workflows go unlabelled and any controller accepts them.
+
+```sh
+kubectl -n <argo-ns> get cm | grep workflow-controller     # name varies by chart version
+kubectl -n <argo-ns> get cm <cm> -o jsonpath='{.data.config}' | grep -i instanceID   # newer charts nest it under `config:`
+kubectl -n <argo-ns> get cm <cm> -o jsonpath='{.data.instanceID}{"\n"}'              # older ones use a top-level key
+```
 
 ## Step 1 — Configure values/umbrella.yaml
 
-Create `values/umbrella.yaml` with the skeleton below, then replace every `<...>` placeholder with your infrastructure's real addresses. Passwords never go here — they live in the secret files from Step 2.
+Create `values/umbrella.yaml` from the skeleton below and replace every `<...>` placeholder. No passwords here — they go in the Step 2 secret files.
 
 ```yaml
 ## values/umbrella.yaml — the only values file you need.
@@ -57,30 +177,25 @@ credentials:
   autoGenerate: true                 # BYO compose; won't overwrite a labelless insight-db-creds
 
 global:
-  tenantDefaultId: "<TENANT_ID>"     # default tenant UUID; must equal ingestion.reconcile.tenantId
-  # storageClass: ""                 # "" = cluster default; e.g. "local-path" locally
+  tenantDefaultId: "<TENANT_ID>"     # the UUID from Step 0; must equal ingestion.reconcile.tenantId
   # imagePullSecrets: []             # [{name: my-regcred}] for a private registry
 
-# Datastore wiring — deploy:false = dial existing infra, don't install it.
+# Datastore wiring — every dep is external; the chart only dials it.
 clickhouse:
-  deploy: false
-  host: <CLICKHOUSE_HOST>            # e.g. clickhouse.<infra-ns>.svc.cluster.local
-  port: 8123
+  host: <CLICKHOUSE_HOST>            # e.g. clickhouse.<its-ns>.svc.cluster.local
+  port: 8123               # reachable from the insight namespace
   database: insight
   username: insight
 mariadb:
-  deploy: false
   host: <MARIADB_HOST>
   port: 3306
   database: insight
   username: insight
 redis:
-  deploy: false
   host: <REDIS_HOST>
   port: 6379
 redpanda:
-  deploy: false
-  brokers: "<REDPANDA_BROKERS>"      # e.g. redpanda.<infra-ns>.svc.cluster.local:9093
+  brokers: "<REDPANDA_BROKERS>"      # e.g. redpanda.<its-ns>.svc.cluster.local:9093
 
 # Ingestion — point at existing Airbyte + Argo; install the dbt WorkflowTemplates.
 ingestion:
@@ -89,10 +204,10 @@ ingestion:
   reconcile:
     tenantId: "<TENANT_ID>"
     destinationName: clickhouse-bronze
-    argoInstanceId: "<ARGO_INSTANCE_ID>"     # e.g. argo-workflows-<infra-ns>
+    argoInstanceId: "<ARGO_INSTANCE_ID>"     # match the controller's instanceID (Step 0); leave "" if unpinned
 airbyte:
-  namespace: "<AIRBYTE_NAMESPACE>"   # namespace of the Airbyte release, e.g. <infra-ns>; "" = same as the app
-  apiUrl: ""                         # "" = computed from airbyte.releaseName + airbyte.namespace; set only for a non-standard URL
+  namespace: "<AIRBYTE_NAMESPACE>"   # where the Airbyte release runs; "" = the app namespace
+  apiUrl: ""                         # "" = computed from releaseName + namespace; set only for a non-standard URL
 
 analytics:
   replicaCount: 1                    # chart default 2; bump for HA
@@ -100,14 +215,11 @@ analytics:
     requests: { cpu: 100m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 512Mi }
 
-apiGateway:
+gateway:
   replicaCount: 1
-  authDisabled: false                # true = NO auth — LOCAL DEV ONLY
-  oidc:
-    existingSecret: "insight-oidc"
-  ingress:
-    enabled: true
-    className: nginx
+  ingress:                           # the only Ingress the chart publishes; the gateway
+    enabled: true                    # itself routes / to the UI and /api/* to Analytics
+    className: nginx                 # and Identity, from subchart defaults you need not set
     host: <HOST>
     tls:
       enabled: true
@@ -116,64 +228,76 @@ apiGateway:
     requests: { cpu: 100m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 256Mi }
 
+authenticator:
+  replicaCount: 1
+  # ES256 signing keys — see Step 2. MUST already exist as a Secret before install.
+  signingKeysSecret: "insight-authenticator-signing-keys"
+  # cert-manager Certificate for the JWKS-discovery sidecar (internal TLS only).
+  tlsDiscovery:
+    enabled: true
+    issuerRef:
+      name: <CLUSTER_ISSUER>          # your cluster's ClusterIssuer; the chart's `local-ca`
+                                      # default only exists in the local k3s sandbox
+      kind: ClusterIssuer             # or Issuer, if yours is namespaced into `insight`
+  oidc:
+    issuerUrl: "<OIDC_ISSUER>"        # MUST be set — your IdP's issuer URL
+    clientId: "<OIDC_CLIENT_ID>"
+    clientSecret: "<OIDC_CLIENT_SECRET>"
+    redirectUri: "https://<HOST>/auth/callback"   # MUST be set — browser-facing callback through the gateway
+    scopes: ["openid", "profile", "email", "offline_access"]
+  # csrfOrigins: ["https://<HOST>"]  # fail-closed by default: if the UI's POST /auth/logout,
+                                     # /auth/refresh or DELETE /auth/sessions return 403, set this
+
 identity:
   deploy: true                       # MUST be true (chart default false)
   replicaCount: 1
   databaseName: "identity"
-  tenantDefaultId: "<TENANT_ID>"
   resources:
     requests: { cpu: 50m,  memory: 96Mi }
     limits:   { cpu: 250m, memory: 384Mi }
 
 frontend:                            # the web UI (dashboard)
+  deploy: true                       # served through the gateway at / — no ingress of its own
   replicaCount: 1
-  ingress:
-    enabled: true                    # WITHOUT this the UI pod runs but is never exposed
-    className: nginx
-    host: <HOST>                     # same FQDN as apiGateway.ingress.host; /api/* → Router, /* → UI
-  oidc:                              # public values; the browser starts the login here
-    issuer: "<OIDC_ISSUER>"          # same IdP as the Router
-    clientId: "<OIDC_CLIENT_ID>"
-    scopes: "openid profile email"   # IdP-specific
 ```
 
-If you do not already have this file, you can generate the chart's default values as a starting point instead of typing the skeleton by hand:
+To start from the chart's full defaults instead of typing the skeleton:
 
 ```sh
 helm show values oci://ghcr.io/constructorfabric/charts/insight > values/umbrella.yaml
 ```
 
-The placeholder table below explains every `<...>` value in the skeleton:
+Fill each placeholder:
 
 | Placeholder | What it should be |
 |-------------|--------------------|
-| `<TENANT_ID>` | Your Insight tenant UUID. Must be the same value in all three of `global.tenantDefaultId`, `ingestion.reconcile.tenantId`, and `identity.tenantDefaultId` |
-| `<CLICKHOUSE_HOST>` | ClickHouse HTTP host, in `host:8123` form |
-| `<MARIADB_HOST>` | MariaDB host, in `host:3306` form |
-| `<REDIS_HOST>` | Redis host, in `host:6379` form |
-| `<REDPANDA_BROKERS>` | Redpanda broker(s), in `host:9093` form |
-| `<AIRBYTE_NAMESPACE>` | Namespace of the Airbyte release, for example `insight-infra`. Leave `""` if Airbyte shares the app namespace |
-| `<ARGO_INSTANCE_ID>` | Your Argo controller's instance ID, for example `argo-workflows-insight-infra` |
-| `<HOST>` | Public FQDN for the ingress, shared by the Router and Frontend, for example `insight.example.com` |
-| `<TLS_SECRET>` | Name of the Kubernetes TLS Secret that covers that domain |
+| `<TENANT_ID>` | The tenant UUID you generated in Step 0. Must be the same value in `global.tenantDefaultId` and `ingestion.reconcile.tenantId` |
+| `<CLICKHOUSE_HOST>` | ClickHouse host only — no port, no scheme; the skeleton's `port: 8123` supplies the port |
+| `<MARIADB_HOST>` | MariaDB host only — no port; the skeleton's `port: 3306` supplies it |
+| `<REDIS_HOST>` | Redis host only — no port; the skeleton's `port: 6379` supplies it |
+| `<REDPANDA_BROKERS>` | The bootstrap string you composed in Step 0 — comma-separated `host:port` pointing at the internal Kafka API listener |
+| `<AIRBYTE_NAMESPACE>` | Namespace of the Airbyte release from Step 0, for example `insight-infra`. Leave `""` if Airbyte shares the app namespace |
+| `<ARGO_INSTANCE_ID>` | The `instanceID` your Argo workflow controller is pinned to — read it off the controller config map in Step 0. Leave empty (`""`) if the controller is unpinned, the common case |
+| `<HOST>` | Public FQDN for the gateway ingress — the single entrance for both the UI and the APIs, for example `insight.example.com` |
+| `<TLS_SECRET>` | TLS Secret for that domain. The chart only references it: pre-create it, or add `gateway.ingress.annotations: {cert-manager.io/cluster-issuer: <issuer>}`. Missing, ingress-nginx quietly serves its own fake certificate |
+| `<CLUSTER_ISSUER>` | A cert-manager `ClusterIssuer` in your cluster, for the authenticator's internal JWKS certificate. Self-signed is fine; the chart's `local-ca` default exists only in this repo's local sandbox |
+| `<OIDC_ISSUER>` | Your IdP's issuer URL. Its `/.well-known/openid-configuration` document must resolve from inside the cluster |
+| `<OIDC_CLIENT_ID>` / `<OIDC_CLIENT_SECRET>` | Your OIDC client / application registration credentials |
 
-The `frontend.oidc` block also uses `<OIDC_ISSUER>` and `<OIDC_CLIENT_ID>` — the same public values you put in the `insight-oidc` Secret (Step 2). The browser needs them to start the login; the Router validates the resulting token from its Secret.
+For infrastructure in the same cluster, use `<service>.<namespace>.svc.cluster.local`. Any resolvable host or IP also works.
 
-For infrastructure running in the same cluster, use the in-cluster DNS form `<service>.<namespace>.svc.cluster.local`. Any resolvable host or IP address also works.
+Check these four before installing:
 
-Three settings deserve a closer look before you install:
+- Set `identity.deploy: true`. The chart default is `false`, and without the override Identity — and person resolution for the whole app — never deploys.
+- Set real values for `authenticator.oidc.issuerUrl` and `redirectUri`. The chart wraps both in Helm's `required`, and there is no auth-off switch.
+- Create the Secret named in `authenticator.signingKeysSecret` before installing (Step 2). The chart does not generate it.
+- Point the OIDC fields at the real IdP from Prerequisites. The bundled `keycloak`/`fakeidp` subcharts are dev-mode servers for local development, not a stand's IdP.
 
-- **`clickhouse.deploy`, `mariadb.deploy`, `redis.deploy`, `redpanda.deploy` are all `false`.** This tells the chart to connect to your existing datastores rather than install its own. Do not flip these to `true` unless you actually want the chart to provision new infrastructure — that is a different install path and is out of scope for this guide.
-- **`identity.deploy` must be `true`.** The chart's own default is `false`, so this block requires an explicit override. Without it, the Identity service (and person resolution for the whole app) will not deploy.
-- **`apiGateway.authDisabled` must stay `false` in any real environment.** Setting it to `true` disables authentication on the Router entirely — this is a local-dev-only escape hatch, never appropriate for a shared or production cluster.
-
-A local/OrbStack variant of this file, `values/umbrella.orbstack.yaml`, is available as a starting point for local development against a k3s cluster with in-cluster infra under `insight-infra`. Treat it as a reference for local testing, not as a template for a real install — see the Appendix for a summary of how it differs.
-
-## Step 2 — Fill the two secret files
+## Step 2 — Fill the secret files
 
 ### secrets/insight-db-creds.yaml
 
-This Secret holds the four datastore passwords used by Analytic and Identity. All four keys are required — the chart fails fast if any is missing. Values must match the passwords your datastores were deployed with.
+Create this Secret with all four datastore passwords — the chart fails fast if any key is missing. Use the passwords your datastores already run with, but check them first: the chart composes DSNs by string interpolation and rejects any password containing `@ : / ? # %`, so those must be rotated to `[A-Za-z0-9._~-]` before you install.
 
 ```yaml
 apiVersion: v1
@@ -181,578 +305,93 @@ kind: Secret
 metadata: { name: insight-db-creds, namespace: insight }
 type: Opaque
 stringData:
-  clickhouse-password:   "CHANGE_ME"   # ClickHouse admin password    -> Analytic
-  mariadb-password:      "CHANGE_ME"   # MariaDB app-user password    -> Analytic + Identity
-  mariadb-root-password: "CHANGE_ME"   # MariaDB root password (identity-DB init hook) -> Identity
-  redis-password:        "CHANGE_ME"   # Redis password               -> Analytic
+  clickhouse-password:   "CHANGE_ME"   # password of clickhouse.username -> Analytics + hooks
+  mariadb-password:      "CHANGE_ME"   # MariaDB app-user password    -> Analytics + Identity
+  mariadb-root-password: "CHANGE_ME"   # password of the account literally named `root` -> identity-DB init hook
+  redis-password:        "CHANGE_ME"   # Redis password               -> Analytics + Authenticator
 ```
 
-If your existing datastores already have these passwords stored in Secrets in your infrastructure namespace, copy them across instead of retyping them:
+If those passwords already live in Secrets in your infrastructure namespace, copy them across instead of retyping them:
 
 ```sh
-NS_INFRA=<your-infra-namespace>                     # where your L2 services run
-kubectl -n $NS_INFRA get secret <ch-secret>         -o jsonpath='{.data.<ch-key>}'        | base64 -d; echo   # clickhouse-password
-kubectl -n $NS_INFRA get secret <maria-secret>      -o jsonpath='{.data.<app-key>}'       | base64 -d; echo   # mariadb-password (app user)
-kubectl -n $NS_INFRA get secret <maria-root-secret> -o jsonpath='{.data.<root-key>}'      | base64 -d; echo   # mariadb-root-password
-kubectl -n $NS_INFRA get secret <redis-secret>      -o jsonpath='{.data.<redis-key>}'     | base64 -d; echo   # redis-password
+# each password lives in a Secret in its own datastore's namespace — they need not be the same namespace
+kubectl -n <clickhouse-ns> get secret <ch-secret>         -o jsonpath='{.data.<ch-key>}'    | base64 -d; echo   # clickhouse-password
+kubectl -n <mariadb-ns>    get secret <maria-secret>      -o jsonpath='{.data.<app-key>}'   | base64 -d; echo   # mariadb-password (app user)
+kubectl -n <mariadb-ns>    get secret <maria-root-secret> -o jsonpath='{.data.<root-key>}'  | base64 -d; echo   # mariadb-root-password
+kubectl -n <redis-ns>      get secret <redis-secret>      -o jsonpath='{.data.<redis-key>}' | base64 -d; echo   # redis-password
 ```
 
-Paste the decoded output into the matching `clickhouse-password` / `mariadb-password` / `mariadb-root-password` / `redis-password` field.
+Paste each decoded value into the matching field.
 
-> **Do not add an `app.kubernetes.io/managed-by: Helm` label to this Secret.** The chart reads that label's *absence* as "bring your own" credentials. With the label, it assumes ownership and may overwrite your passwords with generated ones. Without it, the chart keeps your values and composes `insight-analytics-config` and `insight-identity-config` from them.
+> **Never label this Secret `app.kubernetes.io/managed-by: Helm`.** The chart reads the label's *absence* as "bring your own" and composes `insight-analytics-config` and `insight-identity-config` from your values; with the label Helm claims ownership of a Secret it did not create and the install aborts with `invalid ownership metadata`.
 
-### secrets/insight-oidc.yaml
+### secrets/insight-authenticator-signing-keys.yaml
 
-This Secret carries the OIDC (OpenID Connect, the login protocol) configuration consumed by the Router. It works with any standards-compliant OIDC identity provider — Entra, Okta, Auth0, Keycloak, or Dex.
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata: { name: insight-oidc, namespace: insight }
-type: Opaque
-stringData:
-  APP__gears__oidc-authn-plugin__config__issuer_url: "<OIDC_ISSUER>"
-  APP__gears__oidc-authn-plugin__config__audience:   "<OIDC_CLIENT_ID>"
-  APP__gears__oidc-authn-plugin__config__jwks_url:   "<OIDC_JWKS_URL>"
-  APP__gears__auth-info__config__issuer_url:         "<OIDC_ISSUER>"
-  APP__gears__auth-info__config__client_id:          "<OIDC_CLIENT_ID>"
-  APP__gears__auth-info__config__redirect_uri:       "<APP_BASE_URL>/callback"
-  APP__gears__auth-info__config__scopes:             "openid profile email"
-```
-
-The `APP__gears__...` key names follow the app's environment-variable-style config convention (double underscores separate config sections); leave them exactly as shown and only fill the values.
-
-| Placeholder | What it should be |
-|-------------|--------------------|
-| `<OIDC_ISSUER>` | Your IdP's issuer URL. Its `/.well-known/openid-configuration` document must resolve |
-| `<OIDC_JWKS_URL>` | The `jwks_uri` value from that same well-known discovery document |
-| `<OIDC_CLIENT_ID>` | Your OIDC client / application registration ID |
-| `<APP_BASE_URL>` | The Router's public URL, the same value as `https://<HOST>` from Step 1 |
-
-Example issuer URLs by provider:
-
-| IdP | Example `<OIDC_ISSUER>` |
-|-----|---------------------------|
-| Entra | `https://login.microsoftonline.com/<tenant>/v2.0` |
-| Okta | `https://<org>.okta.com/oauth2/default` |
-| Auth0 | `https://<tenant>.auth0.com/` |
-| Keycloak | `https://<host>/realms/<realm>` |
-| Dex | `https://<APP_BASE_URL>/dex` |
-
-## Step 3 — Create namespace and apply secrets
-
-Create the `insight` namespace and apply both secret files:
+Generate the authenticator's ES256 (EC P-256) gateway-JWT key as PKCS#8 and create the Secret — the chart does not generate it:
 
 ```sh
-# create the namespace and apply all secrets
+openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt -out current.pem
+kubectl create secret generic insight-authenticator-signing-keys \
+  --namespace insight --from-file=current.pem \
+  --dry-run=client -o yaml > secrets/insight-authenticator-signing-keys.yaml
+```
+
+## Step 3 — Create the namespace and apply the secrets
+
+```sh
 kubectl create namespace insight
 kubectl -n insight apply -f secrets/
 
 # verify
-kubectl -n insight get secret insight-db-creds insight-oidc     # expect 4 keys / 7 keys
+kubectl -n insight get secret insight-db-creds insight-authenticator-signing-keys   # expect 4 keys / 1 key (current.pem)
 ```
 
-The Analytic service also needs Airbyte's own auth credentials (`airbyte-auth-secrets`, created by the Airbyte chart in the infrastructure namespace) to talk to the Airbyte API. Do **not** copy that Secret into `insight` — a copy silently breaks when Airbyte regenerates its credentials on reinstall. Instead, set `airbyte.namespace` in your values (Step 1); the chart reads the Secret from that namespace at run time and installs a Role/RoleBinding there that grants its jobs `get` on that one Secret.
+Do **not** copy Airbyte's own `airbyte-auth-secrets` into `insight`. The reconcile loop and the airbyte-sync workflows read it from Airbyte's namespace at run time — that is what `airbyte.namespace` in Step 1 is for, and the chart renders a Role/RoleBinding there granting `get` on that one Secret. A copy would freeze credentials Airbyte regenerates on reinstall.
 
 ## Step 4 — Install with Helm
 
-Run the umbrella chart install, pointing it at your filled-in values file:
+Install the umbrella chart against your values file:
 
 ```sh
 helm upgrade --install insight oci://ghcr.io/constructorfabric/charts/insight \
   -n insight -f values/umbrella.yaml --wait --timeout 15m
 ```
 
-Omit `--version` to install the latest published chart, or add `--version <x.y.z>` to pin a specific release. `--wait --timeout 15m` blocks the command until all resources report ready, or until 15 minutes pass, whichever comes first — this gives you a clear pass/fail signal instead of a detached background rollout.
+- Add `--version <x.y.z>` to pin a chart release; omit it for the latest published one.
+- `--wait --timeout 15m` blocks until every resource is ready, giving a pass/fail signal instead of a detached rollout.
+- The install also runs the `insight-clickhouse-migrate` hook Job. It creates the staging/silver/app databases, seeds bronze placeholders, ALTERs bronze/silver tables, applies `src/ingestion/scripts/migrations/*.sql`, then rebuilds the gold models with dbt — that last part dominates on a cluster with real data, so raise `--timeout` if it runs close. It fires on **every** upgrade (gated by `clickhouse.runMigrations`, default `true`) and a failure fails the upgrade. Because it drops and recreates every gold object each run, a failure points at Bronze/Silver schema or data, not a stale-object conflict.
+- If `--wait` stalls with the authenticator and analytics in `ContainerCreating`, the cert-manager Certificate `insight-authenticator-authn-tls` has not issued — `--wait` does not wait on Certificates. Check `kubectl -n insight describe certificate insight-authenticator-authn-tls`.
 
 ## Step 5 — Verify the install
 
-Confirm all three service pods are running:
+Run all four checks:
 
 ```sh
 kubectl -n insight get pods
-  # expect: insight-api-gateway, insight-analytics, insight-identity, insight-frontend  (all Running)
-```
+  # expect insight-gateway, -authenticator, -analytics, -identity, -frontend all Running
+  # (Identity only with identity.deploy: true; fakeidp/keycloak only with their deploy flag)
 
-Confirm the chart composed the two config Secrets from `insight-db-creds`:
+kubectl -n insight get secret insight-analytics-config insight-authenticator-config insight-identity-config
+  # the chart composes these from insight-db-creds (the identity one only when identity.deploy=true)
 
-```sh
-kubectl -n insight get secret insight-analytics-config insight-identity-config
-  # chart composed these from insight-db-creds
-```
+helm -n insight history insight
+  # the ClickHouse migration runs as a post-install/post-upgrade hook Job; Helm deletes it
+  # on success (hook-delete-policy: hook-succeeded), so "no jobs found" is the healthy
+  # state — Step 4 exiting 0 is the pass signal. On failure the Job survives:
+  #   kubectl -n insight logs job/insight-clickhouse-migrate
 
-Confirm the reconcile loop's scheduled workflow exists — this is the job that discovers connector Secrets and provisions Airbyte sources and connections automatically:
-
-```sh
 kubectl -n insight get cronworkflow
-  # expect: insight-reconcile-loop (provisions Airbyte sources/connections)
+  # expect two: insight-reconcile-loop (provisions Airbyte sources/connections)
+  # and insight-data-quality (ingestion.dataQuality.enabled, default true)
 ```
 
-Finally, open `https://<HOST>` in a browser (the host you set in Step 1) and confirm the login redirect to your OIDC provider works.
+Then open `https://<HOST>` — the host from Step 1 — and confirm the login redirect to your OIDC provider.
 
 ## Step 6 — Configure connectors (optional)
 
-Connectors pull data from your tools — Jira issues, Slack messages, GitHub pull requests, and so on. Each is one Kubernetes Secret that both configures and enables a single Airbyte data source. Fill in the ones you need, then apply them.
+Configure connectors after the app is up. Each of the 25 connectors is a single Kubernetes Secret; the `insight-reconcile-loop` CronWorkflow discovers it and provisions the Airbyte source automatically, so there is nothing else to run.
 
-### Anatomy of a connector Secret
-
-Every connector Secret needs three things for the reconcile loop to discover and wire it up:
-
-- **A label**, `app.kubernetes.io/part-of: insight` — the selector the reconcile loop uses to find connector Secrets.
-- **Two annotations**: `insight.cyberfabric.com/connector: <name>` identifies which connector definition to use, and `insight.cyberfabric.com/source-id: <id>` names this specific source instance (the convention is `<name>-main`).
-- **`stringData`** holding the connector's required fields — credentials, base URLs, and similar settings specific to that tool.
-
-For example, the Jira connector Secret (`connectors/jira.yaml`) looks like this:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-jira-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: jira, insight.cyberfabric.com/source-id: jira-main }
-type: Opaque
-stringData:
-  jira_instance_url: "https://your-org.atlassian.net"
-  jira_email:        "svc@your-org.com"
-  jira_api_token:    "ATATT-CHANGE_ME"
-```
-
-### The 26 available connectors
-
-Replace `CHANGE_ME` (and any other placeholder) values in whichever connector files you need, under `connectors/`:
-
-`jira`, `slack`, `github-v2`, `gitlab`, `m365`, `salesforce`, `zoom`, `confluence`, `youtrack`, `zendesk`, `workday`, `bamboohr`, `ms-entra`, `figma`, `outline`, `hubspot`, `cursor`, `openai`, `chatgpt-team`, `claude-team`, `claude-admin`, `claude-enterprise`, `github-copilot`, `bitbucket-cloud`, `bitbucket-server`, `zulip-proxy`.
-
-Apply all of them at once, or one at a time:
-
-```sh
-kubectl -n insight apply -f connectors/      # all 26 connectors at once
-# or one at a time:
-kubectl -n insight apply -f connectors/jira.yaml
-```
-
-You only need to create Secrets for the tools you actually use — an unused connector file can be left unfilled and simply not applied.
-
-The reconcile loop scans the `insight` namespace about every 15 minutes. On a new or changed connector Secret, it provisions the matching Airbyte source and connection and starts syncing into Bronze automatically — no further steps once the Secret is applied and filled in correctly.
-
-### Example Secret for every connector
-
-Each block below is a complete, copy-paste-ready Secret for one connector. Fill in the `CHANGE_ME` (and any other placeholder) values, save it under `connectors/<name>.yaml`, and apply it as shown above.
-
-Two things to know before you copy these:
-
-- Connectors marked ⚠ are CDK connectors (built on Airbyte's Connector Development Kit). They bake their own `url_base` into the connector image, so they cannot be repointed at a mock or self-hosted endpoint.
-- `bitbucket-server` intentionally has an empty `stringData: {}` — its URL and credentials come from the connector manifest, not from this Secret.
-
-#### AI & coding assistants
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-chatgpt-team-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: chatgpt-team, insight.cyberfabric.com/source-id: chatgpt-team-main }
-type: Opaque
-stringData:
-  chatgpt_account_id: "CHANGE_ME"
-  proxy_url:          "CHANGE_ME"        # your ChatGPT admin-proxy base URL
-  proxy_auth_token:   "CHANGE_ME"
-  # chatgpt_org_id:   "CHANGE_ME"        # optional (subscription streams)
-  # start_date:       "2026-01-01"       # optional
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-claude-team-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: claude-team, insight.cyberfabric.com/source-id: claude-team-main }
-type: Opaque
-stringData:
-  claude_org_id:    "CHANGE_ME"
-  proxy_url:        "CHANGE_ME"
-  proxy_auth_token: "CHANGE_ME"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-claude-admin-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: claude-admin, insight.cyberfabric.com/source-id: claude-admin-main }
-type: Opaque
-stringData:
-  admin_api_key: "CHANGE_ME"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-claude-enterprise-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: claude-enterprise, insight.cyberfabric.com/source-id: claude-enterprise-main }
-type: Opaque
-stringData:
-  analytics_api_key: "CHANGE_ME"
-```
-
-```yaml
-# ⚠ CDK connector; org-scoped GitHub PAT
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-github-copilot-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: github-copilot, insight.cyberfabric.com/source-id: github-copilot-main }
-type: Opaque
-stringData:
-  github_token:      "CHANGE_ME"       # PAT with Copilot org metrics scope
-  github_org:        "CHANGE_ME"
-  github_start_date: "2026-01-01"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-cursor-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: cursor, insight.cyberfabric.com/source-id: cursor-main }
-type: Opaque
-stringData:
-  cursor_api_key: "CHANGE_ME"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-openai-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: openai, insight.cyberfabric.com/source-id: openai-main }
-type: Opaque
-stringData:
-  openai_admin_api_key: "CHANGE_ME"
-  openai_start_date:    "2026-01-01"
-```
-
-#### Source control & CI
-
-```yaml
-# ⚠ CDK connector; supersedes `github`
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-github-v2-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: github-v2, insight.cyberfabric.com/source-id: github-v2-main }
-type: Opaque
-stringData:
-  github_token:         "CHANGE_ME"
-  github_organizations: "org-a,org-b"
-  github_start_date:    "2026-01-01"
-  github_skip_archived: "true"
-  github_skip_forks:    "true"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-gitlab-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: gitlab, insight.cyberfabric.com/source-id: gitlab-main }
-type: Opaque
-stringData:
-  gitlab_url:   "https://gitlab.com"
-  gitlab_token: "CHANGE_ME"
-```
-
-```yaml
-# ⚠ CDK connector; baked url_base
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-bitbucket-cloud-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: bitbucket-cloud, insight.cyberfabric.com/source-id: bitbucket-cloud-main }
-type: Opaque
-stringData:
-  bitbucket_token:      "CHANGE_ME"    # Atlassian ATCTT access token (NOT an ATATT API token)
-  bitbucket_workspaces: "workspace-a,workspace-b"
-```
-
-```yaml
-# required_fields: [] — URL/creds come from the connector manifest, not this Secret
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-bitbucket-server-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: bitbucket-server, insight.cyberfabric.com/source-id: bitbucket-server-main }
-type: Opaque
-stringData: {}
-```
-
-#### Issue tracking & docs
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-jira-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: jira, insight.cyberfabric.com/source-id: jira-main }
-type: Opaque
-stringData:
-  jira_instance_url: "https://your-org.atlassian.net"
-  jira_email:        "svc@your-org.com"
-  jira_api_token:    "ATATT-CHANGE_ME"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-youtrack-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: youtrack, insight.cyberfabric.com/source-id: youtrack-main }
-type: Opaque
-stringData:
-  youtrack_base_url: "https://your-org.youtrack.cloud/api"
-  youtrack_token:    "perm-CHANGE_ME"
-  # youtrack_page_size: "100"                # optional
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-confluence-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: confluence, insight.cyberfabric.com/source-id: confluence-main }
-type: Opaque
-stringData:
-  confluence_instance_url: "https://your-org.atlassian.net/wiki"
-  confluence_email:        "svc@your-org.com"
-  confluence_api_token:    "ATATT-CHANGE_ME"
-  confluence_start_date:   "2026-01-01"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-outline-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: outline, insight.cyberfabric.com/source-id: outline-main }
-type: Opaque
-stringData:
-  outline_instance_url: "https://your-outline-host"
-  outline_api_token:    "CHANGE_ME"
-  outline_start_date:   "2026-01-01"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-figma-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: figma, insight.cyberfabric.com/source-id: figma-main }
-type: Opaque
-stringData:
-  figma_token:      "figd_CHANGE_ME"
-  figma_team_ids:   "1234567890,0987654321"
-  figma_start_date: "2026-01-01"
-```
-
-#### Communication & meetings
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-slack-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: slack, insight.cyberfabric.com/source-id: slack-main }
-type: Opaque
-stringData:
-  slack_bot_token:  "xoxb-CHANGE_ME"
-  slack_start_date: "2026-01-01"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-zoom-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: zoom, insight.cyberfabric.com/source-id: zoom-main }
-type: Opaque
-stringData:
-  zoom_account_id:   "CHANGE_ME"
-  zoom_client_id:    "CHANGE_ME"
-  zoom_client_secret: "CHANGE_ME"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-m365-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: m365, insight.cyberfabric.com/source-id: m365-main }
-type: Opaque
-stringData:
-  azure_tenant_id:     "CHANGE_ME"
-  azure_client_id:     "CHANGE_ME"
-  azure_client_secret: "CHANGE_ME"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-zulip-proxy-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: zulip-proxy, insight.cyberfabric.com/source-id: zulip-proxy-main }
-type: Opaque
-stringData:
-  zulip_proxy_base_url:   "CHANGE_ME"
-  zulip_proxy_api_key:    "CHANGE_ME"
-  zulip_proxy_start_date: "2026-01-01"
-```
-
-#### HR & identity
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-bamboohr-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: bamboohr, insight.cyberfabric.com/source-id: bamboohr-main }
-type: Opaque
-stringData:
-  bamboohr_api_key: "CHANGE_ME"
-  bamboohr_domain:  "your-company"           # the <domain> in <domain>.bamboohr.com
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-workday-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: workday, insight.cyberfabric.com/source-id: workday-main }
-type: Opaque
-stringData:
-  workday_base_url:            "https://wd2-impl-services1.workday.com"
-  workday_isu_username:        "CHANGE_ME"
-  workday_isu_password:        "CHANGE_ME"
-  workday_workers_report_path: "/ccx/service/customreport2/.../Workers"
-  workday_leave_report_path:   "/ccx/service/customreport2/.../Leave"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-ms-entra-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: ms-entra, insight.cyberfabric.com/source-id: ms-entra-main }
-type: Opaque
-stringData:
-  azure_tenant_id:     "CHANGE_ME"
-  azure_client_id:     "CHANGE_ME"
-  azure_client_secret: "CHANGE_ME"
-```
-
-#### CRM & support
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-salesforce-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: salesforce, insight.cyberfabric.com/source-id: salesforce-main }
-type: Opaque
-stringData:
-  salesforce_instance_url:  "https://your-org.my.salesforce.com"
-  salesforce_client_id:     "CHANGE_ME"
-  salesforce_client_secret: "CHANGE_ME"
-  salesforce_start_date:    "2026-01-01"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-hubspot-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: hubspot, insight.cyberfabric.com/source-id: hubspot-main }
-type: Opaque
-stringData:
-  hubspot_access_token: "CHANGE_ME"
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-zendesk-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: zendesk, insight.cyberfabric.com/source-id: zendesk-main }
-type: Opaque
-stringData:
-  zendesk_subdomain: "your-subdomain"        # <subdomain>.zendesk.com
-  zendesk_email:     "agent@your-org.com"
-  zendesk_api_token: "CHANGE_ME"
-  # start_date:      "2026-01-01"            # optional
-```
-
-## Troubleshooting
-
-| Problem | What to check |
-|---------|-----------------|
-| `insight-analytics` / `insight-identity` stuck in `CreateContainerConfigError` | The chart could not compose the `*-config` Secrets. Confirm `insight-db-creds` has all four keys and carries **no** `app.kubernetes.io/managed-by: Helm` label: `kubectl -n insight get secret insight-db-creds -o yaml \| grep managed-by` should return nothing |
-| Dashboards show "no peer data" (the benchmark/comparison panel is empty) | After Gold-layer data has loaded, restart Analytic: `kubectl -n insight rollout restart deploy/insight-analytics` |
-| Login breaks after changing the host | Update `insight-oidc` (issuer and redirect URI), then restart the Router: `kubectl -n insight rollout restart deploy/insight-api-gateway` |
-| Connectors are not syncing | Check reconcile logs: `kubectl -n insight logs deploy/insight-analytics \| grep -i reconcile`. Confirm `airbyte.namespace` in your values points at the namespace that holds `airbyte-auth-secrets`, and that the `*-airbyte-auth-reader` RoleBinding exists there |
+See [deploy/CONNECTORS.md](./CONNECTORS.md) for the connector list and a copy-paste Secret for each.
 
 ## Appendix — Reference
 
@@ -760,45 +399,38 @@ stringData:
 
 | Placeholder | Field(s) | Notes |
 |-------------|----------|-------|
-| `<TENANT_ID>` | `global.tenantDefaultId`, `ingestion.reconcile.tenantId`, `identity.tenantDefaultId` | Must be identical across all three |
-| `<CLICKHOUSE_HOST>` | `clickhouse.host` | `deploy: false`; port fixed at `8123` in the file |
-| `<MARIADB_HOST>` | `mariadb.host` | `deploy: false`; port fixed at `3306` |
-| `<REDIS_HOST>` | `redis.host` | `deploy: false`; port fixed at `6379` |
-| `<REDPANDA_BROKERS>` | `redpanda.brokers` | `deploy: false`; include port, e.g. `:9093` |
-| `<AIRBYTE_NAMESPACE>` | `airbyte.namespace` | Namespace of the Airbyte release; `""` = app namespace |
-| `<ARGO_INSTANCE_ID>` | `ingestion.reconcile.argoInstanceId` | Your Argo controller's instance ID |
-| `<HOST>` | `apiGateway.ingress.host`, `frontend.ingress.host` | Public FQDN, shared by Router and Frontend (`/api/*` → Router, `/*` → UI) |
-| `<TLS_SECRET>` | `apiGateway.ingress.tls.secretName` | Kubernetes TLS Secret name |
+| `<TENANT_ID>` | `global.tenantDefaultId`, `ingestion.reconcile.tenantId` | Generated in Step 0; a lowercase UUID, identical across both |
+| `<CLICKHOUSE_HOST>` | `clickhouse.host` | Always external; port fixed at `8123` in the file |
+| `<MARIADB_HOST>` | `mariadb.host` | Always external; port fixed at `3306` |
+| `<REDIS_HOST>` | `redis.host` | Always external; port fixed at `6379` |
+| `<REDPANDA_BROKERS>` | `redpanda.brokers` | Always external; a single comma-separated `host:port` string, not a host/port pair. `9093` for the `redpanda/redpanda` chart's internal listener — read yours in Step 0 |
+| `<AIRBYTE_NAMESPACE>` | `airbyte.namespace` | Namespace of the Airbyte release; `""` = app namespace. Drives the computed `apiUrl` and where the jobs read `airbyte-auth-secrets` |
+| `<ARGO_INSTANCE_ID>` | `ingestion.reconcile.argoInstanceId` | Match the controller's configured `instanceID` (Step 0); empty if unpinned |
+| `<HOST>` | `gateway.ingress.host` | Public FQDN on the gateway's Ingress, the only one the chart publishes (`/` → UI, `/api/*` → Analytics/Identity) |
+| `<TLS_SECRET>` | `gateway.ingress.tls.secretName` | Kubernetes TLS Secret name; referenced only — the chart never creates it |
+| `<CLUSTER_ISSUER>` | `authenticator.tlsDiscovery.issuerRef.name` | A cert-manager `ClusterIssuer` that exists in your cluster; internal cert, so self-signed is fine |
+| `<OIDC_ISSUER>` | `authenticator.oidc.issuerUrl` | Your IdP's issuer URL |
+| `<OIDC_CLIENT_ID>` / `<OIDC_CLIENT_SECRET>` | `authenticator.oidc.clientId`/`clientSecret` | Your OIDC client / application registration credentials. The authenticator is the only OIDC client — the frontend does not register one |
 
 Other notable (non-placeholder) settings in this file:
 
+- Image tags are omitted deliberately. Each subchart renders `image.tag | default .Chart.AppVersion`, so a chart release already carries a tested set of product images. Set `<service>.image.tag` only to pin one service to a different build.
 - `credentials.deploymentMode: helm` and `credentials.autoGenerate: true` — this enables the "bring your own" credentials path, where the chart keeps a labelless `insight-db-creds` Secret instead of generating random passwords.
 - `identity.deploy: true` — required override; the chart's own default is `false`.
-- `apiGateway.authDisabled: false` — keep `false`; `true` disables all auth and is local-dev only.
+- `authenticator.tlsDiscovery.issuerRef.name` — the cert-manager `ClusterIssuer` the JWKS-discovery Certificate is issued from. Always set this: the chart ships `local-ca`, which is the self-signed root that `make bootstrap-cert-manager ENV=local` creates for the local k3s sandbox, not anything a real cluster has.
+- There is no auth-off toggle anywhere in this chart. `authenticator.oidc.issuerUrl` and `authenticator.oidc.redirectUri` are hard `required` fields, so a real IdP is a prerequisite; install Keycloak as a separate release if the stand has none. The bundled `keycloak`/`fakeidp` subcharts are local-development servers (embedded database, known passwords) and not a substitute.
 
 ### secrets/insight-db-creds.yaml keys
 
 | Key | Meaning | Consumed by |
 |-----|---------|--------------|
-| `clickhouse-password` | ClickHouse admin password | Analytic |
-| `mariadb-password` | MariaDB app-user password | Analytic + Identity |
-| `mariadb-root-password` | MariaDB root password, used by the identity-DB init hook | Identity |
-| `redis-password` | Redis password | Analytic |
+| `clickhouse-password` | Password of the `clickhouse.username` account | Analytics, Identity, and the init/migrate hooks |
+| `mariadb-password` | MariaDB app-user password | Analytics + Identity |
+| `mariadb-root-password` | Password of the account literally named `root` — the hook runs `mariadb -uroot` and no values key renames it. A wrong one surfaces as `MariaDB did not become reachable within 2 minutes`, not as an auth error | identity-DB init hook |
+| `redis-password` | Redis password | Analytics + Authenticator |
 
 Recall: this Secret must never carry an `app.kubernetes.io/managed-by: Helm` label.
 
-### secrets/insight-oidc.yaml keys
+### secrets/insight-authenticator-signing-keys.yaml keys
 
-| Key | Meaning |
-|-----|---------|
-| `APP__gears__oidc-authn-plugin__config__issuer_url` | IdP issuer URL |
-| `APP__gears__oidc-authn-plugin__config__audience` | OIDC client/application ID |
-| `APP__gears__oidc-authn-plugin__config__jwks_url` | `jwks_uri` from the IdP discovery document |
-| `APP__gears__auth-info__config__issuer_url` | IdP issuer URL (same value as above) |
-| `APP__gears__auth-info__config__client_id` | OIDC client/application ID (same value as above) |
-| `APP__gears__auth-info__config__redirect_uri` | `<APP_BASE_URL>/callback` |
-| `APP__gears__auth-info__config__scopes` | `openid profile email` |
-
-### values/umbrella.orbstack.yaml (local variant)
-
-This file is a pre-filled variant of the values file for local development on OrbStack's bundled k3s cluster, with all infrastructure running in an `insight-infra` namespace. It sets a fixed tenant UUID, in-cluster DNS hosts, an empty (host-less) ingress that matches any `Host` header, and disabled TLS. Use it only as a reference for local testing — do not reuse its host-less ingress or disabled TLS settings on a shared or production cluster.
+One required key, `current.pem`: the active ES256 (EC P-256) signing key, unencrypted PKCS#8 PEM.

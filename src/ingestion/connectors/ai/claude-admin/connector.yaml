@@ -1,4 +1,4 @@
-version: "7.0.4"
+version: "6.60.9"
 type: DeclarativeSource
 
 check:
@@ -11,6 +11,47 @@ definitions:
     type: ApiKeyAuthenticator
     api_token: "{{ config['admin_api_key'] }}"
     header: x-api-key
+
+  # Top-level (NOT under a `linked` block — the Builder strips linked error
+  # handlers). $ref'd into every stream's requester so the whole connector
+  # honors the org-wide Anthropic Admin API rate limit instead of self-
+  # inflicting a 429 storm. Mirrors the sibling claude-enterprise handler.
+  retryable_error_handler:
+    type: CompositeErrorHandler
+    error_handlers:
+      - type: DefaultErrorHandler
+        response_filters:
+          - type: HttpResponseFilter
+            action: RATE_LIMITED
+            http_codes:
+              - 429
+        backoff_strategies:
+          - type: WaitTimeFromHeader
+            header: Retry-After
+      - type: DefaultErrorHandler
+        max_retries: 5
+        response_filters:
+          - type: HttpResponseFilter
+            action: RETRY
+            http_codes:
+              - 503
+              - 500
+              - 502
+              - 504
+        backoff_strategies:
+          - type: ExponentialBackoffStrategy
+            factor: 5
+      - type: DefaultErrorHandler
+        response_filters:
+          - type: HttpResponseFilter
+            action: FAIL
+            http_codes:
+              - 401
+              - 404
+            error_message: >-
+              Authentication or scope error: verify the admin_api_key is a valid
+              Anthropic Admin API key with organization-level read scope (created
+              at console.anthropic.com by an organization admin).
 
   anthropic_headers:
     anthropic-version: "2023-06-01"
@@ -122,6 +163,8 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
         request_parameters:
           limit: "100"
       record_selector:
@@ -209,6 +252,8 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
         request_parameters:
           bucket_width: "1d"
       record_selector:
@@ -333,6 +378,8 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
         request_parameters:
           bucket_width: "1d"
       record_selector:
@@ -457,6 +504,8 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
       record_selector:
         type: RecordSelector
         extractor:
@@ -571,6 +620,8 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
       record_selector:
         type: RecordSelector
         extractor:
@@ -641,6 +692,8 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
       record_selector:
         type: RecordSelector
         extractor:
@@ -698,6 +751,8 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
         request_parameters:
           limit: "100"
       record_selector:
@@ -738,6 +793,8 @@ streams:
                     $ref: "#/definitions/anthropic_headers"
                   authenticator:
                     $ref: "#/definitions/api_key_authenticator"
+                  error_handler:
+                    $ref: "#/definitions/retryable_error_handler"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -807,6 +864,8 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
       record_selector:
         type: RecordSelector
         extractor:
@@ -817,6 +876,14 @@ streams:
         $ref: "#/definitions/offset_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
+
+# default_concurrency: 1 serializes the streams so the connector reads against
+# the org-wide Anthropic Admin API rate limit one stream at a time instead of
+# firing all streams in parallel (which produced a 429 storm — see #1902).
+# Combined with the Retry-After error handler above; matches claude-enterprise.
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 1
 
 spec:
   type: Spec

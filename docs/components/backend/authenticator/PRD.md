@@ -36,6 +36,7 @@ date: 2026-07-06
   - [5.13 Service Tokens](#513-service-tokens)
   - [5.14 Bootstrap of a Fresh Install](#514-bootstrap-of-a-fresh-install)
   - [5.15 Internal Endpoint Reachability](#515-internal-endpoint-reachability)
+  - [5.16 View-As Override](#516-view-as-override)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -460,6 +461,22 @@ Compose/dev has no NetworkPolicies; acceptable -- layers 1 and 3 still hold ther
 
 **Actors**: `cpt-insightspec-actor-nginx-gateway`, `cpt-insightspec-actor-downstream-service`
 
+### 5.16 View-As Override
+
+#### `__override` Login Parameter (Dev/Demo Environments Only)
+
+- [x] `p2` - **ID**: `cpt-insightspec-fr-auth-override`
+
+The system **MUST** honor a `__override=<email>` query parameter on `GET /auth/login` (the historical portal name for the operator "view the dashboard as another user" facility) **only** when `authenticator.override_enabled` is set, and that flag **MUST** default to `false` at every layer (gear config, Helm values). With the flag off the parameter is inert: the login proceeds as the caller and the attempt is logged.
+
+When enabled, the target email is stored server-side with the transient login state and applied only on the callback, **after** the caller completed a full IdP authentication and resolved to a known person: the target is resolved through the same Identity lookup, and the session and its linked JWT are minted for the target `person_id`/email. Note the lookup is **email-only** — Identity carries no tenant memberships yet (#1687) — so a target from another tenant resolves too, paired with the *caller's* tenant claim; acceptable while the flag marks whole dev/demo environments, to be revisited when membership resolution exists. The session record **MUST** retain the real principal (impersonator person id + email), the session **MUST** be revocable through the real principal as well (indexed under both persons), the login audit event **MUST** attribute the real principal and name the override target (denials included), and `/auth/me` **MUST** surface the impersonator so the SPA can display a "viewing as" indicator. An override naming an unknown person **MUST** be denied (no fallback to the caller's own identity — a typo must not look like the feature regressed).
+
+Viewer identity remains exclusively gateway-authored: no client-supplied header or parameter is ever trusted as identity, so this does not reopen the header-spoofing hole the gateway hardening closed.
+
+**Rationale**: Operators of dev/demo installs need to see the portal exactly as a given person (their scope, their metrics); marking the *environment* as impersonation-capable via a default-off flag keeps the facility out of every real deployment without per-user authorization machinery that does not exist yet (roles are `default_roles` until the permissions service lands).
+
+**Actors**: `cpt-insightspec-actor-browser-user`, `cpt-insightspec-actor-oidc-provider`
+
 ## 6. Non-Functional Requirements
 
 ### 6.1 NFR Inclusions
@@ -534,11 +551,11 @@ If Redis is unreachable, `/internal/authz` and `/auth/*` mutations **MUST** fail
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/auth/login` | Start OIDC flow; 302 to IdP. |
+| GET | `/auth/login` | Start OIDC flow; 302 to IdP. Optional `__override=<email>` view-as target, honored only when `override_enabled` (5.16). |
 | GET | `/auth/callback` | OIDC callback; creates session + linked JWT; sets cookie; 302 to SPA. |
 | POST | `/auth/refresh` | Rotate cookie, extend session TTL; return `{expires_at, refresh_at}`. |
 | POST | `/auth/logout` | Revoke current session; clear cookie; return RP-logout URL. |
-| GET | `/auth/me` | Current user, tenants, plus `{expires_at, refresh_at}`. |
+| GET | `/auth/me` | Current user, tenants, plus `{expires_at, refresh_at}`; `impersonator_email` on view-as sessions (5.16). |
 | GET | `/auth/sessions` | List active sessions for current user. |
 | DELETE | `/auth/sessions/{id}` | Revoke a specific session. |
 | DELETE | `/auth/sessions` | Revoke all sessions of current user. Admin/service variant revokes by user id (gateway-JWT authenticated). |
@@ -727,6 +744,7 @@ All endpoints are registered through the toolkit operation builder and land in t
 - [x] `cpt-insightspec-fr-auth-service-tokens`: A registered service obtains a `sub = service:<name>` JWT verifiable via the same JWKS; an unregistered caller gets 401.
 - [ ] `cpt-insightspec-fr-auth-bootstrap`: On an empty persons table with bootstrap enabled, the first IdP login creates a universe admin and emits the audit event; the second login does not.
 - [x] `cpt-insightspec-fr-auth-logout`, `cpt-insightspec-fr-auth-csrf`: Local, RP-initiated, and back-channel logout all converge on the same revoke pipeline; state-changing `/auth/*` requests without CSRF token or matching `Origin` are rejected 403.
+- [x] `cpt-insightspec-fr-auth-override`: With `override_enabled`, a login carrying `__override=<email>` yields a session whose JWT `sub` and `/auth/me` identity are the target's, with `impersonator_email` naming the caller; an unknown target is denied 403. With the flag at its default the parameter changes nothing.
 
 ## 10. Dependencies
 
@@ -758,3 +776,4 @@ All endpoints are registered through the toolkit operation builder and land in t
 | Bootstrap race on fresh install | First IdP-authenticated colleague wins universe admin | Empty-table-only window; loud audit; off switch; INSTALLER as production path |
 | Gateway exchange cache staleness | Revocation reaches the gateway up to `authz_cache_max_age` late | Default 30 s, well inside the 300 s acceptance bound; set 0 for per-request checks |
 | Registry misconfiguration | A service gets roles it should not have | Gitops review of every registry change; issuance audit trail |
+| `override_enabled` left on in a real environment | Any authenticated user can view the portal as any known person (the email-only Identity lookup spans tenants until #1687) | Default `false` at every layer; Helm value carries a dev/demo-only warning; every use and denial is audited with the real principal |

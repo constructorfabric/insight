@@ -101,7 +101,7 @@ Silver-level `silver:class_*` tags will be added in a separate PR; this connecto
 
 ## Operational Constraints
 
-- **Rate limits**: organization-level, enforced by the Anthropic Admin API. The connector follows `Retry-After` on HTTP 429 and retries transient 5xx with exponential backoff.
+- **Rate limits**: organization-level, enforced by the Anthropic Admin API. Every stream's requester carries a `CompositeErrorHandler` that honors `Retry-After` on HTTP 429 and retries transient 5xx (500/502/503/504) with exponential backoff, and the connector sets `concurrency_level: 1` so streams read serially rather than firing in parallel. Without this governor, parallel per-day requests across all streams saturated the org-wide limit and produced a 429 storm that starved `messages_usage`/`cost_report` to 0 rows (#1902).
 - **31-day window**: usage/cost endpoints cap date ranges at 31 days per request. The connector steps at `P1D` (one day per request) to avoid boundary-day loss caused by Airbyte's inclusive-inclusive cursor arithmetic.
 - **`cursor_granularity: PT1S`**: applied on incremental streams to prevent empty date-boundary windows (`starting_at == ending_at`) that the API rejects with HTTP 400. See the historical `claude-api` ADRs for background.
 - **No 3-day reporting lag**: unlike the Enterprise Analytics API (`claude-enterprise`), the Admin API makes day `D` data queryable the same day it is aggregated. This connector's default `start_date` is 90 days ago (not 14).
