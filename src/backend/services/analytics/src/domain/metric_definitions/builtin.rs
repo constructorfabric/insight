@@ -281,11 +281,14 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
     MetricSeed {
         metric_key: "ai.cost",
         source_key: "ai_usage",
-        label: "AI cost",
+        label: "AI usage cost",
         short_label: None,
-        description: Some("Reported AI spend across dev and assistant tools"),
+        description: Some("AI usage priced at vendor token/usage rates"),
         explanation: Some(
-            "Person-attributed AI spend across dev and assistant tools, where the connector reports cost.",
+            "Person-attributed AI usage priced at the vendor's token or usage rates — what the \
+             consumption would cost if billed purely by usage. Includes usage a seat or \
+             subscription already covered, and excludes seat and subscription fees, so it is not \
+             the amount invoiced. Covers the tools whose connector prices usage per person.",
         ),
         unit: None,
         format: MetricFormat::Currency,

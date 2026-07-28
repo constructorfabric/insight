@@ -1,0 +1,213 @@
+spec_version: 1
+description: >
+  Metric: ai.cost — the Cursor input, #1952.
+  How it's computed (bronze → silver → gold):
+    • bronze: Cursor prices usage per event, and ships those events twice — an
+              hourly stream whose amount Cursor may still recompute, plus a
+              next-day re-fetch carrying the finalized amount for the same event
+    • silver: the two event streams are folded into one row per event (latest
+              wins), the day's amounts are summed per developer, and that total
+              lands on the developer's day alongside their activity counters
+    • gold:   metric = sum of those daily amounts over the window, in dollars
+
+  What the amount means: an event's charged amount ALREADY includes Cursor's
+  token fee, so only the charged amount is summed — adding the fee on top
+  double-counts it. Usage the team's seats already cover counts too: the metric
+  is what the usage costs at Cursor's rates, not the amount invoiced.
+
+  Seeded (all on 2026-01-05 unless stated):
+    alice — 500¢ charged with a 150¢ token fee (fee must NOT add) + 300¢ covered
+            by the subscription (must still count) + one event re-priced DOWN by
+            the next-day re-fetch, 420¢ → 250¢ (counts once, at 250¢)
+            → $10.50. Also active on 2026-01-06 with lines but no priced event
+            → that day contributes nothing and reads as "not tracked", not $0.
+    bob   — 200¢ from Cursor + 3¢ from Claude Code the same day → $2.03 total,
+            split by tool in the breakdown.
+    carol — three 0.6¢ events → summed then rounded once = 2¢ ($0.02).
+  Cases: cursor cost · fee not double-counted · downward restatement ·
+         cross-tool sum · fractional cents · active day without priced events
+         (null, not 0).
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_cursor.cursor_daily_usage:
+    # date 1767571200000 ms = 2026-01-05; 1767657600000 ms = 2026-01-06.
+    - $ref: templates/cursor_usage.yaml#/templates/alice
+      unique_key: cursor-alice-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 40
+    - $ref: templates/cursor_usage.yaml#/templates/alice
+      unique_key: cursor-alice-20260106
+      date: 1767657600000
+      acceptedLinesAdded: 5
+    - $ref: templates/cursor_usage.yaml#/templates/bob
+      unique_key: cursor-bob-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 20
+    - $ref: templates/cursor_usage.yaml#/templates/carol
+      unique_key: cursor-carol-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 10
+
+  bronze_cursor.cursor_usage_events:
+    # timestamp 1767585600000 ms = 2026-01-05 04:00 UTC (inside the day above).
+    # alice: charged 500¢ WITH a 150¢ token fee already inside it → adds 500, not 650.
+    - $ref: templates/cursor_events.yaml#/templates/alice
+      unique_key: cursor-ev-alice-1
+      timestamp: "1767585600000"
+      chargedCents: 500
+      cursorTokenFee: 150
+    - $ref: templates/cursor_events.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: cursor-ev-alice-1
+      timestamp: "1767585600000"
+      chargedCents: 500
+      cursorTokenFee: 150
+    # alice: covered by the subscription — priced usage, still counts. Mixed-case
+    # and padded email: the day's events and the daily-usage row come from
+    # different endpoints, so the join must normalize both sides.
+    - $ref: templates/cursor_events.yaml#/templates/alice
+      unique_key: cursor-ev-alice-2
+      timestamp: "1767589200000"
+      chargedCents: 300
+      kind: "Included in Business"
+      userEmail: " Alice@Example.com"
+    # alice: initial amount, superseded by the finalized resync row below. The
+    # restatement goes DOWN (420 → 250) so picking the larger amount, or the
+    # earlier row, both fail — only extraction order gives 250.
+    - $ref: templates/cursor_events.yaml#/templates/alice
+      unique_key: cursor-ev-alice-3
+      timestamp: "1767592800000"
+      chargedCents: 420
+      _airbyte_extracted_at: "2026-01-05T05:00:00Z"
+    # bob: plain usage-based event.
+    - $ref: templates/cursor_events.yaml#/templates/bob
+      unique_key: cursor-ev-bob-1
+      timestamp: "1767585600000"
+      chargedCents: 200
+    # carol: three fractional amounts on one day → 0.6+0.6+0.6 = 1.8¢, summed
+    # THEN rounded = 2¢. Rounding per event would give 3¢, truncating 1¢.
+    - $ref: templates/cursor_events.yaml#/templates/carol
+      unique_key: cursor-ev-carol-1
+      timestamp: "1767585600000"
+      chargedCents: 0.6
+    - $ref: templates/cursor_events.yaml#/templates/carol
+      unique_key: cursor-ev-carol-2
+      timestamp: "1767589200000"
+      chargedCents: 0.6
+    - $ref: templates/cursor_events.yaml#/templates/carol
+      unique_key: cursor-ev-carol-3
+      timestamp: "1767592800000"
+      chargedCents: 0.6
+
+  bronze_cursor.cursor_usage_events_daily_resync:
+    # Same unique_key as cursor-ev-alice-3, extracted later with the finalized
+    # amount → 250¢ replaces 420¢ and is counted once.
+    - $ref: templates/cursor_events.yaml#/templates/alice
+      unique_key: cursor-ev-alice-3
+      timestamp: "1767592800000"
+      chargedCents: 250
+      _airbyte_extracted_at: "2026-01-06T00:00:00Z"
+
+  bronze_claude_team.claude_team_code_metrics:
+    # bob also uses Claude Code that day → 3¢, summed with Cursor's 200¢.
+    - $ref: templates/claude_team_usage.yaml#/templates/bob
+      metric_date: "2026-01-05"
+      unique_key: cc-bob-20260105
+      total_cost: "0.03"
+
+cases:
+  # ── Cursor cost reaches the metric, fee not double-counted, resync not doubled ─
+  - name: AI usage cost from Cursor events
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - metric_key: ai.cost
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+    expect:
+      - assert: "status == 200"
+      # 500 (fee inside, not added) + 300 (subscription-covered) + 250 (finalized) = 1050¢.
+      - metric: ai.cost
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 10.5 }
+      - metric: ai.cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 10.5))"
+      - metric: ai.cost
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'cursor') && double(v.value) == 10.5)"
+
+  # ── Fractional amounts: sum first, round once ────────────────────────────────
+  - name: AI usage cost rounds the daily sum once
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [carol@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - metric_key: ai.cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.cost
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 0.02 }
+
+  # ── Cursor + Claude Code on the same day sum, and split by tool ──────────────
+  - name: AI usage cost across tools
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [bob@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - metric_key: ai.cost
+            views:
+              - { view: period }
+              - { view: breakdown, dimensions: [tool] }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.cost
+        view: period
+        find: { entity_id: bob@example.com }
+        equal: { value: 2.03 }
+      - metric: ai.cost
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'bob@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'cursor') && double(v.value) == 2.0)"
+      - metric: ai.cost
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'bob@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'claude_code') && double(v.value) == 0.03)"
+
+  # ── Active Cursor day with no priced event → not tracked, NOT zero ───────────
+  - name: AI usage cost on an active day without priced events
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-01-06", to: "2026-01-06" }
+        metrics:
+          - metric_key: ai.cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.cost
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: null }

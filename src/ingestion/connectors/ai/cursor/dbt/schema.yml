@@ -26,12 +26,40 @@ sources:
           error_after: {count: 120, period: hour}
 
 models:
+  - name: cursor__event_cost_daily
+    description: >
+      Cursor priced usage rolled up from the per-event grain to
+      (tenant, source, email, day) — the single definition of a day's Cursor
+      cost, shared by cursor__ai_dev_usage and
+      assert_cursor_event_cost_attributed. Ephemeral: inlined as a CTE by each
+      consumer, which applies its own day bound.
+    columns:
+      - name: charged_cents
+        description: >
+          Sum of the day's `chargedCents`. That field is an event's full priced
+          value and ALREADY INCLUDES `cursorTokenFee` — summing both
+          double-counts the fee. All event kinds count, including
+          `Included in Business` (priced usage a seat covered).
+      - name: cost_version
+        description: >
+          Latest event extraction stamp in the group, in epoch millis. Folded
+          into the consumer's `_version` so a restated cost re-emits the row.
+      - name: has_priced_event
+        description: >
+          1 when at least one of the day's events carries a non-NULL
+          `chargedCents`. Lets a consumer tell "no priced usage" (NULL) from
+          "priced at zero" (0).
+
   - name: cursor__ai_dev_usage
     description: >
       Bronze → Silver step 1: Cursor per-user per-day usage → class_ai_dev_usage.
       Sourced from cursor_daily_usage (POST /teams/daily-usage-data), filtered to
       isActive=true and non-empty email. One row per (tenant, email, day).
       session_count=1 per active day (Cursor exposes no per-day session counter).
+      Cost is per-event in Cursor, so cost_cents joins the day's priced usage
+      from cursor__event_cost_daily; `_version` carries the later of the
+      daily-usage and per-event extraction stamps so a restatement re-emits
+      the row.
     columns:
       - name: insight_tenant_id
         tests:
@@ -78,7 +106,23 @@ models:
       - name: chat_requests
         description: "chatRequests + composerRequests"
       - name: cost_cents
-        description: "NULL in MVP (cost data lives in cursor_usage_events, per-event)"
+        description: >
+          Cursor usage priced at Cursor's rates for this person-day, in cents,
+          from cursor__event_cost_daily (which rolls up the deduplicated events,
+          so the finalized amount wins on a restatement).
+
+          `chargedCents` is the full priced value of an event and ALREADY
+          INCLUDES `cursorTokenFee` — adding the fee on top double-counts it.
+
+          Every event kind counts, including `Included in Business`: that usage
+          is priced consumption the seat already covered. So this is what the
+          usage would cost at Cursor's per-usage rates, NOT the amount invoiced
+          — seat fees are absent, and seat-covered consumption is present.
+
+          NULL when the person-day carries no priced event (structural absence,
+          not zero). Cost is dropped when the day has no isActive daily-usage
+          row despite carrying events; assert_cursor_event_cost_attributed
+          surfaces those rows.
       - name: commits_count
         description: "Always NULL for Cursor — Claude-Enterprise-specific column for git commits attributed to AI sessions."
       - name: pull_requests_count
@@ -102,7 +146,10 @@ models:
         tests:
           - not_null
       - name: _version
-        description: "ReplacingMergeTree version — toUnixTimestamp64Milli(_airbyte_extracted_at) per ADR-0001."
+        description: >
+          ReplacingMergeTree version (ADR-0001): the later of the daily-usage
+          and per-event extraction stamps, in epoch millis, so a restated cost
+          re-emits the person-day and clears the Silver watermark.
         tests:
           - not_null
 
