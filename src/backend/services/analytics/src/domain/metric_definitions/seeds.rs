@@ -33,14 +33,16 @@ async fn reconcile_source(
         db.execute(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_measures \
-                (id, source_id, measure_key, is_enabled) \
-             VALUES (?, ?, ?, TRUE) \
+                (id, source_id, measure_key, evidence_granularity, is_enabled) \
+             VALUES (?, ?, ?, ?, TRUE) \
              ON DUPLICATE KEY UPDATE \
+                evidence_granularity = VALUES(evidence_granularity), \
                 is_enabled = VALUES(is_enabled)",
             [
                 uuid_value(Uuid::now_v7()),
                 uuid_value(source_id),
                 Value::from(*measure_key),
+                Value::from(builtin_source.evidence_granularity(measure_key).as_db()),
             ],
         ))
         .await?;
@@ -74,11 +76,12 @@ async fn upsert_source(
     db.execute(Statement::from_sql_and_values(
         db.get_database_backend(),
         "INSERT INTO metric_sources \
-            (id, tenant_id, source_key, source_kind, source_ref, origin, is_enabled) \
-         VALUES (?, NULL, ?, ?, ?, 'builtin', TRUE) \
+            (id, tenant_id, source_key, source_kind, source_ref, evidence_ref, origin, is_enabled) \
+         VALUES (?, NULL, ?, ?, ?, ?, 'builtin', TRUE) \
          ON DUPLICATE KEY UPDATE \
             source_kind = VALUES(source_kind), \
             source_ref = VALUES(source_ref), \
+            evidence_ref = VALUES(evidence_ref), \
             origin = VALUES(origin), \
             is_enabled = VALUES(is_enabled)",
         [
@@ -86,6 +89,7 @@ async fn upsert_source(
             Value::from(builtin_source.source.key),
             Value::from(builtin_source.source.kind.as_db()),
             Value::from(builtin_source.source.source_ref),
+            Value::from(builtin_source.source.evidence_ref),
         ],
     ))
     .await?;

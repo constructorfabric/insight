@@ -528,6 +528,14 @@
         ],
         "type": "object"
       },
+      "EvidenceGranularity": {
+        "enum": [
+          "event",
+          "source_summary",
+          "derived_population"
+        ],
+        "type": "string"
+      },
       "GetMetricsRequest": {
         "additionalProperties": false,
         "description": "Request body for `POST /v1/catalog/get_metrics`.\n\n`tenant_id` is intentionally NOT accepted here — it is resolved server-side\nfrom the session by `tenant_middleware` (Refs #522 auth-trait). Allowing a\nbody-supplied `tenant_id` would open a cross-tenant disclosure surface.\n`deny_unknown_fields` enforces that defensively at the parser layer: a\ncaller that smuggles `\"tenant_id\": \"...\"` into the body gets a 400 instead\nof a silent ignore.",
@@ -685,6 +693,16 @@
           "direction": {
             "$ref": "#/components/schemas/MetricDirection"
           },
+          "drilldown": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricDrilldownCapability"
+              }
+            ]
+          },
           "explanation": {
             "type": [
               "string",
@@ -771,6 +789,24 @@
         ],
         "type": "object"
       },
+      "MetricDimensionFilterDto": {
+        "properties": {
+          "dimension": {
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "dimension",
+          "values"
+        ],
+        "type": "object"
+      },
       "MetricDimensionFilterRequest": {
         "properties": {
           "dimension": {
@@ -796,6 +832,260 @@
           "neutral"
         ],
         "type": "string"
+      },
+      "MetricDrilldownCapability": {
+        "properties": {
+          "granularity": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceGranularity"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "granularity"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownColumn": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/MetricDrilldownColumnType"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "type"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownColumnType": {
+        "enum": [
+          "string",
+          "date",
+          "number"
+        ],
+        "type": "string"
+      },
+      "MetricDrilldownEntity": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownExportFormat": {
+        "enum": [
+          "csv",
+          "xlsx"
+        ],
+        "type": "string"
+      },
+      "MetricDrilldownExportRequest": {
+        "properties": {
+          "display_dimensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/MetricDrilldownEntity"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDrilldownFilter"
+            },
+            "type": "array"
+          },
+          "format": {
+            "$ref": "#/components/schemas/MetricDrilldownExportFormat"
+          },
+          "metric_key": {
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/MetricDrilldownPeriod"
+          }
+        },
+        "required": [
+          "metric_key",
+          "entity",
+          "period",
+          "format"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownFilter": {
+        "properties": {
+          "dimension": {
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "dimension",
+          "values"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownPeriod": {
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownRequest": {
+        "properties": {
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_dimensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/MetricDrilldownEntity"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDrilldownFilter"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "metric_key": {
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/MetricDrilldownPeriod"
+          }
+        },
+        "required": [
+          "metric_key",
+          "entity",
+          "period"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownResponse": {
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDrilldownColumn"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDrilldownRow"
+            },
+            "type": "array"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/MetricDrilldownSelection"
+          }
+        },
+        "required": [
+          "selection",
+          "columns",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownRow": {
+        "properties": {
+          "values": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownSelection": {
+        "properties": {
+          "display_dimensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/MetricDrilldownEntity"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDrilldownFilter"
+            },
+            "type": "array"
+          },
+          "metric_key": {
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/MetricDrilldownPeriod"
+          }
+        },
+        "required": [
+          "metric_key",
+          "entity",
+          "period",
+          "filters",
+          "display_dimensions"
+        ],
+        "type": "object"
       },
       "MetricFormat": {
         "enum": [
@@ -906,6 +1196,16 @@
               "direction": {
                 "$ref": "#/components/schemas/MetricDirection"
               },
+              "drilldown": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MetricDrilldownCapability"
+                  }
+                ]
+              },
               "explanation": {
                 "type": [
                   "string",
@@ -920,6 +1220,9 @@
               },
               "metric_key": {
                 "type": "string"
+              },
+              "selection": {
+                "$ref": "#/components/schemas/MetricResultSelectionDto"
               },
               "short_label": {
                 "type": [
@@ -945,11 +1248,38 @@
               "label",
               "format",
               "direction",
-              "views"
+              "views",
+              "selection"
             ],
             "type": "object"
           }
         ]
+      },
+      "MetricResultSelectionDto": {
+        "properties": {
+          "entity": {
+            "$ref": "#/components/schemas/MetricResultsEntityDto"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDimensionFilterDto"
+            },
+            "type": "array"
+          },
+          "metric_key": {
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/MetricResultsPeriodDto"
+          }
+        },
+        "required": [
+          "metric_key",
+          "entity",
+          "period",
+          "filters"
+        ],
+        "type": "object"
       },
       "MetricResultViewDto": {
         "oneOf": [
@@ -1089,7 +1419,40 @@
         ],
         "type": "object"
       },
+      "MetricResultsEntityDto": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "ids"
+        ],
+        "type": "object"
+      },
       "MetricResultsPeriod": {
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "MetricResultsPeriodDto": {
         "properties": {
           "from": {
             "type": "string"
@@ -2814,6 +3177,229 @@
           }
         ],
         "summary": "List unified metric definitions"
+      }
+    },
+    "/v1/metric-drilldown": {
+      "post": {
+        "operationId": "analytics_api.metric_drilldown.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricDrilldownRequest"
+              }
+            }
+          },
+          "description": "Metric evidence selection",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricDrilldownResponse"
+                }
+              }
+            },
+            "description": "Metric evidence"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List metric evidence"
+      }
+    },
+    "/v1/metric-drilldown/export": {
+      "post": {
+        "operationId": "analytics_api.metric_drilldown.export",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricDrilldownExportRequest"
+              }
+            }
+          },
+          "description": "Metric evidence export selection",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Complete metric evidence export",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Attachment filename",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export metric evidence"
       }
     },
     "/v1/metric-results": {

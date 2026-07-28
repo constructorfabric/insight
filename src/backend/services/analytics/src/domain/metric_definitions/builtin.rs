@@ -1,5 +1,6 @@
 use crate::domain::metric_definitions::definition::{
-    MetricComputation, MetricDirection, MetricFormat, MetricInputRole, SourceKind, ValueTransform,
+    EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat, MetricInputRole,
+    SourceKind, ValueTransform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,12 +61,40 @@ pub struct SourceSeed {
     /// Managed-observation relation name; must satisfy
     /// `ObservationRelation::parse` (pinned by a registry test).
     pub source_ref: &'static str,
+    pub evidence_ref: &'static str,
 }
 
 pub struct BuiltinSource {
     pub source: SourceSeed,
     pub measures: &'static [&'static str],
     pub dimensions: &'static [&'static str],
+}
+
+impl BuiltinSource {
+    pub fn evidence_granularity(&self, measure_key: &str) -> EvidenceGranularity {
+        match (self.source.key, measure_key) {
+            (
+                "git",
+                "commit_count" | "commit_change_size" | "pr_created" | "pr_created_merged"
+                | "pr_merged" | "pr_cycle_hours" | "pr_change_size",
+            )
+            | (
+                "task",
+                "tasks_closed" | "bugs_fixed" | "due_date_on_time" | "due_date_with_due"
+                | "slip_days_total" | "late_count" | "dev_time_hours" | "resolution_days"
+                | "pickup_days",
+            )
+            | ("wiki", "pages_created") => EvidenceGranularity::Event,
+            ("ai_usage", "active_day")
+            | (
+                "collab",
+                "active_day" | "active_modality" | "meeting_free_day" | "focus_hours"
+                | "working_hours",
+            )
+            | ("task", _) => EvidenceGranularity::DerivedPopulation,
+            _ => EvidenceGranularity::SourceSummary,
+        }
+    }
 }
 
 pub struct MetricSeed {
@@ -101,6 +130,7 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
             key: "ai_usage",
             kind: SourceKind::ManagedObservation,
             source_ref: "ai_metric_observations",
+            evidence_ref: "ai_metric_evidence",
         },
         measures: &[
             "accepted_lines",
@@ -121,6 +151,7 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
             key: "git",
             kind: SourceKind::ManagedObservation,
             source_ref: "git_metric_observations",
+            evidence_ref: "git_metric_evidence",
         },
         measures: &[
             "commit_count",
@@ -150,6 +181,7 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
             key: "collab",
             kind: SourceKind::ManagedObservation,
             source_ref: "collab_metric_observations",
+            evidence_ref: "collab_metric_evidence",
         },
         measures: &[
             "total_chat_messages",
@@ -181,6 +213,7 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
             key: "task",
             kind: SourceKind::ManagedObservation,
             source_ref: "task_metric_observations",
+            evidence_ref: "task_metric_evidence",
         },
         measures: &[
             "tasks_closed",
@@ -209,6 +242,7 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
             key: "wiki",
             kind: SourceKind::ManagedObservation,
             source_ref: "wiki_metric_observations",
+            evidence_ref: "wiki_metric_evidence",
         },
         measures: &["pages_created", "edits", "pages_edited", "comments"],
         dimensions: &[],

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,6 +10,7 @@ use toolkit_canonical_errors::CanonicalError;
 
 use super::AppState;
 use super::error::MetricError;
+use crate::domain::metric_drilldown::load_capabilities;
 use crate::domain::metric_results::{
     BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
     MetricResultsRequest, MetricResultsResponse, PeerWideRow, PeriodWideRow, PlannedQuery,
@@ -32,7 +33,15 @@ pub async fn query_metric_results(
     Extension(ctx): Extension<SecurityContext>,
     Json(req): Json<MetricResultsRequest>,
 ) -> Result<Json<MetricResultsResponse>, CanonicalError> {
-    let req = validate_request(&state.db, ctx.subject_tenant_id(), req).await?;
+    let tenant_id = ctx.subject_tenant_id();
+    let req = validate_request(&state.db, tenant_id, req).await?;
+    let metric_keys = req
+        .metrics
+        .iter()
+        .map(|metric| metric.def.key().to_owned())
+        .collect::<Vec<_>>();
+    let capabilities = load_capabilities(&state.db, tenant_id, &metric_keys);
+    tokio::pin!(capabilities);
     let mut ranking_results = BTreeMap::new();
     let mut rankings = stream::iter(plan_rankings(&req))
         .map(|ranking| {
@@ -68,6 +77,13 @@ pub async fn query_metric_results(
         }
     }
 
+    let capabilities = match capabilities.await {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            tracing::warn!(error = ?error, "metric drilldown capability load failed");
+            HashMap::default()
+        }
+    };
     let mut metrics = Vec::with_capacity(req.metrics.len());
     for (idx, metric) in req.metrics.iter().enumerate() {
         let mut views = Vec::with_capacity(metric.views.len());
@@ -78,7 +94,30 @@ pub async fn query_metric_results(
             enforce_view_row_limit(&view, format!("metrics[{idx}].views[{view_index}]"))?;
             views.push(view);
         }
-        metrics.push(build_metric_result(&metric.def, views));
+        let mut result = build_metric_result(&metric.def, views);
+        result.drilldown = capabilities.get(metric.def.key()).cloned();
+        result.selection = crate::domain::metric_results::MetricResultSelectionDto {
+            metric_key: metric.def.key().to_owned(),
+            entity: crate::domain::metric_results::MetricResultsEntityDto {
+                r#type: req.entity_type.clone(),
+                ids: req.entity_ids.clone(),
+            },
+            period: crate::domain::metric_results::MetricResultsPeriodDto {
+                from: req.from.to_string(),
+                to: req.to.to_string(),
+            },
+            filters: metric
+                .filters
+                .iter()
+                .map(
+                    |filter| crate::domain::metric_results::MetricDimensionFilterDto {
+                        dimension: filter.dimension.clone(),
+                        values: filter.values.clone(),
+                    },
+                )
+                .collect(),
+        };
+        metrics.push(result);
     }
 
     let response = MetricResultsResponse { metrics };

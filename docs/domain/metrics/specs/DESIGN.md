@@ -90,6 +90,74 @@ The cohort view is unique per `(tenant_id, entity_type, entity_id,
 cohort_key)`. The peer query relies on this; a dbt build-integrity test
 asserts it.
 
+## Metric Evidence Contract
+
+Each managed source may expose `<family>_metric_evidence` in the `insight`
+database:
+
+```sql
+tenant_id String,
+source_key String,
+entity_type String,
+entity_id String,
+metric_date Date,
+observed_at DateTime64(3),
+measure_key String,
+record_id String,
+record_kind String,
+granularity String,
+record_label String,
+contribution Nullable(Float64),
+subject_key Nullable(String),
+dimensions Array(Tuple(key String, value String, label Nullable(String))),
+details Map(String, String)
+```
+
+Evidence relations are MergeTree serving tables built from silver. Their
+ordering follows the drilldown predicate and cursor access pattern, avoiding
+repeated silver reconstruction for every page and export. Observation models
+derive their values from these evidence tables. The registry stores one
+evidence relation per source and one granularity per measure:
+
+- `event`: one source event, such as a commit.
+- `source_summary`: the finest summary preserved by silver.
+- `derived_population`: a source entity participating in a derived metric.
+
+The schema validator probes every standard column. Drilldown capability is
+absent until the probe is definitively healthy and every metric input has
+granularity metadata. Missing, unchecked, or invalid evidence fails closed.
+
+`POST /v1/metric-drilldown` accepts one metric, one person entity, a period,
+declared dimension filters, and an encoded continuation cursor. It returns the canonical
+selection, typed server-owned columns,
+role-tagged evidence rows, and a next cursor. Ordering is ascending over the
+complete evidence key. The cursor is versioned and bound to the normalized
+selection and request tenant. It is not an authorization token and modifying
+its ordering key cannot widen the server-owned relation or selection.
+
+`POST /v1/metric-drilldown/export` produces the complete selected population
+as CSV or XLSX. Export is server-side and rejects results exceeding its row,
+byte, cell, execution-time, or concurrency limits. It never silently
+truncates.
+
+The evidence contract has these limitations:
+
+- Summary-grain silver cannot produce event-grain evidence. AI and
+  collaboration currently expose source summaries or derived populations.
+  Git exposes commit and pull-request events, task duration metrics expose
+  issue events, and wiki page creation exposes page events; their remaining
+  measures use the finest summary grain preserved by silver.
+- The views are mutable and not snapshot-isolated from an observation query.
+  Results reconcile after the corresponding dbt build, but a rebuild window
+  can temporarily show a different evidence population.
+- Source links are omitted. Hosted services commonly use custom domains, and
+  the current silver contract does not preserve a canonical web base URL. A
+  future source registry can add a non-secret `web_base_url` keyed by source
+  instance and combine it with provider-specific record identifiers.
+- Drilldown preserves the existing metric entity and tenant behavior. This
+  change does not add identity-tree authorization or warehouse tenant
+  enforcement.
+
 ## Computations
 
 The computation vocabulary is closed and fully executable:

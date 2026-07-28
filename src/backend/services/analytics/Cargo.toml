@@ -63,6 +63,10 @@ futures = { workspace = true }
 futures-util = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+csv = { workspace = true }
+rust_xlsxwriter = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }

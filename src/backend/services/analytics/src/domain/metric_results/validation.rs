@@ -499,7 +499,7 @@ fn validate_filters(
     Ok(out)
 }
 
-fn normalize_entity_type(entity_type: &str) -> Result<String, CanonicalError> {
+pub(crate) fn normalize_entity_type(entity_type: &str) -> Result<String, CanonicalError> {
     normalize_key("entity.type", entity_type)
 }
 
@@ -527,7 +527,7 @@ fn normalize_entity_ids(
 // Id normalization is a property of the entity type: person ids are emails
 // and the observation sources emit them lowercased, so equality requires
 // lowercasing here too. Other entity types keep their casing.
-fn normalize_entity_id(entity_type: &str, entity_id: &str) -> String {
+pub(crate) fn normalize_entity_id(entity_type: &str, entity_id: &str) -> String {
     let trimmed = entity_id.trim();
     match entity_type {
         "person" => trimmed.to_ascii_lowercase(),
@@ -553,7 +553,10 @@ fn normalize_key(field: &'static str, value: &str) -> Result<String, CanonicalEr
     Ok(value)
 }
 
-fn normalize_metric_key(field: &'static str, value: &str) -> Result<String, CanonicalError> {
+pub(crate) fn normalize_metric_key(
+    field: &'static str,
+    value: &str,
+) -> Result<String, CanonicalError> {
     let value = value.trim().to_ascii_lowercase();
     if parse_metric_key(&value).is_err() {
         return invalid(field, "expected a metric key");

@@ -3,6 +3,7 @@ pub mod auth;
 pub mod catalog;
 pub mod metric;
 pub mod metric_definitions;
+pub mod metric_drilldown;
 pub mod metric_results;
 pub mod query;
 pub mod schema_validator;

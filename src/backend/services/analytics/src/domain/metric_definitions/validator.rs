@@ -6,12 +6,14 @@ use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 
 use crate::domain::metric_definitions::definition::{
-    CohortSource, MetricInput, ObservationRelation, SourceKind,
+    CohortSource, EvidenceGranularity, EvidenceRelation, MetricInput, ObservationRelation,
+    SourceKind,
 };
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::repository::{
     MetricDefinitionValidationSpec, all_managed_sources, managed_definition_validation_specs,
-    update_definition_status, update_definitions_for_source_status, update_source_status,
+    source_evidence_granularities, update_definition_status, update_definitions_for_source_status,
+    update_evidence_status, update_source_status,
 };
 
 // Dimension coverage is checked over a trailing window anchored at the
@@ -59,25 +61,38 @@ impl MetricDefinitionValidator {
             }
         };
 
-        for (source_id, source_kind, source_ref) in sources {
+        for source in sources {
+            self.validate_evidence(
+                source.id,
+                &source.source_key,
+                source.evidence_ref.as_deref(),
+                &source.config_revision,
+            )
+            .await;
             let outcome = self
-                .validate_source(source_kind.as_str(), source_ref.as_str())
+                .validate_source(source.source_kind.as_str(), source.source_ref.as_str())
                 .await;
 
             match outcome {
                 ProbeOutcome::Definitive(state) => {
                     let (status, error_code) = state.as_db();
-                    if let Err(error) =
-                        update_source_status(&self.db, source_id, status, error_code).await
+                    if let Err(error) = update_source_status(
+                        &self.db,
+                        source.id,
+                        &source.config_revision,
+                        status,
+                        error_code,
+                    )
+                    .await
                     {
                         tracing::warn!(error = %error, "metric definition source status update failed");
                         continue;
                     }
                     if state.is_ok() {
-                        self.validate_definitions_for_source(source_id, source_ref.as_str())
+                        self.validate_definitions_for_source(source.id, source.source_ref.as_str())
                             .await;
                     } else if let Err(error) = update_definitions_for_source_status(
-                        &self.db, source_id, status, error_code,
+                        &self.db, source.id, status, error_code,
                     )
                     .await
                     {
@@ -86,11 +101,62 @@ impl MetricDefinitionValidator {
                 }
                 ProbeOutcome::Inconclusive => {
                     tracing::warn!(
-                        source_ref = %source_ref,
+                        source_ref = %source.source_ref,
                         "metric source validation inconclusive; keeping previous status"
                     );
                 }
             }
+        }
+    }
+
+    async fn validate_evidence(
+        &self,
+        source_id: uuid::Uuid,
+        source_key: &str,
+        evidence_ref: Option<&str>,
+        config_revision: &str,
+    ) {
+        let state = match evidence_ref.and_then(EvidenceRelation::parse) {
+            Some(relation) => match self
+                .has_exact_columns(relation.table_ref(), EVIDENCE_COLUMN_TYPES)
+                .await
+            {
+                Ok(ColumnCheck::Present) => {
+                    let expected = match source_evidence_granularities(&self.db, source_id).await {
+                        Ok(expected) => expected,
+                        Err(error) => {
+                            tracing::warn!(error = %error, "metric evidence granularity metadata load failed");
+                            return;
+                        }
+                    };
+                    match self
+                        .evidence_granularities_match(&relation, source_key, &expected)
+                        .await
+                    {
+                        Ok(true) => Some(ValidationState::Ok),
+                        Ok(false) => Some(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
+                        Err(error) => {
+                            tracing::warn!(error = %error, "metric evidence granularity validation failed");
+                            None
+                        }
+                    }
+                }
+                Ok(missing) => Some(ValidationState::Error(missing.error_code())),
+                Err(error) => {
+                    tracing::warn!(error = %error, "metric evidence validation failed");
+                    None
+                }
+            },
+            None => Some(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
+        };
+        let Some(state) = state else {
+            return;
+        };
+        let (status, error_code) = state.as_db();
+        if let Err(error) =
+            update_evidence_status(&self.db, source_id, config_revision, status, error_code).await
+        {
+            tracing::warn!(error = %error, "metric evidence status update failed");
         }
     }
 
@@ -334,6 +400,83 @@ impl MetricDefinitionValidator {
         Ok(ColumnCheck::Present)
     }
 
+    async fn has_exact_columns(
+        &self,
+        table: (&str, &str),
+        columns: &[(&str, &str)],
+    ) -> Result<ColumnCheck, clickhouse::error::Error> {
+        let (database, table) = table;
+        let exact_columns = columns
+            .iter()
+            .map(|(name, r#type)| format!("(name = '{name}' AND type = '{type}')"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let sql = format!(
+            "SELECT \
+                count() AS total_columns, \
+                countIf({exact_columns}) AS matching_columns \
+             FROM system.columns \
+             WHERE database = ? AND table = ?"
+        );
+        let row: ColumnProbeRow = self
+            .ch
+            .query(&sql)
+            .bind(database)
+            .bind(table)
+            .fetch_one()
+            .await?;
+        if row.total_columns == 0 {
+            return Ok(ColumnCheck::TableMissing);
+        }
+        if row.matching_columns < columns.len() as u64 {
+            return Ok(ColumnCheck::ColumnsMissing);
+        }
+        Ok(ColumnCheck::Present)
+    }
+
+    async fn evidence_granularities_match(
+        &self,
+        relation: &EvidenceRelation,
+        source_key: &str,
+        expected: &[(String, Option<String>)],
+    ) -> Result<bool, clickhouse::error::Error> {
+        if expected.is_empty()
+            || expected.iter().any(|(_, value)| {
+                value
+                    .as_deref()
+                    .and_then(EvidenceGranularity::from_db)
+                    .is_none()
+            })
+        {
+            return Ok(false);
+        }
+        let (database, table) = relation.table_ref();
+        let placeholders = vec!["?"; expected.len()].join(", ");
+        let sql = format!(
+            "SELECT measure_key, groupUniqArray(granularity) AS granularities \
+             FROM {database}.{table} \
+             WHERE source_key = ? AND measure_key IN ({placeholders}) \
+             GROUP BY measure_key"
+        );
+        let mut query = self.ch.query(&sql).bind(source_key);
+        for (measure_key, _) in expected {
+            query = query.bind(measure_key);
+        }
+        let rows = query
+            .fetch_all::<EvidenceGranularityProbeRow>()
+            .await?
+            .into_iter()
+            .map(|row| (row.measure_key, row.granularities))
+            .collect::<HashMap<_, _>>();
+        Ok(expected.iter().all(|(measure_key, granularity)| {
+            let Some(granularity) = granularity.as_deref() else {
+                return false;
+            };
+            rows.get(measure_key)
+                .is_some_and(|values| values.len() == 1 && values[0] == granularity)
+        }))
+    }
+
     async fn measure_last_dates(
         &self,
         relation: &ObservationRelation,
@@ -407,6 +550,27 @@ const OBSERVATION_COLUMNS: &[&str] = &[
     "dimensions",
 ];
 
+const EVIDENCE_COLUMN_TYPES: &[(&str, &str)] = &[
+    ("tenant_id", "String"),
+    ("source_key", "String"),
+    ("entity_type", "String"),
+    ("entity_id", "String"),
+    ("metric_date", "Date"),
+    ("observed_at", "Nullable(DateTime64(3))"),
+    ("measure_key", "String"),
+    ("record_id", "String"),
+    ("record_kind", "String"),
+    ("granularity", "String"),
+    ("record_label", "String"),
+    ("contribution", "Nullable(Float64)"),
+    ("subject_key", "Nullable(String)"),
+    (
+        "dimensions",
+        "Array(Tuple(key String, value String, label Nullable(String)))",
+    ),
+    ("details", "Map(String, String)"),
+];
+
 const COHORT_COLUMNS: &[&str] = &[
     "tenant_id",
     "entity_type",
@@ -432,6 +596,12 @@ struct DimensionCoverageProbeRow {
     measure_key: String,
     total_rows: u64,
     matching_rows: u64,
+}
+
+#[derive(Row, Deserialize)]
+struct EvidenceGranularityProbeRow {
+    measure_key: String,
+    granularities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]

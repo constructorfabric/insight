@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::view::{Bucket, MetricResultViewKind};
 use crate::domain::metric_definitions::{MetricDirection, MetricFormat};
+use crate::domain::metric_drilldown::MetricDrilldownCapability;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MetricResultsRequest {
@@ -95,6 +96,35 @@ pub struct MetricResultDto {
     #[serde(flatten)]
     pub computation: ComputationDto,
     pub views: Vec<MetricResultViewDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drilldown: Option<MetricDrilldownCapability>,
+    pub selection: MetricResultSelectionDto,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MetricResultSelectionDto {
+    pub metric_key: String,
+    pub entity: MetricResultsEntityDto,
+    pub period: MetricResultsPeriodDto,
+    pub filters: Vec<MetricDimensionFilterDto>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MetricResultsEntityDto {
+    pub r#type: String,
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MetricResultsPeriodDto {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MetricDimensionFilterDto {
+    pub dimension: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

@@ -17,7 +17,7 @@ pub enum MetricFormat {
     Percent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricComputation {
     Sum,
@@ -26,12 +26,39 @@ pub enum MetricComputation {
     DistinctCount,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricInputRole {
     Value,
     Numerator,
     Denominator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceGranularity {
+    Event,
+    SourceSummary,
+    DerivedPopulation,
+}
+
+impl EvidenceGranularity {
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::Event => "event",
+            Self::SourceSummary => "source_summary",
+            Self::DerivedPopulation => "derived_population",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "event" => Some(Self::Event),
+            "source_summary" => Some(Self::SourceSummary),
+            "derived_population" => Some(Self::DerivedPopulation),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +92,9 @@ impl SourceKind {
 /// a dbt model plus registry seed rows — no code change here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservationRelation(String);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvidenceRelation(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CohortSource {
@@ -240,6 +270,33 @@ impl ObservationRelation {
 
     /// The stored relation name, as written to `metric_sources.source_ref`.
     /// Used to group same-source metrics for batched queries.
+    pub fn source_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl EvidenceRelation {
+    pub const DATABASE: &'static str = "insight";
+
+    pub fn parse(value: &str) -> Option<Self> {
+        let family = value.strip_suffix("_metric_evidence")?;
+        if family.is_empty() {
+            return None;
+        }
+        let starts_alpha = family
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase());
+        let rest_ok = family
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        (starts_alpha && rest_ok).then(|| Self(value.to_owned()))
+    }
+
+    pub fn table_ref(&self) -> (&'static str, &str) {
+        (Self::DATABASE, &self.0)
+    }
+
     pub fn source_ref(&self) -> &str {
         &self.0
     }

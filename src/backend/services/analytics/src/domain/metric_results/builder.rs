@@ -283,6 +283,19 @@ pub fn build_metric_result(
         direction: def.base.direction,
         computation,
         views,
+        drilldown: None,
+        selection: super::dto::MetricResultSelectionDto {
+            metric_key: def.key().to_owned(),
+            entity: super::dto::MetricResultsEntityDto {
+                r#type: String::new(),
+                ids: Vec::new(),
+            },
+            period: super::dto::MetricResultsPeriodDto {
+                from: String::new(),
+                to: String::new(),
+            },
+            filters: Vec::new(),
+        },
     }
 }
 
