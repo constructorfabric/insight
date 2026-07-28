@@ -58,6 +58,14 @@ enum Commands {
     /// The Helm chart runs this as an initContainer before the server pod
     /// (same pattern as the analytics service).
     Migrate,
+    /// Run the persons-seed pipeline directly (bypassing the admin-gated HTTP
+    /// endpoint and auth) and exit. Refuses to run unless BOTH `persons` and
+    /// `person_roles` for the configured tenant are empty, so it can only
+    /// ever bootstrap a truly fresh instance, never clobber a live one. For
+    /// local/QA bring-up where no admin exists yet to call
+    /// `POST /v1/persons-seed` (#1956) — not part of the normal deploy
+    /// lifecycle.
+    InitSeed,
 }
 
 #[tokio::main]
@@ -69,5 +77,6 @@ async fn main() -> Result<()> {
     match cli.command.unwrap_or(Commands::Run) {
         Commands::Run => run_server(config).await,
         Commands::Migrate => gear::run_migrate(&config).await,
+        Commands::InitSeed => gear::run_init_seed(&config).await,
     }
 }

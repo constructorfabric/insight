@@ -68,10 +68,18 @@ pub async fn connect_single(database_url: &str) -> anyhow::Result<DatabaseConnec
     Ok(db)
 }
 
-/// Name of the cross-process advisory lock serializing schema migration runs.
-const MIGRATION_LOCK: &str = "identity_resolution_migrations";
-/// How long a second migrator waits for the lock before giving up (seconds).
-const MIGRATION_LOCK_TIMEOUT_SECS: i32 = 300;
+/// Name of the cross-process advisory lock serializing the identity-resolution
+/// schema/data lifecycle: migrations, the UUID-based first-admin bootstrap,
+/// AND the `init-seed` CLI subcommand (`gear::run_init_seed`) all take this
+/// SAME lock. `init-seed` shares it deliberately — it runs on a fresh install
+/// where the `migrate` initContainer may still be creating tables or applying
+/// `bootstrap_admin_person_id`; without a shared lock, `init-seed` could hit a
+/// partial schema or race the bootstrap insert. `pub(crate)` so `gear.rs` can
+/// take it for that non-migration use.
+pub(crate) const MIGRATION_LOCK: &str = "identity_resolution_migrations";
+/// How long a second lock-holder waits before giving up (seconds). Shared by
+/// every `MIGRATION_LOCK` caller (see above).
+pub(crate) const MIGRATION_LOCK_TIMEOUT_SECS: i32 = 300;
 
 /// Run pending migrations AND the first-admin bootstrap under one `GET_LOCK`
 /// advisory lock.
@@ -89,6 +97,11 @@ const MIGRATION_LOCK_TIMEOUT_SECS: i32 = 300;
 /// released could insert two active bootstrap assignments. Call with a
 /// [`connect_single`] connection: `GET_LOCK` is session-scoped and must share
 /// the session with the DDL.
+///
+/// This same [`MIGRATION_LOCK`] is also taken by the `init-seed` CLI
+/// subcommand (see `gear::run_init_seed`) — a fresh install may have `migrate`
+/// (this function) and a QA-triggered `init-seed` running close together, and
+/// both touch the same admin-less-tenant invariant.
 ///
 /// # Errors
 ///

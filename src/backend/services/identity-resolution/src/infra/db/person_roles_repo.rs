@@ -50,6 +50,30 @@ fn row_to_person_role(r: &sea_orm::QueryResult) -> anyhow::Result<PersonRole> {
     })
 }
 
+/// Count ALL `person_roles` rows for the tenant — active or revoked. Part of
+/// the "has this tenant ever been seeded/administered" check the `init-seed`
+/// CLI subcommand uses (alongside `persons_repo::count_for_tenant`) to confirm
+/// a tenant is genuinely fresh before it bypasses the persons-seed admin gate
+/// (#1956). Deliberately broader than an active-only check: a tenant with
+/// only revoked assignments has still been administered before and is not a
+/// fresh install.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub async fn count_for_tenant(db: &DatabaseConnection, tenant_id: Uuid) -> anyhow::Result<i64> {
+    const SQL: &str = "SELECT COUNT(*) AS c FROM person_roles WHERE insight_tenant_id = ?";
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [tenant_id.as_bytes().to_vec().into()],
+    );
+    match db.query_one(stmt).await? {
+        Some(row) => Ok(row.try_get::<i64>("", "c")?),
+        None => Ok(0),
+    }
+}
+
 /// Fetch one assignment by id (tenant-scoped). Ported from `SqlRoles.PersonRoleById`.
 ///
 /// # Errors

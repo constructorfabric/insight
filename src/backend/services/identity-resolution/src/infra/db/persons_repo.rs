@@ -16,6 +16,27 @@ use uuid::Uuid;
 
 use super::entities::persons;
 
+/// Count ALL `persons` rows for the tenant (no filter on observation status) —
+/// the "has this tenant ever been seeded" check the `init-seed` CLI
+/// subcommand uses to confirm a tenant is genuinely fresh before it bypasses
+/// the persons-seed admin gate (#1956).
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub async fn count_for_tenant(db: &DatabaseConnection, tenant_id: Uuid) -> anyhow::Result<i64> {
+    const SQL: &str = "SELECT COUNT(*) AS c FROM persons WHERE insight_tenant_id = ?";
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [tenant_id.as_bytes().to_vec().into()],
+    );
+    match db.query_one(stmt).await? {
+        Some(row) => Ok(row.try_get::<i64>("", "c")?),
+        None => Ok(0),
+    }
+}
+
 /// Resolve the set of `person_id`s whose CURRENT email (latest observation per
 /// source instance) equals `email` within the tenant.
 ///
