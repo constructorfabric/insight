@@ -65,6 +65,7 @@ impl MetricDefinitionValidator {
             self.validate_evidence(
                 source.id,
                 &source.source_key,
+                &source.source_ref,
                 source.evidence_ref.as_deref(),
                 &source.config_revision,
             )
@@ -113,11 +114,15 @@ impl MetricDefinitionValidator {
         &self,
         source_id: uuid::Uuid,
         source_key: &str,
+        source_ref: &str,
         evidence_ref: Option<&str>,
         config_revision: &str,
     ) {
-        let state = match evidence_ref.and_then(EvidenceRelation::parse) {
-            Some(relation) => match self
+        let state = match (
+            evidence_ref.and_then(EvidenceRelation::parse),
+            ObservationRelation::parse(source_ref),
+        ) {
+            (Some(relation), Some(observation_relation)) => match self
                 .has_exact_columns(relation.table_ref(), EVIDENCE_COLUMN_TYPES)
                 .await
             {
@@ -130,7 +135,12 @@ impl MetricDefinitionValidator {
                         }
                     };
                     match self
-                        .evidence_granularities_match(&relation, source_key, &expected)
+                        .evidence_granularities_match(
+                            &relation,
+                            &observation_relation,
+                            source_key,
+                            &expected,
+                        )
                         .await
                     {
                         Ok(true) => Some(ValidationState::Ok),
@@ -147,7 +157,7 @@ impl MetricDefinitionValidator {
                     None
                 }
             },
-            None => Some(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
+            _ => Some(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
         };
         let Some(state) = state else {
             return;
@@ -437,6 +447,7 @@ impl MetricDefinitionValidator {
     async fn evidence_granularities_match(
         &self,
         relation: &EvidenceRelation,
+        observation_relation: &ObservationRelation,
         source_key: &str,
         expected: &[(String, Option<String>)],
     ) -> Result<bool, clickhouse::error::Error> {
@@ -468,12 +479,30 @@ impl MetricDefinitionValidator {
             .into_iter()
             .map(|row| (row.measure_key, row.granularities))
             .collect::<HashMap<_, _>>();
+        let (observation_database, observation_table) = observation_relation.table_ref();
+        let observation_sql = format!(
+            "SELECT DISTINCT measure_key \
+             FROM {observation_database}.{observation_table} \
+             WHERE source_key = ? AND measure_key IN ({placeholders})"
+        );
+        let mut observation_query = self.ch.query(&observation_sql).bind(source_key);
+        for (measure_key, _) in expected {
+            observation_query = observation_query.bind(measure_key);
+        }
+        let observed_measures = observation_query
+            .fetch_all::<ObservedMeasureProbeRow>()
+            .await?
+            .into_iter()
+            .map(|row| row.measure_key)
+            .collect::<BTreeSet<_>>();
         Ok(expected.iter().all(|(measure_key, granularity)| {
             let Some(granularity) = granularity.as_deref() else {
                 return false;
             };
-            rows.get(measure_key)
-                .is_some_and(|values| values.len() == 1 && values[0] == granularity)
+            match rows.get(measure_key) {
+                Some(values) => values.len() == 1 && values[0] == granularity,
+                None => !observed_measures.contains(measure_key),
+            }
         }))
     }
 
@@ -602,6 +631,11 @@ struct DimensionCoverageProbeRow {
 struct EvidenceGranularityProbeRow {
     measure_key: String,
     granularities: Vec<String>,
+}
+
+#[derive(Row, Deserialize)]
+struct ObservedMeasureProbeRow {
+    measure_key: String,
 }
 
 #[derive(Debug, Clone, Copy)]
