@@ -16,6 +16,16 @@ spec:
       annotations:
         # Roll pods when the gears config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.idp.extraCaCertSecret }}
+        # Roll pods when the idp-extra-ca Secret's DATA changes under the
+        # same name/key (name/key/path changes already alter the pod
+        # template via the volume/env blocks above). `lookup` reads the
+        # live Secret on classic `helm upgrade`. Under GitOps
+        # (`helm template`) `lookup` always returns nil — same documented
+        # limitation as the credential lookups in charts/insight/values.yaml
+        # — so GitOps rotations still need an external rollout trigger.
+        checksum/idp-extra-ca: {{ lookup "v1" "Secret" .Release.Namespace .Values.idp.extraCaCertSecret | toYaml | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -59,6 +69,15 @@ spec:
               mountPath: /app/authn-ca
               readOnly: true
             {{- end }}
+            {{- if .Values.idp.extraCaCertSecret }}
+            # Extra CA bundle the binary trusts for the IdP TLS connection
+            # (idp.extraCaCertPath). Mounted read-only from the operator's
+            # Secret; the file's mount path is passed to the binary via the
+            # env var below.
+            - name: idp-extra-ca
+              mountPath: {{ dir .Values.idp.extraCaCertPath | quote }}
+              readOnly: true
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -73,6 +92,15 @@ spec:
             # APP__gears__authenticator__config__* leaf overrides.
             - secretRef:
                 name: {{ required "existingSecret is required (umbrella provides `insight-authenticator-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+          {{- if .Values.idp.extraCaCertSecret }}
+          env:
+            # Point the binary at the mounted extra-CA bundle. Set here (not
+            # via the config Secret) because the path is chart-derived from
+            # idp.extraCaCertPath and must stay in lockstep with the volume
+            # mount above. Overrides any value carried in the config Secret.
+            - name: APP__gears__authenticator__config__idp__extra_ca_cert_path
+              value: {{ .Values.idp.extraCaCertPath | quote }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
           {{- with .Values.livenessProbe }}
@@ -116,6 +144,14 @@ spec:
         - name: signing-keys
           secret:
             secretName: {{ required "signingKeysSecret is required (mount the ES256 current.pem/previous.pem)" .Values.signingKeysSecret | quote }}
+        {{- if .Values.idp.extraCaCertSecret }}
+        - name: idp-extra-ca
+          secret:
+            secretName: {{ .Values.idp.extraCaCertSecret | quote }}
+            items:
+              - key: {{ .Values.idp.extraCaCertSecretKey | quote }}
+                path: {{ base .Values.idp.extraCaCertPath | quote }}
+        {{- end }}
         {{- if .Values.tlsDiscovery.enabled }}
         - name: authn-tls-conf
           configMap:

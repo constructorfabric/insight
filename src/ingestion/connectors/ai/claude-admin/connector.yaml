@@ -1,4 +1,4 @@
-version: "6.60.9"
+version: "6.60.16"
 type: DeclarativeSource
 
 check:
@@ -20,6 +20,22 @@ definitions:
     type: CompositeErrorHandler
     error_handlers:
       - type: DefaultErrorHandler
+        # Anthropic's 429s on these endpoints carry no Retry-After header
+        # (confirmed empirically: curl against /v1/organizations/... returns
+        # 429 with no retry-after in the response). WaitTimeFromHeader alone
+        # then returns None on every attempt, so DefaultErrorHandler.backoff_time()
+        # falls through with no wait time, the CDK's internal bounded default
+        # backoff (~5 tries) exhausts fast, and the read aborts. For a
+        # multi-page stream (e.g. api_keys, ~80 pages at limit=1000) that
+        # aborts a full-refresh read with no resumable checkpoint, so the
+        # whole stream restarts from page 1 — turning any single mid-pagination
+        # 429 into a full re-read, which repeats as long as 429s recur.
+        # ExponentialBackoffStrategy is the fallback DefaultErrorHandler.backoff_time()
+        # tries when WaitTimeFromHeader returns None (it returns the first
+        # non-None value from the list), and max_retries is raised so the
+        # connector actually waits out a real rate-limit window instead of
+        # giving up after 5 tries (~a few seconds with no real wait time).
+        max_retries: 10
         response_filters:
           - type: HttpResponseFilter
             action: RATE_LIMITED
@@ -28,6 +44,8 @@ definitions:
         backoff_strategies:
           - type: WaitTimeFromHeader
             header: Retry-After
+          - type: ExponentialBackoffStrategy
+            factor: 5
       - type: DefaultErrorHandler
         max_retries: 5
         response_filters:
@@ -91,20 +109,6 @@ definitions:
       type: RequestOption
       inject_into: request_parameter
       field_name: after_id
-
-  offset_paginator:
-    type: DefaultPaginator
-    pagination_strategy:
-      type: OffsetIncrement
-      page_size: 1000
-    page_token_option:
-      type: RequestOption
-      inject_into: request_parameter
-      field_name: offset
-    page_size_option:
-      type: RequestOption
-      inject_into: request_parameter
-      field_name: limit
 
 streams:
   # ── Stream 1: claude_admin_users (full refresh, after_id cursor pagination) ──
@@ -293,8 +297,15 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%dT00:00:00Z')) }}"
         datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      # cursor_granularity: P0D so each slice sends ending_at = starting_at + step
+      # = the next UTC midnight. The Admin usage/cost API treats ending_at as
+      # EXCLUSIVE ("buckets that end before this timestamp") and snaps starting_at
+      # to the UTC day start, so a midnight→midnight window selects exactly one
+      # daily bucket — no gap, no double-count. A positive granularity (the old
+      # PT1S) pulls ending_at back to 23:59:59Z, which is not before the bucket's
+      # midnight end, so zero buckets qualify. See ADR-0002 (supersedes ADR-0001).
       step: P1D
-      cursor_granularity: PT1S
+      cursor_granularity: P0D
       start_time_option:
         type: RequestOption
         field_name: starting_at
@@ -411,8 +422,15 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%dT00:00:00Z')) }}"
         datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      # cursor_granularity: P0D so each slice sends ending_at = starting_at + step
+      # = the next UTC midnight. The Admin usage/cost API treats ending_at as
+      # EXCLUSIVE ("buckets that end before this timestamp") and snaps starting_at
+      # to the UTC day start, so a midnight→midnight window selects exactly one
+      # daily bucket — no gap, no double-count. A positive granularity (the old
+      # PT1S) pulls ending_at back to 23:59:59Z, which is not before the bucket's
+      # midnight end, so zero buckets qualify. See ADR-0002 (supersedes ADR-0001).
       step: P1D
-      cursor_granularity: PT1S
+      cursor_granularity: P0D
       start_time_option:
         type: RequestOption
         field_name: starting_at
@@ -560,7 +578,7 @@ streams:
         field_name: starting_at
         inject_into: request_parameter
 
-  # ── Stream 5: claude_admin_api_keys (full refresh, offset pagination) ──
+  # ── Stream 5: claude_admin_api_keys (full refresh, after_id cursor pagination) ──
   - type: DeclarativeStream
     name: claude_admin_api_keys
     primary_key:
@@ -622,6 +640,8 @@ streams:
           $ref: "#/definitions/api_key_authenticator"
         error_handler:
           $ref: "#/definitions/retryable_error_handler"
+        request_parameters:
+          limit: "1000"
       record_selector:
         type: RecordSelector
         extractor:
@@ -629,7 +649,7 @@ streams:
           field_path:
             - data
       paginator:
-        $ref: "#/definitions/offset_paginator"
+        $ref: "#/definitions/after_id_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
@@ -641,7 +661,7 @@ streams:
           - path: [created_by_type]
             value: "{{ record.get('created_by', {}).get('type', '') }}"
 
-  # ── Stream 6: claude_admin_workspaces (full refresh, offset pagination)
+  # ── Stream 6: claude_admin_workspaces (full refresh, after_id cursor pagination)
   #    Merged from claude-api: data_residency fallback '' (defensive).
   - type: DeclarativeStream
     name: claude_admin_workspaces
@@ -694,6 +714,8 @@ streams:
           $ref: "#/definitions/api_key_authenticator"
         error_handler:
           $ref: "#/definitions/retryable_error_handler"
+        request_parameters:
+          limit: "1000"
       record_selector:
         type: RecordSelector
         extractor:
@@ -701,7 +723,7 @@ streams:
           field_path:
             - data
       paginator:
-        $ref: "#/definitions/offset_paginator"
+        $ref: "#/definitions/after_id_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
@@ -795,6 +817,8 @@ streams:
                     $ref: "#/definitions/api_key_authenticator"
                   error_handler:
                     $ref: "#/definitions/retryable_error_handler"
+                  request_parameters:
+                    limit: "1000"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -802,7 +826,7 @@ streams:
                     field_path:
                       - data
                 paginator:
-                  $ref: "#/definitions/offset_paginator"
+                  $ref: "#/definitions/after_id_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
@@ -812,9 +836,9 @@ streams:
           - path: [unique]
             value: "{{ record.get('user_id', '') }}:{{ stream_partition['workspace_id'] }}"
 
-  # ── Stream 8: claude_admin_invites (full refresh, offset pagination)
-  #    Merged from claude-api: uses `created_at` (project-wide convention)
-  #    instead of claude-team's `invited_at`.
+  # ── Stream 8: claude_admin_invites (full refresh, after_id cursor pagination)
+  #    Schema uses `created_at` (project-wide convention); the Admin API returns
+  #    `invited_at`, so the AddFields below maps it before tenant_id_injection.
   - type: DeclarativeStream
     name: claude_admin_invites
     primary_key:
@@ -866,6 +890,8 @@ streams:
           $ref: "#/definitions/api_key_authenticator"
         error_handler:
           $ref: "#/definitions/retryable_error_handler"
+        request_parameters:
+          limit: "1000"
       record_selector:
         type: RecordSelector
         extractor:
@@ -873,8 +899,12 @@ streams:
           field_path:
             - data
       paginator:
-        $ref: "#/definitions/offset_paginator"
+        $ref: "#/definitions/after_id_paginator"
     transformations:
+      - type: AddFields
+        fields:
+          - path: [created_at]
+            value: "{{ record.get('created_at') or record.get('invited_at', '') }}"
       - $ref: "#/definitions/tenant_id_injection"
 
 # default_concurrency: 1 serializes the streams so the connector reads against
