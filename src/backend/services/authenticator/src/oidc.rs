@@ -131,7 +131,16 @@ impl OidcClient {
         }
         let http = builder.build().context("build OIDC HTTP client")?;
         Ok(Self {
-            issuer_url: idp.issuer_url.trim_end_matches('/').to_owned(),
+            // Do NOT normalize a trailing slash: OIDC issuer comparison is a
+            // byte-exact string match against the `issuer` field the IdP's
+            // own discovery document returns (RFC 8414 / OIDC Discovery
+            // §4.3) — no trailing-slash equivalence is defined. Some
+            // spec-compliant IdPs report an issuer WITH a trailing slash;
+            // stripping it here makes every login fail with `unexpected
+            // issuer URI` even though the configured value and the IdP's
+            // real issuer are the same URL. Operators must set `issuer_url`
+            // to exactly what the IdP's discovery document reports.
+            issuer_url: idp.issuer_url.clone(),
             client_id: idp.client_id.clone(),
             client_secret: idp.client_secret.clone(),
             tenant_claim: idp.tenant_claim.clone(),
@@ -350,7 +359,7 @@ impl OidcClient {
             .http
             .get(format!(
                 "{}/.well-known/openid-configuration",
-                self.issuer_url
+                self.issuer_url.trim_end_matches('/')
             ))
             .send()
             .await
@@ -385,7 +394,7 @@ impl OidcClient {
             .http
             .get(format!(
                 "{}/.well-known/openid-configuration",
-                self.issuer_url
+                self.issuer_url.trim_end_matches('/')
             ))
             .send()
             .await

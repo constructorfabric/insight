@@ -191,7 +191,7 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.07.27.08.48-132177b" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.07.27.17.10-65e5a4d" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -365,6 +365,10 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
+  # Honor `/auth/login?__override=<email>` (view-as, #1941): the session is
+  # minted for that person instead of the authenticated one. Dev/demo
+  # environments ONLY — MUST stay false anywhere real users log in.
+  overrideEnabled: false
 # ─── fakeidp (dev/e2e OIDC provider — NEVER a real environment) ─────────────
 fakeidp:
   deploy: false

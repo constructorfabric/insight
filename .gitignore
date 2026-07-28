@@ -79,6 +79,8 @@ coverage-raw/
 # Files matched here are owned by Constructor Studio and may be overwritten.
 .cf-studio/.core/
 .cf-studio/.gen/
+# Constructor Studio plan files — local working state (plan-first + cf-plan).
+.cf-studio/.plans/
 .agents/skills/cf-analyze/SKILL.md
 .agents/skills/cf-auto-config/SKILL.md
 .agents/skills/cf-brainstorm/SKILL.md

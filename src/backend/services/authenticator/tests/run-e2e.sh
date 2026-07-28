@@ -16,6 +16,8 @@ cd "$HERE/../../.."   # -> src/backend (the cargo workspace root)
 
 AUTH_PORT=8083
 TOKEN_PORT=8093
+AUTH2_PORT=8085
+TOKEN2_PORT=8095
 IDP_PORT=8084
 IDENTITY_PORT=8092
 REDIS_CT=authenticator-e2e-redis
@@ -27,6 +29,7 @@ cleanup() {
   docker rm -f "$REDIS_CT" >/dev/null 2>&1
   [[ -n "${KEYS_DIR:-}" ]] && rm -rf "$KEYS_DIR"
   [[ -n "${SVC_KEYS_DIR:-}" ]] && rm -rf "$SVC_KEYS_DIR"
+  [[ -n "${AUTH2_CONFIG:-}" ]] && rm -f "$AUTH2_CONFIG"
 }
 trap cleanup EXIT
 
@@ -79,6 +82,9 @@ pids+=($!)
 wait_ready identity-stub "http://localhost:$IDENTITY_PORT/internal/persons/by-email/probe@example.com"
 
 echo "==> authenticator :$AUTH_PORT"
+# override_enabled exercises the `__override` view-as loop (e2e_override); the
+# parameter is inert for every other test (nothing else sends it).
+APP__gears__authenticator__config__override_enabled=true \
 APP__gears__authenticator__config__redis_url=redis://localhost:6399 \
 APP__gears__authenticator__config__signing_keys_path="$KEYS_DIR" \
 APP__gears__authenticator__config__identity_url="http://localhost:$IDENTITY_PORT" \
@@ -100,6 +106,31 @@ if ! wait_ready authenticator "http://localhost:$AUTH_PORT/.well-known/jwks.json
   exit 1
 fi
 
+echo "==> authenticator #2 :$AUTH2_PORT (override_enabled at its default: false)"
+# Same stack (Redis/keys/IdP/identity), own ports + grpc socket. This instance
+# proves the `__override` parameter is inert unless an environment opts in.
+AUTH2_CONFIG="$(mktemp "${TMPDIR:-/tmp}/authenticator-e2e-cfg2.XXXXXX")"
+sed -e "s/$AUTH_PORT/$AUTH2_PORT/g" -e "s/$TOKEN_PORT/$TOKEN2_PORT/g" \
+    -e 's#/tmp/authenticator-grpc#/tmp/authenticator-e2e2-grpc#' \
+  services/authenticator/config/insight.yaml > "$AUTH2_CONFIG"
+APP__gears__authenticator__config__redis_url=redis://localhost:6399 \
+APP__gears__authenticator__config__signing_keys_path="$KEYS_DIR" \
+APP__gears__authenticator__config__identity_url="http://localhost:$IDENTITY_PORT" \
+APP__gears__authenticator__config__gateway_issuer=http://localhost:8080 \
+APP__gears__authenticator__config__idp__issuer_url="http://localhost:$IDP_PORT" \
+APP__gears__authenticator__config__idp__client_id=insight-authenticator \
+APP__gears__authenticator__config__redirect_uri="http://localhost:$AUTH2_PORT/auth/callback" \
+APP__gears__authenticator__config__service_tokens__public_key_dir="$SVC_KEYS_DIR" \
+  ./target/release/authenticator -c "$AUTH2_CONFIG" run \
+  >/tmp/authenticator-e2e-auth2.log 2>&1 &
+pids+=($!)
+
+echo "==> wait for authenticator #2 readiness"
+if ! wait_ready authenticator2 "http://localhost:$AUTH2_PORT/.well-known/jwks.json"; then
+  tail -20 /tmp/authenticator-e2e-auth2.log >&2 || true
+  exit 1
+fi
+
 echo "==> run the login loop"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \
   cargo test -p authenticator --test e2e_login_loop -- --ignored --nocapture
@@ -111,6 +142,11 @@ AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \
 echo "==> run the session-management loop (step 10.2)"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER=dev@company.nonpresent \
   cargo test -p authenticator --test e2e_sessions -- --ignored --nocapture
+
+echo "==> run the __override view-as loop (#1941)"
+AUTH_BASE="http://localhost:$AUTH_PORT" AUTH_BASE_DISABLED="http://localhost:$AUTH2_PORT" \
+  E2E_USER=dev@company.nonpresent \
+  cargo test -p authenticator --test e2e_override -- --ignored --nocapture
 
 echo "==> run the back-channel logout loop (step 10.3)"
 AUTH_BASE="http://localhost:$AUTH_PORT" FAKEIDP_PUBLIC="http://localhost:$IDP_PORT" \

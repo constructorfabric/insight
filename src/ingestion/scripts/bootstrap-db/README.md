@@ -6,8 +6,10 @@ How it works: for every connector the source image runs `discover` (schemas are 
 
 ## Prerequisites
 
-- `docker`, `jq`, `yq` (mikefarah v4), `dbt` with `dbt-clickhouse`
-- ClickHouse reachable under `CLICKHOUSE_HOST` both from this machine (dbt) and from inside docker containers (destination connector). For a ClickHouse running on this machine use `host.docker.internal`.
+- `docker`, `jq`, `yq` (mikefarah v4)
+- `python3.12` or `python3.11` on `PATH` — `run-dbt.sh` builds a local `.venv` with the pinned dbt from it (parity with the toolbox image; dbt-core 1.10 does not run on newer pythons). A `python -m venv`-capable interpreter is required (uv-managed pythons lack `ensurepip`; with those, pre-build the venv via `uv venv --seed .venv && .venv/bin/pip install dbt-core==<pin> dbt-clickhouse==<pin>`).
+- ClickHouse reachable under `CLICKHOUSE_HOST` both from this machine (dbt) and from inside docker containers (destination connector). For a ClickHouse running on this machine use the machine's LAN IP (`ipconfig getifaddr en0`) — `host.docker.internal` resolves inside containers but not on the macOS host itself.
+- Real HubSpot and Salesforce credentials in `.env` — their CDK `discover` calls the live APIs, so fake values fail. Without credentials, seed their bronze from the committed snapshot instead: apply `scripts/connectors-ddl/{hubspot,salesforce}.sql`, run `./run-dbt.sh --select hubspot__bronze_promoted salesforce__bronze_promoted`, and continue from the dbt step.
 
 ## Local ClickHouse for testing
 

@@ -54,7 +54,10 @@ CHART            ?= oci://ghcr.io/constructorfabric/charts/insight
 LOCAL_CHART      ?= ../../charts/insight
 INSIGHT_VERSION  ?= $(shell cat .insight-version 2>/dev/null)
 VALUES           ?= environments/$(ENV)/values.yaml
-TIMEOUT          ?= 10m
+# Covers rollout waits plus the post-upgrade clickhouse-migrate hook; the
+# gold build inside that hook spills to disk under memory pressure, which
+# trades speed for reliability — give it room before --atomic rolls back.
+TIMEOUT          ?= 30m
 RENDER_DIR       := .deploy
 
 # Extra flags appended to helm invocations. Default empty.
@@ -102,6 +105,10 @@ REDPANDA_CONSOLE_RELEASE ?= redpanda-console
 REDPANDA_CONSOLE_CHART   ?= redpanda/console
 REDPANDA_CONSOLE_VERSION ?= 3.7.0
 
+# Airbyte 1.8+ merged the webapp service into server and stopped publishing
+# a separate webapp image — UI is served by the server service. Bumping below
+# 1.8 (or rolling back) requires re-adding the webapp subchart/routing that
+# system/airbyte/values.yaml removed; see issue #1910.
 AIRBYTE_RELEASE  ?= airbyte
 AIRBYTE_VERSION  ?= 1.9.2
 
