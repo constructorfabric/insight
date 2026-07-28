@@ -273,11 +273,7 @@ SELECT
         hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), dimensions))))
     ) AS record_id,
     measure_key AS record_kind,
-    if(
-        measure_key IN ('commit_change_size', 'pr_cycle_hours', 'pr_change_size'),
-        'event',
-        'source_summary'
-    ) AS granularity,
+    'source_summary' AS granularity,
     replaceAll(measure_key, '_', ' ') AS record_label,
     value AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
@@ -353,8 +349,11 @@ FROM prs_created_source
 ARRAY JOIN arrayConcat(
     [tuple('pr_created', toFloat64(1))],
     if(state = 'MERGED', [tuple('pr_created_merged', toFloat64(1))], []),
-    if(change_size > 0, [tuple('pr_change_size', toFloat64(change_size))], [])
+    if(ifNull(change_size, 0) > 0, [tuple('pr_change_size', toFloat64(change_size))], [])
 ) AS pr_measure
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND metric_date IS NOT NULL
 
 UNION ALL
 
@@ -384,3 +383,6 @@ ARRAY JOIN arrayConcat(
     [tuple('pr_merged', toFloat64(1))],
     if(cycle_hours IS NOT NULL, [tuple('pr_cycle_hours', toFloat64(cycle_hours))], [])
 ) AS pr_measure
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND metric_date IS NOT NULL

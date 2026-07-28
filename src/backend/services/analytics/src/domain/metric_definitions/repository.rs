@@ -602,25 +602,33 @@ pub async fn update_evidence_status(
     status: SchemaStatus,
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
-    db.execute(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        "UPDATE metric_sources \
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "UPDATE metric_sources \
          SET evidence_schema_status = ?, \
              evidence_schema_checked_at = CURRENT_TIMESTAMP(3), \
              evidence_schema_error_code = ?, \
              updated_at = updated_at \
          WHERE id = ? AND updated_at = ?",
-        [
-            Value::from(status.as_db()),
-            match error_code {
-                Some(code) => Value::from(code.as_db()),
-                None => Value::String(None),
-            },
-            Value::Bytes(Some(Box::new(source_id.as_bytes().to_vec()))),
-            Value::from(config_revision),
-        ],
-    ))
-    .await?;
+            [
+                Value::from(status.as_db()),
+                match error_code {
+                    Some(code) => Value::from(code.as_db()),
+                    None => Value::String(None),
+                },
+                uuid_value(source_id),
+                Value::from(config_revision),
+            ],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        tracing::trace!(
+            %source_id,
+            config_revision,
+            "metric evidence status update skipped for stale configuration revision"
+        );
+    }
     Ok(())
 }
 

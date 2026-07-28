@@ -15,6 +15,10 @@ use crate::domain::metric_definitions::repository::{
     source_evidence_granularities, update_definition_status, update_definitions_for_source_status,
     update_evidence_status, update_source_status,
 };
+use crate::domain::metric_drilldown::{
+    EVIDENCE_QUERY_MEMORY_BYTES, EVIDENCE_QUERY_READ_BYTES, EVIDENCE_QUERY_RESULT_BYTES,
+    EVIDENCE_QUERY_TIMEOUT_SECS,
+};
 
 // Dimension coverage is checked over a trailing window anchored at the
 // newest observed row, not at today(): rows predating a dimension's
@@ -65,6 +69,7 @@ impl MetricDefinitionValidator {
             self.validate_evidence(
                 source.id,
                 &source.source_key,
+                &source.source_kind,
                 &source.source_ref,
                 source.evidence_ref.as_deref(),
                 &source.config_revision,
@@ -114,10 +119,14 @@ impl MetricDefinitionValidator {
         &self,
         source_id: uuid::Uuid,
         source_key: &str,
+        source_kind: &str,
         source_ref: &str,
         evidence_ref: Option<&str>,
         config_revision: &str,
     ) {
+        if SourceKind::from_db(source_kind) == Some(SourceKind::CustomObservationSql) {
+            return;
+        }
         let state = match (
             evidence_ref.and_then(EvidenceRelation::parse),
             ObservationRelation::parse(source_ref),
@@ -144,7 +153,15 @@ impl MetricDefinitionValidator {
                         .await
                     {
                         Ok(true) => Some(ValidationState::Ok),
-                        Ok(false) => Some(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
+                        Ok(false) => {
+                            tracing::warn!(
+                                source_key,
+                                evidence_ref,
+                                expected = ?expected,
+                                "metric evidence granularity does not match configured measures"
+                            );
+                            Some(ValidationState::Error(MetricSchemaErrorCode::Unknown))
+                        }
                         Err(error) => {
                             tracing::warn!(error = %error, "metric evidence granularity validation failed");
                             None
@@ -157,7 +174,7 @@ impl MetricDefinitionValidator {
                     None
                 }
             },
-            _ => Some(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
+            _ => Some(ValidationState::Unchecked),
         };
         let Some(state) = state else {
             return;
@@ -461,17 +478,61 @@ impl MetricDefinitionValidator {
         {
             return Ok(false);
         }
-        let (database, table) = relation.table_ref();
         let placeholders = vec!["?"; expected.len()].join(", ");
-        let sql = format!(
-            "SELECT measure_key, groupUniqArray(granularity) AS granularities \
-             FROM {database}.{table} \
+        let (observation_database, observation_table) = observation_relation.table_ref();
+        let observation_sql = format!(
+            "SELECT measure_key, toString(max(metric_date)) AS last_date \
+             FROM {observation_database}.{observation_table} \
              WHERE source_key = ? AND measure_key IN ({placeholders}) \
              GROUP BY measure_key"
         );
-        let mut query = self.ch.query(&sql).bind(source_key);
+        let mut observation_query = self
+            .ch
+            .query(&observation_sql)
+            .with_option(
+                "max_execution_time",
+                EVIDENCE_QUERY_TIMEOUT_SECS.to_string(),
+            )
+            .with_option("max_memory_usage", EVIDENCE_QUERY_MEMORY_BYTES.to_string())
+            .with_option("max_bytes_to_read", EVIDENCE_QUERY_READ_BYTES.to_string())
+            .with_option("max_result_bytes", EVIDENCE_QUERY_RESULT_BYTES.to_string())
+            .bind(source_key);
+        for (measure_key, _) in expected {
+            observation_query = observation_query.bind(measure_key);
+        }
+        let observed_dates = parse_measure_last_dates(observation_query.fetch_all().await?)?;
+        let observed_measures = observed_dates.keys().cloned().collect::<BTreeSet<_>>();
+        let window_start = observed_dates
+            .values()
+            .min()
+            .map(|date| *date - chrono::Duration::days(i64::from(PROBE_WINDOW_DAYS)));
+
+        let (database, table) = relation.table_ref();
+        let window_sql = window_start
+            .map(|_| " AND metric_date >= toDate(?)")
+            .unwrap_or_default();
+        let sql = format!(
+            "SELECT measure_key, groupUniqArray(granularity) AS granularities \
+             FROM {database}.{table} \
+             WHERE source_key = ? AND measure_key IN ({placeholders}){window_sql} \
+             GROUP BY measure_key"
+        );
+        let mut query = self
+            .ch
+            .query(&sql)
+            .with_option(
+                "max_execution_time",
+                EVIDENCE_QUERY_TIMEOUT_SECS.to_string(),
+            )
+            .with_option("max_memory_usage", EVIDENCE_QUERY_MEMORY_BYTES.to_string())
+            .with_option("max_bytes_to_read", EVIDENCE_QUERY_READ_BYTES.to_string())
+            .with_option("max_result_bytes", EVIDENCE_QUERY_RESULT_BYTES.to_string())
+            .bind(source_key);
         for (measure_key, _) in expected {
             query = query.bind(measure_key);
+        }
+        if let Some(window_start) = window_start {
+            query = query.bind(window_start.to_string());
         }
         let rows = query
             .fetch_all::<EvidenceGranularityProbeRow>()
@@ -479,30 +540,24 @@ impl MetricDefinitionValidator {
             .into_iter()
             .map(|row| (row.measure_key, row.granularities))
             .collect::<HashMap<_, _>>();
-        let (observation_database, observation_table) = observation_relation.table_ref();
-        let observation_sql = format!(
-            "SELECT DISTINCT measure_key \
-             FROM {observation_database}.{observation_table} \
-             WHERE source_key = ? AND measure_key IN ({placeholders})"
-        );
-        let mut observation_query = self.ch.query(&observation_sql).bind(source_key);
-        for (measure_key, _) in expected {
-            observation_query = observation_query.bind(measure_key);
-        }
-        let observed_measures = observation_query
-            .fetch_all::<ObservedMeasureProbeRow>()
-            .await?
-            .into_iter()
-            .map(|row| row.measure_key)
-            .collect::<BTreeSet<_>>();
         Ok(expected.iter().all(|(measure_key, granularity)| {
             let Some(granularity) = granularity.as_deref() else {
                 return false;
             };
-            match rows.get(measure_key) {
+            let matches = match rows.get(measure_key) {
                 Some(values) => values.len() == 1 && values[0] == granularity,
                 None => !observed_measures.contains(measure_key),
+            };
+            if !matches {
+                tracing::warn!(
+                    measure_key,
+                    expected_granularity = granularity,
+                    actual_granularities = ?rows.get(measure_key),
+                    observed = observed_measures.contains(measure_key),
+                    "metric evidence measure granularity mismatch"
+                );
             }
+            matches
         }))
     }
 
@@ -631,11 +686,6 @@ struct DimensionCoverageProbeRow {
 struct EvidenceGranularityProbeRow {
     measure_key: String,
     granularities: Vec<String>,
-}
-
-#[derive(Row, Deserialize)]
-struct ObservedMeasureProbeRow {
-    measure_key: String,
 }
 
 #[derive(Debug, Clone, Copy)]

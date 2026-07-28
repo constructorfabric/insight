@@ -27,6 +27,10 @@ const MAX_DISPLAY_DIMENSIONS: usize = 10;
 const MAX_FILTER_VALUES: usize = 100;
 const MAX_FILTER_VALUE_BYTES: usize = 512;
 pub const MAX_EXPORT_ROWS: usize = 50_000;
+pub const EVIDENCE_QUERY_TIMEOUT_SECS: u64 = 45;
+pub const EVIDENCE_QUERY_MEMORY_BYTES: usize = 256 * 1024 * 1024;
+pub const EVIDENCE_QUERY_READ_BYTES: usize = 512 * 1024 * 1024;
+pub const EVIDENCE_QUERY_RESULT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct MetricDrilldownEntity {
@@ -197,6 +201,7 @@ pub struct CursorKey {
 struct CursorEnvelope {
     version: u8,
     fingerprint: String,
+    snapshot_id: String,
     key: CursorKey,
 }
 
@@ -226,6 +231,7 @@ struct CapabilityRow {
     metric_key: String,
     input_role: String,
     evidence_granularity: Option<String>,
+    source_key: String,
     evidence_ref: Option<String>,
     evidence_schema_status: String,
 }
@@ -245,7 +251,7 @@ pub async fn load_capabilities(
     }
     let placeholders = vec!["?"; metric_keys.len()].join(", ");
     let sql = format!(
-        "SELECT d.metric_key, i.input_role, m.evidence_granularity, \
+        "SELECT d.metric_key, i.input_role, m.evidence_granularity, s.source_key, \
                 s.evidence_ref, s.evidence_schema_status \
          FROM metric_definitions d \
          INNER JOIN metric_definition_inputs i ON i.metric_definition_id = d.id \
@@ -256,7 +262,8 @@ pub async fn load_capabilities(
                (SELECT td.id FROM metric_definitions td WHERE td.metric_key = d.metric_key AND td.tenant_id = ? LIMIT 1), \
                (SELECT pd.id FROM metric_definitions pd WHERE pd.metric_key = d.metric_key AND pd.tenant_id IS NULL LIMIT 1) \
            ) \
-           AND d.is_enabled = TRUE AND m.is_enabled = TRUE AND s.is_enabled = TRUE \
+           AND d.is_enabled = TRUE AND d.schema_status = 'ok' \
+           AND m.is_enabled = TRUE AND s.is_enabled = TRUE \
          ORDER BY d.metric_key, i.input_role, m.measure_key"
     );
     let mut values = metric_keys.iter().map(Value::from).collect::<Vec<_>>();
@@ -275,15 +282,23 @@ pub async fn load_capabilities(
     }
     let mut capabilities = HashMap::new();
     for (metric_key, rows) in grouped {
+        let relation = rows
+            .first()
+            .and_then(|row| row.evidence_ref.as_deref())
+            .and_then(EvidenceRelation::parse);
+        let source_key = rows.first().map(|row| row.source_key.as_str());
         let healthy = !rows.is_empty()
+            && relation.is_some()
+            && source_key.is_some()
             && rows.iter().all(|row| {
                 MetricInputRole::from_db(&row.input_role).is_some()
                     && row.evidence_schema_status == "ok"
-                    && row
-                        .evidence_ref
-                        .as_deref()
-                        .and_then(EvidenceRelation::parse)
-                        .is_some()
+                    && Some(row.source_key.as_str()) == source_key
+                    && row.evidence_ref.as_deref().is_some_and(|value| {
+                        relation
+                            .as_ref()
+                            .is_some_and(|relation| value == relation.source_ref())
+                    })
                     && row
                         .evidence_granularity
                         .as_deref()
@@ -422,10 +437,18 @@ async fn validate_common(
         filters,
         display_dimensions,
     };
-    let fingerprint = selection_fingerprint(tenant_id, &selection, &snapshot_id)?;
-    let cursor = cursor
-        .map(|value| decode_cursor(&value, &fingerprint))
-        .transpose()?;
+    let fingerprint = selection_fingerprint(tenant_id, &selection)?;
+    let cursor = match cursor {
+        Some(value) => {
+            let envelope = decode_cursor(&value)?;
+            verify_evidence_snapshot(ch, &plan.relation, &envelope.snapshot_id).await?;
+            if envelope.fingerprint != fingerprint {
+                return invalid("cursor", "cursor does not match the metric selection");
+            }
+            Some(envelope.key)
+        }
+        None => None,
+    };
     Ok(ValidatedMetricDrilldown {
         selection,
         from,
@@ -543,9 +566,10 @@ fn compile_value_query(req: &ValidatedMetricDrilldown) -> (String, Vec<String>) 
         let placeholders = vec!["?"; filter.values.len()].join(", ");
         let _ = write!(
             filter_sql,
-            " AND indexOf(evidence.dimensions.1, '{}') > 0 AND evidence.dimensions.2[indexOf(evidence.dimensions.1, '{}')] IN ({placeholders})",
-            filter.dimension, filter.dimension
+            " AND indexOf(evidence.dimensions.1, ?) > 0 AND evidence.dimensions.2[indexOf(evidence.dimensions.1, ?)] IN ({placeholders})"
         );
+        params.push(filter.dimension.clone());
+        params.push(filter.dimension.clone());
         params.extend(filter.values.iter().cloned());
     }
     let mut cursor_sql = String::new();
@@ -615,9 +639,10 @@ fn compile_ratio_query(
         let placeholders = vec!["?"; filter.values.len()].join(", ");
         let _ = write!(
             filter_sql,
-            " AND indexOf(evidence.dimensions.1, '{}') > 0 AND evidence.dimensions.2[indexOf(evidence.dimensions.1, '{}')] IN ({placeholders})",
-            filter.dimension, filter.dimension
+            " AND indexOf(evidence.dimensions.1, ?) > 0 AND evidence.dimensions.2[indexOf(evidence.dimensions.1, ?)] IN ({placeholders})"
         );
+        params.push(filter.dimension.clone());
+        params.push(filter.dimension.clone());
         params.extend(filter.values.iter().cloned());
     }
     let mut cursor_sql = String::new();
@@ -676,7 +701,7 @@ pub fn build_response(
     let next_cursor = if rows.len() > req.limit {
         rows.truncate(req.limit);
         rows.last()
-            .map(|row| encode_cursor(&req.fingerprint, row))
+            .map(|row| encode_cursor(&req.fingerprint, &req.snapshot_id, row))
             .transpose()?
     } else {
         None
@@ -1005,10 +1030,8 @@ fn normalize_display_dimensions(
 fn selection_fingerprint(
     tenant_id: Uuid,
     selection: &MetricDrilldownSelection,
-    snapshot_id: &str,
 ) -> Result<String, CanonicalError> {
-    let bytes =
-        serde_json::to_vec(&(tenant_id, selection, snapshot_id)).map_err(|_| config_error())?;
+    let bytes = serde_json::to_vec(&(tenant_id, selection)).map_err(|_| config_error())?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
@@ -1055,10 +1078,15 @@ async fn evidence_snapshot_id(
     })
 }
 
-fn encode_cursor(fingerprint: &str, row: &EvidenceQueryRow) -> Result<String, CanonicalError> {
+fn encode_cursor(
+    fingerprint: &str,
+    snapshot_id: &str,
+    row: &EvidenceQueryRow,
+) -> Result<String, CanonicalError> {
     let envelope = CursorEnvelope {
         version: 1,
         fingerprint: fingerprint.to_owned(),
+        snapshot_id: snapshot_id.to_owned(),
         key: CursorKey {
             role: row.role.clone(),
             metric_date: row.metric_date.clone(),
@@ -1074,16 +1102,16 @@ fn encode_cursor(fingerprint: &str, row: &EvidenceQueryRow) -> Result<String, Ca
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
-fn decode_cursor(value: &str, fingerprint: &str) -> Result<CursorKey, CanonicalError> {
+fn decode_cursor(value: &str) -> Result<CursorEnvelope, CanonicalError> {
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(value)
         .map_err(|_| invalid_error("cursor", "cursor is malformed"))?;
     let envelope: CursorEnvelope = serde_json::from_slice(&bytes)
         .map_err(|_| invalid_error("cursor", "cursor is malformed"))?;
-    if envelope.version != 1 || envelope.fingerprint != fingerprint {
-        return invalid("cursor", "cursor does not match the metric selection");
+    if envelope.version != 1 {
+        return invalid("cursor", "cursor version is unsupported");
     }
-    Ok(envelope.key)
+    Ok(envelope)
 }
 
 fn parse_date(field: &str, value: &str) -> Result<NaiveDate, CanonicalError> {
@@ -1118,4 +1146,389 @@ fn db_error(error: &sea_orm::DbErr) -> CanonicalError {
 
 fn config_error() -> CanonicalError {
     CanonicalError::internal("corrupt metric evidence configuration").create()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::metric_definitions::definition::{
+        MetricBase, MetricDirection, MetricFormat, MetricInput, ObservationRelation,
+    };
+
+    fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
+        MetricInput {
+            role,
+            observation_relation: ObservationRelation::parse("git_metric_observations")
+                .unwrap_or_else(|| panic!("observation relation must parse")),
+            source_key: "git".to_owned(),
+            measure_key: measure_key.to_owned(),
+        }
+    }
+
+    fn definition(spec: ComputationSpec, dimensions: &[&str]) -> MetricDefinition {
+        MetricDefinition {
+            base: MetricBase {
+                key: "git.example".to_owned(),
+                label: "Example".to_owned(),
+                short_label: None,
+                description: None,
+                explanation: None,
+                entity_type: "person".to_owned(),
+                format: MetricFormat::Integer,
+                unit: None,
+                direction: MetricDirection::Neutral,
+                peer_cohort_key: None,
+                allowed_dimensions: dimensions.iter().map(|value| (*value).to_owned()).collect(),
+            },
+            spec,
+            transform: None,
+        }
+    }
+
+    fn plan(spec: ComputationSpec, inputs: Vec<EvidenceInput>) -> EvidencePlan {
+        EvidencePlan {
+            definition: definition(spec, &["repository", "category"]),
+            relation: EvidenceRelation::parse("git_metric_evidence")
+                .unwrap_or_else(|| panic!("evidence relation must parse")),
+            source_key: "git".to_owned(),
+            inputs,
+        }
+    }
+
+    fn row() -> EvidenceQueryRow {
+        EvidenceQueryRow {
+            role: "value".to_owned(),
+            metric_date: "2026-07-01".to_owned(),
+            observed_at: "2026-07-01 10:00:00".to_owned(),
+            source_key: "git".to_owned(),
+            measure_key: "commit_count".to_owned(),
+            record_id: "abc123".to_owned(),
+            record_kind: "commit".to_owned(),
+            contribution: Some(1.0),
+            numerator: None,
+            denominator: None,
+            subject_key: String::new(),
+            dimensions_json: r#"[{"key":"repository","value":"repo","label":"Repository"},{"key":"category","value":"code","label":null}]"#.to_owned(),
+            details: serde_json::json!({
+                "ref": "abc123",
+                "title": "Change",
+                "repository": "org/repo",
+                "author": "Developer",
+                "lines_added": "12",
+                "lines_removed": "3"
+            }),
+        }
+    }
+
+    fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
+        let selection = MetricDrilldownSelection {
+            metric_key: plan.definition.key().to_owned(),
+            entity: MetricDrilldownEntity {
+                r#type: "person".to_owned(),
+                id: "person@example.com".to_owned(),
+            },
+            period: MetricDrilldownPeriod {
+                from: "2026-07-01".to_owned(),
+                to: "2026-07-31".to_owned(),
+            },
+            filters: vec![MetricDrilldownFilter {
+                dimension: "repository".to_owned(),
+                values: vec!["org/repo".to_owned()],
+            }],
+            display_dimensions: vec!["category".to_owned()],
+        };
+        ValidatedMetricDrilldown {
+            fingerprint: selection_fingerprint(Uuid::nil(), &selection)
+                .unwrap_or_else(|error| panic!("selection fingerprint must build: {error}")),
+            selection,
+            from: NaiveDate::from_ymd_opt(2026, 7, 1)
+                .unwrap_or_else(|| panic!("valid test start date")),
+            to: NaiveDate::from_ymd_opt(2026, 7, 31)
+                .unwrap_or_else(|| panic!("valid test end date")),
+            limit: 1,
+            cursor: None,
+            plan,
+            snapshot_id: "snapshot".to_owned(),
+        }
+    }
+
+    #[test]
+    fn value_query_binds_filters_and_cursor() {
+        let value = input(MetricInputRole::Value, "commit_count");
+        let plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                measure_key: value.measure_key,
+                presentation: evidence_presentation(
+                    "git",
+                    "commit_count",
+                    EvidenceGranularity::Event,
+                ),
+            }],
+        );
+        let mut request = validated(plan);
+        request.cursor = Some(CursorKey {
+            role: "value".to_owned(),
+            metric_date: "2026-07-01".to_owned(),
+            observed_at: String::new(),
+            source_key: "git".to_owned(),
+            measure_key: "commit_count".to_owned(),
+            record_id: "abc".to_owned(),
+            record_kind: "commit".to_owned(),
+            subject_key: String::new(),
+        });
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+        assert!(sql.contains("insight.git_metric_evidence"));
+        assert!(sql.contains("indexOf(evidence.dimensions.1, ?)"));
+        assert!(sql.contains("LIMIT 2"));
+        assert_eq!(
+            params
+                .iter()
+                .filter(|value| value.as_str() == "repository")
+                .count(),
+            2
+        );
+        assert!(params.iter().any(|value| value == "abc"));
+    }
+
+    #[test]
+    fn ratio_query_uses_named_inputs() {
+        let numerator = input(MetricInputRole::Numerator, "focus_hours");
+        let denominator = input(MetricInputRole::Denominator, "work_hours");
+        let plan = plan(
+            ComputationSpec::Ratio {
+                numerator: numerator.clone(),
+                denominator: denominator.clone(),
+                scale: 100.0,
+            },
+            vec![
+                EvidenceInput {
+                    role: MetricInputRole::Numerator,
+                    measure_key: numerator.measure_key,
+                    presentation: EvidencePresentation {
+                        detail_keys: &[],
+                        show_value: true,
+                    },
+                },
+                EvidenceInput {
+                    role: MetricInputRole::Denominator,
+                    measure_key: denominator.measure_key,
+                    presentation: EvidencePresentation {
+                        detail_keys: &[],
+                        show_value: true,
+                    },
+                },
+            ],
+        );
+        let request = validated(plan);
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+        assert!(sql.contains("sumIf"));
+        assert!(sql.contains("daily_ratio"));
+        assert!(params.iter().any(|value| value == "focus_hours"));
+        assert!(params.iter().any(|value| value == "work_hours"));
+    }
+
+    #[test]
+    fn event_presentation_projects_human_fields_and_dimensions() {
+        let value = input(MetricInputRole::Value, "commit_count");
+        let plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                measure_key: value.measure_key,
+                presentation: evidence_presentation(
+                    "git",
+                    "commit_count",
+                    EvidenceGranularity::Event,
+                ),
+            }],
+        );
+        let (columns, rows) = presentation(&[row()], &plan, &[], &["category".to_owned()])
+            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "ref",
+                "title",
+                "repository",
+                "author",
+                "category",
+                "lines_added",
+                "lines_removed",
+                "date"
+            ]
+        );
+        assert_eq!(rows[0].values["category"], "code");
+        assert_eq!(rows[0].values["lines_added"], 12.0);
+    }
+
+    #[test]
+    fn ratio_presentation_names_numerator_and_denominator() {
+        let numerator = input(MetricInputRole::Numerator, "focus_hours");
+        let denominator = input(MetricInputRole::Denominator, "work_hours");
+        let plan = plan(
+            ComputationSpec::Ratio {
+                numerator: numerator.clone(),
+                denominator: denominator.clone(),
+                scale: 100.0,
+            },
+            vec![
+                EvidenceInput {
+                    role: MetricInputRole::Numerator,
+                    measure_key: numerator.measure_key,
+                    presentation: EvidencePresentation {
+                        detail_keys: &[],
+                        show_value: true,
+                    },
+                },
+                EvidenceInput {
+                    role: MetricInputRole::Denominator,
+                    measure_key: denominator.measure_key,
+                    presentation: EvidencePresentation {
+                        detail_keys: &[],
+                        show_value: true,
+                    },
+                },
+            ],
+        );
+        let mut ratio_row = row();
+        ratio_row.numerator = Some(6.0);
+        ratio_row.denominator = Some(8.0);
+        ratio_row.details = serde_json::json!({});
+        let (columns, rows) = presentation(&[ratio_row], &plan, &[], &[])
+            .unwrap_or_else(|error| panic!("ratio presentation must build: {error}"));
+        assert_eq!(columns[1].label, "Focus hours");
+        assert_eq!(columns[2].label, "Work hours");
+        assert_eq!(rows[0].values["numerator"], 6.0);
+        assert_eq!(rows[0].values["denominator"], 8.0);
+    }
+
+    #[test]
+    fn response_pages_with_snapshot_bound_cursor() {
+        let value = input(MetricInputRole::Value, "commit_count");
+        let plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                measure_key: value.measure_key,
+                presentation: evidence_presentation(
+                    "git",
+                    "commit_count",
+                    EvidenceGranularity::Event,
+                ),
+            }],
+        );
+        let request = validated(plan);
+        let response = build_response(&request, vec![row(), row()])
+            .unwrap_or_else(|error| panic!("response must build: {error}"));
+        let cursor = response
+            .next_cursor
+            .unwrap_or_else(|| panic!("response must include a next cursor"));
+        let envelope =
+            decode_cursor(&cursor).unwrap_or_else(|error| panic!("cursor must decode: {error}"));
+        assert_eq!(response.rows.len(), 1);
+        assert_eq!(envelope.snapshot_id, "snapshot");
+        assert_eq!(envelope.fingerprint, request.fingerprint);
+        assert!(decode_cursor("invalid").is_err());
+    }
+
+    #[test]
+    fn filters_and_display_dimensions_are_normalized() {
+        let definition = definition(
+            ComputationSpec::Sum {
+                value: input(MetricInputRole::Value, "commit_count"),
+            },
+            &["repository", "category"],
+        );
+        let filters = normalize_filters(
+            &definition,
+            vec![MetricDrilldownFilter {
+                dimension: " repository ".to_owned(),
+                values: vec!["b".to_owned(), "a".to_owned(), "a".to_owned()],
+            }],
+        )
+        .unwrap_or_else(|error| panic!("filter value must normalize: {error}"));
+        assert_eq!(filters[0].values, ["a", "b"]);
+        assert_eq!(
+            normalize_display_dimensions(
+                &definition,
+                vec!["category".to_owned(), "category".to_owned()]
+            )
+            .unwrap_or_else(|error| panic!("display dimensions must normalize: {error}")),
+            ["category"]
+        );
+        assert!(
+            normalize_filters(
+                &definition,
+                vec![MetricDrilldownFilter {
+                    dimension: "unknown".to_owned(),
+                    values: vec!["value".to_owned()],
+                }]
+            )
+            .is_err()
+        );
+        assert!(normalize_display_dimensions(&definition, vec!["unknown".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn presentation_rejects_invalid_warehouse_json() {
+        let value = input(MetricInputRole::Value, "commit_count");
+        let plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                measure_key: value.measure_key,
+                presentation: evidence_presentation(
+                    "git",
+                    "commit_count",
+                    EvidenceGranularity::Event,
+                ),
+            }],
+        );
+        let mut invalid_details = row();
+        invalid_details.details = serde_json::json!("invalid");
+        assert!(presentation(&[invalid_details], &plan, &[], &[]).is_err());
+        let mut invalid_dimensions = row();
+        invalid_dimensions.dimensions_json = "invalid".to_owned();
+        assert!(presentation(&[invalid_dimensions], &plan, &[], &[]).is_err());
+    }
+
+    #[test]
+    fn evidence_presentations_cover_domain_shapes() {
+        assert!(!evidence_presentation("git", "pr_merged", EvidenceGranularity::Event).show_value);
+        assert!(
+            evidence_presentation("git", "pr_cycle_hours", EvidenceGranularity::Event).show_value
+        );
+        assert!(
+            evidence_presentation(
+                "task",
+                "average_slip",
+                EvidenceGranularity::DerivedPopulation
+            )
+            .detail_keys
+            .is_empty()
+        );
+        assert!(evidence_presentation("task", "custom", EvidenceGranularity::Event).show_value);
+        assert!(
+            !evidence_presentation("wiki", "pages_created", EvidenceGranularity::Event).show_value
+        );
+        assert!(
+            evidence_presentation("collab", "messages", EvidenceGranularity::SourceSummary)
+                .show_value
+        );
+    }
 }

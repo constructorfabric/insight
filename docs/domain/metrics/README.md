@@ -30,8 +30,9 @@ ready to render.
 
 Metric **evidence** is the source-level population behind that answer. Each
 managed source exposes a normalized serving table.
-Definitions inherit drilldown support from their input measures, so adding a
-metric over an existing measure requires no drilldown-specific configuration.
+Definitions inherit drilldown support when all compatible inputs are backed by
+the same validated evidence relation, so adding a metric over an existing
+measure requires no drilldown-specific configuration.
 The backend applies the same entity, period, dimension, input-role, and
 computation semantics used by metric results.
 
@@ -71,7 +72,8 @@ either side knowing the other exists.
 | Definition loading, reconciler, schema validator | [`src/backend/services/analytics/src/domain/metric_definitions/`](../../../src/backend/services/analytics/src/domain/metric_definitions/) |
 | Result runtime (validation, query compiler, response builder) | [`src/backend/services/analytics/src/domain/metric_results/`](../../../src/backend/services/analytics/src/domain/metric_results/) |
 | Result endpoint | [`src/backend/services/analytics/src/api/metric_results.rs`](../../../src/backend/services/analytics/src/api/metric_results.rs) |
-| Drilldown runtime and endpoints | [`src/backend/services/analytics/src/domain/metric_drilldown/`](../../../src/backend/services/analytics/src/domain/metric_drilldown/) |
+| Drilldown runtime | [`src/backend/services/analytics/src/domain/metric_drilldown/`](../../../src/backend/services/analytics/src/domain/metric_drilldown/) |
+| Drilldown endpoints | [`src/backend/services/analytics/src/api/metric_drilldown.rs`](../../../src/backend/services/analytics/src/api/metric_drilldown.rs) |
 | Registry schema migration | [`src/backend/services/analytics/src/migration/m20260625_000001_metric_definitions.rs`](../../../src/backend/services/analytics/src/migration/m20260625_000001_metric_definitions.rs) |
 | Managed observation sources (dbt gold models) | [`src/ingestion/gold/`](../../../src/ingestion/gold/) |
 | Class-contract data-quality tests | [`src/ingestion/dbt/tests/ai/`](../../../src/ingestion/dbt/tests/ai/) |

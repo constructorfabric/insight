@@ -133,3 +133,4 @@ SELECT
         'title', coalesce(title, '')
     ) AS details
 FROM page_creations
+WHERE tenant_id IS NOT NULL

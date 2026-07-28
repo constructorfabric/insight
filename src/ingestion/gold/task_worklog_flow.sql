@@ -38,7 +38,10 @@ in_progress_per_day AS (
         ON s.insight_source_id = i.insight_source_id AND s.issue_id = i.issue_id
     ARRAY JOIN
         arrayMap(d -> toDate(i.interval_start) + toIntervalDay(d),
-                 range(toUInt32(dateDiff('day', toDate(i.interval_start), toDate(i.interval_end)) + 1))) AS day
+                 range(toUInt32(greatest(
+                     toInt64(0),
+                     dateDiff('day', toDate(i.interval_start), toDate(i.interval_end)) + 1
+                 )))) AS day
     WHERE i.status_category = 'in_progress'
     GROUP BY s.tenant_id, s.entity_id, day
 ),
@@ -65,3 +68,4 @@ FULL OUTER JOIN worklog_per_day AS wl
     ON wl.tenant_id = ip.tenant_id
     AND wl.entity_id = ip.entity_id
     AND wl.metric_date = ip.metric_date
+SETTINGS join_use_nulls = 1

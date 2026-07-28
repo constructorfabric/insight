@@ -9,24 +9,51 @@ models:
     columns: &metric_evidence_columns
       - name: tenant_id
         description: "Tenant isolation field"
+        tests:
+          - not_null
       - name: source_key
         description: "Logical source family"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ai_usage', 'collab', 'git', 'task', 'wiki']
       - name: entity_type
         description: "Measured entity type"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['person']
       - name: entity_id
         description: "Normalized measured entity identifier"
+        tests:
+          - not_null
       - name: metric_date
         description: "Date used by metric period filtering"
+        tests:
+          - not_null
       - name: observed_at
         description: "Optional event timestamp"
       - name: measure_key
         description: "Source measure key"
+        tests:
+          - not_null
       - name: record_id
         description: "Deterministic total-order key within the measure scope"
+        tests:
+          - not_null
       - name: record_kind
         description: "Source record classification"
+        tests:
+          - not_null
       - name: granularity
         description: "Evidence grain: event, source_summary, or derived_population"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['event', 'source_summary', 'derived_population']
       - name: record_label
         description: "Human-readable record label"
       - name: contribution

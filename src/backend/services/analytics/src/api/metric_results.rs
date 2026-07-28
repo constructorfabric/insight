@@ -41,23 +41,28 @@ pub async fn query_metric_results(
         .map(|metric| metric.def.key().to_owned())
         .collect::<Vec<_>>();
     let capabilities = load_capabilities(&state.db, tenant_id, &metric_keys);
-    tokio::pin!(capabilities);
-    let mut ranking_results = BTreeMap::new();
-    let mut rankings = stream::iter(plan_rankings(&req))
-        .map(|ranking| {
-            let state = Arc::clone(&state);
-            async move {
-                let comment = format!("metric-results:ranking:{}", ranking.key.rank_metric_key);
-                let rows = fetch_rows::<RankingQueryRow>(&state, ranking.query, &comment).await?;
-                let groups = build_ranked_groups(&ranking.dimensions, rows)?;
-                Ok::<_, CanonicalError>((ranking.key, groups))
-            }
-        })
-        .buffer_unordered(QUERY_CONCURRENCY);
-    while let Some(result) = rankings.next().await {
-        let (key, groups) = result?;
-        ranking_results.insert(key, groups);
-    }
+    let rankings = async {
+        let mut ranking_results = BTreeMap::new();
+        let mut rankings = stream::iter(plan_rankings(&req))
+            .map(|ranking| {
+                let state = Arc::clone(&state);
+                async move {
+                    let comment = format!("metric-results:ranking:{}", ranking.key.rank_metric_key);
+                    let rows =
+                        fetch_rows::<RankingQueryRow>(&state, ranking.query, &comment).await?;
+                    let groups = build_ranked_groups(&ranking.dimensions, rows)?;
+                    Ok::<_, CanonicalError>((ranking.key, groups))
+                }
+            })
+            .buffer_unordered(QUERY_CONCURRENCY);
+        while let Some(result) = rankings.next().await {
+            let (key, groups) = result?;
+            ranking_results.insert(key, groups);
+        }
+        Ok::<_, CanonicalError>(ranking_results)
+    };
+    let (ranking_results, capabilities) = tokio::join!(rankings, capabilities);
+    let ranking_results = ranking_results?;
     let planned = plan_queries(&req, &ranking_results)?;
 
     let mut views_by_metric: Vec<Vec<Option<MetricResultViewDto>>> = req
@@ -77,7 +82,7 @@ pub async fn query_metric_results(
         }
     }
 
-    let capabilities = match capabilities.await {
+    let capabilities = match capabilities {
         Ok(capabilities) => capabilities,
         Err(error) => {
             tracing::warn!(error = ?error, "metric drilldown capability load failed");

@@ -29,7 +29,8 @@ use axum::http::{Request, StatusCode};
 use axum::middleware::from_fn_with_state;
 use axum::response::Response;
 use sea_orm::{
-    ColumnTrait, ConnectOptions, Database, DatabaseConnection, EntityTrait, QueryFilter,
+    ColumnTrait, ConnectOptions, ConnectionTrait, Database, DatabaseConnection, EntityTrait,
+    QueryFilter, Statement,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -156,6 +157,18 @@ fn json_req(method: &str, uri: &str, body: &Value) -> Result<Request<Body>, axum
 async fn body_json(resp: Response) -> Result<Value, Box<dyn std::error::Error>> {
     let bytes = to_bytes(resp.into_body(), 256 * 1024).await?;
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+async fn enable_drilldown_metadata(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
+    for sql in [
+        "UPDATE metric_sources SET schema_status = 'ok', evidence_schema_status = 'ok'",
+        "UPDATE metric_source_measures SET schema_status = 'ok'",
+        "UPDATE metric_definitions SET schema_status = 'ok'",
+    ] {
+        db.execute(Statement::from_string(db.get_database_backend(), sql))
+            .await?;
+    }
+    Ok(())
 }
 
 /// A seeded, enabled metric + the tenant that owns it (the seed migration
@@ -441,5 +454,103 @@ async fn query_metric_without_clickhouse_maps_to_error() -> TestResult {
         "expected an error status, got {}",
         resp.status()
     );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn metric_results_loads_drilldown_capabilities_before_clickhouse_error() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    enable_drilldown_metadata(&db).await?;
+    let app = app(db, Uuid::now_v7());
+    let resp = app
+        .oneshot(json_req(
+            "POST",
+            "/v1/metric-results",
+            &json!({
+                "entity": {"type": "person", "ids": ["person@example.com"]},
+                "period": {"from": "2026-07-01", "to": "2026-07-28"},
+                "metrics": [{
+                    "metric_key": "git.commits",
+                    "views": [{"view": "period"}]
+                }]
+            }),
+        )?)
+        .await?;
+    assert!(resp.status().is_server_error());
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn metric_drilldown_validates_selection_before_clickhouse_error() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    enable_drilldown_metadata(&db).await?;
+    let app = app(db, Uuid::now_v7());
+    let body = json!({
+        "metric_key": "git.commits",
+        "entity": {"type": "person", "id": "person@example.com"},
+        "period": {"from": "2026-07-01", "to": "2026-07-28"},
+        "filters": [{"dimension": "repository", "values": ["org/repo"]}],
+        "display_dimensions": ["repository"],
+        "limit": 100
+    });
+    let resp = app
+        .clone()
+        .oneshot(json_req("POST", "/v1/metric-drilldown", &body)?)
+        .await?;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let export = json!({
+        "metric_key": "git.commits",
+        "entity": {"type": "person", "id": "person@example.com"},
+        "period": {"from": "2026-07-01", "to": "2026-07-28"},
+        "filters": [],
+        "display_dimensions": [],
+        "format": "csv"
+    });
+    let resp = app
+        .oneshot(json_req("POST", "/v1/metric-drilldown/export", &export)?)
+        .await?;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn metric_drilldown_rejects_invalid_selection_without_clickhouse() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let app = app(db, Uuid::now_v7());
+    for body in [
+        json!({
+            "metric_key": "git.commits",
+            "entity": {"type": "team", "id": "team"},
+            "period": {"from": "2026-07-01", "to": "2026-07-28"},
+            "limit": 100
+        }),
+        json!({
+            "metric_key": "git.commits",
+            "entity": {"type": "person", "id": ""},
+            "period": {"from": "2026-07-01", "to": "2026-07-28"},
+            "limit": 100
+        }),
+        json!({
+            "metric_key": "git.commits",
+            "entity": {"type": "person", "id": "person@example.com"},
+            "period": {"from": "2026-07-28", "to": "2026-07-01"},
+            "limit": 100
+        }),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(json_req("POST", "/v1/metric-drilldown", &body)?)
+            .await?;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
     Ok(())
 }

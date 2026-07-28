@@ -142,7 +142,7 @@ close_reopen AS (
         ON s.insight_source_id = c.insight_source_id AND s.issue_id = c.issue_id
     LEFT JOIN reopens AS r
         ON r.insight_source_id = c.insight_source_id AND r.issue_id = c.issue_id
-    GROUP BY s.tenant_id, s.entity_id, c.issue_id, c.close_at
+    GROUP BY s.tenant_id, s.entity_id, c.insight_source_id, c.issue_id, c.close_at
 ),
 worklog_flow AS (
     SELECT
@@ -158,14 +158,14 @@ stale AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
         s.entity_id                                                          AS entity_id,
-        today()                                                              AS metric_date,
+        toDate(s.last_status_event_at)                                       AS metric_date,
         toFloat64(count())                                                   AS stale_count,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM issue_state AS s
     WHERE (s.status_category IS NULL OR s.status_category != 'done')
       AND s.last_status_event_at IS NOT NULL
       AND dateDiff('day', s.last_status_event_at, now()) > 14
-    GROUP BY s.tenant_id, s.entity_id
+    GROUP BY s.tenant_id, s.entity_id, toDate(s.last_status_event_at)
 ),
 value_measures AS (
     {{ sum_measure('estimation_error_pct', 'estimation_day', 'if(estimation_pct > 0 AND estimation_pct <= 200, abs(100 - estimation_pct), NULL)', 'no_dimensions') }}
@@ -218,11 +218,7 @@ SELECT
         hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), dimensions))))
     ) AS record_id,
     measure_key AS record_kind,
-    if(
-        measure_key IN ('dev_time_hours', 'resolution_days', 'pickup_days'),
-        'event',
-        'derived_population'
-    ) AS granularity,
+    'derived_population' AS granularity,
     replaceAll(measure_key, '_', ' ') AS record_label,
     value AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
@@ -255,6 +251,10 @@ SELECT
         'issue_type', ifNull(issue_type, '')
     ) AS details
 FROM issue_item_evidence
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND entity_id != ''
+  AND metric_date IS NOT NULL
 
 UNION ALL
 
@@ -283,3 +283,7 @@ ARRAY JOIN arrayConcat(
     if(ifNull(lead_seconds, 0) > 0, [tuple('resolution_days', toFloat64(lead_seconds / 86400.0))], []),
     if(pickup_seconds IS NOT NULL, [tuple('pickup_days', toFloat64(pickup_seconds / 86400.0))], [])
 ) AS duration_measure
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND entity_id != ''
+  AND metric_date IS NOT NULL

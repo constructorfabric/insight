@@ -15,20 +15,18 @@ use toolkit_security::SecurityContext;
 use super::AppState;
 use crate::api::error::MetricError;
 use crate::domain::metric_drilldown::{
-    EvidenceQueryRow, MAX_EXPORT_ROWS, MetricDrilldownColumn, MetricDrilldownExportFormat,
-    MetricDrilldownExportRequest, MetricDrilldownRequest, MetricDrilldownResponse,
-    MetricDrilldownRow, build_response, compile_query, presentation, validate_export_request,
-    validate_request, verify_evidence_snapshot,
+    EVIDENCE_QUERY_MEMORY_BYTES, EVIDENCE_QUERY_READ_BYTES, EVIDENCE_QUERY_RESULT_BYTES,
+    EVIDENCE_QUERY_TIMEOUT_SECS, EvidenceQueryRow, MAX_EXPORT_ROWS, MetricDrilldownColumn,
+    MetricDrilldownExportFormat, MetricDrilldownExportRequest, MetricDrilldownRequest,
+    MetricDrilldownResponse, MetricDrilldownRow, build_response, compile_query, presentation,
+    validate_export_request, validate_request, verify_evidence_snapshot,
 };
 
-const QUERY_TIMEOUT: Duration = Duration::from_secs(45);
+const QUERY_TIMEOUT: Duration = Duration::from_secs(EVIDENCE_QUERY_TIMEOUT_SECS);
 const EXPORT_TIMEOUT: Duration = Duration::from_mins(1);
 const EXPORT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_EXPORT_BYTES: usize = 25 * 1024 * 1024;
 const MAX_CELL_BYTES: usize = 32 * 1024;
-const MAX_QUERY_RESULT_BYTES: usize = 32 * 1024 * 1024;
-const MAX_QUERY_MEMORY_BYTES: usize = 256 * 1024 * 1024;
-const MAX_QUERY_READ_BYTES: usize = 512 * 1024 * 1024;
 const MAX_CONCURRENT_EXPORTS: usize = 2;
 const MAX_CONCURRENT_QUERIES: usize = 8;
 static EXPORT_SEMAPHORE: LazyLock<Semaphore> =
@@ -153,11 +151,17 @@ fn build_export(
     columns: &[MetricDrilldownColumn],
     rows: &[MetricDrilldownRow],
 ) -> Result<(Vec<u8>, &'static str, &'static str), CanonicalError> {
-    ensure_export_input_bound(columns, rows)?;
+    let formatted_rows = rows
+        .iter()
+        .map(|row| export_values(columns, row))
+        .collect::<Result<Vec<_>, _>>()?;
+    ensure_export_input_bound(columns, &formatted_rows)?;
     match format {
-        MetricDrilldownExportFormat::Csv => {
-            Ok((build_csv(columns, rows)?, "text/csv; charset=utf-8", "csv"))
-        }
+        MetricDrilldownExportFormat::Csv => Ok((
+            build_csv(columns, formatted_rows)?,
+            "text/csv; charset=utf-8",
+            "csv",
+        )),
         MetricDrilldownExportFormat::Xlsx => Ok((
             build_xlsx(columns, rows)?,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -182,9 +186,9 @@ async fn fetch_rows(
         .with_option("log_comment", log_comment)
         .with_option("max_execution_time", QUERY_TIMEOUT.as_secs().to_string())
         .with_option("max_threads", "2")
-        .with_option("max_memory_usage", MAX_QUERY_MEMORY_BYTES.to_string())
-        .with_option("max_bytes_to_read", MAX_QUERY_READ_BYTES.to_string())
-        .with_option("max_result_bytes", MAX_QUERY_RESULT_BYTES.to_string());
+        .with_option("max_memory_usage", EVIDENCE_QUERY_MEMORY_BYTES.to_string())
+        .with_option("max_bytes_to_read", EVIDENCE_QUERY_READ_BYTES.to_string())
+        .with_option("max_result_bytes", EVIDENCE_QUERY_RESULT_BYTES.to_string());
     for param in params {
         query = query.bind(param);
     }
@@ -215,7 +219,7 @@ async fn fetch_rows(
 
 fn build_csv(
     columns: &[MetricDrilldownColumn],
-    rows: &[MetricDrilldownRow],
+    rows: Vec<Vec<String>>,
 ) -> Result<Vec<u8>, CanonicalError> {
     let mut writer = csv::Writer::from_writer(LimitedBuffer::new(MAX_EXPORT_BYTES));
     let headers = columns
@@ -226,10 +230,7 @@ fn build_csv(
         .write_record(&headers)
         .map_err(|_| export_limit("CSV export exceeds the byte limit."))?;
     for row in rows {
-        let values = export_values(columns, row)?
-            .into_iter()
-            .map(csv_safe_cell)
-            .collect::<Vec<_>>();
+        let values = row.into_iter().map(csv_safe_cell).collect::<Vec<_>>();
         writer
             .write_record(values)
             .map_err(|_| export_limit("CSV export exceeds the byte limit."))?;
@@ -269,13 +270,15 @@ fn build_xlsx(
                     .write_blank(row_index, column_index, &Format::new())
                     .map_err(|_| export_internal())?,
                 (crate::domain::metric_drilldown::MetricDrilldownColumnType::Number, value) => {
-                    worksheet
-                        .write_number(
-                            row_index,
-                            column_index,
-                            value.as_f64().ok_or_else(export_internal)?,
-                        )
-                        .map_err(|_| export_internal())?
+                    if let Some(value) = value.as_f64() {
+                        worksheet
+                            .write_number(row_index, column_index, value)
+                            .map_err(|_| export_internal())?
+                    } else {
+                        worksheet
+                            .write_string(row_index, column_index, value.to_string())
+                            .map_err(|_| export_internal())?
+                    }
                 }
                 (
                     crate::domain::metric_drilldown::MetricDrilldownColumnType::Date,
@@ -352,7 +355,7 @@ fn export_values(
 
 fn ensure_export_input_bound(
     columns: &[MetricDrilldownColumn],
-    rows: &[MetricDrilldownRow],
+    rows: &[Vec<String>],
 ) -> Result<(), CanonicalError> {
     let mut bytes = columns
         .iter()
@@ -361,7 +364,7 @@ fn ensure_export_input_bound(
         })
         .ok_or_else(|| export_limit("Export input exceeds the byte limit."))?;
     for row in rows {
-        for value in export_values(columns, row)? {
+        for value in row {
             bytes = bytes
                 .checked_add(value.len() + 1)
                 .ok_or_else(|| export_limit("Export input exceeds the byte limit."))?;
@@ -538,4 +541,169 @@ impl MetricDrilldownExportFormat {
 
 fn export_internal() -> CanonicalError {
     CanonicalError::internal("failed to build metric evidence export").create()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::metric_drilldown::MetricDrilldownColumnType;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    fn columns() -> Vec<MetricDrilldownColumn> {
+        vec![
+            MetricDrilldownColumn {
+                key: "ref".to_owned(),
+                label: "Ref".to_owned(),
+                r#type: MetricDrilldownColumnType::String,
+            },
+            MetricDrilldownColumn {
+                key: "date".to_owned(),
+                label: "Date".to_owned(),
+                r#type: MetricDrilldownColumnType::Date,
+            },
+            MetricDrilldownColumn {
+                key: "value".to_owned(),
+                label: "Value".to_owned(),
+                r#type: MetricDrilldownColumnType::Number,
+            },
+            MetricDrilldownColumn {
+                key: "active".to_owned(),
+                label: "Active".to_owned(),
+                r#type: MetricDrilldownColumnType::String,
+            },
+        ]
+    }
+
+    fn row() -> MetricDrilldownRow {
+        MetricDrilldownRow {
+            values: BTreeMap::from([
+                ("ref".to_owned(), json!("=formula")),
+                ("date".to_owned(), json!("2026-07-28")),
+                ("value".to_owned(), json!(12.5)),
+                ("active".to_owned(), json!(true)),
+            ]),
+        }
+    }
+
+    #[test]
+    fn csv_export_is_bounded_and_formula_safe() {
+        let (bytes, content_type, extension) =
+            build_export(MetricDrilldownExportFormat::Csv, &columns(), &[row()])
+                .unwrap_or_else(|error| panic!("CSV export must succeed: {error}"));
+        let csv = String::from_utf8(bytes)
+            .unwrap_or_else(|error| panic!("CSV export must be UTF-8: {error}"));
+        assert_eq!(content_type, "text/csv; charset=utf-8");
+        assert_eq!(extension, "csv");
+        assert!(csv.contains("'=formula"));
+        assert!(csv.contains("2026-07-28"));
+        assert!(csv.contains("12.5"));
+    }
+
+    #[test]
+    fn xlsx_export_contains_typed_cells() {
+        let (bytes, content_type, extension) =
+            build_export(MetricDrilldownExportFormat::Xlsx, &columns(), &[row()])
+                .unwrap_or_else(|error| panic!("XLSX export must succeed: {error}"));
+        assert_eq!(
+            content_type,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        assert_eq!(extension, "xlsx");
+        assert!(bytes.starts_with(b"PK"));
+        assert!(bytes.len() > 1_000);
+    }
+
+    #[test]
+    fn export_values_serialize_supported_json_values() {
+        let columns = vec![
+            MetricDrilldownColumn {
+                key: "missing".to_owned(),
+                label: "Missing".to_owned(),
+                r#type: MetricDrilldownColumnType::String,
+            },
+            MetricDrilldownColumn {
+                key: "object".to_owned(),
+                label: "Object".to_owned(),
+                r#type: MetricDrilldownColumnType::String,
+            },
+        ];
+        let row = MetricDrilldownRow {
+            values: BTreeMap::from([("object".to_owned(), json!({"key": "value"}))]),
+        };
+        assert_eq!(
+            export_values(&columns, &row)
+                .unwrap_or_else(|error| panic!("export values must serialize: {error}")),
+            ["", r#"{"key":"value"}"#]
+        );
+    }
+
+    #[test]
+    fn oversized_export_cells_are_rejected() {
+        let columns = vec![MetricDrilldownColumn {
+            key: "value".to_owned(),
+            label: "Value".to_owned(),
+            r#type: MetricDrilldownColumnType::String,
+        }];
+        let row = MetricDrilldownRow {
+            values: BTreeMap::from([("value".to_owned(), json!("x".repeat(MAX_CELL_BYTES + 1)))]),
+        };
+        assert!(export_values(&columns, &row).is_err());
+    }
+
+    #[test]
+    fn limited_buffer_enforces_write_and_seek_bounds() {
+        let mut buffer = LimitedBuffer::new(4);
+        assert_eq!(
+            buffer
+                .write(b"1234")
+                .unwrap_or_else(|error| panic!("bounded write must succeed: {error}")),
+            4
+        );
+        assert!(buffer.write(b"5").is_err());
+        assert!(buffer.seek(SeekFrom::Start(5)).is_err());
+        assert_eq!(buffer.into_inner(), b"1234");
+    }
+
+    #[test]
+    fn filenames_are_human_readable_and_bounded() {
+        assert_eq!(
+            export_filename(
+                "Tasks closed",
+                "tasks.closed",
+                "2025-07-28",
+                "2026-07-27",
+                true,
+                "xlsx"
+            ),
+            "tasks-closed_2025-07-28_2026-07-27_filtered.xlsx"
+        );
+        assert_eq!(filename_slug("***"), "");
+        assert!(filename_slug(&"a".repeat(100)).len() <= 80);
+    }
+
+    #[test]
+    fn query_errors_are_classified() {
+        assert!(is_clickhouse_resource_limit("MEMORY_LIMIT_EXCEEDED"));
+        assert!(is_clickhouse_resource_limit("Code: 241"));
+        assert!(!is_clickhouse_resource_limit("syntax error"));
+        let missing = query_error("UNKNOWN_TABLE");
+        let limited = query_error("QUOTA_EXCEEDED");
+        let internal = query_error("syntax error");
+        assert_eq!(missing.status_code(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            limited.status_code(),
+            axum::http::StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            internal.status_code(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn export_format_strings_are_stable() {
+        assert_eq!(MetricDrilldownExportFormat::Csv.as_str(), "csv");
+        assert_eq!(MetricDrilldownExportFormat::Xlsx.as_str(), "xlsx");
+    }
 }
