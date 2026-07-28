@@ -3,9 +3,9 @@ version: 2
 models:
   - name: ai_metric_evidence
     description: >
-      Non-materialized evidence relation for AI source measures. AI silver
-      retains daily usage summaries, so rows use source_summary granularity
-      except active-day population rows.
+      Materialized MergeTree evidence serving table for AI source measures.
+      AI silver retains daily usage summaries, so rows use source_summary
+      granularity except active-day population rows.
     columns: &metric_evidence_columns
       - name: tenant_id
         description: "Tenant isolation field"
@@ -40,29 +40,29 @@ models:
 
   - name: git_metric_evidence
     description: >
-      Non-materialized evidence relation for Git source measures. Median
-      inputs retain event grain; additive measures retain their established
-      daily and dimension summaries.
+      Materialized MergeTree evidence serving table for Git source measures.
+      Median inputs retain event grain; additive measures retain their
+      established daily and dimension summaries.
     columns: *metric_evidence_columns
 
   - name: collab_metric_evidence
     description: >
-      Non-materialized evidence relation for collaboration source measures.
-      Connector class contracts retain daily summaries; focus, activity, and
-      meeting-free populations are marked as derived.
+      Materialized MergeTree evidence serving table for collaboration source
+      measures. Connector class contracts retain daily summaries; focus,
+      activity, and meeting-free populations are marked as derived.
     columns: *metric_evidence_columns
 
   - name: task_metric_evidence
     description: >
-      Non-materialized evidence relation for task source measures. Issue
-      duration inputs retain event grain; lifecycle ratios, snapshots, and
-      daily flows are marked as derived populations.
+      Materialized MergeTree evidence serving table for task source measures.
+      Issue duration inputs retain event grain; lifecycle ratios, snapshots,
+      and daily flows are marked as derived populations.
     columns: *metric_evidence_columns
 
   - name: wiki_metric_evidence
     description: >
-      Non-materialized evidence relation for wiki source measures. Page
-      creation rows retain event grain; edits and engagement expose the
+      Materialized MergeTree evidence serving table for wiki source measures.
+      Page creation rows retain event grain; edits and engagement expose the
       established daily summaries retained by the silver contracts.
     columns: *metric_evidence_columns
 
