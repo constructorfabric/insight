@@ -1512,7 +1512,14 @@ fn unauthenticated_clear_cookie(jar: CookieJar) -> Response {
 }
 
 fn internal_problem(context: &str, err: &anyhow::Error) -> Response {
-    tracing::error!(context, error = %err, "authenticator internal error");
+    // Log the full error chain (`?` = Debug) — anyhow::Error's Display (`%`)
+    // shows only the top-level context, dropping the actual underlying cause
+    // (e.g. the real TLS/validation error text), which made failures like a
+    // rejected OIDC issuer or a missing CA impossible to diagnose from logs
+    // alone. The HTTP response body stays on the short `{context}: {err}`
+    // form — the full chain can include upstream-response fragments that
+    // shouldn't reach the browser.
+    tracing::error!(context, error = ?err, "authenticator internal error");
     toolkit_canonical_errors::CanonicalError::internal(format!("{context}: {err}"))
         .create()
         .into_response()
