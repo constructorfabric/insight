@@ -41,6 +41,10 @@ static X_GATEWAY_JWT: HeaderName = HeaderName::from_static("x-gateway-jwt");
 pub struct LoginParams {
     #[serde(default)]
     return_to: Option<String>,
+    /// View-as target (#1941). Honored only when `override_enabled`; the name
+    /// is the historical one the portal always used.
+    #[serde(default, rename = "__override")]
+    override_email: Option<String>,
 }
 
 /// Start the OIDC code+PKCE flow: stash state/nonce/verifier, 302 to the IdP.
@@ -49,6 +53,30 @@ pub async fn login(
     Query(params): Query<LoginParams>,
 ) -> Response {
     let return_to = sanitize_return_to(params.return_to.as_deref(), &state.cfg.default_return_to);
+
+    // `__override` (view-as, #1941): carried into the login state only when
+    // the environment opts in; otherwise the parameter is inert — and logged,
+    // so an attempt against a real environment is visible, not silent.
+    // Sanitized before anything touches it (this log path is reachable in
+    // real environments): control characters stripped so a hostile value
+    // cannot forge log lines, length capped at the RFC 5321 address maximum.
+    let override_email = match params
+        .override_email
+        .as_deref()
+        .map(sanitize_override_email)
+    {
+        Some(email) if !email.is_empty() && state.cfg.override_enabled => email,
+        Some(email) if !email.is_empty() => {
+            tracing::warn!(
+                target: "audit",
+                event = "login_override_ignored",
+                email,
+                "__override presented but override_enabled=false: ignored"
+            );
+            String::new()
+        }
+        _ => String::new(),
+    };
 
     // Layer-2 cap (DESIGN §4.4): pre-auth there is no per-caller key, so the
     // guarded resource is the login-state store itself — refuse before any
@@ -85,6 +113,7 @@ pub async fn login(
                 pkce_verifier: start.pkce_verifier,
                 nonce: start.nonce,
                 return_to,
+                override_email,
             },
             300,
             now,
@@ -254,22 +283,42 @@ pub async fn callback(
         Err(e) => return internal_problem("person_resolution", &e),
     };
 
+    // View-as override (#1941): applied only when `override_enabled` (dev/demo
+    // environments) and only after the caller completed a full IdP login and
+    // resolved to a known person above. Every decision input is server-side
+    // (the flag, the login-state value, the person store) — no client-supplied
+    // identity is ever trusted, so the #1769 model holds.
+    let client = ClientInfo::from_headers(&headers);
+    let identity =
+        match resolve_override(&state, &login_state, &idp, &resolution, &client, &headers).await {
+            Ok(identity) => identity,
+            Err(resp) => return *resp,
+        };
+
     // `return_to` was sanitized at login time and stored with the login state.
     let return_to = login_state.return_to.clone();
-    let client = ClientInfo::from_headers(&headers);
-    match mint_and_store_session(&state, &idp, &resolution, &client).await {
+    match mint_and_store_session(&state, &idp, &identity, &client).await {
         Ok((session_id, token)) => {
+            let mut details = serde_json::json!({ "idp_sub": idp.identity.sub });
+            if !identity.impersonator_email.is_empty() {
+                details["override"] = serde_json::json!({
+                    "person_id": identity.person_id,
+                    "email": identity.email,
+                });
+            }
             state.audit.emit(AuditEvent {
                 action: "login",
                 outcome: "success",
-                tenant_id: resolution.tenant_id.clone(),
+                tenant_id: identity.tenant_id.clone(),
+                // The REAL authenticated principal — on view-as logins the
+                // impersonated person did nothing, so they are never the actor.
                 actor_person_id: resolution.person_id.clone(),
                 actor_ip: client.ip,
                 actor_user_agent: client.user_agent,
                 correlation_id: correlation_id(&headers),
                 resource_type: "session",
                 resource_id: session_id,
-                details: serde_json::json!({ "idp_sub": idp.identity.sub }),
+                details,
             });
             let jar = jar.add(cookie::session_cookie(
                 &token,
@@ -348,12 +397,114 @@ fn session_audit(
     }
 }
 
+/// The identity a new session is minted for: the effective person (the
+/// override target on view-as logins, the caller otherwise), plus the real
+/// principal behind a view-as session (empty on normal logins).
+struct SessionIdentity {
+    person_id: String,
+    email: String,
+    tenant_id: String,
+    impersonator_person_id: String,
+    impersonator_email: String,
+}
+
+/// Apply the `__override` view-as request stored with the login state (#1941):
+/// resolve the target through the same person store and swap the effective
+/// identity, keeping the real principal for the session record and audit.
+/// No-op (the caller's own identity) when the login carried no override or the
+/// flag is off. An unknown target is a 403, audited — silently falling back to
+/// the caller's identity would make a typo look like the override regressed.
+async fn resolve_override(
+    state: &AppState,
+    login_state: &LoginState,
+    idp: &crate::oidc::AuthenticatedIdp,
+    resolution: &PersonResolution,
+    client: &ClientInfo,
+    headers: &axum::http::HeaderMap,
+) -> Result<SessionIdentity, Box<Response>> {
+    let target_email = login_state.override_email.trim();
+    if target_email.is_empty() || !state.cfg.override_enabled {
+        return Ok(SessionIdentity {
+            person_id: resolution.person_id.clone(),
+            email: idp.identity.email.clone(),
+            tenant_id: resolution.tenant_id.clone(),
+            impersonator_person_id: String::new(),
+            impersonator_email: String::new(),
+        });
+    }
+
+    // The target resolves by email alone — Identity's internal lookup carries
+    // no tenant memberships (#1687) — so an email from another tenant DOES
+    // resolve, and the session then pairs the target's person_id with the
+    // CALLER's tenant claim. Acceptable only because the flag marks whole
+    // dev/demo environments; revisit when membership resolution exists.
+    let target = crate::identity::IdpIdentity {
+        sub: String::new(),
+        email: target_email.to_owned(),
+        tenant_id: idp.identity.tenant_id.clone(),
+    };
+    match state.resolver.resolve(&target).await {
+        Ok(Some(t)) => {
+            tracing::warn!(
+                target: "audit",
+                event = "login_override",
+                impersonator_person_id = %resolution.person_id,
+                impersonator_email = %idp.identity.email,
+                person_id = %t.person_id,
+                email = target_email,
+                "view-as override: minting the session for another person"
+            );
+            Ok(SessionIdentity {
+                person_id: t.person_id,
+                email: target_email.to_owned(),
+                tenant_id: t.tenant_id,
+                impersonator_person_id: resolution.person_id.clone(),
+                impersonator_email: idp.identity.email.clone(),
+            })
+        }
+        Ok(None) => {
+            tracing::warn!(
+                target: "audit",
+                event = "login_override_unknown_person",
+                impersonator_person_id = %resolution.person_id,
+                impersonator_email = %idp.identity.email,
+                email = target_email,
+                "view-as override denied: no matching person in Identity"
+            );
+            // The durable audit sink gets the denial too — an impersonation
+            // attempt against a bad target is exactly what audit is for.
+            state.audit.emit(AuditEvent {
+                action: "login",
+                outcome: "failure",
+                tenant_id: idp.identity.tenant_id.clone(),
+                actor_person_id: resolution.person_id.clone(),
+                actor_ip: client.ip.clone(),
+                actor_user_agent: client.user_agent.clone(),
+                correlation_id: correlation_id(headers),
+                resource_type: "session",
+                resource_id: String::new(),
+                details: serde_json::json!({
+                    "reason": "override_unknown_person",
+                    "override_email": target_email,
+                }),
+            });
+            Err(Box::new(
+                PersonError::permission_denied()
+                    .with_reason("override_unknown_person")
+                    .create()
+                    .into_response(),
+            ))
+        }
+        Err(e) => Err(Box::new(internal_problem("person_resolution", &e))),
+    }
+}
+
 /// Build claims, sign the linked JWT, and persist the session in one pipeline.
 /// Returns the cookie token.
 async fn mint_and_store_session(
     state: &AppState,
     idp: &crate::oidc::AuthenticatedIdp,
-    resolution: &PersonResolution,
+    identity: &SessionIdentity,
     client: &ClientInfo,
 ) -> anyhow::Result<(String, String)> {
     let now = now_secs();
@@ -388,8 +539,8 @@ async fn mint_and_store_session(
     // exp clamped to the session absolute cap (cheap hygiene, G3).
     let exp = (now + cfg.jwt_ttl_seconds).min(absolute_expires_at);
     let claims = GatewayClaims {
-        sub: resolution.person_id.clone(),
-        tenant_id: resolution.tenant_id.clone(),
+        sub: identity.person_id.clone(),
+        tenant_id: identity.tenant_id.clone(),
         roles: roles.clone(),
         sub_type: "user".to_owned(),
         sid: session_id.clone(),
@@ -414,9 +565,9 @@ async fn mint_and_store_session(
     };
 
     let record = SessionRecord {
-        person_id: resolution.person_id.clone(),
-        email: idp.identity.email.clone(),
-        tenant_id: resolution.tenant_id.clone(),
+        person_id: identity.person_id.clone(),
+        email: identity.email.clone(),
+        tenant_id: identity.tenant_id.clone(),
         roles,
         idp_iss: idp.issuer.clone(),
         idp_sub: idp.identity.sub.clone(),
@@ -431,6 +582,8 @@ async fn mint_and_store_session(
         ip: client.ip.clone(),
         csrf_token,
         current_token: token.clone(),
+        impersonator_person_id: identity.impersonator_person_id.clone(),
+        impersonator_email: identity.impersonator_email.clone(),
     };
 
     state
@@ -598,7 +751,7 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
 
     let refresh_at = refresh_at_for(&state.cfg, record.expires_at);
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "user": record.person_id,
         "email": record.email,
         "tenant_id": record.tenant_id,
@@ -606,9 +759,13 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
         "expires_at": record.expires_at,
         "refresh_at": refresh_at,
         "csrf_token": record.csrf_token,
-    })
-    .to_string();
-    json_ok(body)
+    });
+    // View-as session (#1941): name the real principal so the SPA can show a
+    // "viewing as X" banner. Absent on normal sessions.
+    if !record.impersonator_email.is_empty() {
+        body["impersonator_email"] = serde_json::Value::String(record.impersonator_email.clone());
+    }
+    json_ok(body.to_string())
 }
 
 // ── /auth/csrf ───────────────────────────────────────────────────────────────
@@ -849,9 +1006,11 @@ pub async fn sessions_revoke_one(
         Ok(t) => t,
         Err(e) => return internal_problem("session_load", &e),
     };
-    let owned = target
-        .as_ref()
-        .is_some_and(|t| t.person_id == record.person_id);
+    // A view-as session (#1941) belongs to the real principal too — it is
+    // listed under their index, so it must be revocable from there as well.
+    let owned = target.as_ref().is_some_and(|t| {
+        t.person_id == record.person_id || t.impersonator_person_id == record.person_id
+    });
     if !owned {
         return not_found(&target_id);
     }
@@ -1224,6 +1383,20 @@ pub fn sanitize_return_to(candidate: Option<&str>, default: &str) -> String {
     }
 }
 
+/// Sanitize the client-supplied `__override` value before it is logged or
+/// stored: strip control characters (a CR/LF or ANSI escape in the value could
+/// forge log lines on a plain-text subscriber — and this is logged even in
+/// flag-off environments) and cap at the RFC 5321 address maximum.
+#[must_use]
+pub fn sanitize_override_email(candidate: &str) -> String {
+    candidate
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(254)
+        .collect()
+}
+
 // ── Internal plumbing ────────────────────────────────────────────────────────
 
 fn now_secs() -> u64 {
@@ -1339,7 +1512,14 @@ fn unauthenticated_clear_cookie(jar: CookieJar) -> Response {
 }
 
 fn internal_problem(context: &str, err: &anyhow::Error) -> Response {
-    tracing::error!(context, error = %err, "authenticator internal error");
+    // Log the full error chain (`?` = Debug) — anyhow::Error's Display (`%`)
+    // shows only the top-level context, dropping the actual underlying cause
+    // (e.g. the real TLS/validation error text), which made failures like a
+    // rejected OIDC issuer or a missing CA impossible to diagnose from logs
+    // alone. The HTTP response body stays on the short `{context}: {err}`
+    // form — the full chain can include upstream-response fragments that
+    // shouldn't reach the browser.
+    tracing::error!(context, error = ?err, "authenticator internal error");
     toolkit_canonical_errors::CanonicalError::internal(format!("{context}: {err}"))
         .create()
         .into_response()
@@ -1379,6 +1559,16 @@ mod tests {
     #[test]
     fn return_to_accepts_site_relative_paths() {
         assert_eq!(sanitize_return_to(Some("/dashboard"), "/"), "/dashboard");
+    }
+
+    #[test]
+    fn override_email_strips_control_chars_and_caps_length() {
+        assert_eq!(
+            sanitize_override_email("  bob@example.com\r\nforged=line  "),
+            "bob@example.comforged=line"
+        );
+        assert_eq!(sanitize_override_email("a\u{1b}[31mred"), "a[31mred");
+        assert_eq!(sanitize_override_email(&"x".repeat(300)).len(), 254);
     }
 
     #[test]

@@ -19,6 +19,9 @@ logger = logging.getLogger("airbyte")
 
 BUCKET_COUNT = 8
 MAX_TEXT_BYTES = 16_384
+# Bumped from 2 when entity and state keys moved back to workspace/slug: a
+# version-2 state is keyed by repository uuid and no longer addresses anything.
+STATE_VERSION = 3
 
 
 def now_iso() -> str:
@@ -51,9 +54,63 @@ def unique_key(tenant_id: str, source_id: str, *parts: Any) -> str:
     return ":".join([tenant_id, source_id, *encoded])
 
 
-def repository_bucket(repository_uuid: str) -> int:
-    digest = hashlib.sha256(repository_uuid.encode("utf-8")).digest()
+def repo_scope(repo: RepositoryRef) -> tuple[str, str]:
+    """Identity parts for an entity key: workspace + slug.
+
+    These are the parts the pre-rewrite connector used, so a re-synced entity
+    lands on the same `unique_key` as the row that connector already wrote and
+    supersedes it in place instead of duplicating it.
+    """
+    return (repo.workspace, repo.slug)
+
+
+def repo_state_key(repo: RepositoryRef) -> str:
+    """State-dict key for a repository, matching the pre-rewrite partition key."""
+    return f"{repo.workspace}/{repo.slug}"
+
+
+def repository_bucket(state_key: str) -> int:
+    digest = hashlib.sha256(state_key.encode("utf-8")).digest()
     return int.from_bytes(digest[:4], "big") % BUCKET_COUNT
+
+
+def migrate_legacy_state(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Fold a pre-rewrite state dict into the per-repository shape.
+
+    The old connector kept one flat entry per partition, and the partition was a
+    branch (`ws/slug/branch` carrying `head_sha`) or a pull request
+    (`ws/slug/pr_id` carrying `pull_request_updated_on`) or the repository itself
+    (`ws/slug` carrying `updated_on`). Everything the new streams need is already
+    in there — the branch heads are exactly the `exclude` set of the commit-range
+    diff, and the max cursor is the pull-request watermark — so this reshapes
+    rather than reconstructs, and an upgraded connector resumes from the old
+    checkpoints instead of re-reading history.
+
+    A partition that cannot be parsed is skipped: the repository then looks
+    unsynced and is fetched in full, which is safe because re-fetched rows
+    supersede the old ones on the same key.
+    """
+    repositories: dict[str, dict[str, Any]] = {}
+    for partition, entry in value.items():
+        if not isinstance(entry, Mapping):
+            continue
+        segments = str(partition).split("/")
+        if len(segments) < 2:
+            continue
+        key = "/".join(segments[:2])
+        repository = repositories.setdefault(key, {})
+        head_sha = entry.get("head_sha")
+        if head_sha:
+            repository.setdefault("head_shas", set()).add(str(head_sha))
+        cursor = entry.get("updated_on") or entry.get("pull_request_updated_on")
+        if cursor:
+            repository["updated_on"] = max(str(cursor), repository.get("updated_on", ""))
+    for repository in repositories.values():
+        if "head_shas" in repository:
+            repository["head_shas"] = sorted(repository["head_shas"])
+        if "updated_on" in repository:
+            repository["reconcile_after_id"] = 0
+    return {"version": STATE_VERSION, "bucket_count": BUCKET_COUNT, "repositories": repositories}
 
 
 def schema(properties: Mapping[str, Any], *, additional: bool = False) -> Mapping[str, Any]:
@@ -166,7 +223,7 @@ class BitbucketStream(Stream, ABC):
     def _bucket_repositories(self) -> None:
         self._repositories_by_bucket = {bucket: [] for bucket in range(BUCKET_COUNT)}
         for repo in self._catalog.repositories():
-            self._repositories_by_bucket[repository_bucket(repo.uuid)].append(repo)
+            self._repositories_by_bucket[repository_bucket(repo_state_key(repo))].append(repo)
 
     def envelope(self, record: Mapping[str, Any]) -> dict[str, Any]:
         return {
@@ -230,20 +287,36 @@ class BitbucketIncrementalStream(BitbucketStream, CheckpointMixin, ABC):
 
     @state.setter
     def state(self, value: MutableMapping[str, Any]) -> None:
-        if value and value.get("version") == 2 and value.get("bucket_count") == BUCKET_COUNT:
+        if not value:
+            self._state = self._empty_state()
+        elif value.get("version") == STATE_VERSION and value.get("bucket_count") == BUCKET_COUNT:
             self._state = value
+        elif "version" not in value:
+            # Pre-rewrite state: a flat partition -> cursor map. Reshape it so
+            # the sync resumes from those checkpoints (see migrate_legacy_state).
+            self._state = migrate_legacy_state(value)
+            logger.info(
+                f"{self.name}: migrated pre-rewrite state — "
+                f"{len(self._state['repositories'])} repositories resume from their last checkpoint"
+            )
         else:
-            self._state = {"version": 2, "bucket_count": BUCKET_COUNT, "repositories": {}}
+            # A version we do not recognise (e.g. the uuid-keyed version 2)
+            # addresses nothing here; start clean rather than half-resume.
+            self._state = self._empty_state()
+
+    @staticmethod
+    def _empty_state() -> dict[str, Any]:
+        return {"version": STATE_VERSION, "bucket_count": BUCKET_COUNT, "repositories": {}}
 
     def repository_state(self, repo: RepositoryRef) -> MutableMapping[str, Any]:
         repositories = self._state.setdefault("repositories", {})
-        return dict(repositories.get(repo.uuid) or {})
+        return dict(repositories.get(repo_state_key(repo)) or {})
 
     def commit_repository_state(self, repo: RepositoryRef, value: Mapping[str, Any]) -> None:
-        self._state.setdefault("repositories", {})[repo.uuid] = dict(value)
+        self._state.setdefault("repositories", {})[repo_state_key(repo)] = dict(value)
 
     def prune_bucket_state(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
-        current = {repo.uuid for repo in repositories}
+        current = {repo_state_key(repo) for repo in repositories}
         state_repositories = self._state.setdefault("repositories", {})
         stale = [key for key in state_repositories if repository_bucket(key) == bucket_id and key not in current]
         for key in stale:

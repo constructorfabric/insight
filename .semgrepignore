@@ -1,0 +1,26 @@
+# Semgrep scan exclusions — build outputs and vendored dependencies only.
+# Application AND test source stay in scope (constructorfabric/insight#1797).
+# Syntax is .gitignore-style. Point/path/rule-class waivers live elsewhere:
+#   - per-finding:  inline `// nosemgrep: <rule-id>` / `# nosemgrep: <rule-id>` + issue link
+#   - per-rule:     `--exclude-rule` in .github/workflows/semgrep.yml (e.g. the TruffleHog boundary)
+
+# --- Rust build output ---
+target/
+
+# --- Python build/dep/caches ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# --- Node / frontend build & deps ---
+node_modules/
+dist/
+build/
+
+# --- VCS / editor noise ---
+.git/

@@ -5,7 +5,7 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from source_bitbucket_cloud.streams.base import schema, unique_key
+from source_bitbucket_cloud.streams.base import repo_scope, schema, unique_key
 from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
 
@@ -47,7 +47,7 @@ class PRActivityStream(PullRequestStateStream):
             )
             raw_identity = json.dumps(entry, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
             activity_id = entry.get("id") or hashlib.sha256(raw_identity).hexdigest()
-            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, pr_id, activity_id, event_type)
+            entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), pr_id, activity_id, event_type)
             entity_keys.add(entity_key)
             yield self.item(
                 entity_key=entity_key,

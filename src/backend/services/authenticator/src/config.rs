@@ -42,6 +42,13 @@ pub struct IdpConfig {
     /// and downstream services fail closed. Interim until the Identity
     /// membership API (#1687) / Keycloak broker (#1782).
     pub default_tenant_id: String,
+    /// PEM bundle of extra CA certificate(s) to trust for the IdP's TLS
+    /// connection, on top of the platform's default trust store. Needed
+    /// when `issuer_url` sits behind an internal/corporate CA the
+    /// container's OS-level trust store doesn't chain to. Empty = trust
+    /// only the default store. Mount the PEM file into the pod and point
+    /// this at its path.
+    pub extra_ca_cert_path: String,
     /// Background refresh of IdP tokens per session (workers land in step 10).
     pub refresh_enabled: bool,
     /// Refresh IdP tokens this long before their expiry.
@@ -65,6 +72,7 @@ impl Default for IdpConfig {
             client_secret: String::new(),
             tenant_claim: "tenant_id".to_owned(),
             default_tenant_id: String::new(),
+            extra_ca_cert_path: String::new(),
             refresh_enabled: true,
             refresh_safety_margin_seconds: 60,
             refresh_concurrency: 128,
@@ -276,6 +284,12 @@ pub struct AuthenticatorConfig {
     /// the services that may force-logout users (e.g. the future permissions
     /// service on grant changes, DD-AUTH-07).
     pub admin_revoke_roles: Vec<String>,
+    /// Honor the `__override=<email>` parameter on `/auth/login` (view-as,
+    /// #1941): the session is minted for that person instead of the
+    /// authenticated one, after a full IdP login. Dev/demo environments ONLY —
+    /// the flag marks the whole environment as impersonation-capable, so it
+    /// MUST stay `false` anywhere real users log in.
+    pub override_enabled: bool,
 
     // ── Dependencies ─────────────────────────────────────────────────────
     /// Redis connection URL (`redis://host:port`).
@@ -347,6 +361,7 @@ impl Default for AuthenticatorConfig {
             backchannel_clock_skew_seconds: 60,
             backchannel_token_max_age_seconds: 300,
             admin_revoke_roles: vec!["session_admin".to_owned()],
+            override_enabled: false,
             redis_url: String::new(),
             signing_keys_path: String::new(),
             identity_url: String::new(),

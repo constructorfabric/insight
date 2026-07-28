@@ -1,0 +1,49 @@
+# Reusable Cursor per-event usage records (bronze_cursor.cursor_usage_events and
+# its cursor_usage_events_daily_resync twin — same shape, so both tables take
+# these records).
+#
+# Carry ONLY the boilerplate (identity); the fields under test (timestamp,
+# chargedCents, kind, unique_key) are set in each test's `bronze`.
+#
+# The base lists EVERY schema column so a merged bronze row is complete; unused
+# fields default to null. The 4 _airbyte_* CDK columns are included too —
+# cursor__usage_events keeps the latest row per unique_key by
+# _airbyte_extracted_at, and cursor__ai_dev_usage folds that stamp into
+# `_version` so a finalized cost re-emits the person-day.
+#
+# `timestamp` is epoch-millis as a STRING; `chargedCents` is the event's full
+# priced value (it already includes cursorTokenFee — do not add the two).
+templates:
+  cursor_event:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    source_id: "cursor-test"
+    unique_key: null
+    userEmail: null
+    timestamp: null
+    kind: "Usage-based"
+    model: "claude-4.6-sonnet"
+    maxMode: false
+    requestsCosts: null
+    isTokenBasedCall: true
+    isFreeBugbot: null
+    cursorTokenFee: null
+    isChargeable: true
+    isHeadless: false
+    chargedCents: null
+    tokenUsage: null
+
+  alice:
+    $ref: "#/templates/cursor_event"
+    userEmail: alice@example.com
+
+  bob:
+    $ref: "#/templates/cursor_event"
+    userEmail: bob@example.com
+
+  carol:
+    $ref: "#/templates/cursor_event"
+    userEmail: carol@example.com

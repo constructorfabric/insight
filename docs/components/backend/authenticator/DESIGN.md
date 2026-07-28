@@ -46,6 +46,7 @@ date: 2026-07-06
   - [DD-AUTH-06: Two Listeners for Two Internal Surfaces](#dd-auth-06-two-listeners-for-two-internal-surfaces)
   - [DD-AUTH-07: Access-Control Claims Fetched Once, at Login](#dd-auth-07-access-control-claims-fetched-once-at-login)
   - [DD-AUTH-08: Empty-Table First-Admin Bootstrap plus INSTALLER](#dd-auth-08-empty-table-first-admin-bootstrap-plus-installer)
+  - [DD-AUTH-09: View-As Override at Session Mint, Gated by an Environment Flag](#dd-auth-09-view-as-override-at-session-mint-gated-by-an-environment-flag)
   - [RESOLVED (step 07): ES256 for the Gateway JWT](#resolved-step-07-es256-for-the-gateway-jwt)
 - [6. Traceability](#6-traceability)
 
@@ -84,6 +85,7 @@ The authenticator is a plain HTTP service: no proxying, no K8s API access, no st
 | `cpt-insightspec-fr-auth-service-tokens` | Token listener + RFC 7523 verification against the registry; same signer, same JWKS |
 | `cpt-insightspec-fr-auth-bootstrap` | Empty-table guard in the login path; INSTALLER as the production path |
 | `cpt-insightspec-fr-auth-internal-reachability` | Two listeners (3.10); NetworkPolicies; credential checks on every endpoint |
+| `cpt-insightspec-fr-auth-override` | View-as swap at session mint, gated by default-off `override_enabled` (DD-AUTH-09); `impersonator_*` fields in the session record; real principal audited |
 
 #### NFR Allocation
 
@@ -548,7 +550,7 @@ sequenceDiagram
     B-->>U: Set-Cookie __Host-sid=(session token) + 302 to SPA
 ```
 
-**Description**: The only moment IdP tokens are exchanged. The session-fixation guard (revoke any live session named by an incoming cookie, always generate the new token server-side) runs before session creation, exactly as in the deleted BFF spec.
+**Description**: The only moment IdP tokens are exchanged. The session-fixation guard (revoke any live session named by an incoming cookie, always generate the new token server-side) runs before session creation, exactly as in the deleted BFF spec. When `override_enabled` and the login carried `__override=<email>`, the effective person is swapped here — after IdP authentication and person resolution, before session creation (DD-AUTH-09).
 
 #### Every API request -- cookie in, JWT out
 
@@ -754,6 +756,8 @@ graph LR
 | `user_agent` | String | Captured at login |
 | `ip` | String | Captured at login |
 | `csrf_token` | String | CSRF token bound to this session |
+| `impersonator_person_id` | String | Real principal behind a `__override` view-as session (DD-AUTH-09); empty on normal logins |
+| `impersonator_email` | String | Real principal's email on a view-as session; surfaced by `/auth/me` |
 
 **Redis TTL**: matches `expires_at`; re-set on every refresh.
 
@@ -779,7 +783,7 @@ graph LR
 
 #### Key: `asm:login_state:{state}`
 
-**Type**: Redis HASH. Fields: `pkce_verifier`, `nonce`, `redirect_to`. **TTL**: 5 minutes, one-shot. The live count is capped (layer-2 rate limiting).
+**Type**: Redis HASH. Fields: `pkce_verifier`, `nonce`, `redirect_to`, `override_email` (view-as target, DD-AUTH-09; empty on normal logins). **TTL**: 5 minutes, one-shot. The live count is capped (layer-2 rate limiting).
 
 #### Key: `asm:logout_jti:{iss}:{jti}`
 
@@ -878,6 +882,7 @@ Step-10 additions (all defaulted; the config struct mirrors them 1:1):
 | `authenticator.idp.refresh_due_jitter_seconds` | `30` | ± jitter applied to due-times when written (anti-herding, G5). |
 | `authenticator.rate_limit.login_state_max` | `1000` | Cap on concurrent live login states; excess `/auth/login` → 429. |
 | `authenticator.rate_limit.refresh_burst` / `refresh_per_minute` | `5` / `6` | Per-session `/auth/refresh` token bucket (burst 0 disables). |
+| `authenticator.override_enabled` | `false` | Honor `__override=<email>` on `/auth/login` (view-as, DD-AUTH-09). Dev/demo environments ONLY — never set where real users log in. |
 | `authenticator.rate_limit.callback_burst` / `callback_per_minute` | `5` / `10` | Per-state `/auth/callback` token bucket. |
 | `authenticator.audit.brokers` | `""` | Redpanda bootstrap servers for audit events; empty = disabled (structured log only). |
 | `authenticator.audit.topic` | `insight.audit.events` | The platform audit topic. |
@@ -1088,6 +1093,14 @@ Recorded here so the decisions survive the deleted tree; rationale as originally
 **Why**: An empty persons table otherwise deadlocks every fresh install (a known operational scar); way 1 makes dev/demo installs self-healing; way 2 formalizes seeding that must happen anyway and closes way 1's window by populating the table.
 
 **Consequences**: The documented race ("first colleague to log in wins the universe") is bounded to IdP-authenticated principals on an empty install and is loudly audited; security-sensitive installs disable it.
+
+### DD-AUTH-09: View-As Override at Session Mint, Gated by an Environment Flag
+
+**Decision**: Restore the operator "view the dashboard as another user" facility (`?__override=<email>`, issue #1941) inside the authenticator, at the only legitimate seam: the target email is stored with the transient login state at `/auth/login` and applied at `/auth/callback` — after full IdP authentication and person resolution — by resolving the target through the same Identity lookup and minting the session + linked JWT for the target. Gated by a single `override_enabled` flag, default `false`, wired through Helm; no per-user allowlist.
+
+**Why**: The gateway hardening made viewer identity exclusively gateway-authored (inbound `X-Insight-*` stripped), which correctly killed the old client-side override; the replacement must therefore act where identity is authored. All decision inputs are server-side (flag, login-state value, person store) — the parameter itself is never trusted as identity, so the spoofing hole stays closed. A per-user allowlist is deliberately absent: roles are `default_roles` until the permissions service exists, so the flag marks the whole *environment* (dev/demo) as impersonation-capable instead of pretending to per-user authorization we cannot yet enforce. Once DD-AUTH-07 lands, the gate can become a role check without changing the flow.
+
+**Consequences**: The session behaves as the target everywhere downstream (JWT `sub`, scope, session index) — that is the point. The record keeps `impersonator_*` fields and the real `idp_sub`/`idp_sid`/refresh token, so audit attribution, back-channel logout, and the background refresher keep targeting the real principal's IdP grant; the session is additionally indexed under the impersonator's `asm:user_sessions:*` (scored at the absolute cap — rotation only re-scores the target's index) so revoke-by-person against the real principal reaches it, and the real principal may list/revoke it as their own. `/auth/me` exposes `impersonator_email` for the SPA's "viewing as" banner. An unknown target is denied 403 (audited to the durable sink, not just the log), never silently ignored. Two accepted sharp edges, bounded by flag-on environments holding no real users: the Identity lookup is email-only (no tenant memberships until #1687), so a target from another tenant resolves and is paired with the caller's tenant claim; and compromise of any account grants impersonation of any known person. Both are why the default is `false` at every layer.
 
 ### RESOLVED (step 07): ES256 for the Gateway JWT
 

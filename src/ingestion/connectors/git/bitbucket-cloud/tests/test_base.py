@@ -8,6 +8,7 @@ from source_bitbucket_cloud.streams.base import (
     BUCKET_COUNT,
     normalize_start_date,
     now_iso,
+    repo_state_key,
     repository_bucket,
     truncate,
     unique_key,
@@ -34,17 +35,17 @@ def test_bucket_slices_and_repository_lookup(repositories_stream, repo):
 
 
 def test_incremental_state_is_versioned_and_pruned(commits_stream):
-    current = repository(uuid="{current}")
-    stale = repository(uuid="{stale}")
-    while repository_bucket(stale.uuid) != repository_bucket(current.uuid):
-        stale = repository(uuid=stale.uuid + "x")
+    current = repository(slug="current")
+    stale = repository(slug="stale")
+    while repository_bucket(repo_state_key(stale)) != repository_bucket(repo_state_key(current)):
+        stale = repository(slug=stale.slug + "x")
     commits_stream._catalog = FakeCatalog([current])
     commits_stream.state = {"legacy": True}
-    assert commits_stream.state == {"version": 2, "bucket_count": BUCKET_COUNT, "repositories": {}}
+    assert commits_stream.state == {"version": 3, "bucket_count": BUCKET_COUNT, "repositories": {}}
     commits_stream.commit_repository_state(current, {"head_shas": ["a"]})
     commits_stream.commit_repository_state(stale, {"head_shas": ["b"]})
-    commits_stream.prune_bucket_state(repository_bucket(current.uuid), [current])
-    assert commits_stream.state["repositories"] == {current.uuid: {"head_shas": ["a"]}}
+    commits_stream.prune_bucket_state(repository_bucket(repo_state_key(current)), [current])
+    assert commits_stream.state["repositories"] == {repo_state_key(current): {"head_shas": ["a"]}}
 
 
 def test_items_and_completion_have_stable_storage_keys(repositories_stream):

@@ -203,6 +203,18 @@ COMPONENTS = [
         "cov_package": "source_github_copilot",
         "paths": ["src/ingestion/connectors/ai/github-copilot"],
     },
+    # Deploy-time ClickHouse schema tooling (the migration Job's Python half:
+    # reconcile_bronze_schema, which heals warm-cluster bronze drift — #1991).
+    # Owning the whole scripts/ tree means a connectors-ddl snapshot regen also
+    # re-runs these tests, which is the point: the reconciler's contract is with
+    # that snapshot. Shell scripts in the same tree have no measured lines.
+    {
+        "name": "ingestion-scripts",
+        "lang": "python",
+        "root": "src/ingestion/scripts",
+        "cov_package": "reconcile_bronze_schema",
+        "paths": ["src/ingestion/scripts"],
+    },
     # Mock-server test rig for NOCODE connectors (feature-connector-mock-tests),
     # split into two CI jobs for clean results (review ask): the harness's own
     # unit tests (meta/) and the per-connector mock suites. Both measure the
@@ -237,7 +249,10 @@ COMPONENTS = [
         "pytest_args": "--suites-only",
         "cover": False,
         "triggered_by": ["connector-tests-harness"],
-        "paths": ["src/ingestion/connectors/task-tracking/jira"],
+        "paths": [
+            "src/ingestion/connectors/task-tracking/jira",
+            "src/ingestion/connectors/ai/claude-admin",
+        ],
     },
 ]
 

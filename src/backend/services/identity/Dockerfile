@@ -3,6 +3,9 @@
 # attestation steps in build-images.yml.
 # Take 2: the first publish-chart attempt failed before committing the
 # appVersion bumps back to main (chart attest step lacked registry login).
+# Take 3 (2026-07-27): republish after merge-identity's digest-artifact glob
+# swallowed the identity-resolution digests (fixed alongside this marker) —
+# the failed runs never advanced the chart-pinned identity tag.
 # Identity Resolution — .NET 9 service.
 #
 # Build context: src/backend/   (was services/identity/ historically — moved

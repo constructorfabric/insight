@@ -1,0 +1,37 @@
+# JSON schema for bronze_cursor.cursor_usage_events (all real columns).
+# Resolved by table name. Mirrors the connector's InlineSchemaLoader
+# (src/ingestion/connectors/ai/cursor/connector.yaml — stream cursor_usage_events,
+# POST /teams/filtered-usage-events) plus the 4 _airbyte_* CDK columns.
+# NOTE: `timestamp` is epoch-millis carried as a STRING (the connector's %ms
+# cursor field); the dbt model derives the day via
+# fromUnixTimestamp64Milli(toInt64OrNull(timestamp)). `chargedCents` is the
+# event's full priced value and already includes `cursorTokenFee`.
+# `tokenUsage` is the nested token object flattened to a JSON string
+# (ClickHouse views cannot carry JSON columns). `unique_key` =
+# {tenant}-{source}-{userEmail}-{timestamp}.
+schemas:
+  bronze_cursor.cursor_usage_events:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: string }
+      userEmail: { type: [string, "null"] }
+      timestamp: { type: [string, "null"] }
+      kind: { type: [string, "null"] }
+      model: { type: [string, "null"] }
+      maxMode: { type: [boolean, "null"] }
+      requestsCosts: { type: [number, "null"] }
+      isTokenBasedCall: { type: [boolean, "null"] }
+      isFreeBugbot: { type: [boolean, "null"] }
+      cursorTokenFee: { type: [number, "null"] }
+      isChargeable: { type: [boolean, "null"] }
+      isHeadless: { type: [boolean, "null"] }
+      chargedCents: { type: [number, "null"] }
+      tokenUsage: { type: [string, "null"] }

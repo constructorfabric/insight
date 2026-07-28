@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from source_bitbucket_cloud.streams.base import schema, unique_key
+from source_bitbucket_cloud.streams.base import repo_scope, schema, unique_key
 from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
 
@@ -24,7 +24,7 @@ class PRDiffstatStream(PullRequestStateStream):
             file_path = new_file.get("path") or old_file.get("path")
             if not file_path:
                 continue
-            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, pr_id, file_path)
+            entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), pr_id, file_path)
             entity_keys.add(entity_key)
             yield self.item(
                 entity_key=entity_key,

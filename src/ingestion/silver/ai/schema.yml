@@ -112,9 +112,19 @@ models:
           NULL for other tools.
       - name: cost_cents
         description: >
-          Monetary cost in cents when available. NULL for Cursor daily usage
-          (cost is per-event, not per-day) and for Claude Code (no billing per
-          user — only per API key / workspace).
+          This person-day's AI usage priced at the vendor's token/usage rates,
+          in cents — what the consumption would cost if billed purely by usage.
+          It is NOT the amount invoiced: usage a seat or subscription already
+          covered is included, and seat/subscription fees are excluded.
+
+          Populated by Cursor (sum of the day's priced events) and Claude Team
+          (total_cost). NULL for Claude Code via Enterprise (no per-user
+          billing — cost exists only per API key / workspace), for Copilot (no
+          cost surface), and for ChatGPT Team (credits are not currency).
+
+          Cash actually spent is a different quantity and lives elsewhere:
+          per-seat overage in class_ai_overage, token-metered invoices at
+          workspace / project grain in their own sources.
       - name: commits_count
         description: >
           Git commits attributed to Claude Code sessions. Populated for
@@ -365,9 +375,11 @@ models:
           non-cross surfaces.
       - name: cost_cents
         description: >
-          Monetary cost in cents when available. NULL for Claude Enterprise
-          (cost is org-level subscription, not per-user / per-surface).
-          Reserved for future providers that surface assistant cost per-user.
+          Assistant usage priced at the vendor's token/usage rates, in cents —
+          same meaning as class_ai_dev_usage.cost_cents, not an invoiced amount.
+          NULL for Claude Enterprise (cost is org-level subscription, not
+          per-user / per-surface). Reserved for future providers that surface
+          assistant cost per-user.
       - name: surface_metrics_json
         description: >
           Raw JSON blob for the surface (chat_metrics_json / office_metrics_json /
