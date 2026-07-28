@@ -708,12 +708,15 @@ pub fn presentation(
     let ratio = matches!(plan.definition.spec, ComputationSpec::Ratio { .. });
     let display_dimensions = if ratio { &[] } else { display_dimensions };
     let dimensions = presentation_dimensions(rows)?;
-    let mut detail_keys = plan
-        .inputs
-        .iter()
-        .flat_map(|input| input.presentation.detail_keys)
-        .map(|key| (*key).to_owned())
-        .collect::<BTreeSet<_>>();
+    let mut detail_keys = if ratio {
+        BTreeSet::new()
+    } else {
+        plan.inputs
+            .iter()
+            .flat_map(|input| input.presentation.detail_keys)
+            .map(|key| (*key).to_owned())
+            .collect::<BTreeSet<_>>()
+    };
     let dimension_keys = filters
         .iter()
         .filter(|filter| filter.values.len() == 1)

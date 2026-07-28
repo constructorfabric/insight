@@ -7,7 +7,7 @@ use axum::body::Body;
 use axum::extract::Extension;
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::{HeaderValue, Response};
-use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
+use rust_xlsxwriter::{ExcelDateTime, Format, Table, TableStyle, Workbook};
 use tokio::sync::Semaphore;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -291,6 +291,17 @@ fn build_xlsx(
                     .map_err(|_| export_internal())?,
             };
         }
+    }
+    if !rows.is_empty() && !columns.is_empty() {
+        let last_row = u32::try_from(rows.len()).map_err(|_| export_internal())?;
+        let last_column = u16::try_from(columns.len() - 1).map_err(|_| export_internal())?;
+        let table = Table::new()
+            .set_style(TableStyle::None)
+            .set_autofilter(false)
+            .set_banded_rows(false);
+        worksheet
+            .add_table(0, 0, last_row, last_column, &table)
+            .map_err(|_| export_internal())?;
     }
     let mut output = LimitedBuffer::new(MAX_EXPORT_BYTES);
     workbook.save_to_writer(&mut output).map_err(|error| {
