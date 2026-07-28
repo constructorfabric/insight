@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import re
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -152,11 +153,19 @@ def reconcile_bronze_schema(cfg: SessionConfig, ddl_dir: Path) -> int:
 
 @lru_cache(maxsize=1)
 def _reconciler(path: Path):
-    """Load scripts/reconcile_bronze_schema.py, which lives outside the rig's package root."""
+    """Load scripts/reconcile_bronze_schema.py, which lives outside the rig's package root.
+
+    The module must be registered in sys.modules BEFORE exec_module: dataclass
+    resolves its own module via `sys.modules[cls.__module__]`, so executing an
+    unregistered module raises AttributeError on the first @dataclass. Loading
+    the file by path (rather than putting scripts/ on sys.path) keeps the rig's
+    own `tests` package from being shadowed by the one next to the script.
+    """
     spec = importlib.util.spec_from_file_location("reconcile_bronze_schema", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load the bronze reconciler from {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 

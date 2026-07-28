@@ -196,7 +196,7 @@ def _existing_tables(
     databases = ", ".join(sorted({_lit(t.database) for t in tables}))
     rows = fetch_rows(
         "SELECT database, name FROM system.tables "
-        f"WHERE database IN ({databases}) FORMAT TSV"
+        f"WHERE database IN ({databases})"
     )
     return {(row[0], row[1]) for row in rows if len(row) >= 2}
 
@@ -218,7 +218,7 @@ def _reconcile_one(
         "SELECT name, type FROM system.columns "
         f"WHERE database = {db} AND table = {probe} "
         f"AND name NOT IN (SELECT name FROM system.columns WHERE database = {db} AND table = {tbl}) "
-        "ORDER BY position FORMAT TSV"
+        "ORDER BY position"
     )
     for row in missing:
         name, ch_type = row[0], row[1]
@@ -236,7 +236,7 @@ def _reconcile_one(
         f"(SELECT name, type FROM system.columns WHERE database = {db} AND table = {probe}) AS s "
         "INNER JOIN "
         f"(SELECT name, type FROM system.columns WHERE database = {db} AND table = {tbl}) AS l "
-        "USING (name) WHERE s.type != l.type ORDER BY s.name FORMAT TSV"
+        "USING (name) WHERE s.type != l.type ORDER BY s.name"
     )
     for row in drift:
         name, snapshot_type, live_type = row[0], row[1], row[2]

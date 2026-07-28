@@ -10,6 +10,7 @@ SQL strings.
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -245,6 +246,54 @@ class TestReconcile:
         fake, _ = run({("bronze_bitbucket_cloud", "commits"): LEGACY_COMMITS})
         for sql in fake.alters():
             assert sql.startswith("ALTER TABLE `bronze_bitbucket_cloud`.`commits` ADD COLUMN IF NOT EXISTS `")
+
+
+class TestLoadableByPath:
+    """The e2e rig loads this file by path, not as an installed module.
+
+    Regression test: `module_from_spec` + `exec_module` without registering the
+    module in sys.modules first raises `AttributeError: 'NoneType' object has no
+    attribute '__dict__'` on the first @dataclass, because dataclass resolves its
+    own module through `sys.modules[cls.__module__]`. Importing normally (as the
+    tests above do) hides that, so this exercises the rig's actual code path.
+    """
+
+    def _load(self, name: str):
+        spec = importlib.util.spec_from_file_location(
+            name, Path(__file__).resolve().parent.parent / "reconcile_bronze_schema.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(spec.name, None)
+            raise
+        return module
+
+    def test_executes_and_its_dataclasses_are_usable(self):
+        module = self._load("reconcile_bronze_schema_pathloaded")
+        try:
+            table = module.SnapshotTable("bronze_x", "t", SNAPSHOT_COMMITS)
+            assert table.probe == f"t{module.PROBE_SUFFIX}"
+            assert module.ReconcileResult().columns_added == 0
+        finally:
+            sys.modules.pop("reconcile_bronze_schema_pathloaded", None)
+
+    def test_reconciles_when_loaded_by_path(self):
+        """End-to-end through the path-loaded module, as the rig calls it."""
+        module = self._load("reconcile_bronze_schema_pathloaded2")
+        try:
+            fake = FakeClickHouse({("bronze_bitbucket_cloud", "commits"): LEGACY_COMMITS})
+            result = module.reconcile(
+                module.parse_snapshot_tables(SNAPSHOT_COMMITS),
+                execute=fake.execute,
+                fetch_rows=fake.fetch_rows,
+            )
+            assert result.columns_added == 4
+            assert "bucket_id" in fake.tables[("bronze_bitbucket_cloud", "commits")]
+        finally:
+            sys.modules.pop("reconcile_bronze_schema_pathloaded2", None)
 
 
 class TestHttpClient:
