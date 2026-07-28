@@ -179,3 +179,170 @@ def test_reconcile_leaves_no_probe_tables(warm_cluster):
         f"WHERE name LIKE '%{rbs.PROBE_SUFFIX}' FORMAT TSV"
     )
     assert leftovers == []
+
+
+# ---------------------------------------------------------------------------
+# Whole-snapshot sweep
+# ---------------------------------------------------------------------------
+# The tests above cover the tables issue #1991 named. These cover EVERY bronze
+# table in the snapshot — 172 across 25 connector databases — each stripped to
+# the bare minimum ClickHouse will accept, which is far more drift than a real
+# upgrade produces. The assertion is the strong one: after reconcile, a stripped
+# table's columns match what a fresh install of that same snapshot statement
+# creates, compared by ClickHouse itself rather than by parsing DDL text.
+
+REFERENCE_SUFFIX = "__ddl_reference"
+
+
+def _split_columns(create_sql: str) -> tuple[str, str, str]:
+    head, rest = create_sql.split("(\n", 1)
+    close = rest.index("\n)")
+    return head, rest[:close], rest[close + 2 :]
+
+
+def strip_to_minimum(create_sql: str) -> tuple[str, set[str]]:
+    """Withhold every column the ENGINE/ORDER BY/SETTINGS tail does not require.
+
+    Whatever the tail names must stay or the CREATE is invalid; at least one
+    column is always kept. Returns the reduced statement and the withheld names.
+    """
+    head, body, tail = _split_columns(create_sql)
+    required = set(re.findall(r"\b(\w+)\b", tail))
+    kept, withheld = [], set()
+    for line in body.splitlines():
+        match = _COLUMN.match(line)
+        if not match:
+            continue
+        if match.group("name") in required:
+            kept.append(line)
+        else:
+            withheld.add(match.group("name"))
+    if not kept:  # ORDER BY tuple() protects nothing — keep the first column
+        first = next(line for line in body.splitlines() if _COLUMN.match(line))
+        kept.append(first)
+        withheld.discard(_COLUMN.match(first).group("name"))
+    reduced = head + "(\n" + ",\n".join(line.rstrip().rstrip(",") for line in kept) + "\n)" + tail
+    return reduced.replace("IF NOT EXISTS ", "").rstrip(";"), withheld
+
+
+def retarget(create_sql: str, database: str, table: str) -> str:
+    """The snapshot statement pointed at a different table name."""
+    match = rbs._CREATE_TABLE_RE.match(create_sql)
+    return f"CREATE TABLE `{database}`.`{table}`" + create_sql[match.end() :].rstrip(";")
+
+
+def columns_with_types(database: str, table: str) -> set[tuple[str, str]]:
+    return {
+        (row[0], row[1])
+        for row in rows(
+            f"SELECT name, type FROM system.columns WHERE database='{database}' AND table='{table}' FORMAT TSV"
+        )
+    }
+
+
+@pytest.fixture(scope="module")
+def stripped_snapshot():
+    """Every bronze table in the snapshot, created stripped to its minimum."""
+    tables = rbs.load_snapshot_tables(DDL_DIR)
+    bronze = [t for t in tables if rbs.is_reconcilable(t)]
+    assert len(bronze) > 100, f"expected the full snapshot, got {len(bronze)} bronze tables"
+
+    withheld_total = 0
+    for table in bronze:
+        reduced, withheld = strip_to_minimum(table.create_sql)
+        post(f"CREATE DATABASE IF NOT EXISTS `{table.database}`")
+        post(f"DROP TABLE IF EXISTS `{table.database}`.`{table.table}`")
+        post(reduced)
+        first = rows(
+            f"SELECT name FROM system.columns WHERE database='{table.database}' "
+            f"AND table='{table.table}' ORDER BY position"
+        )[0][0]
+        post(f"INSERT INTO `{table.database}`.`{table.table}` (`{first}`) VALUES (DEFAULT)")
+        withheld_total += len(withheld)
+
+    yield {"tables": tables, "bronze": bronze, "withheld_total": withheld_total}
+
+    for table in bronze:
+        post(f"DROP TABLE IF EXISTS `{table.database}`.`{table.table}`")
+        post(f"DROP TABLE IF EXISTS `{table.database}`.`{table.table}{REFERENCE_SUFFIX}`")
+
+
+def test_sweep_actually_withholds_columns(stripped_snapshot):
+    """Guards the sweep fixture — otherwise the healing assertion is vacuous."""
+    assert stripped_snapshot["withheld_total"] > 1000, stripped_snapshot["withheld_total"]
+
+
+def test_every_bronze_table_matches_a_fresh_install(stripped_snapshot):
+    """The core generality claim, across all 25 connector databases."""
+    result = rbs.reconcile(stripped_snapshot["tables"], execute=post, fetch_rows=rows)
+    assert result.columns_added == stripped_snapshot["withheld_total"]
+
+    mismatched = []
+    for table in stripped_snapshot["bronze"]:
+        reference = f"{table.table}{REFERENCE_SUFFIX}"
+        post(f"DROP TABLE IF EXISTS `{table.database}`.`{reference}`")
+        post(retarget(table.create_sql, table.database, reference))
+        expected = columns_with_types(table.database, reference)
+        actual = columns_with_types(table.database, table.table)
+        if actual != expected:
+            mismatched.append(
+                f"{table.database}.{table.table}: missing={sorted(expected - actual)} extra={sorted(actual - expected)}"
+            )
+    assert not mismatched, "\n".join(mismatched)
+
+
+def test_sweep_preserves_every_row(stripped_snapshot):
+    rbs.reconcile(stripped_snapshot["tables"], execute=post, fetch_rows=rows)
+
+    empty = [
+        f"{t.database}.{t.table}"
+        for t in stripped_snapshot["bronze"]
+        if rows(f"SELECT count() FROM `{t.database}`.`{t.table}`")[0][0] != "1"
+    ]
+    assert not empty, f"rows lost in: {empty}"
+
+
+def test_sweep_is_idempotent(stripped_snapshot):
+    rbs.reconcile(stripped_snapshot["tables"], execute=post, fetch_rows=rows)
+
+    second = rbs.reconcile(stripped_snapshot["tables"], execute=post, fetch_rows=rows)
+
+    assert second.columns_added == 0
+    assert second.type_drift == []
+
+
+def test_sweep_never_touches_non_bronze_tables(stripped_snapshot):
+    """silver/insight/identity/person/staging are owned by dbt and the migrations."""
+    non_bronze = [t for t in stripped_snapshot["tables"] if not rbs.is_reconcilable(t)]
+    assert non_bronze, "snapshot should contain non-bronze tables"
+    created = []
+    try:
+        for table in non_bronze:
+            reduced, withheld = strip_to_minimum(table.create_sql)
+            if not withheld:
+                continue
+            post(f"CREATE DATABASE IF NOT EXISTS `{table.database}`")
+            post(f"DROP TABLE IF EXISTS `{table.database}`.`{table.table}`")
+            post(reduced)
+            created.append((table, withheld))
+
+        rbs.reconcile(stripped_snapshot["tables"], execute=post, fetch_rows=rows)
+
+        widened = [
+            f"{t.database}.{t.table}"
+            for t, withheld in created
+            if withheld & {name for name, _ in columns_with_types(t.database, t.table)}
+        ]
+        assert not widened, f"non-bronze tables were modified: {widened}"
+    finally:
+        for table, _ in created:
+            post(f"DROP TABLE IF EXISTS `{table.database}`.`{table.table}`")
+
+
+def test_sweep_leaves_no_scratch_tables(stripped_snapshot):
+    rbs.reconcile(stripped_snapshot["tables"], execute=post, fetch_rows=rows)
+
+    leftovers = rows(
+        f"SELECT database, name FROM system.tables WHERE name LIKE '%{rbs.PROBE_SUFFIX}' FORMAT TSV"
+    )
+    assert leftovers == []
