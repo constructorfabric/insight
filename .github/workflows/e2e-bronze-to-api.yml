@@ -85,6 +85,13 @@ jobs:
       # compose/docker-compose.cache.yml wires onto the build-only services.
       - uses: docker/setup-buildx-action@v3
 
+      # Expose ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL to run steps. The
+      # type=gha cache backend needs them; GitHub only hands them to JS
+      # actions, so `docker compose build` in a plain run step never sees
+      # them and buildx SILENTLY drops the cache_from/cache_to config —
+      # every run was a full Rust recompile.
+      - uses: crazy-max/ghaction-github-runtime@v3
+
       # ─── Build the runner image ─────────────────────────────────────────
       # The runner bakes in analytics + each connector's enrich binary, each
       # compiled FROM ITS OWN Dockerfile via build-only services wired as
