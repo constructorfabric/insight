@@ -54,6 +54,12 @@ IMAGE="$(echo "${DEPLOY_JSON}" | jq -r '.spec.template.spec.containers[0].image'
 CONFIGMAP="$(echo "${DEPLOY_JSON}" | jq -r '.spec.template.spec.volumes[] | select(.configMap != null) | .configMap.name' | head -n1)"
 SECRET="$(echo "${DEPLOY_JSON}" | jq -r '.spec.template.spec.containers[0].envFrom[]? | select(.secretRef != null) | .secretRef.name' | head -n1)"
 IMAGE_PULL_SECRETS_JSON="$(echo "${DEPLOY_JSON}" | jq -c '.spec.template.spec.imagePullSecrets // []')"
+# Derive from the live Deployment too (same fallback the chart's own
+# securityContext defaults to) — a Deployment running as a non-default
+# UID/GID would otherwise have its init-seed Job fail to start while the
+# real server Deployment runs fine.
+POD_UID="$(echo "${DEPLOY_JSON}" | jq -r '.spec.template.spec.securityContext.runAsUser // 1000')"
+POD_GID="$(echo "${DEPLOY_JSON}" | jq -r '.spec.template.spec.securityContext.fsGroup // 1000')"
 
 for name_value in "IMAGE=${IMAGE}" "CONFIGMAP=${CONFIGMAP}" "SECRET=${SECRET}"; do
   if [ -z "${name_value#*=}" ]; then
@@ -87,8 +93,8 @@ spec:
       imagePullSecrets: ${IMAGE_PULL_SECRETS_JSON}
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
+        runAsUser: ${POD_UID}
+        fsGroup: ${POD_GID}
       containers:
         - name: init-seed
           image: "${IMAGE}"
@@ -128,8 +134,12 @@ echo "------------------------"
 
 if [ "${result}" = "succeeded" ]; then
   echo "${JOB_NAME}: succeeded"
+  # The run already succeeded — a cleanup hiccup (permissions, the Job
+  # already gone, etc.) must not turn a successful init-seed into a script
+  # failure, so tolerate delete errors instead of letting `set -e` kill us.
   if [ "${KEEP}" != "true" ]; then
-    kubectl -n "${NAMESPACE}" delete job "${JOB_NAME}"
+    kubectl -n "${NAMESPACE}" delete job "${JOB_NAME}" ||
+      echo "warning: could not delete ${JOB_NAME} — leaving it in place" >&2
   fi
   exit 0
 fi
