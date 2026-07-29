@@ -229,6 +229,31 @@ Makes the public query path incapable of anything but a single read, so a broken
 
 ---
 
+#### Read-Only Role
+
+- [ ] `p2` - **ID**: `cpt-presentation-component-read-only-role`
+
+##### Why this component exists
+
+The second, independent barrier behind the query gate: once analytics connects as the role, even a read that slips past the gate executes under grants that make writing, altering, or dropping the source impossible. Read-only enforced by construction, not convention. The role is **provisioned** by #1963; it is **not yet the active query-path identity** — analytics still connects as the admin until that wiring lands, so this barrier is dormant until then.
+
+##### Responsibility scope
+
+- `presentation_ro` ClickHouse role: `SELECT` on the contract (silver, identity/person, legacy gold in `insight`); `SELECT`/`INSERT`/`CREATE` only in `presentation`; no `DROP`/`ALTER`/`TRUNCATE` anywhere.
+- Defined as idempotent DDL in [presentation-role.sql](../../../../src/ingestion/scripts/bootstrap-db/presentation-role.sql); provisioned by [apply-ch-migrations.sh](../../../../src/ingestion/scripts/apply-ch-migrations.sh) (the clickhouse-migrate hook, which bootstrap also runs), guarded so a ClickHouse admin without access-management is skipped with a warning rather than aborting.
+
+##### Responsibility boundaries
+
+- Does NOT parse SQL — that is the query gate.
+- Does NOT create the `presentation` database or wire the analytics connection to the role — those follow in #1964 and the connection wiring; until the connection wiring lands the role is provisioned but inactive.
+
+##### Related components (by ID)
+
+- `cpt-presentation-component-query-gate` — the first barrier; the role is the second
+- `cpt-presentation-component-saved-query-api` — runs as this role
+
+---
+
 #### Saved-Query API
 
 - [ ] `p2` - **ID**: `cpt-presentation-component-saved-query-api`
@@ -351,7 +376,7 @@ Entity `presentation.queries`: `{ id, insight_tenant_id, name, description, sql,
 | Presentation namespace | New `presentation` DB: `SELECT` + `CREATE`/`INSERT` for new gold, results, scratch |
 | Access | Executed as the `presentation_ro` role (SELECT on contract; CREATE/INSERT only in `presentation`) |
 | Read semantics | `FINAL` on silver `ReplacingMergeTree` reads |
-| Bootstrap | Role and empty DB created in `src/ingestion/scripts/bootstrap-db/` |
+| Bootstrap | Role defined in `src/ingestion/scripts/bootstrap-db/presentation-role.sql`, provisioned (guarded) by `apply-ch-migrations.sh`; the empty `presentation` DB follows in #1964 |
 
 #### Redis
 

@@ -41,6 +41,17 @@ CREATE DATABASE IF NOT EXISTS silver;
 CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE};
 SQL
 
+echo "=== Provisioning presentation_ro role (#1963) ==="
+# Read-only role for the presentation query path (bootstrap-db/presentation-role.sql).
+# Guarded + non-fatal: creating a role needs access_management on the admin, so an
+# admin without it is skipped with a warning rather than aborting the deploy.
+if printf 'CREATE ROLE IF NOT EXISTS presentation_ro' | _ch_http_query >/dev/null 2>&1; then
+  run_ch < "$SCRIPT_DIR/bootstrap-db/presentation-role.sql"
+  echo "  presentation_ro ready"
+else
+  echo "  WARN: admin lacks access_management; skipping presentation_ro (see bootstrap-db/README.md)"
+fi
+
 echo "=== Creating bronze/silver placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-bronze-placeholders.sh"
 
