@@ -15,7 +15,6 @@ Both matter at ~1,400 repositories against Bitbucket's ~1,000 req/h budget.
 from __future__ import annotations
 
 from airbyte_cdk.models import SyncMode
-
 from source_bitbucket_cloud.streams.base import BUCKET_COUNT, repo_state_key
 from source_bitbucket_cloud.streams.branches import BranchesStream
 from source_bitbucket_cloud.streams.commits import CommitsStream
@@ -185,7 +184,8 @@ class TestSharedPrSelection:
         client_fresh = CountingClient()
         client_fresh.pr_values = [pr()]
         client_fresh.optional_values["repositories/ws/repo/pullrequests/42/comments"] = (
-            True, [{"id": 7, "content": {"raw": "lgtm"}, "user": {"uuid": "{u}"}}],
+            True,
+            [{"id": 7, "content": {"raw": "lgtm"}, "user": {"uuid": "{u}"}}],
         )
         fresh = self._run(PRCommentsStream, repo, client_fresh, FakeCatalog([repo], client_fresh))
 
@@ -193,10 +193,13 @@ class TestSharedPrSelection:
         # unique_key, which embeds it) legitimately differs between two runs;
         # the equivalence claim is about entity content.
         volatile = {"collected_at", "generation_id", "unique_key"}
-        strip = lambda rows: [{k: v for k, v in r.items() if k not in volatile} for r in rows]
+
+        def strip(rows):
+            return [{k: v for k, v in r.items() if k not in volatile} for r in rows]
+
         assert strip(from_cache) == strip(fresh)
 
-    def test_divergent_watermark_fetches_its_own(self, repo):
+    def test_lagging_watermark_triggers_own_fetch(self, repo):
         """A stream whose state lags (failed last sync) must not reuse a
         narrower selection."""
         client = CountingClient()
@@ -209,7 +212,9 @@ class TestSharedPrSelection:
         lagging.state = {
             "version": 3,
             "bucket_count": 8,
-            "repositories": {repo_state_key(repo): {"updated_on": "2026-01-01T00:00:00+00:00", "reconcile_after_id": 0}},
+            "repositories": {
+                repo_state_key(repo): {"updated_on": "2026-01-01T00:00:00+00:00", "reconcile_after_id": 0}
+            },
         }
         read_all(lagging, repo)
 
