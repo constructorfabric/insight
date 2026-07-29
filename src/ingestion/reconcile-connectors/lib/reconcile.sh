@@ -154,9 +154,14 @@ print(json.dumps({
 # @cpt-begin:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1
 reconcile_cascade_delete() {
   local connector="$1"
+  # Set to 1 when this call actually removed something (sources and/or the
+  # CronWorkflow); the caller counts CHANGED vs SKIPPED off it. Dry-run
+  # reports 1 — it would attempt the removal.
+  _RECONCILE_CASCADE_REMOVED=0
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     # @cpt-begin:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1:inst-cd-dry-run-guard
-    log_line WARN "would remove ${connector} from Airbyte — its Secret was deleted in Kubernetes"
+    _RECONCILE_CASCADE_REMOVED=1
+    log_line WARN "would remove ${connector} from Airbyte — no Secret in Kubernetes"
     # @cpt-end:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1:inst-cd-dry-run-guard
     return 0
   fi
@@ -175,9 +180,11 @@ reconcile_cascade_delete() {
 
   # Delete connections bound to connector's sources (by name prefix).
   # RECONCILE_DRY_RUN guard at top of reconcile_cascade_delete short-circuits.
+  local removed_sources=0
   while IFS= read -r conn_id; do
     [[ -n "${conn_id}" ]] || continue
     ab_delete_source "${conn_id}" >/dev/null 2>&1 || true
+    removed_sources=$((removed_sources + 1))
   done < <(printf '%s' "${sources_json}" \
     | python3 -c '
 import json, sys
@@ -190,8 +197,29 @@ for s in json.load(sys.stdin):
 
   # Delete the per-connector CronWorkflow.
   # RECONCILE_DRY_RUN guard at top of reconcile_cascade_delete short-circuits.
-  argo_delete_cronworkflow "${connector}" "${tenant}" 2>/dev/null || true
-  log_line WARN "${connector}: Secret was deleted in Kubernetes — removed connector from Airbyte"
+  # kubectl --ignore-not-found prints "… deleted" only when the object
+  # existed, so non-empty output = a CronWorkflow was actually removed.
+  local cron_out
+  cron_out="$(argo_delete_cronworkflow "${connector}" "${tenant}" 2>/dev/null || true)"
+
+  # A missing Secret is stateless: this tick cannot tell "deleted since the
+  # last tick" from "never existed on this cluster". What it CAN tell is
+  # whether any managed resources were actually removed — a descriptor that
+  # is baked into the toolbox but was never configured here must not WARN
+  # about a removal that never happened.
+  local removed_what=""
+  if (( removed_sources > 0 )); then
+    removed_what="${removed_sources} source(s)"
+  fi
+  if [[ -n "${cron_out}" ]]; then
+    removed_what="${removed_what:+${removed_what} + }CronWorkflow"
+  fi
+  if [[ -n "${removed_what}" ]]; then
+    _RECONCILE_CASCADE_REMOVED=1
+    log_line WARN "${connector}: Secret missing in Kubernetes — removed ${removed_what}"
+  else
+    log_line INFO "${connector}: no Secret and no Airbyte/Argo resources — not installed on this cluster; nothing to remove"
+  fi
 }
 # @cpt-end:cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow:p1
 
@@ -939,7 +967,14 @@ _reconcile_one_connector() {
       if ! reconcile_cascade_delete "${name}"; then
         return 1
       fi
-      _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      # Only an actual removal is a change; an uninstalled descriptor (no
+      # Secret, no Airbyte/Argo resources) is a skip — otherwise every
+      # not-configured connector inflates the changed-count each tick.
+      if [[ "${_RECONCILE_CASCADE_REMOVED:-0}" -eq 1 ]]; then
+        _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      else
+        _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
+      fi
       return 0
       ;;
     2)

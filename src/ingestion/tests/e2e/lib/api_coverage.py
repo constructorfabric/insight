@@ -100,14 +100,51 @@ IDENTITY_BLOCKED: dict[str, frozenset[int]] = {
     "DELETE /v1/person-roles/{id}": frozenset({200}),  # answers 204
     "DELETE /v1/visibility/{id}": frozenset({200}),  # answers 204
 }
+# The identity spec declares ONLY the (often wrong) 200 per route, so every
+# real code the suite proves is REQUIRED_EXTRA — the mutation success codes
+# AND the error contract (identity/test_error_contracts.py): validation 400s,
+# unknown-id 404s, the 401/403 gate per route, and the duplicate/guard
+# conflicts. BLOCKING: a disappearing error test (or a handler regressing to
+# a different code) fails the gate instead of dimming an advisory. 5xx stays
+# out (SERVER_FAULT_FLOOR — e.g. the queue-full 503 on POST /v1/persons-seed
+# is not deterministically inducible black-box). Self-cleaning once the spec
+# starts declaring real codes (REDUNDANT then forces the move).
+_IDENTITY_COMMON_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
+    "POST /v1/profiles": frozenset({400, 401, 404}),
+    "POST /v1/persons-seed": frozenset({202, 400, 401, 403}),
+    "GET /v1/persons-seed/{id}": frozenset({400, 401, 403, 404}),
+    "GET /v1/persons-seed": frozenset({400, 401, 403}),
+    "POST /v1/roles": frozenset({201, 400, 401, 403, 409}),
+    "GET /v1/roles": frozenset({400, 401, 403}),
+    "DELETE /v1/roles/{id}": frozenset({204, 400, 401, 403, 404}),
+    "POST /v1/person-roles": frozenset({201, 400, 401, 403}),
+    "GET /v1/person-roles": frozenset({400, 401, 403}),
+    "DELETE /v1/person-roles/{id}": frozenset({204, 400, 401, 403, 404}),
+    "POST /v1/visibility": frozenset({201, 400, 401, 403}),
+    "GET /v1/visibility": frozenset({400, 401, 403}),
+    "DELETE /v1/visibility/{id}": frozenset({204, 400, 401, 403, 404}),
+    "GET /v1/subchart": frozenset({400, 401}),
+    "GET /v1/subchart/{personId}": frozenset({400, 401, 404}),
+}
+
+# Where the implementations answer DIFFERENT codes for the same guard (the
+# .NET 422 → Rust 409 family, contract.UNPROCESSABLE_OR_CONFLICT; the
+# .NET-only deprecated lookup), the delta is per-suite on top of the common
+# base.
 IDENTITY_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
-    "POST /v1/roles": frozenset({201}),
-    "POST /v1/person-roles": frozenset({201}),
-    "POST /v1/visibility": frozenset({201}),
-    "POST /v1/persons-seed": frozenset({202}),
-    "DELETE /v1/roles/{id}": frozenset({204}),
-    "DELETE /v1/person-roles/{id}": frozenset({204}),
-    "DELETE /v1/visibility/{id}": frozenset({204}),
+    **_IDENTITY_COMMON_REQUIRED_EXTRA,
+    "POST /v1/profiles": _IDENTITY_COMMON_REQUIRED_EXTRA["POST /v1/profiles"] | {422},
+    "DELETE /v1/roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/roles/{id}"] | {422},
+    "DELETE /v1/person-roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/person-roles/{id}"]
+    | {422},
+    "GET /v1/persons/{email}": frozenset({404}),
+}
+IDENTITY_RUST_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
+    **_IDENTITY_COMMON_REQUIRED_EXTRA,
+    "POST /v1/profiles": _IDENTITY_COMMON_REQUIRED_EXTRA["POST /v1/profiles"] | {409},
+    "DELETE /v1/roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/roles/{id}"] | {409},
+    "DELETE /v1/person-roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/person-roles/{id}"]
+    | {409},
 }
 
 # The Rust implementation dropped the deprecated persons lookup (approved
@@ -116,8 +153,30 @@ IDENTITY_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
 # operation be legitimately unexercised on a Rust run — while the dotnet
 # suite (no such skip) still REQUIRES it, so a .NET regression can't hide.
 IDENTITY_RUST_SKIP_LIST: list[tuple[str, str]] = [
-    ("GET /v1/persons/{email}", "dropped in the Rust successor (approved removal; tests skip via capabilities)"),
+    ("GET /v1/persons/{email}", "dropped in the Rust successor (approved removal; tests skip via capabilities)")
 ]
+
+# ── authenticator suite (src/backend/services/authenticator/tests/, run by
+# .github/workflows/authenticator.yml) ──────────────────────────────────────
+# The Rust e2e harness records the ledger via tests/common/mod.rs (the same
+# {method, path, statuses} schema this gate reads); the spec universe is the
+# committed doc kept fresh by the openapi-specs drift gate.
+AUTHENTICATOR_SKIP_LIST: list[tuple[str, str]] = [
+    (
+        "DELETE /auth/admin/users/{person_id}/sessions",
+        "needs the gateway-JWT authn pipeline (TLS discovery front); exercised "
+        "in the gateway compose e2e instead (see e2e_sessions.rs)",
+    )
+]
+# The authenticator spec declares codes intentionally (no `.standard_errors`
+# stamping), so there is no universal boilerplate to subtract. Its rate
+# limiter's 429s are real but undeclared — extra observed codes are ignored.
+AUTHENTICATOR_UNIVERSAL_BOILERPLATE = frozenset()
+# back-channel-logout's 200 is answered to the IdP's server-side POST (proven
+# via fakeidp's rp_status assertion in e2e_backchannel), never to the test
+# client — the client can only observe the 400 rejection.
+AUTHENTICATOR_BLOCKED: dict[str, frozenset[int]] = {"POST /auth/oidc/back-channel-logout": frozenset({200})}
+AUTHENTICATOR_REQUIRED_EXTRA: dict[str, frozenset[int]] = {}
 
 # Codes the suite must observe DESPITE the spec not declaring them (a known
 # spec-fidelity gap, per suite). Unlike ordinary uncovered codes (advisory),
@@ -140,17 +199,18 @@ _SUITES = {
         _ANALYTICS_UNIVERSAL_BOILERPLATE,
         _ANALYTICS_REQUIRED_EXTRA,
     ),
-    "identity": (
-        IDENTITY_SKIP_LIST,
-        IDENTITY_BLOCKED,
-        IDENTITY_UNIVERSAL_BOILERPLATE,
-        IDENTITY_REQUIRED_EXTRA,
-    ),
+    "identity": (IDENTITY_SKIP_LIST, IDENTITY_BLOCKED, IDENTITY_UNIVERSAL_BOILERPLATE, IDENTITY_REQUIRED_EXTRA),
     "identity-rust": (
         IDENTITY_RUST_SKIP_LIST,
         IDENTITY_BLOCKED,
         IDENTITY_UNIVERSAL_BOILERPLATE,
-        IDENTITY_REQUIRED_EXTRA,
+        IDENTITY_RUST_REQUIRED_EXTRA,
+    ),
+    "authenticator": (
+        AUTHENTICATOR_SKIP_LIST,
+        AUTHENTICATOR_BLOCKED,
+        AUTHENTICATOR_UNIVERSAL_BOILERPLATE,
+        AUTHENTICATOR_REQUIRED_EXTRA,
     ),
 }
 
@@ -228,15 +288,10 @@ def _dump(path: str | Path, observed: dict[tuple[str, str], set[int]]) -> Path:
     merged: dict[tuple[str, str], set[int]] = {}
     if out.exists():
         for row in json.loads(out.read_text(encoding="utf-8")):
-            merged.setdefault((row["method"], row["path"]), set()).update(
-                int(s) for s in row["statuses"]
-            )
+            merged.setdefault((row["method"], row["path"]), set()).update(int(s) for s in row["statuses"])
     for key, codes in observed.items():
         merged.setdefault(key, set()).update(codes)
-    rows = [
-        {"method": m, "path": p, "statuses": sorted(codes)}
-        for (m, p), codes in sorted(merged.items())
-    ]
+    rows = [{"method": m, "path": p, "statuses": sorted(codes)} for (m, p), codes in sorted(merged.items())]
     out.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
     return out
 
@@ -260,9 +315,7 @@ def spec_operations(spec: dict) -> dict[str, list[int]]:
         for method, op in methods.items():
             if method.lower() not in _HTTP_METHODS:
                 continue
-            codes = sorted(
-                int(c) for c in (op.get("responses") or {}) if str(c).isdigit()
-            )
+            codes = sorted(int(c) for c in (op.get("responses") or {}) if str(c).isdigit())
             ops[f"{method.upper()} {path}"] = codes
     return ops
 
@@ -295,10 +348,7 @@ def match_observed(observed: list[dict], spec_ops: dict[str, list[int]]) -> tupl
         for tmpl, tmpl_segs in spec_paths.get(method, []):
             if len(tmpl_segs) != len(obs_segs):
                 continue
-            if all(
-                t.startswith("{") and t.endswith("}") or t == o
-                for t, o in zip(tmpl_segs, obs_segs)
-            ):
+            if all(t.startswith("{") and t.endswith("}") or t == o for t, o in zip(tmpl_segs, obs_segs)):
                 hit = f"{method} {tmpl}"
                 break
         if hit is None:
@@ -355,15 +405,11 @@ class CoverageReport:
         # coverable codes (required_codes = declared − 5xx − boilerplate −
         # BLOCKED[op]), how many the suite observed. The `·`/excluded codes are
         # not in the denominator.
-        self.covered_codes: dict[str, set[int]] = {
-            op: self.required[op] & self.validated.get(op, set()) for op in ops
-        }
+        self.covered_codes: dict[str, set[int]] = {op: self.required[op] & self.validated.get(op, set()) for op in ops}
         self.total_coverable = sum(len(c) for c in self.required.values())
         self.total_covered = sum(len(c) for c in self.covered_codes.values())
         self.coverage_pct = (
-            100.0
-            if self.total_coverable == 0
-            else round(100.0 * self.total_covered / self.total_coverable, 1)
+            100.0 if self.total_coverable == 0 else round(100.0 * self.total_covered / self.total_coverable, 1)
         )
 
     def required_codes(self, op: str) -> set[int]:
@@ -374,11 +420,9 @@ class CoverageReport:
         exercised."""
         declared = self.spec_ops.get(op, [])
         excluded = BLOCKED.get(op, frozenset())
-        return (
-            {c for c in declared if c < SERVER_FAULT_FLOOR}
-            - UNIVERSAL_BOILERPLATE
-            - set(excluded)
-        ) | set(REQUIRED_EXTRA.get(op, frozenset()))
+        return ({c for c in declared if c < SERVER_FAULT_FLOOR} - UNIVERSAL_BOILERPLATE - set(excluded)) | set(
+            REQUIRED_EXTRA.get(op, frozenset())
+        )
 
     @property
     def passed(self) -> bool:
@@ -431,8 +475,7 @@ def gate_violations(r: CoverageReport) -> list[str]:
         unseen = set(extra) - r.validated.get(op, set())
         if unseen:
             out.append(
-                f"MISSING REQUIRED_EXTRA: {op} never answered {sorted(unseen)} — the "
-                f"mutation success path is unproven"
+                f"MISSING REQUIRED_EXTRA: {op} never answered {sorted(unseen)} — the mutation success path is unproven"
             )
     return out
 
@@ -463,8 +506,7 @@ def render_markdown(r: CoverageReport) -> str:
     # the REQUIRED_EXTRA codes — enforced despite not being declared, so a
     # reader can see them in the matrix instead of only in the violations text.
     all_codes = sorted(
-        {c for codes in r.spec_ops.values() for c in codes}
-        | {c for codes in REQUIRED_EXTRA.values() for c in codes}
+        {c for codes in r.spec_ops.values() for c in codes} | {c for codes in REQUIRED_EXTRA.values() for c in codes}
     )
     lines = [
         "# API endpoint coverage — by method+path",
@@ -512,10 +554,10 @@ def render_markdown(r: CoverageReport) -> str:
         lines += ["", "## Excluded from coverage (`·` — declared but not coverable)", ""]
         lines += [
             f"_Server-fault 5xx (500) and UNIVERSAL_BOILERPLATE {sorted(UNIVERSAL_BOILERPLATE)} "
-            "(auth disabled / no rate limiter) are excluded on every route. The committed spec "
-            "is the `.standard_errors` boilerplate, so most per-op exclusions below are "
-            "over-declared codes the handler cannot answer (a SPEC BUG, #1669); the rest are "
-            "rig/product (#1663, #1664):_",
+            "are excluded on every route. Per-op exclusions below are declared codes the suite "
+            "cannot observe — spec over-declaration (`.standard_errors` boilerplate, #1669) or a "
+            "pinned rig/product limitation; each entry's rationale lives beside it in this "
+            "suite's BLOCKED table (api_coverage.py):_",
             "",
         ]
         for op in sorted(BLOCKED):
@@ -550,7 +592,7 @@ def main() -> int:
 
     observed_path = Path(args.observed)
     if not observed_path.exists():
-        print(
+        print(  # noqa: T201 — CLI diagnostic on stderr
             f"ERROR: {observed_path} not found — the e2e suite must run first "
             f"(it writes the ledger at pytest_sessionfinish)",
             file=sys.stderr,

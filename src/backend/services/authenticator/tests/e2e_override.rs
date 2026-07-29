@@ -15,6 +15,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod common;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 
@@ -24,11 +26,8 @@ fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap()
+fn client() -> common::Client {
+    common::client()
 }
 
 fn cookie_from(resp: &reqwest::Response) -> Option<String> {
@@ -49,7 +48,7 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
 /// on `/auth/login`. Returns the callback response (302 + cookie on success,
 /// the error status otherwise).
 async fn login_flow(
-    http: &reqwest::Client,
+    http: &common::Client,
     auth_base: &str,
     user: &str,
     override_email: Option<&str>,
@@ -82,7 +81,7 @@ fn urlencode(s: &str) -> String {
     s.replace('@', "%40").replace('+', "%2B")
 }
 
-async fn me(http: &reqwest::Client, auth_base: &str, token: &str) -> serde_json::Value {
+async fn me(http: &common::Client, auth_base: &str, token: &str) -> serde_json::Value {
     let resp = http
         .get(format!("{auth_base}/auth/me"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
@@ -94,7 +93,7 @@ async fn me(http: &reqwest::Client, auth_base: &str, token: &str) -> serde_json:
 }
 
 /// The JWT `sub` behind a session cookie, via the `/internal/authz` exchange.
-async fn jwt_sub(http: &reqwest::Client, auth_base: &str, token: &str) -> String {
+async fn jwt_sub(http: &common::Client, auth_base: &str, token: &str) -> String {
     let resp = http
         .get(format!("{auth_base}/internal/authz"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
@@ -175,7 +174,7 @@ async fn override_mints_the_session_for_the_target_person() {
 }
 
 /// The session-bound CSRF token (state-changing `/auth/*` requires it).
-async fn csrf_token(http: &reqwest::Client, auth_base: &str, token: &str) -> String {
+async fn csrf_token(http: &common::Client, auth_base: &str, token: &str) -> String {
     let resp = http
         .get(format!("{auth_base}/auth/csrf"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))

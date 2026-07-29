@@ -14,6 +14,16 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE/../../.."   # -> src/backend (the cargo workspace root)
 
+# Endpoint-coverage ledger: tests/common/mod.rs records every test-client
+# request against the authenticator into this file (merged across the serial
+# cargo test invocations below). The endpoint coverage gate consumes it:
+#   python3 src/ingestion/tests/e2e/lib/api_coverage.py --suite authenticator \
+#     --observed "$E2E_COVERAGE_LEDGER" \
+#     --spec docs/components/backend/authenticator/openapi.json
+# Reset it up front so dead coverage from a previous run can't survive.
+export E2E_COVERAGE_LEDGER="${E2E_COVERAGE_LEDGER:-$HERE/.artifacts/observed_authenticator_endpoints.json}"
+rm -f "$E2E_COVERAGE_LEDGER"
+
 AUTH_PORT=8083
 TOKEN_PORT=8093
 AUTH2_PORT=8085
@@ -170,4 +180,4 @@ AUTH_BASE="http://localhost:$AUTH_PORT" \
   SVC_KEY="$SVC_KEYS_DIR/testclient.key.pem" \
   cargo test -p authenticator --test e2e_service_token -- --ignored --nocapture
 
-echo "==> PASS"
+echo "==> PASS (endpoint-coverage ledger: $E2E_COVERAGE_LEDGER)"

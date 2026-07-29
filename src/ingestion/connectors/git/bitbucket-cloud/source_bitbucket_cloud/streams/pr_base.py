@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from source_bitbucket_cloud.client import RepositoryRef
-from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream
+from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream, repo_state_key
 
 PR_STATES = ("OPEN", "MERGED", "DECLINED", "SUPERSEDED")
 TERMINAL_PR_STATES = ("MERGED", "DECLINED", "SUPERSEDED")
@@ -13,8 +13,31 @@ RECONCILE_LIMIT = 100
 OVERLAP_MINUTES = 5
 
 
+def slim_pull_request(pr: Mapping[str, Any]) -> dict[str, Any]:
+    """The four fields the child streams actually read, in the original shape.
+
+    Anything larger must not be cached: the selection cache lives across the six
+    sequential PR streams for every repository at once, and raw PR objects
+    (description, reviewers, participants) would cost hundreds of MB where this
+    costs ~100 bytes per pull request.
+    """
+    source = pr.get("source") or {}
+    destination = pr.get("destination") or {}
+    return {
+        "id": pr.get("id"),
+        "updated_on": pr.get("updated_on"),
+        "source": {"commit": {"hash": (source.get("commit") or {}).get("hash")}},
+        "destination": {"commit": {"hash": (destination.get("commit") or {}).get("hash")}},
+    }
+
+
 class PullRequestStateStream(BitbucketIncrementalStream):
     cursor_field = "updated_on"
+
+    # The stream that emits full PR records (pull_requests) must never consume
+    # the slim cache — it needs every field. It always fetches, and its fetch
+    # fills the cache for the five child streams that follow it.
+    reads_selection_cache = True
 
     def repository_records(self, repo, bucket_id):
         del bucket_id
@@ -27,6 +50,31 @@ class PullRequestStateStream(BitbucketIncrementalStream):
         raise NotImplementedError
 
     def selected_pull_requests(
+        self, repo: RepositoryRef, prior: Mapping[str, Any]
+    ) -> tuple[list[Mapping[str, Any]], Mapping[str, Any]]:
+        """One PR selection per (repository, watermark) per sync, shared.
+
+        Each of the six PR streams used to list the repository's pull requests
+        itself — up to three requests each, ~18 per repository per sync, the
+        single largest consumer of the rate limit. The selection is deterministic
+        given the watermark, so it is fetched once and shared through the
+        catalog; a stream whose watermark diverged (e.g. it failed last sync)
+        misses the cache and fetches its own.
+        """
+        cache_key = (repo_state_key(repo), str(prior.get("updated_on") or ""), str(prior.get("reconcile_after_id") or 0))
+        if self.reads_selection_cache:
+            cached = self._catalog.pr_selections.get(cache_key)
+            if cached is not None:
+                slim_selected, cached_state = cached
+                return slim_selected, dict(cached_state)
+        selected, new_state = self._fetch_pull_requests(repo, prior)
+        self._catalog.pr_selections[cache_key] = (
+            [slim_pull_request(pr) for pr in selected],
+            dict(new_state),
+        )
+        return selected, new_state
+
+    def _fetch_pull_requests(
         self, repo: RepositoryRef, prior: Mapping[str, Any]
     ) -> tuple[list[Mapping[str, Any]], Mapping[str, Any]]:
         selected: dict[int, Mapping[str, Any]] = {}

@@ -18,6 +18,8 @@ insight-clickhouse = { workspace = true }
 # but doesn't re-export the row-deserialization derives.
 clickhouse = { workspace = true }
 
+sqlparser = { workspace = true }
+
 axum = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }

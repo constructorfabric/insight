@@ -732,6 +732,10 @@ fn find_at_depth_zero(haystack: &str, needle: &str) -> Option<usize> {
 }
 
 fn parse_query_ref(query_ref: &str) -> Result<(String, String, Option<String>), String> {
+    // Single-SELECT gate (#1962): reject non-read statements before the stricter
+    // metric-specific parsing below.
+    crate::domain::query_gate::validate_single_select(query_ref)?;
+
     let upper = query_ref.to_ascii_uppercase();
 
     // Find SELECT ... FROM boundary at depth 0 (skip FROM inside subqueries).

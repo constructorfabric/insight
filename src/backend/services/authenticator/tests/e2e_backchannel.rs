@@ -16,17 +16,16 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
 
+mod common;
+
 const COOKIE: &str = "__Host-sid";
 
 fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap()
+fn client() -> common::Client {
+    common::client()
 }
 
 fn rewrite_host(url: &str) -> String {
@@ -53,7 +52,7 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
     None
 }
 
-async fn login(http: &reqwest::Client, auth_base: &str, user: &str) -> String {
+async fn login(http: &common::Client, auth_base: &str, user: &str) -> String {
     let login = http
         .get(format!("{auth_base}/auth/login"))
         .send()
@@ -78,7 +77,7 @@ async fn login(http: &reqwest::Client, auth_base: &str, user: &str) -> String {
     cookie_from(&cb).expect("callback must set __Host-sid")
 }
 
-async fn authz_status(http: &reqwest::Client, auth_base: &str, token: &str) -> u16 {
+async fn authz_status(http: &common::Client, auth_base: &str, token: &str) -> u16 {
     http.get(format!("{auth_base}/internal/authz"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
         .send()

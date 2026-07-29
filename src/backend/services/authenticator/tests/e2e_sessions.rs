@@ -15,6 +15,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod common;
+
 use serde::Deserialize;
 
 const COOKIE: &str = "__Host-sid";
@@ -23,11 +25,8 @@ fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap()
+fn client() -> common::Client {
+    common::client()
 }
 
 fn rewrite_host(url: &str) -> String {
@@ -55,7 +54,7 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
 }
 
 /// Fetch the session's CSRF token (state-changing /auth/* requires it, 10.5).
-async fn get_csrf(http: &reqwest::Client, auth_base: &str, token: &str) -> String {
+async fn get_csrf(http: &common::Client, auth_base: &str, token: &str) -> String {
     #[derive(Deserialize)]
     struct CsrfBody {
         csrf_token: String,
@@ -71,7 +70,7 @@ async fn get_csrf(http: &reqwest::Client, auth_base: &str, token: &str) -> Strin
 }
 
 /// Run the full fakeidp login loop; returns the session cookie token.
-async fn login(http: &reqwest::Client, auth_base: &str, user: &str) -> String {
+async fn login(http: &common::Client, auth_base: &str, user: &str) -> String {
     let login = http
         .get(format!("{auth_base}/auth/login"))
         .header(reqwest::header::USER_AGENT, "e2e-sessions-test")
@@ -118,7 +117,7 @@ struct SessionsBody {
     sessions: Vec<SessionItem>,
 }
 
-async fn list(http: &reqwest::Client, auth_base: &str, token: &str) -> Vec<SessionItem> {
+async fn list(http: &common::Client, auth_base: &str, token: &str) -> Vec<SessionItem> {
     let resp = http
         .get(format!("{auth_base}/auth/sessions"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
