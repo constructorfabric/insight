@@ -8,28 +8,33 @@
     tags=['bitbucket-cloud', 'silver:class_git_repository_branches']
 ) }}
 
+-- Generations are per repository (workspace, repo_slug), matching the stream:
+-- a repository that is denied or fails simply has no new generation and keeps
+-- its previous branches, without freezing the other repositories.
 WITH generations AS (
     SELECT
         tenant_id,
         source_id,
-        bucket_id,
+        workspace,
+        repo_slug,
         generation_id,
         countIf(record_type = 'item') AS observed_count,
         maxIf(snapshot_item_count, record_type = 'snapshot_complete') AS expected_count,
         maxIf(_airbyte_extracted_at, record_type = 'snapshot_complete') AS completed_at,
         countIf(record_type = 'snapshot_complete' AND snapshot_available) AS completion_count
     FROM {{ source('bronze_bitbucket_cloud', 'branches') }} FINAL
-    GROUP BY tenant_id, source_id, bucket_id, generation_id
+    GROUP BY tenant_id, source_id, workspace, repo_slug, generation_id
     HAVING completion_count > 0 AND observed_count = expected_count
 ),
 latest AS (
     SELECT
         tenant_id,
         source_id,
-        bucket_id,
+        workspace,
+        repo_slug,
         argMax(generation_id, completed_at) AS generation_id
     FROM generations
-    GROUP BY tenant_id, source_id, bucket_id
+    GROUP BY tenant_id, source_id, workspace, repo_slug
 )
 SELECT
     tenant_id,
@@ -45,5 +50,5 @@ SELECT
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at
 FROM {{ source('bronze_bitbucket_cloud', 'branches') }} AS branch FINAL
-INNER JOIN latest USING (tenant_id, source_id, bucket_id, generation_id)
+INNER JOIN latest USING (tenant_id, source_id, workspace, repo_slug, generation_id)
 WHERE record_type = 'item'

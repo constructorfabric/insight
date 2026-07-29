@@ -127,6 +127,13 @@ jobs:
         run: |
           BUILD_TAG="$(date -u +%Y.%m.%d.%H.%M)-$(echo "${GITHUB_SHA}" | cut -c1-7)"
           if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            # Fail fast on branch names outside the docker-tag charset (+ `/`):
+            # byte-wise sanitization would mangle unicode names into ambiguous,
+            # potentially colliding tags. Rename the branch instead.
+            if ! printf '%s' "$REF_NAME" | LC_ALL=C grep -Eq '^[A-Za-z0-9._/-]+$'; then
+              echo "::error::branch name '$REF_NAME' contains characters outside [A-Za-z0-9._/-] — non-ASCII branch names are not allowed for image builds; rename the branch"
+              exit 1
+            fi
             # Docker tag charset is [A-Za-z0-9._-] (branch names carry `/`);
             # cap the suffix well under the 128-char tag limit and trim
             # separator runs the sanitizer may produce at the edges.
@@ -134,6 +141,12 @@ jobs:
               | tr -c 'a-zA-Z0-9._-' '-' \
               | sed -E 's/^[-.]+//; s/[-.]+$//' \
               | cut -c1-60)"
+            # All-separator names (e.g. `-`) pass the allowlist but sanitize
+            # to nothing — a bare trailing `.` is not a usable tag suffix.
+            if [ -z "$SAFE_BRANCH" ]; then
+              echo "::error::branch name '$REF_NAME' sanitizes to an empty tag suffix — rename the branch"
+              exit 1
+            fi
             BUILD_TAG="${BUILD_TAG}.${SAFE_BRANCH}"
           fi
           # Push policy: pull_request builds are compile-only; push (main is
