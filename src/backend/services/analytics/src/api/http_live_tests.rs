@@ -29,8 +29,7 @@ use axum::http::{Request, StatusCode};
 use axum::middleware::from_fn_with_state;
 use axum::response::Response;
 use sea_orm::{
-    ColumnTrait, ConnectOptions, ConnectionTrait, Database, DatabaseConnection, EntityTrait,
-    QueryFilter, Statement,
+    ColumnTrait, ConnectOptions, Database, DatabaseConnection, EntityTrait, QueryFilter,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -44,6 +43,7 @@ use crate::config::GearConfig;
 use crate::domain::admin_threshold::AdminThresholdService;
 use crate::domain::auth::{ConfigTenantAuthorization, TenantAuthorization};
 use crate::domain::catalog::{CatalogReader, ThresholdResolver};
+use crate::domain::metric_definitions::test_fixture::DrilldownFixture;
 use crate::domain::schema_validator::SchemaValidator;
 use crate::infra::cache::catalog_cache::{CatalogCache, NoopCatalogCache};
 use crate::infra::db::entities;
@@ -157,18 +157,6 @@ fn json_req(method: &str, uri: &str, body: &Value) -> Result<Request<Body>, axum
 async fn body_json(resp: Response) -> Result<Value, Box<dyn std::error::Error>> {
     let bytes = to_bytes(resp.into_body(), 256 * 1024).await?;
     Ok(serde_json::from_slice(&bytes)?)
-}
-
-async fn enable_drilldown_metadata(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
-    for sql in [
-        "UPDATE metric_sources SET schema_status = 'ok', evidence_schema_status = 'ok'",
-        "UPDATE metric_source_measures SET schema_status = 'ok'",
-        "UPDATE metric_definitions SET schema_status = 'ok'",
-    ] {
-        db.execute(Statement::from_string(db.get_database_backend(), sql))
-            .await?;
-    }
-    Ok(())
 }
 
 /// A seeded, enabled metric + the tenant that owns it (the seed migration
@@ -463,24 +451,29 @@ async fn metric_results_loads_drilldown_capabilities_before_clickhouse_error() -
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    enable_drilldown_metadata(&db).await?;
-    let app = app(db, Uuid::now_v7());
-    let resp = app
-        .oneshot(json_req(
-            "POST",
-            "/v1/metric-results",
-            &json!({
-                "entity": {"type": "person", "ids": ["person@example.com"]},
-                "period": {"from": "2026-07-01", "to": "2026-07-28"},
-                "metrics": [{
-                    "metric_key": "git.commits",
-                    "views": [{"view": "period"}]
-                }]
-            }),
-        )?)
-        .await?;
-    assert!(resp.status().is_server_error());
-    Ok(())
+    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
+    let result: anyhow::Result<()> = async {
+        let app = app(db.clone(), fixture.tenant_id);
+        let resp = app
+            .oneshot(json_req(
+                "POST",
+                "/v1/metric-results",
+                &json!({
+                    "entity": {"type": "person", "ids": ["person@example.com"]},
+                    "period": {"from": "2026-07-01", "to": "2026-07-28"},
+                    "metrics": [{
+                        "metric_key": "git.commits",
+                        "views": [{"view": "period"}]
+                    }]
+                }),
+            )?)
+            .await?;
+        anyhow::ensure!(resp.status().is_server_error());
+        Ok(())
+    }
+    .await;
+    fixture.delete(&db).await?;
+    result.map_err(Into::into)
 }
 
 #[tokio::test]
@@ -489,34 +482,39 @@ async fn metric_drilldown_validates_selection_before_clickhouse_error() -> TestR
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    enable_drilldown_metadata(&db).await?;
-    let app = app(db, Uuid::now_v7());
-    let body = json!({
-        "metric_key": "git.commits",
-        "entity": {"type": "person", "id": "person@example.com"},
-        "period": {"from": "2026-07-01", "to": "2026-07-28"},
-        "filters": [{"dimension": "repository", "values": ["org/repo"]}],
-        "display_dimensions": ["repository"],
-        "limit": 100
-    });
-    let resp = app
-        .clone()
-        .oneshot(json_req("POST", "/v1/metric-drilldown", &body)?)
-        .await?;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let export = json!({
-        "metric_key": "git.commits",
-        "entity": {"type": "person", "id": "person@example.com"},
-        "period": {"from": "2026-07-01", "to": "2026-07-28"},
-        "filters": [],
-        "display_dimensions": [],
-        "format": "csv"
-    });
-    let resp = app
-        .oneshot(json_req("POST", "/v1/metric-drilldown/export", &export)?)
-        .await?;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    Ok(())
+    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &["repository"]).await?;
+    let result: anyhow::Result<()> = async {
+        let app = app(db.clone(), fixture.tenant_id);
+        let body = json!({
+            "metric_key": "git.commits",
+            "entity": {"type": "person", "id": "person@example.com"},
+            "period": {"from": "2026-07-01", "to": "2026-07-28"},
+            "filters": [{"dimension": "repository", "values": ["org/repo"]}],
+            "display_dimensions": ["repository"],
+            "limit": 100
+        });
+        let resp = app
+            .clone()
+            .oneshot(json_req("POST", "/v1/metric-drilldown", &body)?)
+            .await?;
+        anyhow::ensure!(resp.status() == StatusCode::BAD_REQUEST);
+        let export = json!({
+            "metric_key": "git.commits",
+            "entity": {"type": "person", "id": "person@example.com"},
+            "period": {"from": "2026-07-01", "to": "2026-07-28"},
+            "filters": [],
+            "display_dimensions": [],
+            "format": "csv"
+        });
+        let resp = app
+            .oneshot(json_req("POST", "/v1/metric-drilldown/export", &export)?)
+            .await?;
+        anyhow::ensure!(resp.status() == StatusCode::BAD_REQUEST);
+        Ok(())
+    }
+    .await;
+    fixture.delete(&db).await?;
+    result.map_err(Into::into)
 }
 
 #[tokio::test]

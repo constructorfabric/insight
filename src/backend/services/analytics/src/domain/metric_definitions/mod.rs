@@ -6,6 +6,8 @@ pub mod listing;
 mod live_tests;
 mod repository;
 mod seeds;
+#[cfg(test)]
+pub(crate) mod test_fixture;
 pub mod validator;
 
 pub use definition::{

@@ -14,9 +14,9 @@ use uuid::Uuid;
 use crate::domain::metric_definitions::error_code::SchemaStatus;
 use crate::domain::metric_definitions::listing::list_definition_views;
 use crate::domain::metric_definitions::repository::{
-    all_managed_sources, source_evidence_granularities, update_definition_status,
-    update_evidence_status,
+    update_definition_status, update_evidence_status,
 };
+use crate::domain::metric_definitions::test_fixture::DrilldownFixture;
 use crate::domain::metric_definitions::validator::MetricDefinitionValidator;
 use crate::domain::metric_drilldown::load_capabilities;
 
@@ -162,36 +162,27 @@ async fn drilldown_capabilities_follow_healthy_evidence_metadata() -> anyhow::Re
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    db.execute(Statement::from_string(
-        db.get_database_backend(),
-        "UPDATE metric_sources SET schema_status = 'ok', evidence_schema_status = 'ok'",
-    ))
-    .await?;
-    db.execute(Statement::from_string(
-        db.get_database_backend(),
-        "UPDATE metric_source_measures SET schema_status = 'ok'",
-    ))
-    .await?;
-    db.execute(Statement::from_string(
-        db.get_database_backend(),
-        "UPDATE metric_definitions SET schema_status = 'ok'",
-    ))
-    .await?;
+    let fixture = DrilldownFixture::insert(&db, &["git.commits", "tasks.closed"], &[]).await?;
     let keys = vec![
         "git.commits".to_owned(),
         "tasks.closed".to_owned(),
         "missing.metric".to_owned(),
     ];
-    let capabilities = load_capabilities(&db, Uuid::now_v7(), &keys).await?;
-    assert!(capabilities.contains_key("git.commits"));
-    assert!(capabilities.contains_key("tasks.closed"));
-    assert!(!capabilities.contains_key("missing.metric"));
-    assert!(
-        load_capabilities(&db, Uuid::now_v7(), &[])
-            .await?
-            .is_empty()
-    );
-    Ok(())
+    let result = async {
+        let capabilities = load_capabilities(&db, fixture.tenant_id, &keys).await?;
+        anyhow::ensure!(capabilities.contains_key("git.commits"));
+        anyhow::ensure!(capabilities.contains_key("tasks.closed"));
+        anyhow::ensure!(!capabilities.contains_key("missing.metric"));
+        anyhow::ensure!(
+            load_capabilities(&db, fixture.tenant_id, &[])
+                .await?
+                .is_empty()
+        );
+        Ok(())
+    }
+    .await;
+    fixture.delete(&db).await?;
+    result
 }
 
 #[tokio::test]
@@ -200,32 +191,44 @@ async fn evidence_status_writer_is_revision_conditional() -> anyhow::Result<()> 
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    let sources = all_managed_sources(&db).await?;
-    let source = sources
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("managed source missing"))?;
-    assert!(
-        !source_evidence_granularities(&db, source.id)
-            .await?
-            .is_empty()
-    );
-    update_evidence_status(
-        &db,
-        source.id,
-        &source.config_revision,
-        SchemaStatus::Ok,
-        None,
-    )
-    .await?;
-    update_evidence_status(
-        &db,
-        source.id,
-        "1970-01-01 00:00:00.000000",
-        SchemaStatus::Ok,
-        None,
-    )
-    .await?;
-    Ok(())
+    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
+    let result = async {
+        let revision = fixture.config_revision(&db).await?;
+        update_evidence_status(
+            &db,
+            fixture.source_id,
+            &revision,
+            SchemaStatus::Error,
+            Some(crate::domain::metric_definitions::error_code::MetricSchemaErrorCode::Unknown),
+        )
+        .await?;
+        let current = fixture.statuses(&db).await?;
+        anyhow::ensure!(
+            current
+                == (
+                    "ok".to_owned(),
+                    "error".to_owned(),
+                    Some("unknown".to_owned())
+                )
+        );
+        update_evidence_status(
+            &db,
+            fixture.source_id,
+            "1970-01-01 00:00:00.000000",
+            SchemaStatus::Ok,
+            None,
+        )
+        .await?;
+        let stale = fixture.statuses(&db).await?;
+        anyhow::ensure!(
+            stale == current,
+            "stale evidence status write changed {current:?} to {stale:?}"
+        );
+        Ok(())
+    }
+    .await;
+    fixture.delete(&db).await?;
+    result
 }
 
 #[tokio::test]
@@ -234,10 +237,24 @@ async fn metric_definition_validator_handles_unavailable_clickhouse() -> anyhow:
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-        "http://127.0.0.1:1",
-        "analytics",
-    ));
-    MetricDefinitionValidator::new(db, ch).validate_all().await;
-    Ok(())
+    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
+    let result = async {
+        let before = fixture.statuses(&db).await?;
+        let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+            "http://127.0.0.1:1",
+            "analytics",
+        ));
+        MetricDefinitionValidator::new(db.clone(), ch)
+            .validate_all()
+            .await;
+        let after = fixture.statuses(&db).await?;
+        anyhow::ensure!(
+            after == before,
+            "unavailable ClickHouse changed source status from {before:?} to {after:?}"
+        );
+        Ok(())
+    }
+    .await;
+    fixture.delete(&db).await?;
+    result
 }
