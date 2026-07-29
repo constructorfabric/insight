@@ -410,3 +410,13 @@ coverage-raw/
 # whole dirs, so a stray non-.pem key can't slip past a git add -A.
 deploy/compose/authenticator-dev-keys/
 deploy/compose/authn-tls-certs/
+
+# Security scanner output. CI writes these into the workspace, and the same
+# commands are runnable locally; trufflehog's report holds raw secret values, so
+# it must never be committed.
+semgrep.sarif
+trivy-fs.json
+trivy-fs.sarif
+trivy-image.json
+trivy-image.sarif
+trufflehog-findings.jsonl
