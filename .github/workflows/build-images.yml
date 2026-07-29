@@ -141,6 +141,12 @@ jobs:
               | tr -c 'a-zA-Z0-9._-' '-' \
               | sed -E 's/^[-.]+//; s/[-.]+$//' \
               | cut -c1-60)"
+            # All-separator names (e.g. `-`) pass the allowlist but sanitize
+            # to nothing — a bare trailing `.` is not a usable tag suffix.
+            if [ -z "$SAFE_BRANCH" ]; then
+              echo "::error::branch name '$REF_NAME' sanitizes to an empty tag suffix — rename the branch"
+              exit 1
+            fi
             BUILD_TAG="${BUILD_TAG}.${SAFE_BRANCH}"
           fi
           # Push policy: pull_request builds are compile-only; push (main is
