@@ -18,9 +18,6 @@ insight-clickhouse = { workspace = true }
 # but doesn't re-export the row-deserialization derives.
 clickhouse = { workspace = true }
 
-# Single-SELECT gate (#1962): parse the query path SQL and require exactly one
-# read statement. A real parser handles string literals, quoted identifiers, and
-# comments correctly — the class of edge cases a hand-rolled scanner gets wrong.
 sqlparser = { workspace = true }
 
 axum = { workspace = true }

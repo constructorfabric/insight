@@ -1,33 +1,18 @@
-//! Single-SELECT gate for the public query path (Phase A, #1962).
+//! Single-SELECT gate for the public query path (#1962).
 //!
-//! The presentation layer accepts exactly one read-only statement on the public
-//! query path — a single `SELECT` or `WITH ... SELECT`. This is a
-//! parse-and-reject gate applied before any SQL reaches ClickHouse: on
-//! saved-query write and on run. Today it also guards every metric `query_ref`
-//! (the only raw-SQL surface that exists yet), validated identically on write
-//! and run. Paired with the `presentation_ro` grants (#1963) it bounds the blast
-//! radius of a broken or LLM-generated query to read paths only.
-//!
-//! Implemented with a real SQL parser (`sqlparser`, ClickHouse dialect) rather
-//! than hand-rolled scanning: string literals, quoted identifiers, comments, and
-//! escapes are the parser's concern, which removes the class of lexing bugs a
-//! bespoke scanner is prone to (e.g. a `;` hidden past a mis-escaped quote). The
-//! gate requires the input to parse to exactly one statement that is a read
-//! query; anything else — DDL, DML, multiple statements, an unparseable
-//! fragment — is rejected. The ClickHouse dialect may not accept every exotic
-//! ClickHouse-only construct; an unparseable-but-valid query is therefore
-//! rejected, which errs toward safety. The `presentation_ro` grants remain the
-//! real safety boundary.
+//! Requires the SQL to parse (sqlparser, ClickHouse dialect) to exactly one read
+//! statement — a `SELECT`/`WITH` query. Multiple statements, DDL/DML, and
+//! unparseable input are rejected. Using a parser (not hand-rolled scanning)
+//! keeps a `;` inside a string/comment/identifier from hiding a second
+//! statement. Defense in depth: the `presentation_ro` grants (#1963) are the
+//! real boundary.
 
 use sqlparser::ast::Statement;
 use sqlparser::dialect::ClickHouseDialect;
 use sqlparser::parser::Parser;
 
-/// Reject anything that is not a single read statement (`SELECT` / `WITH ...`).
-///
-/// `Ok(())` for exactly one query statement; otherwise a short, user-facing
-/// reason. A trailing `;` is allowed. Multiple statements, DDL/DML (`INSERT`,
-/// `DROP`, `SET`, ...), and unparseable input are rejected.
+/// Reject anything that is not a single read statement (`SELECT`/`WITH`).
+/// Returns a short, user-facing reason on rejection.
 pub fn validate_single_select(sql: &str) -> Result<(), String> {
     let statements = Parser::parse_sql(&ClickHouseDialect {}, sql)
         .map_err(|e| format!("query must be a single SELECT statement: {e}"))?;
@@ -73,8 +58,6 @@ mod tests {
 
     #[test]
     fn semicolons_and_keywords_inside_literals_are_inert() {
-        // A `;`, a `DROP`, or a quote-escape inside a string/identifier must not
-        // be mistaken for a second statement — the parser tokenizes correctly.
         assert!(check("SELECT ';' AS x").is_ok());
         assert!(check("SELECT 'a; DROP TABLE t' AS x FROM t").is_ok());
         assert!(check("SELECT 'it''s ok' AS x").is_ok());
