@@ -35,6 +35,11 @@ dbg_macro = "deny"
 # ClickHouse client
 clickhouse = { version = "0.14", features = ["uuid"] }
 
+# SQL parser — backs the presentation-layer single-SELECT gate (#1962): parse
+# the query and require exactly one read statement, instead of hand-rolled
+# lexing.
+sqlparser = "0.62"
+
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
