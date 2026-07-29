@@ -1,14 +1,14 @@
 spec_version: 1
 description: >
-  Metric: ai.cost.
+  Metric: ai.cost — the Claude Code input (see ai_cost_cursor for Cursor).
   How it's computed (bronze → silver → gold):
     • bronze: Claude Team daily per-user metrics (cost as a decimal string, e.g. "2.00")
-    • silver: class_ai_dev_usage, deduped to one row per user/day (tool='claude_code');
-              cost_cents ← round(toFloat64(total_cost) * 100)
-    • gold:   ai_bullet_rows branch 3 emits ('cc_cost', cost_cents) per day; the served
-              IC query SUMs the requested person's per-day cost (cents) over the window
-              (value), and reports the DEPARTMENT distribution of those per-person SUMs
-              as median/range_min/range_max.
+    • silver: deduped to one row per user/day carrying that amount in cents
+    • gold:   metric = sum of those daily amounts over the window, in dollars; the
+              peer view reports the DEPARTMENT distribution of the per-person sums.
+
+  The amount is usage priced at the vendor's rates, not the amount invoiced —
+  usage the seat already covers is included and seat fees are excluded.
 
   NOTE on the served stat set: the IC Bullet AI query_ref (id …0013) is last
   re-seeded by migration m20260618_000001 (cc_overage), which carries only

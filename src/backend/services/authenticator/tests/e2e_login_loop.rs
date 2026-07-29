@@ -20,6 +20,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
+mod common;
+
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
 
@@ -29,11 +31,8 @@ fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap()
+fn client() -> common::Client {
+    common::client()
 }
 
 fn rewrite_host(url: &str) -> String {
@@ -181,6 +180,27 @@ async fn full_login_exchange_logout_loop() {
     );
     assert!(!claims.sid.is_empty(), "stable sid present");
     let _ = &claims.tenant_id; // present (may be empty in a keyless local run)
+
+    // 5b. The discovery document points downstream verifiers at that JWKS
+    //     (cf-gears-oidc-authn-plugin resolves jwks_uri from it).
+    let discovery: serde_json::Value = http
+        .get(format!("{auth_base}/.well-known/openid-configuration"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        discovery["issuer"].as_str().is_some_and(|s| !s.is_empty()),
+        "discovery must carry the issuer"
+    );
+    assert!(
+        discovery["jwks_uri"]
+            .as_str()
+            .is_some_and(|s| s.ends_with("/.well-known/jwks.json")),
+        "discovery must point at the published JWKS"
+    );
 
     // 6. /auth/me returns the session summary.
     let me = http

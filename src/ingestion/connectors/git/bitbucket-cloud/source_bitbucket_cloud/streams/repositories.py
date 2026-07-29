@@ -5,7 +5,7 @@ from typing import Any
 
 from airbyte_cdk.models import SyncMode
 
-from source_bitbucket_cloud.streams.base import BitbucketStream, schema, unique_key
+from source_bitbucket_cloud.streams.base import BitbucketStream, repo_scope, schema, unique_key
 
 
 class RepositoriesStream(BitbucketStream):
@@ -28,7 +28,7 @@ class RepositoriesStream(BitbucketStream):
             owner = raw.get("owner") or {}
             project = raw.get("project") or {}
             parent = raw.get("parent") or {}
-            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid)
+            entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo))
             entity_keys.add(entity_key)
             yield self.item(
                 entity_key=entity_key,

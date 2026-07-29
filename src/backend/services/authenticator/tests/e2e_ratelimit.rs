@@ -12,6 +12,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod common;
+
 use serde::Deserialize;
 
 const COOKIE: &str = "__Host-sid";
@@ -20,11 +22,8 @@ fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap()
+fn client() -> common::Client {
+    common::client()
 }
 
 fn rewrite_host(url: &str) -> String {
@@ -51,7 +50,7 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
     None
 }
 
-async fn login(http: &reqwest::Client, auth_base: &str, user: &str) -> String {
+async fn login(http: &common::Client, auth_base: &str, user: &str) -> String {
     let login = http
         .get(format!("{auth_base}/auth/login"))
         .send()
@@ -76,7 +75,7 @@ async fn login(http: &reqwest::Client, auth_base: &str, user: &str) -> String {
     cookie_from(&cb).expect("callback must set __Host-sid")
 }
 
-async fn get_csrf(http: &reqwest::Client, auth_base: &str, token: &str) -> String {
+async fn get_csrf(http: &common::Client, auth_base: &str, token: &str) -> String {
     #[derive(Deserialize)]
     struct CsrfBody {
         csrf_token: String,
@@ -93,7 +92,7 @@ async fn get_csrf(http: &reqwest::Client, auth_base: &str, token: &str) -> Strin
 
 /// One refresh attempt; returns (status, rotated cookie when present).
 async fn refresh(
-    http: &reqwest::Client,
+    http: &common::Client,
     auth_base: &str,
     token: &str,
     csrf: &str,

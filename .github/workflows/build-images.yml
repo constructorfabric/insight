@@ -64,6 +64,13 @@ jobs:
       toolbox: ${{ steps.filter.outputs.toolbox }}
       umbrella: ${{ steps.filter.outputs.umbrella }}
       build_tag: ${{ steps.tag.outputs.build_tag }}
+      # Single push-policy switch consumed by every build/merge job below:
+      # 'true' for a main push and for ANY workflow_dispatch (including a
+      # branch dispatch — that is what branch image builds are, #1994);
+      # 'false' for pull_request runs, which build without pushing.
+      # Publishing side-effects stay main-only via their own ref guards:
+      # bump-descriptors, publish-chart, and the `latest` tag.
+      should_push: ${{ steps.tag.outputs.should_push }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -108,12 +115,37 @@ jobs:
       # chart publish) tags with the SAME string. metadata-action's {{date}}
       # would otherwise drift by up to a minute across parallel steps, and
       # subchart appVersion bumps would point at images that don't exist.
-      - name: Compute build tag
+      #
+      # Branch builds (#1994) append `.<sanitized-branch>` after the sha so a
+      # branch image can never be mistaken for (or `sort -V`-beat) a main
+      # release tag — main keeps the suffix-less format, and publish-chart's
+      # appVersion regex rejects the suffixed form as a backstop.
+      - name: Compute build tag and push policy
         id: tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
           BUILD_TAG="$(date -u +%Y.%m.%d.%H.%M)-$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            # Docker tag charset is [A-Za-z0-9._-] (branch names carry `/`);
+            # cap the suffix well under the 128-char tag limit and trim
+            # separator runs the sanitizer may produce at the edges.
+            SAFE_BRANCH="$(printf '%s' "$REF_NAME" \
+              | tr -c 'a-zA-Z0-9._-' '-' \
+              | sed -E 's/^[-.]+//; s/[-.]+$//' \
+              | cut -c1-60)"
+            BUILD_TAG="${BUILD_TAG}.${SAFE_BRANCH}"
+          fi
+          # Push policy: pull_request builds are compile-only; push (main is
+          # the only on.push branch) and workflow_dispatch (any ref) push.
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            SHOULD_PUSH=false
+          else
+            SHOULD_PUSH=true
+          fi
           echo "build_tag=${BUILD_TAG}" >> "$GITHUB_OUTPUT"
-          echo "Build tag for this run: ${BUILD_TAG}"
+          echo "should_push=${SHOULD_PUSH}" >> "$GITHUB_OUTPUT"
+          echo "Build tag for this run: ${BUILD_TAG} (push: ${SHOULD_PUSH})"
 
   # ─── Connector image discovery (ADR-0016) ──────────────────────────────────
   # Scan every src/ingestion/connectors/*/*/descriptor.yaml's `images:` map
@@ -226,7 +258,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -237,17 +269,17 @@ jobs:
           context: src/backend
           file: src/backend/services/analytics/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-analytics,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-analytics,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=analytics-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=analytics-${{ matrix.arch }},ignore-error=true
       - name: Export digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: digests-analytics-${{ matrix.arch }}
@@ -260,8 +292,7 @@ jobs:
     if: |
       always()
       && needs.backend-analytics.result == 'success'
-      && github.event_name != 'pull_request'
-      && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -282,7 +313,7 @@ jobs:
           images: ${{ env.IMAGE_PREFIX }}/insight-analytics
           tags: |
             type=raw,value=${{ needs.changes.outputs.build_tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
         run: |
@@ -302,6 +333,10 @@ jobs:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-analytics
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/insight-analytics:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   backend-authenticator:
     needs: changes
@@ -323,7 +358,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -334,17 +369,17 @@ jobs:
           context: src/backend
           file: src/backend/services/authenticator/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-authenticator,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-authenticator,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=authenticator-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=authenticator-${{ matrix.arch }},ignore-error=true
       - name: Export digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: digests-authenticator-${{ matrix.arch }}
@@ -357,8 +392,7 @@ jobs:
     if: |
       always()
       && needs.backend-authenticator.result == 'success'
-      && github.event_name != 'pull_request'
-      && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -379,7 +413,7 @@ jobs:
           images: ${{ env.IMAGE_PREFIX }}/insight-authenticator
           tags: |
             type=raw,value=${{ needs.changes.outputs.build_tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
         run: |
@@ -399,6 +433,10 @@ jobs:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-authenticator
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/insight-authenticator:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   backend-gateway:
     needs: changes
@@ -420,7 +458,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -431,17 +469,17 @@ jobs:
           context: src/backend
           file: src/backend/services/gateway/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-gateway,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-gateway,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=gateway-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=gateway-${{ matrix.arch }},ignore-error=true
       - name: Export digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: digests-gateway-${{ matrix.arch }}
@@ -454,8 +492,7 @@ jobs:
     if: |
       always()
       && needs.backend-gateway.result == 'success'
-      && github.event_name != 'pull_request'
-      && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -476,7 +513,7 @@ jobs:
           images: ${{ env.IMAGE_PREFIX }}/insight-gateway
           tags: |
             type=raw,value=${{ needs.changes.outputs.build_tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
         run: |
@@ -496,6 +533,10 @@ jobs:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-gateway
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/insight-gateway:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   backend-identity:
     needs: changes
@@ -517,7 +558,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -533,17 +574,17 @@ jobs:
           context: src/backend
           file: src/backend/services/identity/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-identity,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-identity,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=identity-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=identity-${{ matrix.arch }},ignore-error=true
       - name: Export digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: digests-identity-${{ matrix.arch }}
@@ -556,8 +597,7 @@ jobs:
     if: |
       always()
       && needs.backend-identity.result == 'success'
-      && github.event_name != 'pull_request'
-      && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -581,7 +621,7 @@ jobs:
           images: ${{ env.IMAGE_PREFIX }}/insight-identity
           tags: |
             type=raw,value=${{ needs.changes.outputs.build_tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
         run: |
@@ -601,6 +641,10 @@ jobs:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-identity
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/insight-identity:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   # ─── Identity Resolution (Rust port of identity, epic #1602) ───────────────
   backend-identity-resolution:
@@ -625,7 +669,7 @@ jobs:
           persist-credentials: false # don't leave the token in .git/config
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -636,17 +680,17 @@ jobs:
           context: src/backend
           file: src/backend/services/identity-resolution/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=identity-resolution-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=identity-resolution-${{ matrix.arch }},ignore-error=true
       - name: Export digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: digests-identity-resolution-${{ matrix.arch }}
@@ -659,8 +703,7 @@ jobs:
     if: |
       always()
       && needs.backend-identity-resolution.result == 'success'
-      && github.event_name != 'pull_request'
-      && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -681,7 +724,7 @@ jobs:
           images: ${{ env.IMAGE_PREFIX }}/insight-identity-resolution
           tags: |
             type=raw,value=${{ needs.changes.outputs.build_tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
         run: |
@@ -701,6 +744,10 @@ jobs:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-identity-resolution
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/insight-identity-resolution:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   # ─── Toolbox build (with dbt parse smoke) ──────────────────────────────────
   # Toolbox is special — it bakes every connector's descriptor.yaml and dbt
@@ -732,7 +779,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -797,18 +844,18 @@ jobs:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-toolbox,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-toolbox,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=toolbox-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=toolbox-${{ matrix.arch }},ignore-error=true
 
       - name: Export digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: digests-toolbox-${{ matrix.arch }}
@@ -821,8 +868,7 @@ jobs:
     if: |
       always()
       && needs.toolbox.result == 'success'
-      && github.event_name != 'pull_request'
-      && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -843,7 +889,7 @@ jobs:
           images: ${{ env.IMAGE_PREFIX }}/insight-toolbox
           tags: |
             type=raw,value=${{ needs.changes.outputs.build_tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
         run: |
@@ -863,6 +909,10 @@ jobs:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-toolbox
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/insight-toolbox:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   # ─── Connector image build (matrix-driven, descriptor-discovered) ──────────
   # One matrix leg per `descriptor.yaml.images.<key>` entry × arch that
@@ -893,7 +943,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -904,19 +954,19 @@ jobs:
           context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
           file: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }},push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           # Scope cache per (image name, arch) so unrelated connectors and
           # cross-arch builds don't evict each other.
           cache-from: type=gha,scope=${{ matrix.entry.name }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.entry.name }}-${{ matrix.arch }},ignore-error=true
       - name: Export digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: digests-${{ matrix.entry.name }}-${{ matrix.arch }}
@@ -933,8 +983,7 @@ jobs:
       always()
       && needs.discover-images.outputs.any == 'true'
       && needs.build-image.result == 'success'
-      && github.event_name != 'pull_request'
-      && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -959,7 +1008,7 @@ jobs:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}
           tags: |
             type=raw,value=${{ needs.changes.outputs.build_tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
         run: |
@@ -979,6 +1028,10 @@ jobs:
           subject-name: ${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   # ─── Connector descriptor bump ─────────────────────────────────────────────
   # After build-image succeeds on every matrix leg, patch each connector's

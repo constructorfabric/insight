@@ -112,6 +112,19 @@ def supports_containerized_clickhouse(implementation: str) -> bool:
     """
     return implementation == "rust"
 
+
+def supports_strict_input_validation(implementation: str) -> bool:
+    """Validation the Rust port ADDED beyond the .NET behavior (reviewed on
+    epic #1602): a too-long revoke `reason` in DELETE bodies is rejected
+    (400; .NET ignores the body's length), a present-but-nil
+    `viewed_person_id` on POST /v1/visibility is rejected (400; .NET happily
+    creates the nonsense grant), and a malformed person_id on
+    GET /v1/subchart/{person_id} is a 400 (the .NET route binder answers
+    404). A capability of the EXPLICIT selection, never probed from runtime
+    behavior."""
+    return implementation == "rust"
+
+
 _HEALTH_TIMEOUT_S = float(
     os.environ.get(
         "E2E_IDENTITY_HEALTH_TIMEOUT_S", "120"
@@ -237,6 +250,10 @@ class IdentityProcess:
     @property
     def supports_containerized_clickhouse(self) -> bool:
         return supports_containerized_clickhouse(self.implementation)
+
+    @property
+    def supports_strict_input_validation(self) -> bool:
+        return supports_strict_input_validation(self.implementation)
 
     def start(self) -> None:
         create_identity_database(self.cfg)

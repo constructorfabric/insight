@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream, schema, unique_key
+from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream, repo_scope, schema, unique_key
 from source_bitbucket_cloud.streams.git_ranges import CommitRangeMixin
 
 
@@ -37,7 +37,7 @@ class FileChangesStream(CommitRangeMixin, BitbucketIncrementalStream):
             if not filename:
                 continue
             status = entry.get("status")
-            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, sha, filename)
+            entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), sha, filename)
             entity_keys.add(entity_key)
             yield self.item(
                 entity_key=entity_key,

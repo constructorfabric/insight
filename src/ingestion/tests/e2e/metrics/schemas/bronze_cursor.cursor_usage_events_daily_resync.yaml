@@ -1,0 +1,32 @@
+# JSON schema for bronze_cursor.cursor_usage_events_daily_resync (all real columns).
+# Same stream shape as bronze_cursor.cursor_usage_events — the connector re-fetches
+# the previous billing day into this second table so the finalized `chargedCents`
+# lands without double-counting the main stream (Cursor recomputes an event's cost
+# for up to ~24h). cursor__usage_events UNIONs both and keeps the latest row per
+# unique_key, preferring the resync row on an extraction-time tie.
+schemas:
+  bronze_cursor.cursor_usage_events_daily_resync:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: string }
+      userEmail: { type: [string, "null"] }
+      timestamp: { type: [string, "null"] }
+      kind: { type: [string, "null"] }
+      model: { type: [string, "null"] }
+      maxMode: { type: [boolean, "null"] }
+      requestsCosts: { type: [number, "null"] }
+      isTokenBasedCall: { type: [boolean, "null"] }
+      isFreeBugbot: { type: [boolean, "null"] }
+      cursorTokenFee: { type: [number, "null"] }
+      isChargeable: { type: [boolean, "null"] }
+      isHeadless: { type: [boolean, "null"] }
+      chargedCents: { type: [number, "null"] }
+      tokenUsage: { type: [string, "null"] }

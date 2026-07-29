@@ -8,6 +8,8 @@ name: OpenAPI Specs
 #
 #   • analytics — the offline `analytics openapi` subcommand (no DB,
 #     no HTTP listener; see api::openapi_document).
+#   • authenticator — the offline `authenticator openapi` subcommand (no Redis,
+#     no IdP; see api::openapi_document), same shape as analytics.
 #   • identity — the served GET /openapi.json, dumped by its integration test
 #     (Testcontainers MariaDB); the drift comparison is external (this workflow),
 #     so the test project itself has no docs/ coupling.
@@ -52,6 +54,43 @@ jobs:
           rc=${PIPESTATUS[0]}
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then echo "::error::OpenAPI spec drift — docs/components/backend/analytics/openapi.json is stale. Regenerate: (cd src/backend && cargo run -p analytics -- openapi) > docs/components/backend/analytics/openapi.json"; fi
+          exit "$rc"
+
+  # ─── authenticator — offline emit via the `openapi` subcommand ────────────
+  authenticator:
+    name: Authenticator OpenAPI spec drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protoc + librdkafka build deps
+        # protobuf-compiler: grpc-hub -> prost-build. cmake + libcurl headers:
+        # the authenticator vendors librdkafka (audit events) via rdkafka's
+        # cmake-build; librdkafka's OAUTHBEARER path needs curl/curl.h.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/backend -> target
+          key: authenticator-openapi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate the OpenAPI doc offline and drift-check it
+        env:
+          AUTHENTICATOR_SPEC: docs/components/backend/authenticator/openapi.json
+        run: |
+          # `authenticator openapi` builds offline and prints the doc; a build
+          # failure here should abort loudly under the runner's default `set -e`.
+          (cd src/backend && cargo run --quiet -p authenticator --bin authenticator -- openapi) > authenticator.openapi.live.json
+          # Relax errexit from here: we capture the drift-check rc ourselves,
+          # write the committed-vs-generated diff to the step summary, and emit a
+          # friendly ::error:: before exiting non-zero.
+          set +e
+          python3 scripts/ci/openapi_spec.py check --file "$AUTHENTICATOR_SPEC" --live-file authenticator.openapi.live.json | tee authenticator_openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat authenticator_openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Authenticator OpenAPI spec drift — $AUTHENTICATOR_SPEC is stale. Regenerate: (cd src/backend && cargo run -p authenticator --bin authenticator -- openapi) > dump.json && python3 scripts/ci/openapi_spec.py update --file $AUTHENTICATOR_SPEC --live-file dump.json"; fi
           exit "$rc"
 
   # ─── identity — serve GET /openapi.json (integration test) + external diff ──

@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
-from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream, BitbucketStream, schema, unique_key
+from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream, BitbucketStream, repo_scope, schema, unique_key
 from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
 
@@ -23,7 +23,7 @@ class RepositorySnapshotStream(BitbucketStream):
             identity = record.get("uuid") or record.get("id") or record.get("name")
             if identity is None:
                 continue
-            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, identity)
+            entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), identity)
             entity_keys.add(entity_key)
             projected = dict(record)
             projected.update(self.project(record))
@@ -143,7 +143,7 @@ class PipelinesStream(PipelineStateStream):
 
     def pipeline_records(self, repo, pipeline: Mapping[str, Any]):
         pipeline_uuid = pipeline.get("uuid")
-        entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, pipeline_uuid)
+        entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), pipeline_uuid)
         projected = dict(pipeline)
         projected.update(
             {
@@ -183,7 +183,7 @@ class PipelineStepsStream(PipelineStateStream):
         entity_keys: set[str] = set()
         for step in steps:
             step_uuid = step.get("uuid")
-            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, pipeline_uuid, step_uuid)
+            entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), pipeline_uuid, step_uuid)
             entity_keys.add(entity_key)
             projected = dict(step)
             projected.update(
@@ -234,7 +234,7 @@ class PipelineStepTestReportsStream(PipelineStateStream):
             count = 0
             if response is not None:
                 payload = response.json()
-                entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, pipeline_uuid, step_uuid)
+                entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), pipeline_uuid, step_uuid)
                 count = 1
                 yield self.item(
                     entity_key=entity_key,
@@ -317,7 +317,7 @@ class IssuesStream(IssueStateStream):
 
     def issue_records(self, repo, issue: Mapping[str, Any]):
         issue_id = issue.get("id")
-        entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, issue_id)
+        entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), issue_id)
         projected = dict(issue)
         projected.update(
             {
@@ -355,7 +355,7 @@ class IssueChildStream(IssueStateStream):
             identity = record.get("id") or record.get("uuid")
             if identity is None:
                 continue
-            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, issue_id, identity)
+            entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), issue_id, identity)
             entity_keys.add(entity_key)
             projected = dict(record)
             projected.update(
@@ -419,7 +419,7 @@ class PRTasksStream(PullRequestStateStream):
             task_id = task.get("id")
             if task_id is None:
                 continue
-            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, pr_id, task_id)
+            entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), pr_id, task_id)
             entity_keys.add(entity_key)
             projected = dict(task)
             projected.update(
