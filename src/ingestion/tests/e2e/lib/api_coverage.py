@@ -100,14 +100,51 @@ IDENTITY_BLOCKED: dict[str, frozenset[int]] = {
     "DELETE /v1/person-roles/{id}": frozenset({200}),  # answers 204
     "DELETE /v1/visibility/{id}": frozenset({200}),  # answers 204
 }
+# The identity spec declares ONLY the (often wrong) 200 per route, so every
+# real code the suite proves is REQUIRED_EXTRA — the mutation success codes
+# AND the error contract (identity/test_error_contracts.py): validation 400s,
+# unknown-id 404s, the 401/403 gate per route, and the duplicate/guard
+# conflicts. BLOCKING: a disappearing error test (or a handler regressing to
+# a different code) fails the gate instead of dimming an advisory. 5xx stays
+# out (SERVER_FAULT_FLOOR — e.g. the queue-full 503 on POST /v1/persons-seed
+# is not deterministically inducible black-box). Self-cleaning once the spec
+# starts declaring real codes (REDUNDANT then forces the move).
+_IDENTITY_COMMON_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
+    "POST /v1/profiles": frozenset({400, 401, 404}),
+    "POST /v1/persons-seed": frozenset({202, 400, 401, 403}),
+    "GET /v1/persons-seed/{id}": frozenset({400, 401, 403, 404}),
+    "GET /v1/persons-seed": frozenset({400, 401, 403}),
+    "POST /v1/roles": frozenset({201, 400, 401, 403, 409}),
+    "GET /v1/roles": frozenset({400, 401, 403}),
+    "DELETE /v1/roles/{id}": frozenset({204, 400, 401, 403, 404}),
+    "POST /v1/person-roles": frozenset({201, 400, 401, 403}),
+    "GET /v1/person-roles": frozenset({400, 401, 403}),
+    "DELETE /v1/person-roles/{id}": frozenset({204, 400, 401, 403, 404}),
+    "POST /v1/visibility": frozenset({201, 400, 401, 403}),
+    "GET /v1/visibility": frozenset({400, 401, 403}),
+    "DELETE /v1/visibility/{id}": frozenset({204, 400, 401, 403, 404}),
+    "GET /v1/subchart": frozenset({400, 401}),
+    "GET /v1/subchart/{personId}": frozenset({400, 401, 404}),
+}
+
+# Where the implementations answer DIFFERENT codes for the same guard (the
+# .NET 422 → Rust 409 family, contract.UNPROCESSABLE_OR_CONFLICT; the
+# .NET-only deprecated lookup), the delta is per-suite on top of the common
+# base.
 IDENTITY_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
-    "POST /v1/roles": frozenset({201}),
-    "POST /v1/person-roles": frozenset({201}),
-    "POST /v1/visibility": frozenset({201}),
-    "POST /v1/persons-seed": frozenset({202}),
-    "DELETE /v1/roles/{id}": frozenset({204}),
-    "DELETE /v1/person-roles/{id}": frozenset({204}),
-    "DELETE /v1/visibility/{id}": frozenset({204}),
+    **_IDENTITY_COMMON_REQUIRED_EXTRA,
+    "POST /v1/profiles": _IDENTITY_COMMON_REQUIRED_EXTRA["POST /v1/profiles"] | {422},
+    "DELETE /v1/roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/roles/{id}"] | {422},
+    "DELETE /v1/person-roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/person-roles/{id}"]
+    | {422},
+    "GET /v1/persons/{email}": frozenset({404}),
+}
+IDENTITY_RUST_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
+    **_IDENTITY_COMMON_REQUIRED_EXTRA,
+    "POST /v1/profiles": _IDENTITY_COMMON_REQUIRED_EXTRA["POST /v1/profiles"] | {409},
+    "DELETE /v1/roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/roles/{id}"] | {409},
+    "DELETE /v1/person-roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/person-roles/{id}"]
+    | {409},
 }
 
 # The Rust implementation dropped the deprecated persons lookup (approved
@@ -167,7 +204,7 @@ _SUITES = {
         IDENTITY_RUST_SKIP_LIST,
         IDENTITY_BLOCKED,
         IDENTITY_UNIVERSAL_BOILERPLATE,
-        IDENTITY_REQUIRED_EXTRA,
+        IDENTITY_RUST_REQUIRED_EXTRA,
     ),
     "authenticator": (
         AUTHENTICATOR_SKIP_LIST,

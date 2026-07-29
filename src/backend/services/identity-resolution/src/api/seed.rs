@@ -219,13 +219,22 @@ pub async fn create_persons_seed(
         tenant_id: tenant,
         author_person_id: author,
     };
-    if state.seed_tx.try_send(job).is_err() {
+    if let Err(err) = try_enqueue_job(&state.seed_tx, job) {
         // Channel full/closed — fail the row so it isn't a zombie, and tell the
         // caller to retry later (503, not 500 — parity with the .NET queue-full).
-        let _ = ops_repo::fail(&state.db, operation_id, "seed queue full; retry later").await;
-        return Err(CanonicalError::service_unavailable()
-            .with_detail("seed queue is full; retry later")
-            .create());
+        // A failed status update is logged, not propagated: 503/retry-later is
+        // still the right caller signal, and a row left `queued` is reclaimed
+        // by the startup zombie sweep (`sweep_zombies`).
+        if let Err(db_err) =
+            ops_repo::fail(&state.db, operation_id, "seed queue full; retry later").await
+        {
+            tracing::error!(
+                error = %db_err,
+                %operation_id,
+                "failed to mark the refused seed operation as failed"
+            );
+        }
+        return Err(err);
     }
 
     // Audit the enqueue (parity with the .NET `persons_seed.enqueue` audit).
@@ -247,6 +256,21 @@ pub async fn create_persons_seed(
     );
     let location = format!("/v1/persons-seed/{operation_id}");
     Ok((StatusCode::ACCEPTED, [(LOCATION, location)], Json(body)))
+}
+
+/// Hand the job to the worker channel, mapping a full/closed channel to the
+/// caller-facing 503 (parity with the .NET queue-full path). Split out of the
+/// handler so the refusal is unit-testable: the e2e suite cannot fill the
+/// channel deterministically from outside.
+fn try_enqueue_job(
+    tx: &mpsc::Sender<PersonsSeedJob>,
+    job: PersonsSeedJob,
+) -> Result<(), CanonicalError> {
+    tx.try_send(job).map_err(|_| {
+        CanonicalError::service_unavailable()
+            .with_detail("seed queue is full; retry later")
+            .create()
+    })
 }
 
 /// `GET /v1/persons-seed/{id}` — poll one operation.
@@ -401,5 +425,52 @@ pub async fn run_worker(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    use super::*;
+
+    fn job() -> PersonsSeedJob {
+        PersonsSeedJob {
+            operation_id: Uuid::from_u128(1),
+            tenant_id: Uuid::from_u128(2),
+            author_person_id: Uuid::from_u128(3),
+        }
+    }
+
+    #[test]
+    fn enqueue_maps_closed_channel_to_503() -> anyhow::Result<()> {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let Err(err) = try_enqueue_job(&tx, job()) else {
+            anyhow::bail!("closed channel must refuse the job");
+        };
+        assert_eq!(
+            err.into_response().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn enqueue_maps_full_channel_to_503() -> anyhow::Result<()> {
+        let (tx, _rx) = mpsc::channel(1);
+        assert!(
+            try_enqueue_job(&tx, job()).is_ok(),
+            "first job fits the 1-slot channel"
+        );
+        let Err(err) = try_enqueue_job(&tx, job()) else {
+            anyhow::bail!("full channel must refuse the job");
+        };
+        assert_eq!(
+            err.into_response().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        Ok(())
     }
 }
