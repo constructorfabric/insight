@@ -163,9 +163,9 @@ The system **MUST** accept exactly one read statement — a single `SELECT`/`WIT
 
 #### Read-Only Role
 
-- [ ] `p1` - **ID**: `cpt-presentation-fr-read-only-role`
+- [x] `p1` - **ID**: `cpt-presentation-fr-read-only-role`
 
-The system **MUST** execute contract reads under a dedicated `presentation_ro` role that has `SELECT` on the silver and identity databases and `CREATE`/`INSERT` only in `presentation`, with no `DROP`/`ALTER`/`TRUNCATE` anywhere. (#1963.)
+The system **MUST** execute contract reads under a dedicated `presentation_ro` role that has `SELECT` on the silver, identity, and legacy-gold (`insight`) databases and `CREATE`/`INSERT` only in `presentation`, with no `DROP`/`ALTER`/`TRUNCATE` anywhere. (#1963.)
 
 **Rationale**: Read-only enforced by construction, not by convention.
 

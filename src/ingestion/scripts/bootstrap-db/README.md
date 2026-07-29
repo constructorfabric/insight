@@ -19,8 +19,11 @@ Start a throwaway ClickHouse in docker, on the same version production runs (pin
 source pins.env
 docker run -d --name bootstrap-db-clickhouse -p 8123:8123 \
   -e CLICKHOUSE_USER=insight -e CLICKHOUSE_PASSWORD=insight -e CLICKHOUSE_DB=insight \
+  -v "$PWD/clickhouse-access-management.xml":/etc/clickhouse-server/users.d/zz-access-management.xml:ro \
   "${CLICKHOUSE_SERVER_IMAGE}"
 ```
+
+The `clickhouse-access-management.xml` mount lets the `insight` admin manage access (`CREATE ROLE`/`GRANT`) so the run provisions the read-only `presentation_ro` role (`presentation-role.sql`, #1963); the official image otherwise disables it. Production needs no mount (the bitnami admin already has it; provisioning is guarded, so an admin lacking it is skipped with a warning).
 
 Point `.env` at it: `CLICKHOUSE_HOST=$(ipconfig getifaddr en0)` (the LAN IP — reachable both for dbt on this machine and for the connector containers; see Prerequisites), `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_PROTOCOL=http`, user/password/database `insight`. Check what got created:
 
