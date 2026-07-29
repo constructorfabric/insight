@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -38,17 +39,27 @@ pytestmark = pytest.mark.skipif(
 
 ROLE_SQL = Path(__file__).resolve().parent.parent / "bootstrap-db" / "presentation-role.sql"
 
+# The read-only contract databases the role grants SELECT on.
+CONTRACT_DBS = ("silver", "person", "identity", "insight")
+
 PROBE_USER = "pres_role_probe"
 PROBE_PASSWORD = "probe"
 
 
 def _query(sql: str, *, user: str, password: str) -> tuple[bool, str]:
     """POST one statement over the HTTP interface. Returns (ok, body)."""
+    url = CH_URL.rstrip("/") + "/"
+    # Pin the scheme: urllib honours file:// etc. CH_URL is an operator-supplied
+    # test endpoint, but reject anything but http(s) so a stray value can't read
+    # local files.
+    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+        raise ValueError(f"PRESENTATION_ROLE_TEST_CH_URL must be http(s), got {CH_URL!r}")
     req = urllib.request.Request(
-        CH_URL.rstrip("/") + "/", data=sql.encode(), headers={"X-ClickHouse-User": user, "X-ClickHouse-Key": password}
+        url, data=sql.encode(), headers={"X-ClickHouse-User": user, "X-ClickHouse-Key": password}
     )
     try:
-        with urllib.request.urlopen(req) as resp:  # noqa: S310 (trusted local URL)
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        with urllib.request.urlopen(req) as resp:  # noqa: S310 (scheme pinned to http(s) above)
             return True, resp.read().decode()
     except urllib.error.HTTPError as e:
         return False, e.read().decode()
@@ -76,34 +87,40 @@ def _apply(path: Path) -> None:
 def probe():
     """Provision the contract + presentation objects and a probe user carrying
     only the presentation_ro role. Torn down afterwards."""
-    for db in ("silver", "person", "identity", "insight", "presentation"):
+    for db in (*CONTRACT_DBS, "presentation"):
         assert _admin(f"CREATE DATABASE IF NOT EXISTS {db}")[0]
-    assert _admin("CREATE TABLE IF NOT EXISTS silver.probe (x UInt8) ENGINE=MergeTree ORDER BY x")[0]
+    for db in CONTRACT_DBS:
+        assert _admin(f"CREATE TABLE IF NOT EXISTS {db}.probe (x UInt8) ENGINE=MergeTree ORDER BY x")[0]
 
     _apply(ROLE_SQL)
 
+    # ClickHouse only accepts a default role once it is granted, so grant first.
     assert _admin(f"DROP USER IF EXISTS {PROBE_USER}")[0]
-    ok, resp = _admin(f"CREATE USER {PROBE_USER} IDENTIFIED BY '{PROBE_PASSWORD}' DEFAULT ROLE presentation_ro")
+    ok, resp = _admin(f"CREATE USER {PROBE_USER} IDENTIFIED BY '{PROBE_PASSWORD}'")
     assert ok, resp
     assert _admin(f"GRANT presentation_ro TO {PROBE_USER}")[0]
+    assert _admin(f"ALTER USER {PROBE_USER} DEFAULT ROLE presentation_ro")[0]
     try:
         yield _probe
     finally:
         _admin("DROP TABLE IF EXISTS presentation.scratch")
+        for db in CONTRACT_DBS:
+            _admin(f"DROP TABLE IF EXISTS {db}.probe")
         _admin(f"DROP USER IF EXISTS {PROBE_USER}")
 
 
-def test_contract_is_read_only(probe) -> None:
-    """SELECT on the contract is allowed; every write/DDL is denied."""
-    assert probe("SELECT count() FROM silver.probe")[0], "contract SELECT must be allowed"
+@pytest.mark.parametrize("db", CONTRACT_DBS)
+def test_contract_is_read_only(probe, db: str) -> None:
+    """SELECT on every contract database is allowed; every write/DDL is denied."""
+    assert probe(f"SELECT count() FROM {db}.probe")[0], f"{db} SELECT must be allowed"
     for sql in (
-        "INSERT INTO silver.probe VALUES (1)",
-        "DROP TABLE silver.probe",
-        "ALTER TABLE silver.probe ADD COLUMN y UInt8",
-        "TRUNCATE TABLE silver.probe",
+        f"INSERT INTO {db}.probe VALUES (1)",
+        f"DROP TABLE {db}.probe",
+        f"ALTER TABLE {db}.probe ADD COLUMN y UInt8",
+        f"TRUNCATE TABLE {db}.probe",
     ):
         ok, resp = probe(sql)
-        assert not ok, f"contract must reject: {sql!r}"
+        assert not ok, f"{db} must reject: {sql!r}"
         assert "ACCESS_DENIED" in resp, resp
 
 
