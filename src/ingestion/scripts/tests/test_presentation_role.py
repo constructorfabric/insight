@@ -11,8 +11,7 @@ free. The admin must have access_management (to CREATE ROLE / CREATE USER):
 
     docker run -d --rm --name ch -p 38210:8123 \\
         -e CLICKHOUSE_USER=insight -e CLICKHOUSE_PASSWORD=insight \\
-        -v "$PWD/src/ingestion/scripts/bootstrap-db/clickhouse-access-management.xml":\\
-/etc/clickhouse-server/users.d/zz-access-management.xml:ro \\
+        -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \\
         clickhouse/clickhouse-server:25.7.5
     PRESENTATION_ROLE_TEST_CH_URL=http://localhost:38210 \\
     PRESENTATION_ROLE_TEST_CH_USER=insight \\

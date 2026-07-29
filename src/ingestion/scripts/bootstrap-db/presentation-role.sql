@@ -1,7 +1,8 @@
 -- presentation_ro: read-only-by-construction role for the presentation query
 -- path (#1963). Contract = SELECT only; `presentation` = SELECT/INSERT/CREATE;
 -- no DROP/ALTER/TRUNCATE anywhere. Idempotent. Needs an admin with
--- access_management (see README.md). Spec: docs/domain/presentation-layer/specs.
+-- access_management (compose/e2e/bitnami already have it; see README.md).
+-- Spec: docs/domain/presentation-layer/specs.
 
 CREATE ROLE IF NOT EXISTS presentation_ro;
 
