@@ -9,6 +9,9 @@ from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
 class PullRequestsStream(PullRequestStateStream):
     name = "pull_requests"
+    # Emits full PR records, so it must fetch everything itself; its fetch
+    # populates the slim cache the five child streams read.
+    reads_selection_cache = False
 
     def pull_request_records(self, repo, pr: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
         yield self._record(repo, pr)

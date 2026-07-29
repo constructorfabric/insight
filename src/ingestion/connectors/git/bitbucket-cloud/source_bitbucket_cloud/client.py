@@ -49,6 +49,32 @@ class RepositoryCatalog:
         self._skip_forks = skip_forks
         self._repositories: list[RepositoryRef] | None = None
         self._branches: dict[str, list[BranchRef]] = {}
+        self._inaccessible: set[str] = set()
+        # Shared per-sync selection caches (see streams/pr_base.py). Keyed by
+        # (repository, watermark) and holding SLIM projections only — a handful
+        # of scalar fields per entity, never the raw API objects. The raw list
+        # for the whole workspace would cost hundreds of MB held across the six
+        # sequential PR streams; the slim form is ~100 bytes per entity.
+        self.pr_selections: dict[tuple[str, str], tuple[list, dict]] = {}
+        self.pipeline_selections: dict[tuple[str, str], tuple[bool, list, dict]] = {}
+        self.issue_selections: dict[tuple[str, str], tuple[bool, list, dict]] = {}
+
+    def mark_inaccessible(self, repo: RepositoryRef) -> None:
+        """Record that this repository denies access, for the rest of the sync.
+
+        A repository can appear in the workspace listing and still refuse every
+        request under it (403) — normal with repo-scoped tokens or per-repository
+        permissions. The catalog is shared by every stream, so the first stream
+        to discover it saves the others from rediscovering it repo by repo.
+        """
+        self._inaccessible.add(repo.uuid)
+
+    def is_inaccessible(self, repo: RepositoryRef) -> bool:
+        return repo.uuid in self._inaccessible
+
+    @property
+    def inaccessible_count(self) -> int:
+        return len(self._inaccessible)
 
     def repositories(self) -> list[RepositoryRef]:
         if self._repositories is None:
@@ -233,19 +259,32 @@ class BitbucketClient:
                 )
         return branches
 
+    # Bitbucket documents no ceiling on include/exclude counts, and per
+    # BCLOUD-13229 its limits tend to surface as unexplained 400s. A repository
+    # with hundreds of branches would otherwise send them all in one form, so
+    # includes are chunked; the union of the chunked ranges is the same commit
+    # set (the full exclude list rides along with every chunk), and bronze
+    # dedups any overlap by unique_key.
+    COMMITS_INCLUDE_CHUNK = 100
+
     def commits_between(
         self, repo: RepositoryRef, current_heads: Sequence[str], previous_heads: Sequence[str]
     ) -> Iterable[Mapping[str, Any]]:
-        form = [("include", head) for head in sorted(set(current_heads))]
-        form.extend(("exclude", head) for head in sorted(set(previous_heads)))
-        if not form:
+        includes = sorted(set(current_heads))
+        excludes = [("exclude", head) for head in sorted(set(previous_heads))]
+        # With no include the endpoint falls back to every branch, so excludes
+        # alone would page a whole history out; nothing is newly reachable.
+        if not includes:
             return
-        yield from self.paginate(
-            self.repo_path(repo, "commits"),
-            method="POST",
-            params={"pagelen": "100"},
-            data=form,
-        )
+        for start in range(0, len(includes), self.COMMITS_INCLUDE_CHUNK):
+            chunk = includes[start : start + self.COMMITS_INCLUDE_CHUNK]
+            form = [("include", head) for head in chunk] + excludes
+            yield from self.paginate(
+                self.repo_path(repo, "commits"),
+                method="POST",
+                params={"pagelen": "100"},
+                data=form,
+            )
 
     def repo_path(self, repo: RepositoryRef, suffix: str) -> str:
         workspace = quote(repo.workspace, safe="")

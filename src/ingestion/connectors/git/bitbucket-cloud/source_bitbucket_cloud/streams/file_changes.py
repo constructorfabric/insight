@@ -14,6 +14,14 @@ class FileChangesStream(CommitRangeMixin, BitbucketIncrementalStream):
     def repository_records(self, repo, bucket_id: int) -> Iterable[Mapping[str, Any]]:
         del bucket_id
         prior = self.repository_state(repo)
+        repo_updated_on = str(repo.raw.get("updated_on") or "")
+        if repo_updated_on and prior.get("repo_updated_on") == repo_updated_on:
+            # The repository has not been pushed to since the last successful
+            # pass (updated_on comes free with the workspace listing), so the
+            # branch heads cannot have moved: skip the branch listing and the
+            # range fetch entirely. This is what keeps the per-repository
+            # request budget at zero for the idle majority of a large fleet.
+            return
         _, current_heads = self.branch_snapshot(repo)
         current_head_shas = sorted(set(current_heads.values()))
         previous_head_shas = prior.get("head_shas") or []
@@ -23,14 +31,23 @@ class FileChangesStream(CommitRangeMixin, BitbucketIncrementalStream):
                 if self._start_date and committed_date and str(committed_date)[:10] < self._start_date:
                     continue
                 yield from self._diffstat(repo, str(commit.get("hash") or ""), committed_date)
-        self.commit_repository_state(repo, {"head_shas": current_head_shas})
+        self.commit_repository_state(repo, {"head_shas": current_head_shas, "repo_updated_on": repo_updated_on})
 
     def _diffstat(self, repo, sha: str, committed_date: Any) -> Iterable[Mapping[str, Any]]:
         if not sha:
             return
         generation = self.generation(repo.uuid, sha)
         entity_keys: set[str] = set()
-        for entry in self._client.paginate(self._client.repo_path(repo, f"diffstat/{sha}"), params={"pagelen": "100"}):
+        # A commit's diffstat can be permanently gone (orphaned merge parents,
+        # rewritten history) — the pre-rewrite connector tolerated exactly this
+        # ("commit diffstat gone", ignore_404). Raising here would fail the
+        # repository on every sync forever. The marker records the denial so the
+        # completeness gate keeps whatever was known before instead of treating
+        # the empty read as "this commit changed nothing".
+        present, entries = self._client.paginate_optional(
+            self._client.repo_path(repo, f"diffstat/{sha}"), params={"pagelen": "100"}
+        )
+        for entry in entries:
             new_file = entry.get("new") or {}
             old_file = entry.get("old") or {}
             filename = new_file.get("path") or old_file.get("path")
@@ -61,6 +78,7 @@ class FileChangesStream(CommitRangeMixin, BitbucketIncrementalStream):
             scope_parts=[repo.uuid, sha, "diffstat"],
             generation_id=generation,
             item_count=len(entity_keys),
+            available=present,
             repository_uuid=repo.uuid,
             workspace_uuid=repo.workspace_uuid,
             source_type="commit",

@@ -34,7 +34,7 @@ def test_changed_heads_fetch_range_and_map_commit(commits_stream, client, repo):
     assert records[0]["branch_name"] is None
     assert records[0]["parent_hashes"] == ["p1"]
     assert set(records[0]) <= set(commits_stream.get_json_schema()["properties"])
-    assert commits_stream.state["repositories"][repo_state_key(repo)] == {"head_shas": ["head", "head2"]}
+    assert commits_stream.state["repositories"][repo_state_key(repo)] == {"head_shas": ["head", "head2"], "repo_updated_on": "2026-06-01T00:00:00+00:00"}
 
 
 def test_unchanged_heads_make_no_commit_request(commits_stream, client, repo):
