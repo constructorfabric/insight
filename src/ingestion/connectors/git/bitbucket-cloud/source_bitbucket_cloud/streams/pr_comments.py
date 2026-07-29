@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from source_bitbucket_cloud.streams.base import schema, truncate, unique_key
+from source_bitbucket_cloud.streams.base import repo_scope, schema, truncate, unique_key
 from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
 
@@ -25,7 +25,7 @@ class PRCommentsStream(PullRequestStateStream):
             user = comment.get("user") or {}
             inline = comment.get("inline") or {}
             parent = comment.get("parent") or {}
-            entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, pr_id, comment_id)
+            entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), pr_id, comment_id)
             entity_keys.add(entity_key)
             yield self.item(
                 entity_key=entity_key,

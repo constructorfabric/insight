@@ -1,6 +1,6 @@
 from airbyte_cdk.models import SyncMode
 from conftest import branch
-from source_bitbucket_cloud.streams.base import repository_bucket
+from source_bitbucket_cloud.streams.base import repo_state_key, repository_bucket
 
 
 def commit(sha="c1", date="2026-06-01T00:00:00+00:00", **extra):
@@ -19,7 +19,7 @@ def commit(sha="c1", date="2026-06-01T00:00:00+00:00", **extra):
 
 
 def read(stream, repo):
-    return list(stream.read_records(SyncMode.incremental, stream_slice={"bucket_id": repository_bucket(repo.uuid)}))
+    return list(stream.read_records(SyncMode.incremental, stream_slice={"bucket_id": repository_bucket(repo_state_key(repo))}))
 
 
 def test_changed_heads_fetch_range_and_map_commit(commits_stream, client, repo):
@@ -34,19 +34,19 @@ def test_changed_heads_fetch_range_and_map_commit(commits_stream, client, repo):
     assert records[0]["branch_name"] is None
     assert records[0]["parent_hashes"] == ["p1"]
     assert set(records[0]) <= set(commits_stream.get_json_schema()["properties"])
-    assert commits_stream.state["repositories"][repo.uuid] == {"head_shas": ["head", "head2"]}
+    assert commits_stream.state["repositories"][repo_state_key(repo)] == {"head_shas": ["head", "head2"]}
 
 
 def test_unchanged_heads_make_no_commit_request(commits_stream, client, repo):
     client.branch_values[repo.uuid] = [branch("main", "head")]
-    commits_stream.state = {"version": 2, "bucket_count": 8, "repositories": {repo.uuid: {"head_shas": ["head"]}}}
+    commits_stream.state = {"version": 3, "bucket_count": 8, "repositories": {repo_state_key(repo): {"head_shas": ["head"]}}}
     assert read(commits_stream, repo) == []
     assert client.commit_calls == []
 
 
 def test_changed_heads_exclude_previous_heads(commits_stream, client, repo):
     client.branch_values[repo.uuid] = [branch("main", "new")]
-    commits_stream.state = {"version": 2, "bucket_count": 8, "repositories": {repo.uuid: {"head_shas": ["old"]}}}
+    commits_stream.state = {"version": 3, "bucket_count": 8, "repositories": {repo_state_key(repo): {"head_shas": ["old"]}}}
     read(commits_stream, repo)
     assert client.commit_calls == [(["new"], ["old"])]
 

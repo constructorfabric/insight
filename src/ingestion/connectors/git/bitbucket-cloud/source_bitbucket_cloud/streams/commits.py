@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from source_bitbucket_cloud.streams.base import AUTHOR_RE, BitbucketIncrementalStream, schema, truncate, unique_key
+from source_bitbucket_cloud.streams.base import AUTHOR_RE, BitbucketIncrementalStream, repo_scope, schema, truncate, unique_key
 from source_bitbucket_cloud.streams.git_ranges import CommitRangeMixin
 
 
@@ -29,7 +29,7 @@ class CommitsStream(CommitRangeMixin, BitbucketIncrementalStream):
         sha = str(commit.get("hash") or "")
         author = self._identity(commit.get("author") or {})
         committer = self._identity(commit.get("committer") or {})
-        entity_key = unique_key(self._tenant_id, self._source_id, repo.uuid, sha)
+        entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), sha)
         return self.item(
             entity_key=entity_key,
             repository_uuid=repo.uuid,

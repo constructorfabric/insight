@@ -21,8 +21,11 @@ HTTP endpoint accepts only one statement per request.
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import re
+import sys
+from functools import lru_cache
 from pathlib import Path
 
 from lib import clickhouse as ch
@@ -112,7 +115,59 @@ def apply_bronze_placeholders(cfg: SessionConfig) -> int:
             summary = "\n".join(f"  {s[:120]!r}: {e}" for s, e in failed[:5])
             raise RuntimeError(f"DDL snapshot stuck; {len(failed)} statement(s) keep failing:\n{summary}")
         pending = [s for s, _ in failed]
+
+    reconcile_bronze_schema(cfg, ddl_dir)
     return applied
+
+
+def reconcile_bronze_schema(cfg: SessionConfig, ddl_dir: Path) -> int:
+    """Add snapshot columns missing from pre-existing bronze tables.
+
+    Mirrors the phase prod runs at the end of create-bronze-placeholders.sh, by
+    importing the same module rather than reimplementing it — the rig's
+    ClickHouse outlives a single run (compose volume, and CI reuses the service
+    across fixtures), so it accumulates exactly the schema drift #1991 is about.
+    """
+    reconciler = _reconciler(cfg.repo_root / "src/ingestion/scripts/reconcile_bronze_schema.py")
+    result = reconciler.reconcile(
+        reconciler.load_snapshot_tables(ddl_dir),
+        execute=lambda sql: ch.execute(cfg, sql),
+        fetch_rows=lambda sql: [[str(cell) for cell in row] for row in ch.query(cfg, sql)],
+    )
+    if result.columns_added:
+        LOG.info(
+            "reconciled %d bronze column(s) across %d table(s)",
+            result.columns_added,
+            result.tables_reconciled,
+        )
+    for qualified, name, snapshot_type, live_type in result.type_drift:
+        LOG.warning(
+            "%s.%s type differs — snapshot=%s live=%s (left unchanged)",
+            qualified,
+            name,
+            snapshot_type,
+            live_type,
+        )
+    return result.columns_added
+
+
+@lru_cache(maxsize=1)
+def _reconciler(path: Path):
+    """Load scripts/reconcile_bronze_schema.py, which lives outside the rig's package root.
+
+    The module must be registered in sys.modules BEFORE exec_module: dataclass
+    resolves its own module via `sys.modules[cls.__module__]`, so executing an
+    unregistered module raises AttributeError on the first @dataclass. Loading
+    the file by path (rather than putting scripts/ on sys.path) keeps the rig's
+    own `tests` package from being shadowed by the one next to the script.
+    """
+    spec = importlib.util.spec_from_file_location("reconcile_bronze_schema", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load the bronze reconciler from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def discover_refreshable_views(cfg: SessionConfig) -> list[str]:

@@ -89,3 +89,15 @@ while true; do
 done
 
 echo "=== connectors-ddl snapshot applied ==="
+
+# CREATE TABLE IF NOT EXISTS above is a no-op against a table that already
+# exists, so a warm cluster keeps the schema its bronze tables had when the
+# connector last synced. When a connector adds columns, the staging models that
+# read them fail with UNKNOWN_IDENTIFIER and the whole downstream domain is
+# skipped (#1991). Add the snapshot's missing columns to every pre-existing
+# bronze table; see reconcile_bronze_schema.py for the guarantees (bronze only,
+# ADD COLUMN only, idempotent, safe alongside a running sync). Shared with the
+# e2e rig so the two cannot drift.
+echo "=== Reconciling existing bronze tables to snapshot ==="
+python3 "${SCRIPT_DIR}/reconcile_bronze_schema.py" "${DDL_DIR}"
+echo "=== bronze reconcile complete ==="

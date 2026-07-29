@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from source_bitbucket_cloud.client import BitbucketApiError
-from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream, schema, unique_key
+from source_bitbucket_cloud.streams.base import BitbucketIncrementalStream, repo_scope, schema, unique_key
 from source_bitbucket_cloud.streams.git_ranges import CommitRangeMixin
 
 
@@ -43,7 +43,7 @@ class CommitBranchReachabilityStream(CommitRangeMixin, BitbucketIncrementalStrea
                 entity_key = unique_key(
                     self._tenant_id,
                     self._source_id,
-                    repo.uuid,
+                    *repo_scope(repo),
                     branch_name,
                     old_head,
                     "deleted",
@@ -76,7 +76,7 @@ class CommitBranchReachabilityStream(CommitRangeMixin, BitbucketIncrementalStrea
             entity_key = unique_key(
                 self._tenant_id,
                 self._source_id,
-                repo.uuid,
+                *repo_scope(repo),
                 branch.name,
                 include,
                 "removal_unavailable",
@@ -108,7 +108,7 @@ class CommitBranchReachabilityStream(CommitRangeMixin, BitbucketIncrementalStrea
             entity_key = unique_key(
                 self._tenant_id,
                 self._source_id,
-                repo.uuid,
+                *repo_scope(repo),
                 branch.name,
                 head,
                 action,
