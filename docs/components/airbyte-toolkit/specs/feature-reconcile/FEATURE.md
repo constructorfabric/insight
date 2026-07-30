@@ -260,7 +260,7 @@ The reconcile feature explicitly does NOT cover:
 5. [ ] - `p1` - **CALL** `ab_delete_source` for each match - `inst-cd-delete-src`
 6. [ ] - `p1` - **IF** definition.ref_count == 0 **CALL** `ab_delete_definition` - `inst-cd-delete-def`
 7. [ ] - `p1` - **CALL** `cpt-insightspec-algo-reconcile-cascade-delete-cronworkflow` - `inst-cd-cronworkflow`
-8. [ ] - `p1` - log_line WARN "cascade-delete ${connector}: secret missing" - `inst-cd-log`
+8. [ ] - `p1` - **IF** any source or CronWorkflow was actually removed log_line WARN "cascade-delete ${connector}: removed <resources>" **ELSE** log_line INFO "${connector}: not installed (no Secret, no Airbyte/Argo resources)" and count as skipped, not changed — a descriptor baked into the toolbox but never configured on this cluster must not WARN about a removal that never happened - `inst-cd-log`
 9. [ ] - `p1` - **RETURN** ok - `inst-cd-return`
 
 ### Create Connection First Time

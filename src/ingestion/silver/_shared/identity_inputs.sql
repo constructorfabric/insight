@@ -1,3 +1,15 @@
+-- depends_on: {{ ref('active_directory__identity_inputs') }}
+-- depends_on: {{ ref('active_directory__manager_identity_inputs') }}
+-- depends_on: {{ ref('seed_identity_inputs_from_claude_admin') }}
+-- depends_on: {{ ref('seed_identity_inputs_from_cursor') }}
+-- depends_on: {{ ref('outline__identity_inputs') }}
+-- depends_on: {{ ref('jira__identity_inputs') }}
+-- depends_on: {{ ref('workday__identity_inputs') }}
+-- depends_on: {{ ref('ms_entra__identity_inputs') }}
+-- depends_on: {{ ref('bamboohr__identity_inputs') }}
+-- depends_on: {{ ref('zulip_proxy__identity_inputs') }}
+-- depends_on: {{ ref('zoom__identity_inputs') }}
+-- depends_on: {{ ref('youtrack__identity_inputs') }}
 -- @cpt-principle:cpt-dataflow-principle-rmt-with-version:p1
 {{ config(
     materialized='incremental',
@@ -10,13 +22,6 @@
     tags=['silver']
 ) }}
 
--- depends_on: {{ ref('bamboohr__identity_inputs') }}
--- depends_on: {{ ref('zoom__identity_inputs') }}
--- depends_on: {{ ref('ms_entra__identity_inputs') }}
--- depends_on: {{ ref('zulip_proxy__identity_inputs') }}
--- depends_on: {{ ref('outline__identity_inputs') }}
--- depends_on: {{ ref('seed_identity_inputs_from_cursor') }}
--- depends_on: {{ ref('seed_identity_inputs_from_claude_admin') }}
 
 SELECT * FROM (
     {{ union_by_tag('silver:identity_inputs') }}

@@ -31,6 +31,17 @@ public sealed class PersonsRepository : IPersonsReader
         return raw is byte[] bytes && bytes.Length == 16 ? new Guid(bytes, bigEndian: true) : null;
     }
 
+    public async Task<Guid?> ResolvePersonIdByEmailAnyTenantAsync(
+        string email,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(Sql.ResolvePersonIdByEmailAnyTenant, conn);
+        cmd.Parameters.AddWithValue("@email", email);
+        var raw = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return raw is byte[] bytes && bytes.Length == 16 ? new Guid(bytes, bigEndian: true) : null;
+    }
+
     public async Task<IReadOnlyList<PersonObservation>> GetLatestObservationsAsync(
         Guid tenantId,
         Guid personId,

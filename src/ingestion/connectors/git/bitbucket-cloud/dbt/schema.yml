@@ -10,13 +10,41 @@ sources:
     loaded_at_field: _airbyte_extracted_at
     schema: bronze_bitbucket_cloud
     tables:
+      # Required streams inherit the source-level 72h freshness SLA above.
       - name: repositories
       - name: branches
       - name: commits
+      - name: commit_branch_reachability
       - name: file_changes
       - name: pull_requests
+      - name: pull_request_diffstat
+      - name: pull_request_activity
+      - name: pull_request_tasks
       - name: pull_request_comments
       - name: pull_request_commits
+      # Optional streams: permission- or feature-gated endpoints (Pipelines,
+      # Deployments, issue tracker) that a workspace may never populate, and
+      # tags that a repository may not have. An empty bronze table has no
+      # newest row, so the source-level SLA would raise a false staleness
+      # error — freshness is disabled per table instead.
+      - name: pipelines
+        freshness: null
+      - name: pipeline_steps
+        freshness: null
+      - name: pipeline_step_test_reports
+        freshness: null
+      - name: deployments
+        freshness: null
+      - name: environments
+        freshness: null
+      - name: tags
+        freshness: null
+      - name: issues
+        freshness: null
+      - name: issue_comments
+        freshness: null
+      - name: issue_changes
+        freshness: null
 
 models:
   - name: bitbucket_cloud__repositories
@@ -27,6 +55,9 @@ models:
 
   - name: bitbucket_cloud__commits
     description: "Bitbucket Cloud commits -> staging, feeds class_git_commits"
+
+  - name: bitbucket_cloud__commit_branch_reachability
+    description: "Bitbucket Cloud commit-to-branch reachability events -> staging"
 
   - name: bitbucket_cloud__file_changes
     description: "Bitbucket Cloud file changes -> staging, feeds class_git_file_changes"

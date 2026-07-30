@@ -1,0 +1,93 @@
+spec_version: 1
+description: >
+  Bitbucket Cloud git metrics regression (issue #1877). Seeds the connector's
+  item/snapshot_complete bronze envelope and drives it through the
+  bitbucket_cloud__commits / __file_changes / __pull_requests staging models —
+  the three models that failed to build with ILLEGAL_AGGREGATION before the
+  latest_* CTE aliases were de-shadowed. Assertions use the `source=bitbucket_cloud`
+  breakdown so they are unaffected by any other git connector seeded in the suite.
+
+  Fixture exercises the exact previously-broken code paths:
+    * file_changes gating — sha commit-a has a COMPLETE generation g1 (a.py, +10/-2)
+      and an INCOMPLETE generation g2 (b.py, +99/-99, no marker); the fixed CTE must
+      pick g1, so lines resolve to 10/2, never 99.
+    * empty diffstat — commit-b has only a count=0 snapshot_complete marker, taking
+      the empty_file_changes anti-join branch (0 files, 0 lines).
+    * pull request terminal activity — a MERGED activity event feeds closed_on.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_bitbucket_cloud.commits:
+    - { $ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:commit-a", entity_key: "c:commit-a", hash: commit-a, author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com }
+    - { $ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:commit-b", entity_key: "c:commit-b", hash: commit-b, author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com }
+
+  bronze_bitbucket_cloud.file_changes:
+    # commit-a: complete generation g1 (counts) ...
+    - { $ref: templates/bitbucket_git.yaml#/templates/file_change, unique_key: "fc:commit-a:a.py:g1", entity_key: "fc:commit-a:a.py", generation_id: g1, sha: commit-a, filename: src/a.py, additions: 10, deletions: 2 }
+    - { $ref: templates/bitbucket_git.yaml#/templates/file_change_marker, unique_key: "fc:commit-a:complete:g1", generation_id: g1, sha: commit-a, snapshot_item_count: 1 }
+    # ... and an INCOMPLETE generation g2 (no marker) that must be ignored.
+    - { $ref: templates/bitbucket_git.yaml#/templates/file_change, unique_key: "fc:commit-a:b.py:g2", entity_key: "fc:commit-a:b.py", generation_id: g2, sha: commit-a, filename: src/b.py, additions: 99, deletions: 99 }
+    # commit-b: complete marker with zero items -> empty_file_changes branch.
+    - { $ref: templates/bitbucket_git.yaml#/templates/file_change_marker, unique_key: "fc:commit-b:complete:g3", generation_id: g3, sha: commit-b, snapshot_item_count: 0 }
+
+  bronze_bitbucket_cloud.pull_requests:
+    - { $ref: templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "pr:1", entity_key: "pr:1", id: 1, author_display_name: Erin Epsilon, source_commit_hash: src-1, destination_commit_hash: dst-1, merge_commit_hash: merge-1 }
+
+  bronze_bitbucket_cloud.pull_request_diffstat:
+    - { $ref: templates/bitbucket_git.yaml#/templates/diffstat, unique_key: "ds:1:a.py:dg1", entity_key: "ds:1:a.py", generation_id: dg1, pr_id: 1, lines_added: 5, lines_removed: 1, pull_request_source_commit_hash: src-1, pull_request_destination_commit_hash: dst-1 }
+    - { $ref: templates/bitbucket_git.yaml#/templates/diffstat_marker, unique_key: "ds:1:complete:dg1", generation_id: dg1, pr_id: 1, snapshot_item_count: 1, pull_request_source_commit_hash: src-1, pull_request_destination_commit_hash: dst-1 }
+
+  bronze_bitbucket_cloud.pull_request_activity:
+    - { $ref: templates/bitbucket_git.yaml#/templates/activity, unique_key: "ac:1:ev1", entity_key: "ac:1:ev1", generation_id: ag1, pr_id: 1, update_state: MERGED }
+    - { $ref: templates/bitbucket_git.yaml#/templates/activity_marker, unique_key: "ac:1:complete:ag1", generation_id: ag1, pr_id: 1, snapshot_item_count: 1 }
+
+cases:
+  - name: Bitbucket git metrics build and resolve through the source breakdown
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-10-01", to: "2026-10-02" }
+        metrics:
+          - metric_key: git.commits
+            views:
+              - { view: period }
+              - { view: breakdown, dimensions: [source] }
+          - metric_key: git.lines_added
+            views:
+              - { view: breakdown, dimensions: [source] }
+          - metric_key: git.lines_removed
+            views:
+              - { view: breakdown, dimensions: [source] }
+    expect:
+      - assert: "status == 200"
+      # Gating picks the complete generation g1 (10 added / 2 removed), never the
+      # incomplete g2 (+99/-99); commit-b contributes 0. Two non-merge commits.
+      - metric: git.commits
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: source, value: bitbucket_cloud } }
+        equal: { value: 2 }
+      - metric: git.lines_added
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: source, value: bitbucket_cloud } }
+        equal: { value: 10 }
+      - metric: git.lines_removed
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: source, value: bitbucket_cloud } }
+        equal: { value: 2 }
+
+  - name: Bitbucket git metrics empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics:
+          - { metric_key: git.commits, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - { metric: git.commits, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

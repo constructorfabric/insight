@@ -513,7 +513,7 @@ Every merge to `main` of `constructorfabric/insight` **MUST** publish a new umbr
 
 **Direction**: required from client (Insight consumes Airbyte's API).
 
-**Protocol/Format**: HTTP/JSON on the Airbyte REST API; bearer token obtained via OAuth2 client_credentials at `/api/v1/applications/token` using `instance-admin-client-id` / `instance-admin-client-secret` from the `airbyte-auth-secrets` Secret created by the Airbyte chart. No JWT signing on our side. Airbyte runs as an L2 release in `insight-infra` on every gitops cluster (production and local); the chart reads `airbyte.apiUrl` to reach it.
+**Protocol/Format**: HTTP/JSON on the Airbyte REST API; bearer token obtained via OAuth2 client_credentials at `/api/v1/applications/token` using `instance-admin-client-id` / `instance-admin-client-secret` from the `airbyte-auth-secrets` Secret created by the Airbyte chart in its own namespace. No JWT signing on our side. Airbyte may share the app namespace (the chart default, `airbyte.namespace: ""`) or run in a separate one (e.g. `insight-infra`, the layout the gitops clusters use); the chart reaches it via `airbyte.namespace` (from which it computes the API URL and reads the auth Secret via the K8s API, with a narrowly-scoped Role rendered into that namespace) or an explicit `airbyte.apiUrl` override.
 
 **Compatibility**: pinned to Airbyte chart 1.8.5+ / app 1.8.5+ at the consumer side. Chart 1.9.x was intentionally skipped while its bundled app was 2.0.x-alpha. Version bumps happen in dedicated PRs with regression tests.
 

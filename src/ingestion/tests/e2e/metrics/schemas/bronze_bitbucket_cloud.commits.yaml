@@ -1,0 +1,47 @@
+# Auto-derived from source_bitbucket_cloud stream get_json_schema() and the
+# bronze_bitbucket_cloud placeholder DDL. Array/object fields land in bronze
+# as JSON strings (the staging models toString() them), so they are typed
+# string here. Regression fixture for issue #1877.
+schemas:
+  bronze_bitbucket_cloud.commits:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      tenant_id: { type: string }
+      source_id: { type: string }
+      unique_key: { type: string }
+      entity_key: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      record_type: { type: [string, "null"] }
+      generation_id: { type: [string, "null"] }
+      bucket_id: { type: [integer, "null"] }
+      snapshot_item_count: { type: [integer, "null"] }
+      snapshot_available: { type: [boolean, "null"] }
+      repository_uuid: { type: [string, "null"] }
+      workspace_uuid: { type: [string, "null"] }
+      hash: { type: [string, "null"] }
+      message: { type: [string, "null"] }
+      date: { type: [string, "null"] }
+      author_raw: { type: [string, "null"] }
+      author_name: { type: [string, "null"] }
+      author_email: { type: [string, "null"] }
+      author_display_name: { type: [string, "null"] }
+      author_uuid: { type: [string, "null"] }
+      author_account_id: { type: [string, "null"] }
+      committer_raw: { type: [string, "null"] }
+      committer_name: { type: [string, "null"] }
+      committer_email: { type: [string, "null"] }
+      committer_display_name: { type: [string, "null"] }
+      committer_uuid: { type: [string, "null"] }
+      committer_account_id: { type: [string, "null"] }
+      parent_hashes: { type: [string, "null"] }
+      workspace: { type: [string, "null"] }
+      repo_slug: { type: [string, "null"] }
+      branch_name: { type: [string, "null"] }
+      head_sha: { type: [string, "null"] }
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }

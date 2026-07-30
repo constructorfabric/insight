@@ -30,6 +30,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         "/v1/metrics",
         "/v1/metrics/queries",
         "/v1/catalog/get_metrics",
+        "/v1/metric-results",
     ] {
         assert!(paths.contains_key(expected), "missing path {expected}");
     }
@@ -45,5 +46,17 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         schemas.len()
     );
     assert!(schemas.contains_key("Metric"), "Metric schema missing");
+    assert!(
+        schemas.contains_key("MetricResultsRequest"),
+        "MetricResultsRequest schema missing"
+    );
+    assert!(
+        schemas.contains_key("MetricGroupLimitRequest"),
+        "MetricGroupLimitRequest schema missing"
+    );
+    assert!(
+        schemas.contains_key("TimeseriesDto"),
+        "TimeseriesDto schema missing"
+    );
     Ok(())
 }

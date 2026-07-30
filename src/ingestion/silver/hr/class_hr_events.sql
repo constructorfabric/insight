@@ -1,3 +1,6 @@
+-- depends_on: {{ ref('workday__hr_events') }}
+-- depends_on: {{ ref('bamboohr__hr_events') }}
+
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',
@@ -8,8 +11,6 @@
     settings={'allow_nullable_key': 1},
     tags=['silver']
 ) }}
-
--- depends_on: {{ ref('bamboohr__hr_events') }}
 
 SELECT * FROM (
     {{ union_by_tag('silver:class_hr_events') }}

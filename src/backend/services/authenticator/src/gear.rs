@@ -64,13 +64,15 @@ impl Gear for AuthenticatorGear {
         let sessions = SessionManager::connect(&cfg.redis_url).await?;
         sessions.ping().await?;
 
-        let oidc = OidcClient::new(
-            &cfg.idp.issuer_url,
-            &cfg.idp.client_id,
-            &cfg.idp.client_secret,
-        )?;
-        let resolver: Arc<dyn PersonResolver> =
-            Arc::new(IdentityPersonResolver::new(&cfg.identity_url));
+        let oidc = OidcClient::new(&cfg.idp)?;
+        // The resolver authenticates its internal Identity lookup with a service
+        // JWT it mints via the same keystore (fail-closed Identity, R1).
+        let resolver: Arc<dyn PersonResolver> = Arc::new(IdentityPersonResolver::new(
+            &cfg.identity_url,
+            keystore.clone(),
+            cfg.gateway_issuer.clone(),
+            cfg.jwt_audience.clone(),
+        ));
 
         // Parse the service-token registry (DD-AUTH-05). Fails closed at boot
         // on a malformed public key rather than on the first token request.
@@ -82,8 +84,20 @@ impl Gear for AuthenticatorGear {
         );
 
         // Register the inter-gear client contract in the hub (DESIGN §3.10).
+        // The same instance backs the admin revoke-by-user HTTP operation, so
+        // the SDK contract is the single revoke path.
+        let authn_client: Arc<dyn AuthenticatorClientV1> =
+            Arc::new(LocalClient::new(sessions.clone()));
         ctx.client_hub()
-            .register::<dyn AuthenticatorClientV1>(Arc::new(LocalClient::new(sessions.clone())));
+            .register::<dyn AuthenticatorClientV1>(authn_client.clone());
+
+        // Audit sink (PRD nfr-auth-audit). Fails the gear on a malformed
+        // broker config; unconfigured = disabled (structured log only).
+        let audit = crate::audit::AuditEmitter::new(
+            &cfg.audit.brokers,
+            &cfg.audit.topic,
+            cfg.audit.retention_ms,
+        )?;
 
         let state = Arc::new(AppState {
             cfg,
@@ -92,6 +106,8 @@ impl Gear for AuthenticatorGear {
             oidc,
             resolver,
             service_registry,
+            authn_client,
+            audit,
         });
         self.state
             .set(state)
@@ -130,8 +146,14 @@ impl RunnableCapability for AuthenticatorGear {
             .get()
             .ok_or_else(|| anyhow::anyhow!("authenticator gear not initialized"))?
             .clone();
-        service_token::spawn(state, cancel).await?;
-        tracing::info!("authenticator runnable: service-token listener started (step 06)");
+        service_token::spawn(state.clone(), cancel.clone()).await?;
+        // Leader-elected background workers (step 10): the IdP refresher (G5)
+        // and the index janitor (DESIGN §4.3).
+        crate::refresher::spawn(state.clone(), cancel.clone());
+        crate::janitor::spawn(state, cancel);
+        tracing::info!(
+            "authenticator runnable: service-token listener + idp refresher + janitor started"
+        );
         Ok(())
     }
 

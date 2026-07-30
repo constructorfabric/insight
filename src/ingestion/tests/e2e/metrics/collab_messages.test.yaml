@@ -1,0 +1,95 @@
+spec_version: 1
+description: "Unified collaboration messaging metrics across period, peer, timeseries, and tool breakdown views."
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_m365.teams_activity:
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tc-alice-20261225, privateChatMessageCount: 10, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tc-alice-20261225, privateChatMessageCount: 10, teamChatMessageCount: 0 }   # duplicate → dedup, not 20
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: bob@example.com,   reportRefreshDate: "2026-12-25", unique_key: tc-bob-20261225,   privateChatMessageCount: 20, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: tc-carol-20261225, privateChatMessageCount: 30, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: tc-dave-20261225,  privateChatMessageCount: 40, teamChatMessageCount: 0 }
+    - { $ref: templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com,  reportRefreshDate: "2026-12-25", unique_key: tc-erin-20261225,  privateChatMessageCount: 50, teamChatMessageCount: 0 }
+
+cases:
+  - name: Unified collaboration messaging
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-12-01", to: "2026-12-31" }
+        metrics:
+          - metric_key: collab.messages_sent
+            views: &messaging_views
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+          - { metric_key: collab.channel_posts, views: *messaging_views }
+          - { metric_key: collab.dm_ratio, views: *messaging_views }
+          - { metric_key: collab.msgs_per_active_day, views: *messaging_views }
+    expect:
+      - assert: "status == 200"
+      - metric: collab.messages_sent
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 50 }
+      - metric: collab.messages_sent
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
+      - metric: collab.messages_sent
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-25' && double(p.value) == 50.0))"
+      - metric: collab.messages_sent
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'm365') && double(v.value) == 50.0)"
+      - metric: collab.channel_posts
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: null }
+      - metric: collab.channel_posts
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: null, p25: null, median: null, p75: null, min: null, max: null, n: 0 }
+      - metric: collab.channel_posts
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-25' && double(p.value) == 0.0))"
+      - metric: collab.channel_posts
+        view: breakdown
+        assert: "size(items) == 0"
+      - metric: collab.dm_ratio
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 100 }
+      - metric: collab.dm_ratio
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 100, p25: 100, median: 100, p75: 100, min: 100, max: 100, n: 5 }
+      - metric: collab.dm_ratio
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-25' && double(p.value) == 100.0))"
+      - metric: collab.dm_ratio
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'm365') && double(v.value) == 100.0)"
+      - metric: collab.msgs_per_active_day
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 50 }
+      - metric: collab.msgs_per_active_day
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
+      - metric: collab.msgs_per_active_day
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-25' && double(p.value) == 50.0))"
+      - metric: collab.msgs_per_active_day
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'm365') && double(v.value) == 50.0)"

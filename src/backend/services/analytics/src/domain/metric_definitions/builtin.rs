@@ -72,6 +72,9 @@ pub struct MetricSeed {
     pub metric_key: &'static str,
     pub source_key: &'static str,
     pub label: &'static str,
+    /// Compact label for dense surfaces (member grids, heatmap columns);
+    /// None = the full label is already compact enough.
+    pub short_label: Option<&'static str>,
     pub description: Option<&'static str>,
     pub explanation: Option<&'static str>,
     pub unit: Option<&'static str>,
@@ -125,13 +128,22 @@ pub const BUILTIN_SOURCES: &[BuiltinSource] = &[
             "commit_change_size",
             "code_lines_added",
             "lines_added",
+            "lines_removed",
             "pr_created",
             "pr_created_merged",
             "pr_merged",
             "pr_cycle_hours",
             "pr_change_size",
         ],
-        dimensions: &["source", "category"],
+        dimensions: &[
+            "category",
+            "change_type",
+            "destination_branch",
+            "file_extension",
+            "project",
+            "repository",
+            "source",
+        ],
     },
     BuiltinSource {
         source: SourceSeed {
@@ -208,6 +220,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "ai.accepted_lines",
         source_key: "ai_usage",
         label: "AI-added lines",
+        short_label: Some("AI lines +"),
         description: Some("Accepted added coding output"),
         explanation: Some("Accepted AI-generated added lines across coding AI tools."),
         unit: Some("lines"),
@@ -227,6 +240,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "ai.removed_lines",
         source_key: "ai_usage",
         label: "AI-removed lines",
+        short_label: Some("AI lines −"),
         description: Some("Accepted deleted coding output"),
         explanation: Some("Accepted AI-generated removed lines across coding AI tools."),
         unit: Some("lines"),
@@ -246,6 +260,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "ai.active_days",
         source_key: "ai_usage",
         label: "AI active days",
+        short_label: Some("AI days"),
         description: Some("Days with any AI activity across dev and assistant tools"),
         explanation: Some(
             "Distinct days with person-attributed AI activity across dev and assistant tools.",
@@ -266,10 +281,14 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
     MetricSeed {
         metric_key: "ai.cost",
         source_key: "ai_usage",
-        label: "AI cost",
-        description: Some("Reported AI spend across dev and assistant tools"),
+        label: "AI usage cost",
+        short_label: None,
+        description: Some("AI usage priced at vendor token/usage rates"),
         explanation: Some(
-            "Person-attributed AI spend across dev and assistant tools, where the connector reports cost.",
+            "Person-attributed AI usage priced at the vendor's token or usage rates — what the \
+             consumption would cost if billed purely by usage. Includes usage a seat or \
+             subscription already covered, and excludes seat and subscription fees, so it is not \
+             the amount invoiced. Covers the tools whose connector prices usage per person.",
         ),
         unit: None,
         format: MetricFormat::Currency,
@@ -288,6 +307,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "ai.accepted_edit_actions",
         source_key: "ai_usage",
         label: "Accepted AI edits",
+        short_label: Some("AI edits"),
         description: Some("Accepted tool or edit suggestions"),
         explanation: Some("Accepted AI edit or tool suggestions across supported coding AI tools."),
         unit: Some("actions"),
@@ -307,6 +327,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "ai.tool_acceptance_rate",
         source_key: "ai_usage",
         label: "AI tool acceptance",
+        short_label: Some("AI accept %"),
         description: Some("Accepted divided by offered AI edits"),
         explanation: Some("Accepted AI edit or tool suggestions divided by offered suggestions."),
         unit: None,
@@ -332,6 +353,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "ai.assistant_messages",
         source_key: "ai_usage",
         label: "AI assistant messages",
+        short_label: Some("AI msgs"),
         description: Some("Assistant messages"),
         explanation: Some(
             "Person-attributed assistant messages from supported AI assistant tools.",
@@ -353,6 +375,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "ai.assistant_actions",
         source_key: "ai_usage",
         label: "AI assistant actions",
+        short_label: Some("AI actions"),
         description: Some("Assistant actions"),
         explanation: Some("Person-attributed assistant actions from supported AI assistant tools."),
         unit: Some("actions"),
@@ -372,6 +395,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "ai.dev_conversations",
         source_key: "ai_usage",
         label: "AI dev conversations",
+        short_label: Some("AI dev chats"),
         description: Some("Coding tool conversations where the source reports them"),
         explanation: Some(
             "Person-attributed coding conversations from dev tools that report them.",
@@ -393,6 +417,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "ai.chat_assistant_conversations",
         source_key: "ai_usage",
         label: "AI chat conversations",
+        short_label: Some("AI chats"),
         description: Some("Chat assistant conversations"),
         explanation: Some(
             "Person-attributed chat assistant conversations from supported AI chat tools.",
@@ -414,6 +439,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "git.commits",
         source_key: "git",
         label: "Commits",
+        short_label: None,
         description: Some("Authored commits"),
         explanation: Some(
             "Distinct authored commits across connected git sources, excluding merge commits.",
@@ -429,12 +455,13 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "commit_count",
         }],
-        dimensions: &["source"],
+        dimensions: &["project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.code_lines",
         source_key: "git",
         label: "Code lines added",
+        short_label: Some("Code lines"),
         description: Some("Lines added to code files"),
         explanation: Some(
             "Lines added to files classified as code — tests, configuration, and documentation excluded.",
@@ -450,12 +477,19 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "code_lines_added",
         }],
-        dimensions: &["source"],
+        dimensions: &[
+            "change_type",
+            "file_extension",
+            "project",
+            "repository",
+            "source",
+        ],
     },
     MetricSeed {
         metric_key: "git.lines_added",
         source_key: "git",
         label: "Lines added",
+        short_label: Some("Lines +"),
         description: Some("All lines added, by file category"),
         explanation: Some(
             "Lines added across all files, split by file category: code, tests, configuration, documentation.",
@@ -471,12 +505,49 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "lines_added",
         }],
-        dimensions: &["category", "source"],
+        dimensions: &[
+            "category",
+            "change_type",
+            "file_extension",
+            "project",
+            "repository",
+            "source",
+        ],
+    },
+    MetricSeed {
+        metric_key: "git.lines_removed",
+        source_key: "git",
+        label: "Lines removed",
+        short_label: Some("Lines −"),
+        description: Some("All lines removed, by file category"),
+        explanation: Some(
+            "Lines removed across all reported file changes, with file-category, repository, and source breakdowns available.",
+        ),
+        unit: Some("lines"),
+        format: MetricFormat::Integer,
+        direction: MetricDirection::Neutral,
+        entity_type: EntityType::Person,
+        computation: SeedComputation::Sum,
+        transform: None,
+        peer_cohort_key: Some(CohortKey::OrgUnit),
+        inputs: &[InputSeed {
+            input_role: MetricInputRole::Value,
+            measure_key: "lines_removed",
+        }],
+        dimensions: &[
+            "category",
+            "change_type",
+            "file_extension",
+            "project",
+            "repository",
+            "source",
+        ],
     },
     MetricSeed {
         metric_key: "git.prs_created",
         source_key: "git",
         label: "Pull requests created",
+        short_label: Some("PRs opened"),
         description: Some("Authored pull requests"),
         explanation: Some("Pull requests opened, dated by creation."),
         unit: Some("PRs"),
@@ -490,12 +561,13 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "pr_created",
         }],
-        dimensions: &["source"],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.prs_merged",
         source_key: "git",
         label: "Pull requests merged",
+        short_label: Some("PRs merged"),
         description: Some("Authored pull requests merged"),
         explanation: Some("Authored pull requests that merged, dated by the merge."),
         unit: Some("PRs"),
@@ -509,12 +581,13 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "pr_merged",
         }],
-        dimensions: &["source"],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.merge_rate",
         source_key: "git",
         label: "PR merge rate",
+        short_label: Some("Merge %"),
         description: Some("Share of created pull requests that merged"),
         explanation: Some(
             "Of the pull requests created in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.",
@@ -536,12 +609,13 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
                 measure_key: "pr_created",
             },
         ],
-        dimensions: &[],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.commits_per_active_day",
         source_key: "git",
         label: "Commits per active day",
+        short_label: Some("Commits/day"),
         description: Some("Commit cadence on days with commits"),
         explanation: Some("Commits divided by the number of days with at least one commit."),
         unit: None,
@@ -567,6 +641,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "git.commit_size",
         source_key: "git",
         label: "Commit size",
+        short_label: None,
         description: Some("Typical diff size per commit"),
         explanation: Some(
             "Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.",
@@ -582,12 +657,13 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "commit_change_size",
         }],
-        dimensions: &["source"],
+        dimensions: &["project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.pr_size",
         source_key: "git",
         label: "PR size",
+        short_label: None,
         description: Some("Typical diff size per pull request"),
         explanation: Some(
             "Median diff size of authored pull requests (lines added plus removed). Smaller requests are easier to review. Sources that do not report line counts contribute no values.",
@@ -603,12 +679,13 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "pr_change_size",
         }],
-        dimensions: &["source"],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     MetricSeed {
         metric_key: "git.pr_cycle_time_h",
         source_key: "git",
         label: "PR cycle time",
+        short_label: Some("PR cycle"),
         description: Some("Typical hours from open to merge"),
         explanation: Some(
             "Median hours from opening a pull request to merging it, over requests merged in the period.",
@@ -624,13 +701,14 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
             input_role: MetricInputRole::Value,
             measure_key: "pr_cycle_hours",
         }],
-        dimensions: &["source"],
+        dimensions: &["destination_branch", "project", "repository", "source"],
     },
     // ─────────────────────────── collaboration ───────────────────────────
     MetricSeed {
         metric_key: "collab.messages_sent",
         source_key: "collab",
         label: "Messages Sent",
+        short_label: Some("Msgs"),
         description: Some("Chat messages sent"),
         explanation: Some(
             "Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft 365 combines private-chat and channel messages.",
@@ -652,6 +730,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.channel_posts",
         source_key: "collab",
         label: "Channel Posts",
+        short_label: Some("Channel posts"),
         description: Some("Messages posted to shared channels, including replies"),
         explanation: Some(
             "Channel posts plus thread replies across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.",
@@ -673,6 +752,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.dm_ratio",
         source_key: "collab",
         label: "DM Ratio",
+        short_label: Some("DM %"),
         description: Some("Share of messages sent in direct or group chats"),
         explanation: Some(
             "Direct and group-chat messages divided by all chat messages. A lower ratio means more communication happens in open channels. Tools that do not distinguish message types report no value.",
@@ -700,6 +780,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.msgs_per_active_day",
         source_key: "collab",
         label: "Messages per Active Day",
+        short_label: Some("Msgs/day"),
         description: Some("Chat messages divided by chat-active days"),
         explanation: Some(
             "Chat messages sent divided by days with chat messages. Each tool's active days count separately.",
@@ -727,6 +808,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.active_days",
         source_key: "collab",
         label: "Active Days",
+        short_label: None,
         description: Some("Days with collaboration activity"),
         explanation: Some(
             "Distinct days on which a person took a deliberate collaboration action — sending a message, sending email, engaging or sharing a file, or attending a meeting. Passive activity such as receiving or reading email is excluded.",
@@ -748,6 +830,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.emails_sent",
         source_key: "collab",
         label: "Emails Sent",
+        short_label: Some("Emails sent"),
         description: Some("Emails sent"),
         explanation: Some("Emails a person sent."),
         unit: Some("emails"),
@@ -767,6 +850,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.emails_received",
         source_key: "collab",
         label: "Emails Received",
+        short_label: Some("Emails rcvd"),
         description: Some("Emails received"),
         explanation: Some("Emails a person received."),
         unit: Some("emails"),
@@ -786,6 +870,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.emails_read",
         source_key: "collab",
         label: "Emails Read",
+        short_label: Some("Emails read"),
         description: Some("Emails read"),
         explanation: Some("Emails a person read."),
         unit: Some("emails"),
@@ -805,6 +890,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.files_engaged",
         source_key: "collab",
         label: "Files Engaged",
+        short_label: None,
         description: Some("Files viewed or edited"),
         explanation: Some("Files a person viewed or edited."),
         unit: Some("files"),
@@ -824,6 +910,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.files_shared_internal",
         source_key: "collab",
         label: "Files Shared (Internal)",
+        short_label: Some("Files (int)"),
         description: Some("Files shared inside the organization"),
         explanation: Some("Files a person shared with people inside the organization."),
         unit: Some("files"),
@@ -843,6 +930,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.files_shared_external",
         source_key: "collab",
         label: "Files Shared (External)",
+        short_label: Some("Files (ext)"),
         description: Some("Files shared outside the organization"),
         explanation: Some("Files a person shared with people outside the organization."),
         unit: Some("files"),
@@ -862,6 +950,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.files_shared",
         source_key: "collab",
         label: "Files Shared",
+        short_label: Some("Files shared"),
         description: Some("Files shared with any recipient"),
         explanation: Some(
             "Files a person shared with recipients inside or outside the organization.",
@@ -883,6 +972,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.meeting_hours",
         source_key: "collab",
         label: "Meeting Hours",
+        short_label: Some("Mtg hrs"),
         description: Some("Hours spent in meetings"),
         explanation: Some(
             "Hours spent in meetings, taking the longest active modality (audio, video, or screen share) per meeting. Zoom reports modality durations as full-session estimates, so its figures may run higher than Microsoft Teams.",
@@ -904,6 +994,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.meetings_count",
         source_key: "collab",
         label: "Meetings Attended",
+        short_label: Some("Mtgs"),
         description: Some("Distinct meetings attended"),
         explanation: Some("Distinct meetings a person attended across meeting tools."),
         unit: Some("meetings"),
@@ -923,6 +1014,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.meeting_free_days",
         source_key: "collab",
         label: "Meeting-Free Days",
+        short_label: Some("Mtg-free days"),
         description: Some("Active days with no meeting time"),
         explanation: Some(
             "Days on which a person was actively collaborating but spent no time in meetings — a proxy for uninterrupted working days.",
@@ -944,6 +1036,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.focus_time_pct",
         source_key: "collab",
         label: "Focus Time",
+        short_label: Some("Focus %"),
         description: Some("Share of the workday outside meetings"),
         explanation: Some(
             "Share of the workday not spent in meetings: meeting-free hours divided by scheduled working hours. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them.",
@@ -971,6 +1064,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.breadth",
         source_key: "collab",
         label: "Collaboration Breadth",
+        short_label: Some("Breadth"),
         description: Some("Distinct collaboration modalities used"),
         explanation: Some(
             "Distinct collaboration modalities — chat, meetings, email, documents — a person was deliberately active in during the period.",
@@ -992,6 +1086,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.meetings_organized",
         source_key: "collab",
         label: "Meetings Organized",
+        short_label: Some("Mtgs hosted"),
         description: Some("Meetings organized"),
         explanation: Some(
             "Meetings a person organized. Reported only by tools that expose organizer counts.",
@@ -1013,6 +1108,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.adhoc_meetings",
         source_key: "collab",
         label: "Ad-hoc Meetings",
+        short_label: Some("Ad-hoc mtgs"),
         description: Some("Unscheduled meetings attended"),
         explanation: Some(
             "Unscheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.",
@@ -1034,6 +1130,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "collab.scheduled_meetings",
         source_key: "collab",
         label: "Scheduled Meetings",
+        short_label: Some("Sched. mtgs"),
         description: Some("Scheduled meetings attended"),
         explanation: Some(
             "Scheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.",
@@ -1055,6 +1152,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.closed",
         source_key: "task",
         label: "Tasks closed",
+        short_label: Some("Tasks"),
         description: Some("Tasks moved to a closed status"),
         explanation: Some("Tasks a person moved into a closed status during the period."),
         unit: Some("tasks"),
@@ -1074,6 +1172,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.bugs_fixed",
         source_key: "task",
         label: "Bugs fixed",
+        short_label: Some("Bugs"),
         description: Some("Bug-type tasks closed"),
         explanation: Some("Bug-type tasks a person closed during the period."),
         unit: Some("tasks"),
@@ -1093,6 +1192,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.dev_time",
         source_key: "task",
         label: "Development time",
+        short_label: Some("Dev time"),
         description: Some("Time a task spends in active development"),
         explanation: Some(
             "Median time closed tasks spent in in-progress statuses, from first pickup to close.",
@@ -1114,6 +1214,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.resolution_time",
         source_key: "task",
         label: "Time to resolution",
+        short_label: Some("Resolution"),
         description: Some("Task lifetime from creation to close"),
         explanation: Some("Median time from task creation to close."),
         unit: Some("d"),
@@ -1133,6 +1234,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.pickup_time",
         source_key: "task",
         label: "Pickup time",
+        short_label: Some("Pickup"),
         description: Some("Wait before work starts on a task"),
         explanation: Some(
             "Median time from task creation to first entering an in-progress status.",
@@ -1154,6 +1256,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.flow_efficiency",
         source_key: "task",
         label: "Flow efficiency",
+        short_label: Some("Flow %"),
         description: Some("Active development share of task lifetime"),
         explanation: Some(
             "Time in active development as a share of total task lifetime, across closed tasks.",
@@ -1186,6 +1289,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.reopen_rate",
         source_key: "task",
         label: "Reopen rate",
+        short_label: Some("Reopen %"),
         description: Some("Closed tasks reopened shortly after"),
         explanation: Some("Share of task closes followed by a reopen within 14 days."),
         unit: None,
@@ -1211,6 +1315,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.due_date_compliance",
         source_key: "task",
         label: "Due date compliance",
+        short_label: Some("Due date %"),
         description: Some("On-time share of tasks with a due date"),
         explanation: Some("Share of tasks that had a due date and were closed on or before it."),
         unit: None,
@@ -1236,6 +1341,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.on_time_delivery",
         source_key: "task",
         label: "On-time delivery",
+        short_label: Some("On-time %"),
         description: Some("On-time share of all closed tasks"),
         explanation: Some(
             "Share of all closed tasks that were closed on or before their due date.",
@@ -1263,6 +1369,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.avg_slip",
         source_key: "task",
         label: "Average slip",
+        short_label: Some("Avg slip"),
         description: Some("How late overdue tasks close"),
         explanation: Some("Average days past the due date for tasks closed late."),
         unit: Some("d"),
@@ -1288,6 +1395,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.estimation_accuracy",
         source_key: "task",
         label: "Estimation accuracy",
+        short_label: Some("Estimate %"),
         description: Some("How close estimates land to time spent"),
         explanation: Some(
             "100 minus the average deviation between original estimates and time spent, over days whose estimated work stayed within twice the estimate. 100 means estimates matched reality; over- and under-estimation count equally.",
@@ -1320,6 +1428,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.worklog_accuracy",
         source_key: "task",
         label: "Worklog accuracy",
+        short_label: Some("Worklog %"),
         description: Some("Logged time versus tracked development"),
         explanation: Some(
             "Logged work time as a share of time tasks spent in in-progress statuses.",
@@ -1352,6 +1461,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.bugs_ratio",
         source_key: "task",
         label: "Bug ratio",
+        short_label: Some("Bug %"),
         description: Some("Bugs as a share of closed tasks"),
         explanation: Some("Bug-type tasks as a share of all closed tasks."),
         unit: None,
@@ -1377,6 +1487,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "tasks.stale_in_progress",
         source_key: "task",
         label: "Stale in progress",
+        short_label: Some("Stale WIP"),
         description: Some("Open tasks idle for over two weeks"),
         explanation: Some("Open tasks with no status change in more than 14 days."),
         unit: Some("tasks"),
@@ -1396,6 +1507,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "wiki.pages_created",
         source_key: "wiki",
         label: "Pages created",
+        short_label: Some("New pages"),
         description: Some("Wiki pages authored"),
         explanation: Some(
             "Wiki pages the person created during the period, counted on the \
@@ -1418,6 +1530,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "wiki.edits",
         source_key: "wiki",
         label: "Page edits",
+        short_label: Some("Edits"),
         description: Some("Wiki edit sessions"),
         explanation: Some(
             "Logical wiki edits the person made during the period. Consecutive \
@@ -1441,6 +1554,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "wiki.pages_edited",
         source_key: "wiki",
         label: "Pages edited",
+        short_label: Some("Pages edited"),
         description: Some("Distinct wiki pages edited"),
         explanation: Some(
             "Distinct wiki pages the person edited during the period, counted \
@@ -1463,6 +1577,7 @@ pub const BUILTIN_METRICS: &[MetricSeed] = &[
         metric_key: "wiki.comments",
         source_key: "wiki",
         label: "Comments received",
+        short_label: Some("Comments"),
         description: Some("Comments on the person's wiki pages"),
         explanation: Some(
             "Comments and replies other people left on wiki pages the person \

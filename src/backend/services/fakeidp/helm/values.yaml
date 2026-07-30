@@ -1,0 +1,42 @@
+# insight-fakeidp — a LOCAL/CI-only OIDC provider (the authenticator's IdP when
+# no real IdP is configured). NEVER enable in production: the umbrella gates it
+# behind `fakeidp.enabled` and refuses real deployments to use it.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/constructorfabric/insight-fakeidp
+  tag: "" # umbrella sets this to the pinned appVersion
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8084
+
+# Optional ingress. Disabled by default (in-cluster-only). When enabled, the
+# fakeidp is exposed at the /idp path prefix; an nginx rewrite strips the prefix
+# (the chart always injects `rewrite-target: /$2`, merged with any annotations
+# below) because fakeidp serves its OIDC routes at ROOT and emits absolute URLs.
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  annotations: {}
+
+# Issuer the authenticator validates the id_token `iss` against + fetches
+# discovery/JWKS/token from. Must equal the in-cluster URL the authenticator
+# uses (set by the umbrella to the fakeidp Service FQDN).
+issuer: ""
+# Audience of issued id_tokens = the authenticator's OIDC client_id.
+defaultAudience: "insight-authenticator"
+# Default login identity (dev impersonation person; must be seeded in identity).
+devUserEmail: "dev@company.nonpresent"
+tokenTtlSeconds: 300
+
+resources:
+  requests: {cpu: 25m, memory: 32Mi}
+  limits: {cpu: 200m, memory: 128Mi}
+
+livenessProbe:
+  httpGet: {path: /.well-known/openid-configuration, port: http}
+readinessProbe:
+  httpGet: {path: /.well-known/openid-configuration, port: http}

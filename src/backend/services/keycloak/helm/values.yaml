@@ -1,0 +1,54 @@
+# insight-keycloak — a LOCAL/CI-only real-OIDC IdP (the authenticator's IdP when
+# `keycloak.deploy=true`, replacing fakeidp). NEVER enable in production: it runs
+# start-dev with an embedded H2 DB and imports a dev realm with known passwords.
+replicaCount: 1
+
+image:
+  repository: quay.io/keycloak/keycloak
+  tag: "26.4"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8085
+
+# Advertised issuer base (browser- AND authenticator-facing; both resolve the
+# same URL so the id_token `iss` validates). MUST end with the /kc relative path
+# — Keycloak 26 hostname-v2 drops --http-relative-path from the advertised issuer.
+# The umbrella sets this to the ingress LB URL, e.g. http://<lb-ip>/kc.
+hostname: ""
+
+# Pre-created ConfigMap holding the imported realm JSON (key `realm-insight.json`,
+# produced by deploy/compose/keycloak/gen-realm.py). Empty = "<release>-keycloak-realm".
+# The gitops flow generates + applies it before the umbrella deploy.
+realmConfigMap: ""
+
+# Bootstrap admin (dev only; console at {hostname}/admin).
+admin:
+  username: "admin"
+  password: "admin"
+
+# Optional ingress. The umbrella enables it so the browser (and the in-cluster
+# authenticator, via the LB IP) reach Keycloak at the /kc prefix. Keycloak serves
+# under /kc natively (--http-relative-path=/kc), so NO rewrite is needed.
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  annotations: {}
+
+resources:
+  requests: {cpu: 100m, memory: 384Mi}
+  limits: {cpu: "1", memory: 768Mi}
+
+# Keycloak boot is slow; give it generous startup headroom before liveness bites.
+startupProbe:
+  httpGet: {path: /kc/realms/insight, port: http}
+  periodSeconds: 5
+  failureThreshold: 60
+livenessProbe:
+  httpGet: {path: /kc/realms/insight, port: http}
+  periodSeconds: 15
+readinessProbe:
+  httpGet: {path: /kc/realms/insight, port: http}
+  periodSeconds: 10

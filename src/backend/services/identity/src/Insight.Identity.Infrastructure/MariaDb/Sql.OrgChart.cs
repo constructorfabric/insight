@@ -35,6 +35,7 @@ internal static class SqlOrgChart
         FROM org_chart
         WHERE insight_tenant_id = @tenant_id
           AND child_person_id   = @child_person_id
+          AND parent_person_id IS NOT NULL
           AND valid_to IS NULL
         ORDER BY insight_source_type, insight_source_id
         """;

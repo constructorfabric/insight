@@ -21,7 +21,11 @@ SELECT
     fc.change_type,
     fc.lines_added,
     fc.lines_removed,
+    -- `vendored` is checked first (shared pattern from the git_file_category
+    -- macro) so machine-produced content never counts toward code_loc /
+    -- clean_loc downstream, regardless of its extension or folder.
     multiIf(
+        match(fc.file_path, {{ git_vendored_path_regex() }}), 'vendored',
         match(fc.file_path, '(?i)(\\.spec\\.|\\.test\\.|__tests__/|/tests?/)'), 'spec',
         match(fc.file_path, '(?i)(\\.lock$|package-lock\\.json|yarn\\.lock|poetry\\.lock|\\.ya?ml$|\\.toml$|\\.cfg$|\\.ini$)'), 'config',
         'code'

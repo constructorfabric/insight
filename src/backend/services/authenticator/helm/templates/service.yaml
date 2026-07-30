@@ -17,5 +17,14 @@ spec:
       targetPort: token
       protocol: TCP
       name: token
+    {{- if .Values.tlsDiscovery.enabled }}
+    # TLS discovery front (NGINX_BFF R1): the authn-tls sidecar terminates HTTPS
+    # here so downstream verifiers resolve the JWKS over https. The token `iss`
+    # is `https://<fullname>:<port>`.
+    - port: {{ .Values.tlsDiscovery.port }}
+      targetPort: tls
+      protocol: TCP
+      name: tls
+    {{- end }}
   selector:
     {{- include "insight-authenticator.selectorLabels" . | nindent 4 }}

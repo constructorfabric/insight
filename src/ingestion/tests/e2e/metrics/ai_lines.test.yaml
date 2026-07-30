@@ -1,0 +1,91 @@
+spec_version: 1
+description: >
+  Metrics: ai.accepted_lines and ai.removed_lines.
+  How it's computed (bronze → silver → gold):
+    • bronze: Cursor daily per-developer usage report (accepted lines, completions, agents)
+    • silver: deduped to one row per developer/day carrying the accepted-lines count
+    • gold:   metric = sum of AI-accepted lines over the window
+
+  Team (median/range = the person's department):
+    alice 40 · bob 20 · carol 10 (alice row re-synced once → must not double)
+    → median 20, range [10, 40].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_cursor.cursor_daily_usage:
+    # date 1767571200000 ms = 2026-01-05.
+    - $ref: templates/cursor_usage.yaml#/templates/alice
+      unique_key: cursor-alice-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 40
+      acceptedLinesDeleted: 8
+    - $ref: templates/cursor_usage.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: cursor-alice-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 40
+      acceptedLinesDeleted: 8
+    - $ref: templates/cursor_usage.yaml#/templates/bob
+      unique_key: cursor-bob-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 20
+      acceptedLinesDeleted: 4
+    - $ref: templates/cursor_usage.yaml#/templates/carol
+      unique_key: cursor-carol-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 10
+      acceptedLinesDeleted: 2
+
+cases:
+  - name: AI accepted and removed lines
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - metric_key: ai.accepted_lines
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+          - metric_key: ai.removed_lines
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.accepted_lines
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 40 }
+      - metric: ai.accepted_lines
+        view: peer
+        find: { entity_id: alice@example.com }
+        equal: { target_value: 40, p25: null, median: null, p75: null, min: null, max: null, n: 3 }
+      - metric: ai.accepted_lines
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 40.0))"
+      - metric: ai.accepted_lines
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'cursor') && double(v.value) == 40.0)"
+      - metric: ai.removed_lines
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 8 }
+      - metric: ai.removed_lines
+        view: peer
+        find: { entity_id: alice@example.com }
+        equal: { target_value: 8, p25: null, median: null, p75: null, min: null, max: null, n: 3 }
+      - metric: ai.removed_lines
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 8.0))"
+      - metric: ai.removed_lines
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'cursor') && double(v.value) == 8.0)"

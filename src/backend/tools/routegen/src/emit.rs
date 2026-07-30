@@ -137,7 +137,10 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
     }
 
     let (_, auth_authority) = authority_of(&settings.authenticator_url, "authenticator url")?;
-    let (_, front_authority) = authority_of(&settings.front_url, "front url")?;
+    // Validate the front URL early; the front location resolves it lazily
+    // (variable proxy_pass) inside emit_server so a down/absent SPA doesn't stop
+    // the gateway booting.
+    let _ = authority_of(&settings.front_url, "front url")?;
     let authz_url = format!(
         "{}{}",
         settings.authenticator_url.trim_end_matches('/'),
@@ -176,10 +179,10 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
         c,
         "    upstream authenticator {{ server {auth_authority}; keepalive 32; }}"
     )?;
-    writeln!(
-        c,
-        "    upstream insight_front {{ server {front_authority}; keepalive 32; }}"
-    )?;
+    // NB: no static `upstream insight_front` — the SPA front is resolved lazily
+    // in `location /` (variable proxy_pass + the http-block resolver) so the
+    // gateway starts even when the frontend is absent (backend-only / API + auth
+    // dev against a separately-run SPA). See emit_server.
     for u in &upstreams {
         writeln!(
             c,
@@ -345,8 +348,15 @@ fn emit_server(
     c.push_str(
         "        # the SPA rides through the gateway: one origin, one __Host- cookie (DD-GW-04)\n",
     );
+    // Resolve the SPA upstream LAZILY via a variable + the http-block resolver,
+    // so the gateway boots even when the frontend is absent (backend-only / API
+    // + auth dev against a separately-run SPA). `/` then 502s until a front is
+    // up, but `/api/*` and `/auth/*` work. A static `upstream {}` would instead
+    // fail nginx config load with "host not found in upstream".
+    let (front_scheme, front_authority) = authority_of(&settings.front_url, "front url")?;
     c.push_str("        location / {\n");
-    c.push_str("            proxy_pass http://insight_front;\n");
+    writeln!(c, "            set $insight_front \"{front_authority}\";")?;
+    writeln!(c, "            proxy_pass {front_scheme}://$insight_front;")?;
     c.push_str("            proxy_set_header Connection \"\";\n");
     c.push_str("            proxy_set_header Host $host;\n");
     c.push_str("            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");

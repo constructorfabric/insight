@@ -1,0 +1,275 @@
+name: Trivy SCA
+
+# Dependency and misconfiguration scanning, report-only (#2020).
+#
+#   critical — CRITICAL only; the one pass that also scans secrets, so its output stays in the
+#              log and never reaches a SARIF upload.
+#   report   — every severity, plus generated Python locks and rendered Helm charts. Rendered
+#              YAML uploads as `trivy-helm` to keep synthetic paths out of `trivy-fs`.
+#
+# Do not change without reading why:
+#   - keep `-w /src`; do not switch to `--ignorefile` — it exits FATAL when the file is absent.
+#   - the report pass must not run the secret scanner: its SARIF is world-readable here.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Nightly, 03:41 UTC — after the TruffleHog sweep (03:13) and Semgrep baseline (03:27).
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_IMAGE: aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
+
+jobs:
+  gate:
+    name: critical (report-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Trivy fs scan — CRITICAL only (report-only)
+        # Waivers: `.trivyignore` at the repo root, date-scoped — `CVE-... exp:YYYY-MM-DD # <issue>`.
+        # Keep `-w /src`; `--ignorefile` exits FATAL when the file is absent.
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src:ro" \
+            -w /src \
+            "$TRIVY_IMAGE" fs \
+              --scanners vuln,secret,misconfig \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --exit-code 0 \
+              --no-progress \
+              /src
+
+  report:
+    name: report (all severities + charts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+      security-events: write # upload SARIF to Code Scanning
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve Python dependencies
+        # Locks are generated in the workspace and discarded with the runner. Best-effort: one
+        # unresolvable project must not cost the rest.
+        continue-on-error: true
+        env:
+          UV_IMAGE: ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
+        run: |
+          set -uo pipefail
+          git ls-files '**/pyproject.toml' | while read -r manifest; do
+            project="$(dirname "$manifest")"
+            docker run --rm \
+              -v "${{ github.workspace }}:/repo" \
+              -w "/repo/${project}" \
+              "$UV_IMAGE" uv lock \
+              || echo "uv lock failed — skipped ${project}"
+          done
+          echo "Lock files now present:"
+          git ls-files --others --exclude-standard | grep -E 'uv\.lock' | sed 's/^/  /' || echo "  none"
+
+      - name: Trivy fs scan — all severities
+        # `trivy convert` derives the SARIF instead of rescanning.
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -v /tmp/trivy-cache:/root/.cache \
+            -w /src \
+            "$TRIVY_IMAGE" fs \
+              --scanners vuln,misconfig \
+              --severity CRITICAL,HIGH,MEDIUM,LOW \
+              --include-dev-deps \
+              --exit-code 0 \
+              --no-progress \
+              --format json --output /src/trivy-fs.json \
+              /src
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            "$TRIVY_IMAGE" convert \
+              --format sarif --output /src/trivy-fs.sarif \
+              /src/trivy-fs.json
+
+      - name: Summarize findings in the job summary
+        if: always()
+        run: |
+          [ -f trivy-fs.json ] || exit 0
+          [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
+          CS_BASE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/security/code-scanning"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            CS_URL="${CS_BASE}?query=is%3Aopen+pr%3A${GITHUB_REF_NAME%/merge}"
+          else
+            CS_URL="${CS_BASE}?query=is%3Aopen+branch%3A${GITHUB_REF_NAME}"
+          fi
+          python3 - trivy-fs.json "$GITHUB_STEP_SUMMARY" "$CS_URL" <<'PY'
+          import json, sys, collections
+          d = json.load(open(sys.argv[1], encoding="utf-8"))
+          out = open(sys.argv[2], "a", encoding="utf-8")
+          cs_url = sys.argv[3]
+          w = out.write
+          vulns, miscfg = [], []
+          for r in d.get("Results") or []:
+              vulns += r.get("Vulnerabilities") or []
+              miscfg += [(r.get("Target"), m) for m in (r.get("Misconfigurations") or [])]
+          w("## Trivy SCA — repository (report-only)\n\n")
+          w(f"**{len(vulns)}** vulnerabilit(ies) + **{len(miscfg)}** misconfiguration(s), every "
+            f"severity, including development dependencies and the Python lock files "
+            f"resolved for this run. Image layers are covered by `Trivy Images`. "
+            f"Full details in [Security -> Code scanning]({cs_url}).\n\n")
+          rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+          if vulns:
+              bundles = collections.defaultdict(list)
+              for v in vulns:
+                  bundles[(v["PkgName"], v.get("InstalledVersion", "?"))].append(v)
+              w("| Package | Max | CVEs | Fixed in |\n|---|---|---:|---|\n")
+              for (pkg, ver), items in sorted(
+                      bundles.items(), key=lambda kv: (min(rank.get(i["Severity"], 4) for i in kv[1]), kv[0])):
+                  worst = min(items, key=lambda i: rank.get(i["Severity"], 4))["Severity"]
+                  fixes = sorted({i.get("FixedVersion") or "-" for i in items})
+                  w(f"| `{pkg}@{ver}` | {worst} | {len(items)} | {', '.join(fixes)} |\n")
+              w("\n")
+          if miscfg:
+              by_rule = collections.defaultdict(list)
+              for target, m in miscfg:
+                  by_rule[(m["Severity"], m["ID"], m.get("Title", ""))].append(target)
+              w("| Severity | Rule | Files | Title |\n|---|---|---:|---|\n")
+              for (sev, rid, title), targets in sorted(by_rule.items(), key=lambda kv: (rank.get(kv[0][0], 4), kv[0][1])):
+                  w(f"| {sev} | `{rid}` | {len(targets)} | {title} |\n")
+              w("\n<details><summary>Misconfigurations by file</summary>\n\n| Severity | Rule | Target |\n|---|---|---|\n")
+              for target, m in sorted(miscfg, key=lambda tm: (rank.get(tm[1]["Severity"], 4), tm[0])):
+                  w(f"| {m['Severity']} | `{m['ID']}` | `{target}` |\n")
+              w("\n</details>\n")
+          PY
+
+      - name: Upload SARIF to GitHub Code Scanning
+        # Skip on fork PRs: read-only token cannot upload, which would red-X this report-only job.
+        # The hashFiles guard keeps a failed scan from producing a second, misleading error that
+        # points at Code Scanning rather than at the scan that actually broke.
+        if: ${{ always() && hashFiles('trivy-fs.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@fb0994ef1c058010acf1efccff928b0a83b1ed54 # v4.32.6
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+      # ─── Helm charts, rendered ─────────────────────────────────────────────
+      # After the repository scan, so the rendered output is not swept into it. Values are
+      # throwaway and only satisfy the `required` guards.
+      - name: Render Helm charts
+        continue-on-error: true
+        env:
+          HELM_IMAGE: alpine/helm:3.16.3@sha256:ed9dfc49d43d034df3f9880eb777caf0183e5156508672478b80412c63f3db4f
+        run: |
+          set -uo pipefail
+          mkdir -p .helm-rendered
+          for chart in src/backend/services/*/helm src/frontend/helm; do
+            [ -f "$chart/Chart.yaml" ] || continue
+            name="$(printf '%s' "$chart" | sed -E 's#^src/(backend/services|)/?##; s#/helm$##; s#/#-#g')"
+            docker run --rm \
+              -v "${{ github.workspace }}:/repo" \
+              -w /repo \
+              "$HELM_IMAGE" template scan "$chart" \
+                --set existingSecret=dummy \
+                --set signingKeysSecret=dummy \
+                --set tlsDiscovery.issuerRef.name=dummy \
+                --set issuer=http://idp.invalid \
+                --set hostname=http://kc.invalid \
+                --set image.repository=ghcr.io/example/image \
+                --set image.tag=scan \
+                --set oidc.scopes=openid \
+              > ".helm-rendered/${name}.yaml" \
+              || { echo "render failed — skipped ${chart}"; rm -f ".helm-rendered/${name}.yaml"; }
+          done
+          echo "Rendered:"
+          find .helm-rendered -name '*.yaml' -exec basename {} ';' | sed 's/^/  /'
+
+      - name: Trivy scan — rendered charts
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          find .helm-rendered -name '*.yaml' -print -quit 2>/dev/null | grep -q . \
+            || { echo "nothing rendered — skipping"; exit 0; }
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -v /tmp/trivy-cache:/root/.cache \
+            -w /src \
+            "$TRIVY_IMAGE" fs \
+              --scanners misconfig \
+              --severity CRITICAL,HIGH,MEDIUM,LOW \
+              --exit-code 0 \
+              --no-progress \
+              --format json --output /src/trivy-helm.json \
+              /src/.helm-rendered
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            "$TRIVY_IMAGE" convert \
+              --format sarif --output /src/trivy-helm.sarif \
+              /src/trivy-helm.json
+
+      - name: Summarize rendered-chart findings
+        if: always()
+        run: |
+          [ -f trivy-helm.json ] || exit 0
+          [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
+          python3 - trivy-helm.json "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys, collections, os
+          d = json.load(open(sys.argv[1], encoding="utf-8"))
+          out = open(sys.argv[2], "a", encoding="utf-8")
+          w = out.write
+          rows = [(os.path.basename(r.get("Target", "?")), m)
+                  for r in (d.get("Results") or []) for m in (r.get("Misconfigurations") or [])]
+          w("\n## Trivy — Helm charts, rendered (report-only)\n\n")
+          if not rows:
+              w("No misconfigurations in the rendered charts.\n")
+              sys.exit(0)
+          rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+          sev = collections.Counter(m["Severity"] for _, m in rows)
+          w(f"**{len(rows)}** misconfiguration(s) across "
+            f"{len({t for t, _ in rows})} chart(s) — "
+            + ", ".join(f"{sev[s]} {s}" for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW") if sev.get(s))
+            + ". These charts are invisible to a raw-template scan because they require values at "
+              "render time.\n\n")
+          w("| Chart | Findings | Worst |\n|---|---:|---|\n")
+          per = collections.defaultdict(list)
+          for target, m in rows:
+              per[target].append(m)
+          for target, items in sorted(per.items(), key=lambda kv: (min(rank.get(m["Severity"], 4) for m in kv[1]), kv[0])):
+              worst = min(items, key=lambda m: rank.get(m["Severity"], 4))["Severity"]
+              w(f"| `{target}` | {len(items)} | {worst} |\n")
+          w("\n<details><summary>By rule</summary>\n\n| Severity | Rule | Charts | Title |\n|---|---|---:|---|\n")
+          by_rule = collections.defaultdict(set)
+          titles = {}
+          for target, m in rows:
+              by_rule[(m["Severity"], m["ID"])].add(target)
+              titles[(m["Severity"], m["ID"])] = m.get("Title", "")
+          for (s, rid), charts in sorted(by_rule.items(), key=lambda kv: (rank.get(kv[0][0], 4), kv[0][1])):
+              w(f"| {s} | `{rid}` | {len(charts)} | {titles[(s, rid)]} |\n")
+          w("\n</details>\n")
+          out.close()
+          PY
+
+      - name: Upload rendered-chart SARIF
+        # Own category: `.helm-rendered/*` paths do not exist in the tree.
+        if: ${{ always() && hashFiles('trivy-helm.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@fb0994ef1c058010acf1efccff928b0a83b1ed54 # v4.32.6
+        with:
+          sarif_file: trivy-helm.sarif
+          category: trivy-helm

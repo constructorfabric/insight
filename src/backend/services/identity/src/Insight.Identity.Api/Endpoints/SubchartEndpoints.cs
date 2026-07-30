@@ -71,7 +71,7 @@ public static class SubchartEndpoints
                     Type: "urn:insight:error:tenant_unresolved",
                     Title: "Bad Request",
                     Status: StatusCodes.Status400BadRequest,
-                    Detail: $"Tenant not provided. Send the {HeaderTenantContext.HeaderName} header or configure identity.tenant_default_id."),
+                    Detail: "Tenant not resolved. The gateway JWT must carry a valid tenant_id claim."),
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
@@ -82,7 +82,7 @@ public static class SubchartEndpoints
                     Type: "urn:insight:error:caller_unresolved",
                     Title: "Unauthorized",
                     Status: StatusCodes.Status401Unauthorized,
-                    Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
+                    Detail: "Caller not identified. The gateway JWT must carry a person subject (sub)."),
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
@@ -129,7 +129,7 @@ public static class SubchartEndpoints
                     Type: "urn:insight:error:tenant_unresolved",
                     Title: "Bad Request",
                     Status: StatusCodes.Status400BadRequest,
-                    Detail: $"Tenant not provided. Send the {HeaderTenantContext.HeaderName} header or configure identity.tenant_default_id."),
+                    Detail: "Tenant not resolved. The gateway JWT must carry a valid tenant_id claim."),
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
@@ -140,7 +140,7 @@ public static class SubchartEndpoints
                     Type: "urn:insight:error:caller_unresolved",
                     Title: "Unauthorized",
                     Status: StatusCodes.Status401Unauthorized,
-                    Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
+                    Detail: "Caller not identified. The gateway JWT must carry a person subject (sub)."),
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 

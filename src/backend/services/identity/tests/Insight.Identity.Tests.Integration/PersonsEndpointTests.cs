@@ -70,12 +70,12 @@ public sealed class PersonsEndpointTests : IAsyncLifetime
     [Fact]
     public async Task Returns_400_when_no_tenant_resolved()
     {
-        // Caller present (via header), no default tenant configured,
-        // no X-Insight-Tenant-Id header → tenant resolver null → 400.
+        // Caller present (default bearer carries `sub`), no default tenant
+        // configured and no `tenant_id` claim on the token → tenant resolver
+        // null → 400.
         using var noTenantApp = new TestApplicationFactory(
             _fixture.ConnectionString, defaultTenantId: null, defaultCallerPersonId: CallerPersonId);
         var client = noTenantApp.CreateClient();
-        client.DefaultRequestHeaders.Remove(HeaderTenantContext.HeaderName);
 
         var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
             .ConfigureAwait(false);
@@ -97,20 +97,23 @@ public sealed class PersonsEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Resolves_tenant_from_jwt_insight_tenant_id_claim()
+    public async Task Resolves_tenant_from_jwt_tenant_id_claim()
     {
         // Proves the JwtBearer middleware wires the bearer payload into
-        // `HttpContext.User` so `JwtTenantContext` can read the claim.
-        // No X-Insight-Tenant-Id header, no config default — the only
-        // path to a tenant is the JWT. Caller still comes via header
-        // and gets seeded as whole-tenant viewer.
+        // `HttpContext.User` so `GatewayTenantContext` reads the signed single
+        // `tenant_id` claim — no config default, the only path to a tenant
+        // is the JWT. Both caller (`sub`) and tenant come from the token.
         await SeedAliceAsync().ConfigureAwait(false);
         using var jwtApp = new TestApplicationFactory(
             _fixture.ConnectionString, defaultTenantId: null, defaultCallerPersonId: CallerPersonId);
         await _fixture.SeedWholeTenantVisibilityAsync(TenantId, CallerPersonId).ConfigureAwait(false);
         var client = jwtApp.CreateClient();
         client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", BuildUnverifiedJwt(TenantId));
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer",
+                TestApplicationFactory.BuildJwt(
+                    ("sub", CallerPersonId.ToString("D")),
+                    ("tenant_id", TenantId.ToString("D"))));
 
         var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
             .ConfigureAwait(false);
@@ -121,24 +124,6 @@ public sealed class PersonsEndpointTests : IAsyncLifetime
         }
         var doc = await response.ReadJsonAsync<JsonElement>().ConfigureAwait(false);
         doc.GetProperty("email").GetString().Should().Be("alice@example.com");
-    }
-
-    private static string BuildUnverifiedJwt(Guid tenantId)
-    {
-        // Hand-crafted token: parse-only middleware ignores the signature
-        // segment so we can omit a real signing key. `alg=HS256` keeps
-        // the header shape conventional; the third segment is a
-        // non-empty placeholder (`AAAA`) — `JsonWebToken` requires three
-        // dot-separated segments and tolerates an opaque signature when
-        // the SignatureValidator short-circuits.
-        static string B64Url(string raw)
-        {
-            var bytes = System.Text.Encoding.UTF8.GetBytes(raw);
-            return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        }
-        var header = B64Url("{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
-        var payload = B64Url($"{{\"insight_tenant_id\":\"{tenantId:D}\"}}");
-        return $"{header}.{payload}.AAAA";
     }
 
     private async Task SeedAliceAsync()

@@ -57,5 +57,10 @@ secrets:
     - { name: clickhouse-creds, enabled: true }
     - { name: redis-creds,      enabled: true }
   services:
-    - { name: insight-db-creds, enabled: true  }
-    - { name: insight-oidc,     enabled: false }   # sandbox: authDisabled=true
+    - { name: insight-db-creds,                  enabled: true  }
+    # ES256 gateway-JWT signing key (current.pem) mounted by the authenticator.
+    - { name: insight-authenticator-signing-keys, enabled: true }
+    # Real-IdP OIDC secret. Off for local — the authenticator logs in against the
+    # in-cluster fakeidp; its leaf config is composed at deploy time by
+    # compose-app-secrets.sh, not sealed here.
+    - { name: insight-oidc,                      enabled: false }

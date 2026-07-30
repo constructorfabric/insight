@@ -1,0 +1,35 @@
+-- Retype bronze_jira.jira_issue.jira_id from Decimal(38,9) to String.
+--
+-- Why: the jira connector maps jira_id = record['id'] (Jira's opaque issue
+-- identifier, delivered as a quoted string by the REST API) and id_readable =
+-- record['key'] (the human-readable "PROJ-123"). The jira_issue stream schema
+-- declared jira_id as `number`, which the ClickHouse destination materialized
+-- as Decimal(38,9) — while the other stream that carries jira_id already
+-- declared it `string`, and every dbt reader does `toString(jira_id)`. The
+-- connector now declares jira_id as `string` consistently (descriptor 2.4.0);
+-- this migration reconciles the EXISTING bronze table to match so the next
+-- sync's `ensureSchemaMatches` accepts it without a full refresh.
+--
+-- Airbyte's ClickHouse destination never retypes an existing column
+-- (ensureSchemaMatches only ADDs missing ones), so an existing cluster keeps
+-- the Decimal column until this ALTER runs. It MUST be applied before the
+-- first sync on the new connector image, otherwise the destination tries to
+-- write String values into the Decimal column and the sync fails.
+--
+-- Manual application (existing clusters, before deploying the 2.4.0 image):
+--   clickhouse-client --query "ALTER TABLE bronze_jira.jira_issue \
+--     MODIFY COLUMN IF EXISTS jira_id Nullable(String)"
+-- or over HTTP:
+--   curl "$CLICKHOUSE_URL/" -H "X-ClickHouse-User: $CLICKHOUSE_USER" \
+--     -H "X-ClickHouse-Key: $CLICKHOUSE_PASSWORD" \
+--     --data-binary "ALTER TABLE bronze_jira.jira_issue \
+--       MODIFY COLUMN IF EXISTS jira_id Nullable(String)"
+--
+-- Decimal->String is a safe, lossless conversion (10001 -> '10001', NULL
+-- preserved; whole-number Decimals render without a fractional part).
+--
+-- Idempotent: re-running against an already-String column is a no-op, so the
+-- clickhouse-migrate Hook Job applies it automatically on every deploy. The
+-- table always exists here (create-bronze-placeholders precedes migrations);
+-- MODIFY COLUMN IF EXISTS guards the column on partial installs.
+ALTER TABLE bronze_jira.jira_issue MODIFY COLUMN IF EXISTS jira_id Nullable(String);

@@ -38,7 +38,7 @@ In Airbyte 1.7+ the self-minted JWT flow is rejected at the security filter for 
 
 Chosen option: **Option B — OAuth everywhere**.
 
-**Justification**: Airbyte's OAuth client_credentials flow is the documented and supported way to obtain a bearer token. The `instance-admin-*` credentials live in `airbyte-auth-secrets`, the same Secret that already holds `jwt-signature-secret`, so the chart wiring cost is one extra `secretKeyRef` per script container (no new Secret to create). Token TTL is short, so each script call mints fresh; for the polling loop in `poll-job` we re-mint per iteration to survive long-running syncs.
+**Justification**: Airbyte's OAuth client_credentials flow is the documented and supported way to obtain a bearer token. The `instance-admin-*` credentials live in `airbyte-auth-secrets`, the same Secret that already holds `jwt-signature-secret` (no new Secret to create). Script containers read the credentials from that Secret via the Kubernetes API at call time — not via `secretKeyRef`, which cannot cross namespaces and would force a drift-prone mirror when Airbyte runs in its own namespace (`airbyte.namespace`). Token TTL is short, so each script call mints fresh; for the polling loop in `poll-job` we re-mint per iteration to survive long-running syncs.
 
 `airbyte-sync` WorkflowTemplate's `trigger-sync` and `poll-job` script blocks are rewritten to call `/api/v1/applications/token` for their bearer instead of HMAC-signing JWT locally. The HMAC code path and `jwtSecret` value reference are removed from those scripts. (The `jwtSecret` Helm value stays in `values.yaml` for now — other unrelated tooling may still reference it; it can be retired in a follow-up.)
 

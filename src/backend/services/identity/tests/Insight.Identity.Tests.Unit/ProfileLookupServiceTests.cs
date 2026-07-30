@@ -115,6 +115,9 @@ public sealed class ProfileLookupServiceTests
         public Task<Guid?> ResolvePersonIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
             => Task.FromResult<Guid?>(null);
 
+        public Task<Guid?> ResolvePersonIdByEmailAnyTenantAsync(string email, CancellationToken cancellationToken)
+            => Task.FromResult<Guid?>(null);
+
         public Task<IReadOnlyList<OrgChartEdge>> GetCurrentParentsAsync(Guid tenantId, Guid childPersonId, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
 

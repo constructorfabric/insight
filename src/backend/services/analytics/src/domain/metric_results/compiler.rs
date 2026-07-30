@@ -3,8 +3,11 @@ use std::fmt::Write;
 
 use serde::Deserialize;
 
+use super::batch::ResolvedGroupLimit;
 use super::batch::{peer_aliases, period_alias};
-use super::validation::{HISTOGRAM_BINS, ValidatedMetricResultsRequest, query_row_limit};
+use super::validation::{
+    HISTOGRAM_BINS, ValidatedDimensionFilter, ValidatedMetricResultsRequest, query_row_limit,
+};
 use super::view::Bucket;
 use crate::domain::metric_definitions::{
     CohortSource, ComputationSpec, MetricDefinition, ObservationRelation,
@@ -38,6 +41,16 @@ pub struct TimeseriesQueryRow {
     pub entity_id: String,
     pub bucket_start: String,
     pub value: Option<f64>,
+    pub is_total: u8,
+    pub rank: Option<u32>,
+    pub remainder: u8,
+    pub group_label: Option<String>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RankingQueryRow {
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -79,10 +92,11 @@ pub struct HistogramQueryRow {
 pub(crate) fn compile_period_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
+    filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
     let selects = item_value_selects(defs, &mut params, period_alias);
-    let metric_scope = shared_observation_where(defs, req, &mut params);
+    let metric_scope = shared_observation_where(defs, req, filters, &mut params);
     params.extend(req.entity_ids.iter().cloned());
     let entities = placeholders(req.entity_ids.len());
     let observation_table = batch_observation_table(defs);
@@ -107,16 +121,27 @@ pub(crate) fn compile_timeseries_query(
     req: &ValidatedMetricResultsRequest,
     bucket: Bucket,
     dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+    group_limit: Option<&ResolvedGroupLimit>,
 ) -> CompiledQuery {
+    if let Some(group_limit) = group_limit {
+        return compile_capped_timeseries_query(def, req, bucket, dimensions, filters, group_limit);
+    }
     let mut params = metric_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
     params.extend(req.entity_ids.iter().cloned());
     let entities = placeholders(req.entity_ids.len());
     let bucket = bucket_expr(bucket);
     let (dim_select, dim_group) = dimension_select_group(dimensions);
-    let group = if dim_group.is_empty() {
-        "entity_id, bucket_start".to_owned()
+    let bucket_group = if dim_group.is_empty() {
+        format!("entity_id, {bucket}")
     } else {
-        format!("entity_id, bucket_start, {dim_group}")
+        format!("entity_id, {bucket}, {dim_group}")
+    };
+    let total_group = if dim_group.is_empty() {
+        "entity_id".to_owned()
+    } else {
+        format!("entity_id, {dim_group}")
     };
     let observation_table = observation_table(def.observation_relation());
     let limit = query_row_limit();
@@ -126,12 +151,17 @@ pub(crate) fn compile_timeseries_query(
         SELECT
             entity_id,
             toString({bucket}) AS bucket_start{dim_select},
-            {value_expr} AS value
+            {value_expr} AS value,
+            toUInt8(grouping({bucket})) AS is_total,
+            CAST(NULL AS Nullable(UInt32)) AS rank,
+            toUInt8(0) AS remainder,
+            CAST(NULL AS Nullable(String)) AS group_label
         FROM {observation_table}
         WHERE {metric_where}
+          {filter_where}
           AND entity_id IN ({entities})
-        GROUP BY {group}
-        ORDER BY entity_id, bucket_start
+        GROUP BY GROUPING SETS (({bucket_group}), ({total_group}))
+        ORDER BY entity_id, is_total, bucket_start
         LIMIT {limit}
         ",
         metric_where = metric_where(def),
@@ -140,12 +170,219 @@ pub(crate) fn compile_timeseries_query(
     CompiledQuery { sql, params }
 }
 
+pub(crate) fn compile_group_ranking_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+    count: usize,
+) -> CompiledQuery {
+    let mut params = grouped_value_params(def);
+    params.extend(metric_where_params(def, req));
+    let filter_where = dimension_filter_where(filters, &mut params);
+    params.extend(req.entity_ids.iter().cloned());
+    let entities = placeholders(req.entity_ids.len());
+    let (dim_select, dim_group, dim_order) = ranking_dimension_select_group(dimensions);
+    let observation_table = observation_table(def.observation_relation());
+    let value_expr = grouped_value_expr(def);
+    let inner = format!(
+        r"
+        SELECT
+            {dim_select},
+            {value_expr} AS value
+        FROM {observation_table}
+        WHERE {metric_where}
+          {filter_where}
+          AND entity_id IN ({entities})
+        GROUP BY {dim_group}
+        ",
+        metric_where = metric_where(def),
+    );
+    let transformed = transformed_single(def, inner);
+    let sql = format!(
+        r"
+        SELECT *
+        FROM ({transformed})
+        WHERE value IS NOT NULL
+        ORDER BY value DESC, {dim_order}
+        LIMIT {count}
+        "
+    );
+    CompiledQuery { sql, params }
+}
+
+fn compile_capped_timeseries_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    bucket: Bucket,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+    group_limit: &ResolvedGroupLimit,
+) -> CompiledQuery {
+    let mut params = metric_where_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
+    params.extend(req.entity_ids.iter().cloned());
+    let entities = placeholders(req.entity_ids.len());
+    let bucket = bucket_expr(bucket);
+    let raw_dimensions = dimensions.iter().enumerate().fold(
+        String::new(),
+        |mut raw_dimensions, (index, dimension)| {
+            let _ = write!(
+                raw_dimensions,
+                ", {} AS raw_dim_{index}",
+                dimension_value_expr(dimension)
+            );
+            raw_dimensions
+        },
+    );
+    let rank_expr = capped_rank_expr(group_limit, dimensions.len(), &mut params);
+    params.extend(grouped_value_params(def));
+    let dimension_select = capped_dimension_select(group_limit, dimensions, &mut params);
+    let observation_table = observation_table(def.observation_relation());
+    let value_expr = grouped_value_expr(def);
+    let value = transformed(def, "value".to_owned());
+    let remainder_filter = if group_limit.include_remainder {
+        ""
+    } else {
+        "WHERE group_rank > 0"
+    };
+    let limit = query_row_limit();
+    let sql = format!(
+        r"
+        WITH scoped AS (
+            SELECT
+                *,
+                {bucket} AS bucket_start
+                {raw_dimensions}
+            FROM {observation_table}
+            WHERE {metric_where}
+              {filter_where}
+              AND entity_id IN ({entities})
+        ),
+        ranked AS (
+            SELECT
+                *,
+                {rank_expr} AS group_rank
+            FROM scoped
+        ),
+        filtered AS (
+            SELECT *
+            FROM ranked
+            {remainder_filter}
+        ),
+        aggregated AS (
+            SELECT
+                entity_id,
+                bucket_start,
+                group_rank,
+                {value_expr} AS value,
+                toUInt8(grouping(bucket_start)) AS is_total
+            FROM filtered
+            GROUP BY GROUPING SETS (
+                (entity_id, bucket_start, group_rank),
+                (entity_id, group_rank)
+            )
+        )
+        SELECT
+            entity_id,
+            toString(bucket_start) AS bucket_start
+            {dimension_select},
+            {value} AS value,
+            is_total,
+            if(group_rank = 0, CAST(NULL AS Nullable(UInt32)), toNullable(group_rank)) AS rank,
+            toUInt8(group_rank = 0) AS remainder,
+            if(group_rank = 0, toNullable('Other'), CAST(NULL AS Nullable(String))) AS group_label
+        FROM aggregated
+        ORDER BY entity_id, group_rank, is_total, bucket_start
+        LIMIT {limit}
+        ",
+        metric_where = metric_where(def),
+    );
+    CompiledQuery { sql, params }
+}
+
+fn capped_rank_expr(
+    group_limit: &ResolvedGroupLimit,
+    dimension_count: usize,
+    params: &mut Vec<String>,
+) -> String {
+    if group_limit.groups.is_empty() {
+        return "toUInt32(0)".to_owned();
+    }
+    let mut branches = Vec::with_capacity(group_limit.groups.len() * 2 + 1);
+    for group in &group_limit.groups {
+        let comparisons = (0..dimension_count)
+            .map(|index| format!("raw_dim_{index} = ?"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        params.extend(
+            group
+                .dimensions
+                .iter()
+                .map(|dimension| dimension.value.clone()),
+        );
+        branches.push(format!("({comparisons})"));
+        branches.push(format!("toUInt32({})", group.rank));
+    }
+    branches.push("toUInt32(0)".to_owned());
+    format!("multiIf({})", branches.join(", "))
+}
+
+fn capped_dimension_select(
+    group_limit: &ResolvedGroupLimit,
+    dimensions: &[String],
+    params: &mut Vec<String>,
+) -> String {
+    let mut select = String::new();
+    for (index, _) in dimensions.iter().enumerate() {
+        let (value_alias, label_alias) = dimension_aliases(index);
+        if group_limit.groups.is_empty() {
+            let _ = write!(
+                select,
+                ", CAST(NULL AS Nullable(String)) AS {value_alias}, CAST(NULL AS Nullable(String)) AS {label_alias}"
+            );
+            continue;
+        }
+        let mut value_branches = Vec::with_capacity(group_limit.groups.len() * 2 + 1);
+        let mut label_branches = Vec::with_capacity(group_limit.groups.len() * 2 + 1);
+        let mut values = Vec::with_capacity(group_limit.groups.len());
+        let mut labels = Vec::with_capacity(group_limit.groups.len());
+        for group in &group_limit.groups {
+            let dimension = &group.dimensions[index];
+            value_branches.push(format!("group_rank = {}", group.rank));
+            value_branches.push("toNullable(?)".to_owned());
+            values.push(dimension.value.clone());
+            label_branches.push(format!("group_rank = {}", group.rank));
+            match &dimension.label {
+                Some(label) => {
+                    label_branches.push("toNullable(?)".to_owned());
+                    labels.push(label.clone());
+                }
+                None => label_branches.push("CAST(NULL AS Nullable(String))".to_owned()),
+            }
+        }
+        params.extend(values);
+        params.extend(labels);
+        value_branches.push("CAST(NULL AS Nullable(String))".to_owned());
+        label_branches.push("CAST(NULL AS Nullable(String))".to_owned());
+        let _ = write!(
+            select,
+            ", multiIf({}) AS {value_alias}, multiIf({}) AS {label_alias}",
+            value_branches.join(", "),
+            label_branches.join(", ")
+        );
+    }
+    select
+}
+
 pub(crate) fn compile_breakdown_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = metric_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
     params.extend(req.entity_ids.iter().cloned());
     let entities = placeholders(req.entity_ids.len());
     let (dim_select, dim_group) = dimension_select_group(dimensions);
@@ -164,6 +401,7 @@ pub(crate) fn compile_breakdown_query(
             {value_expr} AS value
         FROM {observation_table}
         WHERE {metric_where}
+          {filter_where}
           AND entity_id IN ({entities})
         GROUP BY {group}
         ORDER BY entity_id
@@ -204,8 +442,10 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
 pub(crate) fn compile_histogram_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
+    filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = metric_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
     params.extend(req.entity_ids.iter().cloned());
     let entities = placeholders(req.entity_ids.len());
     let observation_table = observation_table(def.observation_relation());
@@ -220,6 +460,7 @@ pub(crate) fn compile_histogram_query(
                 assumeNotNull({event_value}) AS event_value
             FROM {observation_table}
             WHERE {metric_where}
+              {filter_where}
               AND entity_id IN ({entities})
               AND value IS NOT NULL
         ),
@@ -264,6 +505,7 @@ pub(crate) fn compile_peer_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
     cohort_key: &str,
+    filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
     params.push(req.entity_type.clone());
@@ -272,7 +514,7 @@ pub(crate) fn compile_peer_batch_query(
     params.push(req.entity_type.clone());
     params.push(cohort_key.to_owned());
     let value_selects = item_value_selects(defs, &mut params, period_alias);
-    let metric_scope = shared_observation_where(defs, req, &mut params);
+    let metric_scope = shared_observation_where(defs, req, filters, &mut params);
 
     let entities = placeholders(req.entity_ids.len());
     let observation_table = batch_observation_table(defs);
@@ -511,6 +753,7 @@ fn transformed_batch(
 fn shared_observation_where(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
+    filters: &[ValidatedDimensionFilter],
     params: &mut Vec<String>,
 ) -> String {
     params.push(req.entity_type.clone());
@@ -522,9 +765,28 @@ fn shared_observation_where(
         params.push(measure_key.clone());
     }
     let pair_placeholders = vec!["(?, ?)"; pairs.len()].join(", ");
-    format!(
+    let mut where_clause = format!(
         "entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND (source_key, measure_key) IN ({pair_placeholders})"
-    )
+    );
+    where_clause.push_str(&dimension_filter_where(filters, params));
+    where_clause
+}
+
+fn dimension_filter_where(
+    filters: &[ValidatedDimensionFilter],
+    params: &mut Vec<String>,
+) -> String {
+    let mut sql = String::new();
+    for filter in filters {
+        let values = placeholders(filter.values.len());
+        let _ = write!(
+            sql,
+            " AND indexOf(dimensions.1, '{dimension}') > 0 AND dimensions.2[indexOf(dimensions.1, '{dimension}')] IN ({values})",
+            dimension = filter.dimension,
+        );
+        params.extend(filter.values.iter().cloned());
+    }
+    sql
 }
 
 fn measure_pairs(defs: &[&MetricDefinition]) -> BTreeSet<(String, String)> {
@@ -577,6 +839,28 @@ fn metric_where(def: &MetricDefinition) -> &'static str {
 }
 
 fn metric_params(def: &MetricDefinition, req: &ValidatedMetricResultsRequest) -> Vec<String> {
+    let mut params = grouped_value_params(def);
+    params.extend(metric_where_params(def, req));
+    params
+}
+
+fn grouped_value_params(def: &MetricDefinition) -> Vec<String> {
+    match &def.spec {
+        ComputationSpec::Ratio {
+            numerator,
+            denominator,
+            ..
+        } => vec![
+            numerator.measure_key.clone(),
+            denominator.measure_key.clone(),
+        ],
+        ComputationSpec::Sum { .. }
+        | ComputationSpec::Median { .. }
+        | ComputationSpec::DistinctCount { .. } => Vec::new(),
+    }
+}
+
+fn metric_where_params(def: &MetricDefinition, req: &ValidatedMetricResultsRequest) -> Vec<String> {
     match &def.spec {
         ComputationSpec::Sum { value }
         | ComputationSpec::Median { value }
@@ -591,21 +875,14 @@ fn metric_params(def: &MetricDefinition, req: &ValidatedMetricResultsRequest) ->
             numerator,
             denominator,
             ..
-        } => {
-            let mut params = vec![
-                numerator.measure_key.clone(),
-                denominator.measure_key.clone(),
-            ];
-            params.extend([
-                numerator.source_key.clone(),
-                req.entity_type.clone(),
-                req.from.to_string(),
-                req.to.to_string(),
-                numerator.measure_key.clone(),
-                denominator.measure_key.clone(),
-            ]);
-            params
-        }
+        } => vec![
+            numerator.source_key.clone(),
+            req.entity_type.clone(),
+            req.from.to_string(),
+            req.to.to_string(),
+            numerator.measure_key.clone(),
+            denominator.measure_key.clone(),
+        ],
     }
 }
 
@@ -651,6 +928,24 @@ fn dimension_select_group(dimensions: &[String]) -> (String, String) {
         groups.push(label_alias);
     }
     (select, groups.join(", "))
+}
+
+fn ranking_dimension_select_group(dimensions: &[String]) -> (String, String, String) {
+    let mut select = Vec::with_capacity(dimensions.len() * 2);
+    let mut group = Vec::with_capacity(dimensions.len());
+    let mut order = Vec::with_capacity(dimensions.len());
+    for (index, dimension) in dimensions.iter().enumerate() {
+        let (value_alias, label_alias) = dimension_aliases(index);
+        let value = dimension_value_expr(dimension);
+        let label = dimension_label_expr(dimension);
+        select.push(format!("{value} AS {value_alias}"));
+        select.push(format!(
+            "argMax({label}, tuple(metric_date, {label})) AS {label_alias}"
+        ));
+        group.push(value_alias.clone());
+        order.push(value_alias);
+    }
+    (select.join(", "), group.join(", "), order.join(", "))
 }
 
 // `indexOf(dimensions.1, key)` locates the matching tuple by its key column in
@@ -704,6 +999,7 @@ where
 mod tests {
     use super::*;
     use crate::domain::metric_definitions::definition::ValueTransform;
+    use crate::domain::metric_results::batch::{RankedDimension, RankedGroup};
     use chrono::NaiveDate;
 
     use crate::domain::metric_definitions::definition::{
@@ -714,6 +1010,7 @@ mod tests {
         MetricBase {
             key: "ai.accepted_lines".to_owned(),
             label: "AI-added lines".to_owned(),
+            short_label: None,
             description: None,
             explanation: None,
             entity_type: "person".to_owned(),
@@ -790,7 +1087,7 @@ mod tests {
     #[test]
     fn period_batch_binds_item_params_then_scope_then_pairs_then_entities() {
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_period_batch_query(&[&sum, &ratio], &request());
+        let query = compile_period_batch_query(&[&sum, &ratio], &request(), &[]);
         assert!(query.sql.contains("FROM insight.ai_metric_observations"));
         assert!(!query.sql.contains("tenant_id"));
         assert!(query.sql.contains("AS m0"));
@@ -839,7 +1136,7 @@ mod tests {
     #[test]
     fn period_batch_of_one_uses_wide_aliases() {
         let sum = sum_metric();
-        let query = compile_period_batch_query(&[&sum], &request());
+        let query = compile_period_batch_query(&[&sum], &request(), &[]);
         assert!(query.sql.contains("AS m0"));
         assert!(!query.sql.contains("AS value"));
     }
@@ -847,7 +1144,7 @@ mod tests {
     #[test]
     fn ratio_item_binds_numerator_source_for_both_halves() {
         let ratio = ratio_metric();
-        let query = compile_period_batch_query(&[&ratio], &request());
+        let query = compile_period_batch_query(&[&ratio], &request(), &[]);
         // Ratio inputs share one source by the definition-load invariant;
         // both sumIf halves and the pruning pair carry the numerator's key.
         assert_eq!(
@@ -877,19 +1174,128 @@ mod tests {
             (Bucket::Week, "toStartOfWeek(metric_date, 1)"),
             (Bucket::Month, "toStartOfMonth(metric_date)"),
         ] {
-            let query = compile_timeseries_query(&sum_metric(), &request(), bucket, &[]);
+            let query = compile_timeseries_query(&sum_metric(), &request(), bucket, &[], &[], None);
             assert!(
                 query
                     .sql
                     .contains(&format!("toString({expr}) AS bucket_start"))
             );
-            assert!(query.sql.contains("GROUP BY entity_id, bucket_start"));
+            assert!(query.sql.contains("GROUP BY GROUPING SETS"));
+        }
+    }
+
+    fn resolved_limit(include_remainder: bool) -> ResolvedGroupLimit {
+        ResolvedGroupLimit {
+            groups: vec![
+                RankedGroup {
+                    rank: 1,
+                    dimensions: vec![RankedDimension {
+                        value: "cursor".to_owned(),
+                        label: Some("Cursor".to_owned()),
+                    }],
+                },
+                RankedGroup {
+                    rank: 2,
+                    dimensions: vec![RankedDimension {
+                        value: UNKNOWN_DIMENSION_VALUE.to_owned(),
+                        label: Some(UNKNOWN_DIMENSION_LABEL.to_owned()),
+                    }],
+                },
+            ],
+            include_remainder,
         }
     }
 
     #[test]
+    fn ranking_query_is_global_transformed_and_deterministic() {
+        let mut def = sum_metric();
+        def.transform = Some(ValueTransform {
+            multiplier: Some(2.0),
+            ..ValueTransform::default()
+        });
+        let query = compile_group_ranking_query(&def, &request(), &["tool".to_owned()], &[], 10);
+        assert!(!query.sql.contains("GROUP BY entity_id"));
+        assert!(query.sql.contains("2.0 * (value) AS value"));
+        assert!(query.sql.contains("WHERE value IS NOT NULL"));
+        assert!(query.sql.contains("ORDER BY value DESC, dim_0_value"));
+        assert!(query.sql.contains("LIMIT 10"));
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
+    fn capped_timeseries_freezes_groups_and_aggregates_the_remainder() {
+        let dimensions = vec!["tool".to_owned()];
+        for def in [
+            sum_metric(),
+            ratio_metric(),
+            median_metric(),
+            distinct_count_metric(),
+        ] {
+            let query = compile_timeseries_query(
+                &def,
+                &request(),
+                Bucket::Week,
+                &dimensions,
+                &[],
+                Some(&resolved_limit(true)),
+            );
+            assert!(query.sql.contains("AS group_rank"));
+            assert!(query.sql.contains("GROUP BY GROUPING SETS"));
+            assert!(query.sql.contains("(entity_id, group_rank)"));
+            assert!(query.sql.contains("toNullable('Other')"));
+            assert!(query.sql.contains("group_rank = 0"));
+            assert!(!query.sql.contains("WHERE group_rank > 0"));
+            assert_eq!(query.sql.matches('?').count(), query.params.len());
+            assert!(query.params.windows(4).any(|values| {
+                values
+                    == [
+                        "cursor",
+                        UNKNOWN_DIMENSION_VALUE,
+                        "Cursor",
+                        UNKNOWN_DIMENSION_LABEL,
+                    ]
+            }));
+        }
+    }
+
+    #[test]
+    fn capped_timeseries_uses_one_aggregation_pipeline_for_points_and_totals() {
+        let query = compile_timeseries_query(
+            &ratio_metric(),
+            &request(),
+            Bucket::Day,
+            &["tool".to_owned()],
+            &[],
+            Some(&resolved_limit(false)),
+        );
+        assert_eq!(query.sql.matches("sumIfOrNull(value").count(), 1);
+        assert_eq!(query.sql.matches("nullIf(sumIf(value").count(), 1);
+        assert_eq!(query.sql.matches("aggregated AS").count(), 1);
+        assert!(query.sql.contains("WHERE group_rank > 0"));
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
+    fn empty_ranking_routes_displayed_data_to_the_remainder() {
+        let query = compile_timeseries_query(
+            &sum_metric(),
+            &request(),
+            Bucket::Day,
+            &["tool".to_owned()],
+            &[],
+            Some(&ResolvedGroupLimit {
+                groups: vec![],
+                include_remainder: true,
+            }),
+        );
+        assert!(query.sql.contains("toUInt32(0) AS group_rank"));
+        assert!(query.sql.contains("toNullable('Other')"));
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
     fn dimensioned_query_emits_value_and_label_aliases() {
-        let query = compile_breakdown_query(&sum_metric(), &request(), &["tool".to_owned()]);
+        let query = compile_breakdown_query(&sum_metric(), &request(), &["tool".to_owned()], &[]);
         assert!(query.sql.contains("AS dim_0_value"));
         assert!(query.sql.contains("AS dim_0_label"));
         assert!(query.sql.contains("indexOf(dimensions.1, 'tool')"));
@@ -903,7 +1309,7 @@ mod tests {
     #[test]
     fn peer_batch_keeps_cohort_ctes_and_param_order() {
         let sum = sum_metric();
-        let query = compile_peer_batch_query(&[&sum], &request(), "org_unit");
+        let query = compile_peer_batch_query(&[&sum], &request(), "org_unit", &[]);
         assert!(
             query
                 .sql
@@ -936,7 +1342,7 @@ mod tests {
         // rows cannot be distinguished from "not covered by the source", so
         // the peer query must not invent zeros for them.
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit");
+        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit", &[]);
         assert!(query.sql.contains("sumIfOrNull"));
         assert!(!query.sql.contains("coalesce"));
         assert!(query.sql.contains("metric_values.m0 AS m0"));
@@ -945,7 +1351,7 @@ mod tests {
     #[test]
     fn peer_batch_guards_every_percentile_per_item() {
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit");
+        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit", &[]);
         for item in 0..2 {
             let guard =
                 format!("uniqExactIf(peer.entity_id, peer.m{item} IS NOT NULL) >= {MIN_PEER_N}");
@@ -983,12 +1389,12 @@ mod tests {
         let (sum, ratio) = (sum_metric(), ratio_metric());
         let limit = format!("LIMIT {}", query_row_limit());
         assert!(
-            compile_period_batch_query(&[&sum], &request())
+            compile_period_batch_query(&[&sum], &request(), &[])
                 .sql
                 .contains(&limit)
         );
         assert!(
-            compile_peer_batch_query(&[&ratio], &request(), "org_unit")
+            compile_peer_batch_query(&[&ratio], &request(), "org_unit", &[])
                 .sql
                 .contains(&limit)
         );
@@ -1008,8 +1414,13 @@ mod tests {
             distinct_count_metric(),
         );
         for query in [
-            compile_period_batch_query(&[&sum, &median, &ratio, &distinct], &request()),
-            compile_peer_batch_query(&[&sum, &median, &ratio, &distinct], &request(), "org_unit"),
+            compile_period_batch_query(&[&sum, &median, &ratio, &distinct], &request(), &[]),
+            compile_peer_batch_query(
+                &[&sum, &median, &ratio, &distinct],
+                &request(),
+                "org_unit",
+                &[],
+            ),
         ] {
             assert_eq!(query.sql.matches('?').count(), query.params.len());
         }
@@ -1022,8 +1433,8 @@ mod tests {
         // for this one comes back NULL, not 0 (the builder never zero-fills
         // medians). Placeholder/param lockstep still holds.
         for query in [
-            compile_period_batch_query(&[&median_metric()], &request()),
-            compile_peer_batch_query(&[&median_metric()], &request(), "org_unit"),
+            compile_period_batch_query(&[&median_metric()], &request(), &[]),
+            compile_peer_batch_query(&[&median_metric()], &request(), "org_unit", &[]),
         ] {
             assert!(
                 query.sql.contains(
@@ -1037,13 +1448,14 @@ mod tests {
 
     #[test]
     fn median_single_views_use_exact_median() {
-        let ts = compile_timeseries_query(&median_metric(), &request(), Bucket::Week, &[]);
+        let ts =
+            compile_timeseries_query(&median_metric(), &request(), Bucket::Week, &[], &[], None);
         assert!(
             ts.sql
                 .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
         );
-        assert!(ts.sql.contains("GROUP BY entity_id, bucket_start"));
-        let bd = compile_breakdown_query(&median_metric(), &request(), &["source".to_owned()]);
+        assert!(ts.sql.contains("GROUP BY GROUPING SETS"));
+        let bd = compile_breakdown_query(&median_metric(), &request(), &["source".to_owned()], &[]);
         assert!(
             bd.sql
                 .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
@@ -1057,8 +1469,8 @@ mod tests {
         // via another measure but with no rows here comes back NULL, not 0 —
         // the builder zero-fills distinct counts like sums. Lockstep holds.
         for query in [
-            compile_period_batch_query(&[&distinct_count_metric()], &request()),
-            compile_peer_batch_query(&[&distinct_count_metric()], &request(), "org_unit"),
+            compile_period_batch_query(&[&distinct_count_metric()], &request(), &[]),
+            compile_peer_batch_query(&[&distinct_count_metric()], &request(), "org_unit", &[]),
         ] {
             assert!(
                 query
@@ -1076,9 +1488,10 @@ mod tests {
         // (e.g. a chat source with totals but no DM split) must read NULL,
         // not 0%: the numerator aggregates OrNull in every query shape, while
         // the denominator relies on nullIf alone.
-        let batched = compile_period_batch_query(&[&ratio_metric()], &request());
-        let ts = compile_timeseries_query(&ratio_metric(), &request(), Bucket::Week, &[]);
-        let bd = compile_breakdown_query(&ratio_metric(), &request(), &["tool".to_owned()]);
+        let batched = compile_period_batch_query(&[&ratio_metric()], &request(), &[]);
+        let ts =
+            compile_timeseries_query(&ratio_metric(), &request(), Bucket::Week, &[], &[], None);
+        let bd = compile_breakdown_query(&ratio_metric(), &request(), &["tool".to_owned()], &[]);
         assert!(
             batched
                 .sql
@@ -1096,14 +1509,25 @@ mod tests {
 
     #[test]
     fn distinct_count_single_views_count_distinct_subject_key() {
-        let ts = compile_timeseries_query(&distinct_count_metric(), &request(), Bucket::Week, &[]);
+        let ts = compile_timeseries_query(
+            &distinct_count_metric(),
+            &request(),
+            Bucket::Week,
+            &[],
+            &[],
+            None,
+        );
         assert!(
             ts.sql
                 .contains("uniqExactIf(subject_key, subject_key IS NOT NULL)")
         );
-        assert!(ts.sql.contains("GROUP BY entity_id, bucket_start"));
-        let bd =
-            compile_breakdown_query(&distinct_count_metric(), &request(), &["tool".to_owned()]);
+        assert!(ts.sql.contains("GROUP BY GROUPING SETS"));
+        let bd = compile_breakdown_query(
+            &distinct_count_metric(),
+            &request(),
+            &["tool".to_owned()],
+            &[],
+        );
         assert!(
             bd.sql
                 .contains("uniqExactIf(subject_key, subject_key IS NOT NULL)")
@@ -1112,7 +1536,7 @@ mod tests {
 
     #[test]
     fn histogram_query_bins_deterministically_from_entity_bounds() {
-        let query = compile_histogram_query(&median_metric(), &request());
+        let query = compile_histogram_query(&median_metric(), &request(), &[]);
         assert!(
             query
                 .sql
@@ -1141,8 +1565,8 @@ mod tests {
             clamp_max: Some(100.0),
             ..ValueTransform::default()
         });
-        let ts = compile_timeseries_query(&def, &request(), Bucket::Day, &[]);
-        let bd = compile_breakdown_query(&def, &request(), &[]);
+        let ts = compile_timeseries_query(&def, &request(), Bucket::Day, &[], &[], None);
+        let bd = compile_breakdown_query(&def, &request(), &[], &[]);
         for query in [&ts, &bd] {
             assert!(
                 query
@@ -1160,7 +1584,7 @@ mod tests {
             clamp_max: Some(100.0),
             ..ValueTransform::default()
         });
-        let hist = compile_histogram_query(&median, &request());
+        let hist = compile_histogram_query(&median, &request(), &[]);
         assert!(
             hist.sql
                 .contains("if((value) IS NULL, NULL, least(100.0, value))")
@@ -1175,7 +1599,7 @@ mod tests {
             hist.sql
         );
         assert_eq!(hist.sql.matches('?').count(), hist.params.len());
-        let period = compile_period_batch_query(&[&def], &request());
+        let period = compile_period_batch_query(&[&def], &request(), &[]);
         assert!(
             period
                 .sql
@@ -1184,7 +1608,7 @@ mod tests {
             period.sql
         );
         assert_eq!(period.sql.matches('?').count(), period.params.len());
-        let peer = compile_peer_batch_query(&[&def], &request(), "org_unit");
+        let peer = compile_peer_batch_query(&[&def], &request(), "org_unit", &[]);
         assert!(
             peer.sql.contains("if((metric_values.m0) IS NULL, NULL,"),
             "peer carry must transform before percentiles: {}",

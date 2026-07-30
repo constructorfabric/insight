@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insight-ingestion-scripts"
+version = "0.1.0"
+description = "Deploy-time ClickHouse schema tooling shipped in the ingestion toolbox image"
+requires-python = ">=3.10"
+# Deliberately dependency-free: this runs in the migration Job, which talks to
+# ClickHouse over HTTP with nothing but the standard library.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools]
+py-modules = ["reconcile_bronze_schema"]

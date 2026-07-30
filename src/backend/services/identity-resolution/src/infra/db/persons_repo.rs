@@ -2,9 +2,11 @@
 //!
 //! Ported from the .NET service's `Sql.Profiles.cs`. The resolution queries use
 //! window functions (`ROW_NUMBER()` over the canonical partition) that have no
-//! first-class SeaORM query-builder form, so we run them as **raw SQL** via
-//! SeaORM's `Statement` and read columns off the `QueryResult`. Running the same
-//! SQL as the .NET service keeps resolution behaviour identical.
+//! first-class SeaORM query-builder form and no `toolkit-db` equivalent (see
+//! `infra::db` module docs + constructorfabric/gears-rust#4239), so we run them
+//! as **raw SQL** via SeaORM's `Statement` and read columns off the
+//! `QueryResult`. Running the same SQL as the .NET service keeps resolution
+//! behaviour identical.
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
@@ -64,18 +66,19 @@ pub async fn resolve_person_ids_by_email(
     person_ids_from_rows(rows)
 }
 
-/// Resolve a single `person_id` for an email — the most recently observed
-/// `value_type='email'` row with `value_id = email` in the tenant (`LIMIT 1`).
-/// Used by the deprecated `GET /v1/persons/{email}`; distinct from the plural
-/// resolver, which finds every person whose CURRENT email matches (for
-/// ambiguity detection). Ported from `Sql.cs::ResolvePersonIdByEmail`.
+/// Tenant-AGNOSTIC email → `person_id` resolution for the login bootstrap (the
+/// authenticator's service-only `GET /internal/persons/by-email/{email}` call):
+/// at login the caller's tenant is not yet known, so the tenant filter is
+/// dropped and any matching tenant's latest observation wins. Returns the single
+/// winning `person_id`, or `None` when the email is unknown. Ported verbatim from
+/// `Sql.cs::ResolvePersonIdByEmailAnyTenant` (window `ROW_NUMBER()` → raw SQL,
+/// see `infra::db` module docs + constructorfabric/gears-rust#4239).
 ///
 /// # Errors
 ///
 /// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
-pub async fn resolve_person_id_by_email(
+pub async fn resolve_person_id_by_email_any_tenant(
     db: &DatabaseConnection,
-    tenant_id: Uuid,
     email: &str,
 ) -> anyhow::Result<Option<Uuid>> {
     const SQL: &str = r"
@@ -89,8 +92,7 @@ pub async fn resolve_person_id_by_email(
                 ) AS rn,
                 created_at
             FROM persons
-            WHERE insight_tenant_id = ?
-              AND value_type = 'email'
+            WHERE value_type = 'email'
               AND value_id = ?
         )
         SELECT person_id
@@ -100,14 +102,8 @@ pub async fn resolve_person_id_by_email(
         LIMIT 1
     ";
 
-    let stmt = Statement::from_sql_and_values(
-        DbBackend::MySql,
-        SQL,
-        [
-            tenant_id.as_bytes().to_vec().into(),
-            email.trim().to_owned().into(),
-        ],
-    );
+    let stmt =
+        Statement::from_sql_and_values(DbBackend::MySql, SQL, [email.trim().to_owned().into()]);
 
     match db.query_one(stmt).await? {
         Some(row) => {
@@ -271,6 +267,12 @@ pub struct OrgChartEdge {
 /// instance, ordered by source. The caller filters to the configured
 /// `org_chart` source. Ported from `Sql.OrgChart.cs::CurrentParentsForChild`.
 ///
+/// The `parent_person_id IS NOT NULL` filter matches
+/// `Sql.OrgChart.cs::CurrentParentsForChild`: the seed writes Path-B
+/// root/membership rows with a NULL parent, and a parent edge with no parent is
+/// not an edge — skipping it also avoids decoding a NULL into the non-nullable
+/// `parent_person_id`.
+///
 /// # Errors
 ///
 /// Returns an error if the query fails or a stored id column is not 16 bytes.
@@ -285,6 +287,7 @@ pub async fn current_parents_for_child(
         WHERE insight_tenant_id = ?
           AND child_person_id   = ?
           AND valid_to IS NULL
+          AND parent_person_id IS NOT NULL
         ORDER BY insight_source_type, insight_source_id
     ";
 

@@ -20,11 +20,29 @@ public sealed class AppOptions
     public string BindAddr { get; init; } = "0.0.0.0:8082";
 
     /// <summary>
-    /// Default tenant UUID used when no <c>X-Insight-Tenant-Id</c>
-    /// header arrives and JWT auth is not yet wired.
+    /// Single-tenant fallback used only when the gateway JWT carries no
+    /// <c>tenants</c> claim (e.g. cross-tenant service tokens) — never as a
+    /// way to override the signed set.
     /// </summary>
     [ConfigurationKeyName("tenant_default_id")]
     public Guid? TenantDefaultId { get; init; }
+
+    /// <summary>
+    /// Expected issuer (<c>iss</c>) of the gateway JWT — the authenticator's
+    /// gateway origin. Verified fail-closed (NGINX_BFF R1). Env:
+    /// <c>IDENTITY__auth_gateway_issuer</c>.
+    /// </summary>
+    [ConfigurationKeyName("auth_gateway_issuer")]
+    public string AuthGatewayIssuer { get; init; } = "";
+
+    /// <summary>
+    /// JWKS endpoint the gateway JWT's signing keys are fetched from (the
+    /// gateway's / authenticator's <c>/.well-known/jwks.json</c>). This is the
+    /// per-service <c>GATEWAY_JWKS_URL</c>. Env:
+    /// <c>IDENTITY__auth_gateway_jwks_url</c>.
+    /// </summary>
+    [ConfigurationKeyName("auth_gateway_jwks_url")]
+    public string AuthGatewayJwksUrl { get; init; } = "";
 
     /// <summary>
     /// Kill switch for the recursive org-tree walk on

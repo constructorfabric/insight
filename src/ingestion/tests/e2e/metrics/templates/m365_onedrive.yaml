@@ -14,6 +14,7 @@ templates:
     reportPeriod: "D1"
     reportRefreshDate: null
     lastActivityDate: null
+    assignedProducts: null
     viewedOrEditedFileCount: null
     syncedFileCount: null
     sharedInternallyFileCount: null

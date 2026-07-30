@@ -19,11 +19,29 @@ public sealed class ClickHouseIdentityInputsReader : IIdentityInputsReader
     // current email and to detect a closed account (latest row is a
     // DELETE). DELETE rows are streamed too; they flag the account as
     // closed but never produce a persons observation.
-    // identity_inputs stores insight_tenant_id / insight_source_id as
-    // Nullable(String) (dashed UUID text), so the tenant filter is a
-    // plain string compare. The `_str` aliases avoid shadowing the
-    // source columns referenced in WHERE (a same-name SELECT alias
-    // would otherwise be substituted into the WHERE clause).
+    // The `_str` aliases avoid shadowing the source columns referenced
+    // in WHERE (a same-name SELECT alias would otherwise be substituted
+    // into the WHERE clause).
+    //
+    // HOTFIX (#1550) — TEMPORARY, identity-scoped, pre-release. The dbt
+    // producer writes insight_tenant_id *hashed* — sipHash128 of whatever
+    // raw string the connector was configured with (identity_inputs_from_
+    // history.sql, documented there as a TEMPORARY cross-source join key) —
+    // so the stored tenant never equals the caller's tenant and persons-seed
+    // silently read 0 rows. There is no reliable representation to match
+    // against (connector configs are free-form strings), so the tenant
+    // filter is DROPPED for now: Insight deployments are single-tenant, all
+    // identity_inputs rows belong to the deployment, and the seed writes
+    // its output under the caller's tenant regardless of what the rows
+    // carry (PersonsSeedService binds the request tenant, never the row's).
+    //
+    // MULTI-TENANT PREREQUISITE: the tenant filter MUST come back before any
+    // multi-tenant deployment — without it every tenant's seed would read
+    // (and re-file under itself) all other tenants' rows. Restoring it
+    // requires the producer side to be fixed first: the tenant representation
+    // unified end to end (dbt resolves real tenant UUIDs instead of hashing
+    // free-form connector strings), then reinstate
+    // `WHERE insight_tenant_id = {tenant:String}` here and in the Rust port.
     private const string StreamSql = """
         SELECT
             toString(insight_tenant_id) AS tenant_id_str,
@@ -35,8 +53,7 @@ public sealed class ClickHouseIdentityInputsReader : IIdentityInputsReader
             _synced_at,
             operation_type
         FROM identity.identity_inputs
-        WHERE insight_tenant_id = {tenant:String}
-          AND operation_type    IN ('UPSERT', 'DELETE')
+        WHERE operation_type    IN ('UPSERT', 'DELETE')
           AND value             IS NOT NULL
           AND value             != ''
         ORDER BY
@@ -59,9 +76,12 @@ public sealed class ClickHouseIdentityInputsReader : IIdentityInputsReader
         Guid tenantId,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        // tenantId is intentionally unused while the HOTFIX (#1550) drops the
+        // tenant filter — kept so the interface (and the Rust port tracking
+        // it) stays stable for when the filter comes back.
+        _ = tenantId;
         await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var cmd = conn.CreateCommand(StreamSql);
-        cmd.Parameters.AddWithValue("tenant", tenantId.ToString("D"));
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {

@@ -57,12 +57,12 @@ cargo run -p fakeidp             # → http://localhost:8084
 | `FAKEIDP_BACKCHANNEL_URL`| _(unset)_                 | RP back-channel logout endpoint; required for `/_control/backchannel`. |
 | `FAKEIDP_DEFAULT_AUD`    | `authenticator`           | `aud` for the back-channel `logout_token`.                     |
 | `FAKEIDP_USERS`          | _(baked `users.yaml`)_    | Path to an alternate users file.                               |
-| `FAKEIDP_DEV_USER_EMAIL` | _(unset)_                 | Overrides the **first** user's email — the default-login identity. Compose wires it from `VITE_DEV_USER_EMAIL`. |
+| `FAKEIDP_DEV_USER_EMAIL` | _(unset)_                 | Overrides the **first** user's email — the default-login identity. Compose wires it from `DEV_USER_EMAIL`. |
 
 Test users live in [`users.yaml`](./users.yaml) (baked into the binary). The
 **first** user is the default when `/authorize` is called with no `user=`
 parameter. Its baked email (`dev@company.nonpresent`) matches dev-compose.sh's
-`VITE_DEV_USER_EMAIL` default — the same dev person the seeder writes into
+`DEV_USER_EMAIL` default — the same dev person the seeder writes into
 identity — so a plain `docker compose up` + login resolves to a real person.
 When the wizard is given a different dev email, compose forwards it via
 `FAKEIDP_DEV_USER_EMAIL` so the default login still matches the seeded person.

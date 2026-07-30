@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('github__commits') }}
 -- depends_on: {{ ref('bitbucket_cloud__commits') }}
 -- depends_on: {{ ref('gitlab__commits') }}
 {{ config(

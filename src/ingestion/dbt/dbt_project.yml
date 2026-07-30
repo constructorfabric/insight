@@ -17,6 +17,65 @@ clean-targets:
   - target
   - dbt_packages
 
+vars:
+  # Path patterns (ClickHouse `match` / RE2 regex fragments, matched
+  # case-insensitively) that mark a git file as vendored/generated rather than
+  # authored. Files matching any pattern are classified `vendored` by the
+  # shared `git_file_category` macro and so are excluded from authored
+  # line-count metrics (code_loc / clean_loc / code_lines_added) while still
+  # being retained — and auditable — under the `vendored` category in the
+  # total lines_added breakdown. Override per deployment to extend coverage.
+  # NOTE: values are RE2 fragments embedded into a ClickHouse SQL *string
+  # literal*, so backslashes are doubled (`\\.` -> ClickHouse unescapes to
+  # `\.` -> RE2 sees a literal dot), matching the convention in the other
+  # hand-written regexes in git_file_category.sql. Single-quoted YAML keeps the
+  # doubled backslashes verbatim.
+  git_vendored_path_patterns:
+    # dependency / vendored trees
+    - '(^|/)node_modules/'
+    - '(^|/)bower_components/'
+    - '(^|/)vendor/'
+    - '(^|/)third_party/'
+    - '(^|/)Pods/'
+    - '(^|/)\\.venv/'
+    - '(^|/)site-packages/'
+    - '(^|/)Carthage/'
+    # build / generated output
+    - '(^|/)dist/'
+    - '(^|/)build/'
+    - '(^|/)out/'
+    - '(^|/)target/'
+    - '(^|/)bin/'
+    - '(^|/)obj/'
+    - '(^|/)\\.next/'
+    - '(^|/)\\.nuxt/'
+    - '(^|/)__pycache__/'
+    - '(^|/)(__generated__|generated|gen)/'
+    - '(^|/)coverage/'
+    # generated / minified single files
+    - '\\.min\\.(js|css)$'
+    - '\\.(pb|pb\\.go)$'
+    - '\\.g\\.(dart|cs)$'
+    - '\\.generated\\.'
+    - '\\.designer\\.cs$'
+    - '\\.d\\.ts$'
+    # lockfiles / machine-managed manifests (checked before the `config`
+    # branch, so all lockfiles land in one auditable `vendored` bucket)
+    - '(^|/)go\\.sum$'
+    - '(^|/)Cargo\\.lock$'
+    - '(^|/)composer\\.lock$'
+    - '(^|/)Gemfile\\.lock$'
+    - '(^|/)pnpm-lock\\.yaml$'
+    - '(^|/)package-lock\\.json$'
+    - '(^|/)npm-shrinkwrap\\.json$'
+    - '(^|/)yarn\\.lock$'
+    - '(^|/)poetry\\.lock$'
+    - '(^|/)Pipfile\\.lock$'
+    - '(^|/)packages\\.lock\\.json$'
+    - '(^|/)gradle\\.lockfile$'
+    - '(^|/)mix\\.lock$'
+    - '(^|/)flake\\.lock$'
+
 # on-run-start hooks:
 #  - create_task_field_history_staging:
 #      DDL for `staging.jira__task_field_history` (Rust-owned table, ADR-003).

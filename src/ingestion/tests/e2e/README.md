@@ -19,8 +19,8 @@
 Test framework that exercises the full data path:
 
 ```
-metrics/<name>.test.yaml (bronze records)  →  bronze tables  →  dbt staging/silver  →
-ClickHouse migration gold-views  →  analytics HTTP (POST /v1/metrics/queries)  →  expect rules
+metrics/<name>.test.yaml (bronze records)  →  bronze tables  →  dbt staging/silver/gold  →
+analytics HTTP (POST /v1/metric-results)  →  expect rules
 ```
 
 Airbyte / Kestra / Argo are NOT exercised — bronze is seeded by direct INSERT of the
@@ -82,9 +82,9 @@ e2e/
 │   ├── migration_applier.py    # applies src/ingestion/scripts/migrations/*.sql
 │   ├── analytics.py        # builds + spawns the analytics binary
 │   ├── worker.py               # WorkerContext (resolves pytest-xdist worker id)
-│   ├── metric_coverage.py      # metric-coverage gate: SKIP_TABLES + SKIP_LIST (--universe-file)
+│   ├── metric_coverage.py      # builtin metric coverage gate
 │   ├── api_coverage.py         # endpoint-coverage report + httpx recording hook
-│   ├── collect_metrics.py      # script: snapshot the metric catalog → .artifacts/
+│   ├── collect_metric_definitions.py # snapshot enabled builtin definitions
 │   └── config.py               # session config (ports, random creds)
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
@@ -94,31 +94,18 @@ e2e/
 
 ## Metric coverage gate
 
-A job (`metric-coverage-gate`) in the **E2E — Bronze to API** workflow, *not* a pytest test. The `e2e-metrics` lane runs the metrics/ suite and, while analytics is up, snapshots the metric catalog (`POST /v1/catalog/get_metrics`) to `.artifacts/catalog_metrics.json` (uploaded as `coverage-inputs-metrics`); the gate job then checks every product `metric_key` the catalog exposes is value-asserted by a test or covered by a `SKIP_TABLES`/`SKIP_LIST` entry — pure Python, no Docker, no second app boot.
+A job (`metric-coverage-gate`) in the **E2E — Bronze to API** workflow checks enabled builtin product definitions. The metrics lane snapshots `metric_key`, computation, dimensions, and cohort metadata to `.artifacts/metric_definitions.json`; the gate then verifies every builtin has period, peer, and timeseries assertions, plus breakdown assertions for declared dimensions and histogram assertions for median metrics.
 
 Locally, after a run:
 
 ```bash
-./e2e.sh test metrics/    # runs the metrics suite (emits both .artifacts files; only catalog_metrics.json feeds this gate)
+./e2e.sh test metrics/    # runs the metrics suite and writes metric_definitions.json
 ./e2e.sh gates metrics    # metric gate only, against .artifacts/ (in the runner image; no DB)
 ```
 
 `./e2e.sh gates` with no argument runs both gates (handy after running both suites locally; see [API endpoint coverage gate](#api-endpoint-coverage-gate) below for the api/-only equivalent). `gates api` / `gates metrics` run one gate against one artifact each — that per-lane shape is what mirrors the two independent CI jobs, each of which only ever needs its own lane's artifact.
 
-The verdict per **metric_key** (each individual number) is **binary**:
-
-- **value-tested** — a `metrics/*.test.yaml` asserts it (`find: {metric_key: …}` paired with `equal`/`assert`) → **PASS**
-- **skip-listed** (in the inline `SKIP_LIST` in [`lib/metric_coverage.py`](lib/metric_coverage.py)) → **PASS** (baseline)
-- **neither** → **FAIL** — a number nobody validates must get an assertion or a `SKIP_LIST` entry.
-
-Catalog keys are dotted (`collab_bullet_rows.m365_emails_sent`); a test asserts the bare response key (`m365_emails_sent`). The column suffix is unique across the catalog, so the gate maps bare→dotted by suffix (a future collision raises). `SKIP_LIST` is the accepted baseline and single source of truth (no side-car file — just `(metric_key, reason)`). Kept honest: a **stale** entry (key no longer in the catalog), a **redundant** one (now value-tested), or a test asserting a **non-catalog** key (typo / unseeded → matches 0 rows) all fail. PASS iff no FAILs.
-
-```bash
-# ad hoc against a running analytics (instead of the collected artifact):
-ANALYTICS_URL=http://localhost:18081 python3 lib/metric_coverage.py
-```
-
-Coverage is **per metric_key**, so every number on a bullet is validated independently — one tested key of a metric does not cover the rest. Today: **44/96** value-tested; the rest are skip-listed with a reason (`reachable — …` entries are the backlog where fixtures already exist).
+Missing views, unknown asserted keys, unknown requested keys, and stale fixtures fail. There are no legacy suffix mappings or skip lists.
 
 ## API endpoint coverage gate
 
@@ -133,7 +120,7 @@ Locally, after a run:
 
 Per-status-code coverage is **reported, not enforced**: the report renders an endpoints × registered-status-codes table (`✓` observed · `✗` declared but not yet observed · `·` excluded · blank = not declared) and an overall coverage percentage. A code is *coverable* — and so counts toward the percentage — only if a black-box rig can produce it: `coverable(op) = declared(op) − {codes ≥ 500} − UNIVERSAL_BOILERPLATE{401,429} − BLOCKED[op]`. `BLOCKED` absorbs the committed spec's `.standard_errors` over-declaration (#1669) plus pinned rig/product limits, and a `·` code that becomes observed (or a `BLOCKED` op dropped from the spec) is surfaced as a non-blocking advisory so the list stays honest.
 
-The [`api/`](api/) contract suite covers all 21 spec operations — one module per path group (`test_metrics.py`, `test_metric_thresholds.py`, `test_admin_thresholds.py`, `test_catalog.py`, `test_columns.py`, `test_persons.py`, `test_metric_results.py`), one test per (path, method, status-code) case, from self-cleaning fixtures (`api/conftest.py`) — so `SKIP_LIST` is empty and adding a spec operation without a test fails the gate as MISSING. Spec/product gaps are pinned by **strict xfails** rather than fixed here: #1663 (legacy threshold reads 500 once a row exists), #1664 (duplicate admin create answers 500 instead of the declared 409), and #1670 (off-schema legacy body answers a non-canonical 422, not the intended 400). `POST /v1/metric-results` — the unified-metric compute endpoint added by the `feat/unified-metrics` merge (#1656) — is covered on its deterministic error paths (400 empty/bad-period/unknown-key, 415 wrong content-type); its 200 happy-path needs seeded unified-metric observation data and shows as a reported `✗` gap until that fixture lands.
+The [`api/`](api/) contract suite covers all 21 spec operations — one module per path group (`test_metrics.py`, `test_metric_thresholds.py`, `test_admin_thresholds.py`, `test_catalog.py`, `test_columns.py`, `test_persons.py`, `test_metric_results.py`), one test per (path, method, status-code) case, from self-cleaning fixtures (`api/conftest.py`). The declarative metrics suite covers successful `/v1/metric-results` computation for every builtin metric.
 
 ## Ports (loopback only)
 
@@ -153,16 +140,17 @@ These ports avoid conflict with a local gitops dev cluster (which forwards 8123 
 
 ## `cases` / `expect` (declarative YAML rig)
 
-Tests are `metrics/**/*.test.yaml`; each `case` POSTs a batch to `/v1/metrics/queries` and checks an `expect` list of rules. A rule selects with `in` (batch result by `id`) + an exact-equality `find` (`{field: value}`), then asserts via `equal` (subset of fields, exact / `null`) or `assert` (a CEL boolean). Anything richer than equality (inequalities, counts, predicates) goes in a CEL `assert` — the rig deliberately has no second selector language. See the [yaml-rig FEATURE](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md) and the `/metric` skill.
+Tests are `metrics/**/*.test.yaml`; each case posts to `/v1/metric-results`. Rules select a full builtin `metric` key and `view`, then optionally use `find` for a row and `equal` for exact or null values. Use CEL `assert` for nested timeseries points, dimensions, histogram bins, counts, and predicates.
 
 Variables available in an `assert` (CEL) expression — assembled in `lib/expect_engine.py::evaluate_case` (the `bindings` dict), converted to CEL in `_eval_cel`:
 
 | Binding | Value | Present when |
 |---------|-------|--------------|
 | `it` | the single row matched by `find` | only with `find` (else `null`) |
-| `items` | the selected result's `items` array | a result is selected (`in` or sole query) |
-| `result` | the selected batch result `{id, status, metric_id, items, page_info}` | a result is selected |
-| `results` | the full `results[]` of the batch | always |
+| `items` | values or series from the selected view | a metric view is selected |
+| `view` | the selected view object | a metric view is selected |
+| `metric` | the selected metric result | a metric is selected |
+| `metrics` | all metric results | always |
 | `status` | the batch HTTP status code (int) | always |
 
 CEL is strictly typed and will not compare an `int` to a `double`. Bindings are passed through unchanged, so when a metric value may be integral (e.g. `40`) and you compare against a fractional literal, cast it: `double(it.value) > 39.5`. `status` and `size(...)` are integers — compare them with integer literals. Use `equal` for exact / `null` comparisons (it uses Python `==`).
@@ -171,25 +159,22 @@ CEL is strictly typed and will not compare an `int` to a `double`. Bindings are 
 
 `assert` expressions are written in **CEL — the [Common Expression Language](https://github.com/google/cel-spec)** (the same expression language used by Kubernetes admission policies and Envoy). It is a small, side-effect-free language for boolean/value expressions over structured data: no statements, no loops, no I/O — an expression is evaluated against the bindings above and must return a boolean. The rig evaluates it with the [`cel-python`](https://pypi.org/project/cel-python/) library (`celpy`) in `lib/expect_engine.py::_eval_cel`.
 
-Operators: `== != < <= > >=`, `&& || !`, `+ - * / %`, `in`, ternary `cond ? a : b`. Field/index access: `it.value`, `result.status`, `items[0]`. Useful built-ins & macros: `size(x)`, `has(x.field)`, `x.exists(e, <pred>)`, `x.all(e, <pred>)`, `x.filter(e, <pred>)`, `x.map(e, <expr>)`, string `.startsWith()/.endsWith()/.contains()/.matches(re)`.
+Operators: `== != < <= > >=`, `&& || !`, `+ - * / %`, `in`, ternary `cond ? a : b`. Field/index access: `it.value`, `view.values`, `items[0]`. Useful built-ins & macros: `size(x)`, `has(x.field)`, `x.exists(e, <pred>)`, `x.all(e, <pred>)`, `x.filter(e, <pred>)`, `x.map(e, <expr>)`, string `.startsWith()/.endsWith()/.contains()/.matches(re)`.
 
 Examples:
 
 ```yaml
-- assert: "status == 200"                                  # batch HTTP code
-- in: collaboration
-  assert: "result.status == 'ok'"                           # this query's own status
-- in: collaboration
-  assert: "size(items) == 20"                               # row count
-- in: collaboration
-  find: { metric_key: m365_emails_sent }
-  assert: "double(it.value) > 39.5 && double(it.value) < 40.5"   # cast to double for fractional compare
-- in: collaboration
-  find: { metric_key: slack_dm_ratio }
-  assert: "it.value == null"                                # explicit null
-- assert: "results.exists(r, r.status == 'error')"          # any query in the batch failed?
-- in: collaboration
-  assert: "items.all(r, r.range_min <= r.value)"            # invariant across all rows
+- assert: "status == 200"
+- metric: collab.emails_sent
+  view: period
+  find: { entity_id: erin@example.com }
+  equal: { value: 50 }
+- metric: collab.messages_sent
+  view: timeseries
+  assert: "items.exists(s, s.points.exists(p, double(p.value) > 0.0))"
+- metric: git.lines_added
+  view: breakdown
+  assert: "items.exists(v, v.dimensions.exists(d, d.key == 'category' && d.value == 'code'))"
 ```
 
 Prefer `equal` for exact / `null` checks (it uses Python `==`, so `40 == 40.0` and `value: null` work directly); reach for `assert` when you need inequalities, counts, or cross-row predicates.

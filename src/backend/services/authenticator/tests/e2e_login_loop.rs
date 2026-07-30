@@ -20,6 +20,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
+mod common;
+
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
 
@@ -29,11 +31,8 @@ fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap()
+fn client() -> common::Client {
+    common::client()
 }
 
 fn rewrite_host(url: &str) -> String {
@@ -75,8 +74,10 @@ struct Jwk {
 #[derive(Deserialize)]
 struct Claims {
     sub: String,
-    tenants: Vec<String>,
-    roles: Vec<String>,
+    tenant_id: String,
+    /// Space-delimited on the wire (OAuth `scope` shape — the downstream
+    /// verifier's `token_scopes` mapping splits on whitespace).
+    roles: String,
     sid: String,
     aud: String,
 }
@@ -174,11 +175,32 @@ async fn full_login_exchange_logout_loop() {
     assert!(!claims.sub.is_empty(), "JWT sub (person_id) must be set");
     assert_eq!(claims.aud, "internal-services");
     assert!(
-        claims.roles.contains(&"user".to_owned()),
+        claims.roles.split_whitespace().any(|r| r == "user"),
         "default role present"
     );
     assert!(!claims.sid.is_empty(), "stable sid present");
-    let _ = &claims.tenants; // present (may be empty in a keyless local run)
+    let _ = &claims.tenant_id; // present (may be empty in a keyless local run)
+
+    // 5b. The discovery document points downstream verifiers at that JWKS
+    //     (cf-gears-oidc-authn-plugin resolves jwks_uri from it).
+    let discovery: serde_json::Value = http
+        .get(format!("{auth_base}/.well-known/openid-configuration"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        discovery["issuer"].as_str().is_some_and(|s| !s.is_empty()),
+        "discovery must carry the issuer"
+    );
+    assert!(
+        discovery["jwks_uri"]
+            .as_str()
+            .is_some_and(|s| s.ends_with("/.well-known/jwks.json")),
+        "discovery must point at the published JWKS"
+    );
 
     // 6. /auth/me returns the session summary.
     let me = http
@@ -192,10 +214,13 @@ async fn full_login_exchange_logout_loop() {
     assert!(me_body.get("user").is_some());
     assert!(me_body.get("refresh_at").is_some());
 
-    // 7. /auth/logout revokes the session and clears the cookie.
+    // 7. /auth/logout revokes the session and clears the cookie. State-changing
+    //    /auth/* requires the CSRF token (step 10.5) — /auth/me echoed it.
+    let csrf = me_body["csrf_token"].as_str().unwrap().to_owned();
     let logout = http
         .post(format!("{auth_base}/auth/logout"))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
+        .header("X-CSRF-Token", &csrf)
         .send()
         .await
         .unwrap();

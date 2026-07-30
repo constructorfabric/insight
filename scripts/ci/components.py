@@ -27,20 +27,13 @@ COMPONENTS = [
     # Rust: `cargo llvm-cov --package <package>` run in <root>. Each --package
     # report includes cross-crate files and the gate merges all reports (max
     # hits/line), so a lib's coverage reflects tests in other crates too, not
-    # just its own. NB: api-gateway's cargo package is insight-api-gateway.
+    # just its own.
     {
         "name": "insight-clickhouse",
         "lang": "rust",
         "root": "src/backend",
         "package": "insight-clickhouse",
         "paths": ["src/backend/libs/insight-clickhouse"],
-    },
-    {
-        "name": "oidc-authn-plugin",
-        "lang": "rust",
-        "root": "src/backend",
-        "package": "oidc-authn-plugin",
-        "paths": ["src/backend/plugins/oidc-authn-plugin"],
     },
     {
         "name": "analytics",
@@ -60,21 +53,32 @@ COMPONENTS = [
         "cover_ignore_regex": "src/backend/libs/",
         "paths": ["src/backend/services/analytics"],
     },
-    # cover=False: the gateway has no unit tests yet (its behavior is covered
-    # by the e2e suite), so a coverage report would gate it at 0% the moment
-    # any file under its paths changes. Tests + lint still run; re-enable
-    # coverage when unit tests land. Mirrors the identity decision below.
+    # cover=False (mirrors authenticator/identity): the crate's business logic
+    # is exercised by env-gated live tests (IDENTITY_TEST_* against a dev
+    # MariaDB/ClickHouse) that skip cleanly in CI, so only the pure-logic unit
+    # tests would count — gating the crate far below the 80% line. fmt + clippy
+    # + tests still run and gate the pipeline. Re-enable coverage when the
+    # HTTP+MariaDB integration suite lands (#1753).
     {
-        "name": "api-gateway",
+        "name": "identity-resolution",
         "lang": "rust",
         "root": "src/backend",
-        "package": "insight-api-gateway",
+        "package": "identity-resolution",
         "cover": False,
-        # When coverage is re-enabled: scope out linked dependency crates
-        # (oidc-authn-plugin, libs) — they self-report in their own jobs, and
-        # zero-hit dependency files would gate THOSE components at 0%.
-        "cover_ignore_regex": "src/backend/(libs|plugins)/",
-        "paths": ["src/backend/services/api-gateway"],
+        # DB-backed migration/bootstrap tests: the CI rust job provisions a
+        # MariaDB (database `identity` — this service owns that schema), runs
+        # `identity-resolution migrate` up front, then `cargo test` with
+        # INTEGRATION_TESTS_MARIADB_URL set (the live tests re-run the
+        # migrator to prove idempotency and skip cleanly when unset).
+        "live_db": True,
+        "live_db_name": "identity",
+        "cover_ignore_regex": "src/backend/libs/",
+        "paths": ["src/backend/services/identity-resolution"],
+        # insight-clickhouse is compiled in as a path dependency: a lib change
+        # must re-run this crate's tests too. A shared path in `paths` would
+        # NOT do that (component_for() picks a single owner — always the lib's
+        # own component); `triggered_by` is the registry's co-trigger for this.
+        "triggered_by": ["insight-clickhouse"],
     },
     # fakeidp is a dev/e2e test double (see cf/NGINX_BFF.md §10 G6), not shipped
     # code — but it has real integration tests, so it is covered + gated like any
@@ -99,7 +103,7 @@ COMPONENTS = [
         "package": "routegen",
         "paths": ["src/backend/tools/routegen"],
     },
-    # cover=False (mirrors api-gateway): the authenticator's security-critical
+    # cover=False (mirrors identity): the authenticator's security-critical
     # flow (OIDC login, sessions, cookie->JWT exchange) is proven by the e2e
     # login-loop, which drives the server as a SEPARATE process — so it can't
     # feed `cargo llvm-cov` (that instruments the test binary, not a spawned
@@ -199,6 +203,18 @@ COMPONENTS = [
         "cov_package": "source_github_copilot",
         "paths": ["src/ingestion/connectors/ai/github-copilot"],
     },
+    # Deploy-time ClickHouse schema tooling (the migration Job's Python half:
+    # reconcile_bronze_schema, which heals warm-cluster bronze drift — #1991).
+    # Owning the whole scripts/ tree means a connectors-ddl snapshot regen also
+    # re-runs these tests, which is the point: the reconciler's contract is with
+    # that snapshot. Shell scripts in the same tree have no measured lines.
+    {
+        "name": "ingestion-scripts",
+        "lang": "python",
+        "root": "src/ingestion/scripts",
+        "cov_package": "reconcile_bronze_schema",
+        "paths": ["src/ingestion/scripts"],
+    },
     # Mock-server test rig for NOCODE connectors (feature-connector-mock-tests),
     # split into two CI jobs for clean results (review ask): the harness's own
     # unit tests (meta/) and the per-connector mock suites. Both measure the
@@ -233,7 +249,10 @@ COMPONENTS = [
         "pytest_args": "--suites-only",
         "cover": False,
         "triggered_by": ["connector-tests-harness"],
-        "paths": ["src/ingestion/connectors/task-tracking/jira"],
+        "paths": [
+            "src/ingestion/connectors/task-tracking/jira",
+            "src/ingestion/connectors/ai/claude-admin",
+        ],
     },
 ]
 

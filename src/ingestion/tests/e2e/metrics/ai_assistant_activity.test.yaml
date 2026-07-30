@@ -1,0 +1,69 @@
+spec_version: 1
+description: Unified assistant actions and chat conversations from Claude Enterprise.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_claude_enterprise.claude_enterprise_users:
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/alice, date: "2026-01-05", unique_key: assistant-alice, chat_conversation_count: 5, chat_message_count: 15, cowork_action_count: 10 }
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/bob, date: "2026-01-05", unique_key: assistant-bob, chat_conversation_count: 10, chat_message_count: 30, cowork_action_count: 20 }
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/carol, date: "2026-01-05", unique_key: assistant-carol, chat_conversation_count: 15, chat_message_count: 45, cowork_action_count: 30 }
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: dave@example.com, user_id: user-dave, date: "2026-01-05", unique_key: assistant-dave, chat_conversation_count: 20, chat_message_count: 60, cowork_action_count: 40 }
+    - { $ref: templates/claude_enterprise_users.yaml#/templates/ent_user, user_email: erin@example.com, user_id: user-erin, date: "2026-01-05", unique_key: assistant-erin, chat_conversation_count: 25, chat_message_count: 75, cowork_action_count: 50 }
+
+cases:
+  - name: AI assistant actions and chat conversations
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - metric_key: ai.assistant_actions
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool, surface] }
+          - metric_key: ai.chat_assistant_conversations
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool, surface] }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.assistant_actions
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 50 }
+      - metric: ai.assistant_actions
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5 }
+      - metric: ai.assistant_actions
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 50.0))"
+      - metric: ai.assistant_actions
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && size(v.dimensions) == 2 && v.dimensions.exists(d, d.key == 'tool' && d.value == 'claude') && v.dimensions.exists(d, d.key == 'surface' && d.value == 'cowork') && double(v.value) == 50.0)"
+      - metric: ai.chat_assistant_conversations
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 25 }
+      - metric: ai.chat_assistant_conversations
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 25, p25: 10, median: 15, p75: 20, min: 5, max: 25, n: 5 }
+      - metric: ai.chat_assistant_conversations
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 25.0))"
+      - metric: ai.chat_assistant_conversations
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && size(v.dimensions) == 2 && v.dimensions.exists(d, d.key == 'tool' && d.value == 'claude') && v.dimensions.exists(d, d.key == 'surface' && d.value == 'chat') && double(v.value) == 25.0)"

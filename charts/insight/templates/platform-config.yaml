@@ -55,7 +55,8 @@ data:
   AIRBYTE_JWT_SECRET_KEY:   {{ .Values.airbyte.jwtSecret.key   | quote }}
 
   # ─── App service hosts (for sidecars and debugging) ───
-  INSIGHT_API_GATEWAY_HOST: {{ include "insight.apiGateway.host" . | quote }}
+  INSIGHT_GATEWAY_HOST:       {{ include "insight.gateway.host"       . | quote }}
+  INSIGHT_AUTHENTICATOR_HOST: {{ include "insight.authenticator.host" . | quote }}
   INSIGHT_ANALYTICS_HOST:   {{ include "insight.analytics.host"  . | quote }}
   INSIGHT_IDENTITY_HOST:    {{ include "insight.identity.host"   . | quote }}
   INSIGHT_FRONTEND_HOST:    {{ include "insight.frontend.host"   . | quote }}

@@ -21,6 +21,18 @@ public interface IPersonsReader
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Tenant-AGNOSTIC email → <c>person_id</c> resolution for the login
+    /// bootstrap: the authenticator's service-only lookup runs before any tenant
+    /// is known, so the tenant filter is dropped and any matching tenant's
+    /// latest observation wins. Returns <c>null</c> when no current
+    /// <c>value_type='email'</c> observation matches. NEVER call this on a
+    /// user-facing path — it crosses tenant boundaries by design.
+    /// </summary>
+    Task<Guid?> ResolvePersonIdByEmailAnyTenantAsync(
+        string email,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Latest-per-source observations for a single <c>person_id</c> within
     /// the tenant. Empty list when the person has no observations.
     /// </summary>

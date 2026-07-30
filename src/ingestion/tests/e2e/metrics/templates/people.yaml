@@ -36,7 +36,7 @@ templates:
     hireDate: null
     originalHireDate: null
     terminationDate: null
-    lastChanged: null
+    lastChanged: "2026-01-01T00:00:00Z"
     employmentHistoryStatus: null
     raw_data: null
 

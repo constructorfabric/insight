@@ -1,0 +1,38 @@
+{{- if .Values.ingress.enabled }}
+# Cluster ingress -> the fakeidp OIDC provider, served under the /idp prefix.
+# fakeidp serves its OIDC routes at ROOT (/.well-known/openid-configuration,
+# /authorize, /token, /jwks) and its discovery document emits ABSOLUTE URLs
+# ({issuer}/authorize, {issuer}/token, {issuer}/jwks). So to expose it under a
+# path prefix we strip the prefix with an nginx rewrite: the capture group
+# `(.*)` after `/idp(/|$)` is `$2`, and rewrite-target rewrites the request to
+# `/$2` before it hits the Service. The browser and the authenticator pod both
+# reach it at `<ingress-lb-ip>/idp`, which must equal `.Values.issuer`.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "insight-fakeidp.fullname" . }}
+  labels:
+    {{- include "insight-fakeidp.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  rules:
+    - {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: /idp(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "insight-fakeidp.fullname" . }}
+                port:
+                  name: http
+{{- end }}

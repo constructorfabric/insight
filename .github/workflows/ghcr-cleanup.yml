@@ -1,0 +1,79 @@
+name: GHCR cleanup
+
+# Retention for the images this repo publishes (see build-images.yml):
+#
+#   • trunk tags (`YYYY.MM.DD.HH.MM-sha7`, suffix-less) — deleted after 4
+#     weeks on a daily schedule, keeping the 15 newest per package as a
+#     backstop. `latest` and the branch-suffixed tags never match the glob,
+#     and `image-names: insight-*` never matches the `charts/insight`
+#     package, so charts are untouched.
+#   • branch tags (`…-sha7.<sanitized-branch>`, #1994) — deleted when their
+#     branch is deleted. `release-*` branches are excluded: their images are
+#     kept forever (customer-release pins).
+#
+# snok/container-retention-policy v3 is multi-arch aware: it protects
+# untagged per-arch digests referenced by tagged manifest lists.
+#
+# DRY-RUN: both jobs start with dry-run: true. Review one run's log
+# (workflow_dispatch), confirm the deletion list is sane, then flip to false.
+#
+# ⚠️ Before flipping trunk to dry-run: false — every deployed environment
+# must pin images NEWER than the cut-off (a deleted tag breaks pod
+# rescheduling and helm rollbacks). As of 2026-07-29 virtuozzo still runs
+# 2026.07.15.* images.
+
+on:
+  schedule:
+    - cron: "5 5 * * *"
+  workflow_dispatch:
+  # Branch deletions; the `branch` job filters to ref_type == branch.
+  delete: {}
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  trunk:
+    if: github.event_name != 'delete'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: snok/container-retention-policy@v3.1.0
+        with:
+          account: constructorfabric
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: "insight-*"
+          # Fixed-length trunk format only: branch tags carry a `.suffix`
+          # (longer), `latest` doesn't match either.
+          image-tags: "2???.??.??.??.??-???????"
+          cut-off: 4w
+          keep-n-most-recent: 15
+          dry-run: true
+
+  branch:
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch' && !startsWith(github.event.ref, 'release-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Same sanitizer as the build-tag computation in build-images.yml —
+      # the deleted branch's tags end with `.<sanitized-branch>`.
+      - name: Sanitize branch name
+        id: suffix
+        env:
+          REF_NAME: ${{ github.event.ref }}
+        run: |
+          SAFE="$(printf '%s' "$REF_NAME" \
+            | tr -c 'a-zA-Z0-9._-' '-' \
+            | sed -E 's/^[-.]+//; s/[-.]+$//' \
+            | cut -c1-60)"
+          echo "safe=$SAFE" >> "$GITHUB_OUTPUT"
+          echo "Cleaning image tags with suffix: .$SAFE"
+      - uses: snok/container-retention-policy@v3.1.0
+        with:
+          account: constructorfabric
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: "insight-*"
+          image-tags: "*.${{ steps.suffix.outputs.safe }}"
+          cut-off: 0s
+          dry-run: true

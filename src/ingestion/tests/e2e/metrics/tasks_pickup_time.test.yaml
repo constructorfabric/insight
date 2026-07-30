@@ -1,0 +1,108 @@
+spec_version: 1
+description: >
+  Task Delivery - pickup_time - JIRA, IC Bullet Task Delivery (...0011),
+  department-of-5 distribution + 6 stats in a single custom window.
+
+  bronze -> silver -> gold: jira_issue (Closed) + jira_issue_history (Open ->
+  In Progress -> Closed) + jira_user; bamboohr employees give the Engineering
+  org_unit_id (the cohort). jira-enrich reconstructs status intervals; pickup_time
+  = days an issue waited in Open before the first In Progress transition. The
+  ...0011 query_ref takes the per-person mean pickup days (value = the member's
+  own), median/p25/p75/range = the department distribution. range_max = cohort P95
+  (long-tail guard) = max on a 5-point ladder.
+
+  Department: 5 Engineering members alice..erin of rank r in 1..5, each with ONE
+  issue created Open at 2026-03-20T00:00, moved to In Progress at 2026-03-(20+r),
+  then Closed 2026-03-27 -> per-person pickup = {1,2,3,4,5} days. The IC case
+  requests erin (5): value=5, median=3, range_min=1, range_max=5 (P95), p25=2,
+  p75=4. Empty window 2026-06 -> no items.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_jira.jira_user:
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-alice-jira-acct, account_id: alice-jira-acct, email: alice@example.com, display_name: Alice Alpha }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-bob-jira-acct, account_id: bob-jira-acct, email: bob@example.com, display_name: Bob Beta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-carol-jira-acct, account_id: carol-jira-acct, email: carol@example.com, display_name: Carol Gamma }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-jira-acct, account_id: dave-jira-acct, email: dave@example.com, display_name: Dave Delta }
+    - { $ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-erin-jira-acct, account_id: erin-jira-acct, email: erin@example.com, display_name: Erin Epsilon }
+
+  bronze_jira.jira_statuses:
+    - $ref: templates/jira_task.yaml#/templates/status_open
+    - $ref: templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+
+  bronze_jira.jira_issue:
+    # Each member: created Open 2026-03-20T00:00, closed 2026-03-27T00:00.
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: PUA-1, jira_id: PUA-1, unique_key: jira-test-PUA-1, id_readable: PUA1, created: "2026-03-20T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: PUB-1, jira_id: PUB-1, unique_key: jira-test-PUB-1, id_readable: PUB1, created: "2026-03-20T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: PUC-1, jira_id: PUC-1, unique_key: jira-test-PUC-1, id_readable: PUC1, created: "2026-03-20T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: PUD-1, jira_id: PUD-1, unique_key: jira-test-PUD-1, id_readable: PUD1, created: "2026-03-20T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_issue, id: PUE-1, jira_id: PUE-1, unique_key: jira-test-PUE-1, id_readable: PUE1, created: "2026-03-20T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}' }
+
+  bronze_jira.jira_issue_history:
+    # Per member: (a) Open -> In Progress at 2026-03-(20+r); (b) In Progress -> Closed at 2026-03-27.
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUA1, changelog_id: "53001", unique_key: jira-test-PUA1-53001, created_at: "2026-03-21T00:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUA1, changelog_id: "53002", unique_key: jira-test-PUA1-53002, created_at: "2026-03-27T00:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUB1, changelog_id: "53003", unique_key: jira-test-PUB1-53003, created_at: "2026-03-22T00:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUB1, changelog_id: "53004", unique_key: jira-test-PUB1-53004, created_at: "2026-03-27T00:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUC1, changelog_id: "53005", unique_key: jira-test-PUC1-53005, created_at: "2026-03-23T00:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUC1, changelog_id: "53006", unique_key: jira-test-PUC1-53006, created_at: "2026-03-27T00:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUD1, changelog_id: "53007", unique_key: jira-test-PUD1-53007, created_at: "2026-03-24T00:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUD1, changelog_id: "53008", unique_key: jira-test-PUD1-53008, created_at: "2026-03-27T00:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUE1, changelog_id: "53009", unique_key: jira-test-PUE1-53009, created_at: "2026-03-25T00:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"In Progress","to":"3"}]' }
+    - { $ref: templates/jira_task.yaml#/templates/jira_history, id_readable: PUE1, changelog_id: "53010", unique_key: jira-test-PUE1-53010, created_at: "2026-03-27T00:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+
+cases:
+  - name: tasks.pickup_time
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-03-20", to: "2026-03-31" }
+        metrics:
+          - metric_key: tasks.pickup_time
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: histogram }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.pickup_time
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      - metric: tasks.pickup_time
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: tasks.pickup_time
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 5.0))"
+      - metric: tasks.pickup_time
+        view: histogram
+        assert: "items.exists(h, h.entity_id == 'erin@example.com' && size(h.bins) > 0)"
+
+  - name: tasks.pickup_time empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2025-01-01", to: "2025-01-31" }
+        metrics: [{ metric_key: tasks.pickup_time, views: [{ view: period }] }]
+    expect:
+      - assert: "status == 200"
+      - { metric: tasks.pickup_time, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

@@ -1,0 +1,55 @@
+{{- if .Values.tlsDiscovery.enabled }}
+{{- $fullname := include "insight-authenticator.fullname" . }}
+{{- $svc := printf "%s.%s.svc" $fullname .Release.Namespace }}
+# TLS discovery front for the authenticator's OIDC discovery + JWKS. Downstream
+# verifiers (analytics / identity-resolution) run the oidc-authn-plugin, whose
+# runtime resolves the JWKS over HTTPS ONLY. This cert-manager Certificate + the
+# `authn-tls` sidecar (see deployment.yaml) terminate TLS on :{{ .Values.tlsDiscovery.port }}
+# and proxy the well-known endpoints to the authenticator on localhost. `iss` =
+# https://{{ $fullname }}:{{ .Values.tlsDiscovery.port }}; downstream trust the
+# issuer's CA (ca.crt in the cert Secret) via gateway.caCertPaths.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-authn-tls
+  labels:
+    {{- include "insight-authenticator.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "insight-authenticator.authnTlsSecret" . }}
+  duration: 2160h      # 90d
+  renewBefore: 360h    # 15d
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  dnsNames:
+    - {{ $fullname | quote }}
+    - {{ printf "%s.%s" $fullname .Release.Namespace | quote }}
+    - {{ $svc | quote }}
+    - {{ printf "%s.cluster.local" $svc | quote }}
+  issuerRef:
+    name: {{ required "tlsDiscovery.issuerRef.name is required" .Values.tlsDiscovery.issuerRef.name | quote }}
+    kind: {{ .Values.tlsDiscovery.issuerRef.kind | quote }}
+    group: cert-manager.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-authn-tls
+  labels:
+    {{- include "insight-authenticator.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen {{ .Values.tlsDiscovery.port }} ssl;
+        server_name {{ $fullname }};
+        ssl_certificate     /tls/tls.crt;
+        ssl_certificate_key /tls/tls.key;
+        # Same pod: the authenticator listens on localhost. Only the discovery
+        # surface is fronted; everything else 404s.
+        location /.well-known/ {
+            proxy_pass http://127.0.0.1:{{ .Values.service.port }};
+            proxy_set_header Host $host;
+        }
+        location = /healthz { return 200 "ok\n"; }
+    }
+{{- end }}

@@ -3,9 +3,9 @@ Demo persons + team profiles.
 
 The 25-person organisation that the seed script populates: one CEO
 above 4 team leads (development, sales, HR, support), each with 5 ICs.
-The development-team lead's email is `VITE_DEV_USER_EMAIL` (the
-dev-impersonation user); the other 24 persons get deterministic
-`email_<team>_<NN>@company.nonpresent` addresses.
+The development-team lead's email is `DEV_USER_EMAIL`; the other 24
+persons get deterministic `email_<team>_<NN>@company.nonpresent`
+addresses.
 
 `TEAM_PROFILES` below maps a per-team source-type to a numeric
 multiplier (0 = no rows; 1 = baseline; >1 = heavier). The row
@@ -161,7 +161,7 @@ def build_email(person: str) -> str:
 def build_roster(dev_user_email: str) -> list[Person]:
     """Construct the 25-person roster anchored on `dev_user_email`."""
     if not dev_user_email:
-        raise ValueError("VITE_DEV_USER_EMAIL is required to build the roster.")
+        raise ValueError("DEV_USER_EMAIL is required to build the roster.")
 
     ceo = Person(
         uuid=CEO_UUID,
@@ -204,11 +204,11 @@ def build_roster(dev_user_email: str) -> list[Person]:
 
 
 def get_dev_user_email() -> str:
-    """Resolve the dev user's email, honouring VITE_DEV_USER_EMAIL."""
-    val = os.environ.get("VITE_DEV_USER_EMAIL", "").strip().lower()
+    """Resolve the dev user's email, honouring DEV_USER_EMAIL."""
+    val = os.environ.get("DEV_USER_EMAIL", "").strip().lower()
     if not val:
         raise SystemExit(
-            "ERROR: VITE_DEV_USER_EMAIL must be set in the seed environment.\n"
+            "ERROR: DEV_USER_EMAIL must be set in the seed environment.\n"
             "       It anchors the development team lead in the demo roster."
         )
     return val

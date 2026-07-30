@@ -63,7 +63,10 @@ fn every_api_location_has_the_hygiene_block() {
     assert!(conf.contains("location /internal/ {\n            return 404;"));
     // Auth surface is a plain proxy (no exchange) and the SPA rides through.
     assert!(conf.contains("location /auth/ {"));
-    assert!(conf.contains("location / {\n            proxy_pass http://insight_front;"));
+    // The SPA front is resolved lazily (variable proxy_pass + resolver) so the
+    // gateway boots without a frontend present.
+    assert!(conf.contains("location / {\n            set $insight_front \""));
+    assert!(conf.contains("proxy_pass http://$insight_front;"));
     // HSTS on every response (G9).
     assert!(conf.contains("add_header Strict-Transport-Security"));
 }

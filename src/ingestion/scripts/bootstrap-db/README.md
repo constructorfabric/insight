@@ -6,31 +6,26 @@ How it works: for every connector the source image runs `discover` (schemas are 
 
 ## Prerequisites
 
-- `docker`, `jq`, `yq` (mikefarah v4), `dbt` with `dbt-clickhouse`
-- ClickHouse reachable under `CLICKHOUSE_HOST` both from this machine (dbt) and from inside docker containers (destination connector). For a ClickHouse running on this machine use `host.docker.internal`.
+- `docker`, `jq`, `yq` (mikefarah v4)
+- `python3.12` or `python3.11` on `PATH` — `run-dbt.sh` builds a local `.venv` with the pinned dbt from it (parity with the toolbox image; dbt-core 1.10 does not run on newer pythons). A `python -m venv`-capable interpreter is required (uv-managed pythons lack `ensurepip`; with those, pre-build the venv via `uv venv --seed .venv && .venv/bin/pip install dbt-core==<pin> dbt-clickhouse==<pin>`).
+- ClickHouse reachable under `CLICKHOUSE_HOST` both from this machine (dbt) and from inside docker containers (destination connector). For a ClickHouse running on this machine use the machine's LAN IP (`ipconfig getifaddr en0`) — `host.docker.internal` resolves inside containers but not on the macOS host itself.
+- Real HubSpot and Salesforce credentials in `.env` — their CDK `discover` calls the live APIs, so fake values fail. Without credentials, seed their bronze from the committed snapshot instead: apply `../connectors-ddl/{hubspot,salesforce}.sql` (paths relative to this directory), run `./run-dbt.sh --select hubspot__bronze_promoted salesforce__bronze_promoted`, and continue from the dbt step.
 
 ## Local ClickHouse for testing
 
-Start a throwaway ClickHouse in docker (one migration needs the refreshable-MV setting, enabled on real clusters):
+Start a throwaway ClickHouse in docker, on the same version production runs (pinned in `pins.env`, must match the bitnami chart's appVersion in `deploy/gitops/Makefile`):
 
 ```bash
-cat > /tmp/clickhouse-bootstrap-settings.xml <<'EOF'
-<clickhouse>
-  <profiles>
-    <default>
-      <allow_experimental_refreshable_materialized_view>1</allow_experimental_refreshable_materialized_view>
-    </default>
-  </profiles>
-</clickhouse>
-EOF
-
+source pins.env
 docker run -d --name bootstrap-db-clickhouse -p 8123:8123 \
   -e CLICKHOUSE_USER=insight -e CLICKHOUSE_PASSWORD=insight -e CLICKHOUSE_DB=insight \
-  -v /tmp/clickhouse-bootstrap-settings.xml:/etc/clickhouse-server/users.d/bootstrap-settings.xml:ro \
-  clickhouse/clickhouse-server:24.8.4.13
+  -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+  "${CLICKHOUSE_SERVER_IMAGE}"
 ```
 
-Point `.env` at it: `CLICKHOUSE_HOST=host.docker.internal`, `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_PROTOCOL=http`, user/password/database `insight` — the host name works both for dbt on this machine and for the connector containers. Check what got created:
+`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` lets the `insight` admin manage access (`CREATE ROLE`/`GRANT`) so the run provisions the read-only `presentation_ro` role (`presentation-role.sql`, #1963); the official image disables it by default. Both compose stacks (`docker-compose.yml`, `tests/e2e/compose`) and the bitnami prod admin already have access-management, and provisioning is guarded (an admin lacking it is skipped with a warning), so this flag is only needed for this bare throwaway container.
+
+Point `.env` at it: `CLICKHOUSE_HOST=$(ipconfig getifaddr en0)` (the LAN IP — reachable both for dbt on this machine and for the connector containers; see Prerequisites), `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_PROTOCOL=http`, user/password/database `insight`. Check what got created:
 
 ```bash
 curl -s "http://localhost:8123/" -H "X-ClickHouse-User: insight" -H "X-ClickHouse-Key: insight" \
@@ -81,18 +76,22 @@ Throw it away with `docker rm -f bootstrap-db-clickhouse`.
 | `generate-connectors-config.sh [pattern]` | Finds `descriptor.yaml` files, extracts every required config field from the connector spec, writes the config YAML with fake values to stdout. |
 | `seed-connectors.sh <config.yaml>` | Iterates over the config file, resolves `value`/`env` fields into a config JSON, calls `create-connector-tables.sh` per connector. Errors are printed and skipped. |
 | `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog → `destination-clickhouse write` with a zero-record stream-status input (creates empty tables) → `dbt run --select <name>__bronze_promoted` (MergeTree → ReplacingMergeTree). |
-| `bootstrap-db.sh <config.yaml>` | Sources `.env` if present, runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
+| `bootstrap-db.sh <config.yaml>` | Sources `pins.env` and `.env` (if present), runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
 | `run-dbt.sh [dbt args]` | Helper: generates a profiles.yml from the `CLICKHOUSE_*` variables and runs `dbt run` in `src/ingestion/dbt`. |
+| `dump-ddl.sh` | Dumps `SHOW CREATE` for every `bronze_*` table, the `person`/`identity`/`silver`/`insight` databases (tables and views), and the gold-referenced `staging` tables into `../connectors-ddl/*.sql` — the committed snapshot that `../create-bronze-placeholders.sh` applies on fresh clusters. **Run it manually** after `bootstrap-db.sh` (see step above) whenever a schema changes, and commit the diff; `.github/workflows/connectors-ddl-reminder.yml` only posts a reminder on `src/ingestion/**` PRs — it does not regenerate anything. |
 
-## Pinning DESTINATION_CLICKHOUSE_IMAGE
+## Image pins (pins.env)
 
-The tag must match the ClickHouse destination version your Airbyte installation actually runs — Airbyte seeds connector versions from its registry at install time, so the platform chart version does not determine it. Ask your Airbyte instance:
+`pins.env` is committed and sourced by `bootstrap-db.sh` and CI:
 
-```bash
-curl -s -X POST "${AIRBYTE_URL}/api/v1/destination_definitions/list" \
-  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
-  -d "{\"workspaceId\": \"${WORKSPACE_ID}\"}" \
-  | jq -r '.destinationDefinitions[] | select(.name == "ClickHouse") | .dockerImageTag'
-```
+- `CLICKHOUSE_SERVER_IMAGE` — must match production: the appVersion of the bitnami chart pinned as `CLICKHOUSE_VERSION` in `deploy/gitops/Makefile`.
+- `DESTINATION_CLICKHOUSE_IMAGE` — must match the ClickHouse destination version your Airbyte installation actually runs. Airbyte seeds connector versions from its registry at install time, so the platform chart version does not determine it; ask the instance:
 
-Put the result into `DESTINATION_CLICKHOUSE_IMAGE` in `.env`.
+  ```bash
+  curl -s -X POST "${AIRBYTE_URL}/api/v1/destination_definitions/list" \
+    -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+    -d "{\"workspaceId\": \"${WORKSPACE_ID}\"}" \
+    | jq -r '.destinationDefinitions[] | select(.name == "ClickHouse") | .dockerImageTag'
+  ```
+
+- `SOURCE_DECLARATIVE_MANIFEST_IMAGE` — runtime for nocode (declarative YAML) connectors.

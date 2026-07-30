@@ -35,7 +35,8 @@ on the ParentStreamConfig is what turns that on).
 Coverage matrix rows: substream_partition (one child request per parent
 partition, uuid escaping), transformations + tenant_source_stamping,
 schema_conformance, pagination_multi_page, incremental_state (the two
-parent-state tests above).
+parent-state tests above), error_handler_policy (the two Cloudflare-block
+tests at the end).
 """
 
 from __future__ import annotations
@@ -251,3 +252,88 @@ def test_resume_enumerates_parent_from_saved_cursor(http_mocker: HttpMocker) -> 
         assert [r.record.data["participant_uuid"] for r in second.records] == ["part-2"]
         final_state = second.state_messages[-1].state.stream.stream_state.__dict__
         assert final_state.get("parent_state") == {"_meetings": {"end_time": "2026-06-20T10:30:00Z"}}
+
+
+# The meeting uuid Cloudflare's WAF started blocking on dev-vhc on 2026-07-23,
+# and a trimmed-down copy of the HTML page it answers with (matched by the
+# manifest's error_message_contains filter on "Sorry, you have been blocked").
+_CF_BLOCKED_UUID = "9XG9hLVrTtWhAK2A7TFO6w=="
+_CF_BLOCKED_HTML = """<!DOCTYPE html>
+<html lang="en-US">
+<head><title>Attention Required! | Cloudflare</title></head>
+<body>
+<div id="cf-wrapper">
+<h1><span data-translate="block_headline">Sorry, you have been blocked</span></h1>
+<h2 class="cf-subheadline"><span data-translate="unable_to_access">You are unable to access</span> api.zoom.us</h2>
+<div class="cf-error-details-wrapper"><p>This website is using a security service to protect itself from online attacks.</p></div>
+<span class="cf-footer-item">Performance &amp; security by Cloudflare</span>
+</div>
+</body>
+</html>"""
+
+
+@freezegun.freeze_time(_NOW)
+def test_cloudflare_blocked_meeting_is_skipped(http_mocker: HttpMocker) -> None:
+    """A partition answered by Cloudflare's WAF block page (HTTP 403 + HTML,
+    not a Zoom JSON error) must be skipped: the other meetings still emit and
+    the final state advances past the blocked meeting.
+
+    Regression pin for the dev-vhc incident of 2026-07-23: Cloudflare in
+    front of api.zoom.us false-positives on the literal meeting uuid below
+    (any encoding, even unauthenticated), so the partition can never succeed.
+    Before the manifest's Cloudflare filter every sync died on this meeting,
+    and — because the parent _meetings cursor persists only via this stream's
+    state (incremental_dependency) — the cursor never advanced, so every
+    following sync re-fanned out over the same window and died on the same
+    partition again. The blocked meeting is deliberately the OLDER one here:
+    the assert on parent_state proves the cursor moved past it."""
+    config = ZoomConfigBuilder().build()
+    mock_token(http_mocker)
+    _mock_parent(
+        http_mocker,
+        [_meeting(_CF_BLOCKED_UUID, "2026-06-15T10:30:00Z"), _meeting("mtg-good==", "2026-06-16T10:30:00Z")],
+    )
+    http_mocker.get(
+        HttpRequest(_participants_url("9XG9hLVrTtWhAK2A7TFO6w%3D%3D"), query_params=_CHILD_PARAMS),
+        HttpResponse(body=_CF_BLOCKED_HTML, status_code=403),
+    )
+    http_mocker.get(
+        HttpRequest(_participants_url("mtg-good%3D%3D"), query_params=_CHILD_PARAMS),
+        _participants_page([_participant("part-good", "alice@example.com", join_time="2026-06-16T10:00:05Z")]),
+    )
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    assert not output.errors
+    assert [r.record.data["participant_uuid"] for r in output.records] == ["part-good"]
+    final_state = output.state_messages[-1].state.stream.stream_state.__dict__
+    assert final_state.get("parent_state") == {"_meetings": {"end_time": "2026-06-16T10:30:00Z"}}
+
+
+@freezegun.freeze_time(_NOW)
+def test_genuine_zoom_403_still_fails_the_sync(http_mocker: HttpMocker) -> None:
+    """A real Zoom 403 — a JSON error body, e.g. the app is missing the
+    dashboard_meetings:read:admin scope — must NOT be swallowed by the
+    Cloudflare filter: it means every partition would silently return
+    nothing while the parent cursor advances, i.e. permanent data loss.
+    The sync must fail loudly instead."""
+    config = ZoomConfigBuilder().build()
+    mock_token(http_mocker)
+    _mock_parent(http_mocker, [_meeting("mtg-uuid-1==", "2026-06-15T10:30:00Z")])
+    http_mocker.get(
+        HttpRequest(_participants_url("mtg-uuid-1%3D%3D"), query_params=_CHILD_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "code": 4711,
+                    "message": "Invalid access token, does not contain scopes:[dashboard_meetings:read:admin].",
+                }
+            ),
+            status_code=403,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, _STREAM, config, expecting_exception=True)
+
+    assert output.errors, "a genuine Zoom 403 (JSON body) must fail the sync, not be skipped"
+    assert not output.records

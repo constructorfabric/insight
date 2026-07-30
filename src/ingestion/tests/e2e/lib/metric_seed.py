@@ -18,7 +18,7 @@ from pathlib import Path
 import yaml
 
 from lib import mariadb
-from lib.config import SessionConfig, TEST_TENANT_ID
+from lib.config import TEST_TENANT_ID, SessionConfig
 
 LOG = logging.getLogger("e2e.metric_seed")
 
@@ -26,7 +26,7 @@ LOG = logging.getLogger("e2e.metric_seed")
 # middleware rejects the nil UUID, and `find_enabled_metric` filters the
 # `metrics` table by tenant, so both the prod metrics seeded by the binary's
 # migrations (under the nil tenant) and our overrides must sit under the tenant
-# the harness sends as `X-Insight-Tenant-Id`.
+# the harness's signed gateway JWT carries in its `tenant_id` claim.
 # SeaORM stores `.uuid()` columns as BINARY(16) in MariaDB, so we pass raw
 # bytes — pymysql interprets a str as utf-8 (36 chars) and overflows.
 TEST_TENANT = TEST_TENANT_ID.bytes
@@ -66,10 +66,7 @@ def _retenant_seeded_metrics(cur) -> int:
     seeded under 0000…0 are invisible to a request that resolves to TEST_TENANT.
     Re-homing them in the test DB (NOT in the migration source) keeps the fix
     inside the harness and out of prod seeding. Idempotent."""
-    cur.execute(
-        "UPDATE metrics SET insight_tenant_id = %s WHERE insight_tenant_id = %s",
-        (TEST_TENANT, NIL_TENANT),
-    )
+    cur.execute("UPDATE metrics SET insight_tenant_id = %s WHERE insight_tenant_id = %s", (TEST_TENANT, NIL_TENANT))
     return cur.rowcount
 
 

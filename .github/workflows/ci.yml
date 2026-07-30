@@ -76,6 +76,32 @@ jobs:
           echo "dotnet=$(echo "$changed" | jq -c .dotnet)" >> "$GITHUB_OUTPUT"
           echo "python=$(echo "$changed" | jq -c .python)" >> "$GITHUB_OUTPUT"
 
+  # Guard the jsonwebtoken crypto-provider invariant: >1 backend active makes
+  # verify() panic on every call (#1725, #1727). cargo tree only reads the
+  # resolved graph — no compile.
+  jwt-provider-guard:
+    name: JWT crypto-provider invariant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+      - name: Exactly one jsonwebtoken crypto provider
+        run: |
+          # Providers = jsonwebtoken's enabled features minus the known
+          # non-crypto ones, so an unknown future backend still counts (fail-safe).
+          providers=$(cargo tree --manifest-path src/backend/Cargo.toml --edges features --invert jsonwebtoken \
+            | grep -oE 'jsonwebtoken feature "[^"]+"' | sed -E 's/.*"([^"]+)".*/\1/' \
+            | tr '-' '_' | sort -u | grep -vxE 'default|use_pem|pem|simple_asn1')
+          n=$(printf '%s' "$providers" | grep -c .)
+          if [ "$n" -ne 1 ]; then
+            echo "Expected exactly one jsonwebtoken crypto provider, found $n: $(echo $providers)"
+            exit 1
+          fi
+
   # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
   # (when entry.cover). Replaces the old standalone workspace rust-lint — fmt and
   # clippy now run per crate, gated by the lint flag from changed.py (a shared
@@ -94,8 +120,12 @@ jobs:
         with:
           persist-credentials: false # don't leave the token in .git/config
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install protoc + librdkafka build deps
+        # protobuf-compiler: grpc-hub -> prost-build. cmake + libcurl headers:
+        # the authenticator vendors librdkafka (audit events, step 10.8) via
+        # rdkafka's cmake-build; librdkafka's OAUTHBEARER path needs curl/curl.h
+        # even with WITH_CURL=0.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -139,11 +169,14 @@ jobs:
       # ~15s startup. ClickHouse is intentionally not provisioned — CH-gated
       # tests skip themselves (see cf/insight#1564).
       - name: Start MariaDB (${{ matrix.entry.name }})
-        if: ${{ matrix.entry.cover && matrix.entry.live_db }}
+        # live_db is a static per-component flag — only pay the container
+        # startup when this run actually executes tests (with or without
+        # coverage), not on a lint-only fanout entry.
+        if: ${{ matrix.entry.live_db && (matrix.entry.cover || matrix.entry.test) }}
         run: |
           set -euo pipefail
           docker run -d --name insight-maria \
-            -e MARIADB_DATABASE=analytics \
+            -e MARIADB_DATABASE=${{ matrix.entry.live_db_name }} \
             -e MARIADB_USER=insight -e MARIADB_PASSWORD=insight \
             -e MARIADB_ROOT_PASSWORD=root \
             -p 3306:3306 mariadb:11.4
@@ -163,7 +196,7 @@ jobs:
         # #[ignore]d live_tests in parallel — they are tenant/metric-key
         # isolated and never reset the DB, so parallel runs don't collide.
         env:
-          INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && 'mysql://insight:insight@127.0.0.1:3306/analytics' || '' }}
+          INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/coverage"
@@ -190,17 +223,29 @@ jobs:
           cargo llvm-cov report --cobertura $ignore \
             --output-path "$GITHUB_WORKSPACE/coverage/rust-${{ matrix.entry.name }}.cobertura.xml"
 
-      # Changed crates with cover=false (api-gateway — no unit tests yet) still
+      # Changed crates with cover=false (authenticator — no in-process tests yet) still
       # run plain `cargo test`: a failure fails this job; only the Cobertura
       # collection and the coverage gates are skipped. Lint-only fanout entries
       # (test=false) skip this too — coverage/tests stay per-changed-crate.
       - name: Test (${{ matrix.entry.name }}, no coverage)
         if: ${{ matrix.entry.test && !matrix.entry.cover }}
         working-directory: ${{ matrix.entry.root }}
+        env:
+          INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
         run: |
           set -euo pipefail
           feats=""
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
+          if [ "${{ matrix.entry.live_db }}" = "true" ]; then
+            # Apply migrations once up front (a failed migration fails the
+            # job); the live tests then re-run the migrator to prove
+            # idempotency. The gear name may contain a dash
+            # (identity-resolution), so the env override is passed via
+            # `env` — a plain NAME=VALUE prefix is not a valid sh assignment.
+            env "APP__gears__${{ matrix.entry.name }}__config__database_url=$INTEGRATION_TESTS_MARIADB_URL" \
+              cargo run -p ${{ matrix.entry.package }} $feats -- \
+                -c "services/${{ matrix.entry.name }}/config/insight.yaml" migrate
+          fi
           cargo test -p ${{ matrix.entry.package }} $feats
 
       - name: Upload Cobertura
@@ -363,10 +408,7 @@ jobs:
       # unchanged language) report 'skipped', not 'failure', so they're fine.
       - name: Guard against incomplete reports
         if: >-
-          needs.changes.result != 'success' ||
-          needs.rust.result == 'failure' ||
-          needs.dotnet.result == 'failure' ||
-          needs.python.result == 'failure'
+          needs.changes.result != 'success' || needs.rust.result == 'failure' || needs.dotnet.result == 'failure' || needs.python.result == 'failure'
         run: |
           echo "changes=${{ needs.changes.result }} rust=${{ needs.rust.result }} dotnet=${{ needs.dotnet.result }} python=${{ needs.python.result }}"
           echo "::error::Change detection or a producer job failed — refusing to gate on an incomplete report set."

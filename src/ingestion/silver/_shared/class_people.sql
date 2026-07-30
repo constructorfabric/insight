@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('workday__to_class_people') }}
 {{ config(
     materialized='table',
     schema='silver',
@@ -14,6 +15,7 @@
 -- here too (project convention is `<source>__to_class_people`).
 -- depends_on: {{ ref('bamboohr__to_class_people') }}
 -- depends_on: {{ ref('ms_entra__to_class_people') }}
+-- depends_on: {{ ref('active_directory__to_class_people') }}
 
 SELECT * FROM (
     {{ union_by_tag('silver:class_people', dedup_version_col=none) }}

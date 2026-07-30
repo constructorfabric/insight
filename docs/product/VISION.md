@@ -4,6 +4,8 @@ Constructor Insight is an AI-assisted intelligence product that helps organizati
 
 It does not stop at reporting activity. Insight observes work from existing systems, uses AI and analytical rules to find problems in output, quality, cost, or flow, recommends concrete improvement actions, and later validates whether those actions improved the measured system.
 
+Insight supports decisions in two directions. Looking back, it improves work that has already happened — the measure → diagnose → recommend → validate loop. Looking forward, it helps product and engineering teams decide what to build and commit to, by estimating what is technically feasible, how much a proposed feature is likely to cost, how quickly it can be delivered, and what risk, effort, and quality tradeoffs are involved — *before* development begins. Forward-looking estimates are grounded in the organization's own delivery history, not generic assumptions, and use the same evidence model, confidence rating, and stated limitations as the rest of the product.
+
 A recommendation in Insight is a structured improvement object, not a generic comment or dashboard annotation. For every recommendation, Insight shows:
 
 * the observed problem;
@@ -38,6 +40,8 @@ Access to people-level data is role-based and policy-controlled. Insight is not 
 
 When evidence is incomplete, Insight shows the gap instead of hiding it. Recommendations, diagnoses, and suggestions are presented with confidence and limitations, so customers know whether they are seeing a strong finding, a directional signal, or an instrumentation problem.
 
+Cross-organization benchmarking, where offered, is strictly opt-in. Raw customer data never leaves the customer's boundary; only anonymized, aggregated benchmarks are shared, and only at cohort, team, or organization level — never as individual data and never as stack ranking. This preserves the ownership and control promise in Sections 2 and 12 even when a customer chooses to compare against peers.
+
 ## 4\. Why Insight
 
 Organizations already have dashboards, activity reports, AI usage logs, engineering metrics, CRM reports, support analytics, cloud cost reports, and finance summaries. The problem is not the absence of numbers. The problem is that these numbers rarely explain what should be improved, who can improve it, and whether the improvement worked.
@@ -53,6 +57,7 @@ Insight is different because it:
 * uses AI to help analyze patterns, explain likely causes, generate recommendations, and summarize evidence;
 * compares change over time, including before and after a process, tooling, staffing, or AI adoption change;
 * moves from measurement to diagnosis, recommendation, action ownership, and validation;
+* informs forward-looking decisions — feasibility, cost, time, and risk of proposed work — from the organization's own delivery history, before development begins;
 * keeps conclusions explainable through evidence, confidence, and stated limitations.
 
 ⠀
@@ -138,6 +143,8 @@ Insight helps find where roadmap intent does not translate into delivered work, 
 
 It can recommend actions such as clarifying initiative ownership, changing portfolio allocation, reducing scope, improving work-to-outcome lineage, pausing low-confidence claims, or instrumenting missing outcome signals before making investment decisions.
 
+Before work is committed, Insight can also help Product Management decide what to build. It supports pre-development questions — is a proposed feature technically feasible, how much is it likely to cost, how quickly can it be delivered, and what risk, effort, or quality tradeoffs are involved — by grounding the estimate in how comparable work performed in the organization's own history. These forecasts are shown as evidence-based extrapolations with confidence and limitations, not as guarantees, and they get stronger as delivery history and lineage improve.
+
 **6.2.3 Design / UX**
 
 For Design and UX, Insight connects design tasks, research activities, prototypes, handoffs, product requirements, implementation work, user feedback, and post-release quality or adoption signals.
@@ -222,6 +229,15 @@ It helps find where AI adoption improves real work, where it only increases acti
 
 It can recommend actions such as changing AI usage guidance, reviewing AI-assisted work patterns, improving prompts or workflows, adjusting review and test gates, reducing low-value AI usage, or validating AI impact before scaling adoption.
 
+Insight is designed to test *why* AI may not accelerate delivery as much as expected, rather than assuming a single answer. It can look for concrete patterns, treated as hypotheses to measure against evidence, not as conclusions:
+
+* **Larger change sets** — AI may modify more code than a human would for the same task, increasing review, testing, and regression load.
+* **Code churn** — generated code is fluid; the same intent can produce different implementations, and working code may be replaced or deleted while the net amount of production functionality moves slowly.
+* **Volume without proportional value** — AI may produce more lines for the same functionality, adding maintenance work without improving outcomes.
+* **Loss of context** — during regeneration, AI may drop earlier instructions, architectural decisions, or conventions, introducing inconsistent implementations.
+
+Insight measures these patterns against the customer's own evidence and keeps confidence and limitations visible, so a slowdown is diagnosed rather than assumed.
+
 **6.3.4 Cost-to-Outcome Flow**
 
 Insight connects people cost, tool cost, AI cost, cloud cost, production cost, support cost, work performed, delivered changes, and outcome signals.
@@ -290,7 +306,7 @@ Insight provides intelligence across the full lifecycle of work, not only from r
 
 Insight reasons over three broad lifecycle phases:
 
-1. **Plan** — decide what should be done, why it matters, who owns it, and what outcome is expected.
+1. **Plan** — decide what should be done, why it matters, who owns it, and what outcome is expected. In this phase Insight can also forecast feasibility, cost, time, and risk for proposed work, grounded in the organization's own delivery history, so product and engineering decisions are informed before development begins.
 2. **Execute** — perform the work across roles, systems, teams, tools, and handoffs.
 3. **Operate and Improve** — run the result, support users or customers, observe cost and quality, learn from outcomes, and improve the system.
 
@@ -353,10 +369,11 @@ Insight provides the following product capabilities:
 2. **Identity, role, and organization model** — resolve people across systems, support temporal team membership, configurable roles, multiple roles per person, and role changes over time.
 3. **Work, outcome, and cost lineage** — connect work, delivery, operations, support, customer outcomes, AI usage, and cost where evidence allows.
 4. **Measurement and metric definitions** — maintain governed definitions for metrics, units, granularity, thresholds, confidence, and limitations.
-5. **Analysis and diagnosis** — detect bottlenecks, risks, anomalies, cost drivers, quality issues, weak evidence, and role/activity mismatches.
+5. **Analysis, diagnosis, and forecasting** — detect bottlenecks, risks, anomalies, cost drivers, quality issues, weak evidence, and role/activity mismatches; and, before work is committed, forecast feasibility, cost, time, and risk for proposed work from the organization's own history, with confidence and limitations.
 6. **Recommendation and validation** — suggest improvement actions, show evidence and confidence, identify an owner, and validate whether the action helped.
 7. **Customer configuration** — let customers configure roles, activities, source systems, metrics, thresholds, dashboards, cohorts, access rules, localization, and governance policies.
 8. **Exposure and consumption** — provide Insight views, summaries, dashboards, APIs, and governed data access for customers who want to use Insight outputs in other systems.
+9. **Benchmarks and shared intelligence** — where enabled and opt-in, compare an organization's own results against anonymized, aggregated benchmarks from peers, public, and market data, at cohort or organization level only (Section 12).
 
 Recommendations declare whether they are evidence-derived from the customer’s own data or heuristic suggestions based on configured rules or best practices. Heuristic recommendations are shown as such and are not presented as data-proven findings.
 
@@ -475,13 +492,17 @@ If the evidence is incomplete, Insight can still use it as a directional signal,
 
 
 ## 11\. Cost Model
+
 Insight connects cost to work, systems, roles, teams, products, services, and outcomes. Cost is not shown only as a finance total; it is used to understand where work becomes expensive, where cost moves between parts of the system, and whether improvement actions actually reduce or shift cost.
+
 ### 11.1 Cost Categories
+
 Insight assembles cost across the major areas where work is created, delivered, operated, supported, and improved:
 
 **Total observable cost = People cost + Tooling cost + AI cost + Infrastructure cost + Production cost + Support cost + Operations cost**
 
 The exact categories and allocation rules are customer-configurable. At minimum, Insight distinguishes:
+
 * **People cost** — effort from employees, contractors, and teams contributing to work across functions.
 * **Tooling and license cost** — development tools, collaboration tools, AI tools, SaaS systems, seats, subscriptions, and contracts.
 * **AI cost** — AI seats, API/token usage, model gateway cost, and self-hosted model compute.
@@ -489,42 +510,82 @@ The exact categories and allocation rules are customer-configurable. At minimum,
 * **Production cost** — runtime compute, storage, network, observability, operations effort, and production AI inference where applicable.
 * **Support cost** — support people, ticket handling, escalations, configuration, upgrades, customer operations, and post-release effort.
 
-⠀Insight preserves unattributed cost instead of forcing it into precise-looking totals. Each cost view declares its allocation rule, evidence, and confidence.
+Insight preserves unattributed cost instead of forcing it into precise-looking totals. Each cost view declares its allocation rule, evidence, and confidence.
+
 ### 11.2 AI and Compute Cost
+
 AI cost can be analyzed as its own view, but it is also allocated to the part of the operating system where it is incurred: development, product work, sales, marketing, support, operations, or production.
+
 AI cost appears in several forms:
+
 * **Per-seat subscriptions** — fixed licenses for AI tools, charged per user or seat.
 * **Hosted model usage** — token, API, or usage-based cost from hosted AI providers.
 * **Self-hosted model compute** — GPU/CPU cost for inference, fine-tuning, training, or internal model serving.
 * **Embedded production AI** — AI consumed by product features or services after release.
 
-⠀Ordinary compute that does not run an AI model — CI runners, test environments, build systems, application servers, storage, and network — remains regular infrastructure, development, or production cost. The distinction is based on what the compute is used for, not on whether it is expensive or cheap.
+Ordinary compute that does not run an AI model — CI runners, test environments, build systems, application servers, storage, and network — remains regular infrastructure, development, or production cost. The distinction is based on what the compute is used for, not on whether it is expensive or cheap.
+
 When AI shifts cost between areas — for example, development effort falls but production inference, review, maintenance, or support cost rises — Insight preserves that movement instead of collapsing it into one generic “AI value” number.
+
 ### 11.3 AI Exposure, Cost, and Impact
+
 Insight analyzes AI usage through three layers:
-| **Layer** | **Question** | **Evidence needed** | **Supports the statement** |
-|:-:|:-:|:-:|:-:|
+
+| Layer | Question | Evidence needed | Supports the statement |
+|:---|:---|:---|:---|
 | **Exposure** | Where and how much was AI used? | Sessions, tokens, tool identity, actor, team, time, accepted suggestions or generated output where available | “AI was used in this scope, to this extent.” |
 | **Cost** | What did that usage cost? | Seat prices, token/API usage, compute usage, pricing rules, allocation rules | “AI cost for this scope was X, with stated limits.” |
 | **Impact** | What changed when AI was used? | Lineage, baseline, comparison group, quality, cost, flow, and outcome context | “AI-exposed work moved differently in this bounded comparison.” |
-These layers apply to AI used by people while performing work and to AI consumed by products or services in production. Insight does not assume impact from usage alone. Where impact evidence is missing, it shows what is missing and can recommend what to instrument next.
+
+These layers apply to AI used by people while performing work and to AI consumed by products or services in production. Insight does not assume impact from usage alone. Where impact evidence is missing, it shows what is missing and can recommend what to instrument next. When AI-exposed work does not move faster or better, Insight looks for concrete patterns — larger change sets, code churn, volume without proportional value, or loss of context — rather than collapsing the result into a single generic "AI value" number (see Section 6.3.3).
+
 ### 11.4 Cost-to-Outcome Analysis
+
 Insight does not treat lower cost as the only goal. It analyzes cost together with output, quality, flow, support load, operational effort, and outcomes.
 
 It helps find cases where:
+
 * cost increases without matching output or outcome movement;
 * local savings shift cost, quality risk, support load, or operational effort downstream;
 * AI adoption increases activity but does not improve outcomes;
 * production or support cost is linked to specific releases, services, teams, or work types;
 * cost is too weakly attributed to support a confident ROI claim.
 
-⠀Insight can recommend actions such as improving allocation rules, reducing unused spend, changing AI usage guidance, optimizing infrastructure, investigating cost anomalies, or improving cost lineage before making ROI or investment claims.
+Insight can recommend actions such as improving allocation rules, reducing unused spend, changing AI usage guidance, optimizing infrastructure, investigating cost anomalies, or improving cost lineage before making ROI or investment claims.
 
 
 
-## 12\. Adoption and Extension
+## 12\. Benchmarks and Shared Intelligence
 
-### 12.1 Adoption Path
+Insight becomes more useful when an organization can compare its own results against a wider context, not only against its own past. This section describes a benchmark and shared-intelligence layer — a "mega-brain" that combines information useful to Insight users. It extends the single-organization product rather than replacing it, and it is always opt-in and governed by privacy and access controls.
+
+### 12.1 Three Sources of Comparison
+
+Insight can combine, subject to privacy and access controls:
+
+* **The organization's own evidence** — its history, cohorts, and baselines. This is the default and requires no sharing.
+* **Opt-in peer benchmarks** — anonymized, aggregated results contributed by other participating Insight customers, so a customer can see how comparable work, cost, quality, speed, or adoption looks across a relevant peer set.
+* **Public and market data** — industry metrics, competitor and market benchmarks, common implementation approaches, and comparable-feature performance, from public or licensed sources.
+
+Examples of questions this layer helps answer: how comparable features perform in other products; industry and competitor metrics; what was developed, by whom, and when; common implementation approaches; and market benchmarks for cost, speed, quality, and adoption. This shared context also strengthens the forward-looking forecasts described in Sections 6.2.2 and 7.1, so an organization with limited history of its own can still reason from a broader base.
+
+### 12.2 Clean-Room Principle
+
+Shared intelligence follows a clean-room model. Raw customer data never leaves the customer's boundary. Only anonymized, aggregated benchmarks are exchanged, and only at cohort, team, or organization level — never individual data and never stack ranking. Participation is opt-in per customer and can be withdrawn. Each benchmark declares its source, cohort definition, coverage, and confidence, so customers know what they are comparing against and how strong the comparison is.
+
+Snowflake and Databricks are studied as reference models for governed data sharing, data marketplaces, and data clean rooms.
+
+### 12.3 Relationship to Governance and Ownership
+
+This layer does not weaken the ownership and control promise in Sections 2 and 3. Customers retain ownership of their data; the shared layer sees only what a customer explicitly contributes, in anonymized and aggregated form. When a customer does not opt in, Insight still works fully on the organization's own evidence, with no loss of core capability.
+
+### 12.4 Business Model
+
+Business and monetization models for shared intelligence — acquiring useful public or commercial datasets, reselling third-party datasets where licensing permits, selling or licensing proprietary datasets, and offering anonymized aggregated benchmarks from participating customers — are out of scope for this document. The Vision describes the capability and its guardrails, not how it is offered commercially.
+
+## 13\. Adoption and Extension
+
+### 13.1 Adoption Path
 
 Insight can start with the systems and evidence a customer already has. The customer does not need perfect coverage before getting value; the product starts with available evidence, shows gaps, and strengthens conclusions as coverage improves.
 
@@ -538,7 +599,7 @@ A typical adoption path is:
 6. **Validate improvement actions** — track whether recommended or customer-selected actions improved output, quality, cost, flow, collaboration, or outcomes.
 
 ⠀
-### 12.2 Extension Points
+### 13.2 Extension Points
 
 Insight is designed to be extended as customers add systems, roles, metrics, and improvement needs.
 
@@ -556,11 +617,14 @@ Extension points include:
 ⠀
 Extensions can be customer-specific or contributed back into shared product capabilities when appropriate. No extension should create a confident metric, diagnosis, or recommendation without declared evidence, coverage, and limitations.
 
-## 13\. Non-Functional Requirements and Migration
-### 13.1 Non-Functional Requirements
+## 14\. Non-Functional Requirements and Migration
+
+### 14.1 Non-Functional Requirements
+
 Insight must be usable as an operational product, not a one-off analytics project. Non-functional requirements are product design targets and are validated per deployment model.
-| **Dimension**                    | **Requirement**                                              |
-|:--------------------------------:|:------------------------------------------------------------:|
+
+| Dimension | Requirement |
+|:---|:---|
 | **Scale**                        | Reference deployment target: ~10K users and ~10M ingested events/day. Larger deployments scale through additional storage, compute, partitioning, or multiple governed deployments where needed. |
 | **Data ingestion**               | Support scheduled ingestion from connected systems, with separate historical backfill for large existing data sets. Insight is not designed as a real-time operational telemetry pipeline. |
 | **Data freshness**               | Show when each source, metric, diagnosis, recommendation, and view was last updated. Stale evidence must be visible to users. |
@@ -571,18 +635,23 @@ Insight must be usable as an operational product, not a one-off analytics projec
 | **Deployment**                   | Support Constructor-hosted cloud, customer cloud, private cloud, and customer-operated installation, including environments with strict data residency or network constraints. |
 | **Upgradeability**               | Support customer-safe upgrades, configuration migration, versioned rules, and backward-compatible access to historical data where possible. |
 | **Localization**                 | Support customer and user-level localization: language, date format, time format, number format, currency, timezone, regional display rules, and right-to-left text where required. |
+
 Detailed scale ceilings, validated throughput numbers, and hardware profiles should be maintained in the technical architecture and deployment documentation, not asserted as universal limits in the Vision document.
 
-### 13.2 Migration and Historical Data
+### 14.2 Migration and Historical Data
+
 Insight can replace fragmented internal measurement, reporting, analytics, and cost-tracking systems over time. Migration is treated as a controlled product adoption path, not a one-time data import.
 
 The first migration targets are Constructor, Acronis, and Virtuozzo. Each starts from a different measurement landscape, so the migration plan is different for each company.
-| **Company** | **Current internal measurement** | **Intent** |
-|:-:|:-:|:-:|
+
+| Company | Current internal measurement | Intent |
+|:---|:---|:---|
 | **Constructor** | Multiple internal analytics systems, including development metrics and AI-tool usage/cost | Consolidate onto Insight |
 | **Acronis** | A developer-productivity analytics system, now in maintenance | Migrate its historical data, then replace once parity is reached |
 | **Virtuozzo** | Current analytics on a general-purpose BI tool; no dedicated legacy product | Deploy Insight as the analytics layer, alongside existing BI until ready |
+
 A typical migration includes:
+
 1. **Inventory existing systems** — identify current dashboards, internal analytics, scripts, reports, source systems, metrics, and owners.
 2. **Map required metrics and views** — decide which existing metrics must be preserved, retired, renamed, or replaced by better definitions.
 3. **Import historical data where available** — retain historical events and metric history when source retention and data quality allow it.
@@ -591,7 +660,7 @@ A typical migration includes:
 6. **Move users gradually** — transition teams, leaders, and administrators to Insight views, recommendations, and workflows.
 7. **Retire legacy systems safely** — shut down old systems only after required metrics, connectors, stewardship, access rules, and migration owners are in place.
 
-⠀Historical comparison depends on source retention. Some systems preserve years of history; others retain only short windows. Insight shows these limits explicitly so users do not compare periods with unequal evidence.
+Historical comparison depends on source retention. Some systems preserve years of history; others retain only short windows. Insight shows these limits explicitly so users do not compare periods with unequal evidence.
 
 
 
@@ -617,3 +686,7 @@ Plain-language definitions; terminology is consistent across this document.
 | **Readiness mode**       | The state used when evidence is too weak for a strong claim — shows the gaps and what to fix, not a fabricated number. |
 | **Release / Deployment** | A *Release* is a versioned, deployable package; a *Deployment* is installing and configuring it into an environment. |
 | **Observable cost**      | Development + production + support cost, with AI cost as a subcomponent. |
+| **Forecast**             | A forward-looking, evidence-based estimate of feasibility, cost, time, or risk for proposed work, extrapolated from the organization's own delivery history and shown with confidence and limitations. Not a guarantee. |
+| **Benchmark**            | An anonymized, aggregated comparison point — from the organization's own history, opt-in peer data, or public/market sources — declared with cohort definition, coverage, and confidence. Never individual-level. |
+| **Shared intelligence**  | The opt-in layer that combines an organization's own evidence with anonymized peer benchmarks and public/market data (Section 12). |
+| **Clean room**           | A data-sharing model where raw data never leaves its owner's boundary and only anonymized, aggregated results are exchanged. |

@@ -42,7 +42,7 @@ public static class PersonsEndpoints
                     Type: "urn:insight:error:tenant_unresolved",
                     Title: "Bad Request",
                     Status: StatusCodes.Status400BadRequest,
-                    Detail: $"Tenant not provided. Send the {HeaderTenantContext.HeaderName} header or configure identity.tenant_default_id."),
+                    Detail: "Tenant not resolved. The gateway JWT must carry a valid tenant_id claim."),
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
@@ -53,7 +53,7 @@ public static class PersonsEndpoints
                     Type: "urn:insight:error:caller_unresolved",
                     Title: "Unauthorized",
                     Status: StatusCodes.Status401Unauthorized,
-                    Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
+                    Detail: "Caller not identified. The gateway JWT must carry a person subject (sub)."),
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
@@ -98,7 +98,7 @@ public static class PersonsEndpoints
                     Type: "urn:insight:error:tenant_unresolved",
                     Title: "Bad Request",
                     Status: StatusCodes.Status400BadRequest,
-                    Detail: $"Tenant not provided. Send the {HeaderTenantContext.HeaderName} header or configure identity.tenant_default_id."),
+                    Detail: "Tenant not resolved. The gateway JWT must carry a valid tenant_id claim."),
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
@@ -109,7 +109,7 @@ public static class PersonsEndpoints
                     Type: "urn:insight:error:caller_unresolved",
                     Title: "Unauthorized",
                     Status: StatusCodes.Status401Unauthorized,
-                    Detail: $"Caller not identified. Send the {HeaderCallerContext.HeaderName} header."),
+                    Detail: "Caller not identified. The gateway JWT must carry a person subject (sub)."),
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
@@ -164,15 +164,54 @@ public static class PersonsEndpoints
             }
         });
 
+        // Internal, SERVICE-ONLY person resolution for the login bootstrap. The
+        // authenticator resolves email -> person_id at login, BEFORE any tenant
+        // or caller exists, so this deliberately bypasses the tenant +
+        // visibility gates the user-facing /v1/persons endpoint enforces. It is
+        // still fail-closed: a valid gateway JWT is required (the fallback
+        // policy), and a non-service caller (sub_type != "service") gets 403.
+        app.MapGet("/internal/persons/by-email/{email}", async (
+            string email,
+            HttpContext http,
+            PersonsRepository repo,
+            CancellationToken cancellationToken) =>
+        {
+            if (http.User.FindFirst("sub_type")?.Value != "service")
+            {
+                return Results.Json(new ProblemResponse(
+                    Type: "urn:insight:error:service_only",
+                    Title: "Forbidden",
+                    Status: StatusCodes.Status403Forbidden,
+                    Detail: "This endpoint is restricted to service principals (sub_type=service)."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            var personId = await repo.ResolvePersonIdByEmailAnyTenantAsync(email, cancellationToken)
+                .ConfigureAwait(false);
+            if (personId is null)
+            {
+                return NotFoundByEmail(email);
+            }
+            return Results.Ok(new
+            {
+                value_type = "email",
+                value = email,
+                insight_source_type = "person",
+                insight_source_id = personId.Value,
+            });
+        }).ExcludeFromDescription(); // internal S2S endpoint — not part of the public OpenAPI contract
+
+        // Health probes are unauthenticated (NGINX_BFF R1 fail-closed applies to
+        // the data surface; k8s/compose probes must reach these without a JWT).
         app.MapGet("/health", async (PersonsRepository repo, CancellationToken cancellationToken) =>
         {
             var ok = await repo.PingAsync(cancellationToken).ConfigureAwait(false);
             return ok
                 ? Results.Ok(new { status = "healthy" })
                 : Results.Json(new { status = "unhealthy" }, statusCode: StatusCodes.Status503ServiceUnavailable);
-        });
+        }).AllowAnonymous();
 
-        app.MapGet("/healthz", () => Results.Text("ok", "text/plain"));
+        app.MapGet("/healthz", () => Results.Text("ok", "text/plain")).AllowAnonymous();
 
         return app;
     }

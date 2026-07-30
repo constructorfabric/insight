@@ -5,7 +5,7 @@
 //! It drives the whole flow through the SDK `ServiceTokenClient`:
 //!   1. obtain a tenant-scoped service token and verify it against the JWKS
 //!      (`sub = sid = service:testclient`, `roles` includes `service`,
-//!      `tenants = [tenant-a]`);
+//!      `tenant_id = tenant-a`);
 //!   2. a replayed assertion is rejected (single-use `jti`);
 //!   3. an assertion signed with a key the registry does not hold is rejected;
 //!   4. a request that names no tenant is rejected (tenant isolation).
@@ -16,6 +16,8 @@
 //! ```
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+mod common;
 
 use authenticator_sdk::ServiceTokenClient;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
@@ -55,15 +57,16 @@ struct Jwk {
 #[derive(Deserialize)]
 struct Claims {
     sub: String,
-    tenants: Vec<String>,
-    roles: Vec<String>,
+    tenant_id: String,
+    /// Space-delimited on the wire (OAuth `scope` shape).
+    roles: String,
     sid: String,
     aud: String,
 }
 
 /// Fetch + verify a gateway JWT against the authenticator's published JWKS.
 async fn verify_against_jwks(jwt: &str) -> Claims {
-    let http = reqwest::Client::new();
+    let http = common::client();
     let jwks: Jwks = http
         .get(format!("{}/.well-known/jwks.json", auth_base()))
         .send()
@@ -93,38 +96,42 @@ async fn service_token_full_loop() {
     let endpoint = token_endpoint();
     let client =
         ServiceTokenClient::from_key_file("testclient", testclient_key_path(), &endpoint).unwrap();
-    let tenant = vec!["tenant-a".to_owned()];
+    let tenant = "tenant-a";
 
     // 1. Obtain a (tenant-scoped) service token and verify it against the JWKS.
     let bearer = client
-        .bearer(&tenant)
+        .bearer(tenant)
         .await
         .expect("bearer() should mint a tenant-scoped token");
     let jwt = bearer
         .strip_prefix("Bearer ")
         .expect("bearer() returns a Bearer value");
     let claims = verify_against_jwks(jwt).await;
-    assert_eq!(claims.sub, "service:testclient", "sub is service:<name>");
+    // `sub` is the stable per-service UUID (v5 over "service:<name>"); `sid`
+    // carries the service:<name> correlation handle.
+    let expected_sub =
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"service:testclient").to_string();
+    assert_eq!(claims.sub, expected_sub, "sub is the per-service UUIDv5");
     assert_eq!(claims.sid, "service:testclient", "sid is service:<name>");
     assert_eq!(claims.aud, "internal-services");
     assert!(
-        claims.roles.contains(&"service".to_owned()),
+        claims.roles.split_whitespace().any(|r| r == "service"),
         "service role always present, got {:?}",
         claims.roles
     );
     assert_eq!(
-        claims.tenants, tenant,
+        claims.tenant_id, tenant,
         "the requested tenant is carried in the token"
     );
 
     // 2. Replay: the same assertion must be accepted once, then rejected.
     let assertion = client.make_assertion().unwrap();
     client
-        .post(&assertion, &tenant)
+        .post(&assertion, tenant)
         .await
         .expect("first use of an assertion succeeds");
     assert!(
-        client.post(&assertion, &tenant).await.is_err(),
+        client.post(&assertion, tenant).await.is_err(),
         "a replayed assertion must be rejected"
     );
 
@@ -134,13 +141,13 @@ async fn service_token_full_loop() {
     let impostor = ServiceTokenClient::from_key_pem("testclient", &wrong_priv, &endpoint).unwrap();
     let forged = impostor.make_assertion().unwrap();
     assert!(
-        impostor.post(&forged, &tenant).await.is_err(),
+        impostor.post(&forged, tenant).await.is_err(),
         "an assertion signed with an unregistered key must be rejected"
     );
 
     // 4. Tenant isolation: a request that names no tenant is refused (400).
     assert!(
-        client.fetch(&[]).await.is_err(),
+        client.fetch("").await.is_err(),
         "a service token must name a tenant; an unscoped request is rejected"
     );
 }

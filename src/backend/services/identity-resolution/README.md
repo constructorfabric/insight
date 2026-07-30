@@ -1,13 +1,16 @@
 # identity-resolution
 
-Rust port of the .NET `identity` service (epic #1602). **Iteration 1: read API.**
+Rust port of the .NET `identity` service (epic #1602).
 Built on the gears-rust framework — same host pattern as `services/analytics`
-(the `api-gateway` system gear is the REST host; auth disabled — the platform
-gateway authenticates upstream).
+(the `api-gateway` system gear is the REST host; auth ENABLED — the
+`oidc-authn-plugin` verifies the gateway JWT and maps its claims into the
+`SecurityContext`).
 
-Current state: boots as a gears host, connects to MariaDB on startup, serves
-`/health`, and implements the read API — `POST /v1/profiles` (attributes, `ids[]`,
-org tree) plus the deprecated `GET /v1/persons/{email}`.
+Current state: boots as a gears host, connects to MariaDB on startup, and
+implements the full ported surface — `POST /v1/profiles` (attributes, `ids[]`,
+org tree), persons-seed, roles / person-roles / visibility, org subchart, and
+the internal service-only `GET /internal/persons/by-email/{email}`. (The
+deprecated .NET `GET /v1/persons/{email}` is intentionally not carried.)
 
 ## Run locally against the dev cluster DB
 
@@ -39,17 +42,18 @@ cd src/backend
 env "APP__gears__identity-resolution__config__database_url=$URL" \
   cargo run -p identity-resolution -- -c services/identity-resolution/config/insight.yaml
 ```
-Startup log should show `connected to MariaDB` and `HTTP server bound on 0.0.0.0:8083`.
+Startup log should show `connected to MariaDB` and `HTTP server bound on 0.0.0.0:8082`.
 
 ### 4. Verify — terminal 3
 ```bash
-curl -s localhost:8083/health     # {"status":"healthy", ...}
-curl -s localhost:8083/healthz    # ok
-open http://localhost:8083/docs   # OpenAPI docs page
+curl -s localhost:8082/health     # {"status":"healthy", ...}
+curl -s localhost:8082/healthz    # ok
+open http://localhost:8082/docs   # OpenAPI docs page
 ```
 
 ## Notes
-- HTTP port **8083** (owned by the `api-gateway` host gear).
+- HTTP port **8082** (owned by the `api-gateway` host gear) — same port as the
+  .NET identity service it replaces, so the cutover flips only the hostname.
 - `database_url` is left **empty** in `config/insight.yaml` — no credentials are
   committed. It is injected via the env override above (or, in a real deploy,
   from the umbrella Secret).

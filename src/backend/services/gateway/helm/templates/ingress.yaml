@@ -1,0 +1,39 @@
+{{- if .Values.ingress.enabled }}
+# Cluster ingress -> the nginx gateway. The gateway is the single edge proxy:
+# it runs auth_request against the authenticator, injects the gateway JWT, and
+# fans out to /api/* upstreams + the SPA. So the ingress sends everything ("/")
+# here; path routing happens inside the gateway, not at the ingress.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "insight-gateway.fullname" . }}
+  labels:
+    {{- include "insight-gateway.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if and .Values.ingress.tls .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "insight-gateway.fullname" . }}
+                port:
+                  name: http
+{{- end }}

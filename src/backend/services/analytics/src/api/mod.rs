@@ -5,10 +5,8 @@ pub(crate) mod canonical_json;
 mod catalog;
 pub(crate) mod error;
 mod handlers;
+mod metric_definitions;
 mod metric_results;
-
-#[cfg(test)]
-mod tenant_resolution_tests;
 
 #[cfg(test)]
 mod http_live_tests;
@@ -17,13 +15,11 @@ mod http_live_tests;
 mod openapi_tests;
 
 use axum::http::StatusCode;
-use axum::middleware::from_fn;
 use axum::{Extension, Router};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder};
 
-use crate::auth;
 use crate::config::GearConfig;
 use crate::domain::admin_threshold::AdminThresholdService;
 use crate::domain::admin_threshold::dto as admin_dto;
@@ -31,6 +27,7 @@ use crate::domain::auth::TenantAuthorization;
 use crate::domain::catalog::CatalogReader;
 use crate::domain::catalog::response as catalog_response;
 use crate::domain::metric;
+use crate::domain::metric_definitions::listing as metric_definitions_listing;
 use crate::domain::query;
 use crate::domain::schema_validator::SchemaValidator;
 use crate::domain::threshold;
@@ -75,16 +72,20 @@ pub struct AppState {
 /// extension scope to the analytics gear's routes only — not the host's `/health`,
 /// `/healthz`, `/openapi.json`, `/docs` — then merges it into the host router.
 ///
-/// The shared `Arc<AppState>` is attached via `router.layer(Extension(state))`
-/// and the per-request tenant override via `router.layer(from_fn(tenant_middleware))`.
+/// The shared `Arc<AppState>` is attached via `router.layer(Extension(state))`.
+/// Gateway-JWT identity is enforced entirely by the host authn pipeline: the
+/// `oidc-authn-plugin` verifies the ES256 gateway JWT (signature / `iss` /
+/// `aud` / `exp`) against the authenticator's JWKS and maps its claims to the
+/// request `SecurityContext` via configured `claim_mapping` (`sub` →
+/// `subject_id`, `tenant_id` → `subject_tenant_id`, `roles` → `token_scopes`;
+/// `subject_tenant_id` is required). No bespoke mapping layer here
+/// (`NGINX_BFF` R1 / G2).
 pub fn register_routes(
     host_router: Router,
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let api = build_operations(Router::new(), openapi)
-        .layer(from_fn(auth::tenant_middleware))
-        .layer(Extension(state));
+    let api = build_operations(Router::new(), openapi).layer(Extension(state));
 
     host_router.merge(api)
 }
@@ -216,7 +217,15 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Compute metric results")
         .authenticated()
         .no_license_required()
-        .json_response(StatusCode::OK, "Metric results")
+        .json_request::<crate::domain::metric_results::MetricResultsRequest>(
+            openapi,
+            "Metric result request",
+        )
+        .json_response_with_schema::<crate::domain::metric_results::MetricResultsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Metric results",
+        )
         .standard_errors(openapi)
         .handler(metric_results::query_metric_results)
         .register(router, openapi);
@@ -337,6 +346,23 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(catalog::get_metrics)
+        .register(router, openapi);
+
+    // Unified metric definitions listing — display fields only, tenant
+    // scope resolved server-side from the session. GET is safe here: no
+    // request-context fields exist to leak into access logs.
+    router = OperationBuilder::get("/v1/metric-definitions")
+        .operation_id("analytics_api.metric_definitions.list")
+        .summary("List unified metric definitions")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<metric_definitions_listing::MetricDefinitionListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Metric definitions",
+        )
+        .standard_errors(openapi)
+        .handler(metric_definitions::list_metric_definitions)
         .register(router, openapi);
 
     // Admin threshold CRUD (Refs #525) — DESIGN §3.2 admin-crud.

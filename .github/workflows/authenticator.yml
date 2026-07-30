@@ -1,0 +1,108 @@
+name: Authenticator — e2e, endpoint coverage
+
+# The authenticator's end-to-end suite (tests/run-e2e.sh: Redis in docker,
+# fakeidp + two authenticator instances as local release binaries, the eight
+# e2e_*.rs loops) plus the endpoint coverage gate on top of it: the suite's
+# shared client (tests/common/mod.rs) records every request against the
+# authenticator into a ledger, and the gate job matches that ledger against
+# the committed OpenAPI spec — a documented operation no test exercises fails
+# the gate. Same gate script and report as the analytics/identity lanes
+# (src/ingestion/tests/e2e/lib/api_coverage.py); the spec universe is kept
+# fresh by the openapi-specs drift gate.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/services/authenticator/**"
+      - "src/backend/services/fakeidp/**"
+      - "src/backend/libs/authenticator-sdk/**"
+      - "src/ingestion/tests/e2e/lib/api_coverage.py"
+      - "docs/components/backend/authenticator/openapi.json"
+      - ".github/workflows/authenticator.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: e2e (8 suites)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install protoc + librdkafka build deps
+        # protobuf-compiler: grpc-hub -> prost-build. cmake + libcurl headers:
+        # the authenticator vendors librdkafka (audit events) via rdkafka's
+        # cmake-build; librdkafka's OAUTHBEARER path needs curl/curl.h.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/backend -> target
+          key: authenticator-e2e
+
+      - name: Run the authenticator e2e suite
+        # run-e2e.sh builds fakeidp + authenticator (release), boots the stack,
+        # runs every e2e_*.rs loop serially, and leaves the coverage ledger at
+        # $E2E_COVERAGE_LEDGER (tests/common/mod.rs writes it per response).
+        env:
+          E2E_COVERAGE_LEDGER: ${{ github.workspace }}/observed_authenticator_endpoints.json
+        run: src/backend/services/authenticator/tests/run-e2e.sh
+
+      # Uploaded even if the suite failed, so the gate reports alongside a red
+      # suite (the ledger holds whatever ran before the failure).
+      - name: Upload coverage ledger
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-inputs-authenticator
+          path: observed_authenticator_endpoints.json
+          overwrite: true
+          # A failure before the first recorded request legitimately leaves no
+          # ledger; warn instead of masking the suite's own failure.
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Pure-Python analysis of the ledger — no Docker, no Rust, no app boot.
+  # `!cancelled()` so it still reports when the suite itself failed.
+  authenticator-endpoint-coverage-gate:
+    name: Authenticator endpoint coverage gate
+    needs: e2e
+    if: ${{ !cancelled() && needs.e2e.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Checkout only for the gate script + the committed OpenAPI spec (the
+      # coverage universe — kept fresh by the openapi-specs drift gate).
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inputs-authenticator
+          path: coverage-inputs
+      - name: Analyse authenticator endpoint coverage
+        run: |
+          python3 src/ingestion/tests/e2e/lib/api_coverage.py \
+            --suite authenticator \
+            --observed coverage-inputs/observed_authenticator_endpoints.json \
+            --spec docs/components/backend/authenticator/openapi.json | tee authenticator_coverage.md
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat authenticator_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Authenticator endpoint coverage gate failed — a spec operation is exercised by no test and not in SKIP_LIST (or a skip is stale). See the e2e suites (src/backend/services/authenticator/tests/)."; fi
+          exit "$rc"

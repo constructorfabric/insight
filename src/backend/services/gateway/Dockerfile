@@ -48,3 +48,5 @@ EXPOSE 8080
 
 STOPSIGNAL SIGQUIT
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+# CI rebuild marker -- first publish of this image (fix/ci-publish-gateway-authenticator).

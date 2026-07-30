@@ -70,7 +70,7 @@ for ingress hostnames and the services/ports it provisions.
 
 | Service | Access | Credentials |
 |---------|--------|-------------|
-| Airbyte | ingress or `kubectl -n insight port-forward svc/airbyte-webapp-svc 8000:80` | from gitops secrets |
+| Airbyte | ingress or `kubectl -n insight port-forward svc/airbyte-airbyte-server-svc 8000:8001` | from gitops secrets |
 | Argo UI | ingress or `kubectl -n insight port-forward svc/argo-server 2746:2746` | No auth (local) |
 | ClickHouse | ingress or `kubectl -n insight port-forward svc/insight-clickhouse 8123:8123` | user: `default`, password: `clickhouse` |
 

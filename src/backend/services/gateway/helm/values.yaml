@@ -11,6 +11,17 @@ service:
   type: ClusterIP
   port: 8080
 
+# Cluster ingress -> gateway. The gateway is the single edge; the ingress routes
+# everything ("/") to it (path routing happens inside the gateway).
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  host: "" # Leave empty for local (no host-based routing)
+  tls:
+    enabled: false
+    secretName: ""
+
 # Gateway upstreams + route table. Every URL is a Helm template rendered with
 # `tpl` (configmap.yaml / deployment.yaml), so `{{ .Release.Name }}` resolves to
 # the real service names and there are no hardcoded hosts. Override any URL with
@@ -23,19 +34,29 @@ gateway:
 
   # Cookie-to-JWT exchange target (FQDN, for the cosocket) and the SPA upstream.
   authenticatorUrl: 'http://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.{{ .Values.gateway.clusterDomain }}:8083'
-  frontUrl: 'http://{{ .Release.Name }}-frontend:80'
+  # FQDN, not the short name: routegen emits a `proxy_pass` through nginx's
+  # runtime `resolver`, which (unlike the OS resolver) does NOT apply the pod's
+  # /etc/resolv.conf search domains — a short `insight-frontend` fails with
+  # "could not be resolved (Host not found)". Same reason authenticatorUrl is a
+  # FQDN.
+  frontUrl: 'http://{{ .Release.Name }}-frontend.{{ .Release.Namespace }}.svc.{{ .Values.gateway.clusterDomain }}:80'
 
   # Route table -> rendered into the ConfigMap's routes.yaml (via `tpl`) and
   # compiled by routegen at startup. Upstreams are nginx upstream blocks
   # (short names resolve via the k8s search domain).
   defaults:
     stripRequestHeaders: [X-Real-IP, Forwarded]
+  # stripPrefix turns `/api/analytics/v1/metrics` into the service's own
+  # `/v1/metrics` before proxying (the app services host at `/v1/*`, unaware of
+  # the platform prefix).
   routes:
-    - prefix: /api/v1/analytics
+    - prefix: /api/analytics
       upstream: 'http://{{ .Release.Name }}-analytics:8081'
       timeoutMs: 60000
-    - prefix: /api/v1/identity
+      stripPrefix: true
+    - prefix: /api/identity
       upstream: 'http://{{ .Release.Name }}-identity:8082'
+      stripPrefix: true
 
   # Trusted ingress-hop CIDRs for X-Forwarded-For (set_real_ip_from). Empty =
   # no client-IP trust; set to the ingress/pod network where TLS terminates in

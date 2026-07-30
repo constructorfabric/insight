@@ -1,9 +1,13 @@
 ##
 ## Supplemental RBAC required by Argo Workflows beyond what the upstream
-## chart provisions. Applied by `make system-argo` after the chart install.
+## chart provisions. Applied by `make system-argo` after the chart install,
+## once per namespace the controller watches (workflowNamespaces).
 ##
 ## Templated; substituted at apply time via envsubst.
-## Placeholders: ${NAMESPACE}, ${WORKFLOW_SA}.
+## Placeholders: ${NAMESPACE} (where this Role/RoleBinding is created —
+## i.e. one of the watched workflowNamespaces), ${WORKFLOW_SA} (the
+## ServiceAccount name), ${SA_NAMESPACE} (where that ServiceAccount
+## actually lives).
 ##
 ## argo-workflow-executor: Role bound to the `argo-workflow` ServiceAccount
 ## created by the Argo Workflows chart (workflow.serviceAccount.create=true
@@ -11,8 +15,14 @@
 ## can write step results (workflowtaskresults, pods, pods/log) via the
 ## Kubernetes API.
 ##
-## All Insight components (Airbyte, Argo, the umbrella) live in the SAME
-## namespace, so this RBAC binds only to that one namespace.
+## The two-namespace split (services vs. shared infra, see
+## environments/*/inventory.yaml) is this repo's standard topology — the
+## `argo-workflow` SA is only ever created once, in NS_INFRA, but the
+## controller can run workflow pods (and thus need this RBAC) in every
+## namespace listed in workflowNamespaces. Hence SA_NAMESPACE is a
+## separate placeholder from NAMESPACE: the RoleBinding's subject always
+## points back at NS_INFRA even when the Role/RoleBinding itself is
+## applied into NS_APP.
 ##
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -38,7 +48,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: ${WORKFLOW_SA}
-    namespace: ${NAMESPACE}
+    namespace: ${SA_NAMESPACE}
 roleRef:
   kind: Role
   name: argo-workflow-executor

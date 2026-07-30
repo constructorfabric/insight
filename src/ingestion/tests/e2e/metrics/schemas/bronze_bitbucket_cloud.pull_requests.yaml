@@ -1,0 +1,54 @@
+# Auto-derived from source_bitbucket_cloud stream get_json_schema() and the
+# bronze_bitbucket_cloud placeholder DDL. Array/object fields land in bronze
+# as JSON strings (the staging models toString() them), so they are typed
+# string here. Regression fixture for issue #1877.
+schemas:
+  bronze_bitbucket_cloud.pull_requests:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      tenant_id: { type: string }
+      source_id: { type: string }
+      unique_key: { type: string }
+      entity_key: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      record_type: { type: [string, "null"] }
+      generation_id: { type: [string, "null"] }
+      bucket_id: { type: [integer, "null"] }
+      snapshot_item_count: { type: [integer, "null"] }
+      snapshot_available: { type: [boolean, "null"] }
+      repository_uuid: { type: [string, "null"] }
+      workspace_uuid: { type: [string, "null"] }
+      id: { type: [integer, "null"] }
+      title: { type: [string, "null"] }
+      description: { type: [string, "null"] }
+      state: { type: [string, "null"] }
+      created_on: { type: [string, "null"] }
+      updated_on: { type: [string, "null"] }
+      author_display_name: { type: [string, "null"] }
+      author_uuid: { type: [string, "null"] }
+      author_account_id: { type: [string, "null"] }
+      closed_by_display_name: { type: [string, "null"] }
+      closed_by_uuid: { type: [string, "null"] }
+      closed_by_account_id: { type: [string, "null"] }
+      source_branch: { type: [string, "null"] }
+      destination_branch: { type: [string, "null"] }
+      source_commit_hash: { type: [string, "null"] }
+      destination_commit_hash: { type: [string, "null"] }
+      merge_commit_hash: { type: [string, "null"] }
+      task_count: { type: [integer, "null"] }
+      draft: { type: [boolean, "null"] }
+      queued: { type: [boolean, "null"] }
+      close_source_branch: { type: [boolean, "null"] }
+      reason: { type: [string, "null"] }
+      reviewers: { type: [string, "null"] }
+      comment_count: { type: [integer, "null"] }
+      participants: { type: [string, "null"] }
+      workspace: { type: [string, "null"] }
+      repo_slug: { type: [string, "null"] }
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }

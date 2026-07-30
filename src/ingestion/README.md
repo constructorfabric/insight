@@ -316,7 +316,8 @@ src/ingestion/
 ├── scripts/                         # ClickHouse migrations + in-toolbox helpers
 │   ├── migrations/                  #   gold-view migrations (*.sql)
 │   ├── apply-ch-migrations.sh       #   migration runner (clickhouse-migrate Hook Job)
-│   ├── create-bronze-placeholders.sh #  ADR-0007 fresh-cluster placeholders
+│   ├── create-bronze-placeholders.sh #  applies connectors-ddl/ DDL snapshot
+│   ├── connectors-ddl/              #   CI-generated SHOW CREATE snapshot (#1831)
 │   ├── lib/ch-exec.sh               #   ClickHouse HTTP exec helpers
 │   └── wait-for-services.sh         #   kubectl wait for pods
 │
@@ -498,7 +499,7 @@ Both passes are idempotent — re-run any time after a Secret or descriptor chan
 | Secret | Namespace | Keys | Created by |
 |--------|-----------|------|------------|
 | `clickhouse-credentials` | `insight` + `argo` | `username`, `password` | `secrets/apply.sh` |
-| `airbyte-auth-secrets` | `airbyte` | `instance-admin-password`, ... | Helm chart (auto) |
+| `airbyte-auth-secrets` | Airbyte's own (`airbyte.namespace`, defaults to the app's) | `instance-admin-password`, ... | Airbyte Helm chart (auto) |
 | `insight-{connector}-{source-id}` | `insight` | Connector-specific | `secrets/apply.sh` |
 
 ### Password Rotation

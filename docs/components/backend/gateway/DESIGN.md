@@ -331,12 +331,12 @@ defaults:
     - X-Real-IP
     - Forwarded
 routes:
-  - prefix: /api/v1/analytics
+  - prefix: /api/analytics
     upstream: http://analytics.insight.svc.cluster.local:8081
     timeout_ms: 60000
     strip_prefix: false
 
-  - prefix: /api/v1/identity
+  - prefix: /api/identity
     upstream: http://identity.insight.svc.cluster.local:8082
 
   - prefix: /api/v1/stream
@@ -352,9 +352,9 @@ Validation rules (enforced by the configurator in CI, before nginx ever sees the
 - `prefix` must start with `/api/`.
 - `upstream` must be a valid URL with hostname and port.
 - `timeout_ms >= 0`; `0` only allowed when `websocket: true`.
-- `strip_request_headers` entries must be valid HTTP header names; reserved gateway headers (`Authorization`, `X-Correlation-Id`, `X-Forwarded-*`, gateway cookies) **MUST NOT** appear in this list -- they are stripped unconditionally. `X-Tenant-ID` is **not** reserved and must pass through (it is the tenant selector the downstream middleware validates against the signed `tenants[]`).
+- `strip_request_headers` entries must be valid HTTP header names; reserved gateway headers (`Authorization`, `X-Correlation-Id`, `X-Forwarded-*`, gateway cookies) **MUST NOT** appear in this list -- they are stripped unconditionally. There is no tenant selector anymore: the JWT carries a single signed `tenant_id`, so an inbound `X-Tenant-ID`/`X-Insight-Tenant-Id` is not authority and downstream ignores it (deployments may strip it for hygiene).
 
-**Why the defaults strip `X-Real-IP` and `Forwarded` -- and how backends still get the client IP.** Those two are *inbound, client-writable* identity headers: the gateway never sets them, so any value arriving upstream could only have come from the browser -- an attacker sending `Forwarded: for=1.2.3.4` would spoof IP-based audit trails, rate-limit keys, or geo logic in any backend that reads them. Stripping them leaves exactly **one source of client-IP truth**: the `X-Forwarded-For` chain, which the gateway strips from the client unconditionally (reserved set) and re-writes itself (hygiene block item 5), resolving the true peer address via `set_real_ip_from` trust of the ingress hops. Backends read client IP from that header and nothing else; the authenticator's session records (`ip` captured at login) rely on the same chain. Same trust model as the tenant selector: an unsigned inbound header is never authority. If an upstream ever genuinely needs `X-Real-IP`, the configurator emits it gateway-written (`$remote_addr` after real-ip resolution) as a hygiene-block addition -- do not remove it from the strip list, which would reintroduce the client-writable variant.
+**Why the defaults strip `X-Real-IP` and `Forwarded` -- and how backends still get the client IP.** Those two are *inbound, client-writable* identity headers: the gateway never sets them, so any value arriving upstream could only have come from the browser -- an attacker sending `Forwarded: for=1.2.3.4` would spoof IP-based audit trails, rate-limit keys, or geo logic in any backend that reads them. Stripping them leaves exactly **one source of client-IP truth**: the `X-Forwarded-For` chain, which the gateway strips from the client unconditionally (reserved set) and re-writes itself (hygiene block item 5), resolving the true peer address via `set_real_ip_from` trust of the ingress hops. Backends read client IP from that header and nothing else; the authenticator's session records (`ip` captured at login) rely on the same chain. Same trust model as the tenant claim: an unsigned inbound header is never authority — only the signed gateway JWT is. If an upstream ever genuinely needs `X-Real-IP`, the configurator emits it gateway-written (`$remote_addr` after real-ip resolution) as a hygiene-block addition -- do not remove it from the strip list, which would reintroduce the client-writable variant.
 
 ### 3.9 Generated Location Hygiene Block
 
@@ -514,7 +514,9 @@ One OpenResty Deployment behind the single ingress backend, per the edge chain f
 
 **Why**: In the deleted Rust Router, auth was structural (every request passed the middleware chain by construction); in nginx it is per-location config. The containment is this rule: a route missing auth means a JWT-less request downstream and a 401 -- an availability bug caught by the first smoke test, never a breach. This is what zero trust means here: no service trusts network position, headers, or another service's word; only the signature.
 
-**Consequences**: CI asserts every `/api/` route returns 401 without a cookie; downstream verification ships as one shared middleware so a new service gets the boundary by adding a dependency (implementation phase 3 of the plan).
+**Consequences**: CI asserts every `/api/` route returns 401 without a cookie; downstream verification ships as one shared middleware so a new service gets the boundary by adding a dependency.
+
+**Realized (step 07)**: The algorithm is **ES256** (§9.6, ECDSA P-256) — smaller signatures (~64 B vs RSA's ~256 B) and faster verify, both paid on every downstream request. Downstream verification is entirely **plugin-native**: Rust services enable host auth via the **upstream `cf-gears-oidc-authn-plugin`** (the insight-local fork and the bespoke `authverify` crate are both **deleted**), which verifies signature / `iss` / `aud` / `exp` / the required `tenant_id` and maps the signed claims straight to a `SecurityContext` via configured `claim_mapping` (`sub`→`subject_id`, `tenant_id`→`subject_tenant_id`, `sub_type`→`subject_type`, `roles`→`token_scopes`). There is **no tenant selector**: the JWT carries a single signed `tenant_id`, so the `X-Tenant-ID`/`X-Insight-Tenant-Id` header trust paths are gone (a tenant from the outside world never passes). analytics adopts the plugin (its `auth_disabled` trust path deleted). identity (.NET) turns on full `JwtBearer` validation (pinned to `EcdsaSha256`) against the authenticator's JWKS, reads the caller from `sub` and the tenant from the single `tenant_id` claim, and fails closed via a `RequireAuthenticatedUser` fallback policy. The plugin resolves the JWKS via OIDC **discovery** (`{issuer}/.well-known/openid-configuration` → `jwks_uri`) over **https only**; in production the issuer is a real https origin, and in dev/e2e a self-signed TLS front serves the authenticator's well-known endpoints (trusted via `http_client.custom_ca_certificate_paths`). Proven end-to-end by `services/gateway/tests/step07/` (the §D scenarios).
 
 ### Carried over and known issues
 

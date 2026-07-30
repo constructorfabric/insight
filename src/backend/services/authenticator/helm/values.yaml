@@ -32,6 +32,25 @@ serviceTokens:
   # Service tokens are always tenant-scoped; there is no per-service tenant flag.
   services: {}
 
+# CSRF Origin-allowlist fallback (PRD 5.11) for state-changing /auth/*
+# requests that carry no X-CSRF-Token: list the SPA's public origin(s), e.g.
+# ["https://insight.example.com"]. Empty (default) = fail closed, header only.
+#
+# DEPLOY COORDINATION: CSRF is enforced fail-closed. An SPA that does not yet
+# send X-CSRF-Token will get 403 on POST /auth/logout, /auth/refresh, and
+# DELETE /auth/sessions once this chart is rolled. Either roll the matching
+# insight-front (which sends the header) FIRST, or set csrfOrigins to the SPA's
+# public origin here so the Origin fallback keeps those calls working during
+# the transition.
+csrfOrigins: []
+
+# Audit publishing (PRD nfr-auth-audit): auth events to the platform Redpanda
+# topic. Empty brokers (default) disables publishing — events stay in the
+# structured log. The umbrella wires the bundled Redpanda.
+audit:
+  brokers: ""
+  topic: "insight.audit.events"
+
 resources:
   requests:
     cpu: 50m
@@ -62,6 +81,49 @@ existingSecret: ""
 # jwt_ttl + downstream JWKS cache age, ~65 min) and rolling the pods.
 signingKeysSecret: ""
 signingKeysPath: /app/keys
+
+# Extra CA trust for the IdP's TLS connection. Needed when
+# `idp.issuer_url` sits behind an internal/corporate CA that the
+# container's default trust store does not chain to — the authenticator's
+# HTTP client validates the IdP cert against its compiled-in roots and does
+# not consult the OS trust store or SSL_CERT_FILE, so the CA must be handed
+# to it explicitly via this path. Leave `extraCaCertSecret` empty to trust
+# only the default roots.
+#
+#   extraCaCertSecret: name of a Secret holding the PEM bundle (may contain a
+#                      full chain: intermediate + root).
+#   extraCaCertSecretKey: key within that Secret whose value is the PEM.
+#   extraCaCertPath: mount path the bundle is exposed at inside the pod; this
+#                    exact path is also passed to the binary as
+#                    APP__gears__authenticator__config__idp__extra_ca_cert_path.
+idp:
+  extraCaCertSecret: ""
+  extraCaCertSecretKey: ca-bundle.pem
+  extraCaCertPath: /etc/ssl/authenticator-ca/ca-bundle.pem
+
+# TLS discovery front (NGINX_BFF R1). Downstream verifiers (analytics /
+# identity-resolution) run the oidc-authn-plugin, which resolves the JWKS via
+# OIDC discovery over HTTPS ONLY. When enabled, an `authn-tls` nginx sidecar
+# terminates TLS on `port` (cert issued by cert-manager from `issuerRef`) and
+# proxies the well-known endpoints to the authenticator on localhost. The token
+# `iss` (gateway_issuer) is then `https://<fullname>:<port>`, and downstream
+# services trust the issuer's CA (the cert Secret's ca.crt) via
+# gateway.caCertPaths. Disabled by default; the umbrella turns it on.
+tlsDiscovery:
+  enabled: false
+  port: 8443
+  # cert-manager issuer that signs the discovery cert (local: the self-signed
+  # `local-ca` ClusterIssuer; prod: a real issuer).
+  issuerRef:
+    name: ""
+    kind: ClusterIssuer
+  # Secret cert-manager writes the leaf + ca.crt into. Empty = <fullname>-authn-tls-cert.
+  certSecret: ""
+  # Unprivileged nginx (runs non-root, binds the high :8443, writable /tmp paths)
+  # — the pod's securityContext forbids root.
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: "1.27-alpine"
 
 # Health probes. Boot fails closed if Redis is unreachable or the signing keys
 # are missing (the gear pings Redis and loads keys in `init`), so a Ready pod

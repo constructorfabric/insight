@@ -103,7 +103,7 @@ def stack():
     keys = HERE / "keys"
     keys.mkdir(exist_ok=True)
 
-    def _genpkey(out: str) -> None:
+    def _genpkey_ec(out: str) -> None:
         subprocess.run(
             [
                 "openssl",
@@ -121,15 +121,17 @@ def stack():
             capture_output=True,
         )
 
-    # ES256 gateway signing key.
-    _genpkey("current.pem")
+    # ES256 gateway signing key (§9.6): EC P-256 — the authenticator's p256
+    # loader requires an EC key, and downstream verifiers validate ES256.
+    _genpkey_ec("current.pem")
     (keys / "current.pem").chmod(0o644)
     # Service-token registry key: the baked config/insight.yaml carries a dev
     # `testclient` entry (public_key_paths: [testclient.pub.pem], resolved
     # against public_key_dir=/keys in the e2e compose), so the authenticator
     # needs the public half present to build the registry and boot. This e2e
-    # does not exercise service tokens; it just satisfies that dev entry.
-    _genpkey("testclient.key.pem")
+    # does not exercise service tokens; it just satisfies that dev entry. The
+    # service-token client key stays EC (ES256 RFC 7523 assertion).
+    _genpkey_ec("testclient.key.pem")
     subprocess.run(
         [
             "openssl",
@@ -170,7 +172,7 @@ def session_sid():
     so the cache is populated while the authenticator is still up.
     """
     sid = GatewayClient().login()
-    GatewayClient().request(f"{GW}/api/v1/analytics/warm", headers={"Cookie": f"__Host-sid={sid}"})
+    GatewayClient().request(f"{GW}/api/analytics/warm", headers={"Cookie": f"__Host-sid={sid}"})
     return sid
 
 
@@ -189,7 +191,7 @@ def authenticator_down(session_sid):
     """Kill the authenticator (session already warmed), restore on teardown."""
     _compose("kill", "authenticator")
     # Wait until the fail-closed state is actually reached before yielding.
-    _wait_status(f"{GW}/api/v1/analytics/x", "__Host-sid=cold-poll", 503)
+    _wait_status(f"{GW}/api/analytics/x", "__Host-sid=cold-poll", 503)
     yield
     _compose("start", "authenticator")
     _wait_http(f"{GW}/auth/login", want={302})

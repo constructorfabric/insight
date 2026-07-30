@@ -82,7 +82,9 @@ events AS (
             CAST(ActivityDate AS Nullable(DateTime64(3))),
             CreatedDate
         )                                           AS timestamp,
-        DurationInMinutes * 60                      AS duration_seconds,
+        -- toInt64 to match the tasks branch + hubspot (Int64); Airbyte may
+        -- infer DurationInMinutes as float, which broke the UNION (#1709).
+        toInt64(DurationInMinutes * 60)             AS duration_seconds,
         CAST(NULL AS Nullable(String))              AS outcome,
         toJSONString(map(
             'Subject',      coalesce(toString(Subject), ''),

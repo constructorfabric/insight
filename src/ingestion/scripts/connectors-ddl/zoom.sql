@@ -1,0 +1,150 @@
+CREATE DATABASE IF NOT EXISTS `bronze_zoom`;
+
+CREATE TABLE IF NOT EXISTS bronze_zoom.meetings
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `uuid` Nullable(String),
+    `id` Nullable(Decimal(38, 9)),
+    `topic` Nullable(String),
+    `host` Nullable(String),
+    `email` Nullable(String),
+    `user_type` Nullable(String),
+    `start_time` Nullable(String),
+    `end_time` Nullable(String),
+    `duration` Nullable(String),
+    `participants` Nullable(Decimal(38, 9)),
+    `has_pstn` Nullable(Bool),
+    `has_archiving` Nullable(Bool),
+    `has_voip` Nullable(Bool),
+    `has_3rd_party_audio` Nullable(Bool),
+    `has_video` Nullable(Bool),
+    `has_screen_share` Nullable(Bool),
+    `has_recording` Nullable(Bool),
+    `has_sip` Nullable(Bool),
+    `dept` Nullable(String),
+    `has_poll` Nullable(Bool),
+    `has_qa` Nullable(Bool),
+    `has_survey` Nullable(Bool),
+    `session_key` Nullable(String),
+    `audio_quality` Nullable(String),
+    `has_manual_captions` Nullable(Bool),
+    `has_automated_captions` Nullable(Bool),
+    `has_meeting_summary` Nullable(Bool),
+    `avg_jointime_cost` Nullable(Decimal(38, 9)),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `video_quality` Nullable(String),
+    `screen_share_quality` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_zoom.participants
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `version` Nullable(String),
+    `id` Nullable(String),
+    `user_id` Nullable(String),
+    `participant_uuid` Nullable(String),
+    `user_name` Nullable(String),
+    `device` Nullable(String),
+    `client` Nullable(String),
+    `ip_address` Nullable(String),
+    `internal_ip_addresses` Nullable(String),
+    `location` Nullable(String),
+    `network_type` Nullable(String),
+    `microphone` Nullable(String),
+    `speaker` Nullable(String),
+    `camera` Nullable(String),
+    `data_center` Nullable(String),
+    `full_data_center` Nullable(String),
+    `connection_type` Nullable(String),
+    `video_connection_type` Nullable(String),
+    `as_connection_type` Nullable(String),
+    `join_time` Nullable(String),
+    `leave_time` Nullable(String),
+    `share_application` Nullable(Bool),
+    `share_desktop` Nullable(Bool),
+    `share_whiteboard` Nullable(Bool),
+    `recording` Nullable(Bool),
+    `pc_name` Nullable(String),
+    `domain` Nullable(String),
+    `mac_addr` Nullable(String),
+    `harddisk_id` Nullable(String),
+    `leave_reason` Nullable(String),
+    `email` Nullable(String),
+    `registrant_id` Nullable(String),
+    `status` Nullable(String),
+    `os` Nullable(String),
+    `os_version` Nullable(String),
+    `browser_name` Nullable(String),
+    `browser_version` Nullable(String),
+    `device_name` Nullable(String),
+    `groupId` Nullable(String),
+    `health` Nullable(String),
+    `customer_key` Nullable(String),
+    `sip_uri` Nullable(String),
+    `from_sip_uri` Nullable(String),
+    `role` Nullable(String),
+    `participant_user_id` Nullable(String),
+    `audio_call` Nullable(String),
+    `has_archiving` Nullable(Bool),
+    `optional_archiving` Nullable(String),
+    `aic_disclaimer` Nullable(String),
+    `total_jointime_cost` Nullable(Decimal(38, 9)),
+    `is_original_host` Nullable(Bool),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `meeting_uuid` Nullable(String),
+    `unique_key` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_zoom.users
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `type` Nullable(Decimal(38, 9)),
+    `id` Nullable(String),
+    `first_name` Nullable(String),
+    `last_name` Nullable(String),
+    `display_name` Nullable(String),
+    `email` Nullable(String),
+    `pmi` Nullable(Decimal(38, 9)),
+    `timezone` Nullable(String),
+    `verified` Nullable(Decimal(38, 9)),
+    `dept` Nullable(String),
+    `created_at` Nullable(String),
+    `last_login_time` Nullable(String),
+    `last_client_version` Nullable(String),
+    `group_ids` Nullable(String),
+    `language` Nullable(String),
+    `status` Nullable(String),
+    `role_id` Nullable(String),
+    `employee_unique_id` Nullable(String),
+    `user_created_at` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `pic_url` Nullable(String),
+    `phone_number` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+

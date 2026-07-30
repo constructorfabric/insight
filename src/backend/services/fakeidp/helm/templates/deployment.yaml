@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insight-fakeidp.fullname" . }}
+  labels:
+    {{- include "insight-fakeidp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "insight-fakeidp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insight-fakeidp.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: fakeidp
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          env:
+            - name: FAKEIDP_ISSUER
+              value: {{ tpl (required "fakeidp.issuer is required (the in-cluster fakeidp URL)" .Values.issuer) . | quote }}
+            - name: FAKEIDP_BIND
+              value: "0.0.0.0:{{ .Values.service.port }}"
+            - name: FAKEIDP_DEFAULT_AUD
+              value: {{ .Values.defaultAudience | quote }}
+            - name: FAKEIDP_DEV_USER_EMAIL
+              value: {{ .Values.devUserEmail | quote }}
+            - name: FAKEIDP_TOKEN_TTL
+              value: {{ .Values.tokenTtlSeconds | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}

@@ -21,6 +21,23 @@ pub struct GearConfig {
     pub expand_subordinates: bool,
     /// Max org-tree recursion depth (cycle-safe; mirrors the .NET `MaxDepth`).
     pub max_depth: usize,
+    /// `ClickHouse` HTTP URL for reading `identity_inputs` (persons-seed input).
+    pub clickhouse_url: String,
+    /// `ClickHouse` database (the `identity_inputs` table lives in `identity`).
+    pub clickhouse_database: String,
+    /// `ClickHouse` user (empty = no auth).
+    pub clickhouse_user: String,
+    /// `ClickHouse` password.
+    pub clickhouse_password: String,
+    /// Default tenant for the bootstrap-admin seed (mirrors the .NET
+    /// `AppOptions.TenantDefaultId`). Empty = bootstrap skipped with a warning
+    /// when a bootstrap person is configured.
+    pub tenant_default_id: String,
+    /// First-admin seed for the admin-gated CRUD endpoints (mirrors the .NET
+    /// `AppOptions.BootstrapAdminPersonId`): on `migrate`, this person gets an
+    /// active `admin` assignment in `tenant_default_id` unless one already
+    /// exists. Empty = disabled.
+    pub bootstrap_admin_person_id: String,
 }
 
 impl Default for GearConfig {
@@ -30,6 +47,12 @@ impl Default for GearConfig {
             org_chart_source_type: "bamboohr".to_owned(),
             expand_subordinates: true,
             max_depth: 16,
+            clickhouse_url: String::new(),
+            clickhouse_database: "identity".to_owned(),
+            clickhouse_user: String::new(),
+            clickhouse_password: String::new(),
+            tenant_default_id: String::new(),
+            bootstrap_admin_person_id: String::new(),
         }
     }
 }

@@ -225,7 +225,6 @@ public sealed class ProfilesEndpointTests : IAsyncLifetime
         using var noTenantApp = new TestApplicationFactory(
             _fixture.ConnectionString, defaultTenantId: null, defaultCallerPersonId: CallerPersonId);
         var client = noTenantApp.CreateClient();
-        client.DefaultRequestHeaders.Remove(HeaderTenantContext.HeaderName);
 
         var body = new ResolveProfileCommandModel("email", "alice@x.com", null, null);
         var response = await client.PostJsonAsync(new Uri("/v1/profiles", UriKind.Relative), body)

@@ -1,0 +1,56 @@
+spec_version: 1
+description: >
+  Metric: ai.active_days.
+  How it's computed (bronze → silver → gold):
+    • bronze: Cursor daily per-developer usage report — one row marks a Cursor user
+    • silver: deduped to one row per developer/day
+    • gold:   an "active" metric — value=1 for the requested person; range_max =
+              count of active Cursor members in the team (median is 0 by rule)
+
+  Team (median/range = the person's department):
+    alice · bob · carol all active → value 1, median 0, range [0, 3].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_cursor.cursor_daily_usage:
+    # date 1767571200000 ms = 2026-01-05. isActive defaults to true.
+    - $ref: templates/cursor_usage.yaml#/templates/alice
+      unique_key: cursor-alice-20260105
+      date: 1767571200000
+    - $ref: templates/cursor_usage.yaml#/templates/bob
+      unique_key: cursor-bob-20260105
+      date: 1767571200000
+    - $ref: templates/cursor_usage.yaml#/templates/carol
+      unique_key: cursor-carol-20260105
+      date: 1767571200000
+
+cases:
+  - name: AI active days
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - metric_key: ai.active_days
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.active_days
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 1 }
+      - metric: ai.active_days
+        view: peer
+        find: { entity_id: alice@example.com }
+        equal: { target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3 }
+      - metric: ai.active_days
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 1.0))"

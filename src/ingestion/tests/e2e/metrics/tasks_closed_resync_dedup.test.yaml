@@ -1,0 +1,136 @@
+spec_version: 1
+description: >
+  Unified tasks.closed coverage for re-synced issue snapshots. The latest
+  extraction wins regardless of insertion order, identical snapshots count once,
+  and a reopened issue is not counted as closed.
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+
+  bronze_jira.jira_user:
+    - $ref: templates/jira_task.yaml#/templates/alice_user
+
+  bronze_jira.jira_statuses:
+    - $ref: templates/jira_task.yaml#/templates/status_open
+    - $ref: templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: templates/jira_task.yaml#/templates/field_duedate
+
+  bronze_jira.jira_issue:
+    # ── DDP-1: In Progress first, Closed re-extracted LATER → latest wins ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-1
+      jira_id: DDP-1
+      unique_key: jira-test-DDP-1
+      id_readable: DDP1
+      created: "2026-12-21T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-1
+      jira_id: DDP-1
+      unique_key: jira-test-DDP-1
+      id_readable: DDP1
+      created: "2026-12-21T09:00:00"
+      _airbyte_extracted_at: "2026-12-27T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+    # ── DDP-2: byte-identical re-sync duplicate → must count ONCE ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-2
+      jira_id: DDP-2
+      unique_key: jira-test-DDP-2
+      id_readable: DDP2
+      created: "2026-12-22T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-2
+      jira_id: DDP-2
+      unique_key: jira-test-DDP-2
+      id_readable: DDP2
+      created: "2026-12-22T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+    # ── DDP-3: LATEST extraction (Closed) inserted FIRST, older In Progress
+    #    inserted after it → dedup must key on _airbyte_extracted_at, not on
+    #    physical insert order ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-3
+      jira_id: DDP-3
+      unique_key: jira-test-DDP-3
+      id_readable: DDP3
+      created: "2026-12-23T09:00:00"
+      _airbyte_extracted_at: "2026-12-28T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-3
+      jira_id: DDP-3
+      unique_key: jira-test-DDP-3
+      id_readable: DDP3
+      created: "2026-12-23T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+    # ── DDP-4: was Closed, the LATEST extraction re-opens it → the stale
+    #    Closed row must NOT resurrect a close (min-extraction dedup would) ──
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-4
+      jira_id: DDP-4
+      unique_key: jira-test-DDP-4
+      id_readable: DDP4
+      created: "2026-12-24T09:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+    - $ref: templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-4
+      jira_id: DDP-4
+      unique_key: jira-test-DDP-4
+      id_readable: DDP4
+      created: "2026-12-24T09:00:00"
+      _airbyte_extracted_at: "2026-12-27T00:00:00"
+      custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+
+  bronze_jira.jira_issue_history: []
+
+cases:
+  - name: tasks.closed resync deduplication
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-12-20", to: "2026-12-31" }
+        metrics:
+          - metric_key: tasks.closed
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.closed
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 3 }
+      - metric: tasks.closed
+        view: timeseries
+        find: { entity_id: alice@example.com }
+        contains: { points: { bucket_start: "2026-12-21", value: 1 } }
+      - metric: tasks.closed
+        view: timeseries
+        find: { entity_id: alice@example.com }
+        contains: { points: { bucket_start: "2026-12-22", value: 1 } }
+      - metric: tasks.closed
+        view: timeseries
+        find: { entity_id: alice@example.com }
+        contains: { points: { bucket_start: "2026-12-23", value: 1 } }
+      - metric: tasks.closed
+        view: timeseries
+        find: { entity_id: alice@example.com }
+        contains: { points: { bucket_start: "2026-12-24", value: null } }

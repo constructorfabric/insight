@@ -31,20 +31,30 @@ ingestion:
   dataQuality:
     enabled: false
 
-apiGateway:
+gateway:
   replicaCount: 1
-  authDisabled: true
   ingress:
-    enabled: false
+    enabled: true
+
+authenticator:
+  replicaCount: 1
+  tlsDiscovery:
+    enabled: true
+    issuerRef:
+      name: local-ca
+      kind: ClusterIssuer
+  oidc:
+    issuerUrl: 'http://{{ .Release.Name }}-fakeidp.{{ .Release.Namespace }}.svc.cluster.local:8084'
+    clientId: "insight-authenticator"
+    redirectUri: "http://localhost/auth/callback"
+
+fakeidp:
+  deploy: true
+  issuer: 'http://{{ .Release.Name }}-fakeidp.{{ .Release.Namespace }}.svc.cluster.local:8084'
+  devUserEmail: "dev@company.nonpresent"
 
 analytics:
   replicaCount: 1
 
 identity:
   deploy: true
-
-frontend:
-  replicaCount: 1
-  ingress:
-    enabled: false
-  devUserEmail: "dev@company.nonpresent"

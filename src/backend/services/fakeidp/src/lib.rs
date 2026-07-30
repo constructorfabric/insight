@@ -87,8 +87,9 @@ pub struct User {
     pub name: String,
     pub sub: String,
     pub sid: String,
+    /// The user's single tenant (single-tenant token contract, EPIC #1583).
     #[serde(default)]
-    pub tenants: Vec<String>,
+    pub tenant_id: String,
 }
 
 #[derive(Deserialize)]
@@ -100,7 +101,7 @@ struct UsersFile {
 /// `users.yaml`. Panics on malformed input — this is a test binary; loud is fine.
 ///
 /// If `FAKEIDP_DEV_USER_EMAIL` is set, it overrides the *first* user's email.
-/// Compose wires this from the wizard's `VITE_DEV_USER_EMAIL`, so the default
+/// Compose wires this from the wizard's `DEV_USER_EMAIL`, so the default
 /// login always matches the dev person the seeder wrote into identity — even
 /// when the operator picked a non-default dev email.
 pub fn load_users() -> Vec<User> {
@@ -284,9 +285,9 @@ struct IdTokenClaims<'a> {
     email: &'a str,
     name: &'a str,
     sid: &'a str,
-    /// Tenant hints from users.yaml, so e2e can assert/map them. Always emitted
-    /// (possibly empty) for predictability.
-    tenants: &'a [String],
+    /// The single tenant from users.yaml (one and only one tenant per token).
+    /// Always emitted (possibly empty) for predictability.
+    tenant_id: &'a str,
 }
 
 fn sign_id_token(state: &AppState, user: &User, aud: &str, nonce: Option<String>) -> String {
@@ -301,7 +302,7 @@ fn sign_id_token(state: &AppState, user: &User, aud: &str, nonce: Option<String>
         email: &user.email,
         name: &user.name,
         sid: &user.sid,
-        tenants: &user.tenants,
+        tenant_id: &user.tenant_id,
     };
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(KID.to_string());

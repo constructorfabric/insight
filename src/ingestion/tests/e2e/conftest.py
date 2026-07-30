@@ -25,18 +25,18 @@ from __future__ import annotations
 
 import logging
 import os
-import pytest
-
 from pathlib import Path
 
+import pytest
 from lib import clickhouse as ch
 from lib import compose, mariadb
 from lib.analytics import AnalyticsProcess, find_free_port, locate_binary
 from lib.ch_seeder import CHSeeder
-from lib.config import SessionConfig, TEST_TENANT_ID
+from lib.config import SessionConfig
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
-from lib.fixture_loader import TestYaml, discover_tests, load as load_test
+from lib.fixture_loader import TestYaml, discover_tests
+from lib.fixture_loader import load as load_test
 from lib.identity_stub import IdentityStub
 from lib.metric_seed import seed_test_metrics
 from lib.migration_applier import apply_all as apply_ch_migrations
@@ -206,38 +206,13 @@ def dbt_runner(ch_migrations_applied: SessionConfig):
     runner.cleanup()
 
 
-def _collect_metrics(proc: AnalyticsProcess) -> None:
-    """Run `lib/collect_metrics.py` (a script — NOT a test) against the
-    live API, primary worker only. Snapshots the metric catalog into `.artifacts/`
-    so the metric-coverage gate analyses a file with no second app boot.
-    Best-effort: a failure just means the gate finds no artifact and fails loudly —
-    never abort the session for it. Must run while the API is up (called from
-    analytics teardown, before proc.stop())."""
+def _collect_metrics(cfg: SessionConfig) -> None:
     if not _IS_PRIMARY:
         return
-    import subprocess
-    import sys
+    from lib.collect_metric_definitions import collect
 
-    script = Path(__file__).parent / "lib" / "collect_metrics.py"
     out_dir = Path(__file__).parent / ".artifacts"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(script),
-            "--url",
-            proc.base_url,
-            "--out-dir",
-            str(out_dir),
-            "--tenant",
-            str(TEST_TENANT_ID),
-        ],
-        check=False,
-    )
-    if result.returncode != 0:
-        LOG.warning(
-            "coverage-artifact collection failed (rc=%d); gate jobs may lack inputs",
-            result.returncode,
-        )
+    collect(cfg, out_dir)
 
 
 @pytest.fixture(scope="session")
@@ -258,7 +233,9 @@ def identity_stub():
 
 
 @pytest.fixture(scope="session")
-def analytics(ch_migrations_applied: SessionConfig, identity_stub: IdentityStub):
+def analytics(
+    ch_migrations_applied: SessionConfig, dbt_runner: DbtRunner, worker_ctx: WorkerContext, identity_stub: IdentityStub
+):
     """Spawn the analytics binary baked into the runner image. Its SeaORM
     migrations run on startup; we then upsert test-specific metrics from
     seed/metrics.yaml.
@@ -270,7 +247,9 @@ def analytics(ch_migrations_applied: SessionConfig, identity_stub: IdentityStub)
     bronze→API tests cannot run, so the only honest result is red.
     """
     cfg = ch_migrations_applied
+    dbt_runner.run("tag:gold", worker_ctx=worker_ctx)
     from lib.analytics import ApiSpawnError  # local import to keep top clean
+
     try:
         binary = locate_binary(cfg)
     except ApiSpawnError as e:
@@ -280,11 +259,8 @@ def analytics(ch_migrations_applied: SessionConfig, identity_stub: IdentityStub)
     proc.start()
     seed_test_metrics(cfg)
     yield proc
-    # Snapshot the metric catalog while the API is still up (a script, run via
-    # subprocess — see _collect_metrics). Always
-    # stop the process afterward, even if collection raised.
     try:
-        _collect_metrics(proc)
+        _collect_metrics(cfg)
     finally:
         proc.stop()
 
@@ -334,19 +310,31 @@ def pytest_sessionfinish(session, exitstatus):
     except OSError as e:
         LOG.warning("could not write API-endpoint ledger %s: %s", out, e)
 
+    # Identity suite ledger (identity/ tests; separate spec, separate gate —
+    # see lib/api_coverage.py on why the two are never mixed).
+    identity_out = Path(__file__).parent / ".artifacts" / "observed_identity_endpoints.json"
+    try:
+        api_coverage.dump_observed_identity(identity_out)
+        LOG.info(
+            "wrote identity-endpoint ledger (%d ops): %s",
+            len(api_coverage._OBSERVED_IDENTITY),
+            identity_out,
+        )
+    except OSError as e:
+        LOG.warning("could not write identity-endpoint ledger %s: %s", identity_out, e)
+
 
 def pytest_generate_tests(metafunc):
     """Generate one `test_metric_smoke` invocation per discovered `*.test.yaml`."""
     if "test_yaml" in metafunc.fixturenames and metafunc.function.__name__ == "test_metric_smoke":
         paths = discover_tests(_METRICS_ROOT)
-        metafunc.parametrize(
-            "test_path",
-            paths,
-            ids=[p.name[: -len(".test.yaml")] for p in paths],
-        )
+        metafunc.parametrize("test_path", paths, ids=[p.name[: -len(".test.yaml")] for p in paths])
 
 
 @pytest.fixture
 def test_yaml(test_path: Path) -> TestYaml:
     """Load + resolve the test file; malformed files fail here as a test failure."""
-    return load_test(test_path)
+    ty = load_test(test_path)
+    if ty.skip:
+        pytest.skip(ty.skip)
+    return ty

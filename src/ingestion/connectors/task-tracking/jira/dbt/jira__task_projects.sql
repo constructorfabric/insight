@@ -3,7 +3,7 @@
     materialized='view',
     alias='jira__task_projects',
     schema='staging',
-    tags=['jira', 'silver:class_task_projects']
+    tags=['jira', 'staging', 'silver:class_task_projects']
 ) }}
 
 -- View, not table: bronze `jira_projects` is MergeTree (full_refresh + overwrite),

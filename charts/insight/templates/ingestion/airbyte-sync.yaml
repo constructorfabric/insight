@@ -85,6 +85,17 @@ spec:
             value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
           - name: INSIGHT_NAMESPACE
             value: {{ .Release.Namespace | quote }}
+          # The auth Secret lives in Airbyte's namespace, which may differ
+          # from the app's (issue #1885). lib/airbyte.sh reads it from
+          # there via the K8s API; RBAC comes from airbyte-auth-rbac.yaml.
+          - name: AIRBYTE_AUTH_SECRET_NAME
+            value: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+          - name: AIRBYTE_AUTH_SECRET_NAMESPACE
+            value: {{ include "insight.airbyte.namespace" . | quote }}
+          - name: AIRBYTE_CLIENT_ID_KEY
+            value: {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
+          - name: AIRBYTE_CLIENT_SECRET_KEY
+            value: {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
           - name: CONNECTORS_DIR
             value: "/ingestion/connectors"
         source: |
@@ -142,33 +153,75 @@ spec:
           # request hangs ~5 min then RST). Per ADR-0013, every workflow
           # API call goes through the same instance-admin OAuth flow that
           # reconcile uses.
-          - name: AIRBYTE_CLIENT_ID
-            valueFrom:
-              secretKeyRef:
-                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
-                key:  {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
-          - name: AIRBYTE_CLIENT_SECRET
-            valueFrom:
-              secretKeyRef:
-                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
-                key:  {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
+          #
+          # The credentials are read from the auth Secret via the K8s API,
+          # not a secretKeyRef: the Secret lives in Airbyte's namespace,
+          # which may differ from the app's (issue #1885), and secretKeyRef
+          # cannot cross namespaces. RBAC: airbyte-auth-rbac.yaml grants the
+          # workflow SA `get` on this one Secret.
+          - name: AIRBYTE_AUTH_SECRET_NAME
+            value: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+          - name: AIRBYTE_AUTH_SECRET_NAMESPACE
+            value: {{ include "insight.airbyte.namespace" . | quote }}
+          - name: AIRBYTE_CLIENT_ID_KEY
+            value: {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
+          - name: AIRBYTE_CLIENT_SECRET_KEY
+            value: {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
           - name: CONNECTION_ID
             value: {{ `"{{inputs.parameters.connection_id}}"` }}
           - name: AIRBYTE_URL
             value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
         source: |
-          import urllib.request, urllib.error, json, sys, os
+          import urllib.request, urllib.error, json, sys, os, ssl, base64, time
+          class FatalError(Exception):
+              # Permanent credential-read failure (RBAC missing, wrong
+              # airbyte.namespace, Secret deleted) — no point retrying.
+              pass
+          def airbyte_creds():
+              sa = "/var/run/secrets/kubernetes.io/serviceaccount"
+              with open(f"{sa}/token") as f:
+                  sa_token = f.read().strip()
+              ctx = ssl.create_default_context(cafile=f"{sa}/ca.crt")
+              ns, name = os.environ["AIRBYTE_AUTH_SECRET_NAMESPACE"], os.environ["AIRBYTE_AUTH_SECRET_NAME"]
+              req = urllib.request.Request(
+                  f"https://kubernetes.default.svc/api/v1/namespaces/{ns}/secrets/{name}",
+                  headers={"Authorization": f"Bearer {sa_token}"})
+              try:
+                  data = json.load(urllib.request.urlopen(req, timeout=30, context=ctx))["data"]
+              except urllib.error.HTTPError as e:
+                  if e.code in (401, 403, 404):
+                      raise FatalError(
+                          f"cannot read Secret {ns}/{name} via the K8s API: HTTP {e.code} "
+                          "(RBAC missing? wrong airbyte.namespace? Secret deleted?)") from None
+                  raise
+              return (base64.b64decode(data[os.environ["AIRBYTE_CLIENT_ID_KEY"]]).decode(),
+                      base64.b64decode(data[os.environ["AIRBYTE_CLIENT_SECRET_KEY"]]).decode())
           def oauth_token():
+              client_id, client_secret = airbyte_creds()
               body = json.dumps({
-                  "client_id":     os.environ["AIRBYTE_CLIENT_ID"],
-                  "client_secret": os.environ["AIRBYTE_CLIENT_SECRET"],
+                  "client_id":     client_id,
+                  "client_secret": client_secret,
                   "grant_type":    "client_credentials",
               }).encode()
               req = urllib.request.Request(
                   f"{os.environ['AIRBYTE_URL']}/api/v1/applications/token",
                   data=body, headers={"Content-Type": "application/json"})
               return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
-          token = oauth_token()
+          # retryPolicy OnError only re-runs pod-level errors, not script
+          # exits, so transient token-mint blips (K8s apiserver or Airbyte
+          # hiccup) are retried here; FatalError aborts immediately.
+          for attempt in range(3):
+              try:
+                  token = oauth_token()
+                  break
+              except FatalError as e:
+                  print(f"FATAL: {e}", file=sys.stderr)
+                  sys.exit(1)
+              except Exception as e:
+                  if attempt == 2:
+                      raise
+                  print(f"transient error minting token: {e!r}; retrying in 10s", file=sys.stderr, flush=True)
+                  time.sleep(10)
           headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
           data = json.dumps({"connectionId": os.environ["CONNECTION_ID"]}).encode()
           req = urllib.request.Request(f"{os.environ['AIRBYTE_URL']}/api/v1/connections/sync", data=data, headers=headers)
@@ -181,7 +234,6 @@ spec:
           # Lifecycle event goes to STDERR: stdout is this step's Argo
           # outputs.result (the bare job id consumed by poll-job) and must
           # stay single-line. The collector ingests both streams alike.
-          import time
           print(json.dumps({
               "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
               "level": "info",
@@ -216,16 +268,18 @@ spec:
         image: python:3.12-alpine
         command: [python3]
         env:
-          - name: AIRBYTE_CLIENT_ID
-            valueFrom:
-              secretKeyRef:
-                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
-                key:  {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
-          - name: AIRBYTE_CLIENT_SECRET
-            valueFrom:
-              secretKeyRef:
-                name: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
-                key:  {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
+          # Same K8s-API credential read as trigger-sync (see the comment
+          # there): the auth Secret may live in Airbyte's own namespace.
+          # Read per poll iteration, so a rotated credential is picked up
+          # mid-sync without restarting the watchdog.
+          - name: AIRBYTE_AUTH_SECRET_NAME
+            value: {{ required "airbyte.authSecret.name is required" .Values.airbyte.authSecret.name | quote }}
+          - name: AIRBYTE_AUTH_SECRET_NAMESPACE
+            value: {{ include "insight.airbyte.namespace" . | quote }}
+          - name: AIRBYTE_CLIENT_ID_KEY
+            value: {{ default "instance-admin-client-id" .Values.airbyte.authSecret.clientIdKey | quote }}
+          - name: AIRBYTE_CLIENT_SECRET_KEY
+            value: {{ default "instance-admin-client-secret" .Values.airbyte.authSecret.clientSecretKey | quote }}
           - name: JOB_ID
             value: {{ `"{{inputs.parameters.job_id}}"` }}
           - name: AIRBYTE_URL
@@ -243,11 +297,37 @@ spec:
           - name: IDLE_THRESHOLD_SECONDS
             value: {{ default 1800 .Values.ingestion.airbyteSync.idleThresholdSeconds | quote }}
         source: |
-          import urllib.request, urllib.error, json, time, sys, os
+          import urllib.request, urllib.error, json, time, sys, os, ssl, base64
+          class FatalError(Exception):
+              # Permanent credential-read failure (RBAC missing, wrong
+              # airbyte.namespace, Secret deleted). Distinguished from
+              # transient blips so the poll loop fails fast instead of
+              # logging "transient error" until activeDeadlineSeconds.
+              pass
+          def airbyte_creds():
+              sa = "/var/run/secrets/kubernetes.io/serviceaccount"
+              with open(f"{sa}/token") as f:
+                  sa_token = f.read().strip()
+              ctx = ssl.create_default_context(cafile=f"{sa}/ca.crt")
+              ns, name = os.environ["AIRBYTE_AUTH_SECRET_NAMESPACE"], os.environ["AIRBYTE_AUTH_SECRET_NAME"]
+              req = urllib.request.Request(
+                  f"https://kubernetes.default.svc/api/v1/namespaces/{ns}/secrets/{name}",
+                  headers={"Authorization": f"Bearer {sa_token}"})
+              try:
+                  data = json.load(urllib.request.urlopen(req, timeout=30, context=ctx))["data"]
+              except urllib.error.HTTPError as e:
+                  if e.code in (401, 403, 404):
+                      raise FatalError(
+                          f"cannot read Secret {ns}/{name} via the K8s API: HTTP {e.code} "
+                          "(RBAC missing? wrong airbyte.namespace? Secret deleted?)") from None
+                  raise
+              return (base64.b64decode(data[os.environ["AIRBYTE_CLIENT_ID_KEY"]]).decode(),
+                      base64.b64decode(data[os.environ["AIRBYTE_CLIENT_SECRET_KEY"]]).decode())
           def oauth_token():
+              client_id, client_secret = airbyte_creds()
               body = json.dumps({
-                  "client_id":     os.environ["AIRBYTE_CLIENT_ID"],
-                  "client_secret": os.environ["AIRBYTE_CLIENT_SECRET"],
+                  "client_id":     client_id,
+                  "client_secret": client_secret,
                   "grant_type":    "client_credentials",
               }).encode()
               req = urllib.request.Request(
@@ -313,6 +393,10 @@ spec:
                       data=json.dumps({"id": job_id}).encode(),
                       headers=headers)
                   resp = json.load(urllib.request.urlopen(req, timeout=30))
+              except FatalError as e:
+                  print(f"FAIL: {e}", flush=True)
+                  emit_completed("error", 1)
+                  sys.exit(1)
               except Exception as e:
                   print(f"poll: transient error fetching job status: {e!r}; retrying in {poll_interval}s", flush=True)
                   time.sleep(poll_interval)

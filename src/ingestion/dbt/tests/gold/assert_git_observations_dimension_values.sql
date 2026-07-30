@@ -11,7 +11,7 @@ FROM {{ ref('git_metric_observations') }}
 WHERE arrayExists(
         d -> (
             (tupleElement(d, 1) = 'category'
-                AND tupleElement(d, 2) NOT IN ('code', 'test', 'config', 'docs'))
+                AND tupleElement(d, 2) NOT IN ('code', 'test', 'config', 'docs', 'vendored'))
             OR (tupleElement(d, 1) = 'source'
                 AND tupleElement(d, 2) NOT IN ('github', 'gitlab', 'bitbucket_cloud'))
             OR tupleElement(d, 2) = ''

@@ -41,6 +41,17 @@ CREATE DATABASE IF NOT EXISTS silver;
 CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE};
 SQL
 
+echo "=== Provisioning presentation_ro role (#1963) ==="
+# Read-only role for the presentation query path (bootstrap-db/presentation-role.sql).
+# Guarded + non-fatal: creating a role needs access_management on the admin, so an
+# admin without it is skipped with a warning rather than aborting the deploy.
+if printf 'CREATE ROLE IF NOT EXISTS presentation_ro' | _ch_http_query >/dev/null 2>&1; then
+  run_ch < "$SCRIPT_DIR/bootstrap-db/presentation-role.sql"
+  echo "  presentation_ro ready"
+else
+  echo "  WARN: admin lacks access_management; skipping presentation_ro (see bootstrap-db/README.md)"
+fi
+
 echo "=== Creating bronze/silver placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-bronze-placeholders.sh"
 
@@ -161,6 +172,37 @@ SQL
 
 heal_task_users_table silver class_task_users
 
+echo "=== Healing jira task id column types (#1743) ==="
+# #1892 retyped the jira staging id projections (worklog_id, comment_id)
+# from raw bronze Decimal(38,9) to toString(...), but pre-existing
+# incremental-append staging tables keep the Decimal column, and the
+# positional union with the youtrack String twins fails with NO_COMMON_TYPE,
+# blanking Task Delivery / Code Quality. MODIFY converges warm tables (and
+# silver targets built from them) to the snapshot's String; Decimal->String
+# is lossless. Guarded: staging tables exist only after the first jira sync.
+heal_task_id_column() {
+  local db="$1" table="$2" column="$3"
+  ch_table_exists "$db" "$table" || return 0
+  echo "  ${db}.${table}.${column}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} MODIFY COLUMN IF EXISTS ${column} Nullable(String);
+SQL
+}
+
+heal_task_id_column staging jira__task_worklogs worklog_id
+heal_task_id_column staging jira__task_comments comment_id
+heal_task_id_column silver class_task_worklogs worklog_id
+heal_task_id_column silver class_task_comments comment_id
+
+# SKIP_DBT_GOLD=1 (set by bootstrap-db snapshot generation) skips this step:
+# generation already built every tag:gold model with the pinned dbt venv
+# (run-dbt.sh) BEFORE the migrations ran, and re-running here would need a `dbt`
+# on PATH — which outside the prod toolbox (local dev, the connectors-ddl CI
+# workflow) is absent or the wrong build (dbt-fusion 2.0). Real deploys leave it
+# unset and rely on this step to materialise gold at deploy time.
+if [[ "${SKIP_DBT_GOLD:-}" == "1" ]]; then
+  echo "=== Skipping gold dbt build (SKIP_DBT_GOLD=1; gold pre-built by generation) ==="
+else
 echo "=== Building gold models (dbt run --select tag:gold) ==="
 # Gold views are dbt-owned but must exist at DEPLOY time, not first-sync
 # time: the analytics service marks metric definitions schema-error while
@@ -201,6 +243,12 @@ profile = {
                 "send_receive_timeout": 1500,
                 "query_limit": 0,
                 "connect_timeout": 30,
+                # Correlated subqueries (LEFT ANTI JOIN in the identity seed
+                # models) are gated behind this experimental flag on CH 25.7.
+                # A model-level config() setting does NOT reach the SELECT plan
+                # in dbt-clickhouse, so it must be set at profile level. Parity
+                # with test/bootstrap.
+                "settings": {"allow_experimental_correlated_subqueries": 1},
             }
         },
     }
@@ -210,5 +258,6 @@ with open(os.path.join(os.environ["DBT_PROFILES_DIR"], "profiles.yml"), "w") as 
 PY
 (cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select tag:gold)
 rm -rf "$DBT_PROFILES_DIR"
+fi
 
 echo "=== ClickHouse migrations complete ==="

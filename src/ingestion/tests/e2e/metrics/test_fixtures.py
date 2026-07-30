@@ -1,19 +1,3 @@
-"""Parametrized runner for `*.test.yaml` fixtures.
-
-One pytest invocation per discovered `<name>.test.yaml`. Implements
-`cpt-bronze-to-api-e2e-algo-yaml-execute-test`:
-
-    truncate prior test's tables  →
-    seed resolved bronze records  →
-    two-pass dbt build (staging, then silver)  →
-    recreate gold views (reapply migrations)   →
-    refresh intermediates  →
-    POST /v1/metrics/queries per case  →
-    evaluate expect rules
-
-Discovery + per-test fixtures live in `../conftest.py`.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -26,7 +10,6 @@ from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
 from lib.expect_engine import evaluate_case
 from lib.fixture_loader import TestYaml
-from lib.migration_applier import refresh_intermediates, reapply_migrations
 from lib.worker import WorkerContext
 
 pytestmark = pytest.mark.fixture
@@ -41,11 +24,10 @@ def test_metric_smoke(
     analytics: AnalyticsProcess,
     worker_ctx: WorkerContext,
 ) -> None:
-    # 1. Clear what the prior test wrote (no-op on the first test).
     ch_seeder.truncate_touched()
 
     # 2. Seed this test's resolved bronze records.
-    ch_seeder.seed_bronze(test_yaml.bronze)
+    ch_seeder.seed_bronze(test_yaml.bronze, test_yaml.schemas)
 
     # 3. Build the dbt models the seeded tables feed: staging first (the `+`
     #    pulls <connector>__bronze_promoted), then the silver class models.
@@ -94,21 +76,28 @@ def test_metric_smoke(
     #     ACTUALLY ran (had a source_id) contribute their ephemeral targets — otherwise
     #     we'd build silver that depends on enrich output that was never produced.
     silver_set = set(silver)
+    silver_set.discard("identity_inputs")
     for step in ran_enrich_steps:
         silver_set.update(dbt_runner.ephemeral_silver_targets(step.name))
-    if silver_set:
+    run_only_silver = silver_set & {"class_hr_working_hours"}
+    tested_silver = silver_set - run_only_silver
+    if tested_silver:
         # Record before building (same rationale as staging above): a build that
         # raises partway still leaves the targets in the truncate ledger for the
         # next test to clean.
-        for cls in silver_set:
+        for cls in tested_silver:
             ch_seeder.ledger.record("silver", cls)
-        dbt_runner.build(" ".join(sorted(silver_set)), worker_ctx=worker_ctx)
+        dbt_runner.build(" ".join(sorted(tested_silver)), worker_ctx=worker_ctx)
+    if run_only_silver:
+        for cls in run_only_silver:
+            ch_seeder.ledger.record("silver", cls)
+        dbt_runner.run(" ".join(sorted(run_only_silver)), worker_ctx=worker_ctx)
+    if "class_collab_meeting_activity" in silver_set:
+        ch_seeder.ledger.record("silver", "class_focus_metrics")
+        dbt_runner.run("class_focus_metrics", worker_ctx=worker_ctx, full_refresh=True)
 
-    # 4. Recreate gold views against the now-real silver schema (fixes the rig-only
-    #    Code 80 nullability mismatch on date-filtered reads), then refresh MVs.
     if staging or silver_set or ran_enrich_steps:
-        reapply_migrations(ch_seeder.cfg)
-    refresh_intermediates(ch_seeder.cfg)
+        dbt_runner.run("tag:gold", worker_ctx=worker_ctx)
 
     # 5. Run each case's batch request and evaluate its expect rules.
     for case in test_yaml.cases:

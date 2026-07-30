@@ -358,7 +358,8 @@ WITH
       o.person_id                          AS person_id,
       coalesce(p.org_unit_id, 'Unknown')   AS org_unit_id,
       'deal_size'                          AS metric_key,
-      coalesce(d.amount_home, 0)           AS metric_value
+      -- toFloat64 to match the other UNION branches; amount_home is Decimal (#1708)
+      toFloat64(coalesce(d.amount_home, 0)) AS metric_value
     FROM deals_dedup d
     INNER JOIN owners o ON o.user_id = d.owner_id
     LEFT JOIN people p ON p.person_id = o.person_id

@@ -6,9 +6,11 @@
 # Stage 1: Builder
 FROM rust:1.95-bookworm AS builder
 
-# protobuf-compiler is required by grpc-hub -> prost-build.
+# protobuf-compiler is required by grpc-hub -> prost-build; cmake + the libcurl
+# headers build the vendored librdkafka (audit events to Redpanda, step 10.8 —
+# librdkafka's OAUTHBEARER path pulls in curl/curl.h even with WITH_CURL=0).
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev && \
+    apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev cmake libcurl4-openssl-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -19,8 +21,6 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY libs/insight-clickhouse/Cargo.toml ./libs/insight-clickhouse/Cargo.toml
 COPY libs/authenticator-sdk/Cargo.toml ./libs/authenticator-sdk/Cargo.toml
-COPY plugins/oidc-authn-plugin/Cargo.toml ./plugins/oidc-authn-plugin/Cargo.toml
-COPY services/api-gateway/Cargo.toml ./services/api-gateway/Cargo.toml
 COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
 COPY services/authenticator/Cargo.toml ./services/authenticator/Cargo.toml
 # identity-resolution is a workspace member; cargo must load its manifest to
@@ -33,8 +33,6 @@ COPY tools/routegen/Cargo.toml ./tools/routegen/Cargo.toml
 
 RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
     mkdir -p libs/authenticator-sdk/src && echo "" > libs/authenticator-sdk/src/lib.rs && \
-    mkdir -p plugins/oidc-authn-plugin/src && echo "" > plugins/oidc-authn-plugin/src/lib.rs && \
-    mkdir -p services/api-gateway/src && echo "fn main() {}" > services/api-gateway/src/main.rs && \
     mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs && \
     mkdir -p services/authenticator/src && echo "fn main() {}" > services/authenticator/src/main.rs && \
     mkdir -p services/identity-resolution/src && echo "fn main() {}" > services/identity-resolution/src/main.rs && \
@@ -61,8 +59,7 @@ FROM debian:bookworm-slim
 ARG TARGETARCH
 ARG WATCHEXEC_VERSION=2.3.2
 
-# Runtime deps + watchexec (auto-reload wrapper in compose). See
-# api-gateway/Dockerfile for rationale.
+# Runtime deps + watchexec (auto-reload wrapper in compose).
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
       amd64) WX_ARCH=x86_64-unknown-linux-musl ;; \
@@ -97,3 +94,5 @@ EXPOSE 8083
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/app/authenticator", "--", "/app/authenticator", "-c", "/app/config/insight.yaml", "run"]
+
+# CI rebuild marker -- appVersion bump now covers this subchart (fix/ci-publish-gateway-authenticator).

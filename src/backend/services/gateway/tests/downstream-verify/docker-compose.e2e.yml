@@ -1,0 +1,174 @@
+# Downstream-verification e2e (dev/CI ONLY) -- NGINX_BFF §6 R1, step-07 §D.
+#
+# The full chain with the REAL downstream services behind the OpenResty gateway:
+#   fakeidp -> authenticator -> gateway -> {analytics, identity}
+# Both analytics (Rust) and identity (.NET) verify the gateway JWT themselves
+# (fail-closed, no disable knob). The authenticator resolves the login user via
+# the identity-stub (a test seam so login works without seeding real identity);
+# the real analytics + identity are the downstream verification targets.
+#
+# Everything runs on one compose network so DNS names resolve for both the nginx
+# upstreams and the Lua cosocket, and the OIDC redirect flow works. Driven by
+# run-e2e.sh; assertions run from the host (published ports below).
+name: insight-gw-e2e-downstream-verify
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: root-local
+      MARIADB_DATABASE: identity
+      MARIADB_USER: insight
+      MARIADB_PASSWORD: insight-local
+    volumes:
+      # Creates the `identity` + `analytics` databases and the `insight` user.
+      - ../../../../../../deploy/compose/mariadb-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  fakeidp:
+    build:
+      context: ../../../..
+      dockerfile: services/fakeidp/Dockerfile
+    environment:
+      FAKEIDP_ISSUER: "http://fakeidp:8084"
+      FAKEIDP_BIND: "0.0.0.0:8084"
+      FAKEIDP_DEFAULT_AUD: "insight-authenticator"
+      FAKEIDP_DEV_USER_EMAIL: "dev@company.nonpresent"
+    ports:
+      - "${FAKEIDP_E2E_PORT:-18084}:8084"
+
+  # Canned person resolver for the authenticator's login step (email -> person).
+  # Keeps login working without seeding real identity; the real
+  # identity service is a downstream verification target, not the login backend.
+  identity-stub:
+    image: python:3.12-slim
+    volumes:
+      - ../../../authenticator/tests/identity-stub.py:/identity-stub.py:ro
+    command: ["python", "/identity-stub.py", "0.0.0.0:8092"]
+
+  authenticator:
+    build:
+      context: ../../../..
+      dockerfile: services/authenticator/Dockerfile
+    depends_on:
+      redis: {condition: service_healthy}
+      fakeidp: {condition: service_started}
+      identity-stub: {condition: service_started}
+    ports:
+      - "${AUTHENTICATOR_E2E_PORT:-18083}:8083"
+      - "${AUTHENTICATOR_TOKEN_E2E_PORT:-18093}:8093"
+    environment:
+      APP__gears__authenticator__config__redis_url: "redis://redis:6379"
+      APP__gears__authenticator__config__signing_keys_path: "/keys"
+      APP__gears__authenticator__config__identity_url: "http://identity-stub:8092"
+      # Token `iss` = the TLS discovery front (authn-tls), so downstream
+      # verifiers resolve the JWKS over https (the plugin's runtime is
+      # https-only). The browser still reaches the gateway plainly at :8080.
+      APP__gears__authenticator__config__gateway_issuer: "https://authn-tls:8443"
+      APP__gears__authenticator__config__redirect_uri: "http://gateway:8080/auth/callback"
+      APP__gears__authenticator__config__idp__issuer_url: "http://fakeidp:8084"
+      APP__gears__authenticator__config__idp__client_id: "insight-authenticator"
+      # Short exchange-cache window so revocation-adjacent assertions are fast.
+      # Sourced from conftest.py's AUTHZ_CACHE_MAX_AGE (exported into the env).
+      APP__gears__authenticator__config__authz_cache_max_age_seconds: "${AUTHZ_CACHE_MAX_AGE:-3}"
+      APP__gears__authenticator__config__service_tokens__public_key_dir: "/keys"
+    volumes:
+      - ./keys:/keys:ro
+
+  # TLS discovery front for the authenticator (see authn-tls.conf). The upstream
+  # oidc-authn-plugin resolves JWKS via OIDC discovery over https ONLY, so the
+  # authenticator's `/.well-known/*` is fronted here with a self-signed cert
+  # (CN/SAN authn-tls, trusted by analytics via /certs/ca.pem). certs generated
+  # by conftest.py into ./certs.
+  authn-tls:
+    image: nginx:1.27-alpine
+    depends_on:
+      authenticator: {condition: service_started}
+    volumes:
+      - ./authn-tls.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/certs:ro
+
+  analytics:
+    build:
+      context: ../../../..
+      dockerfile: services/analytics/Dockerfile
+    depends_on:
+      mariadb: {condition: service_healthy}
+      authenticator: {condition: service_started}
+      authn-tls: {condition: service_started}
+    environment:
+      APP__gears__analytics__config__database_url: "mysql://insight:insight-local@mariadb:3306/analytics"
+      APP__gears__analytics__config__redis_url: "redis://redis:6379"
+      # ClickHouse is a post-readiness dependency; list endpoints never touch it,
+      # so an unreachable URL is fine for this proof (mirrors the http_live_tests
+      # dead-ClickHouse setup).
+      APP__gears__analytics__config__clickhouse_url: "http://clickhouse.invalid:8123"
+      APP__gears__analytics__config__clickhouse_database: "insight"
+      APP__gears__analytics__config__identity_url: "http://identity:8082"
+    # The oidc-authn-plugin verification config is nested/list-shaped, so it
+    # comes from a bind-mounted host config (concrete issuer + CA), not env. The
+    # self-signed CA for authn-tls is mounted at /certs.
+    volumes:
+      - ./analytics.e2e.yaml:/app/config/insight.yaml:ro
+      - ./certs:/certs:ro
+    # Published so a driver can hit analytics DIRECTLY (the R1 "no JWT -> 401" proof).
+    ports:
+      - "${ANALYTICS_E2E_PORT:-18081}:8081"
+
+  identity:
+    build:
+      context: ../../../..
+      dockerfile: services/identity/Dockerfile
+    depends_on:
+      mariadb: {condition: service_healthy}
+      authenticator: {condition: service_started}
+    environment:
+      IDENTITY__mariadb__url: "mysql://insight:insight-local@mariadb:3306/identity"
+      IDENTITY__identity__bind_addr: "0.0.0.0:8082"
+      IDENTITY__identity__tenant_default_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+      # `iss` must equal the token's (authn-tls). identity is .NET (not the
+      # gears plugin) and fetches JWKS from an explicit URL with RequireHttps
+      # off, so it keeps the plain-http JWKS endpoint directly — no TLS front,
+      # no CA trust needed here.
+      IDENTITY__identity__auth_gateway_issuer: "https://authn-tls:8443"
+      IDENTITY__identity__auth_gateway_jwks_url: "http://authenticator:8083/.well-known/jwks.json"
+    # Published so a driver can hit identity DIRECTLY (the R1 "no JWT -> 401" proof).
+    ports:
+      - "${IDENTITY_E2E_PORT:-18082}:8082"
+
+  # Minimal SPA-shell stand-in for the gateway's `location /` passthrough.
+  echo:
+    image: python:3.12-slim
+    volumes:
+      - ../echo-stub.py:/echo-stub.py:ro
+    command: ["python", "/echo-stub.py", "0.0.0.0:9090"]
+
+  gateway:
+    build:
+      context: ../../../..
+      dockerfile: services/gateway/Dockerfile
+    depends_on:
+      authenticator: {condition: service_started}
+      analytics: {condition: service_started}
+      identity: {condition: service_started}
+      echo: {condition: service_started}
+    environment:
+      GATEWAY_AUTHENTICATOR_URL: "http://authenticator:8083"
+      GATEWAY_FRONT_URL: "http://echo:9090"
+    volumes:
+      - ./routes.e2e.yaml:/etc/gateway/routes.yaml:ro
+    ports:
+      - "${GW_E2E_PORT:-18080}:8080"

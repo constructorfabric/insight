@@ -165,6 +165,27 @@ public sealed class OrgChartTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetCurrentParents_excludes_no_parent_sentinel_row()
+    {
+        await InsertEdgeAsync("bamboohr", BambooSourceId, child: AlicePersonId, parent: null).ConfigureAwait(false);
+
+        var parents = await _repo!.GetCurrentParentsAsync(TenantId, AlicePersonId, CancellationToken.None);
+        parents.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetCurrentParents_returns_real_edge_alongside_sentinel_from_other_source()
+    {
+        await InsertEdgeAsync("bamboohr", BambooSourceId, child: AlicePersonId, parent: BobPersonId).ConfigureAwait(false);
+        await InsertEdgeAsync("slack",    SlackSourceId,  child: AlicePersonId, parent: null).ConfigureAwait(false);
+
+        var parents = await _repo!.GetCurrentParentsAsync(TenantId, AlicePersonId, CancellationToken.None);
+
+        parents.Should().HaveCount(1);
+        parents[0].ParentPersonId.Should().Be(BobPersonId);
+    }
+
+    [Fact]
     public async Task GetCurrentChildren_excludes_child_whose_latest_row_is_closed()
     {
         // Bob has two direct reports: Alice (deactivated, never
@@ -189,7 +210,7 @@ public sealed class OrgChartTests : IAsyncLifetime
         string sourceType,
         Guid sourceId,
         Guid child,
-        Guid parent,
+        Guid? parent,
         DateTime? validFrom = null,
         DateTime? validTo   = null,
         Guid? tenantId      = null)
@@ -208,7 +229,7 @@ public sealed class OrgChartTests : IAsyncLifetime
         cmd.Parameters.AddWithValue("@st",  sourceType);
         cmd.Parameters.AddWithValue("@sid", sourceId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@c",   child.ToByteArray(bigEndian: true));
-        cmd.Parameters.AddWithValue("@p",   parent.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@p",   (object?)parent?.ToByteArray(bigEndian: true) ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@a",   AuthorPersonId.ToByteArray(bigEndian: true));
         cmd.Parameters.AddWithValue("@vf",  validFrom ?? new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
         cmd.Parameters.AddWithValue("@vt",  (object?)validTo ?? DBNull.Value);

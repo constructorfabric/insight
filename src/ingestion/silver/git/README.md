@@ -30,7 +30,7 @@ Git silver models. Two layers:
 |---|---|---|
 | `fct_git_pr` | one row per PR | `person_key`, `state_norm`, `cycle_time_h` |
 | `fct_git_commit` | one row per commit | `person_key`, `week` |
-| `fct_git_file_change` | one row per file change | `person_key` (via commit), `week`, `file_category` (code\|spec\|config) |
+| `fct_git_file_change` | one row per file change | `person_key` (via commit), `week`, `file_category` (vendored\|code\|spec\|config) |
 | `fct_git_review` | one row per review | reviewer `person_key` |
 
 ### Metrics
@@ -82,6 +82,10 @@ dbt run --select tag:silver
   `merge_commit_hash` resolves, else `closed_on` week). All CTEs share the
   same week semantic so the final join never splits a person across rows.
 - `file_category` regex matches common test/spec/config path patterns.
+  Vendored/generated content (deps, build output, generated/minified files) is
+  classified `vendored` first — via the shared `git_vendored_path_regex` macro,
+  configurable through the `git_vendored_path_patterns` dbt var — and so is
+  excluded from `code_loc` / `clean_loc`.
 - PR `state` values are source-case-preserved (`MERGED`, `OPEN`). Facts expose
   `state_norm = lower(state)` for downstream use.
 - `pickup_time` and `rework_ratio` are excluded here because Bitbucket Cloud
@@ -97,8 +101,12 @@ the class models directly. PR authors resolve to an email from the PR's
 own field or from the dominant email of its linked commits; PRs that
 resolve to no email are excluded (honest absence). File classification
 for unified measures lives in the shared gold macro
-`dbt/macros/git_file_category.sql` (`code | test | config | docs`),
-computed at read time so taxonomy changes apply retroactively.
+`dbt/macros/git_file_category.sql` (`vendored | code | test | config | docs`),
+computed at read time so taxonomy changes apply retroactively. `vendored`
+(machine-produced deps/build/generated output, matched by the shared
+`git_vendored_path_patterns` var) is excluded from the `code_lines_added`
+measure and surfaced distinctly under the `vendored` category in the total
+`lines_added` breakdown.
 
 `fct_git_*` and `mtr_git_*` serve the legacy `insight.*` views
 (`git_bullet_rows`, `ic_kpis`, `ic_chart_loc`) only and are scheduled for

@@ -20,11 +20,23 @@ resources:
     memory: 384Mi
 
 # Pre-provisioned Secret with the full identity config:
-#   IDENTITY__mariadb__url, IDENTITY__identity__tenant_default_id (optional).
+#   IDENTITY__mariadb__url, IDENTITY__identity__tenant_default_id (optional),
+#   IDENTITY__identity__auth_gateway_issuer, IDENTITY__identity__auth_gateway_jwks_url.
 # The umbrella populates `insight-identity-config` automatically
 # when `identity.deploy=true`; for standalone installs the operator
 # pre-creates an equivalent Secret.
 existingSecret: ""
+
+# Gateway-JWT verification (NGINX_BFF R1). When set, these render as
+# IDENTITY__identity__auth_gateway_* env vars. Leave empty to supply them via
+# the existingSecret instead (the umbrella's preferred path). Identity fails
+# closed — startup requires both an issuer and a JWKS URL to be present.
+gateway:
+  # `iss` the token carries = the authenticator's gateway_issuer (gateway origin).
+  issuer: ""
+  # Network-reachable JWKS endpoint (the gateway's / authenticator's
+  # `/.well-known/jwks.json`). This is the per-service GATEWAY_JWKS_URL.
+  jwksUrl: ""
 
 # Wait for MariaDB TCP before main container starts. Closes the pod-restart
 # race that the umbrella's pre-install Helm hook (mariadb-init-svcdbs-job)

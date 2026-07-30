@@ -4,7 +4,7 @@ podAnnotations: {}
 
 image:
   repository: ghcr.io/constructorfabric/insight-analytics
-  tag: ""                  # MUST be set by the operator. No `:latest` default.
+  tag: "" # MUST be set by the operator. No `:latest` default.
   pullPolicy: IfNotPresent
 
 service:
@@ -29,18 +29,39 @@ resources:
 #
 # `..._metric_catalog__tenant_default_id` (UUID, optional): single-tenant
 # fallback for the Metric Catalog per DESIGN §2.2
-# `cpt-metric-cat-constraint-tenant-default`. Under the auth-disabled host the
-# platform api-gateway is the sole authenticator and this host injects a
-# single-tenant SecurityContext (toolkit-security's DEFAULT_TENANT_ID); the
-# analytics gear overrides the tenant from the `X-Insight-Tenant-Id`
-# header when present. The session-bound tenant ALWAYS wins over the
-# configured default (security invariant; see
-# `domain::auth::TenantAuthorization`).
+# `cpt-metric-cat-constraint-tenant-default`. The gateway JWT is the tenant
+# authority (verified here — NGINX_BFF R1); the oidc-authn-plugin sets the
+# request tenant from the token's single signed `tenant_id` claim. The
+# session-bound tenant ALWAYS wins over the configured default (security
+# invariant; see `domain::auth::TenantAuthorization`).
 #
 # The umbrella populates `insight-analytics-config` automatically; for
 # standalone installs the operator pre-creates an equivalent Secret and
 # sets `existingSecret` to its name.
 existingSecret: ""
+
+# Gateway-JWT verification (cf-gears-oidc-authn-plugin, NGINX_BFF R1). These
+# render into the plugin's `jwt.trusted_issuers` / `expected_audience` in the
+# ConfigMap (nested/list-shaped, so not env-injectable). The plugin resolves the
+# JWKS via OIDC discovery on the issuer over https ONLY.
+gateway:
+  # `iss` the token carries = the authenticator's gateway_issuer (gateway
+  # origin). The plugin fetches `{issuer}/.well-known/openid-configuration`.
+  issuer: ""
+  # Optional discovery override: where to fetch the discovery document, when the
+  # public `issuer` is not reachable from in-cluster. `{issuer}` is substituted
+  # with the matched `iss`. Leave empty to use the issuer directly.
+  discoveryUrl: ""
+  # Expected `aud`. Fixed by the authenticator's claim contract.
+  audience: "internal-services"
+  # Optional extra TLS trust roots (PEM paths inside the pod) for the discovery/
+  # JWKS fetch — e.g. an internal CA. Empty for a publicly-trusted issuer cert.
+  caCertPaths: []
+  # Secret holding the discovery issuer's CA under key `ca.crt` (the
+  # authenticator's authn-tls cert Secret). When set, it is mounted read-only at
+  # /etc/insight/authn-ca and `caCertPaths` should include
+  # `/etc/insight/authn-ca/ca.crt`. The umbrella wires both automatically.
+  caCertSecret: ""
 
 # Health probes
 livenessProbe:

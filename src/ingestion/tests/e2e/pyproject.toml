@@ -13,6 +13,10 @@ dependencies = [
     "clickhouse-connect>=0.7",
     "pymysql>=1.1",
     "httpx>=0.27",
+    # Mint ES256 gateway JWTs + a self-signed JWKS/discovery TLS front so the
+    # rig runs analytics auth-ENABLED (NGINX_BFF R1); see lib/gateway_jwt.py.
+    "pyjwt>=2.8",
+    "cryptography>=42",
     "pandas>=2.2",
     "dbt-core>=1.9",
     "dbt-clickhouse>=1.9",

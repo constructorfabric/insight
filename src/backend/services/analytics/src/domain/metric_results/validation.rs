@@ -7,14 +7,21 @@ use uuid::Uuid;
 
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition, load_definitions};
+use crate::domain::schema_validator::parse::parse_metric_key;
 
-use super::dto::{MetricResultsRequest, MetricViewRequest};
+use super::dto::{
+    MetricDimensionFilterRequest, MetricGroupLimitRequest, MetricResultsRequest, MetricViewRequest,
+};
 use super::view::Bucket;
 
 const ROW_LIMIT: usize = 5000;
 const MAX_METRICS: usize = 50;
 const MAX_ENTITY_IDS: usize = 1000;
 const MAX_PERIOD_DAYS: i64 = 400;
+const MAX_FILTERS: usize = 10;
+const MAX_FILTER_VALUES: usize = 100;
+const MAX_FILTER_VALUE_BYTES: usize = 512;
+const MAX_GROUP_COUNT: usize = 50;
 
 /// Server-owned histogram resolution: fixed-width bins over each entity's
 /// own exact [min, max]. A fixed count keeps responses deterministic and
@@ -34,7 +41,21 @@ pub struct ValidatedMetricResultsRequest {
 #[derive(Debug)]
 pub struct ValidatedMetricRequest {
     pub def: MetricDefinition,
+    pub filters: Vec<ValidatedDimensionFilter>,
     pub views: Vec<ValidatedMetricView>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatedGroupLimit {
+    pub count: usize,
+    pub rank_by: Box<MetricDefinition>,
+    pub include_remainder: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ValidatedDimensionFilter {
+    pub dimension: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +67,7 @@ pub enum ValidatedMetricView {
     Timeseries {
         bucket: Bucket,
         dimensions: Vec<String>,
+        group_limit: Option<ValidatedGroupLimit>,
     },
     Breakdown {
         dimensions: Vec<String>,
@@ -75,12 +97,33 @@ pub async fn validate_request(
         metric_keys,
     } = shape;
 
-    let mut definitions = load_definitions(db, tenant_id, &metric_keys).await?;
+    let mut definition_keys = metric_keys.clone();
+    for metric in &req.metrics {
+        for view in &metric.views {
+            if let MetricViewRequest::Timeseries {
+                group_limit:
+                    Some(MetricGroupLimitRequest {
+                        rank_by_metric: Some(rank_by_metric),
+                        ..
+                    }),
+                ..
+            } = view
+            {
+                definition_keys.push(normalize_metric_key(
+                    "metrics.views.group_limit.rank_by_metric",
+                    rank_by_metric,
+                )?);
+            }
+        }
+    }
+    definition_keys.sort();
+    definition_keys.dedup();
+    let definitions = load_definitions(db, tenant_id, &definition_keys).await?;
     let mut metrics = Vec::with_capacity(req.metrics.len());
 
     for metric in req.metrics {
         let metric_key = metric.metric_key.trim();
-        let def = definitions.remove(metric_key).ok_or_else(|| {
+        let def = definitions.get(metric_key).cloned().ok_or_else(|| {
             tracing::error!(metric_key = %metric_key, "definition missing after successful load");
             CanonicalError::internal("metric definition lookup failed").create()
         })?;
@@ -101,6 +144,7 @@ pub async fn validate_request(
             );
         }
 
+        let filters = validate_filters(&def, metric.filters)?;
         let mut view_kinds = BTreeSet::new();
         let mut views = Vec::with_capacity(metric.views.len());
         for view in metric.views {
@@ -111,10 +155,19 @@ pub async fn validate_request(
                     format!("metric {} has duplicate {kind:?} view", def.key()),
                 );
             }
-            views.push(validate_view(&def, view)?);
+            views.push(validate_view_with_context(
+                &def,
+                view,
+                &definitions,
+                &filters,
+            )?);
         }
 
-        metrics.push(ValidatedMetricRequest { def, views });
+        metrics.push(ValidatedMetricRequest {
+            def,
+            filters,
+            views,
+        });
     }
 
     let validated = ValidatedMetricResultsRequest {
@@ -124,7 +177,7 @@ pub async fn validate_request(
         to,
         metrics,
     };
-    validate_projected_row_limit(&validated)?;
+    validate_projected_view_limits(&validated)?;
     Ok(validated)
 }
 
@@ -188,26 +241,25 @@ pub const fn row_limit() -> usize {
     ROW_LIMIT
 }
 
-// One past the response cap: a query returning ROW_LIMIT + 1 rows proves
-// truncation, which the final enforce_row_limit pass then converts into a
-// whole-request failure instead of a silently clipped result.
 pub const fn query_row_limit() -> usize {
     ROW_LIMIT + 1
 }
 
-pub fn metric_result_too_large() -> CanonicalError {
+pub fn metric_result_too_large(field: impl Into<String>) -> CanonicalError {
     MetricError::invalid_argument()
         .with_field_violation(
-            "metric_results",
-            "Requested metric result exceeds the row limit. Reduce the date range, entities, metrics, or dimensions.",
+            field,
+            "Requested metric view exceeds the row limit. Reduce the date range, entities, or dimensions.",
             "metric_result_too_large",
         )
         .create()
 }
 
-fn validate_view(
+fn validate_view_with_context(
     def: &MetricDefinition,
     view: MetricViewRequest,
+    definitions: &std::collections::HashMap<String, MetricDefinition>,
+    filters: &[ValidatedDimensionFilter],
 ) -> Result<ValidatedMetricView, CanonicalError> {
     match view {
         MetricViewRequest::Period => Ok(ValidatedMetricView::Period),
@@ -238,10 +290,19 @@ fn validate_view(
             };
             Ok(ValidatedMetricView::Peer { cohort_key })
         }
-        MetricViewRequest::Timeseries { bucket, dimensions } => {
+        MetricViewRequest::Timeseries {
+            bucket,
+            dimensions,
+            group_limit,
+        } => {
+            let dimensions = validate_dimensions(def, "metrics.views.dimensions", dimensions)?;
+            let group_limit = group_limit
+                .map(|limit| validate_group_limit(def, definitions, filters, &dimensions, limit))
+                .transpose()?;
             Ok(ValidatedMetricView::Timeseries {
                 bucket: bucket.unwrap_or(Bucket::Day),
-                dimensions: validate_dimensions(def, "metrics.views.dimensions", dimensions)?,
+                dimensions,
+                group_limit,
             })
         }
         MetricViewRequest::Breakdown { dimensions } => {
@@ -275,6 +336,15 @@ fn validate_view(
     }
 }
 
+#[cfg(test)]
+fn validate_view(
+    def: &MetricDefinition,
+    view: MetricViewRequest,
+) -> Result<ValidatedMetricView, CanonicalError> {
+    let definitions = std::collections::HashMap::from([(def.key().to_owned(), def.clone())]);
+    validate_view_with_context(def, view, &definitions, &[])
+}
+
 fn validate_dimensions(
     def: &MetricDefinition,
     field: &'static str,
@@ -298,6 +368,134 @@ fn validate_dimensions(
         };
         out.push(valid_dimension.to_owned());
     }
+    Ok(out)
+}
+
+fn validate_group_limit(
+    def: &MetricDefinition,
+    definitions: &std::collections::HashMap<String, MetricDefinition>,
+    filters: &[ValidatedDimensionFilter],
+    dimensions: &[String],
+    limit: MetricGroupLimitRequest,
+) -> Result<ValidatedGroupLimit, CanonicalError> {
+    if dimensions.is_empty() {
+        return invalid(
+            "metrics.views.group_limit",
+            "group_limit requires at least one dimension",
+        );
+    }
+    if !(1..=MAX_GROUP_COUNT).contains(&limit.count) {
+        return invalid(
+            "metrics.views.group_limit.count",
+            format!("group count must be between 1 and {MAX_GROUP_COUNT}"),
+        );
+    }
+    let rank_key = match limit.rank_by_metric {
+        Some(key) => normalize_metric_key("metrics.views.group_limit.rank_by_metric", &key)?,
+        None => def.key().to_owned(),
+    };
+    let rank_by = definitions.get(&rank_key).cloned().ok_or_else(|| {
+        MetricError::invalid_argument()
+            .with_field_violation(
+                "metrics.views.group_limit.rank_by_metric",
+                format!("ranking metric {rank_key} is unavailable"),
+                "INVALID",
+            )
+            .create()
+    })?;
+    if rank_by.base.entity_type != def.base.entity_type {
+        return invalid(
+            "metrics.views.group_limit.rank_by_metric",
+            format!(
+                "ranking metric {rank_key} uses entity type {} instead of {}",
+                rank_by.base.entity_type, def.base.entity_type
+            ),
+        );
+    }
+    for dimension in dimensions {
+        if rank_by.allowed_dimension(dimension).is_none() {
+            return invalid(
+                "metrics.views.group_limit.rank_by_metric",
+                format!("ranking metric {rank_key} does not support dimension {dimension}"),
+            );
+        }
+    }
+    for filter in filters {
+        if rank_by.allowed_dimension(&filter.dimension).is_none() {
+            return invalid(
+                "metrics.views.group_limit.rank_by_metric",
+                format!(
+                    "ranking metric {rank_key} does not support filter dimension {}",
+                    filter.dimension
+                ),
+            );
+        }
+    }
+    Ok(ValidatedGroupLimit {
+        count: limit.count,
+        rank_by: Box::new(rank_by),
+        include_remainder: limit.include_remainder,
+    })
+}
+
+fn validate_filters(
+    def: &MetricDefinition,
+    filters: Vec<MetricDimensionFilterRequest>,
+) -> Result<Vec<ValidatedDimensionFilter>, CanonicalError> {
+    if filters.len() > MAX_FILTERS {
+        return invalid(
+            "metrics.filters",
+            format!("at most {MAX_FILTERS} dimension filters per metric"),
+        );
+    }
+    let mut seen_dimensions = BTreeSet::new();
+    let mut out = Vec::with_capacity(filters.len());
+    for filter in filters {
+        let Some(dimension) =
+            validate_dimensions(def, "metrics.filters.dimension", vec![filter.dimension])?
+                .into_iter()
+                .next()
+        else {
+            return invalid("metrics.filters.dimension", "dimension must not be empty");
+        };
+        if !seen_dimensions.insert(dimension.clone()) {
+            return invalid(
+                "metrics.filters.dimension",
+                format!("duplicate dimension filter: {dimension}"),
+            );
+        }
+        if filter.values.is_empty() {
+            return invalid(
+                "metrics.filters.values",
+                format!("filter {dimension} must contain at least one value"),
+            );
+        }
+        if filter.values.len() > MAX_FILTER_VALUES {
+            return invalid(
+                "metrics.filters.values",
+                format!("filter {dimension} supports at most {MAX_FILTER_VALUES} values"),
+            );
+        }
+        let mut seen_values = BTreeSet::new();
+        for value in filter.values {
+            let value = value.trim();
+            if value.is_empty() {
+                return invalid("metrics.filters.values", "filter value must not be empty");
+            }
+            if value.len() > MAX_FILTER_VALUE_BYTES {
+                return invalid(
+                    "metrics.filters.values",
+                    format!("filter value must not exceed {MAX_FILTER_VALUE_BYTES} bytes"),
+                );
+            }
+            seen_values.insert(value.to_owned());
+        }
+        out.push(ValidatedDimensionFilter {
+            dimension,
+            values: seen_values.into_iter().collect(),
+        });
+    }
+    out.sort();
     Ok(out)
 }
 
@@ -355,33 +553,47 @@ fn normalize_key(field: &'static str, value: &str) -> Result<String, CanonicalEr
     Ok(value)
 }
 
-fn validate_projected_row_limit(req: &ValidatedMetricResultsRequest) -> Result<(), CanonicalError> {
-    let mut projected = 0usize;
+fn normalize_metric_key(field: &'static str, value: &str) -> Result<String, CanonicalError> {
+    let value = value.trim().to_ascii_lowercase();
+    if parse_metric_key(&value).is_err() {
+        return invalid(field, "expected a metric key");
+    }
+    Ok(value)
+}
 
-    for metric in &req.metrics {
-        for view in &metric.views {
-            match view {
+fn validate_projected_view_limits(
+    req: &ValidatedMetricResultsRequest,
+) -> Result<(), CanonicalError> {
+    for (metric_index, metric) in req.metrics.iter().enumerate() {
+        for (view_index, view) in metric.views.iter().enumerate() {
+            let projected = match view {
                 ValidatedMetricView::Period | ValidatedMetricView::Peer { .. } => {
-                    projected = projected.saturating_add(req.entity_ids.len());
+                    req.entity_ids.len()
                 }
-                ValidatedMetricView::Timeseries { bucket, .. } => {
-                    projected = projected.saturating_add(
-                        req.entity_ids
-                            .len()
-                            .saturating_mul(enumerate_buckets(req.from, req.to, *bucket).len()),
-                    );
+                ValidatedMetricView::Timeseries {
+                    bucket,
+                    group_limit,
+                    ..
+                } => {
+                    let groups = group_limit.as_ref().map_or(1, |limit| {
+                        limit.count + usize::from(limit.include_remainder)
+                    });
+                    req.entity_ids
+                        .len()
+                        .saturating_mul(groups)
+                        .saturating_mul(enumerate_buckets(req.from, req.to, *bucket).len() + 1)
                 }
                 ValidatedMetricView::Histogram => {
-                    projected = projected
-                        .saturating_add(req.entity_ids.len().saturating_mul(HISTOGRAM_BINS));
+                    req.entity_ids.len().saturating_mul(HISTOGRAM_BINS)
                 }
-                ValidatedMetricView::Breakdown { .. } => {}
+                ValidatedMetricView::Breakdown { .. } => 0,
+            };
+            if projected > ROW_LIMIT {
+                return Err(metric_result_too_large(format!(
+                    "metrics[{metric_index}].views[{view_index}]"
+                )));
             }
         }
-    }
-
-    if projected > ROW_LIMIT {
-        return Err(metric_result_too_large());
     }
     Ok(())
 }
@@ -446,6 +658,7 @@ mod tests {
                 .into_iter()
                 .map(|key| super::super::dto::MetricRequest {
                     metric_key: key.to_owned(),
+                    filters: vec![],
                     views: vec![MetricViewRequest::Period],
                 })
                 .collect(),
@@ -458,6 +671,7 @@ mod tests {
             base: MetricBase {
                 key: "ai.accepted_lines".to_owned(),
                 label: "AI-added lines".to_owned(),
+                short_label: None,
                 description: None,
                 explanation: None,
                 entity_type: "person".to_owned(),
@@ -613,6 +827,16 @@ mod tests {
     }
 
     #[test]
+    fn normalize_metric_key_accepts_catalog_key_shape() {
+        assert_eq!(
+            normalize_metric_key("f", " Git.Commits ").ok().as_deref(),
+            Some("git.commits")
+        );
+        assert!(normalize_metric_key("f", "git_commits").is_err());
+        assert!(normalize_metric_key("f", "git.commits.extra").is_err());
+    }
+
+    #[test]
     fn validate_view_rejects_undeclared_dimension() {
         let def = sum_definition(vec!["tool"]);
         let view = MetricViewRequest::Breakdown {
@@ -627,11 +851,105 @@ mod tests {
         let view = MetricViewRequest::Timeseries {
             bucket: None,
             dimensions: vec![],
+            group_limit: None,
         };
         match validate_view(&def, view) {
             Ok(ValidatedMetricView::Timeseries { bucket, .. }) => assert_eq!(bucket, Bucket::Day),
             other => panic!("expected timeseries, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn group_limit_defaults_to_the_current_metric() {
+        let def = sum_definition(vec!["repository"]);
+        let definitions = std::collections::HashMap::from([(def.key().to_owned(), def.clone())]);
+        let limit = MetricGroupLimitRequest {
+            count: 10,
+            rank_by_metric: None,
+            include_remainder: true,
+        };
+        let validated =
+            validate_group_limit(&def, &definitions, &[], &["repository".to_owned()], limit)
+                .unwrap_or_else(|error| panic!("expected valid group limit: {error}"));
+        assert_eq!(validated.rank_by.key(), def.key());
+        assert_eq!(validated.count, 10);
+        assert!(validated.include_remainder);
+    }
+
+    #[test]
+    fn group_limit_validates_shape_and_ranking_compatibility() {
+        let def = sum_definition(vec!["repository", "source"]);
+        let mut rank_by = sum_definition(vec!["repository"]);
+        rank_by.base.key = "git.commits".to_owned();
+        let definitions = std::collections::HashMap::from([
+            (def.key().to_owned(), def.clone()),
+            (rank_by.key().to_owned(), rank_by.clone()),
+        ]);
+        let limit = |count, rank_by_metric| MetricGroupLimitRequest {
+            count,
+            rank_by_metric,
+            include_remainder: true,
+        };
+        assert!(validate_group_limit(&def, &definitions, &[], &[], limit(10, None)).is_err());
+        assert!(
+            validate_group_limit(
+                &def,
+                &definitions,
+                &[],
+                &["repository".to_owned()],
+                limit(0, None),
+            )
+            .is_err()
+        );
+        assert!(
+            validate_group_limit(
+                &def,
+                &definitions,
+                &[],
+                &["repository".to_owned()],
+                limit(MAX_GROUP_COUNT + 1, None),
+            )
+            .is_err()
+        );
+        assert!(
+            validate_group_limit(
+                &def,
+                &definitions,
+                &[],
+                &["source".to_owned()],
+                limit(10, Some("git.commits".to_owned())),
+            )
+            .is_err()
+        );
+        let filters = vec![ValidatedDimensionFilter {
+            dimension: "source".to_owned(),
+            values: vec!["github".to_owned()],
+        }];
+        assert!(
+            validate_group_limit(
+                &def,
+                &definitions,
+                &filters,
+                &["repository".to_owned()],
+                limit(10, Some("git.commits".to_owned())),
+            )
+            .is_err()
+        );
+        rank_by.base.entity_type = "team".to_owned();
+        let definitions = std::collections::HashMap::from([
+            (def.key().to_owned(), def.clone()),
+            (rank_by.key().to_owned(), rank_by),
+        ]);
+        assert!(
+            validate_group_limit(
+                &def,
+                &definitions,
+                &[],
+                &["repository".to_owned()],
+                limit(10, Some("git.commits".to_owned())),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -669,6 +987,93 @@ mod tests {
         let def = sum_definition(vec!["tool"]);
         let view = MetricViewRequest::Breakdown { dimensions: vec![] };
         assert!(validate_view(&def, view).is_err());
+    }
+
+    #[test]
+    fn filters_are_trimmed_deduplicated_and_sorted() {
+        let def = sum_definition(vec!["source", "repository"]);
+        let filters = vec![
+            MetricDimensionFilterRequest {
+                dimension: " source ".to_owned(),
+                values: vec![
+                    "github".to_owned(),
+                    " bitbucket ".to_owned(),
+                    "github".to_owned(),
+                ],
+            },
+            MetricDimensionFilterRequest {
+                dimension: "repository".to_owned(),
+                values: vec!["z/repo".to_owned(), "a/repo".to_owned()],
+            },
+        ];
+        let Ok(filters) = validate_filters(&def, filters) else {
+            panic!("expected valid filters");
+        };
+        assert_eq!(
+            filters,
+            vec![
+                ValidatedDimensionFilter {
+                    dimension: "repository".to_owned(),
+                    values: vec!["a/repo".to_owned(), "z/repo".to_owned()],
+                },
+                ValidatedDimensionFilter {
+                    dimension: "source".to_owned(),
+                    values: vec!["bitbucket".to_owned(), "github".to_owned()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn filters_reject_invalid_shapes() {
+        let def = sum_definition(vec!["source"]);
+        let filter = |dimension: &str, values: Vec<String>| MetricDimensionFilterRequest {
+            dimension: dimension.to_owned(),
+            values,
+        };
+        assert!(
+            validate_filters(
+                &def,
+                vec![
+                    filter("source", vec!["github".to_owned()]),
+                    filter("source", vec!["gitlab".to_owned()]),
+                ],
+            )
+            .is_err()
+        );
+        assert!(validate_filters(&def, vec![filter("source", vec![])]).is_err());
+        assert!(
+            validate_filters(
+                &def,
+                vec![filter(
+                    "source",
+                    (0..=MAX_FILTER_VALUES)
+                        .map(|index| index.to_string())
+                        .collect(),
+                )],
+            )
+            .is_err()
+        );
+        assert!(validate_filters(&def, vec![filter("source", vec![" ".to_owned()])]).is_err());
+        assert!(
+            validate_filters(
+                &def,
+                vec![filter(
+                    "source",
+                    vec!["x".repeat(MAX_FILTER_VALUE_BYTES + 1)],
+                )],
+            )
+            .is_err()
+        );
+        assert!(
+            validate_filters(
+                &def,
+                (0..=MAX_FILTERS)
+                    .map(|index| filter(&format!("d{index}"), vec!["x".to_owned()]))
+                    .collect(),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -711,7 +1116,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_row_limit_counts_timeseries_buckets() {
+    fn projected_view_limit_counts_timeseries_buckets() {
         let def = sum_definition(vec![]);
         let validated = ValidatedMetricResultsRequest {
             entity_type: "person".to_owned(),
@@ -720,17 +1125,58 @@ mod tests {
             to: day("2026-03-31"),
             metrics: vec![ValidatedMetricRequest {
                 def,
+                filters: vec![],
                 views: vec![ValidatedMetricView::Timeseries {
                     bucket: Bucket::Day,
                     dimensions: vec![],
+                    group_limit: None,
                 }],
             }],
         };
-        assert!(validate_projected_row_limit(&validated).is_err());
+        assert!(validate_projected_view_limits(&validated).is_err());
     }
 
     #[test]
-    fn projected_row_limit_counts_histogram_bins() {
+    fn projected_view_limit_uses_the_capped_group_count_and_totals() {
+        let def = sum_definition(vec!["repository"]);
+        let view = || ValidatedMetricView::Timeseries {
+            bucket: Bucket::Week,
+            dimensions: vec!["repository".to_owned()],
+            group_limit: Some(ValidatedGroupLimit {
+                count: 10,
+                rank_by: Box::new(def.clone()),
+                include_remainder: true,
+            }),
+        };
+        let validated = ValidatedMetricResultsRequest {
+            entity_type: "person".to_owned(),
+            entity_ids: vec!["a@x.io".to_owned()],
+            from: day("2025-07-21"),
+            to: day("2026-07-20"),
+            metrics: (0..4)
+                .map(|_| ValidatedMetricRequest {
+                    def: def.clone(),
+                    filters: vec![],
+                    views: vec![view()],
+                })
+                .collect(),
+        };
+        assert!(validate_projected_view_limits(&validated).is_ok());
+
+        let mut combined_over_limit = validated;
+        combined_over_limit.entity_ids = vec![
+            "a@x.io".to_owned(),
+            "b@x.io".to_owned(),
+            "c@x.io".to_owned(),
+        ];
+        assert!(validate_projected_view_limits(&combined_over_limit).is_ok());
+
+        combined_over_limit.entity_ids = (0..10).map(|i| format!("p{i}@x.io")).collect();
+        assert!(validate_projected_view_limits(&combined_over_limit).is_err());
+    }
+
+    #[test]
+    fn projected_view_limit_counts_histogram_bins() {
         // 501 entities × 10 bins > 5000 projected rows.
         let validated = ValidatedMetricResultsRequest {
             entity_type: "person".to_owned(),
@@ -739,14 +1185,15 @@ mod tests {
             to: day("2026-01-31"),
             metrics: vec![ValidatedMetricRequest {
                 def: median_definition(),
+                filters: vec![],
                 views: vec![ValidatedMetricView::Histogram],
             }],
         };
-        assert!(validate_projected_row_limit(&validated).is_err());
+        assert!(validate_projected_view_limits(&validated).is_err());
     }
 
     #[test]
-    fn projected_row_limit_allows_small_requests() {
+    fn projected_view_limit_allows_small_requests() {
         let def = sum_definition(vec![]);
         let validated = ValidatedMetricResultsRequest {
             entity_type: "person".to_owned(),
@@ -755,6 +1202,7 @@ mod tests {
             to: day("2026-01-31"),
             metrics: vec![ValidatedMetricRequest {
                 def,
+                filters: vec![],
                 views: vec![
                     ValidatedMetricView::Period,
                     ValidatedMetricView::Peer {
@@ -763,6 +1211,6 @@ mod tests {
                 ],
             }],
         };
-        assert!(validate_projected_row_limit(&validated).is_ok());
+        assert!(validate_projected_view_limits(&validated).is_ok());
     }
 }

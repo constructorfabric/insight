@@ -90,6 +90,20 @@ spec:
           env:
             - name: ASPNETCORE_URLS
               value: "http://0.0.0.0:{{ .Values.service.port }}"
+            # Gateway-JWT verification (NGINX_BFF R1). May instead be supplied
+            # via the existingSecret (umbrella path) — then leave gateway.* unset.
+            # Each env is emitted only when its chart value is non-empty: an
+            # env entry overrides the same-named envFrom-secret value, so an
+            # empty chart value must NOT be rendered or it would clobber the
+            # secret-provided value.
+            {{- with .Values.gateway.issuer }}
+            - name: IDENTITY__identity__auth_gateway_issuer
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.gateway.jwksUrl }}
+            - name: IDENTITY__identity__auth_gateway_jwks_url
+              value: {{ . | quote }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
           {{- with .Values.livenessProbe }}

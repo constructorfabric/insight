@@ -1,0 +1,12 @@
+{
+  "amount": "123.45",
+  "currency": "USD",
+  "workspace_id": "wrkspc_01TESTAAAAAAAAAAAAAAAAAA",
+  "description": "Claude Sonnet 4 Usage - Input Tokens",
+  "cost_type": "tokens",
+  "model": "claude-sonnet-4-6",
+  "service_tier": "standard",
+  "context_window": "0-200k",
+  "token_type": "uncached_input_tokens",
+  "inference_geo": "global"
+}

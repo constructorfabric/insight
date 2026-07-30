@@ -5,5 +5,6 @@ pub mod metric;
 pub mod metric_definitions;
 pub mod metric_results;
 pub mod query;
+pub mod query_gate;
 pub mod schema_validator;
 pub mod threshold;

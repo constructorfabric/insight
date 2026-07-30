@@ -8,7 +8,7 @@ defaults:
     - X-Real-IP
     - Forwarded
 routes:
-  - prefix: /api/v1/analytics
+  - prefix: /api/analytics
     upstream: http://echo:9090
-  - prefix: /api/v1/identity
+  - prefix: /api/identity
     upstream: http://echo:9090
