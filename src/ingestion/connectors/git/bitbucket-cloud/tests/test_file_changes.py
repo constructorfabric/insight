@@ -11,7 +11,7 @@ def test_file_changes_independently_walk_commits(file_changes_stream, client, re
     client.branch_values[repo.uuid] = [branch("main", "head")]
     client.commit_values = [{"hash": "c1", "date": "2026-06-01"}]
     path = client.repo_path(repo, "diffstat/c1")
-    client.page_values[path] = [
+    client.optional_values[path] = (True, [
         {
             "status": "renamed",
             "old": {"path": "old.py"},
@@ -20,7 +20,7 @@ def test_file_changes_independently_walk_commits(file_changes_stream, client, re
             "lines_removed": 2,
         },
         {"status": "removed", "old": {"path": "gone.py"}, "lines_added": 0, "lines_removed": 8},
-    ]
+    ])
     records = read(file_changes_stream, repo)
     items, complete = records[:-1], records[-1]
     assert client.commit_calls == [(["head"], [])]
@@ -36,7 +36,7 @@ def test_file_change_snapshot_counts_distinct_paths(file_changes_stream, client,
     client.commit_values = [{"hash": "c1", "date": "2026-06-01"}]
     path = client.repo_path(repo, "diffstat/c1")
     entry = {"status": "modified", "new": {"path": "a.py"}}
-    client.page_values[path] = [entry, entry]
+    client.optional_values[path] = (True, [entry, entry])
     records = read(file_changes_stream, repo)
     assert records[-1]["snapshot_item_count"] == 1
 

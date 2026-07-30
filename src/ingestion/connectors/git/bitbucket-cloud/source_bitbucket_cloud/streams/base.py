@@ -13,7 +13,12 @@ from typing import Any
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import CheckpointMixin, Stream
 
-from source_bitbucket_cloud.client import BitbucketClient, RepositoryCatalog, RepositoryRef
+from source_bitbucket_cloud.client import (
+    BitbucketApiError,
+    BitbucketClient,
+    RepositoryCatalog,
+    RepositoryRef,
+)
 
 logger = logging.getLogger("airbyte")
 
@@ -22,6 +27,10 @@ MAX_TEXT_BYTES = 16_384
 # Bumped from 2 when entity and state keys moved back to workspace/slug: a
 # version-2 state is keyed by repository uuid and no longer addresses anything.
 STATE_VERSION = 3
+# Statuses that mean "this token will never read this repository": no retry
+# helps, so the repository is skipped instead of failing the sync. 404 is here
+# too — a repository listed at the start of a sync can be deleted mid-run.
+DENIED_STATUSES = frozenset({403, 404})
 
 
 def now_iso() -> str:
@@ -165,6 +174,7 @@ class BitbucketStream(Stream, ABC):
         self._catalog = catalog or RepositoryCatalog(self._client, self._workspaces, self._skip_forks)
         self._repositories_by_bucket: dict[int, list[RepositoryRef]] = {}
         self._failed_repositories: list[str] = []
+        self._skipped_repositories: list[str] = []
 
     def stream_slices(
         self,
@@ -188,8 +198,29 @@ class BitbucketStream(Stream, ABC):
         del sync_mode, cursor_field, stream_state
         bucket_id, repositories = self.bucket(stream_slice)
         for repo in repositories:
+            if self._catalog.is_inaccessible(repo):
+                # Discovered by an earlier stream; still counts toward THIS
+                # stream's end-of-sync skipped summary.
+                self._skipped_repositories.append(f"{repo.workspace}/{repo.slug}")
+                continue
             try:
                 yield from self.repository_records(repo, bucket_id)
+            except BitbucketApiError as error:
+                if error.status_code == 401:
+                    # Credential failure is global, not per-repository: every
+                    # remaining repo would fail identically, drowning the log in
+                    # quarantine noise before a generic end-of-sync error. Abort
+                    # now with the actionable cause instead.
+                    raise RuntimeError(
+                        "Bitbucket authentication failed mid-sync (HTTP 401): the token was "
+                        "rejected. If bitbucket_username is unset, Atlassian API tokens are "
+                        "sent as Bearer and refused — set the username, or the token has "
+                        "expired/been rotated."
+                    ) from error
+                if error.status_code in DENIED_STATUSES:
+                    self.skip_repository(repo, error.status_code)
+                else:
+                    self.record_failure(repo)
             except Exception:
                 self.record_failure(repo)
         self.finish_bucket(bucket_id, repositories)
@@ -202,12 +233,39 @@ class BitbucketStream(Stream, ABC):
         return bucket_id, self.repositories_for_slice(stream_slice)
 
     def record_failure(self, repo: RepositoryRef) -> None:
+        """A failure worth surfacing: transient, so retrying the sync may fix it."""
         name = f"{repo.workspace}/{repo.slug}"
         self._failed_repositories.append(name)
         logger.exception(f"{self.name}: repository {name} failed; its state was not advanced, continuing")
 
+    def skip_repository(self, repo: RepositoryRef, status_code: int) -> None:
+        """A repository the token cannot read: skip it without failing the sync.
+
+        A repository can be listed for the workspace and still deny every request
+        under it, which is routine with repo-scoped tokens and per-repository
+        permissions. That is a configuration fact, not an incident: retrying will
+        never change it, so counting it as a failure would leave the sync red
+        forever and bury the transient failures that do deserve attention. The
+        repository is marked on the shared catalog so the remaining streams skip
+        it instead of each rediscovering the same 403.
+        """
+        name = f"{repo.workspace}/{repo.slug}"
+        already_known = self._catalog.is_inaccessible(repo)
+        self._catalog.mark_inaccessible(repo)
+        if not already_known:
+            logger.warning(
+                f"{self.name}: repository {name} denied access (HTTP {status_code}); "
+                "skipping it for the rest of this sync"
+            )
+        self._skipped_repositories.append(name)
+
     def finish_bucket(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
         del repositories
+        if bucket_id == BUCKET_COUNT - 1 and self._skipped_repositories:
+            logger.info(
+                f"{self.name}: skipped {len(self._skipped_repositories)} inaccessible "
+                f"repositories: {', '.join(sorted(set(self._skipped_repositories))[:10])}"
+            )
         if bucket_id == BUCKET_COUNT - 1 and self._failed_repositories:
             raise RuntimeError(
                 f"{self.name}: {len(self._failed_repositories)} repositories failed this sync: "

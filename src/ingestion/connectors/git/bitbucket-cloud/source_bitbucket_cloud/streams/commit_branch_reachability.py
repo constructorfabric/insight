@@ -15,6 +15,14 @@ class CommitBranchReachabilityStream(CommitRangeMixin, BitbucketIncrementalStrea
     def repository_records(self, repo, bucket_id: int) -> Iterable[Mapping[str, Any]]:
         del bucket_id
         prior = self.repository_state(repo)
+        repo_updated_on = str(repo.raw.get("updated_on") or "")
+        if repo_updated_on and prior.get("repo_updated_on") == repo_updated_on:
+            # The repository has not been pushed to since the last successful
+            # pass (updated_on comes free with the workspace listing), so the
+            # branch heads cannot have moved: skip the branch listing and the
+            # range fetch entirely. This is what keeps the per-repository
+            # request budget at zero for the idle majority of a large fleet.
+            return
         branches, current_heads = self.branch_snapshot(repo)
         previous_heads = prior.get("heads") or {}
         branch_by_name = {branch.name: branch for branch in branches}
@@ -61,7 +69,7 @@ class CommitBranchReachabilityStream(CommitRangeMixin, BitbucketIncrementalStrea
                     committed_at=None,
                     reachability_action="branch_deleted",
                 )
-        self.commit_repository_state(repo, {"heads": current_heads})
+        self.commit_repository_state(repo, {"heads": current_heads, "repo_updated_on": repo_updated_on})
 
     def _changes(self, repo, branch, include: str, exclude: str | None, action: str):
         try:
