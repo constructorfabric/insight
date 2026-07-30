@@ -496,6 +496,8 @@ Implements the API declared in [PRD section 7.1](./PRD.md#71-public-api-surface)
 
 Exchange response contract (the load-bearing part): `200` + `X-Gateway-Jwt: Bearer <jwt>` + `Cache-Control: max-age = min(authz_cache_max_age, jwt_exp - now - 60 s)`; `401` (no/expired session) + `Cache-Control: no-store`; any other status is treated by the gateway as "authenticator unavailable" and fails closed.
 
+Callback failure contract (issue #2032): `GET /auth/callback` is a browser-facing IdP redirect target, so its failures redirect (`302`) to `default_return_to` with a fixed `auth_error=<reason>` query parameter instead of answering problem+json the user cannot act on. Reasons: `state_expired` (unknown, expired -- the 300 s login-state TTL -- or already-consumed state), `idp_error` (the IdP redirected back with `error=`), `invalid_callback` (missing `code`/`state`), `exchange_failed` (code exchange / id_token validation), `access_denied` (no tenant resolved, no matching person in Identity, or a view-as override naming an unknown person -- still a denial, never a fallback to the caller). The reason strings are a fixed vocabulary -- nothing IdP- or caller-supplied reaches the `Location` header. The SPA consumes `auth_error`, restarts the login for the retryable reasons behind a retry loop guard, and shows an error screen for `access_denied` or repeated failures. Rate-limit (`429`) and internal (`5xx`) responses stay problem+json.
+
 ### 3.4 Internal Dependencies
 
 | Dependency Module | Interface Used | Purpose |

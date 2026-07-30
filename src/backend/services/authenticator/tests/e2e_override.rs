@@ -344,12 +344,18 @@ async fn override_with_unknown_target_is_denied() {
     let user = env("E2E_USER", "dev@company.nonpresent");
     let http = client();
 
-    // The identity stub 404s emails prefixed `unknown-` (test seam).
+    // The identity stub 404s emails prefixed `unknown-` (test seam). The
+    // denial is an auth_error bounce back into the SPA (#2032), never a
+    // fallback to the caller's own identity.
     let cb = login_flow(&http, &auth_base, &user, Some("unknown-nobody@example.com")).await;
     assert_eq!(
         cb.status(),
-        403,
+        302,
         "an unknown override target must be denied"
+    );
+    assert_eq!(
+        cb.headers()[reqwest::header::LOCATION].to_str().unwrap(),
+        "/?auth_error=access_denied"
     );
     assert!(cookie_from(&cb).is_none(), "no session may be minted");
 }

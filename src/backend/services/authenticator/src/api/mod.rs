@@ -86,7 +86,10 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .public()
         .no_content_response(
             StatusCode::FOUND,
-            "Redirect to the SPA with the session cookie set",
+            "Redirect to the SPA: with the session cookie set on success, or \
+             with `auth_error=<reason>` (state_expired, idp_error, \
+             invalid_callback, exchange_failed, access_denied) on a failed \
+             login so the SPA can restart the flow",
         )
         .handler(handlers::callback)
         .register(router, openapi);

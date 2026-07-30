@@ -1,42 +1,16 @@
 name: TruffleHog Secrets
 
-# Secret detection, split into a blocking merge gate and a non-blocking history sweep.
-# Companion to semgrep.yml, which excludes generic-secret rules precisely because this
-# workflow owns the domain.
+# Secret detection. All passes report-only (#2020).
 #
-# Why the split: a full-history scan of this repository currently returns 253 findings —
-# every one of them unverified, and every one triaged (2026-07-28) as a detector false
-# positive: synthetic e2e metric fixtures (178, mostly JiraToken/Lob matching 24- and
-# 40-character fixture strings), the loose GitLab token regex firing on prose in docs/ and
-# on identifiers in dbt models, zero-filled UUIDs in test data, and `CHANGE_ME` templates in
-# `.env.local.example`. Blocking on that baseline would be permanently red, so:
+#   secrets-diff     — pull requests, the PR's own commits only (#2025).
+#   secrets-history  — nightly, every ref. Baseline: 253 unverified false positives.
+#   secrets-api      — nightly, GitHub API: comments, wikis, unreachable objects.
 #
-#   secrets-diff     — pull requests only. Scans just the commits the PR adds, so the
-#                      historical baseline is out of range by construction. TEMPORARILY
-#                      REPORT-ONLY (non-blocking): the same Lob/JiraToken fixture-style
-#                      false positives noted above also fire on added lines (e.g. a 40-char
-#                      test-function name), and a rename can't clear it because the scan
-#                      reads removed lines too. Downgraded to report pending a proper fix by
-#                      the workflow owner — see issue #2025.
-#   secrets-history  — nightly, REPORT-ONLY. Full history over every ref, no exclusions, so
-#                      the 253 stay visible and any change to that number is noticeable.
-#
-# `--results=verified,unknown,unverified,filtered_unverified` on both. The default set
-# (`verified,unknown`) hides findings whose live verification fails, so an already-revoked or
-# inactive credential produces a green run — on a public repository that is still a leak.
-#
-# `--filter-entropy` was evaluated as a way to suppress the fixture noise and REJECTED: at
-# the threshold that clears the baseline (4.0, which cuts 253 findings to 3) a planted AWS
-# access key was also suppressed. A 20-character AWS key ID sits right at that entropy
-# boundary, so the flag trades a known false-negative class for cosmetic quiet.
-#
-# Raw secret values never reach a log, a job summary or an artifact: this repository is
-# public, so Actions logs are world-readable and echoing a hit would publish the value the
-# gate exists to protect. Summaries carry detector, commit and path only.
-#
-# Known gap: direct pushes to main are covered by the nightly report, not by the blocking
-# gate, because a push has no reliable range to diff against on a new or force-pushed ref.
-# Closing it requires the history baseline to be clean.
+# Do not change without reading why:
+#   - `--results=verified,unknown,unverified,filtered_unverified` — the default hides findings
+#     whose verification failed, which on a public repository is still a leak.
+#   - no `--filter-entropy` — it suppresses AWS access key IDs.
+#   - raw values never reach a log, summary or artifact — this repository is public.
 
 on:
   pull_request:
@@ -67,42 +41,49 @@ jobs:
           persist-credentials: false
 
       - name: TruffleHog scan (commits added by this PR)
-        # Digest-pinned image via `docker run`, matching semgrep.yml. stdout carries the JSON
-        # findings — including raw values — and is redirected to a file that stays on the
-        # runner; only stderr (progress and the scan summary) reaches the log. `--fail` is
-        # not used: the summary step decides the exit code so a failing run still renders a
-        # readable report first.
+        # `pull_request.base.sha` lags main, so it pulls unrelated commits into range (#2025).
+        # The merge ref's first parent is the current base tip — that is the PR's own range.
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
+          SINCE="$(git rev-parse 'HEAD^1' 2>/dev/null || echo "$BASE_SHA")"
+          echo "Scanning ${SINCE}..HEAD"
           docker run --rm \
             -v "${{ github.workspace }}:/src:ro" \
-            -e BASE_SHA \
+            -e SINCE \
             trufflesecurity/trufflehog:3.96.0@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577 \
             git file:///src \
               --json \
               --no-update \
-              --since-commit "$BASE_SHA" \
+              --since-commit "$SINCE" \
               --results=verified,unknown,unverified,filtered_unverified \
             > trufflehog-findings.jsonl
 
-      - name: Summarize (redacted) — report only (non-blocking; see #2025)
-        # Temporarily non-blocking: pass a non-"blocking" arg so the step reports
-        # findings to the summary but exits 0. Restore "blocking" once the Lob/
-        # JiraToken fixture false positives are handled (issue #2025).
+      - name: Summarize (redacted)
         if: always()
         run: |
           [ -f trufflehog-findings.jsonl ] || exit 0
-          python3 - trufflehog-findings.jsonl "${GITHUB_STEP_SUMMARY:-/dev/null}" report <<'PY'
+          python3 - trufflehog-findings.jsonl "${GITHUB_STEP_SUMMARY:-/dev/null}" <<'PY'
           import json, sys, collections
-          rows = []
+          rows, unparsable, skipped = [], 0, 0
           with open(sys.argv[1], encoding="utf-8") as fh:
               for line in fh:
                   line = line.strip()
                   if not line:
                       continue
-                  d = json.loads(line)
+                  try:
+                      d = json.loads(line)
+                  except json.JSONDecodeError:
+                      # A truncated or non-JSON line must not take the whole summary down with
+                      # it; it is counted and reported instead.
+                      unparsable += 1
+                      continue
+                  if "DetectorName" not in d:
+                      # Only findings carry a detector. Anything else on stdout is not a finding
+                      # and must not inflate the count.
+                      skipped += 1
+                      continue
                   git = (d.get("SourceMetadata") or {}).get("Data", {}).get("Git", {})
                   rows.append({
                       "detector": d.get("DetectorName", "?"),
@@ -111,10 +92,11 @@ jobs:
                       "file": git.get("file") or "?",
                       "line": git.get("line") or "",
                   })
-          blocking = sys.argv[3] == "blocking"
           out = open(sys.argv[2], "a", encoding="utf-8")
           w = out.write
           w("## TruffleHog — commits added by this PR\n\n")
+          if unparsable or skipped:
+              w(f"_{unparsable} unparsable line(s), {skipped} non-finding record(s) skipped._\n\n")
           if not rows:
               w("No secrets detected in the added commits (all result kinds enabled).\n")
               sys.exit(0)
@@ -131,7 +113,6 @@ jobs:
             "is a detector false positive on synthetic data, say so in the PR and add a narrow, "
             "reviewed exclusion rather than widening the filter.\n")
           out.close()
-          sys.exit(1 if blocking else 0)
           PY
 
   secrets-history:
@@ -179,13 +160,24 @@ jobs:
           python3 - trufflehog-findings.jsonl "${GITHUB_STEP_SUMMARY:-/dev/null}" <<'PY'
           import json, sys, collections
           BASELINE = 253  # triaged 2026-07-28: all unverified detector false positives
-          rows = []
+          rows, unparsable, skipped = [], 0, 0
           with open(sys.argv[1], encoding="utf-8") as fh:
               for line in fh:
                   line = line.strip()
                   if not line:
                       continue
-                  d = json.loads(line)
+                  try:
+                      d = json.loads(line)
+                  except json.JSONDecodeError:
+                      # A truncated or non-JSON line must not take the whole summary down with
+                      # it; it is counted and reported instead.
+                      unparsable += 1
+                      continue
+                  if "DetectorName" not in d:
+                      # Only findings carry a detector. Anything else on stdout is not a finding
+                      # and must not inflate the count.
+                      skipped += 1
+                      continue
                   git = (d.get("SourceMetadata") or {}).get("Data", {}).get("Git", {})
                   rows.append({
                       "detector": d.get("DetectorName", "?"),
@@ -196,6 +188,8 @@ jobs:
           w = out.write
           ver = sum(1 for r in rows if r["verified"])
           w("## TruffleHog — full history (report-only)\n\n")
+          if unparsable or skipped:
+              w(f"_{unparsable} unparsable line(s), {skipped} non-finding record(s) skipped._\n\n")
           w(f"**{len(rows)}** finding(s) over every ref — {ver} live-verified, "
             f"{len(rows) - ver} unverified. Triaged baseline: **{BASELINE}**, all unverified "
             "detector false positives.\n\n")
@@ -215,5 +209,101 @@ jobs:
               for k, v in by_file.most_common(20):
                   w(f"| {v} | `{k}` |\n")
               w("\n</details>\n")
+          out.close()
+          PY
+
+  # The git scan above only reaches commits that some ref still points at. Two classes of leak
+  # sit outside it, and only the GitHub API can see them: objects orphaned by a force push or a
+  # deleted branch, which remain fetchable by SHA, and secrets pasted into pull request or issue
+  # comments, where they arrive more often than in code. On this repository the API source reads
+  # ~8600 chunks against the git scan's ~6900, and takes about ten seconds.
+  #
+  # Off pull requests because it depends on API availability and rate limits, and a transient
+  # outage should not colour a pull request at all.
+  secrets-api:
+    name: secrets (GitHub API)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: TruffleHog scan (GitHub API — comments, wikis, unreachable objects)
+        # Deliberately unauthenticated. `GITHUB_TOKEN` cannot be used here: the GitHub source
+        # calls `GET /user` to identify the token owner, and an installation token gets
+        # `403 Resource not accessible by integration`, which fails the whole job. This repository
+        # is public, so no token is needed — measured unauthenticated: 34393 chunks in 15s.
+        #
+        # Known partial coverage: enumerating comments stops with a 422 past ~1000 issues
+        # ("Pagination with the page parameter is not supported for large datasets"). That is a
+        # TruffleHog limitation and `--comments-timeframe` does not avoid it. The git-object half
+        # is unaffected, and that is where the value sits — it reaches commits no ref points at,
+        # which a refs-based scan cannot see at all. TruffleHog still exits 0, so the run stays
+        # green with the error visible in the log.
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            trufflesecurity/trufflehog:3.96.0@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577 \
+            github \
+              --repo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+              --issue-comments \
+              --pr-comments \
+              --include-wikis \
+              --json \
+              --no-update \
+              --results=verified,unknown,unverified,filtered_unverified \
+            > trufflehog-api-findings.jsonl
+
+      - name: Summarize (redacted) — report only
+        if: always()
+        run: |
+          [ -f trufflehog-api-findings.jsonl ] || exit 0
+          python3 - trufflehog-api-findings.jsonl "${GITHUB_STEP_SUMMARY:-/dev/null}" <<'PY'
+          import json, sys, collections
+          rows, unparsable, skipped = [], 0, 0
+          with open(sys.argv[1], encoding="utf-8") as fh:
+              for line in fh:
+                  line = line.strip()
+                  if not line:
+                      continue
+                  try:
+                      d = json.loads(line)
+                  except json.JSONDecodeError:
+                      # A truncated or non-JSON line must not take the whole summary down with
+                      # it; it is counted and reported instead.
+                      unparsable += 1
+                      continue
+                  if "DetectorName" not in d:
+                      # Only findings carry a detector. Anything else on stdout is not a finding
+                      # and must not inflate the count.
+                      skipped += 1
+                      continue
+                  meta = (d.get("SourceMetadata") or {}).get("Data", {})
+                  # The GitHub source reports under Github for commits and comments alike.
+                  loc = meta.get("Github") or meta.get("Git") or {}
+                  rows.append({
+                      "detector": d.get("DetectorName", "?"),
+                      "verified": bool(d.get("Verified")),
+                      # A comment hit carries a link instead of a path.
+                      "where": loc.get("file") or loc.get("link") or "?",
+                  })
+          out = open(sys.argv[2], "a", encoding="utf-8")
+          w = out.write
+          w("## TruffleHog — GitHub API source (report-only)\n\n")
+          if unparsable or skipped:
+              w(f"_{unparsable} unparsable line(s), {skipped} non-finding record(s) skipped._\n\n")
+          if not rows:
+              w("No secrets detected in commits, pull request and issue comments, or wikis "
+                "(all result kinds enabled).\n")
+              sys.exit(0)
+          ver = sum(1 for r in rows if r["verified"])
+          w(f"**{len(rows)}** finding(s) — {ver} live-verified, {len(rows) - ver} unverified. "
+            "Values are redacted; open the linked location to read them.\n\n")
+          w("| Detector | Verified | Where |\n|---|---|---|\n")
+          for r in sorted(rows, key=lambda r: (not r["verified"], r["detector"])):
+              w(f"| `{r['detector']}` | {'yes' if r['verified'] else 'no'} | `{r['where']}` |\n")
+          by_det = collections.Counter(r["detector"] for r in rows)
+          w(f"\nBy detector: {', '.join(f'{k} x{v}' for k, v in by_det.most_common())}\n")
+          w("\nA hit here that the git scan did not report means the value lives outside the "
+            "current refs — an orphaned commit or a comment. **Rotate it; deleting the comment "
+            "does not.**\n")
           out.close()
           PY

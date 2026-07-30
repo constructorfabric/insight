@@ -414,8 +414,11 @@ deploy/compose/authn-tls-certs/
 # Security scanner output. CI writes these into the workspace, and the same
 # commands are runnable locally; trufflehog's report holds raw secret values, so
 # it must never be committed.
+.helm-rendered/
 semgrep.sarif
 trivy-fs.json
+trivy-helm.json
+trivy-helm.sarif
 trivy-fs.sarif
 trivy-image.json
 trivy-image.sarif

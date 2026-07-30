@@ -1,25 +1,7 @@
 name: Trivy Images
 
-# CVE scan of the published images. This is the only place where three things are visible:
-#
-#   1. base-image and OS-package CVEs (nothing in the repository describes them);
-#   2. .NET dependencies — the five .csproj projects ship no packages.lock.json, so
-#      `trivy fs` cannot resolve their versions and skips them entirely;
-#   3. Python dependencies — same story for the eleven pyproject.toml projects (toolbox,
-#      jira-enrich and the connectors), which have no lock file either.
-#
-# Inside an image those dependencies are installed and therefore resolvable, so this workflow
-# carries the SCA coverage that trivy.yml structurally cannot.
-#
-# Report-only: `--exit-code 0`, findings go to "Security -> Code scanning" under a per-image
-# category plus a job-summary table. Nothing blocks. Barring a vulnerable image from
-# promotion — the policy target — means adding the scan to build-images.yml between the merge
-# and publish steps with `--exit-code 1`, which is a change to a much larger workflow and a
-# separate step.
-#
-# Scans `:latest` rather than a build tag, so it reflects what is currently deployable. The
-# legacy `insight-analytics-api` and `insight-api-gateway` packages are deliberately absent:
-# they are pre-rename names that no current build job publishes.
+# CVE scan of the published images — the only view of base layers and of what a Dockerfile
+# installs without a manifest. Report-only, nightly, `:latest` (#2020).
 
 on:
   schedule:
@@ -68,10 +50,7 @@ jobs:
           - source-github-copilot-insight
           - source-github-v2-insight
           - source-gitlab-insight
-          # The waiver below is per-line and must stay on the entry itself: TruffleHog's
-          # GitLab detector reads that 21-character image name as a token. Waiving the line
-          # keeps the detector enabled — it is one of the few that could catch a real
-          # connector credential.
+          # Keep the waiver on the entry line: the GitLab detector reads this image name as a token.
           - source-hubspot-insight # trufflehog:ignore
           - source-salesforce-insight
     steps:
@@ -81,16 +60,15 @@ jobs:
           persist-credentials: false
 
       - name: Trivy image scan (CRITICAL/HIGH)
-        # Trivy pulls straight from the registry (TRIVY_USERNAME/TRIVY_PASSWORD) instead of a
-        # mounted docker socket, so no local `docker pull` is needed. `--ignore-unfixed` keeps
-        # the output to what a base-image or dependency bump can actually fix. A multi-arch
-        # manifest resolves to the runner's platform (linux/amd64); the arm64 leg is built from
-        # the same base image and package set.
+        # Pulls from the registry directly, so no docker daemon is needed. CRITICAL/HIGH only:
+        # everything here comes from a base layer and the remedy is the same at any severity.
         env:
           TRIVY_IMAGE: aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
           IMAGE_REF: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ inputs.tag || 'latest' }}
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        # CRITICAL/HIGH only: everything here comes from a base layer, and the remedy is the same
+        # at any severity — refresh the base image.
         # One pull and one analysis per image: `trivy convert` derives the SARIF from the JSON
         # rather than rescanning, which for a 14-image matrix saves 14 redundant registry pulls
         # and layer analyses. `-w /work` so a repo-root `.trivyignore` is resolved — Trivy reads
@@ -119,9 +97,7 @@ jobs:
 
       - name: Summarize findings in the job summary
         if: always()
-        # Grouped by (package, version) — the unit of remediation. The ecosystem column
-        # separates base-image OS packages from application dependencies, which is the
-        # difference between "bump the base image" and "bump a dependency".
+        # Grouped by package — the unit of remediation.
         run: |
           [ -f trivy-image.json ] || exit 0
           [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
@@ -150,17 +126,15 @@ jobs:
           rank = {"CRITICAL": 0, "HIGH": 1}
           w("| Ecosystem | Package | Max | CVEs | Fixed in |\n|---|---|---|---:|---|\n")
           for (eco, pkg, ver), items in sorted(
-                  bundles.items(), key=lambda kv: (min(rank.get(i["Severity"], 2) for i in kv[1]), kv[0])):
-              worst = min(items, key=lambda i: rank.get(i["Severity"], 2))["Severity"]
+                  bundles.items(), key=lambda kv: (min(rank.get(i["Severity"], 4) for i in kv[1]), kv[0])):
+              worst = min(items, key=lambda i: rank.get(i["Severity"], 4))["Severity"]
               fixes = sorted({i.get("FixedVersion") or "-" for i in items})
               w(f"| {eco} | `{pkg}@{ver}` | {worst} | {len(items)} | {', '.join(fixes)[:60]} |\n")
           out.close()
           PY
 
       - name: Upload SARIF to GitHub Code Scanning
-        # The hashFiles guard matters more here than elsewhere: with 14 matrix legs, one failed
-        # registry pull would otherwise report twice — once for the pull, once for a SARIF file
-        # that was never written.
+        # Guard: a failed pull must not also report a missing SARIF.
         if: ${{ always() && hashFiles('trivy-image.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@fb0994ef1c058010acf1efccff928b0a83b1ed54 # v4.32.6
         with:

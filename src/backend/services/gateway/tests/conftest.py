@@ -11,6 +11,7 @@ the client rewrites them to the published localhost ports (see GatewayClient).
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 import urllib.error
@@ -77,6 +78,12 @@ class GatewayClient:
             if part.startswith("__Host-sid="):
                 return part[len("__Host-sid=") :]
         raise AssertionError(f"no __Host-sid in Set-Cookie: {h.get('set-cookie')!r}")
+
+    def csrf_token(self, sid):
+        """Fetch the per-session CSRF token; required on state-changing /auth/*."""
+        status, _, body = self.request(f"{GW}/auth/csrf", headers={"Cookie": f"__Host-sid={sid}"})
+        assert status == 200, f"/auth/csrf got {status}"
+        return json.loads(body)["csrf_token"]
 
 
 def _wait_http(url, want, timeout_s=90):
