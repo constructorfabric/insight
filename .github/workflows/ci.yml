@@ -17,6 +17,11 @@ on:
       - "src/ingestion/connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
+  # Merge-queue builds. paths filters don't apply to merge_group, so every queue
+  # entry runs this workflow — the `changes` job still scopes the heavy jobs to
+  # the batch's actual diff (changed.py diffs origin/main...HEAD, and on a queue
+  # branch that is exactly the batched PRs' combined change set).
+  merge_group:
   workflow_dispatch:
     inputs:
       full:

@@ -35,6 +35,10 @@ on:
   # manual reruns against main.
   pull_request:
     branches: [main]
+  # Merge-queue builds: the queue's gh-readonly-queue/* branches emit merge_group,
+  # and the required "Run E2E suite" check must report there or every queued PR
+  # times out and is evicted.
+  merge_group:
   workflow_dispatch:
 
 # A new push obsoletes any run still in flight for the same ref — cancel it so a
