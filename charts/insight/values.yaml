@@ -271,6 +271,11 @@ clickhouse:
   # at startup live here.
   initDatabases:
     - insight
+    # Empty writable namespace for new gold / saved-query results / scratch
+    # (#1964). The read-only presentation_ro role + grant-less `presentation`
+    # user are provisioned by the clickhouse-migrate Hook (apply-ch-migrations
+    # -> provision-presentation-access.sh).
+    - presentation
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the gold-view migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against

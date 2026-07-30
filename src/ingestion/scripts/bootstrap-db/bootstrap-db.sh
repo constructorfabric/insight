@@ -46,10 +46,12 @@ export CLICKHOUSE_URL="${CLICKHOUSE_PROTOCOL}://${CLICKHOUSE_HOST}:${CLICKHOUSE_
 source "${SCRIPT_DIR}/../lib/ch-exec.sh"
 
 echo "=== 1. Core databases + identity/person schema (init-identity) ==="
+# `presentation` (#1964); its role + grant-less user follow in step 4.
 run_ch <<SQL
 CREATE DATABASE IF NOT EXISTS staging;
 CREATE DATABASE IF NOT EXISTS silver;
 CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE};
+CREATE DATABASE IF NOT EXISTS presentation;
 SQL
 # person.persons + identity.aliases must exist before the identity dbt models
 # (LEFT ANTI JOIN person.persons). init-identity is the first, idempotent

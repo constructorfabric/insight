@@ -118,6 +118,10 @@ services:
       - clickhouse-data:/var/lib/clickhouse
       - clickhouse-logs:/var/log/clickhouse-server
       - ./deploy/compose/clickhouse-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      # presentation_ro role + grant-less `presentation` user, so analytics can
+      # connect read-only on first `up` (#1964). Role file is the canonical one.
+      - ./src/ingestion/scripts/bootstrap-db/presentation-role.sql:/docker-entrypoint-initdb.d/01-presentation-role.sql:ro
+      - ./deploy/compose/presentation-user.sql:/docker-entrypoint-initdb.d/02-presentation-user.sql:ro
       # Profile override — see the file for the join_use_nulls rationale.
       - ./deploy/compose/clickhouse-user-defaults.xml:/etc/clickhouse-server/users.d/seed-defaults.xml:ro
     healthcheck:
@@ -210,8 +214,10 @@ services:
       APP__gears__analytics__config__database_url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
       APP__gears__analytics__config__clickhouse_url: "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
       APP__gears__analytics__config__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
-      APP__gears__analytics__config__clickhouse_user: "${CLICKHOUSE_USER:-insight}"
-      APP__gears__analytics__config__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
+      # Read-only query-path identity (#1964): the grant-less `presentation` user
+      # (provisioned at CH init below), not the admin.
+      APP__gears__analytics__config__clickhouse_user: "presentation"
+      APP__gears__analytics__config__clickhouse_password: "${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}"
       APP__gears__analytics__config__identity_url: "http://identity:8082"
       APP__gears__analytics__config__redis_url: "redis://redis:6379"
       APP__gears__analytics__config__metric_catalog__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
@@ -745,6 +751,8 @@ services:
       CLICKHOUSE_USER: "${CLICKHOUSE_USER:-insight}"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-insight-local}"
       CLICKHOUSE_DATABASE: "${CLICKHOUSE_DATABASE:-insight}"
+      # Grant-less `presentation` user's password (#1964), provisioned on seed.
+      CLICKHOUSE_PRESENTATION_PASSWORD: "${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}"
       # apply-ch-migrations.sh runs `dbt run` from /ingestion/dbt. The
       # ingestion tree is bind-mounted read-only (below), so redirect dbt's
       # writable outputs (target/, logs/) to a writable scratch dir.
