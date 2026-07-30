@@ -8,7 +8,7 @@ RUN pip install /airbyte/integration_code
 # unstructured parser, which this connector never loads; defusedxml is
 # nltk 3.10's added runtime dependency. poetry/dulwich are base-image build
 # tooling unused at runtime (CVE-2026-34591, CVE-2026-42305).
-RUN pip install --no-cache-dir --no-deps nltk==3.10.0 defusedxml \
+RUN pip install --no-cache-dir --no-deps nltk==3.10.0 defusedxml==0.7.1 \
     && pip uninstall -y poetry dulwich
 
 RUN useradd --create-home --no-log-init --shell /bin/bash airbyte_user
