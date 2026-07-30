@@ -6,6 +6,7 @@
     alias='task_worklog_flow',
     tags=['gold'],
     query_settings={
+        'join_use_nulls': 1,
         'max_memory_usage': 1610612736,
         'max_threads': 4,
         'max_bytes_before_external_group_by': 805306368,
@@ -68,4 +69,3 @@ FULL OUTER JOIN worklog_per_day AS wl
     ON wl.tenant_id = ip.tenant_id
     AND wl.entity_id = ip.entity_id
     AND wl.metric_date = ip.metric_date
-SETTINGS join_use_nulls = 1

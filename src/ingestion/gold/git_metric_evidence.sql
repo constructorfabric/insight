@@ -6,6 +6,7 @@
     alias='git_metric_evidence',
     tags=['gold'],
     query_settings={
+        'join_use_nulls': 1,
         'max_memory_usage': 1610612736,
         'max_threads': 4,
         'max_bytes_before_external_group_by': 805306368,
@@ -200,7 +201,6 @@ pull_requests_source AS (
         AND pr_commit_emails.project_key = prs.project_key
         AND pr_commit_emails.repo_slug = prs.repo_slug
         AND pr_commit_emails.pr_id = prs.pr_id
-    SETTINGS join_use_nulls = 1
 ),
 prs_created_source AS (
     SELECT
