@@ -258,19 +258,24 @@ async fn failed_callback_redirects_into_the_spa_with_auth_error() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
     let http = client();
 
-    // Distinct `state` values per case: the per-state callback rate-limit
-    // bucket (5-burst) must not couple these requests.
+    // Distinct `state` values per case AND per run: the per-state callback
+    // rate-limit bucket (5-burst, 10/min refill) must not couple these
+    // requests — or trip on rapid suite re-runs against the same stack.
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
     let cases = [
         (
-            "code=x&state=e2e-auth-error-unknown-state",
+            format!("code=x&state=e2e-auth-error-unknown-{run}"),
             "/?auth_error=state_expired",
         ),
         (
-            "error=access_denied&state=e2e-auth-error-idp",
+            format!("error=access_denied&state=e2e-auth-error-idp-{run}"),
             "/?auth_error=idp_error",
         ),
         (
-            "state=e2e-auth-error-no-code",
+            format!("state=e2e-auth-error-no-code-{run}"),
             "/?auth_error=invalid_callback",
         ),
     ];

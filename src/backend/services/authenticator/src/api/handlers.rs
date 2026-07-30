@@ -25,7 +25,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api::AppState;
-use crate::api::error::{OidcError, PersonError, SessionError};
+use crate::api::error::{OidcError, SessionError};
 use crate::audit::AuditEvent;
 use crate::cookie;
 use crate::identity::PersonResolution;
@@ -140,6 +140,11 @@ pub struct CallbackParams {
     state: Option<String>,
     #[serde(default)]
     error: Option<String>,
+    /// The IdP's human-readable detail (e.g. Entra's `AADSTS…` codes) — the
+    /// only place the failure cause survives now that the browser gets a
+    /// redirect instead of a problem body.
+    #[serde(default)]
+    error_description: Option<String>,
 }
 
 /// Bounce a failed callback back into the SPA (#2032). The browser arrives
@@ -178,9 +183,14 @@ pub async fn callback(
 ) -> Response {
     if let Some(err) = params.error {
         // Client-reachable log path: strip control characters so the
-        // IdP-supplied value cannot forge log lines, and cap the length.
-        let err: String = err.chars().filter(|c| !c.is_control()).take(200).collect();
-        tracing::warn!(error = %err, "IdP reported an error at /auth/callback");
+        // IdP-supplied values cannot forge log lines, and cap the lengths.
+        let sanitize =
+            |v: &str| -> String { v.chars().filter(|c| !c.is_control()).take(200).collect() };
+        tracing::warn!(
+            error = %sanitize(&err),
+            error_description = %sanitize(params.error_description.as_deref().unwrap_or("")),
+            "IdP reported an error at /auth/callback"
+        );
         return login_error_redirect(&state.cfg.default_return_to, "idp_error");
     }
     let (Some(code), Some(oidc_state)) = (params.code, params.state) else {
@@ -499,12 +509,12 @@ async fn resolve_override(
                     "override_email": target_email,
                 }),
             });
-            Err(Box::new(
-                PersonError::permission_denied()
-                    .with_reason("override_unknown_person")
-                    .create()
-                    .into_response(),
-            ))
+            // Denied, never a fallback to the caller (PRD 5.16) — but still a
+            // browser-facing callback failure, so it bounces like the rest.
+            Err(Box::new(login_error_redirect(
+                &state.cfg.default_return_to,
+                "access_denied",
+            )))
         }
         Err(e) => Err(Box::new(internal_problem("person_resolution", &e))),
     }
