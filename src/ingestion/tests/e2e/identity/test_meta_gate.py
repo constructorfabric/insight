@@ -180,15 +180,26 @@ def test_rust_gate_suite_skips_legacy_endpoint_dotnet_requires_it() -> None:
     """Implementation-aware gate universes: an unexercised legacy endpoint is
     a legitimate SKIP on identity-rust but a blocking MISSING on identity —
     so the removal never hides a .NET regression, and the Rust run doesn't
-    fail on an approved removal (nor count a fallback 404 as coverage)."""
-    spec = _spec({"/v1/persons/{email}": {"get": [200, 404]}})
-    ledger = _ledger({})  # legacy endpoint never touched
+    fail on an approved removal (nor count a fallback 404 as coverage).
+
+    The synthetic spec must carry EVERY op on the rust SKIP_LIST (the gate
+    flags a skip absent from the spec as STALE) — so the persons-seed POST
+    (#1690, second approved removal) is included alongside the legacy lookup.
+    """
+    spec = _spec(
+        {
+            "/v1/persons/{email}": {"get": [200, 404]},
+            "/v1/persons-seed": {"post": [200, 401, 403]},
+        }
+    )
+    ledger = _ledger({})  # removed endpoints never touched
     try:
         api_coverage.select_suite("identity-rust")
         api_coverage.REQUIRED_EXTRA = {}
         report = api_coverage.build_report(spec, ledger)
         assert report.passed, api_coverage.gate_violations(report)
         assert "GET /v1/persons/{email}" in report.skipped
+        assert "POST /v1/persons-seed" in report.skipped
 
         api_coverage.select_suite("identity")
         api_coverage.REQUIRED_EXTRA = {}

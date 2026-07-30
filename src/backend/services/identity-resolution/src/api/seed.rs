@@ -1,76 +1,41 @@
-//! Persons-seed HTTP surface + background worker.
+//! Persons-seed operations journal — read-only HTTP surface.
 //!
-//! `POST /v1/persons-seed` enqueues an `operations` row and a job on an
-//! in-process channel, returning 202; a worker (spawned once in the gear init)
-//! drains the channel, runs the seed via [`run_seed`], and marks the operation
-//! completed/failed. The GETs poll status. Ported from the .NET
-//! `PersonsSeedEndpoints` + `PersonsSeedQueue`.
+//! The seed itself is CLI-only (`identity-resolution seed`, run by the Helm
+//! `CronJob` or a manual Job — see `crate::seed_runner`); the former
+//! `POST /v1/persons-seed` trigger and its in-process queue/worker are gone
+//! (#1690). The GETs remain as the observability window over the
+//! `operations` rows the CLI runs write: status, summary, error per run.
 //!
 //! Admin-gated like the .NET `CallerAdminCheck`: the caller is the gateway-JWT
 //! subject (`SecurityContext::subject_id`, verified by the host authn pipeline —
-//! `NGINX_BFF` R1) and must hold an active `admin` role in the tenant; it is
-//! recorded as the seed author.
+//! `NGINX_BFF` R1) and must hold an active `admin` role in the tenant.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Extension, Path, Query};
-use axum::http::StatusCode;
-use axum::http::header::LOCATION;
 use axum::response::IntoResponse;
-use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::AppState;
-use super::canonical_json::CanonicalJson;
 use super::error::PersonsSeedError;
 use super::gate::require_admin;
-use crate::config::GearConfig;
-use crate::domain::seed_service::run_seed;
-use crate::infra::db::ops_repo::{self, Operation, OperationStatus};
-use crate::infra::db::seed_repo::MariaDbSeedStore;
-use crate::infra::identity_inputs::ClickHouseIdentityInputsReader;
-
-const LINK_BY_EMAIL_MODE: &str = "link-by-email";
+use crate::infra::db::ops_repo::{self, Operation, OperationStatus, PERSONS_SEED_OP};
 
 /// Default page size / cap for the list endpoint (parity with the .NET
 /// `PageRequest.DefaultLimit` / `MaxLimit`).
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 500;
 
-/// Upper bound on one seed run in the serial worker; a stall past this fails the
-/// job rather than wedging the whole queue.
-const SEED_TIMEOUT: Duration = Duration::from_mins(10);
-const PERSONS_SEED_OP: &str = "persons-seed";
-
-/// A queued persons-seed job handed from the POST handler to the worker.
-#[allow(clippy::struct_field_names)] // all three fields are ids by nature
-#[derive(Debug, Clone, Copy)]
-pub struct PersonsSeedJob {
-    pub operation_id: Uuid,
-    pub tenant_id: Uuid,
-    pub author_person_id: Uuid,
-}
-
-/// Body of `POST /v1/persons-seed`. `mode` defaults to `link-by-email`.
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct PersonsSeedRequest {
-    #[serde(default)]
-    pub mode: Option<String>,
-}
-impl toolkit::api::api_dto::RequestApiDto for PersonsSeedRequest {}
-
-/// One operation's status (POST returns the queued row; GETs return current).
-/// Wire shape mirrors the .NET `PersonsSeedOperationResponse`: `request` and
-/// `summary` are surfaced as parsed JSON (not double-encoded strings), the
-/// tenant/author ids are included, timestamps are ISO-8601, and null fields are
-/// emitted (the .NET serializer does not drop nulls).
+/// One operation's status. Wire shape mirrors the .NET
+/// `PersonsSeedOperationResponse`: `request` and `summary` are surfaced as
+/// parsed JSON (not double-encoded strings), the tenant/author ids are
+/// included, timestamps are ISO-8601, and null fields are emitted (the .NET
+/// serializer does not drop nulls).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonsSeedOperationResponse {
     pub operation_id: Uuid,
@@ -87,33 +52,6 @@ pub struct PersonsSeedOperationResponse {
     pub completed_at: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedOperationResponse {}
-
-impl PersonsSeedOperationResponse {
-    /// The just-enqueued shape for the `202 Accepted` body, built from the
-    /// fields the POST handler already holds — avoids a second round-trip to
-    /// re-read the row, and (unlike a re-read) always reports `queued` even if
-    /// the worker has already picked the job up. Mirrors the .NET `Queued(...)`.
-    fn queued(
-        operation_id: Uuid,
-        tenant_id: Uuid,
-        author_person_id: Uuid,
-        request_json: Option<&str>,
-        started_at: sea_orm::prelude::DateTime,
-    ) -> Self {
-        Self {
-            operation_id,
-            operation_type: PERSONS_SEED_OP.to_owned(),
-            status: OperationStatus::Queued.as_db().to_owned(),
-            insight_tenant_id: tenant_id,
-            author_person_id,
-            request: parse_or_null(request_json),
-            summary: None,
-            error_message: None,
-            started_at: fmt_ts(started_at),
-            completed_at: None,
-        }
-    }
-}
 
 impl From<Operation> for PersonsSeedOperationResponse {
     fn from(op: Operation) -> Self {
@@ -168,111 +106,6 @@ pub struct ListParams {
     pub limit: Option<i64>,
 }
 
-/// `POST /v1/persons-seed` — enqueue an async persons-seed run.
-pub async fn create_persons_seed(
-    Extension(state): Extension<Arc<AppState>>,
-    Extension(ctx): Extension<SecurityContext>,
-    CanonicalJson(req): CanonicalJson<PersonsSeedRequest>,
-) -> Result<impl IntoResponse, CanonicalError> {
-    let tenant = ctx.subject_tenant_id();
-    // Admin gate first (parity with .NET: the caller/admin check precedes mode
-    // validation, so an unauthenticated/non-admin caller gets 401/403, not 400).
-    // The resolved caller is recorded as the author of the job + observations.
-    let author = require_admin(&state.db, &ctx).await?;
-
-    let mode = req
-        .mode
-        .as_deref()
-        .map(str::trim)
-        .filter(|m| !m.is_empty())
-        .unwrap_or(LINK_BY_EMAIL_MODE);
-    if mode != LINK_BY_EMAIL_MODE {
-        return Err(PersonsSeedError::invalid_argument()
-            .with_field_violation(
-                "mode",
-                "unsupported mode; only 'link-by-email' is available",
-                "INVALID",
-            )
-            .create());
-    }
-
-    let operation_id = Uuid::now_v7();
-    let started_at = chrono::Utc::now().naive_utc();
-    let request_json = serde_json::json!({ "mode": mode }).to_string();
-
-    ops_repo::enqueue(
-        &state.db,
-        operation_id,
-        PERSONS_SEED_OP,
-        tenant,
-        author,
-        Some(&request_json),
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "enqueue operation failed");
-        CanonicalError::internal("failed to enqueue seed").create()
-    })?;
-
-    let job = PersonsSeedJob {
-        operation_id,
-        tenant_id: tenant,
-        author_person_id: author,
-    };
-    if let Err(err) = try_enqueue_job(&state.seed_tx, job) {
-        // Channel full/closed — fail the row so it isn't a zombie, and tell the
-        // caller to retry later (503, not 500 — parity with the .NET queue-full).
-        // A failed status update is logged, not propagated: 503/retry-later is
-        // still the right caller signal, and a row left `queued` is reclaimed
-        // by the startup zombie sweep (`sweep_zombies`).
-        if let Err(db_err) =
-            ops_repo::fail(&state.db, operation_id, "seed queue full; retry later").await
-        {
-            tracing::error!(
-                error = %db_err,
-                %operation_id,
-                "failed to mark the refused seed operation as failed"
-            );
-        }
-        return Err(err);
-    }
-
-    // Audit the enqueue (parity with the .NET `persons_seed.enqueue` audit).
-    tracing::info!(
-        %operation_id,
-        %mode,
-        author_person_id = %author,
-        "persons_seed.enqueue"
-    );
-
-    // Build the 202 body from the in-memory snapshot (always `queued`) and set
-    // Location to the status URL — no re-read of the just-inserted row.
-    let body = PersonsSeedOperationResponse::queued(
-        operation_id,
-        tenant,
-        author,
-        Some(&request_json),
-        started_at,
-    );
-    let location = format!("/v1/persons-seed/{operation_id}");
-    Ok((StatusCode::ACCEPTED, [(LOCATION, location)], Json(body)))
-}
-
-/// Hand the job to the worker channel, mapping a full/closed channel to the
-/// caller-facing 503 (parity with the .NET queue-full path). Split out of the
-/// handler so the refusal is unit-testable: the e2e suite cannot fill the
-/// channel deterministically from outside.
-fn try_enqueue_job(
-    tx: &mpsc::Sender<PersonsSeedJob>,
-    job: PersonsSeedJob,
-) -> Result<(), CanonicalError> {
-    tx.try_send(job).map_err(|_| {
-        CanonicalError::service_unavailable()
-            .with_detail("seed queue is full; retry later")
-            .create()
-    })
-}
-
 /// `GET /v1/persons-seed/{id}` — poll one operation.
 pub async fn get_persons_seed(
     Extension(state): Extension<Arc<AppState>>,
@@ -280,7 +113,8 @@ pub async fn get_persons_seed(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
-    // Same admin gate as POST (parity — the .NET service gates all three routes).
+    // Same admin gate as the sibling journal route (parity — the .NET service
+    // gated the whole persons-seed surface).
     require_admin(&state.db, &ctx).await?;
     let op = ops_repo::get_by_id(&state.db, tenant, id)
         .await
@@ -305,7 +139,6 @@ pub async fn list_persons_seed(
     Query(params): Query<ListParams>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
-    // Same admin gate as POST (parity — the .NET service gates all three routes).
     require_admin(&state.db, &ctx).await?;
     let status = status_filter(params.status.as_deref());
     let limit = params.limit.map_or(LIST_DEFAULT_LIMIT, |l| {
@@ -339,138 +172,35 @@ fn status_filter(raw: Option<&str>) -> Option<OperationStatus> {
     }
 }
 
-/// How stale a `queued`/`running` row must be before the startup sweep reclaims
-/// it — parity with the .NET `PersonsSeedWorker.ZombieCutoff` (1 hour).
-const ZOMBIE_CUTOFF_HOURS: i64 = 1;
-
-/// Background worker: drain the queue and run each seed to completion, updating
-/// the `operations` row. Spawned once from the gear `init`; ends when the
-/// channel closes (all senders dropped).
-pub async fn run_worker(
-    mut rx: mpsc::Receiver<PersonsSeedJob>,
-    db: DatabaseConnection,
-    config: GearConfig,
-) {
-    let reader = ClickHouseIdentityInputsReader::connect(
-        &config.clickhouse_url,
-        &config.clickhouse_database,
-        &config.clickhouse_user,
-        &config.clickhouse_password,
-    );
-    let store = MariaDbSeedStore::new(&db);
-
-    // Startup sweep: a pod restart drops the in-memory queue, so any row left
-    // `queued`/`running` by the previous process would otherwise never resolve.
-    // Fail rows older than the cutoff (parity with .NET `SweepZombiesAsync`).
-    let cutoff = chrono::Utc::now().naive_utc() - chrono::Duration::hours(ZOMBIE_CUTOFF_HOURS);
-    match ops_repo::sweep_zombies(&db, cutoff).await {
-        Ok(n) if n > 0 => tracing::warn!(swept = n, "persons-seed: reclaimed zombie operations"),
-        Ok(_) => {}
-        Err(e) => tracing::error!(error = %e, "persons-seed: zombie sweep failed"),
-    }
-
-    while let Some(job) = rx.recv().await {
-        // Only the worker that wins queued→running proceeds (no double-run).
-        match ops_repo::try_start(&db, job.operation_id).await {
-            Ok(true) => {}
-            Ok(false) => continue,
-            Err(e) => {
-                // A transient DB blip on the queued→running transition must not
-                // strand the (already-consumed) job as a zombie `queued` row —
-                // mark it failed so it isn't stuck forever, like the queue-full
-                // path in `create_persons_seed`.
-                tracing::error!(error = %e, operation_id = %job.operation_id, "try_start failed");
-                let _ =
-                    ops_repo::fail(&db, job.operation_id, "try_start failed; retry later").await;
-                continue;
-            }
-        }
-
-        // Bound each run: the worker is single-threaded and serial, so a hung
-        // ClickHouse/MariaDB call would otherwise block every subsequent job for
-        // every tenant until the process restarts. Generous ceiling — a healthy
-        // large-tenant seed is seconds; this only trips on a real stall.
-        let seed = run_seed(
-            &reader,
-            &store,
-            job.tenant_id,
-            job.author_person_id,
-            Uuid::now_v7,
-        );
-        let result = tokio::time::timeout(SEED_TIMEOUT, seed)
-            .await
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("persons-seed timed out")));
-
-        match result {
-            Ok(summary) => {
-                let summary_json =
-                    serde_json::to_string(&summary).unwrap_or_else(|_| "{}".to_owned());
-                if let Err(e) = ops_repo::complete(&db, job.operation_id, &summary_json).await {
-                    tracing::error!(error = %e, operation_id = %job.operation_id, "complete failed");
-                }
-            }
-            Err(e) => {
-                // Log the real error server-side, but persist only a generic
-                // message: `error_message` is returned verbatim by the GET/list
-                // endpoints, so raw driver/anyhow text must not leak to callers.
-                tracing::error!(error = %e, operation_id = %job.operation_id, "persons-seed failed");
-                if let Err(e2) = ops_repo::fail(
-                    &db,
-                    job.operation_id,
-                    "persons-seed failed; see server logs",
-                )
-                .await
-                {
-                    tracing::error!(error = %e2, operation_id = %job.operation_id, "fail update failed");
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use axum::http::StatusCode;
-    use axum::response::IntoResponse;
-
     use super::*;
 
-    fn job() -> PersonsSeedJob {
-        PersonsSeedJob {
-            operation_id: Uuid::from_u128(1),
-            tenant_id: Uuid::from_u128(2),
-            author_person_id: Uuid::from_u128(3),
-        }
+    #[test]
+    fn status_filter_maps_known_and_ignores_unknown() {
+        assert_eq!(status_filter(Some("queued")), Some(OperationStatus::Queued));
+        assert_eq!(
+            status_filter(Some("running")),
+            Some(OperationStatus::Running)
+        );
+        assert_eq!(
+            status_filter(Some("completed")),
+            Some(OperationStatus::Completed)
+        );
+        assert_eq!(status_filter(Some("failed")), Some(OperationStatus::Failed));
+        assert_eq!(status_filter(Some("bogus")), None);
+        assert_eq!(status_filter(Some("")), None);
+        assert_eq!(status_filter(None), None);
     }
 
     #[test]
-    fn enqueue_maps_closed_channel_to_503() -> anyhow::Result<()> {
-        let (tx, rx) = mpsc::channel(1);
-        drop(rx);
-        let Err(err) = try_enqueue_job(&tx, job()) else {
-            anyhow::bail!("closed channel must refuse the job");
-        };
+    fn parse_or_null_parses_and_tolerates_garbage() {
         assert_eq!(
-            err.into_response().status(),
-            StatusCode::SERVICE_UNAVAILABLE
+            parse_or_null(Some(r#"{"mode":"link-by-email"}"#)),
+            Some(serde_json::json!({"mode": "link-by-email"}))
         );
-        Ok(())
-    }
-
-    #[test]
-    fn enqueue_maps_full_channel_to_503() -> anyhow::Result<()> {
-        let (tx, _rx) = mpsc::channel(1);
-        assert!(
-            try_enqueue_job(&tx, job()).is_ok(),
-            "first job fits the 1-slot channel"
-        );
-        let Err(err) = try_enqueue_job(&tx, job()) else {
-            anyhow::bail!("full channel must refuse the job");
-        };
-        assert_eq!(
-            err.into_response().status(),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        Ok(())
+        assert_eq!(parse_or_null(Some("")), None);
+        assert_eq!(parse_or_null(Some("not-json")), None);
+        assert_eq!(parse_or_null(None), None);
     }
 }

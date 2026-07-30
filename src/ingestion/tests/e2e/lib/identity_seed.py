@@ -56,7 +56,7 @@ ALICE_ADMIN_ASSIGNMENT = uuid.UUID("cccccccc-0000-4000-8000-000000000002")
 
 # persons-seed runs under its OWN tenant so its tenant-scoped rebuild of
 # account_person_map / org_chart never touches the fixture tree above.
-# (The identity_inputs read is deliberately tenant-UNfiltered — hotfix #1550 —
+# (The identity_inputs read is deliberately tenant-UNfiltered — HOTFIX(#1550) —
 # but every WRITE binds the caller's tenant.)
 SEED_TENANT = uuid.UUID("44444444-4444-4444-4444-444444444444")
 SEED_ADMIN = uuid.UUID("dddddddd-0000-4000-8000-000000000001")

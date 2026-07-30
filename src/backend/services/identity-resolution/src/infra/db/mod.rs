@@ -68,6 +68,82 @@ pub async fn connect_single(database_url: &str) -> anyhow::Result<DatabaseConnec
     Ok(db)
 }
 
+/// Prefix of the per-tenant advisory lock serializing persons-seed runs.
+/// Cross-process AND cross-instance: the lock lives on the MariaDB server, so
+/// a cron Job, a manual Job, and a second Insight instance sharing the same
+/// database all serialize through it.
+const SEED_LOCK_PREFIX: &str = "persons-seed:";
+
+/// RAII holder of the per-tenant persons-seed advisory lock.
+///
+/// The lock is `GET_LOCK`-session-scoped, and this guard OWNS the dedicated
+/// single-connection session it was acquired on — so the lock's lifetime is
+/// tied to the guard's scope by construction. Every exit path is covered:
+///   * happy path — [`SeedLockGuard::release`] issues `RELEASE_LOCK`
+///     (fastest handover to the next run);
+///   * early return / future cancellation — the guard drops, the session
+///     closes, MariaDB releases the lock server-side;
+///   * process crash (panic, OOM-kill, node death) — the TCP session dies
+///     and MariaDB releases the lock the same way.
+///
+/// A stale lock is therefore impossible; no explicit `Drop` impl is needed —
+/// dropping the owned connection IS the release.
+pub struct SeedLockGuard {
+    conn: DatabaseConnection,
+    tenant_id: uuid::Uuid,
+}
+
+impl SeedLockGuard {
+    /// Try to take the per-tenant lock without waiting (`GET_LOCK` timeout 0
+    /// — a concurrent run fails fast instead of queueing a stale re-run
+    /// behind the active one). Opens its own single-connection session (see
+    /// [`connect_single`]; a pooled connection could be swapped mid-run,
+    /// silently dropping the session-scoped lock). Returns `None` when
+    /// another run holds the lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection or the query fails.
+    pub async fn try_acquire(
+        database_url: &str,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Self>> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let conn = connect_single(database_url).await?;
+        let acquired: Option<i8> = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                "SELECT GET_LOCK(?, 0)",
+                [format!("{SEED_LOCK_PREFIX}{tenant_id}").into()],
+            ))
+            .await?
+            .map(|r| r.try_get_by_index::<Option<i8>>(0))
+            .transpose()?
+            .flatten();
+        if acquired == Some(1) {
+            Ok(Some(Self { conn, tenant_id }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Explicit best-effort release (the happy path — hands the lock over
+    /// without waiting for the session teardown). Consumes the guard; a
+    /// failure is not worth propagating, dropping the session releases the
+    /// lock anyway.
+    pub async fn release(self) {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let _ = self
+            .conn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                "SELECT RELEASE_LOCK(?)",
+                [format!("{SEED_LOCK_PREFIX}{}", self.tenant_id).into()],
+            ))
+            .await;
+    }
+}
+
 /// Name of the cross-process advisory lock serializing schema migration runs.
 const MIGRATION_LOCK: &str = "identity_resolution_migrations";
 /// How long a second migrator waits for the lock before giving up (seconds).

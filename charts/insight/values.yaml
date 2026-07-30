@@ -517,6 +517,16 @@ identityResolution:
   # auto-generated credentials (see templates/secrets.yaml). The subchart
   # consumes it via envFrom (overriding its mounted config ConfigMap).
   existingSecret: "insight-identity-resolution-config"
+  # Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
+  # daily to rebuild the identity org projection (persons / account_person_map
+  # / org_chart) from ClickHouse identity_inputs — without it the projection
+  # freezes at the last manual run and Team-view rosters go stale. Runs
+  # serialize on a per-tenant MariaDB advisory lock; input guards abort on an
+  # empty identity_inputs read or a tenant mismatch (`--force` overrides).
+  # Manual run: kubectl create job --from=cronjob/<release>-identity-resolution-seed ...
+  seed:
+    enabled: true
+    schedule: "30 6 * * *" # daily, after overnight syncs + the 06:00 data-quality run
   # Gateway-JWT verification (NGINX_BFF R1) — same wiring as analytics: the
   # oidc-authn-plugin resolves the authenticator's JWKS via OIDC discovery
   # over https on `issuer` and trusts its CA from the authn-tls cert Secret.

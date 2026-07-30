@@ -140,7 +140,10 @@ IDENTITY_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
     "GET /v1/persons/{email}": frozenset({404}),
 }
 IDENTITY_RUST_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
-    **_IDENTITY_COMMON_REQUIRED_EXTRA,
+    # POST /v1/persons-seed is dropped in the Rust successor (see the SKIP
+    # entry below) — its inherited requirement must go with it, or the gate
+    # demands codes no test can ever observe.
+    **{k: v for k, v in _IDENTITY_COMMON_REQUIRED_EXTRA.items() if k != "POST /v1/persons-seed"},
     "POST /v1/profiles": _IDENTITY_COMMON_REQUIRED_EXTRA["POST /v1/profiles"] | {409},
     "DELETE /v1/roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/roles/{id}"] | {409},
     "DELETE /v1/person-roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/person-roles/{id}"]
@@ -148,12 +151,19 @@ IDENTITY_RUST_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
 }
 
 # The Rust implementation dropped the deprecated persons lookup (approved
-# removal, zero callers), but the gate universe is still the committed .NET
-# spec until the Rust service publishes its own. The SKIP entry lets the
-# operation be legitimately unexercised on a Rust run — while the dotnet
-# suite (no such skip) still REQUIRES it, so a .NET regression can't hide.
+# removal, zero callers) and the persons-seed POST trigger (#1690: the seed is
+# CLI-only — CronJob / manual Job via the `seed` subcommand; the GET journal
+# routes remain). The gate universe is still the committed .NET spec until the
+# Rust service publishes its own, so SKIP entries let these operations be
+# legitimately unexercised on a Rust run — while the dotnet suite (no such
+# skips) still REQUIRES them, so a .NET regression can't hide.
 IDENTITY_RUST_SKIP_LIST: list[tuple[str, str]] = [
-    ("GET /v1/persons/{email}", "dropped in the Rust successor (approved removal; tests skip via capabilities)")
+    ("GET /v1/persons/{email}", "dropped in the Rust successor (approved removal; tests skip via capabilities)"),
+    (
+        "POST /v1/persons-seed",
+        "removed in the Rust successor (#1690: seed runs via the `seed` CLI "
+        "subcommand — CronJob/manual Job; the GET journal routes remain)",
+    ),
 ]
 
 # ── authenticator suite (src/backend/services/authenticator/tests/, run by

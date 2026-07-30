@@ -67,6 +67,32 @@ identityResolution:
   expandSubordinates: true
   maxDepth: 16
 
+# Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
+# to rebuild the identity org projection from ClickHouse identity_inputs.
+# Requires tenant_default_id in the config Secret (the seed refuses to run
+# without it). Manual run:
+#   kubectl create job --from=cronjob/<fullname>-seed seed-manual-<who>
+seed:
+  enabled: true
+  # Explicit tenant for the seed run (UUID). Optional: when set it is
+  # injected as an env var that OVERRIDES any tenant_default_id the
+  # existingSecret carries (k8s `env` beats `envFrom`) — the single source
+  # for the CronJob. Leave empty when the Secret already carries the tenant
+  # (the umbrella wires it from global.tenantDefaultId and validates at
+  # render). Without a tenant from either source every run exits 1.
+  tenantDefaultId: ""
+  # Daily, after the overnight connector syncs and the 06:00 data-quality run.
+  schedule: "30 6 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 # TCP gate before start: the service connects to MariaDB at boot. Same
 # busybox wait as the .NET identity chart.
 waitForMariadb:

@@ -1,0 +1,50 @@
+name: Identity Resolution — Helm contract
+
+# Render-contract gate for the identity-resolution chart, most importantly the
+# persons-seed CronJob (#1690): the original bug was the ABSENCE of scheduling,
+# so the schedule wiring is contract, not plumbing. Pure `helm template` +
+# assertions — no cluster, no images. The functional-k3s lane does not deploy
+# identityResolution, so without this nothing would catch a broken CronJob
+# template before an instance rollout.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/services/identity-resolution/helm/**"
+      - "charts/insight/**"
+      - ".github/workflows/identity-resolution-helm.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  helm-contract:
+    name: render contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Pinned to full SHAs (mutable tags are repointable — supply-chain
+      # hardening, same as semgrep.yml / trivy.yml).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install test deps
+        run: pip install --quiet pytest pyyaml
+
+      - name: helm lint
+        run: |
+          helm lint src/backend/services/identity-resolution/helm
+          helm dependency update charts/insight
+          helm lint charts/insight
+
+      - name: Render-contract tests (seed CronJob, umbrella tenant guard)
+        run: python -m pytest src/backend/services/identity-resolution/helm/tests/ -q

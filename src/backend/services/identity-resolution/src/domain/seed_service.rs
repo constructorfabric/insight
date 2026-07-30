@@ -78,28 +78,27 @@ pub struct SeedSummary {
     pub known_binding_conflicts: usize,
 }
 
-/// Run one persons-seed: read the input stream, fold to per-account profiles,
-/// group by email, resolve each group to a `person_id`, build the observation
-/// rows, and apply them (append + rebuild caches). `mint` is injected so tests
-/// are deterministic.
+/// Run one persons-seed over an already-read input: fold to per-account
+/// profiles, group by email, resolve each group to a `person_id`, build the
+/// observation rows, and apply them (append + rebuild caches). The caller
+/// (`crate::seed_runner`) reads the input itself so its guards can inspect
+/// the rows between the `ClickHouse` read and the MariaDB writes. `mint` is
+/// injected so tests are deterministic.
 ///
 /// # Errors
 ///
-/// Propagates reader / store errors.
-pub async fn run_seed<R, S>(
-    reader: &R,
+/// Propagates store errors.
+pub async fn seed_from_rows<S>(
+    rows: Vec<IdentityInputRow>,
     store: &S,
     tenant_id: Uuid,
     author_person_id: Uuid,
     mint: impl FnMut() -> Uuid,
 ) -> anyhow::Result<SeedSummary>
 where
-    R: IdentityInputsReader + ?Sized,
     S: SeedStore + ?Sized,
 {
     // 1. Build per-account profiles from the (latest-first) input stream.
-    let rows = reader.stream(tenant_id).await?;
-    tracing::info!(input_rows = rows.len(), "persons-seed: input streamed");
     let profiles = build_profiles(rows);
     let accounts_read = profiles.len();
 
@@ -148,16 +147,6 @@ where
 mod tests {
     use super::*;
     use sea_orm::prelude::DateTime;
-
-    struct FakeReader {
-        rows: Vec<IdentityInputRow>,
-    }
-    #[async_trait]
-    impl IdentityInputsReader for FakeReader {
-        async fn stream(&self, _tenant: Uuid) -> anyhow::Result<Vec<IdentityInputRow>> {
-            Ok(self.rows.clone())
-        }
-    }
 
     struct FakeStore {
         known: HashMap<SourceAccountKey, Uuid>,
@@ -212,24 +201,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_seed_wires_pipeline_end_to_end() -> anyhow::Result<()> {
+    async fn seed_from_rows_wires_pipeline_end_to_end() -> anyhow::Result<()> {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
         // Anna across two sources (shared email) + Boris; empty store → all mint.
-        let reader = FakeReader {
-            rows: vec![
-                input("bamboohr", "5001", "email", "anna@corp.com", t),
-                input("bamboohr", "5001", "display_name", "Anna P", t),
-                input("slack", "U777", "email", "anna@corp.com", t),
-                input("bamboohr", "5000", "email", "boris@corp.com", t),
-            ],
-        };
+        let rows = vec![
+            input("bamboohr", "5001", "email", "anna@corp.com", t),
+            input("bamboohr", "5001", "display_name", "Anna P", t),
+            input("slack", "U777", "email", "anna@corp.com", t),
+            input("bamboohr", "5000", "email", "boris@corp.com", t),
+        ];
         let store = FakeStore {
             known: HashMap::new(),
             emails: HashMap::new(),
         };
 
-        let summary = run_seed(
-            &reader,
+        let summary = seed_from_rows(
+            rows,
             &store,
             Uuid::from_u128(9),
             Uuid::from_u128(99),
@@ -250,11 +237,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_seed_reuses_known_binding() -> anyhow::Result<()> {
+    async fn seed_from_rows_reuses_known_binding() -> anyhow::Result<()> {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
-        let reader = FakeReader {
-            rows: vec![input("bamboohr", "5000", "email", "boris@corp.com", t)],
-        };
+        let rows = vec![input("bamboohr", "5000", "email", "boris@corp.com", t)];
         let mut known = HashMap::new();
         known.insert(
             SourceAccountKey {
@@ -269,8 +254,8 @@ mod tests {
             emails: HashMap::new(),
         };
 
-        let summary = run_seed(
-            &reader,
+        let summary = seed_from_rows(
+            rows,
             &store,
             Uuid::from_u128(9),
             Uuid::from_u128(99),
