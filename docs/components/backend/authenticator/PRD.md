@@ -174,6 +174,8 @@ Defined in the [parent backend PRD](../specs/PRD.md) as `cpt-insightspec-actor-o
 
 The system **MUST** implement OIDC authorization code flow with PKCE as a confidential client. The authenticator **MUST** generate `state`, `nonce`, and PKCE verifier per login attempt and validate them on callback. The browser **MUST NOT** receive or transmit the IdP code, ID token, access token, or refresh token at any point.
 
+A failed callback **MUST NOT** dead-end the browser on an error document: `/auth/callback` is an IdP redirect target with no page loaded, so every browser-facing failure (expired, unknown, or replayed `state`; IdP-reported error; missing parameters; code-exchange failure; a denied person) **MUST** redirect (302) back to the SPA with a fixed `auth_error=<reason>` query parameter, allowing the SPA to restart the login from scratch (issue #2032). Rate-limit (429) and internal (5xx) responses stay problem+json.
+
 The new session token issued at the end of a successful callback **MUST** be generated server-side from a CSPRNG and **MUST NOT** be derived from, or equal to, any value present in the incoming request (cookies, headers, query). Any `__Host-sid` cookie present on the `/auth/callback` request **MUST** be ignored; if its value maps to a live session in Redis, that session **MUST** be revoked before the new session is created. This prevents session fixation where an attacker plants a known token before the victim logs in.
 
 At login the system **MUST** resolve the authenticated person via Identity Service (`sub` to `person_id` plus tenant memberships) and **MUST** fetch access-control claims once, from the permissions service when it exists; until then the configured `authenticator.default_roles` apply.
@@ -552,7 +554,7 @@ If Redis is unreachable, `/internal/authz` and `/auth/*` mutations **MUST** fail
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/auth/login` | Start OIDC flow; 302 to IdP. Optional `__override=<email>` view-as target, honored only when `override_enabled` (5.16). |
-| GET | `/auth/callback` | OIDC callback; creates session + linked JWT; sets cookie; 302 to SPA. |
+| GET | `/auth/callback` | OIDC callback; creates session + linked JWT; sets cookie; 302 to SPA. Failures also 302 to the SPA, with `auth_error=<reason>` (5.1). |
 | POST | `/auth/refresh` | Rotate cookie, extend session TTL; return `{expires_at, refresh_at}`. |
 | POST | `/auth/logout` | Revoke current session; clear cookie; return RP-logout URL. |
 | GET | `/auth/me` | Current user, tenants, plus `{expires_at, refresh_at}`; `impersonator_email` on view-as sessions (5.16). |

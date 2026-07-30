@@ -17,7 +17,7 @@ COPY . .
 RUN cargo build --release -p routegen
 
 # Stage 2: OpenResty runtime.
-FROM openresty/openresty:1.27.1.2-alpine
+FROM openresty/openresty:1.31.1.1-2-alpine
 
 # Runtime deps not bundled in the base image:
 #   - lua-resty-http (ADR-0001): the access-phase exchange cosocket.

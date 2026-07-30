@@ -127,7 +127,12 @@ class TestAuthenticatorDown:
 
 
 def test_revocation_within_cache_window(client, session_sid):
-    logout = client.request(f"{GW}/auth/logout", headers={"Cookie": f"__Host-sid={session_sid}"}, method="POST")
+    # Logout is state-changing: it needs the per-session CSRF token (§10.5).
+    logout = client.request(
+        f"{GW}/auth/logout",
+        headers={"Cookie": f"__Host-sid={session_sid}", "X-CSRF-Token": client.csrf_token(session_sid)},
+        method="POST",
+    )
     assert logout[0] == 200, f"logout got {logout[0]}"
     # Revocation reaches the gateway once the cached exchange expires (<= max-age).
     deadline = time.monotonic() + AUTHZ_CACHE_MAX_AGE + 5

@@ -22,6 +22,8 @@ free. The admin must have access_management (to CREATE ROLE / CREATE USER):
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,13 +39,21 @@ pytestmark = pytest.mark.skipif(
     not CH_URL, reason="set PRESENTATION_ROLE_TEST_CH_URL (admin with access_management) to run"
 )
 
-ROLE_SQL = Path(__file__).resolve().parent.parent / "bootstrap-db" / "presentation-role.sql"
+BOOTSTRAP_DIR = Path(__file__).resolve().parent.parent / "bootstrap-db"
+ROLE_SQL = BOOTSTRAP_DIR / "presentation-role.sql"
+PROVISION_SCRIPT = BOOTSTRAP_DIR / "provision-presentation-access.sh"
 
 # The read-only contract databases the role grants SELECT on.
 CONTRACT_DBS = ("silver", "person", "identity", "insight")
 
 PROBE_USER = "pres_role_probe"
 PROBE_PASSWORD = "probe"
+
+# The persistent grant-less user provision-presentation-access.sh creates and
+# that analytics connects as (#1964). Alphanumeric to satisfy the script's
+# quote/`;` guard.
+PRES_USER = "presentation"
+PRES_PASSWORD = "presTest1964"
 
 
 def _query(sql: str, *, user: str, password: str) -> tuple[bool, str]:
@@ -137,5 +147,80 @@ def test_presentation_is_create_insert_only(probe) -> None:
         "ALTER TABLE presentation.scratch ADD COLUMN y UInt8",
     ):
         ok, resp = probe(sql)
+        assert not ok, f"presentation must reject destructive DDL: {sql!r}"
+        assert "ACCESS_DENIED" in resp, resp
+
+
+# ── #1964: the persistent grant-less `presentation` user, provisioned by the
+#    real provision-presentation-access.sh (not a throwaway probe) ──
+
+
+@pytest.fixture(scope="module")
+def presentation_user():
+    """Run provision-presentation-access.sh against the live server and yield a
+    query fn bound to the `presentation` user it creates. Proves the user
+    analytics actually connects as (#1964) carries exactly the role's grant
+    matrix — a grant-less user whose only privileges come via presentation_ro."""
+    if not (shutil.which("bash") and shutil.which("curl")):
+        pytest.skip("provision-presentation-access.sh needs bash + curl")
+
+    for db in (*CONTRACT_DBS, "presentation"):
+        assert _admin(f"CREATE DATABASE IF NOT EXISTS {db}")[0]
+    for db in CONTRACT_DBS:
+        assert _admin(f"CREATE TABLE IF NOT EXISTS {db}.probe (x UInt8) ENGINE=MergeTree ORDER BY x")[0]
+
+    # The script talks to CH over curl (lib/ch-exec.sh) using these env names.
+    env = {
+        **os.environ,
+        "CLICKHOUSE_URL": CH_URL,
+        "CLICKHOUSE_USER": CH_USER,
+        "CLICKHOUSE_PASSWORD": CH_PASSWORD,
+        "CLICKHOUSE_PRESENTATION_PASSWORD": PRES_PASSWORD,
+    }
+    result = subprocess.run(["bash", str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, f"provisioning failed: {result.stdout}\n{result.stderr}"
+    assert "presentation user ready" in result.stdout, result.stdout
+
+    def _query_as_pres(sql: str) -> tuple[bool, str]:
+        return _query(sql, user=PRES_USER, password=PRES_PASSWORD)
+
+    try:
+        yield _query_as_pres
+    finally:
+        _admin("DROP TABLE IF EXISTS presentation.scratch_1964")
+        for db in CONTRACT_DBS:
+            _admin(f"DROP TABLE IF EXISTS {db}.probe")
+        _admin(f"DROP USER IF EXISTS {PRES_USER}")
+
+
+@pytest.mark.parametrize("db", CONTRACT_DBS)
+def test_provisioned_user_contract_is_read_only(presentation_user, db: str) -> None:
+    """The `presentation` user reads every contract DB but cannot write/alter it."""
+    assert presentation_user(f"SELECT count() FROM {db}.probe")[0], f"{db} SELECT must be allowed"
+    for sql in (
+        f"INSERT INTO {db}.probe VALUES (1)",
+        f"DROP TABLE {db}.probe",
+        f"ALTER TABLE {db}.probe ADD COLUMN y UInt8",
+        f"TRUNCATE TABLE {db}.probe",
+    ):
+        ok, resp = presentation_user(sql)
+        assert not ok, f"{db} must reject: {sql!r}"
+        assert "ACCESS_DENIED" in resp, resp
+
+
+def test_provisioned_user_presentation_is_create_insert_only(presentation_user) -> None:
+    """The `presentation` user can CREATE/INSERT/SELECT in `presentation` (proving
+    the DB exists and is writable) but cannot DROP/ALTER/TRUNCATE there."""
+    assert presentation_user(
+        "CREATE TABLE IF NOT EXISTS presentation.scratch_1964 (x UInt8) ENGINE=MergeTree ORDER BY x"
+    )[0], "presentation CREATE must be allowed"
+    assert presentation_user("INSERT INTO presentation.scratch_1964 VALUES (7)")[0], "INSERT must be allowed"
+    assert presentation_user("SELECT sum(x) FROM presentation.scratch_1964")[0], "SELECT must be allowed"
+    for sql in (
+        "DROP TABLE presentation.scratch_1964",
+        "TRUNCATE TABLE presentation.scratch_1964",
+        "ALTER TABLE presentation.scratch_1964 ADD COLUMN y UInt8",
+    ):
+        ok, resp = presentation_user(sql)
         assert not ok, f"presentation must reject destructive DDL: {sql!r}"
         assert "ACCESS_DENIED" in resp, resp

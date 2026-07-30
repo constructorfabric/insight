@@ -231,21 +231,22 @@ Makes the public query path incapable of anything but a single read, so a broken
 
 #### Read-Only Role
 
-- [ ] `p2` - **ID**: `cpt-presentation-component-read-only-role`
+- [x] `p2` - **ID**: `cpt-presentation-component-read-only-role`
 
 ##### Why this component exists
 
-The second, independent barrier behind the query gate: once analytics connects as the role, even a read that slips past the gate executes under grants that make writing, altering, or dropping the source impossible. Read-only enforced by construction, not convention. The role is **provisioned** by #1963; it is **not yet the active query-path identity** — analytics still connects as the admin until that wiring lands, so this barrier is dormant until then.
+The second, independent barrier behind the query gate: once analytics connects as the role, even a read that slips past the gate executes under grants that make writing, altering, or dropping the source impossible. Read-only enforced by construction, not convention. The role is **provisioned** by #1963; #1964 adds the grant-less `presentation` user that carries it and points analytics at that user, so the barrier is now active.
 
 ##### Responsibility scope
 
 - `presentation_ro` ClickHouse role: `SELECT` on the contract (silver, identity/person, legacy gold in `insight`); `SELECT`/`INSERT`/`CREATE` only in `presentation`; no `DROP`/`ALTER`/`TRUNCATE` anywhere.
-- Defined as idempotent DDL in [presentation-role.sql](../../../../src/ingestion/scripts/bootstrap-db/presentation-role.sql); provisioned by [apply-ch-migrations.sh](../../../../src/ingestion/scripts/apply-ch-migrations.sh) (the clickhouse-migrate hook, which bootstrap also runs), guarded so a ClickHouse admin without access-management is skipped with a warning rather than aborting.
+- Grant-less `presentation` user (#1964): every privilege comes from `presentation_ro` (a role only *adds* privileges, so activating it on a user with direct grants would not restrict anything). This is the user analytics connects as.
+- Defined as idempotent DDL in [presentation-role.sql](../../../../src/ingestion/scripts/bootstrap-db/presentation-role.sql) (role) plus [provision-presentation-access.sh](../../../../src/ingestion/scripts/bootstrap-db/provision-presentation-access.sh) (the user, which needs a password); provisioned by [apply-ch-migrations.sh](../../../../src/ingestion/scripts/apply-ch-migrations.sh) (the clickhouse-migrate hook, which bootstrap also runs), guarded so a ClickHouse admin without access-management — or a run without the user password — is skipped with a warning rather than aborting.
 
 ##### Responsibility boundaries
 
 - Does NOT parse SQL — that is the query gate.
-- Does NOT create the `presentation` database or wire the analytics connection to the role — those follow in #1964 and the connection wiring; until the connection wiring lands the role is provisioned but inactive.
+- Does NOT gate the switch behind a flag: analytics always connects as the `presentation` user, whose password is a required credential (like the admin one). The user is provisioned before analytics needs it — by the clickhouse-migrate Hook (gitops/chart) or the ClickHouse init scripts (compose) — so the deploy-side switch must land together with a release that carries that provisioning.
 
 ##### Related components (by ID)
 
@@ -374,9 +375,9 @@ Entity `presentation.queries`: `{ id, insight_tenant_id, name, description, sql,
 |--------|-------|
 | Contract | Read-only: silver (`class_*`, `fct_*`, `mtr_*`), identity (`person.*`, `identity.*`), legacy gold in `insight` |
 | Presentation namespace | New `presentation` DB: `SELECT` + `CREATE`/`INSERT` for new gold, results, scratch |
-| Access | Executed as the `presentation_ro` role (SELECT on contract; CREATE/INSERT only in `presentation`) |
+| Access | Executed as the grant-less `presentation` user, whose only privileges come via the `presentation_ro` role (SELECT on contract; CREATE/INSERT only in `presentation`) |
 | Read semantics | `FINAL` on silver `ReplacingMergeTree` reads |
-| Bootstrap | Role defined in `src/ingestion/scripts/bootstrap-db/presentation-role.sql`, provisioned (guarded) by `apply-ch-migrations.sh`; the empty `presentation` DB follows in #1964 |
+| Bootstrap | `presentation` DB always created (`clickhouse.initDatabases` + the core-DB block of `apply-ch-migrations.sh`); role + grant-less user via `provision-presentation-access.sh` — the user only when its password is supplied (guarded). Role DDL in `presentation-role.sql` |
 
 #### Redis
 
@@ -485,7 +486,7 @@ Saved query authored by an analyst: a single `SELECT`/`WITH` over the contract, 
 Ordered by quick win; each step ships value or safety on its own, and no step depends on physically moving gold.
 
 1. **Single-SELECT gate** (safety, done, #1962) — `validate_single_select`, applied on write and run via `parse_query_ref`. Shipped with no DB or infra change.
-2. **`presentation_ro` role + empty `presentation` DB** (safety, #1963/#1964) — add to CH bootstrap (`src/ingestion/scripts/bootstrap-db/`); point analytics at the role (`config.rs`, `gear.rs` `with_auth`).
+2. **`presentation_ro` role + empty `presentation` DB** (safety, done, #1963/#1964) — role + grant-less `presentation` user in CH bootstrap (`bootstrap-db/provision-presentation-access.sh`); empty DB via `clickhouse.initDatabases` + `apply-ch-migrations.sh`; analytics connects as the `presentation` user (existing `clickhouse_user`/`clickhouse_password` config → `gear.rs` `with_auth`), its password a required credential provisioned before analytics needs it.
 3. **Saved-query CRUD** (value, #1965/#1966) — new entity plus migration for `presentation.queries`; handlers and routes per section 3.3; reuse the existing run path for `/run`.
 4. **Tenant filter** (correctness, #1967) — replace the no-op with the injected predicate in the compiler's shared `WHERE`; `insight_tenant_id` first in `ORDER BY` for new gold; cover with an e2e metric test (`src/ingestion/tests/e2e`). Coordinated with engineering #1829.
 5. **Query console** (value, FE, #1970) — thin stable app on the saved-query API: auth shell, author, list, run, render table / auto-chart. Tier-2 "promote to card" can follow.

@@ -3,6 +3,8 @@
 -- no DROP/ALTER/TRUNCATE anywhere. Idempotent. Needs an admin with
 -- access_management (compose/e2e/bitnami already have it; see README.md).
 -- Spec: docs/domain/presentation-layer/specs.
+-- The grant-less `presentation` user that carries this role is created by
+-- provision-presentation-access.sh (#1964; needs a password → not static DDL).
 
 CREATE ROLE IF NOT EXISTS presentation_ro;
 

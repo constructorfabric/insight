@@ -5,10 +5,6 @@
 
 use toolkit_canonical_errors::resource_error;
 
-/// Failures resolving / creating the request's internal person.
-#[resource_error("gts.cf.insight.authenticator.person.v1~")]
-pub struct PersonError;
-
 /// OIDC handshake failures (state/nonce/exchange/id_token validation).
 #[resource_error("gts.cf.insight.authenticator.oidc.v1~")]
 pub struct OidcError;
