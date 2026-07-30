@@ -23,7 +23,7 @@ docker run -d --name bootstrap-db-clickhouse -p 8123:8123 \
   "${CLICKHOUSE_SERVER_IMAGE}"
 ```
 
-`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` lets the `insight` admin manage access (`CREATE ROLE`/`GRANT`) so the run provisions the read-only `presentation_ro` role (`presentation-role.sql`, #1963); the official image disables it by default. Both compose stacks (`docker-compose.yml`, `tests/e2e/compose`) and the bitnami prod admin already have access-management, and provisioning is guarded (an admin lacking it is skipped with a warning), so this flag is only needed for this bare throwaway container.
+`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` lets the `insight` admin manage access (`CREATE ROLE`/`CREATE USER`/`GRANT`) so the run provisions the read-only `presentation_ro` role and the grant-less `presentation` user (`provision-presentation-access.sh` → `presentation-role.sql`, #1963/#1964); the official image disables it by default. Both compose stacks (`docker-compose.yml`, `tests/e2e/compose`) and the bitnami prod admin already have access-management, and provisioning is guarded (an admin lacking it is skipped with a warning), so this flag is only needed for this bare throwaway container. The `presentation` user is created only when `CLICKHOUSE_PRESENTATION_PASSWORD` is set (unset in this bare run → role only, which is fine for a snapshot); analytics connects as it in the real stacks.
 
 Point `.env` at it: `CLICKHOUSE_HOST=$(ipconfig getifaddr en0)` (the LAN IP — reachable both for dbt on this machine and for the connector containers; see Prerequisites), `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_PROTOCOL=http`, user/password/database `insight`. Check what got created:
 

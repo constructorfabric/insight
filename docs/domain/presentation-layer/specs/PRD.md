@@ -163,9 +163,9 @@ The system **MUST** accept exactly one read statement — a single `SELECT`/`WIT
 
 #### Read-Only Role
 
-- [ ] `p1` - **ID**: `cpt-presentation-fr-read-only-role`
+- [x] `p1` - **ID**: `cpt-presentation-fr-read-only-role`
 
-The system **MUST** execute contract reads under a dedicated `presentation_ro` role that has `SELECT` on the silver, identity, `person`, and legacy-gold (`insight`) databases and `CREATE`/`INSERT` only in `presentation`, with no `DROP`/`ALTER`/`TRUNCATE` anywhere. (#1963 provisions the role; it becomes the query-path identity once the analytics connection is wired to execute as it.)
+The system **MUST** execute contract reads under a dedicated `presentation_ro` role that has `SELECT` on the silver, identity, `person`, and legacy-gold (`insight`) databases and `CREATE`/`INSERT` only in `presentation`, with no `DROP`/`ALTER`/`TRUNCATE` anywhere. (#1963 provisions the role; #1964 adds the grant-less `presentation` user that carries it and points analytics at that user, so the role is now the active query-path identity.)
 
 **Rationale**: Read-only enforced by construction, not by convention.
 
@@ -173,9 +173,9 @@ The system **MUST** execute contract reads under a dedicated `presentation_ro` r
 
 #### Presentation Namespace
 
-- [ ] `p1` - **ID**: `cpt-presentation-fr-namespace`
+- [x] `p1` - **ID**: `cpt-presentation-fr-namespace`
 
-The system **MUST** provide an empty `presentation` ClickHouse database for new presentation artifacts (new gold, saved-query results, scratch). Legacy gold **MUST** remain read-only in the `insight` database (relabel, not migrate). (#1964.)
+The system **MUST** provide an empty `presentation` ClickHouse database for new presentation artifacts (new gold, saved-query results, scratch). Legacy gold **MUST** remain read-only in the `insight` database (relabel, not migrate). (#1964 always creates the database at bootstrap/deploy; the grant-less `presentation` user is provisioned when its password is supplied.)
 
 **Rationale**: Presentation needs a place to write without touching engineering-owned data, without a disruptive physical migration.
 

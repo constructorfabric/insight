@@ -98,4 +98,13 @@ spec:
                 secretKeyRef:
                   name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
                   key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+            # Grant-less `presentation` user's password (#1964). Optional:
+            # unset on a Secret predating this key → the script provisions the
+            # role only.
+            - name: CLICKHOUSE_PRESENTATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
+                  key:  "clickhouse-presentation-password"
+                  optional: true
 {{- end }}

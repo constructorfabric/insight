@@ -165,8 +165,12 @@ CH_PW=$( kubectl -n "$NS_APP" get secret insight-db-creds \
   -o jsonpath='{.data.clickhouse-password}'| base64 -d)
 RD_PW=$( kubectl -n "$NS_APP" get secret insight-db-creds \
   -o jsonpath='{.data.redis-password}'     | base64 -d)
+# Analytics connects as the grant-less read-only `presentation` user (#1964);
+# its password is required, like the admin one.
+CH_PRES_PW=$(kubectl -n "$NS_APP" get secret insight-db-creds \
+  -o jsonpath='{.data.clickhouse-presentation-password}' | base64 -d)
 
-for v in MDB_PW CH_PW; do
+for v in MDB_PW CH_PW CH_PRES_PW; do
   [ -n "${!v}" ] || {
     echo "ERROR: $v missing from $NS_APP/insight-db-creds — refusing to compose with empty password" >&2
     exit 1
@@ -209,8 +213,8 @@ stringData:
   APP__gears__analytics__config__database_url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${MDB_DB}"
   APP__gears__analytics__config__clickhouse_url: "http://${CH_HOST}:${CH_PORT}"
   APP__gears__analytics__config__clickhouse_database: "${CH_DB}"
-  APP__gears__analytics__config__clickhouse_user: "${CH_USER}"
-  APP__gears__analytics__config__clickhouse_password: "${CH_PW}"
+  APP__gears__analytics__config__clickhouse_user: "presentation"
+  APP__gears__analytics__config__clickhouse_password: "${CH_PRES_PW}"
   APP__gears__analytics__config__identity_url: "${IDENTITY_URL}"
   APP__gears__analytics__config__redis_url: "${REDIS_URL}"
 EOF
@@ -331,4 +335,4 @@ EOF
 echo "composed → $NS_APP/insight-identity-resolution-config"
 
 # Don't echo any of the passwords; clear the shell env explicitly.
-unset MDB_PW CH_PW RD_PW REDIS_URL
+unset MDB_PW CH_PW RD_PW REDIS_URL CH_PRES_PW
