@@ -18,7 +18,13 @@ SELECT
     toFloat64(8.0)            AS working_hours_per_day,
     toFloat64(40.0)           AS working_hours_per_week,
     _airbyte_extracted_at     AS ingested_at
-FROM {{ source('bamboohr', 'employees') }}
+-- FINAL is mandatory: bronze is append-only RMT(_airbyte_extracted_at) and only
+-- collapses on background merge. Without it the `status = 'Active'` filter below
+-- is evaluated against EVERY unmerged snapshot, so an employee who has since gone
+-- inactive still qualifies via a stale row — and the downstream versionless
+-- `LIMIT 1 BY unique_key` has no ORDER BY, so which snapshot's hours win is
+-- undefined. See ADR-0001.
+FROM {{ source('bamboohr', 'employees') }} FINAL
 WHERE status = 'Active'
   AND id IS NOT NULL
   AND workEmail IS NOT NULL

@@ -21,7 +21,13 @@ SELECT
     coalesce(toFloat64OrNull(toString(Scheduled_Weekly_Hours)), 40.0)
                               AS working_hours_per_week,
     _airbyte_extracted_at     AS ingested_at
-FROM {{ source('workday', 'workers') }}
+-- FINAL is mandatory: bronze is append-only RMT(_airbyte_extracted_at) and only
+-- collapses on background merge. Without it the `Worker_Status = 'Active'` filter
+-- below is evaluated against EVERY unmerged snapshot, so a worker who has since
+-- been terminated still qualifies via a stale row — and the downstream versionless
+-- `LIMIT 1 BY unique_key` has no ORDER BY, so which snapshot's hours win is
+-- undefined. See ADR-0001.
+FROM {{ source('workday', 'workers') }} FINAL
 WHERE Worker_Status = 'Active'
   AND Employee_ID IS NOT NULL
   AND Work_Email IS NOT NULL

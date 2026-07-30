@@ -55,7 +55,9 @@ The formula:
 {insight_tenant_id}-{insight_source_id}-{natural_key_part_1}-{natural_key_part_2}-...
 ```
 
-Tenant first, source second, natural-key last. For SCD2 grains (`class_people`, `cursor__members_snapshot`), the natural-key parts MUST include the version axis (e.g. `valid_from`, `_tracked_at`, `event_id`) so per-version rows get distinct `unique_key`s.
+Tenant first, source second, natural-key last. For genuine SCD2 / history grains (`cursor__members_snapshot`, the per-source `*_snapshot` and `*_fields_history` models), the natural-key parts MUST include the version axis (e.g. `_tracked_at`, `event_id`) so per-version rows get distinct `unique_key`s.
+
+**A version axis belongs only in a table that is meant to accumulate versions** — in practice an `incremental`/`append` model. It MUST NOT be added to a current-state snapshot such as `class_people`, which is `materialized='table'` and rebuilt in full each run. Combining the two is what produced the `class_people` headcount-inflation bug: the version axis made each changed record a *second* row that the versionless silver RMT could never collapse (and that `FINAL` could not collapse either, because the keys genuinely differ), while `valid_to` stayed NULL so nothing marked which row was current. Snapshot models keep an entity-level `unique_key`; their history lives in the sibling `*_snapshot` / `*_fields_history` chain.
 
 For records produced by dbt explode models (one bronze row → many output rows), the producer MUST compute its own `unique_key` using the same formula — bronze's `unique_key` is at the wrong grain.
 
@@ -159,9 +161,14 @@ SELECT
 FROM {{ source('bronze_<connector>', '<table>') }} u
 ```
 
-**SCD2 extension** (`to_class_people.sql`):
+**SCD2 / history extension** (`*_snapshot`, `*_fields_history` — models that accumulate versions):
 ```sql
-CAST(concat(coalesce(unique_key, ''), '-', toString(lastChanged)) AS String) AS unique_key
+CAST(concat(coalesce(unique_key, ''), '-', toString(_tracked_at)) AS String) AS unique_key
+```
+
+**Snapshot models pass bronze's entity-level key straight through** (`to_class_people.sql`) — no version axis:
+```sql
+CAST(coalesce(unique_key, '') AS String) AS unique_key
 ```
 
 ## Traceability
