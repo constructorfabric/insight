@@ -407,6 +407,19 @@ impl AuthenticatorConfig {
             anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
         }
 
+        // `default_return_to` lands verbatim in Location headers (login
+        // fallback and every `auth_error` bounce). A non-site-relative value
+        // would open-redirect on our own config, and a `#` fragment would hide
+        // `auth_error=` from the SPA's query parsing — defeating its login
+        // retry loop guard.
+        anyhow::ensure!(
+            self.default_return_to.starts_with('/')
+                && !self.default_return_to.starts_with("//")
+                && !self.default_return_to.contains('#')
+                && !self.default_return_to.chars().any(char::is_control),
+            "default_return_to must be a site-relative path without a fragment"
+        );
+
         // Service tokens: if any service is registered, the token endpoint must
         // know the `aud` it expects on assertions (its own URL). A registry
         // entry with zero public keys can never authenticate — reject it early.
