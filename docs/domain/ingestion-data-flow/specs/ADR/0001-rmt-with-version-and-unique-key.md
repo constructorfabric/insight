@@ -107,8 +107,18 @@ never see duplicates. This is the property option A could not guarantee.
 - The `snapshot()` macro now reads its bronze source with `FINAL`, so transient
   duplicates do not create spurious SCD2 history versions.
 - `materialized='table'` silver models (`class_people`, `mtr_git_person_*`,
-  `class_hr_working_hours`) are rebuilt in full each run and already collapse to
-  one row per key via the `union_by_tag` dedup — left unchanged.
+  `class_hr_working_hours`) are rebuilt in full each run and collapse to one row
+  per `unique_key` via the `union_by_tag` dedup.
+
+  **Caveat — this is only equivalent to "one row per entity" while `unique_key`
+  IS the entity key.** `class_people` was originally exempted from the read-dedup
+  cleanup on this basis, but ADR-0004 had it carry a version axis (`lastChanged`),
+  so the dedup was per (entity, version): every changed record became a second
+  permanently-current row, and `FINAL` could not collapse it because the keys
+  genuinely differed. The staging read of bronze also lacked `FINAL`, so unmerged
+  bronze snapshots were the source of those versions. Both are fixed; the
+  exemption does not generalise — a `table` model still needs read-time dedup of
+  its own upstreams, and its `unique_key` must be the entity key.
 
 **Enforcement.** `src/ingestion/dbt/audit_rmt_read_dedup.py` checks every RMT read
 across staging, silver, and the gold-view migrations and fails (exit≠0) on an

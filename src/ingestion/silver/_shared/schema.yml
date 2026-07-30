@@ -2,8 +2,15 @@ version: 2
 
 models:
   - name: class_people
-    description: "Unified person registry from all HR sources (BambooHR, Workday)"
+    description: >
+      Unified person registry from all HR sources (BambooHR, MS Entra, Workday). Current-state snapshot: exactly one row per person per source. NOT an SCD2 history table — HR attribute history lives in the per-source `*_snapshot` / `*_fields_history` chain, which accumulates across syncs (this model is `materialized='table'` and is rebuilt in full every run, so it cannot retain history). `valid_from` records when the source last changed the record; there is no `valid_to` — see ADR-0004.
     columns:
+      - name: unique_key
+        description: >
+          Entity-level key (`{tenant}-{source}-{source_person_id}`) and the RMT ORDER BY column. MUST NOT carry a version axis: a per-version key stops silver RMT from collapsing versions, so every changed record becomes a second permanently-current row.
+        tests:
+          - not_null
+          - unique
       - name: source_person_id
         description: "Source-specific employee ID"
         tests:

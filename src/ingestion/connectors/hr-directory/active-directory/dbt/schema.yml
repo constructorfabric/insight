@@ -15,16 +15,10 @@ sources:
 models:
   - name: active_directory__bronze_promoted
     description: >
-      Bootstrap model that promotes raw `bronze_active_directory.users` to a
-      ReplacingMergeTree table (idempotent). Run before downstream models that
-      depend on RMT semantics.
-
+      Bootstrap model that promotes raw `bronze_active_directory.users` to a ReplacingMergeTree table (idempotent). Run before downstream models that depend on RMT semantics. #magic___^_^___line
   - name: active_directory__users_snapshot
     description: >
-      SCD2 append-only snapshot of Active Directory users. Captures changes in
-      tracked fields (UPN, mail, displayName, employeeId, accountEnabled,
-      sAMAccountName, etc.) so the Identity Manager can observe identity changes
-      over time.
+      SCD2 append-only snapshot of Active Directory users. Captures changes in tracked fields (UPN, mail, displayName, employeeId, accountEnabled, sAMAccountName, etc.) so the Identity Manager can observe identity changes over time.
     columns:
       - name: unique_key
         description: Composite (tenant, source, objectGUID, _row_hash) snapshot key.
@@ -33,8 +27,7 @@ models:
 
   - name: active_directory__users_fields_history
     description: >
-      Field-level change log for Active Directory users. One row per (entity,
-      field, change). Drives `active_directory__identity_inputs`.
+      Field-level change log for Active Directory users. One row per (entity, field, change). Drives `active_directory__identity_inputs`.
     columns:
       - name: entity_id
         description: AD objectGUID.
@@ -55,9 +48,7 @@ models:
 
   - name: active_directory__identity_inputs
     description: >
-      Identity signals emitted to Identity Manager. Each row is one observation
-      (UPSERT or DELETE) of an identity field for a user. Identity Manager
-      consumes these to resolve `objectGUID → person_id`.
+      Identity signals emitted to Identity Manager. Each row is one observation (UPSERT or DELETE) of an identity field for a user. Identity Manager consumes these to resolve `objectGUID → person_id`.
     columns:
       - name: unique_key
         tests:
@@ -94,9 +85,7 @@ models:
 
   - name: active_directory__to_class_people
     description: >
-      Active Directory users → class_people (Silver Step 1).
-      Identity key: `email` (mail with UPN fallback). `source_person_id` is the
-      AD objectGUID — stable across renames and reusable as the directory join key.
+      Active Directory users → class_people (Silver Step 1). Identity key: `email` (mail with UPN fallback). `source_person_id` is the AD objectGUID — stable across renames and reusable as the directory join key.
     columns:
       - name: tenant_id
         tests:
@@ -121,7 +110,9 @@ models:
         tests:
           - not_null
       - name: status
+        description: >
+          Normalised from accountEnabled: active / terminated, or unknown when accountEnabled is NULL. Never defaults to active — that silently inflates headcount.
         tests:
           - accepted_values:
               arguments:
-                values: ['active', 'on_leave', 'terminated']
+                values: ['active', 'on_leave', 'terminated', 'unknown']

@@ -64,7 +64,19 @@ prd: pending
 
 ### 1.1 Architectural Vision
 
-The HR Silver Layer transforms raw HR directory data from Bronze source tables (BambooHR, Workday, LDAP/Active Directory) into two canonical, workspace-isolated Silver tables: `class_people` and `class_org_units`. Both tables follow the SCD Type 2 pattern: each row captures a point-in-time snapshot of a person or organisational unit, with `valid_from`/`valid_to` interval semantics. The current state of any entity is always the row where `valid_to IS NULL`.
+> **Implementation status.** This document is the original HR Silver design. Parts of it describe components that were never built, and they must not be read as the current contract:
+>
+> - There is **no "SCD2 Merge" component**. Bronze → Silver is plain dbt (`<source>__to_class_people` staging views unioned by `union_by_tag` into `silver.class_people`). Every section describing row-closing writes (`UPDATE ... SET valid_to = ...`) is unimplemented design.
+> - **`class_people` has no `valid_to`** and holds no version history — see below.
+> - **`class_org_units` does not exist** as a table or a dbt model. `class_people.org_unit_id` is consequently unpopulated; department attribution currently flows through `department_name`.
+>
+> For the shipped data-flow contract see [ADR-0001](../../../domain/ingestion-data-flow/specs/ADR/0001-rmt-with-version-and-unique-key.md) and [ADR-0004](../../../domain/ingestion-data-flow/specs/ADR/0004-unique-key-formula.md).
+
+The HR Silver Layer transforms raw HR directory data from Bronze source tables (BambooHR, MS Entra, Workday, LDAP/Active Directory) into two canonical, workspace-isolated Silver tables: `class_people` and `class_org_units`.
+
+`class_people` is a **current-state snapshot**: exactly one row per person per source, keyed on an entity-level `unique_key`. `valid_from` records when the source last changed the record; there is no `valid_to`. It is `materialized='table'` and rebuilt in full on every run, so it cannot accumulate history by construction.
+
+HR attribute history lives in the per-source SCD2 chain — `<source>__<entity>_snapshot` and `<source>__<entity>_fields_history` — which are `incremental`/`append` and therefore genuinely accumulate versions across syncs, tracking strictly more fields than `class_people` exposes. Do not add version rows to `class_people`: see ADR-0004 and ADR-0001 for the headcount-inflation bug this caused.
 
 The design makes the HR domain the authoritative source for person identity and organisational structure within the Insight platform. `class_people` serves as the canonical person registry consumed by all other Silver streams that carry `person_id`. `class_org_units` provides the org hierarchy needed for hierarchical scoping of metrics — the depth, path, and head of each organisational unit — data that cannot be reliably derived from `class_people` alone.
 
@@ -89,7 +101,7 @@ Extensibility for company-specific HR attributes is handled natively via two typ
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |---|---|---|---|---|
 | `cpt-insightspec-nfr-tenant-isolation` | Zero cross-workspace data leakage | `workspace_id` column on both Silver tables | `workspace_id` is a partition key component on `class_people` and `class_org_units`; DataScopeFilter injects `workspace_id = ?` predicate on every query | Integration tests asserting no cross-workspace rows returned under adversarial queries |
-| `cpt-insightspec-nfr-query-performance` | Sub-second queries for org-scoped metrics | ClickHouse partition pruning | `(workspace_id, valid_to)` partition key enables pruning for current-state queries (`WHERE valid_to IS NULL`); `path LIKE '/company/eng/%'` enables subtree scoping | Query benchmarks on representative dataset sizes |
+| `cpt-insightspec-nfr-query-performance` | Sub-second queries for org-scoped metrics | ClickHouse sparse primary index | `class_people` is one row per person (current headcount, not turnover-scaled), so current-state reads need no interval predicate and scan a table bounded by headcount; `ORDER BY unique_key` indexes the tenant-prefixed key | Query benchmarks on representative dataset sizes |
 
 ### 1.3 Architecture Layers
 
@@ -165,7 +177,9 @@ Every row in `class_people` and `class_org_units` must carry `workspace_id`. The
 
 - [ ] `p2` - **ID**: `cpt-insightspec-constraint-no-overlapping-intervals`
 
-For a given (`person_id`, `workspace_id`) pair, no two rows in `class_people` may have overlapping `[valid_from, valid_to)` intervals. Exactly one row per person may have `valid_to IS NULL` (the current state). The SCD2 Merge component enforces this invariant before writing to ClickHouse.
+`class_people` MUST contain exactly one row per (`workspace_id`, `source`, `source_person_id`). Because it is a current-state snapshot there are no intervals to overlap: `unique_key` is the entity key, so the versionless ReplacingMergeTree collapses to one row per person, and the `union_by_tag` read-time dedup guarantees it within a single build.
+
+Two things enforce this. Each staging `__to_class_people` view MUST keep `unique_key` entity-level (never append a version axis such as `lastChanged`), and MUST dedup its own bronze read with `FINAL` — bronze is append-only and RMT only collapses on background merge, so a bare read leaks unmerged snapshot rows. The `assert_class_people_one_row_per_person` data-quality check asserts the invariant.
 
 #### Source Priority
 
@@ -329,7 +343,7 @@ Not applicable. `class_people` and `class_org_units` are internal ClickHouse tab
 |---|---|---|
 | ClickHouse cluster | Native ClickHouse client | Stores both Bronze (read) and Silver (write) hr-directory tables |
 
-ClickHouse partition pruning on `(workspace_id, valid_to)` is the primary performance mechanism for current-state queries. All `class_people` and `class_org_units` queries from the Gold layer are expected to include `WHERE workspace_id = ? AND valid_to IS NULL` to leverage pruning.
+`class_people` is a current-state snapshot with one row per person, so Gold-layer queries need no `valid_to IS NULL` predicate — there is no `valid_to` column. Gold queries are expected to include `WHERE workspace_id = ?` for tenant isolation.
 
 #### Identity Resolution V3 (PostgreSQL / MariaDB)
 
@@ -414,9 +428,8 @@ sequenceDiagram
 |---|---|---|
 | `person_id` | String | Canonical person ID (from Identity Resolution V3) |
 | `workspace_id` | String | Tenant identifier — partition key component |
-| `valid_from` | DateTime | Start of this state snapshot (UTC) |
-| `valid_to` | DateTime | End of this state snapshot (UTC); NULL = current row |
-| `source` | String | Origin system: `bamboohr` / `workday` / `ldap` |
+| `valid_from` | DateTime | When the source last changed this record (UTC) |
+| `source` | String | Origin system: `bamboohr` / `ms-entra` / `workday` / `ldap` |
 | `source_person_id` | String | Native ID in the source system (for lineage) |
 | `employee_number` | String | Company-assigned HR employee number |
 | `display_name` | String | Full display name |
@@ -424,10 +437,10 @@ sequenceDiagram
 | `last_name` | String | Family name |
 | `email` | String | Primary work email address |
 | `job_title` | String | Freeform job title as provided by source |
-| `department_name` | String | Department name at time of this snapshot |
-| `org_unit_id` | String | FK → `class_org_units.org_unit_id` (resolved at valid_from) |
+| `department_name` | String | Current department name |
+| `org_unit_id` | String | FK → `class_org_units.org_unit_id` (table not yet built — see status note in §1.1) |
 | `manager_person_id` | String | `person_id` of direct manager; empty string if none |
-| `status` | String | `active` / `on_leave` / `terminated` |
+| `status` | String | `active` / `on_leave` / `terminated` / `unknown` (source value outside the known vocabulary — never silently mapped to `active`) |
 | `employment_type` | String | `full_time` / `part_time` / `contractor` |
 | `hire_date` | DateTime | Employment start date |
 | `termination_date` | DateTime | Employment end date; NULL if not terminated |
@@ -438,16 +451,14 @@ sequenceDiagram
 | `custom_num_attrs` | Map(String, Float64) | Workspace-specific numeric attributes (e.g. scores, targets) |
 | `ingested_at` | DateTime | Timestamp when this row was written by the ETL Job |
 
-**PK**: (`workspace_id`, `person_id`, `valid_from`)
-
-**Partition key**: (`workspace_id`, `valid_to`) — supports pruning for current-state queries
+**Engine / ORDER BY** (as shipped): versionless `ReplacingMergeTree` `ORDER BY unique_key`, where `unique_key` is the entity-level `{tenant}-{source}-{source_person_id}`. No partition key.
 
 **Constraints**:
 
-- No two rows for the same (`person_id`, `workspace_id`) may have overlapping `[valid_from, valid_to)` intervals
-- Exactly one row per (`person_id`, `workspace_id`) may have `valid_to IS NULL`
+- Exactly one row per (`workspace_id`, `source`, `source_person_id`) — asserted by the `assert_class_people_one_row_per_person` data-quality check
+- `unique_key` MUST NOT carry a version axis; a per-version key defeats the RMT collapse and inflates headcount
 
-**Additional info**: Current-state query pattern: `WHERE workspace_id = ? AND valid_to IS NULL`. Point-in-time query: `WHERE workspace_id = ? AND valid_from <= ? AND (valid_to > ? OR valid_to IS NULL)`.
+**Additional info**: Current-state query pattern: `WHERE workspace_id = ?` — every row is current, so no interval predicate is needed. Point-in-time queries are not served by this table; read the per-source `*_snapshot` / `*_fields_history` chain instead.
 
 ---
 
@@ -490,7 +501,9 @@ sequenceDiagram
 
 ### Table Sizing and Retention
 
-`class_people` grows linearly with workspace count and employee turnover rate. For a workspace with 1,000 active employees and 20% annual turnover, approximately 1,200 rows accumulate per year per workspace (1,000 current + 200 historical snapshots). At 100 workspaces this is 120,000 rows per year — well within ClickHouse operational range. No automated retention policy is required at the Silver layer; historical rows are the source of truth for tenure and org-change analytics. Gold layer views must filter to `valid_to IS NULL` for current-state metrics to minimise scan cost.
+`class_people` holds one row per person currently present in the HR source, so its size tracks current headcount, not turnover: a workspace with 1,000 employees is 1,000 rows, and it does not grow year over year. At 100 workspaces this is ~100,000 rows — well within ClickHouse operational range. Leavers disappear from the table once the source stops returning them (the model is rebuilt in full each run), so no retention policy is needed at this layer.
+
+Tenure and org-change analytics must read the per-source `*_snapshot` / `*_fields_history` chain, which is where historical versions accumulate — not `class_people`. Those tables do grow with turnover and change rate.
 
 ### Sections Not Applicable
 
