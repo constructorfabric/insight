@@ -145,7 +145,7 @@
         "operationId": "authenticator.callback",
         "responses": {
           "302": {
-            "description": "Redirect to the SPA with the session cookie set"
+            "description": "Redirect to the SPA: with the session cookie set on success, or with `auth_error=<reason>` (state_expired, idp_error, invalid_callback, exchange_failed, access_denied) on a failed login so the SPA can restart the flow"
           }
         },
         "summary": "Complete login: exchange the code and set the session cookie",

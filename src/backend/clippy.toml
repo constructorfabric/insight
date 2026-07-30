@@ -41,7 +41,7 @@ doc-valid-idents = [
     # ─── Clippy default list (preserved verbatim) ────────────────────
     "..",
     # ─── Auth & identity protocols ───────────────────────────────────
-    "OAuth", "OAuth2", "OIDC", "OpenID", "PKCE",
+    "IdP", "OAuth", "OAuth2", "OIDC", "OpenID", "PKCE",
     "JWT", "JWTs", "JWS", "JWE",
     # ─── Wire protocols & RPC ────────────────────────────────────────
     "gRPC", "HTTPS", "TLS", "mTLS", "WebSocket", "WebSockets",

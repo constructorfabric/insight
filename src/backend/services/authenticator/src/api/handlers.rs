@@ -25,7 +25,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api::AppState;
-use crate::api::error::{OidcError, PersonError, SessionError};
+use crate::api::error::{OidcError, SessionError};
 use crate::audit::AuditEvent;
 use crate::cookie;
 use crate::identity::PersonResolution;
@@ -140,6 +140,33 @@ pub struct CallbackParams {
     state: Option<String>,
     #[serde(default)]
     error: Option<String>,
+    /// The IdP's human-readable detail (e.g. Entra's `AADSTS…` codes) — the
+    /// only place the failure cause survives now that the browser gets a
+    /// redirect instead of a problem body.
+    #[serde(default)]
+    error_description: Option<String>,
+}
+
+/// Bounce a failed callback back into the SPA (#2032). The browser arrives
+/// here on an IdP redirect with no page loaded, so problem+json would dead-end
+/// the login on raw JSON. Redirect to `default_return_to` with a fixed
+/// `auth_error=<reason>` instead — the SPA restarts the login (loop-guarded)
+/// or shows an error screen. `reason` must be one of the fixed codes; nothing
+/// IdP- or caller-supplied may reach the Location header.
+fn login_error_redirect(default_return_to: &str, reason: &str) -> Response {
+    let sep = if default_return_to.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
+    build_response(
+        StatusCode::FOUND,
+        vec![(
+            LOCATION.clone(),
+            format!("{default_return_to}{sep}auth_error={reason}"),
+        )],
+        Body::empty(),
+    )
 }
 
 /// Complete login: validate state, exchange the code, guard against session
@@ -155,16 +182,19 @@ pub async fn callback(
     Query(params): Query<CallbackParams>,
 ) -> Response {
     if let Some(err) = params.error {
-        return OidcError::invalid_argument()
-            .with_field_violation("error", err, "IDP_ERROR")
-            .create()
-            .into_response();
+        // Client-reachable log path: strip control characters so the
+        // IdP-supplied values cannot forge log lines, and cap the lengths.
+        let sanitize =
+            |v: &str| -> String { v.chars().filter(|c| !c.is_control()).take(200).collect() };
+        tracing::warn!(
+            error = %sanitize(&err),
+            error_description = %sanitize(params.error_description.as_deref().unwrap_or("")),
+            "IdP reported an error at /auth/callback"
+        );
+        return login_error_redirect(&state.cfg.default_return_to, "idp_error");
     }
     let (Some(code), Some(oidc_state)) = (params.code, params.state) else {
-        return OidcError::invalid_argument()
-            .with_field_violation("state", "missing code or state", "MISSING")
-            .create()
-            .into_response();
+        return login_error_redirect(&state.cfg.default_return_to, "invalid_callback");
     };
 
     // Layer-2 bucket keyed by the presented `state`
@@ -187,10 +217,10 @@ pub async fn callback(
     let login_state = match state.sessions.take_login_state(&oidc_state).await {
         Ok(Some(ls)) => ls,
         Ok(None) => {
-            return OidcError::invalid_argument()
-                .with_field_violation("state", "unknown or expired state", "STATE_MISMATCH")
-                .create()
-                .into_response();
+            // Expired (the 300 s login-state TTL), unknown, or already-consumed
+            // (replayed callback) state. A fresh login fixes all three, so
+            // bounce to the SPA instead of dead-ending (#2032).
+            return login_error_redirect(&state.cfg.default_return_to, "state_expired");
         }
         Err(e) => return internal_problem("login_state_take", &e),
     };
@@ -212,10 +242,7 @@ pub async fn callback(
                 error = format!("{e:#}"),
                 "oidc code exchange / id_token validation failed"
             );
-            return OidcError::invalid_argument()
-                .with_field_violation("code", "token exchange failed", "EXCHANGE_FAILED")
-                .create()
-                .into_response();
+            return login_error_redirect(&state.cfg.default_return_to, "exchange_failed");
         }
     };
 
@@ -232,10 +259,7 @@ pub async fn callback(
             email = %idp.identity.email,
             "login denied: id_token carried no tenant and no default_tenant_id is set"
         );
-        return PersonError::permission_denied()
-            .with_reason("tenant_unresolved")
-            .create()
-            .into_response();
+        return login_error_redirect(&state.cfg.default_return_to, "access_denied");
     }
 
     // Session-fixation guard: never reuse an incoming session; revoke any live
@@ -275,10 +299,7 @@ pub async fn callback(
                     "idp_sub": idp.identity.sub,
                 }),
             });
-            return PersonError::permission_denied()
-                .with_reason("unknown_person")
-                .create()
-                .into_response();
+            return login_error_redirect(&state.cfg.default_return_to, "access_denied");
         }
         Err(e) => return internal_problem("person_resolution", &e),
     };
@@ -488,12 +509,12 @@ async fn resolve_override(
                     "override_email": target_email,
                 }),
             });
-            Err(Box::new(
-                PersonError::permission_denied()
-                    .with_reason("override_unknown_person")
-                    .create()
-                    .into_response(),
-            ))
+            // Denied, never a fallback to the caller (PRD 5.16) — but still a
+            // browser-facing callback failure, so it bounces like the rest.
+            Err(Box::new(login_error_redirect(
+                &state.cfg.default_return_to,
+                "access_denied",
+            )))
         }
         Err(e) => Err(Box::new(internal_problem("person_resolution", &e))),
     }
@@ -1597,5 +1618,26 @@ mod tests {
         let payload = B64.encode(br#"{"exp":4000000000}"#);
         let token = format!("aGVhZGVy.{payload}.c2ln");
         assert_eq!(jwt_exp(&token), Some(4_000_000_000));
+    }
+
+    fn location_of(resp: &Response) -> String {
+        resp.headers()
+            .get(LOCATION)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    #[test]
+    fn login_error_redirect_bounces_into_the_spa() {
+        let resp = login_error_redirect("/", "state_expired");
+        assert_eq!(resp.status(), StatusCode::FOUND);
+        assert_eq!(location_of(&resp), "/?auth_error=state_expired");
+    }
+
+    #[test]
+    fn login_error_redirect_appends_to_an_existing_query() {
+        let resp = login_error_redirect("/app?tab=home", "access_denied");
+        assert_eq!(location_of(&resp), "/app?tab=home&auth_error=access_denied");
     }
 }
