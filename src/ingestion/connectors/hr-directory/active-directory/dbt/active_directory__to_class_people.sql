@@ -38,7 +38,12 @@ SELECT
     -- Leave it null here; Silver Step 2 (Identity Manager) resolves it from the
     -- parent_id/parent_email identity_inputs signals emitted by
     -- active_directory__manager_identity_inputs.sql.
-    CAST(NULL AS Nullable(UUID))                    AS manager_person_id,
+    -- Nullable(String), not Nullable(UUID): the sibling HR sources project a
+    -- String here (ms-entra casts Nullable(String); bamboohr/workday project
+    -- their source supervisor-ID columns), and union_by_tag UNION ALLs all four
+    -- into silver.class_people — a UUID branch raises Code: 386 NO_COMMON_TYPE
+    -- (cpt-dataflow-constraint-staging-class-column-types-match).
+    CAST(NULL AS Nullable(String))                  AS manager_person_id,
     CASE
         WHEN u.accountEnabled IS NOT NULL AND u.accountEnabled THEN 'active'
         WHEN u.accountEnabled IS NOT NULL AND NOT u.accountEnabled THEN 'terminated'
