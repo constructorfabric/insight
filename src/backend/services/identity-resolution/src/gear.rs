@@ -2,8 +2,9 @@
 //!
 //! Runs on the `api-gateway` system gear (the REST host) under
 //! `toolkit::bootstrap::run_server`. [`IdentityResolutionGear::init`] builds the
-//! runtime (MariaDB pool + persons-seed worker); [`register_rest`] mounts the
-//! profile-read and persons-seed routes on the host router.
+//! runtime (MariaDB pool); [`register_rest`] mounts the profile-read and
+//! persons-seed-journal routes on the host router. The seed itself runs via
+//! the `seed` CLI subcommand ([`run_seed`]), not in this process.
 //!
 //! [`register_rest`]: IdentityResolutionGear::register_rest
 
@@ -32,23 +33,12 @@ impl Gear for IdentityResolutionGear {
         tracing::info!("starting identity-resolution gear");
 
         // Self-managed MariaDB pool (same approach as the analytics gear).
+        // No background workers: the persons-seed runs as the `seed` CLI
+        // subcommand (CronJob / manual Job — see `crate::seed_runner`), so the
+        // server process only serves reads + the operations journal.
         let db = crate::infra::db::connect(&config.database_url).await?;
 
-        // Persons-seed background worker: drains a job queue and runs each seed.
-        // A single spawned task (like the analytics validators) owns the queue.
-        // Capacity matches the .NET `PersonsSeedQueue` bound (100).
-        let (seed_tx, seed_rx) = tokio::sync::mpsc::channel(100);
-        let worker_db = db.clone();
-        let worker_config = config.clone();
-        tokio::spawn(async move {
-            crate::api::seed::run_worker(seed_rx, worker_db, worker_config).await;
-        });
-
-        let state = AppState {
-            db,
-            config,
-            seed_tx,
-        };
+        let state = AppState { db, config };
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;
@@ -91,6 +81,29 @@ pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<
     // see `run_migrations` on why the bootstrap must stay inside the critical
     // section (unconstrained INSERT … WHERE NOT EXISTS between replicas).
     crate::infra::db::run_migrations(&db, &cfg).await?;
+    Ok(())
+}
+
+/// `seed` subcommand: run one persons-seed via [`crate::seed_runner`] and
+/// exit. Same out-of-lifecycle config extraction as `migrate`.
+///
+/// # Errors
+///
+/// [`crate::seed_runner::SeedRunError`] — the caller maps each variant to a
+/// distinct process exit code.
+pub async fn run_seed(
+    app: &toolkit::bootstrap::AppConfig,
+    mode: &str,
+    force: bool,
+) -> Result<(), crate::seed_runner::SeedRunError> {
+    let cfg = extract_gear_config(app).map_err(crate::seed_runner::SeedRunError::Failed)?;
+    if cfg.database_url.is_empty() {
+        return Err(crate::seed_runner::SeedRunError::Failed(anyhow::anyhow!(
+            "`gears.identity-resolution.config.database_url` is required for seed"
+        )));
+    }
+    let summary = crate::seed_runner::run(&cfg, mode, force).await?;
+    tracing::info!(?summary, "persons-seed run finished");
     Ok(())
 }
 

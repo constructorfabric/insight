@@ -113,6 +113,21 @@ def supports_containerized_clickhouse(implementation: str) -> bool:
     return implementation == "rust"
 
 
+def supports_seed_http_trigger(implementation: str) -> bool:
+    """Whether `POST /v1/persons-seed` exists. The Rust successor removed it
+    (#1690): the seed is CLI-only there — the `seed` subcommand, run by the
+    Helm CronJob or a manual Job; only the GET journal routes remain. The
+    .NET service keeps the POST until its deletion. A capability of the
+    EXPLICIT selection, never probed from runtime behavior."""
+    return implementation == "dotnet"
+
+
+def supports_seed_cli(implementation: str) -> bool:
+    """Whether the binary has the `seed` subcommand (#1690) — the CLI trigger
+    that replaced the POST on the Rust implementation."""
+    return implementation == "rust"
+
+
 def supports_strict_input_validation(implementation: str) -> bool:
     """Validation the Rust port ADDED beyond the .NET behavior (reviewed on
     epic #1602): a too-long revoke `reason` in DELETE bodies is rejected
@@ -254,6 +269,58 @@ class IdentityProcess:
     @property
     def supports_strict_input_validation(self) -> bool:
         return supports_strict_input_validation(self.implementation)
+
+    @property
+    def supports_seed_http_trigger(self) -> bool:
+        return supports_seed_http_trigger(self.implementation)
+
+    @property
+    def supports_seed_cli(self) -> bool:
+        return supports_seed_cli(self.implementation)
+
+    def run_seed_cli(
+        self,
+        *,
+        tenant: str | None,
+        force: bool = False,
+        mode: str | None = None,
+        timeout_s: float = 300.0,
+        extra_env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run `identity-resolution seed` — the CLI trigger that replaced
+        `POST /v1/persons-seed` (#1690). Synchronous: when it returns, the
+        run's `operations` row is terminal. Exit codes: 0 ok / 1 failed /
+        2 lock busy / 3 input guard.
+
+        `tenant` lands as the config `tenant_default_id` — the seed stamps
+        its writes and journal row with it (there is no JWT on this path).
+        `None` leaves the config empty, exercising the binary's tenant
+        inference (sole-tenant fallback / ambiguous refusal).
+        """
+        if not self.supports_seed_cli:
+            raise ApiSpawnError(
+                f"the seed CLI exists only on the rust implementation "
+                f"(selected: {self.implementation})"
+            )
+        cmd = locate_rust_app(self.cfg)
+        env = self._rust_env()
+        if tenant is not None:
+            env["APP__gears__identity-resolution__config__tenant_default_id"] = tenant
+        if extra_env:
+            env.update(extra_env)
+        args = [*cmd, "-c", str(self._rig_config_path), "seed"]
+        if mode is not None:
+            args += ["--mode", mode]
+        if force:
+            args.append("--force")
+        return subprocess.run(  # noqa: S603 — harness-controlled argv
+            args,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
 
     def start(self) -> None:
         create_identity_database(self.cfg)

@@ -10,12 +10,13 @@ capability-gated section, so this file is the full Rust surface while the
 .NET run stays green.
 
 Deliberately absent here:
-- 503 on POST /v1/persons-seed (seed queue full): the queue capacity is a
-  compile-time constant (gear.rs, 100) and the refusal needs the channel
-  full at the instant of the POST — not deterministically inducible from a
+- 503 on POST /v1/persons-seed (seed queue full, .NET-only): the queue
+  capacity is a compile-time constant and the refusal needs the channel full
+  at the instant of the POST — not deterministically inducible from a
   black-box test, the same reason the coverage gate excludes >=500 codes
-  (SERVER_FAULT_FLOOR). Pinned instead by Rust unit tests on the extracted
-  refusal path (identity-resolution src/api/seed.rs, `try_enqueue_job`).
+  (SERVER_FAULT_FLOOR). The Rust successor has no POST and no queue at all
+  (#1690: the seed is CLI-only; its refusal paths — input guards, advisory
+  lock — are exit codes, covered in test_persons_seed.py).
 
 Nothing here mutates state: the 400s fail validation before any write, the
 404s target ids that don't exist, and the 401/403s never pass the gate.
@@ -40,12 +41,15 @@ NIL_UUID = uuid.UUID(int=0)
 TOO_LONG_REASON = "x" * 501
 
 
-# ── POST /v1/persons-seed ─────────────────────────────────────────────────
+# ── POST /v1/persons-seed (dotnet-only; removed in the Rust successor) ────
 
 
-def test_persons_seed_unsupported_mode_400(api) -> None:
+def test_persons_seed_unsupported_mode_400(api, identity_svc) -> None:
     """Only 'link-by-email' exists; the refusal happens before any enqueue,
-    so nothing is written."""
+    so nothing is written. The Rust CLI's equivalent (`--mode` validation,
+    exit 1) is covered by its unit tests."""
+    if not identity_svc.supports_seed_http_trigger:
+        pytest.skip("POST /v1/persons-seed removed in the Rust successor (#1690)")
     r = api.post("/v1/persons-seed", json={"mode": "no-such-mode"})
     assert r.status_code == 400, f"status={r.status_code} body={r.text}"
     problem(r)

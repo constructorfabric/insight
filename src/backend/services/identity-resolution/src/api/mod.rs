@@ -17,7 +17,6 @@ use axum::Extension;
 use axum::Router;
 use axum::http::StatusCode;
 use sea_orm::DatabaseConnection;
-use tokio::sync::mpsc;
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
 
 use crate::config::GearConfig;
@@ -30,8 +29,6 @@ pub struct AppState {
     pub db: DatabaseConnection,
     /// Gear config (`org_chart_source_type`, `clickhouse_*`, …).
     pub config: GearConfig,
-    /// Sender to the persons-seed worker's job queue (POST enqueues here).
-    pub seed_tx: mpsc::Sender<seed::PersonsSeedJob>,
 }
 
 /// Mount the identity-resolution routes onto the host's router.
@@ -81,23 +78,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(handlers::resolve_profile)
         .register(router, openapi);
 
-    // Persons-seed (async job): enqueue + poll. Admin-gated: caller = gateway-JWT
-    // subject, must hold the `admin` role in the tenant.
-    let router = OperationBuilder::post("/v1/persons-seed")
-        .operation_id("identity_resolution.persons_seed.create")
-        .summary("Enqueue a persons-seed run (async)")
-        .authenticated()
-        .no_license_required()
-        .json_request::<seed::PersonsSeedRequest>(openapi, "Seed options")
-        .json_response_with_schema::<seed::PersonsSeedOperationResponse>(
-            openapi,
-            StatusCode::ACCEPTED,
-            "Queued operation",
-        )
-        .standard_errors(openapi)
-        .handler(seed::create_persons_seed)
-        .register(router, openapi);
-
+    // Persons-seed operations journal (read-only; the seed itself runs via the
+    // `seed` CLI subcommand — CronJob / manual Job, see `crate::seed_runner`).
+    // Admin-gated: caller = gateway-JWT subject, must hold the `admin` role in
+    // the tenant.
     let router = OperationBuilder::get("/v1/persons-seed/{id}")
         .operation_id("identity_resolution.persons_seed.get")
         .summary("Get a persons-seed operation")

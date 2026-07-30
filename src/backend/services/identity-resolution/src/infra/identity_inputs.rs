@@ -33,7 +33,10 @@ use crate::domain::seed_service::IdentityInputsReader;
 /// the UUID reparse, failing the seed exactly like the .NET reader's
 /// `Guid.Parse(GetString(...))` throw.
 ///
-/// HOTFIX (#1550) — TEMPORARY, ported from the .NET reader (3256f707). The dbt
+/// HOTFIX(#1550) — TEMPORARY, ported from the .NET reader (3256f707). This is
+/// the ANCHOR of the hotfix: every piece of code whose behavior exists only
+/// because of it carries the literal tag `HOTFIX(#1550)` — grep for it to
+/// find the full blast radius when unwinding the hotfix. The dbt
 /// producer writes `insight_tenant_id` *hashed* — sipHash128 of whatever raw
 /// string the connector was configured with (`identity_inputs_from_history.sql`,
 /// documented there as a TEMPORARY cross-source join key) — so the stored tenant
@@ -122,7 +125,7 @@ impl ClickHouseIdentityInputsReader {
 #[async_trait]
 impl IdentityInputsReader for ClickHouseIdentityInputsReader {
     async fn stream(&self, tenant_id: Uuid) -> anyhow::Result<Vec<IdentityInputRow>> {
-        // tenant_id is intentionally unused while the HOTFIX (#1550) drops the
+        // tenant_id is intentionally unused while the HOTFIX(#1550) drops the
         // tenant filter — kept so the `IdentityInputsReader` trait (and the
         // .NET reader tracking it) stays stable for when the filter comes back.
         let _ = tenant_id;
