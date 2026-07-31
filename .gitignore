@@ -423,3 +423,8 @@ trivy-fs.sarif
 trivy-image.json
 trivy-image.sarif
 trufflehog-findings.jsonl
+
+# .NET build output. No .csproj is tracked today, but a working copy predating the
+# identity service removal still holds these, and they embed machine-local paths.
+[Oo]bj/
+[Bb]in/
