@@ -13,10 +13,12 @@ Quarterly. Owner: Gregory91G.
 ## Steps
 
 1. List the pinned digests:
-   `grep -rhoE '[a-z0-9./-]+:[0-9.]+@sha256:[0-9a-f]{64}' .github/workflows/`
+   `grep -rhoE '[a-zA-Z0-9./_-]+:[a-zA-Z0-9._-]+@sha256:[0-9a-f]{64}' .github/workflows/`
+   — the tag part must not be restricted to digits: images such as
+   `python3.12-bookworm-slim` would be missed.
 2. For each image, resolve the current digest of the same major line.
-3. Update the digest and its version comment together — a digest without a matching
-   comment is unreadable at review time.
+3. Update the tag, the digest and the version comment in one edit — a digest that no
+   longer matches its tag is worse than no pin at all, because review reads the tag.
 4. Open one pull request covering every image.
 5. Confirm each security workflow completes and renders its job summary.
 

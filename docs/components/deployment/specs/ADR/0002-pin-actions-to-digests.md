@@ -25,9 +25,9 @@ reader unable to tell a deliberate exemption from an oversight.
 
 Refresh through Dependabot (`.github/dependabot.yml`), weekly, with a seven-day
 cooldown so a release published minutes ago is never resolved, in two groups:
-`actions` and `base-images`. They are separated because a base-image bump is a
-rebuild that can change runtime behaviour, while an action bump cannot — one failing
-build must not hold back the other.
+`actions` and `base-images`. They are separated by blast radius: a base-image bump rebuilds and reships a service,
+while an action bump changes only how CI runs. Both can break; keeping them apart means
+one failing build does not hold back the other.
 
 `npm` and `cargo` are deliberately out of scope for now; they are not the source of
 the current findings and would add volume without addressing them.
@@ -35,7 +35,8 @@ the current findings and would add volume without addressing them.
 ## Consequences
 
 - A compromised upstream tag no longer reaches our runners.
-- Up to two dependency pull requests per week per repository, routed by `CODEOWNERS`.
+- Up to two scheduled dependency pull requests per week per repository, routed by
+  `CODEOWNERS`. Security updates are not bound by the schedule and arrive as raised.
 - Digests pinned inside shell steps (scanner images) are invisible to Dependabot and
   need the manual routine in `sop/scanner-image-refresh.md`.
 - `dtolnay/rust-toolchain@stable` tracks a branch by design; pinning it would freeze
