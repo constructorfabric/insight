@@ -18,12 +18,13 @@ for another unless refresh is automated.
 
 ## Decision
 
-Reference third-party actions by 40-character commit digest, with the human-readable
-version kept in a trailing comment. Actions published under `actions/*` stay on tags:
-they live in GitHub's own organisation, and the residual risk does not justify the
-extra churn.
+Reference every action by 40-character commit digest, with the human-readable version
+kept in a trailing comment. `actions/*` is included: living in GitHub's own
+organisation lowers the risk but does not remove it, and excluding it would leave a
+reader unable to tell a deliberate exemption from an oversight.
 
-Refresh through Dependabot (`.github/dependabot.yml`), weekly, in two groups:
+Refresh through Dependabot (`.github/dependabot.yml`), weekly, with a seven-day
+cooldown so a release published minutes ago is never resolved, in two groups:
 `actions` and `base-images`. They are separated because a base-image bump is a
 rebuild that can change runtime behaviour, while an action bump cannot — one failing
 build must not hold back the other.
@@ -34,7 +35,7 @@ the current findings and would add volume without addressing them.
 ## Consequences
 
 - A compromised upstream tag no longer reaches our runners.
-- Up to two dependency pull requests per week per repository, assigned for triage.
+- Up to two dependency pull requests per week per repository, routed by `CODEOWNERS`.
 - Digests pinned inside shell steps (scanner images) are invisible to Dependabot and
   need the manual routine in `sop/scanner-image-refresh.md`.
 - `dtolnay/rust-toolchain@stable` tracks a branch by design; pinning it would freeze

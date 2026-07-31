@@ -13,7 +13,10 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    assignees: [Gregory91G]
+    # Review routing comes from .github/CODEOWNERS, so it follows ownership
+    # rather than naming one person here.
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -26,7 +29,8 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    assignees: [Gregory91G]
+    cooldown:
+      default-days: 7
     groups:
       base-images:
         patterns: ["*"]
