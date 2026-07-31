@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: snok/container-retention-policy@v3.1.0
+      - uses: snok/container-retention-policy@d3bdcf5ce9b05f685154e4a16c39233b245e3d53 # v3.1.0
         with:
           account: constructorfabric
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -69,7 +69,7 @@ jobs:
             | cut -c1-60)"
           echo "safe=$SAFE" >> "$GITHUB_OUTPUT"
           echo "Cleaning image tags with suffix: .$SAFE"
-      - uses: snok/container-retention-policy@v3.1.0
+      - uses: snok/container-retention-policy@d3bdcf5ce9b05f685154e4a16c39233b245e3d53 # v3.1.0
         with:
           account: constructorfabric
           token: ${{ secrets.GITHUB_TOKEN }}

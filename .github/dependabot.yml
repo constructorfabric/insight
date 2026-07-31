@@ -1,0 +1,32 @@
+# Automated dependency refresh. Pinning an action to a commit digest removes the
+# risk of a moving tag being repointed, but a digest never ages out on its own —
+# this file is the other half of that trade.
+#
+# Scanner images are NOT covered: they are invoked as `docker run <image>@sha256:…`
+# inside workflow shell steps rather than as `FROM` lines, which the docker
+# ecosystem cannot see. They are refreshed by hand — see
+# docs/components/deployment/specs/sop/scanner-image-refresh.md.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    assignees: [Gregory91G]
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Base images only. A bumped base is a rebuild that can change runtime
+  # behaviour, so it is grouped apart from the actions above: one red build must
+  # not hold back an unrelated action bump.
+  - package-ecosystem: docker
+    directories: ["/src/**", "/deploy/**"]
+    schedule:
+      interval: weekly
+      day: monday
+    assignees: [Gregory91G]
+    groups:
+      base-images:
+        patterns: ["*"]

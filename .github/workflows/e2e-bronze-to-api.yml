@@ -83,18 +83,18 @@ jobs:
         working-directory: src/ingestion/tests/e2e
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # docker-container buildx driver — required for the gha cache export that
       # compose/docker-compose.cache.yml wires onto the build-only services.
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # Expose ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL to run steps. The
       # type=gha cache backend needs them; GitHub only hands them to JS
       # actions, so `docker compose build` in a plain run step never sees
       # them and buildx SILENTLY drops the cache_from/cache_to config —
       # every run was a full Rust recompile.
-      - uses: crazy-max/ghaction-github-runtime@v3
+      - uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3
 
       # ─── Build the runner image ─────────────────────────────────────────
       # The runner bakes in analytics + each connector's enrich binary, each
@@ -129,7 +129,7 @@ jobs:
         run: docker save insight-e2e-runner:latest | zstd -T0 -o runner-image.tar.zst
 
       - name: Upload runner image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2e-runner-image
           path: src/ingestion/tests/e2e/runner-image.tar.zst
@@ -151,14 +151,14 @@ jobs:
         working-directory: src/ingestion/tests/e2e
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # ─── Load the shared runner image ───────────────────────────────────
       # Built once by the `build` job above; loading tags it back as
       # insight-e2e-runner:latest, exactly what compose expects, so the
       # `./e2e.sh test` below never re-triggers a build.
       - name: Download runner image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: e2e-runner-image
           path: src/ingestion/tests/e2e
@@ -215,7 +215,7 @@ jobs:
       # ignore defaults.run.working-directory).
       - name: Upload coverage inputs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-inputs-api
           path: src/ingestion/tests/e2e/.artifacts/
@@ -262,10 +262,10 @@ jobs:
         working-directory: src/ingestion/tests/e2e
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Download runner image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: e2e-runner-image
           path: src/ingestion/tests/e2e
@@ -286,7 +286,7 @@ jobs:
 
       - name: Upload coverage inputs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-inputs-identity-rust
           path: src/ingestion/tests/e2e/.artifacts/
@@ -320,14 +320,14 @@ jobs:
         working-directory: src/ingestion/tests/e2e
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # ─── Load the shared runner image ───────────────────────────────────
       # Built once by the `build` job above; loading tags it back as
       # insight-e2e-runner:latest, exactly what compose expects, so the
       # `./e2e.sh test` below never re-triggers a build.
       - name: Download runner image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: e2e-runner-image
           path: src/ingestion/tests/e2e
@@ -384,7 +384,7 @@ jobs:
       # ignore defaults.run.working-directory).
       - name: Upload coverage inputs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-inputs-metrics
           path: src/ingestion/tests/e2e/.artifacts/
@@ -433,11 +433,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: coverage-inputs-metrics
           path: coverage-inputs
@@ -460,11 +460,11 @@ jobs:
     steps:
       # Checkout only for the gate script + the committed OpenAPI spec (the
       # coverage universe — kept fresh by the openapi-specs drift gate).
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: coverage-inputs-api
           path: coverage-inputs
@@ -488,11 +488,11 @@ jobs:
       # The spec universe is the committed identity-resolution spec; the
       # identity-rust suppression lists mark the dropped legacy endpoint as
       # an approved SKIP.
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: coverage-inputs-identity-rust
           path: coverage-inputs
