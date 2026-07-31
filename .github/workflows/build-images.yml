@@ -2,7 +2,11 @@ name: Build & Push Container Images
 
 on:
   push:
-    branches: [main]
+    # release-** pushes get the full main treatment (build → pin → publish),
+    # with the branch-suffixed image tag and a PATCH-only umbrella bump. Safe
+    # because trunk's minor version is bumped right after a release branch is
+    # cut, so the branch's patch stream can never collide with main's.
+    branches: [main, "release-**"]
     paths:
       - "src/backend/**"
       - "src/ingestion/**"
@@ -10,7 +14,7 @@ on:
       - ".github/workflows/build-images.yml"
       - ".github/workflows/scripts/discover-image-matrix.py"
   pull_request:
-    branches: [main]
+    branches: [main, "release-**"]
     paths:
       - "src/backend/**"
       - "src/ingestion/**"
@@ -68,14 +72,22 @@ jobs:
       # 'true' for a main push and for ANY workflow_dispatch (including a
       # branch dispatch — that is what branch image builds are, #1994);
       # 'false' for pull_request runs, which build without pushing.
-      # Publishing side-effects stay main-only via their own ref guards:
-      # bump-descriptors, publish-chart, and the `latest` tag.
+      # Publishing side-effects are gated per-ref: bump-descriptors and
+      # publish-chart run on main AND release-** (branch builds get pinned
+      # into the branch's chart, #1994 follow-up); the `latest` tag and the
+      # strict suffix-less appVersion regex stay main-only.
       should_push: ${{ steps.tag.outputs.should_push }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          # Diff against the pushed-to branch itself, NOT the repo default
+          # branch (dorny's default base). On a release-** push the default
+          # would diff the whole branch against main and mark every service
+          # changed on every push; base=ref_name keeps the per-push diff
+          # semantics main has always had. Ignored on pull_request events.
+          base: ${{ github.ref_name }}
           filters: |
             analytics:
               - 'src/backend/services/analytics/**'
@@ -119,7 +131,8 @@ jobs:
       # Branch builds (#1994) append `.<sanitized-branch>` after the sha so a
       # branch image can never be mistaken for (or `sort -V`-beat) a main
       # release tag — main keeps the suffix-less format, and publish-chart's
-      # appVersion regex rejects the suffixed form as a backstop.
+      # appVersion regex rejects the suffixed form on main as a backstop
+      # (release-** publishes accept it — that's their canonical tag shape).
       - name: Compute build tag and push policy
         id: tag
         env:
@@ -1070,7 +1083,7 @@ jobs:
     if: |
       always()
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && github.ref == 'refs/heads/main'
+      && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-'))
       && needs.discover-images.outputs.any == 'true'
       && (needs.merge-image.result == 'success' || needs.merge-image.result == 'skipped')
       && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
@@ -1221,10 +1234,14 @@ jobs:
           fi
 
   # ─── Umbrella chart publish ────────────────────────────────────────────────
-  # Per merge to main: bump subchart appVersions for whichever services were
-  # rebuilt in this run, patch-bump the umbrella version, regenerate
-  # Chart.lock, package, push to oci://ghcr.io/constructorfabric/charts/insight,
-  # and commit the bumps back to main with [skip ci] so we don't recurse.
+  # Per merge to main — and per push/dispatch on a release-** branch: bump
+  # subchart appVersions for whichever services were rebuilt in this run,
+  # patch-bump the umbrella version, regenerate Chart.lock, package, push to
+  # oci://ghcr.io/constructorfabric/charts/insight, and commit the bumps back
+  # to the triggering branch with [skip ci] so we don't recurse. The
+  # patch-only bump keeps release-branch chart versions inside the minor
+  # stream the branch was cut with (trunk minor-bumps right after cutting a
+  # release branch, so the streams never collide on the OCI registry).
   #
   # Skipped in this run when bump-descriptors committed (`committed=true`):
   # the descriptor commit's push re-triggers the workflow, and publish-chart
@@ -1248,7 +1265,7 @@ jobs:
     if: |
       always()
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && github.ref == 'refs/heads/main'
+      && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-'))
       && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
       && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
@@ -1406,8 +1423,16 @@ jobs:
             | sort -V | tail -1)
           # Fail loud unless the result is a build tag (YYYY.MM.DD.HH.MM-sha):
           # a malformed appVersion must never reach a published chart again.
-          if ! echo "$NEW_APP" | grep -Eq '^[0-9]{4}(\.[0-9]{2}){4}-[0-9a-f]{7}$'; then
-            echo "ERROR: computed umbrella appVersion '$NEW_APP' is not a valid build tag" >&2
+          # On main the regex stays strict — a branch-suffixed tag leaking
+          # into a main-published chart must abort. On release-** the
+          # suffixed form (…-sha7.<sanitized-branch>) is the canonical tag
+          # shape for images built from the branch, so accept it there.
+          TAG_RE='^[0-9]{4}(\.[0-9]{2}){4}-[0-9a-f]{7}$'
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            TAG_RE='^[0-9]{4}(\.[0-9]{2}){4}-[0-9a-f]{7}(\.[A-Za-z0-9._-]+)?$'
+          fi
+          if ! echo "$NEW_APP" | grep -Eq "$TAG_RE"; then
+            echo "ERROR: computed umbrella appVersion '$NEW_APP' is not a valid build tag for ref '${GITHUB_REF_NAME}'" >&2
             exit 1
           fi
           echo "Umbrella version $CURRENT → $NEXT (appVersion → $NEW_APP)"
@@ -1471,7 +1496,7 @@ jobs:
           subject-digest: ${{ steps.helm_push.outputs.digest }}
           push-to-registry: true
 
-      - name: Commit version bumps back to main
+      - name: Commit version bumps back to the branch
         env:
           UMBRELLA_VERSION: ${{ steps.umbrella.outputs.version }}
           BUILD_TAG: ${{ needs.changes.outputs.build_tag }}
