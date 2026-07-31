@@ -17,6 +17,10 @@ on:
       - "src/ingestion/connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
+      # Inputs to connector-wiring-guard beyond the connector tree itself: the
+      # bootstrap connector registry and the shared class_people union.
+      - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
+      - "src/ingestion/silver/_shared/**"
   workflow_dispatch:
     inputs:
       full:
@@ -101,6 +105,27 @@ jobs:
             echo "Expected exactly one jsonwebtoken crypto provider, found $n: $(echo $providers)"
             exit 1
           fi
+
+  # Catches half-landed connectors on the PR instead of after the merge.
+  # bump-descriptors runs only on the push to main, so a non-semver
+  # descriptor.version passes the PR and then aborts that job post-merge,
+  # leaving images.<key>.image unpatched — which is how #2048 also took
+  # silver.class_people out of every bootstrap-db run. Cheap and dependency-
+  # light: pure file inspection, no ClickHouse and no dbt.
+  connector-wiring-guard:
+    name: Connector wiring invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+      - name: Connector wiring invariants
+        run: python3 scripts/ci/connector_wiring.py
 
   # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
   # (when entry.cover). Replaces the old standalone workspace rust-lint — fmt and
