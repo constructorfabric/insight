@@ -190,6 +190,40 @@ services:
   # Auth runs via Keycloak (real login form + generated realm): full cookie/BFF
   # auth, the authenticator does the OIDC flow.
 
+  # analytics owns the `analytics` schema but the server never migrates it — it
+  # validates that the schema carries its embedded migration set and refuses to
+  # boot otherwise. So compose must run `migrate` first, exactly like
+  # identity-resolution below. Exits 0 and stays exited; the server gates on it.
+  analytics-migrate:
+    # backend-common supplies the insight network (without it the migrator lands
+    # on the default network, can't resolve `mariadb`, and the server blocks
+    # forever on service_completed_successfully) + restart:no + init.
+    !!merge <<: *backend-common
+    image: ${ANALYTICS_IMAGE:-insight-analytics:dev}
+    container_name: ${COMPOSE_PROJECT_NAME:-insight}-analytics-migrate
+    build:
+      context: src/backend
+      dockerfile: services/analytics/Dockerfile
+    depends_on:
+      mariadb: {condition: service_healthy, required: false}
+    environment:
+      APP__gears__analytics__config__database_url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
+    volumes:
+      - type: bind
+        source: ./deploy/compose/build/analytics/analytics
+        target: /app/analytics
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./deploy/compose/analytics-fullauth.yaml:/app/config/insight.yaml:ro
+    command:
+      - "/app/analytics" # <watched path — unused, one-shot>
+      - "--"
+      - "/app/analytics"
+      - "-c"
+      - "/app/config/insight.yaml"
+      - "migrate"
+
   analytics:
     !!merge <<: *backend-common
     image: ${ANALYTICS_IMAGE:-insight-analytics:dev}
@@ -203,6 +237,7 @@ services:
       mariadb: {condition: service_healthy, required: false}
       clickhouse: {condition: service_healthy, required: false}
       redis: {condition: service_healthy}
+      analytics-migrate: {condition: service_completed_successfully}
     environment:
       !!merge <<: *backend-env
       # analytics runs on the gears-rust host: structural config

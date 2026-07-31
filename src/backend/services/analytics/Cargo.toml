@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 insight-clickhouse = { workspace = true }
+insight-migration = { workspace = true }
 # Direct `clickhouse` dep is for the `Row` derive on `system.columns` probe
 # rows (Refs #521 schema-validator). `insight-clickhouse` wraps the client
 # but doesn't re-export the row-deserialization derives.

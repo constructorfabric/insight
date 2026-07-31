@@ -82,14 +82,14 @@ dependencies:
     condition: keycloak.deploy
   - name: insight-analytics
     alias: analytics
-    version: "0.2.0"
+    version: "0.3.0"
     repository: "file://../../src/backend/services/analytics/helm"
   # Identity Resolution — Rust identity service (epic #1602). Reads from the
   # MariaDB `persons` table (per identity ADR-0002). Gated because it needs
   # `persons` populated by the seed pipeline.
   - name: insight-identity-resolution
     alias: identityResolution
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../../src/backend/services/identity-resolution/helm"
     condition: identityResolution.deploy
   # Clone-based git extraction for the nocode git connectors. Consumed ONLY by

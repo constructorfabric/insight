@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "libs/insight-clickhouse",
+    "libs/insight-migration",
     "libs/authenticator-sdk",
     "services/analytics",
     "services/git-cli-proxy",
@@ -128,6 +129,7 @@ figment = { version = "0.10", features = ["yaml", "env"] }
 
 # Internal crates
 insight-clickhouse = { path = "libs/insight-clickhouse" }
+insight-migration = { path = "libs/insight-migration" }
 authenticator-sdk = { path = "libs/authenticator-sdk" }
 
 # CI rebuild marker — bumped to retrigger the analytics

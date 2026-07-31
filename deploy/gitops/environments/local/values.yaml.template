@@ -203,7 +203,7 @@ analytics:
     limits:   { cpu: 500m, memory: 512Mi }
 
 # Identity Resolution (epic #1602). Owns the MariaDB `identity` database
-# (its migrate initContainer applies the schema at startup). The database
+# (its pre-install/pre-upgrade migrate hook Job applies the schema). The database
 # itself must already exist with the `insight` user granted ALL on it.
 # When `mariadb.deploy=false` (as here), the engineer runs the one-time
 # `CREATE DATABASE identity` SQL against the L2 MariaDB before the first

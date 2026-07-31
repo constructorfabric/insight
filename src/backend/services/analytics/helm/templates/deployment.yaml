@@ -90,29 +90,6 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-      initContainers:
-        - name: migrate
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["/app/analytics"]
-          args: ["-c", "/app/config/analytics.yaml", "migrate"]
-          volumeMounts:
-            - name: analytics-config
-              mountPath: /app/config/analytics.yaml
-              subPath: analytics.yaml
-              readOnly: true
-            # `migrate` builds the same host_dir but never starts grpc-hub,
-            # so it needs /app/data only.
-            - name: data
-              mountPath: /app/data
-          envFrom:
-            - secretRef:
-                name: {{ .Values.existingSecret | quote }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
       volumes:
         - name: analytics-config
           configMap:

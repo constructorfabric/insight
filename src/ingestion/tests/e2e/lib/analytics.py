@@ -260,6 +260,27 @@ class AnalyticsProcess:
             mode="w", suffix=".log", prefix=f"analytics-{self.port}-", delete=False
         )
         self._log_path = Path(self._log_fh.name)
+        # `run` validates that MariaDB carries this build's migration set and
+        # refuses to boot otherwise — it never migrates. `migrate`
+        # owns schema DDL and the builtin metric-definition converge, so the rig
+        # must run it before spawning the server or every definition-backed
+        # assertion sees an empty catalog.
+        LOG.info("applying analytics migrations (log: %s)", self._log_path)
+        migrate = subprocess.run(
+            [str(self.binary), "-c", str(config_path), "migrate"],
+            env=env,
+            stdout=self._log_fh,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        if migrate.returncode != 0:
+            # The fixture teardown never runs when start() raises, so release
+            # the auth front, the log temp file and the generated config here.
+            # Read the tail first — stop() unlinks the log.
+            tail = self._read_log_tail()
+            self.stop()
+            raise ApiSpawnError(f"analytics migrate failed (exit {migrate.returncode}):\n{tail}")
         LOG.info("spawning analytics (gears host) on 127.0.0.1:%d (startup log: %s)", self.port, self._log_path)
         self._proc = subprocess.Popen(
             [str(self.binary), "-c", str(config_path), "run"],

@@ -37,6 +37,12 @@ resources:
 # sets `existingSecret` to its name.
 existingSecret: ""
 
+# Optional Secret read ONLY by the migrate hook Job, listed after
+# `existingSecret` so its keys win. The umbrella renders it as a pre-install
+# hook so migrations can run before the release's own Secrets exist. Empty
+# disables the extra ref.
+migrateEnvSecret: ""
+
 # Gateway-JWT verification (cf-gears-oidc-authn-plugin, NGINX_BFF R1). These
 # render into the plugin's `jwt.trusted_issuers` / `expected_audience` in the
 # ConfigMap (nested/list-shaped, so not env-injectable). The plugin resolves the

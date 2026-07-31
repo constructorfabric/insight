@@ -540,6 +540,12 @@ analytics:
   # auto-generated credentials (see templates/secrets.yaml). The subchart
   # consumes it via envFrom (overriding its mounted config ConfigMap).
   existingSecret: "insight-analytics-config"
+  # Hook-rendered twin the pre-install migrate Job reads (templates/
+  # secrets.yaml): `existingSecret` is a release resource a pre-install hook
+  # cannot see on a fresh install. Composed only when
+  # `credentials.autoGenerate: true`; on the gitops path the config Secret
+  # pre-exists and this ref stays an inert optional.
+  migrateEnvSecret: "insight-analytics-migrate-env"
   # Metric Catalog single-tenant fallback comes from
   # `global.tenantDefaultId` (DESIGN §2.2 cpt-metric-cat-constraint-tenant-
   # default). The session-bound tenant from the gateway ALWAYS wins; this
@@ -566,8 +572,8 @@ analytics:
 # (constructorfabric/insight#1960), and the authenticator is always installed
 # (its "no deploy flag" app-service contract); `insight.validate` fails the
 # render otherwise.
-# SCHEMA OWNER: identity-resolution's migrate initContainer applies the
-# migrations + first-admin bootstrap against `databaseName` — see ADR-0006
+# SCHEMA OWNER: identity-resolution's pre-install/pre-upgrade migrate hook
+# Job applies the migrations + first-admin bootstrap against `databaseName`
 # (service-owned migrations).
 # Git CLI Proxy — clone-based commit extraction for the nocode git connectors.
 # Airbyte-only consumer: no gateway route, no platform-config entry (other
@@ -668,6 +674,8 @@ identityResolution:
   # auto-generated credentials (see templates/secrets.yaml). The subchart
   # consumes it via envFrom (overriding its mounted config ConfigMap).
   existingSecret: "insight-identity-resolution-config"
+  # Same hook-twin arrangement as analytics.migrateEnvSecret above.
+  migrateEnvSecret: "insight-identity-resolution-migrate-env"
   # Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
   # daily to rebuild the identity org projection (persons / account_person_map
   # / org_chart) from ClickHouse identity_inputs — without it the projection

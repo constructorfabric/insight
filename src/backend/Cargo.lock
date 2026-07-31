@@ -136,6 +136,7 @@ dependencies = [
  "futures-util",
  "hex",
  "insight-clickhouse",
+ "insight-migration",
  "redis",
  "reqwest 0.12.28",
  "rust_xlsxwriter",
@@ -3441,6 +3442,7 @@ dependencies = [
  "clap",
  "clickhouse",
  "insight-clickhouse",
+ "insight-migration",
  "sea-orm 2.0.2",
  "sea-orm-migration 2.0.2",
  "serde",
@@ -3543,6 +3545,17 @@ dependencies = [
  "time",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "insight-migration"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sea-orm 2.0.2",
+ "sea-orm-migration 2.0.2",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

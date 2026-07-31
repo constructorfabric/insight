@@ -5,7 +5,8 @@ Owns the lifecycle of every session-scoped resource:
   pytest_sessionstart:
     1. docker compose up (ClickHouse + MariaDB)
     2. apply ClickHouse migrations
-    3. MariaDB is seeded later by the analytics binary's own auto-migrations
+    3. MariaDB is migrated and seeded by `analytics migrate`, which the rig runs
+       before the server (the server validates the schema, never migrates it)
     4. spawn analytics on a free loopback port
 
   pytest_sessionfinish:
