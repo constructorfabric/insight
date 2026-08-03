@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS insight.ai_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `source_entity_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS insight.collab_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `source_entity_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -100,6 +102,7 @@ CREATE TABLE IF NOT EXISTS insight.git_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `source_entity_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -154,6 +157,19 @@ ORDER BY source_key
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.metric_entity_cohorts_current
+(
+    `tenant_id` String,
+    `entity_type` String,
+    `entity_id` String,
+    `cohort_key` String,
+    `cohort_id` Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, entity_type, cohort_key, entity_id)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.task_issue_state
 (
     `tenant_id` Nullable(String),
@@ -180,6 +196,7 @@ CREATE TABLE IF NOT EXISTS insight.task_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `source_entity_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -254,6 +271,7 @@ CREATE TABLE IF NOT EXISTS insight.wiki_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `source_entity_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -2655,77 +2673,6 @@ FROM
     GROUP BY unique_key
 )
 WHERE JSONExtractString(latest_fields, 'assignee', 'emailAddress') != ''
-;
-
-CREATE OR REPLACE VIEW insight.metric_entity_cohorts_current
-(
-    `tenant_id` String,
-    `entity_type` String,
-    `entity_id` String,
-    `cohort_key` String,
-    `cohort_id` Nullable(String)
-)
-AS SELECT
-    tenant_id,
-    entity_type,
-    entity_id,
-    cohort_key,
-    resolved_cohort_id AS cohort_id
-FROM
-(
-    SELECT
-        tenant_id,
-        entity_type,
-        entity_id,
-        cohort_key,
-        any(cohort_id) AS resolved_cohort_id
-    FROM
-    (
-        SELECT
-            assumeNotNull(people.tenant_id) AS tenant_id,
-            'person' AS entity_type,
-            toString(assumeNotNull(identity_map.person_id)) AS entity_id,
-            'org_unit' AS cohort_key,
-            people.cohort_id AS cohort_id
-        FROM
-        (
-            SELECT
-                workspace_id AS tenant_id,
-                lower(assumeNotNull(email)) AS entity_id,
-                nullIf(department_name, '') AS cohort_id
-            FROM silver.class_people
-            WHERE (email IS NOT NULL) AND (email != '') AND (workspace_id IS NOT NULL) AND (workspace_id != '')
-            ORDER BY
-                tenant_id ASC,
-                entity_id ASC,
-                coalesce(parseDateTimeBestEffortOrNull(toString(valid_from)), toDateTime('1970-01-01')) DESC,
-                unique_key DESC
-            LIMIT 1 BY
-                tenant_id,
-                entity_id
-        ) AS people
-        LEFT JOIN
-        (
-            SELECT
-                lower(trimBoth(value_effective)) AS email,
-                person_id
-            FROM identity.identity_persons
-            WHERE (value_type = 'email') AND (value_effective IS NOT NULL) AND (trimBoth(value_effective) != '')
-            ORDER BY
-                email ASC,
-                created_at DESC,
-                id DESC
-            LIMIT 1 BY email
-        ) AS identity_map ON identity_map.email = lower(trimBoth(people.entity_id))
-        WHERE (people.tenant_id IS NOT NULL) AND (people.tenant_id != '') AND (people.entity_id IS NOT NULL) AND (people.entity_id != '') AND (people.cohort_id IS NOT NULL) AND (identity_map.email != '')
-    ) AS resolved
-    GROUP BY
-        tenant_id,
-        entity_type,
-        entity_id,
-        cohort_key
-    HAVING uniqExact(cohort_id) = 1
-)
 ;
 
 CREATE OR REPLACE VIEW insight.people
