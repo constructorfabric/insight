@@ -10,9 +10,11 @@ removed its row, so a 404 there is expected, not a failure.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 
+import httpx
 import pytest
-from lib import mariadb
+from lib import api_coverage, mariadb
 from lib.analytics import AnalyticsProcess
 from lib.config import TEST_TENANT_ID, SessionConfig
 
@@ -27,11 +29,8 @@ def api(analytics: AnalyticsProcess):
 
 
 @pytest.fixture
-def anon_api(analytics: AnalyticsProcess):
+def anon_api(analytics: AnalyticsProcess) -> Iterator[httpx.Client]:
     """Recording client with NO Authorization header (401 cases)."""
-    import httpx
-    from lib import api_coverage
-
     with httpx.Client(
         base_url=analytics.base_url, timeout=30.0, event_hooks={"response": [api_coverage.record_response]}
     ) as c:

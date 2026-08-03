@@ -82,5 +82,10 @@ async fn session_routes_reject_unknown_session_token_with_401() {
             401,
             "{method} {path} with an unknown session token must be 401"
         );
+        let body = resp.text().await.unwrap();
+        assert_eq!(
+            body, r#"{"error":"unauthenticated"}"#,
+            "{method} {path} must return the unauthenticated body"
+        );
     }
 }
