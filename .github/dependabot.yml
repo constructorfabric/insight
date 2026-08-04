@@ -34,3 +34,8 @@ updates:
     groups:
       base-images:
         patterns: ["*"]
+    ignore:
+      # dbt's dependency chain (dbt-common -> mashumaro) does not import on
+      # Python 3.14 yet; deploy/seed stays on 3.13 until it does.
+      - dependency-name: python
+        versions: [">=3.14"]
