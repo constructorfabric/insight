@@ -1476,7 +1476,7 @@ test_stand_backend_matches_charts() {
   git rev-parse --verify --quiet origin/main >/dev/null || return 0
 
   local changed
-  changed="$(git diff --name-only origin/main -- src/backend 2>/dev/null | head -5)"
+  changed="$(git diff --name-only origin/main...HEAD -- src/backend 2>/dev/null | head -5)"
   [[ -z "$changed" ]] && return 0
 
   echo "ERROR: this tree changes src/backend/ relative to origin/main:" >&2
