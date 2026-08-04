@@ -186,6 +186,18 @@ Invoked from NOTES.txt so they fire on every install.
     {{- end -}}
   {{- end -}}
 
+  {{- /* The authenticator's login-bootstrap resolve
+         (GET /internal/persons/by-external-id / by-email-override) exists on
+         identity-resolution only (constructorfabric/insight#1960). Refuse to
+         render a config that would point it at a service that was never
+         deployed. */ -}}
+  {{- if not (default dict .Values.identityResolution).deploy -}}
+    {{- fail "identityResolution.deploy must be true — the authenticator's login-bootstrap resolve only exists on identity-resolution (constructorfabric/insight#1960)." -}}
+  {{- end -}}
+  {{- if not $aoidc.sourceType -}}
+    {{- fail "authenticator.oidc.sourceType is required — the identity-resolution source_type (e.g. \"ms-entra\") the login-bootstrap resolve is scoped to." -}}
+  {{- end -}}
+
   {{- /* External hosts (L2 infra is out-of-chart → consumer must supply
          host/brokers): the helper templates `insight.<dep>.host` and
          `insight.redpanda.brokers` already `required`-fail when empty, so

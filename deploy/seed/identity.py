@@ -28,6 +28,8 @@ from profiles import (
     build_other_tenant_roster,
     build_roster,
     get_dev_user_email,
+    get_idp_source_type,
+    get_login_id_pairs,
 )
 
 LOG = logging.getLogger("seed.identity")
@@ -98,6 +100,77 @@ def seed_persons(
     ]
     cur.executemany(sql, rows)
     return cur.rowcount
+
+
+def seed_login_ids(
+    cur: pymysql.cursors.Cursor,
+    tenant_uuid: str,
+    roster: Iterable[Person],
+) -> int:
+    """Insert `value_type='id'` login-bootstrap observations under the login
+    IdP's source_type — the rows the authenticator's login-bootstrap resolve
+    (`GET /internal/persons/by-external-id?source_type=...&external_id=...`)
+    looks up. Without them a fresh dev/demo/CI stack can authenticate against
+    the IdP but never resolves to a person (403 at callback).
+
+    WHICH persona(s) get a row depends on the active IdP fixture (see
+    `profiles.get_login_id_pairs`): fakeidp only defines the dev lead; a
+    Keycloak realm seeds the WHOLE roster, so every one of those 25 personas
+    must get their own row here too, or logging in as anyone but the dev lead
+    403s despite Keycloak having authenticated them correctly.
+
+    Idempotent via an explicit existence check per pair, NOT `INSERT IGNORE`:
+    since migration 004 (`004_persons_relax_constraints.sql`), `persons`'
+    unique key is `(tenant, person, source_type, source_id, value_type,
+    created_at)` — `created_at` replaced `value_hash` so the append-only
+    observation log can record the same value re-observed at a different
+    time. That means an `INSERT IGNORE` re-run with a fresh `created_at`
+    never collides with the unique key and always inserts a new row. A plain
+    existence check on the logical key (ignoring `created_at`) is what
+    actually makes re-runs a no-op here.
+    """
+    source_type = get_idp_source_type()
+    exists_sql = """
+        SELECT 1 FROM persons
+        WHERE insight_tenant_id = %s
+          AND person_id = %s
+          AND insight_source_type = %s
+          AND insight_source_id = %s
+          AND value_type = 'id'
+          AND value_id = %s
+        LIMIT 1
+    """
+    insert_sql = """
+        INSERT INTO persons (
+            value_type, insight_source_type, insight_source_id,
+            insight_tenant_id, value_id,
+            person_id, author_person_id, reason
+        ) VALUES (
+            'id', %s, %s, %s, %s, %s, %s, %s
+        )
+    """
+    inserted = 0
+    for person_uuid, external_id in get_login_id_pairs(list(roster)):
+        cur.execute(exists_sql, (
+            _bin(tenant_uuid),
+            _bin(person_uuid),
+            source_type,
+            _bin(DEV_SEED_SOURCE_ID),
+            external_id,
+        ))
+        if cur.fetchone() is not None:
+            continue
+        cur.execute(insert_sql, (
+            source_type,
+            _bin(DEV_SEED_SOURCE_ID),
+            _bin(tenant_uuid),
+            external_id,
+            _bin(person_uuid),
+            _bin(AUTHOR_PERSON_UUID),
+            "seed.py login id",
+        ))
+        inserted += cur.rowcount
+    return inserted
 
 
 def seed_person_names(
@@ -306,6 +379,7 @@ def run() -> None:
     with _connect() as conn:
         cur = conn.cursor()
         n_persons = seed_persons(cur, tenant, roster)
+        n_login_id = seed_login_ids(cur, tenant, roster)
         n_names = seed_person_names(cur, tenant, roster)
         n_org = seed_org_chart(cur, tenant, roster)
         n_roles = seed_person_roles(cur, tenant, roster)
@@ -319,9 +393,10 @@ def run() -> None:
         n_acct += seed_account_person_map(cur, TENANT_OTHER, other_roster)
 
     LOG.info(
-        "DONE: persons=%d (new), names=%d (new), org_chart=%d (new), "
-        "person_roles=%d (new), account_person_map=%d (new)",
+        "DONE: persons=%d (new), login_id=%d (new), names=%d (new), "
+        "org_chart=%d (new), person_roles=%d (new), account_person_map=%d (new)",
         n_persons,
+        n_login_id,
         n_names,
         n_org,
         n_roles,

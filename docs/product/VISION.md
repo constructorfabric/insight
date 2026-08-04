@@ -16,7 +16,6 @@ A recommendation in Insight is a structured improvement object, not a generic co
 * the expected metric movement;
 * the follow-up measurement window used to validate whether the action helped.
 
-⠀
 Insight supports multiple deployment models: Constructor-hosted cloud, customer cloud, private cloud, and customer-operated installation. In every model, customers configure their roles, activities, integrations, metrics, access rules, and localization.
 
 Operational responsibility depends on the selected deployment model: Constructor operates the hosted service, while customer-operated deployments can be downloaded, installed, configured, updated, and upgraded by the customer. Customer data remains under customer control, and Insight does not require Constructor to have default access to customer data in order to operate.
@@ -30,7 +29,6 @@ Open design means Insight is explainable and auditable. Customers can see what d
 Metrics, diagnoses, and recommendations are traceable to source evidence, with confidence and limitations shown where relevant.
 
 Organizations retain ownership and control of their people, work, cost, and operational data while gaining a shared intelligence layer over how work is planned, built, sold, supported, and operated. Insight reads from the systems a company already uses and adapts to the customer’s operating model, localization, and governance rules.
-
 
 ## 3\. Governance
 
@@ -60,7 +58,6 @@ Insight is different because it:
 * informs forward-looking decisions — feasibility, cost, time, and risk of proposed work — from the organization's own delivery history, before development begins;
 * keeps conclusions explainable through evidence, confidence, and stated limitations.
 
-⠀
 The goal is not to create another dashboard layer. The goal is to give leaders and teams an improvement system: find what is not working, understand why, decide what to do, and check whether the action helped.
 
 ## 5\. How Insight Uses AI to Improve Work
@@ -79,7 +76,6 @@ Insight uses AI to:
 * **Improve readiness** — identify missing sources, unresolved identities, broken lineage, weak role/activity definitions, or missing outcome signals.
 * **Learn from outcomes** — compare what changed after an action was taken and use the result to improve future recommendations.
 
-⠀
 AI-generated diagnoses and recommendations are not treated as automatically true. Every recommendation declares whether it is evidence-derived from the customer’s own data or a heuristic suggestion based on configured rules or best practices. Heuristic recommendations are shown as such and are not presented as data-proven findings.
 
 A human owner decides whether to accept, modify, reject, or act on a recommendation. Insight then tracks the follow-up window and validates whether the action improved the measured system.
@@ -98,7 +94,6 @@ Insight recommendations are structured improvement objects. They connect an obse
 * **Expected metric movement:** Lower median review wait time, fewer blocked work items, shorter cycle time for release-bound work.
 * **Validation window:** Compare the next four weeks with the previous four weeks, while monitoring escaped defects and reopen rates to ensure quality does not degrade.
 
-⠀
 **Example 2 — Sales activity without pipeline movement**
 
 * **Observed problem:** Sales activity increased, but qualified pipeline did not move.
@@ -297,7 +292,6 @@ Insight is designed for organizations that need to improve work across multiple 
 4. **Multi-unit organizations** — companies operating across multiple products, departments, regions, business units, or cost centers that need consistent measurement, diagnosis, recommendation, and validation.
 5. **Organizations modernizing legacy operating models** — companies improving old processes, unclear ownership, weak instrumentation, or disconnected source systems while continuing to run existing work.
 
-
 ## 7\. Work Lifecycle and Shared Information Model
 
 Insight provides intelligence across the full lifecycle of work, not only from request to delivery. Work starts with intent — what the organization is trying to achieve — and continues through production, customer use, support, cost, learning, and improvement.
@@ -310,7 +304,6 @@ Insight reasons over three broad lifecycle phases:
 2. **Execute** — perform the work across roles, systems, teams, tools, and handoffs.
 3. **Operate and Improve** — run the result, support users or customers, observe cost and quality, learn from outcomes, and improve the system.
 
-⠀
 Insight observes all three phases where source evidence exists. Where evidence is missing, Insight shows the gap instead of presenting a complete claim.
 
 ### 7.2 Shared Information Model
@@ -328,7 +321,6 @@ Core entities include:
 * **Customer interaction / opportunity / campaign / ticket / incident** — downstream work and outcome signals outside engineering.
 * **Cost record / AI usage event** — observable cost and AI activity linked to people, teams, systems, work, or outcomes where evidence allows.
 
-⠀
 Role and activity are separate axes. A customer can change role definitions, split roles into more granular roles, update expected activities, and preserve historical analysis under the role model that was valid at the time.
 
 ### 7.3 Lineage Before Attribution
@@ -342,7 +334,6 @@ Examples of lineage include:
 * sales and marketing: campaign → lead → opportunity → deal movement → close or loss;
 * finance and cost: cost record → system, team, product, service, work item, or cost center.
 
-⠀
 Lineage comes before attribution. Insight does not strongly attribute cost, quality, AI impact, or outcome movement to work it cannot trace. Broken or weak links are shown as evidence gaps, not silently converted into confident claims.
 
 ### 7.4 Release and Deployment
@@ -397,7 +388,6 @@ Customers can configure:
 * **Access rules** — define who can see raw data, people-level data, aggregate data, cost data, recommendations, and evidence details.
 * **Localization** — configure language, date format, time format, number format, currency, timezone, and regional display rules.
 
-⠀
 Insight also helps customers refine configuration over time. When observed work does not match the configured role model, when important activities are missing, or when evidence is too weak for confident diagnosis, Insight can recommend configuration changes instead of hiding the mismatch.
 ## 10\. Integrations
 
@@ -413,7 +403,6 @@ The categories and products below are examples, not a closed list. Equivalent sy
 * **SSO / identity providers** — account mapping, user identities, group membership, and cross-system identity resolution.
 * **Org charts / directory systems** — reporting lines, teams, business units, and temporal membership.
 
-⠀
 Examples: Workday, BambooHR, Entra ID, Okta, Google Workspace, Microsoft 365, and equivalents.
 
 ### 10.2 Work, Planning, and Product Management
@@ -422,14 +411,12 @@ Examples: Workday, BambooHR, Entra ID, Okta, Google Workspace, Microsoft 365, an
 * **Roadmap and portfolio systems** — initiatives, commitments, planning horizons, strategic themes, and portfolio allocation.
 * **Knowledge and documentation systems** — requirements, decisions, ownership context, documentation, and knowledge gaps.
 
-⠀
 Examples: Jira, YouTrack, GitHub Issues, GitLab Issues, Linear, Azure DevOps Boards, Asana, Trello, Confluence, Notion, wikis, and equivalents.
 
 ### 10.3 Collaboration and Communication
 
 * **Email, calendar, chat, meetings, and documents** — communication load, meetings, handoffs, decisions, follow-ups, shared documents, comments, and collaboration signals.
 
-⠀
 Examples: Outlook, Gmail, Google Calendar, Microsoft Teams, Slack, Zoom, Google Meet, shared drives, document systems, and equivalents.
 
 Insight uses these sources to understand collaboration patterns and handoff health, not to expose private message content by default. Access and visibility follow the customer’s governance rules.
@@ -439,41 +426,36 @@ Insight uses these sources to understand collaboration patterns and handoff heal
 * **Source control and code review systems** — changes, authorship, reviews, comments, approvals, merge events, and links to work.
 * **CI/CD and release systems** — builds, tests, pipeline duration, failures, releases, deployments, and environment signals.
 
-⠀
 Examples: GitHub, GitLab, Bitbucket, Azure DevOps, Jenkins, GitHub Actions, GitLab CI, and equivalents.
 
 ### 10.5 AI Tool Telemetry
 
 * **AI assistants, coding tools, and AI APIs** — sessions, prompts or task metadata where available, model/tool identity, token usage, accepted suggestions, generated code or content signals, and AI cost.
 
-⠀
 Examples: OpenAI, Anthropic Claude / Claude Code, Microsoft Copilot, Cursor, JetBrains AI, internal model gateways, and equivalents.
 
 ### 10.6 Operations, Reliability, and Observability
 
 * **Monitoring, observability, incident, and on-call systems** — incidents, alerts, severity, ownership, resolution, service health, runtime behavior, deployment impact, on-call load, and operational effort.
-⠀
+
 Examples: Prometheus, Grafana, Datadog, New Relic, PagerDuty, Opsgenie, Sentry, OpenTelemetry-compatible sources, and equivalents.
 
 ### 10.7 Support and Customer Operations
 
 * **Support and customer operations systems** — tickets, escalations, SLA performance, reopen rates, handling time, customer/service mapping, knowledge gaps, post-release support load, and customer impact.
 
-⠀
 Examples: Zendesk, Intercom, ServiceNow, Freshdesk, Jira Service Management, and equivalents.
 
 ### 10.8 Sales and Marketing
 
 * **CRM, sales engagement, meetings, proposals, campaigns, and marketing systems** — pipeline movement, opportunities, account activity, customer communication, demos, follow-ups, proposals, presentations, campaigns, leads, attribution, handoff to sales, and outcome signals.
 
-⠀
 Examples: Salesforce, HubSpot, Outreach, Salesloft, Gong, Chorus, Marketo, Google Analytics, campaign platforms, presentation/document systems, and equivalents.
 
 ### 10.9 Cost, Billing, and Finance
 
 * **Cloud, infrastructure, AI, software, billing, and finance systems** — compute, storage, network, AI usage cost, seats, licenses, contracts, currency, billing period, cost centers, allocation rules, and unattributed cost.
 
-⠀
 Examples: AWS, Azure, GCP, cloud billing exports, finance systems, procurement systems, SaaS management systems, and equivalents.
 
 ### 10.10 Connector Evidence Contract
@@ -487,9 +469,7 @@ Every connector declares what it can and cannot prove before its fields support 
 * coverage and known blind spots;
 * whether the evidence supports measurement, diagnosis, recommendation, or validation.
 
-⠀
 If the evidence is incomplete, Insight can still use it as a directional signal, but conclusions remain confidence-rated and limitations stay visible.
-
 
 ## 11\. Cost Model
 
@@ -553,8 +533,6 @@ It helps find cases where:
 
 Insight can recommend actions such as improving allocation rules, reducing unused spend, changing AI usage guidance, optimizing infrastructure, investigating cost anomalies, or improving cost lineage before making ROI or investment claims.
 
-
-
 ## 12\. Benchmarks and Shared Intelligence
 
 Insight becomes more useful when an organization can compare its own results against a wider context, not only against its own past. This section describes a benchmark and shared-intelligence layer — a "mega-brain" that combines information useful to Insight users. It extends the single-organization product rather than replacing it, and it is always opt-in and governed by privacy and access controls.
@@ -583,9 +561,60 @@ This layer does not weaken the ownership and control promise in Sections 2 and 3
 
 Business and monetization models for shared intelligence — acquiring useful public or commercial datasets, reselling third-party datasets where licensing permits, selling or licensing proprietary datasets, and offering anonymized aggregated benchmarks from participating customers — are out of scope for this document. The Vision describes the capability and its guardrails, not how it is offered commercially.
 
-## 13\. Adoption and Extension
+## 13\. Constructor Fabric: Studio, Insight, and Gears
 
-### 13.1 Adoption Path
+Constructor Insight is one of three Constructor Fabric products. Constructor Studio supports how software is specified, designed, and built. Constructor Gears provides reusable, operable components that applications are assembled from. Insight observes and improves how work is performed.
+
+Each product is usable on its own. The promises in Sections 2 and 3 are unchanged: Insight is tool-agnostic and source-agnostic, it does not require Studio or Gears, and no capability described in this document depends on them.
+
+Where a customer does run them, the three products enrich each other. Studio and Gears become high-quality evidence sources for Insight, and Insight's findings return to the place where they can be acted on. Evidence from Studio and Gears passes through the same connector evidence contract (Section 10.10) as any other source — declared fields, coverage, freshness, identity assumptions, and limitations.
+
+Studio and Gears also enrich each other directly: Studio composes applications from Gears modules and contributes reusable workflows and components back. That relationship sits outside Insight's boundary and is described in Fabric-level product material, not here.
+
+### 13.1 What Insight Consumes
+
+**From Studio** — engineering intent and the record of how work was produced:
+
+* requirements, design decisions, and implementation context, so production behavior can be correlated with the original engineering intent rather than inferred from code alone;
+* software architecture, dependency, and implementation metadata, which strengthens lineage between work items, changes, services, and runtime behavior;
+* development activity, code review, and quality-gate records, which improve coverage for delivery-flow and quality analysis;
+* where generated code carries instrumentation probes, direct measurement points for quality and delivery signals that would otherwise be unavailable.
+
+**From Gears** — operational evidence from running components:
+
+* production telemetry, operational events, and business metrics;
+* health, performance, and usage metrics for each reusable component, supporting reliability and capacity analysis;
+* configuration changes and lifecycle events, so operational behavior can be correlated with deployment and configuration history;
+* dependency information, which extends lineage from delivered work through to the components that run it.
+
+Together these narrow two of the gaps Section 7.3 identifies as limits on attribution: intent-to-delivery lineage on the Studio side, and delivery-to-runtime lineage on the Gears side. Attribution remains bounded by lineage; a richer source improves the link, it does not remove the rule.
+
+### 13.2 What Insight Returns
+
+Output to Studio and Gears follows the same rules as every other recommendation in this document. It is a structured improvement object with evidence, confidence, an owner, an expected metric movement, and a validation window (Section 5), and it declares whether it is evidence-derived or heuristic.
+
+**To Studio** — findings delivered where design and implementation decisions are made:
+
+* architectural bottlenecks, technical debt, and reliability risks, with recommended design and implementation improvements;
+* production incidents correlated with source code, requirements, and architecture, so root causes and affected components can be identified quickly;
+* refactoring, performance, and security opportunities derived from production telemetry and historical trends;
+* test and production intelligence that informs code optimization.
+
+**To Gears** — findings about the reusable components themselves:
+
+* configuration, scaling, and resource-optimization policies;
+* identification of underutilized, inefficient, or vulnerable components, with recommended upgrades, replacements, or tuning;
+* whether a reusable component is operationally effective in practice, fed back into its design.
+
+### 13.3 Insight Recommends; It Does Not Execute
+
+Insight remains an observation and analysis product. It reads from the systems it is connected to and writes only its own configuration, annotations, and outputs. A recommendation delivered to Studio or Gears is a proposal, not an instruction.
+
+Where a customer chooses to automate — for example, letting Gears apply a configuration or scaling policy that Insight recommended — the automation and its approval rules belong to that system and to the customer's policy, not to Insight. Insight's role is the same on either side of that choice: it produces the recommendation with its evidence and confidence, and afterwards it observes the measured system to validate whether the change helped.
+
+## 14\. Adoption and Extension
+
+### 14.1 Adoption Path
 
 Insight can start with the systems and evidence a customer already has. The customer does not need perfect coverage before getting value; the product starts with available evidence, shows gaps, and strengthens conclusions as coverage improves.
 
@@ -598,8 +627,7 @@ A typical adoption path is:
 5. **Improve evidence over time** — strengthen connectors, identity resolution, lineage, cost allocation, and outcome signals.
 6. **Validate improvement actions** — track whether recommended or customer-selected actions improved output, quality, cost, flow, collaboration, or outcomes.
 
-⠀
-### 13.2 Extension Points
+### 14.2 Extension Points
 
 Insight is designed to be extended as customers add systems, roles, metrics, and improvement needs.
 
@@ -614,12 +642,11 @@ Extension points include:
 7. **Validation rules** — define how actions are evaluated after implementation.
 8. **Migration paths** — move fragmented internal metrics, dashboards, scripts, and reporting systems into a governed Insight model.
 
-⠀
 Extensions can be customer-specific or contributed back into shared product capabilities when appropriate. No extension should create a confident metric, diagnosis, or recommendation without declared evidence, coverage, and limitations.
 
-## 14\. Non-Functional Requirements and Migration
+## 15\. Non-Functional Requirements and Migration
 
-### 14.1 Non-Functional Requirements
+### 15.1 Non-Functional Requirements
 
 Insight must be usable as an operational product, not a one-off analytics project. Non-functional requirements are product design targets and are validated per deployment model.
 
@@ -638,7 +665,7 @@ Insight must be usable as an operational product, not a one-off analytics projec
 
 Detailed scale ceilings, validated throughput numbers, and hardware profiles should be maintained in the technical architecture and deployment documentation, not asserted as universal limits in the Vision document.
 
-### 14.2 Migration and Historical Data
+### 15.2 Migration and Historical Data
 
 Insight can replace fragmented internal measurement, reporting, analytics, and cost-tracking systems over time. Migration is treated as a controlled product adoption path, not a one-time data import.
 
@@ -661,8 +688,6 @@ A typical migration includes:
 7. **Retire legacy systems safely** — shut down old systems only after required metrics, connectors, stewardship, access rules, and migration owners are in place.
 
 Historical comparison depends on source retention. Some systems preserve years of history; others retain only short windows. Insight shows these limits explicitly so users do not compare periods with unequal evidence.
-
-
 
 ## Glossary
 
@@ -690,3 +715,6 @@ Plain-language definitions; terminology is consistent across this document.
 | **Benchmark**            | An anonymized, aggregated comparison point — from the organization's own history, opt-in peer data, or public/market sources — declared with cohort definition, coverage, and confidence. Never individual-level. |
 | **Shared intelligence**  | The opt-in layer that combines an organization's own evidence with anonymized peer benchmarks and public/market data (Section 12). |
 | **Clean room**           | A data-sharing model where raw data never leaves its owner's boundary and only anonymized, aggregated results are exchanged. |
+| **Constructor Fabric**   | The product family Insight belongs to, alongside Constructor Studio and Constructor Gears (Section 13). |
+| **Constructor Studio**   | The Fabric product supporting how software is specified, designed, and built. An optional evidence source for Insight, and a destination for Insight's design and implementation findings. Not required to run Insight. |
+| **Constructor Gears**    | The Fabric product providing reusable, operable components that applications are assembled from. An optional source of operational evidence for Insight, and a destination for component-level findings. Not required to run Insight. |

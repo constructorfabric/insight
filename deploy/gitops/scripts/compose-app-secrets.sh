@@ -31,9 +31,23 @@
 #                                 analytics. Single source of truth for
 #                                 the single-tenant UUID — matches the
 #                                 chart's `global.tenantDefaultId` knob.)
-#   .identityUrl                 (optional; the identity URL analytics +
-#                                 authenticator call. Empty = the default
-#                                 `http://<release>-identity-resolution:8082`.)
+#   .identityUrl                 (optional; the identity URL ANALYTICS calls.
+#                                 Empty = the default
+#                                 `http://<release>-identity-resolution:8082`.
+#                                 The authenticator does NOT use this — see below.)
+#   .identityResolution.deploy   required to be true — the authenticator's
+#                                 login-bootstrap resolve
+#                                 (GET /internal/persons/by-external-id /
+#                                 by-email-override) only exists on
+#                                 identity-resolution (constructorfabric/insight#1960).
+#                                 The authenticator is ALWAYS pointed at
+#                                 `http://<release>-identity-resolution:8082`,
+#                                 unlike analytics (overridable via
+#                                 .identityUrl above).
+#   .authenticator.oidc.sourceType       required — idp.source_type (the
+#                                        identity-resolution source_type this
+#                                        IdP is seeded under, e.g. "ms-entra").
+#   .authenticator.oidc.externalIdClaim  optional; default "sub" (Entra: "oid").
 #
 # Cleartext passwords live only in this shell's memory; they are never
 # written to disk and never echoed.
@@ -65,10 +79,28 @@ RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
 TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
 IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminPersonId // ""' "$VALUES")
 IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // "identity"' "$VALUES")
-# The identity URL the CONSUMERS (analytics, authenticator) call. Empty =
-# the identity-resolution Service (constructorfabric/insight#1602).
+# The identity URL ANALYTICS calls. Empty = the identity-resolution Service
+# (constructorfabric/insight#1602). The AUTHENTICATOR does NOT use this —
+# see AUTHENTICATOR_IDENTITY_URL below.
 IDENTITY_URL=$(yq -r '.identityUrl // ""' "$VALUES")
 [ -n "$IDENTITY_URL" ] && [ "$IDENTITY_URL" != "null" ] || IDENTITY_URL="http://${RELEASE}-identity-resolution:8082"
+
+# The authenticator's login-bootstrap resolve
+# (GET /internal/persons/by-external-id / by-email-override) only exists on
+# identity-resolution (constructorfabric/insight#1960) — so, unlike analytics
+# above, the authenticator is ALWAYS pointed at identity-resolution,
+# regardless of .identityUrl. Refuse to compose a config that would point it
+# at a service that was never deployed (helm's own render-time check —
+# charts/insight/templates/_helpers.tpl `insight.validate` — covers the
+# non-gitops path; this mirrors it for gitops installs, which skip that
+# validator entirely since autoGenerate=false short-circuits the chart's own
+# Secret rendering).
+IDENTITY_RESOLUTION_DEPLOY=$(yq -r '.identityResolution.deploy // false' "$VALUES")
+if [ "$IDENTITY_RESOLUTION_DEPLOY" != "true" ]; then
+  echo "ERROR: identityResolution.deploy must be true in $VALUES — the authenticator's login-bootstrap resolve only exists on identity-resolution (constructorfabric/insight#1960)." >&2
+  exit 1
+fi
+AUTHENTICATOR_IDENTITY_URL="http://${RELEASE}-identity-resolution:8082"
 
 # ── Authenticator OIDC (NGINX_BFF). issuerUrl/redirectUri may be Helm template
 #    strings in values.yaml; render {{ .Release.Name }}/{{ .Release.Namespace }}
@@ -109,6 +141,13 @@ AUTH_SCOPES=$(yq -r '(.authenticator.oidc.scopes // ["openid","email","profile"]
 # (e.g. Okta). Empty fallback = fail closed downstream.
 AUTH_TENANT_CLAIM=$(     yq -r '.authenticator.oidc.tenantClaim     // "tenant_id"' "$VALUES")
 AUTH_DEFAULT_TENANT_ID=$(yq -r '.authenticator.oidc.defaultTenantId // ""' "$VALUES")
+# The identity-resolution source_type this IdP is seeded under (e.g.
+# "ms-entra") — required; drives the login-bootstrap resolve
+# (GET /internal/persons/by-external-id?source_type=...&external_id=...).
+AUTH_SOURCE_TYPE=$(yq -r '.authenticator.oidc.sourceType // ""' "$VALUES")
+# id_token claim carrying the IdP's stable external user id for source_type
+# (Entra: "oid"; the generic OIDC "sub" is not the same directory-stable id).
+AUTH_EXTERNAL_ID_CLAIM=$(yq -r '.authenticator.oidc.externalIdClaim // "sub"' "$VALUES")
 # `__override` view-as login (insight#1941/#1944) — dev/demo stands ONLY.
 AUTH_OVERRIDE_ENABLED=$(yq -r '.authenticator.overrideEnabled // false' "$VALUES")
 # The authn-tls discovery FQDN — the minted token `iss` and downstream issuer.
@@ -116,9 +155,9 @@ GATEWAY_ISSUER="https://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:844
 GATEWAY_JWKS_URL="http://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:8083/.well-known/jwks.json"
 AUTH_TOKEN_AUD="http://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:8093/internal/token"
 
-for v in AUTH_IDP_ISSUER AUTH_REDIRECT_URI; do
+for v in AUTH_IDP_ISSUER AUTH_REDIRECT_URI AUTH_SOURCE_TYPE; do
   [ -n "${!v}" ] && [ "${!v}" != "null" ] || {
-    echo "ERROR: authenticator.oidc.* incomplete in $VALUES ($v empty) — auth is always on (NGINX_BFF)" >&2
+    echo "ERROR: authenticator.oidc.* incomplete in $VALUES ($v empty) — auth is always on (NGINX_BFF); sourceType is required for the login-bootstrap resolve (constructorfabric/insight#1960)" >&2
     exit 1
   }
 done
@@ -237,13 +276,15 @@ metadata:
 type: Opaque
 stringData:
   APP__gears__authenticator__config__redis_url: "${REDIS_URL}"
-  APP__gears__authenticator__config__identity_url: "${IDENTITY_URL}"
+  APP__gears__authenticator__config__identity_url: "${AUTHENTICATOR_IDENTITY_URL}"
   APP__gears__authenticator__config__gateway_issuer: "${GATEWAY_ISSUER}"
   APP__gears__authenticator__config__idp__issuer_url: "${AUTH_IDP_ISSUER}"
   APP__gears__authenticator__config__idp__client_id: "${AUTH_CLIENT_ID}"
   APP__gears__authenticator__config__idp__client_secret: "${AUTH_CLIENT_SECRET}"
   APP__gears__authenticator__config__idp__tenant_claim: "${AUTH_TENANT_CLAIM}"
   APP__gears__authenticator__config__idp__default_tenant_id: "${AUTH_DEFAULT_TENANT_ID}"
+  APP__gears__authenticator__config__idp__source_type: "${AUTH_SOURCE_TYPE}"
+  APP__gears__authenticator__config__idp__external_id_claim: "${AUTH_EXTERNAL_ID_CLAIM}"
   APP__gears__authenticator__config__redirect_uri: "${AUTH_REDIRECT_URI}"
   APP__gears__authenticator__config__oidc_scopes: "${AUTH_SCOPES}"
   APP__gears__authenticator__config__service_tokens__audience: "${AUTH_TOKEN_AUD}"

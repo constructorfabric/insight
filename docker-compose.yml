@@ -382,6 +382,12 @@ services:
       APP__gears__authenticator__config__idp__issuer_url: "${AUTHENTICATOR_OIDC_ISSUER:-http://fakeidp:8084}"
       APP__gears__authenticator__config__idp__client_id: "${OIDC_CLIENT_ID:-insight-authenticator}"
       APP__gears__authenticator__config__idp__client_secret: "${OIDC_CLIENT_SECRET:-}"
+      # Required: the identity-resolution source_type the login-bootstrap
+      # lookup is scoped to. fakeidp's `sub` claim IS the stable external id
+      # (external_id_claim defaults to "sub"); deploy/seed/identity.py seeds
+      # the matching value_type='id' row for the dev-lead person under this
+      # same source_type.
+      APP__gears__authenticator__config__idp__source_type: "${AUTHENTICATOR_IDP_SOURCE_TYPE:-fakeidp}"
       # Callback rides the SPA's browser origin (Vite :3000) so the __Host-sid
       # cookie lands where the SPA runs; see .env.compose.example.
       APP__gears__authenticator__config__redirect_uri: "${AUTHENTICATOR_REDIRECT_URI:-http://localhost:3000/auth/callback}"
@@ -718,6 +724,15 @@ services:
       # Identity / persons anchor
       DEV_USER_EMAIL: "${DEV_USER_EMAIL:-}"
       TENANT_DEFAULT_ID: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
+      # Must match the authenticator's idp.source_type (AUTHENTICATOR_IDP_SOURCE_TYPE
+      # above) — the dev-lead's login-bootstrap value_type='id' row is seeded
+      # under this source_type.
+      IDP_SOURCE_TYPE: "${AUTHENTICATOR_IDP_SOURCE_TYPE:-fakeidp}"
+      # Selects which roster personas get a login-id fixture (fakeidp: dev lead
+      # only, its fixed "fakeidp|dev"; keycloak: the whole roster, each on their
+      # own uuid — see deploy/seed/profiles.py's get_login_id_pairs).
+      # dev-compose.sh's --auth flag exports this.
+      AUTH_MODE: "${AUTH_MODE:-fakeidp}"
       # MariaDB — falls back to the local docker service name/port; the
       # wizard rewrites these when external MariaDB is selected.
       MARIADB_HOST: "${MARIADB_HOST:-mariadb}"

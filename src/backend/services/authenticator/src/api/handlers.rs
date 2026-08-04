@@ -484,6 +484,7 @@ async fn resolve_override(
         sub: String::new(),
         email: target_email.to_owned(),
         tenant_id: idp.identity.tenant_id.clone(),
+        resolve_by: crate::identity::ResolveTarget::Email(target_email.to_owned()),
     };
     match state.resolver.resolve(&target).await {
         Ok(Some(t)) => {

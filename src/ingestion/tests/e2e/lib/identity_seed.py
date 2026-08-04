@@ -74,9 +74,14 @@ HIDDEN_EMAIL = "hidden@e2e.test"
 EVE_EMAIL = "eve@e2e.test"
 UNKNOWN_EMAIL = "nobody@e2e.test"
 
+# ALICE's source-native account id on SOURCE_TYPE — the value_type='id'
+# observation the by-external-id internal-resolve contract tests exercise
+# (mirrors what a real IdP connector, e.g. ms-entra, would seed as `oid`).
+ALICE_ACCOUNT_ID = "acc-alice"
+
 # person -> (email, account id, display_name, department, job_title)
 PEOPLE: dict[uuid.UUID, tuple[str, str, str, str, str]] = {
-    ALICE: (ALICE_EMAIL, "acc-alice", "Alice Admin", "Engineering", "CTO"),
+    ALICE: (ALICE_EMAIL, ALICE_ACCOUNT_ID, "Alice Admin", "Engineering", "CTO"),
     BOB: (BOB_EMAIL, "acc-bob", "Bob Builder", "Engineering", "Team Lead"),
     CAROL: (CAROL_EMAIL, "acc-carol", "Carol Coder", "Engineering", "Engineer"),
     DUP1: (DUP_EMAIL, "acc-dup1", "Dup One", "Sales", "AE"),

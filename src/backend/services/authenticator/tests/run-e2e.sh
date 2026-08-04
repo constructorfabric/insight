@@ -86,10 +86,10 @@ FAKEIDP_ISSUER="http://localhost:$IDP_PORT" FAKEIDP_BIND="0.0.0.0:$IDP_PORT" \
 pids+=($!)
 wait_ready fakeidp "http://localhost:$IDP_PORT/.well-known/openid-configuration"
 
-echo "==> identity stub :$IDENTITY_PORT (resolves any email to a person)"
+echo "==> identity stub :$IDENTITY_PORT (resolves any email/external-id to a person)"
 python3 "$HERE/identity-stub.py" "127.0.0.1:$IDENTITY_PORT" >/tmp/authenticator-e2e-identity.log 2>&1 &
 pids+=($!)
-wait_ready identity-stub "http://localhost:$IDENTITY_PORT/internal/persons/by-email/probe@example.com"
+wait_ready identity-stub "http://localhost:$IDENTITY_PORT/internal/persons/by-external-id?source_type=faketest&external_id=probe"
 
 echo "==> authenticator :$AUTH_PORT"
 # override_enabled exercises the `__override` view-as loop (e2e_override); the
@@ -101,6 +101,7 @@ APP__gears__authenticator__config__identity_url="http://localhost:$IDENTITY_PORT
 APP__gears__authenticator__config__gateway_issuer=http://localhost:8080 \
 APP__gears__authenticator__config__idp__issuer_url="http://localhost:$IDP_PORT" \
 APP__gears__authenticator__config__idp__client_id=insight-authenticator \
+APP__gears__authenticator__config__idp__source_type=faketest \
 APP__gears__authenticator__config__redirect_uri="http://localhost:$AUTH_PORT/auth/callback" \
 APP__gears__authenticator__config__service_tokens__public_key_dir="$SVC_KEYS_DIR" \
 APP__gears__authenticator__config__idp__refresh_safety_margin_seconds=10 \
@@ -129,6 +130,7 @@ APP__gears__authenticator__config__identity_url="http://localhost:$IDENTITY_PORT
 APP__gears__authenticator__config__gateway_issuer=http://localhost:8080 \
 APP__gears__authenticator__config__idp__issuer_url="http://localhost:$IDP_PORT" \
 APP__gears__authenticator__config__idp__client_id=insight-authenticator \
+APP__gears__authenticator__config__idp__source_type=faketest \
 APP__gears__authenticator__config__redirect_uri="http://localhost:$AUTH2_PORT/auth/callback" \
 APP__gears__authenticator__config__service_tokens__public_key_dir="$SVC_KEYS_DIR" \
   ./target/release/authenticator -c "$AUTH2_CONFIG" run \

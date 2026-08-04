@@ -77,7 +77,8 @@ pub(crate) async fn require_admin(
 
 /// Require a SERVICE principal (gateway JWT `sub_type=service`). Used by the
 /// internal S2S endpoints that run before a tenant/caller identity exists (the
-/// login-bootstrap by-email lookup). 403 for any non-service caller.
+/// login-bootstrap and `__override` resolve lookups). 403 for any non-service
+/// caller.
 ///
 /// # Errors
 ///

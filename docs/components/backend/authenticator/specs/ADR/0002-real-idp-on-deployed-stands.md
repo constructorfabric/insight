@@ -7,6 +7,13 @@ date: 2026-07-30
 
 **ID**: `cpt-insightspec-adr-auth-0002-real-idp-on-deployed-stands`
 
+**Status history**:
+
+- 2026-08-04: AMENDED by `cpt-insightspec-adr-auth-0003-keycloak-identity-broker` -- the fakeidp
+  survival clause is retired (Keycloak becomes the issuer in compose and the in-process rig too),
+  and the deferred production IdP/broker question is decided (adopt Keycloak as broker). The
+  shared pre-provisioned Keycloak and realm-generation decisions stand unchanged.
+
 <!-- toc -->
 
 - [Context and Problem Statement](#context-and-problem-statement)

@@ -1,0 +1,251 @@
+---
+status: accepted
+date: 2026-08-04
+---
+
+# ADR-0003: Keycloak as the Identity Broker (Configured as Code)
+
+**ID**: `cpt-insightspec-adr-auth-0003-keycloak-identity-broker`
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Drivers](#decision-drivers)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+  - [Consequences](#consequences)
+  - [Confirmation](#confirmation)
+- [Pros and Cons of the Options](#pros-and-cons-of-the-options)
+  - [Option A -- Keycloak broker + keycloak-config-cli, chosen](#option-a----keycloak-broker--keycloak-config-cli-chosen)
+  - [Option B -- Dex](#option-b----dex)
+  - [Option C -- multi-issuer support in the authenticator](#option-c----multi-issuer-support-in-the-authenticator)
+  - [Option D -- another self-hosted broker (Zitadel / Authentik / Casdoor)](#option-d----another-self-hosted-broker-zitadel--authentik--casdoor)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
+
+The authenticator is a confidential OIDC client against exactly **one** configured issuer
+(`authenticator.oidc.issuerUrl`). Customers bring heterogeneous IdPs -- Entra, Okta, Google
+Workspace, generic OIDC, SAML-only shops -- each with its own quirks (audience/scope shapes,
+`offline_access` behaviour, back-channel-logout support), and onboarding each one today means
+bespoke per-environment configuration. Issue #1782 asked whether an **identity broker** in front
+of the authenticator should absorb that heterogeneity.
+
+Issue #2163 sharpens the question: "Login with GitHub" (and later Google, Facebook, Apple).
+GitHub OAuth Apps are **plain OAuth 2.0, not OIDC** -- no `id_token`, no discovery document, no
+JWKS -- so GitHub cannot be wired to the authenticator at all without an adapting layer. Social
+logins force the broker decision that heterogeneous customer IdPs only motivated.
+
+Two constraints carry over from the earlier ADRs:
+
+- The gateway JWT carries a **single** `tenant_id` claim resolved at the authentication boundary
+  (DD-AUTH-04); ADR-0001 already rejected Dex because it cannot inject such a claim -- verified
+  end-to-end, analytics returns `AUTHN_FAILED` without it.
+- The authenticator must stay IdP-agnostic: the issuer is a config value, never a code change or
+  an image rebuild.
+
+A further requirement from #2163: broker configuration must be expressible **as code** -- reviewed
+in pull requests, applied by automation, secrets held outside the repository -- never click-ops in
+an admin UI.
+
+## Decision Drivers
+
+- One uniform OIDC issuer toward the authenticator, regardless of what a customer runs upstream.
+- Coverage: OIDC and SAML customer IdPs, plus social providers -- GitHub (#2163), Google,
+  Facebook, Apple -- including GitHub's OAuth-only protocol gap.
+- Per-provider claim control: inject the Insight `tenant_id`, normalise `email`/`sub`, and pass
+  **only** allow-listed claims into the token (exactly one `tenant_id`, never an array).
+- Configuration as code: declarative, idempotent, gitops-applied; secrets via sealed secrets;
+  no admin-UI drift.
+- Operational footprint must stay bounded: ADR-0002 already pays for one shared, pre-provisioned
+  Keycloak; a broker should extend that investment, not add a second system.
+- Dev/CI parity: the same issuer technology everywhere removes prod-versus-test drift and the
+  cost of maintaining a test double.
+
+## Considered Options
+
+- **Option A (chosen)** -- Keycloak as the identity broker, realm content managed declaratively
+  with `keycloak-config-cli` from gitops.
+- **Option B** -- Dex as a lightweight OIDC adapter in front of the authenticator.
+- **Option C** -- native multi-issuer support in the authenticator (one RP, many configured IdPs,
+  per-provider adapters including a bespoke GitHub OAuth adapter).
+- **Option D** -- another self-hosted broker (Zitadel, Authentik, Casdoor).
+
+## Decision Outcome
+
+Chosen: **Option A**. Keycloak fronts the authenticator as an **identity broker**: a realm
+federates the upstream IdPs (customer OIDC/SAML, GitHub, Google, Facebook, Apple) and presents a
+single uniform OIDC issuer. The authenticator's flow logic is unchanged -- the existing
+code + PKCE, refresh, and back-channel-logout machinery against one issuer shape; its only
+change is configuration surface: the single `issuerUrl` generalises to a host-keyed issuer map
+for multi-customer (cloud) installations (see realm selection below).
+
+- **Provider coverage is built in.** Keycloak ships identity providers for GitHub, Google,
+  Facebook, Microsoft, LinkedIn, GitLab and others, and Apple since Keycloak 24. GitHub's
+  OAuth-only protocol is absorbed by the broker; the authenticator never sees it.
+- **Configuration is code, exclusively.** The Keycloak *instance* is deployed declaratively (the
+  existing chart/subchart mechanism, or the Keycloak Operator `Keycloak` CR where the platform
+  provides one). *Realm content* -- brokered IdPs, mappers, the `insight-authenticator` client --
+  is YAML applied idempotently by [`keycloak-config-cli`](https://github.com/adorsys/keycloak-config-cli)
+  as a gitops sync job. Client secrets enter via environment-variable substitution from sealed
+  secrets; nothing lands in the repository or an image (the #2163 credentials criterion). The
+  admin UI is read-only in practice: `KeycloakRealmImport` and hand edits are not configuration
+  channels, and config-cli re-applies the versioned realm on every sync, reverting drift.
+- **Claims are shaped at the broker.** Per-provider **identity provider mappers** inject or
+  import the Insight `tenant_id` (`hardcoded-attribute-idp-mapper` for a fixed per-registration
+  tenant; claim-importer mappers where the upstream carries tenancy, e.g. Entra `tid`). The
+  client's **protocol mappers / client scopes** are the allow-list: the token contains only what
+  is explicitly emitted -- `sub`, `email`, one string `tenant_id` -- matching what the compose
+  realm generator already emits today. Upstream claims never pass through by default. Where a
+  single upstream registration itself distinguishes tenants by a claim value, the external value
+  is translated inside the realm: an advanced claim-to-group mapper (`syncMode: FORCE`) puts the
+  user in a per-tenant group whose `tenant_id` attribute carries the internal UUID, emitted by
+  the protocol mapper with group-attribute aggregation. The translation table is realm YAML, one
+  entry per external tenant, and an unmapped value fails closed -- no group, no `tenant_id`
+  claim, token rejected downstream. Exactly one group per user is an invariant the end-to-end
+  tests guard.
+- **Topology: one realm per customer**, holding that customer's brokered IdPs and one
+  confidential client. The single-`tenant_id` rule holds because each provider registration (or
+  upstream tenancy claim) maps to exactly one Insight tenant. Realm-per-tenant remains available
+  if isolation inside a customer is ever required -- realms are just more YAML.
+- **IdP selection is the realm's login page; realm selection is host-based.** Within one
+  customer, no Insight code chooses a provider: an unauthenticated request lands on the broker
+  realm's login page, which offers exactly the options its YAML configures (password, social,
+  corporate SSO); a single-IdP realm auto-redirects (default IdP / `kc_idp_hint`). Across
+  customers -- the cloud case, where the issuer must be known while the user is still anonymous
+  -- the customer's hostname selects the realm: the authenticator's `issuerUrl` becomes a
+  host-keyed issuer map, with a single-entry map preserving today's behaviour for dedicated
+  installs. Keycloak **Organizations** (one shared realm, email-domain discovery) is rejected
+  for now: it weakens the per-customer realm isolation this decision builds on, and ADR-0002
+  already scoped it out; revisit only if per-customer hostnames are unavailable.
+- **Unknown users are refused by the existing boundary.** Brokering does not change person
+  resolution: the authenticator still resolves the (now broker-issued) identity via the Identity
+  Service, so a social login whose email matches no person is refused with the existing
+  unknown-person behaviour and audit event (#2163: no auto-created accounts).
+- **fakeidp is retired.** With Keycloak the issuer everywhere, the test double loses its reason
+  to exist -- this amends ADR-0002's survival clause (compose inner loop, in-process rig,
+  time-boxed CI scaffold). The compose stack's existing `AUTH_MODE=keycloak` path becomes the
+  only mode; the generated realm (`gen-realm.py` from the seed roster) already provisions users,
+  the confidential client, and the `tenant_id` mapper, so Keycloak itself is the user store in
+  dev and CI -- no upstream IdP and no brokering needed there. The in-process integration rig
+  follows via a container-provisioned realm (same generated JSON, `--import-realm`); tests that
+  need no real HTTP IdP keep mocking at the OIDC-client seam.
+
+```text
+customer IdPs (Entra / Okta / SAML / ...) ─┐
+social (GitHub / Google / Facebook / Apple)┴─brokered──▶ Keycloak realm ──OIDC──▶ authenticator ──▶ gateway JWT ──▶ services
+```
+
+### Consequences
+
+- Onboarding a customer IdP or enabling a social provider becomes a realm-YAML pull request plus
+  a sealed secret -- no authenticator change, no per-IdP code, no admin-UI session.
+- The authenticator gains one bounded config change: `issuerUrl` becomes a host-keyed issuer map
+  (OIDC client and JWKS caches keyed by issuer); a single-entry map is the dedicated-install
+  degenerate case, so existing deployments are untouched.
+- The authenticator's configurable tenant-claim name (`idp.tenant_claim`) loses its purpose once
+  every environment is brokered -- the broker always emits `tenant_id`. It is defaulted to
+  `tenant_id` and frozen (kept as a chart value for third-party consumers wiring a non-broker
+  IdP directly, mirroring ADR-0002's `authDisabled` precedent), not removed.
+- The per-IdP branching at our edge (audience/scope quirks, `account_person_map`-style seams)
+  collapses: the authenticator sees one issuer shape, and claim normalisation lives in versioned
+  mapper definitions.
+- Keycloak moves from "stand IdP" (ADR-0002) to a **production-path dependency**: availability,
+  upgrade cadence, and realm-change procedure now need the same ownership rigour ADR-0002 already
+  demanded for stands, extended to production environments.
+- Two token hops exist upstream of the session (upstream IdP -> broker, broker -> authenticator).
+  Session lifetime follows the **broker's** refresh tokens; upstream-IdP revocation reaches us
+  only as fast as the broker learns of it (its own token validation against the upstream).
+- Retiring fakeidp deletes a maintained service and the prod-versus-test issuer drift, at the
+  cost of Keycloak start-up wherever a live login flow is exercised; the in-process rig keeps
+  sub-second tests by mocking at the client seam.
+- The broker inherits the redirect-URI registration story: social providers and customer IdPs
+  register **one** callback (the broker's), not one per environment consumer.
+
+### Confirmation
+
+- A proof of concept -- realm defined only in config-cli YAML, brokering one upstream (GitHub or
+  a test OIDC provider) -- logs in through the **unchanged** authenticator and mints a gateway
+  JWT with the single `tenant_id` claim. This validates the two open risks recorded in #1782:
+  refresh-token behaviour through the broker (background refresher, `offline_access`) and logout
+  propagation (upstream back-channel -> broker -> authenticator back-channel).
+- `cfs validate --local-only` passes for this ADR, the amended ADR-0002, and the DESIGN.
+- On an environment with a social provider enabled, a login whose email matches no person is
+  refused with the unknown-person audit event; other configured providers keep working (#2163
+  acceptance criteria).
+- `git grep` finds no secret material in realm YAML: credentials resolve only through
+  environment-variable substitution at apply time.
+
+## Pros and Cons of the Options
+
+### Option A -- Keycloak broker + keycloak-config-cli, chosen
+
+- Good, because provider coverage is built in -- GitHub, Google, Facebook, Apple (KC 24+),
+  Microsoft, LinkedIn, plus OIDC and SAML brokering for customer IdPs -- no adapters to write.
+- Good, because claim shaping is first-class: per-provider mappers inject `tenant_id`, and the
+  protocol-mapper allow-list means upstream claims do not leak into tokens by default.
+- Good, because the operational investment is already made: ADR-0002 provisioned shared Keycloak,
+  and the compose stack already generates and imports a realm; this extends working mechanisms.
+- Good, because `keycloak-config-cli` is idempotent, actively maintained, uses the realm-export
+  schema, and substitutes secrets from the environment -- a clean gitops fit.
+- Bad, because Keycloak is a JVM with its own database and a fast upgrade cadence, now on the
+  production login path -- weight the config-as-code discipline mitigates but does not remove.
+- Bad, because refresh and logout semantics compose across two hops and must be proven (the PoC
+  confirmation), not assumed.
+
+### Option B -- Dex
+
+- Good, because it is a single Go binary whose only configuration mode is a file -- gitops-native
+  by construction, with connectors for GitHub, Google, Microsoft, LinkedIn, OIDC, SAML.
+- Bad (fatal), because Dex cannot inject custom claims -- the `tenant_id` failure ADR-0001
+  already verified end-to-end -- and offers no per-provider claim allow-listing.
+- Bad (fatal), because there is no Apple and no Facebook connector, so it cannot cover the
+  stated social-login roadmap.
+
+### Option C -- multi-issuer support in the authenticator
+
+- Good, because it adds no new runtime dependency and keeps every behaviour in one codebase.
+- Bad, because it rebuilds a broker inside a security-critical service: per-provider adapters
+  (including a bespoke GitHub OAuth-to-OIDC shim), N sets of refresh/logout quirks, and a
+  provider-selection UI contract -- permanent bespoke surface where Option A uses commodity.
+- Bad, because it contradicts the design's own boundary: the authenticator is deliberately a
+  single-issuer RP (`issuerUrl` is one config value), and every ADR so far has preserved that.
+
+### Option D -- another self-hosted broker (Zitadel / Authentik / Casdoor)
+
+- Good, because each supports brokering and declarative configuration to some degree (Terraform
+  provider, blueprints), and Casdoor could reuse the existing MariaDB.
+- Bad, because none matches Keycloak's brokering maturity plus built-in social coverage
+  (Apple/Facebook gaps or weaker SAML), and adopting one now would strand the Keycloak mechanisms
+  ADR-0002 and the compose stack already run.
+- Rejected as not better where it matters; Casdoor remains noted in ADR-0001's record.
+
+## More Information
+
+- Investigation report with the full comparison and config sketches: #1782
+  (issuecomment-5176199376); social-login requirements: #2163.
+- Existing realm generation: `deploy/compose/keycloak/README.md`, `deploy/compose/keycloak/gen-realm.py`
+  (roster-driven users, `tenant_id` protocol mapper, confidential client) -- the dev/CI half of
+  this decision, already in place.
+- Realm-content tooling: [`adorsys/keycloak-config-cli`](https://github.com/adorsys/keycloak-config-cli).
+  The Keycloak Operator's `KeycloakRealmImport` was considered for realm content and set aside:
+  import-oriented, weak day-2 updates; the Admin API v2 declarative resources are still preview.
+  The Terraform provider is mature but introduces state management foreign to the gitops flow.
+- Migration order: provision broker realms as code first; move social providers and new customer
+  IdPs behind the broker immediately; re-point each environment's `issuerUrl` from its directly
+  wired IdP to the broker realm as it is onboarded -- per environment, no flag day; retire
+  fakeidp last, once compose and CI default to the Keycloak realm.
+
+## Traceability
+
+- Resolves the investigation this component's ADRs deferred twice: ADR-0001 ("production
+  IdP/broker deferred") and ADR-0002 ("the production IdP choice remains deferred to #1782").
+- Amends `cpt-insightspec-adr-auth-0002-real-idp-on-deployed-stands`: its fakeidp survival
+  clause (compose, in-process rig, CI scaffold) is retired; its shared pre-provisioned Keycloak
+  and realm-generation decisions are extended, unchanged, to brokering.
+- Realises the environment wiring behind `cpt-insightspec-fr-auth-oidc-login` without changing
+  that contract; the single-`tenant_id` token shape of DD-AUTH-04 is preserved by broker-side
+  mappers.

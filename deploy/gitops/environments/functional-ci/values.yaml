@@ -47,6 +47,10 @@ authenticator:
     issuerUrl: 'http://{{ .Release.Name }}-fakeidp.{{ .Release.Namespace }}.svc.cluster.local:8084'
     clientId: "insight-authenticator"
     redirectUri: "http://localhost/auth/callback"
+    # fakeidp's `sub` claim IS the stable per-user id (see users.yaml) — no
+    # real connector backs it, but the persons-seed fixtures used in this
+    # environment key their `value_type='id'` rows on this made-up source_type.
+    sourceType: "fakeidp"
 
 fakeidp:
   deploy: true
@@ -56,5 +60,15 @@ fakeidp:
 analytics:
   replicaCount: 1
 
+identityResolution:
+  deploy: true
+
+# The authenticator's login-bootstrap resolve (GET /internal/persons/
+# by-external-id / by-email-override) is Rust-only — the frozen .NET
+# `identity` twin above never gained it (constructorfabric/insight#1960) — so
+# identity-resolution must ALSO be deployed here, and the authenticator talks
+# to it unconditionally (deploy/gitops/scripts/compose-app-secrets.sh enforces
+# this at apply time regardless of what `.identityUrl` — analytics' own
+# .NET<->Rust switch — is set to).
 identityResolution:
   deploy: true

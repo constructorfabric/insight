@@ -99,7 +99,23 @@ The authenticator is a plain HTTP service: no proxying, no K8s API access, no st
 | `cpt-insightspec-nfr-auth-rate-limit` | Layer-2 precise limits | Auth Controller | Redis token bucket by session/user + login-state cap | Flood test: 429 at cap, bounded Redis entries |
 | `cpt-insightspec-nfr-auth-fail-closed` | No auth without Redis | Session Manager | No local cache; readiness = Redis + keys loaded | Kill Redis; verify 401/503 + not-ready |
 
-**ADRs**: [`cpt-insightspec-adr-auth-0001-per-environment-idp-selection`](specs/ADR/0001-per-environment-idp-selection.md) -- which IdP backs the authenticator's OIDC client per environment (fakeidp for all dev environments -- CI, compose, and local k8s -- because it injects the `tenant_id` claim with zero extra infrastructure; Dex, heavy brokers, and a dev-login endpoint rejected; the production IdP/broker deferred), realising `cpt-insightspec-fr-auth-oidc-login` wiring without a code change. Remaining decisions are captured inline in [section 5](#5-design-decisions) until extracted alongside implementation.
+**ADRs**:
+
+- [`cpt-insightspec-adr-auth-0001-per-environment-idp-selection`](specs/ADR/0001-per-environment-idp-selection.md)
+  (superseded) -- fakeidp for all dev environments; Dex, heavy brokers, and a dev-login endpoint
+  rejected; the production IdP/broker deferred.
+- [`cpt-insightspec-adr-auth-0002-real-idp-on-deployed-stands`](specs/ADR/0002-real-idp-on-deployed-stands.md)
+  -- one shared, pre-provisioned Keycloak backs every deployed stand (realm per environment,
+  roster-generated, `tenant_id` protocol mapper); supersedes ADR-0001 for CI and local k8s.
+- [`cpt-insightspec-adr-auth-0003-keycloak-identity-broker`](specs/ADR/0003-keycloak-identity-broker.md)
+  -- Keycloak adopted as the identity broker for customer IdPs and social logins (GitHub #2163),
+  presenting one uniform OIDC issuer to the authenticator; realm content managed as code
+  (keycloak-config-cli from gitops, secrets via sealed secrets); per-provider mappers inject the
+  single `tenant_id` claim (DD-AUTH-04); amends ADR-0002 by retiring fakeidp everywhere.
+
+All three realise `cpt-insightspec-fr-auth-oidc-login` wiring without a code change -- the IdP
+stays a config value. Remaining decisions are captured inline in
+[section 5](#5-design-decisions) until extracted alongside implementation.
 
 ### 1.3 Architecture Layers
 
@@ -1132,5 +1148,5 @@ The authenticator's Key Store loads a mounted PKCS#8 **EC P-256** private key (`
 - **PRD**: [PRD.md](./PRD.md)
 - **Sibling**: [Gateway DESIGN](../gateway/DESIGN.md) -- the nginx edge: routing, exchange cache, subrequest contract consumer
 - **Parent**: [Backend PRD](../specs/PRD.md), [Backend DESIGN](../specs/DESIGN.md)
-- **ADRs**: [ADR/](./ADR/) -- to be authored alongside implementation; decisions captured inline in section 5 until then
+- **ADRs**: [specs/ADR/](./specs/ADR/) -- 0001 (per-environment IdP, superseded), 0002 (real IdP on deployed stands), 0003 (Keycloak identity broker, configured as code); further decisions captured inline in section 5 until extracted
 - **Decision document**: the nginx + authorization analysis (workspace-level) that mandated this architecture

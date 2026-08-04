@@ -122,6 +122,16 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: "insight-authenticator-dev-secret"
     redirectUri: "http://localhost/auth/callback"
+    # The identity-resolution source_type this IdP is seeded under — required
+    # (constructorfabric/insight#1960): the login-bootstrap resolve
+    # (GET /internal/persons/by-external-id) is scoped to it, and it only
+    # exists on identity-resolution (Rust), never the .NET identity twin.
+    sourceType: "keycloak"
+    # id_token claim carrying the stable external user id for sourceType.
+    # gen-realm.py pins each realm user's `id` to their OWN roster uuid (see
+    # deploy/compose/keycloak/gen-realm.py), so Keycloak's `sub` (the default)
+    # already IS that stable id — no Entra-style non-default claim needed here.
+    externalIdClaim: "sub"
     # Optional tenant sourcing: `tenantClaim` names the id_token claim carrying
     # the single tenant (default `tenant_id` — fakeidp/Keycloak; Entra: `tid`);
     # `defaultTenantId` is the fallback for a claim-less IdP (e.g. Okta),

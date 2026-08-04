@@ -6,7 +6,8 @@
 //! `oidc-authn-plugin` verifies the gateway JWT and maps its claims into the
 //! request `SecurityContext`. Implements the full ported surface: `POST
 //! /v1/profiles`, persons-seed, roles / person-roles / visibility, org subchart,
-//! and the internal service-only by-email lookup.
+//! and the internal service-only resolve lookup (email or source-scoped
+//! external id).
 
 mod api;
 mod config;

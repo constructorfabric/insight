@@ -317,10 +317,25 @@ jobs:
           context: src/backend
           file: src/backend/services/analytics/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-analytics,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          # PR amd64 legs write a loadable tarball instead of discarding the
+          # result — the e2e rig consumes it (see "Upload image for the e2e
+          # rig" below). Other legs keep the push-by-digest output.
+          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-analytics:e2e-prebuilt' || '' }}
+          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-analytics,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           cache-from: type=gha,scope=analytics-${{ matrix.arch }}
           # Cache writes from PR runs land in branch-isolated caches invisible to other refs, yet still consume the shared 10 GB repo quota — only main/dispatch runs export.
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=analytics-{0},ignore-error=true', matrix.arch) || '' }}
+      # Hand the PR-built image to e2e-bronze-to-api.yml's runner build so it
+      # doesn't recompile the same source (registry has no PR images to pull).
+      - name: Upload image for the e2e rig
+        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-prebuilt-insight-analytics
+          path: /tmp/e2e-prebuilt.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
@@ -338,12 +353,19 @@ jobs:
 
   merge-analytics:
     needs: [changes, backend-analytics]
+    # != 'skipped', not == 'success': a failed platform build must turn this
+    # gate red, not skip it — a skipped required check reads as satisfied.
     if: |
       always()
-      && needs.backend-analytics.result == 'success'
+      && needs.backend-analytics.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Require the platform builds to have passed
+        if: needs.backend-analytics.result != 'success'
+        run: |
+          echo "::error::backend-analytics finished '${{ needs.backend-analytics.result }}' — nothing to merge."
+          exit 1
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -440,10 +462,15 @@ jobs:
     needs: [changes, backend-authenticator]
     if: |
       always()
-      && needs.backend-authenticator.result == 'success'
+      && needs.backend-authenticator.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Require the platform builds to have passed
+        if: needs.backend-authenticator.result != 'success'
+        run: |
+          echo "::error::backend-authenticator finished '${{ needs.backend-authenticator.result }}' — nothing to merge."
+          exit 1
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -540,10 +567,15 @@ jobs:
     needs: [changes, backend-gateway]
     if: |
       always()
-      && needs.backend-gateway.result == 'success'
+      && needs.backend-gateway.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Require the platform builds to have passed
+        if: needs.backend-gateway.result != 'success'
+        run: |
+          echo "::error::backend-gateway finished '${{ needs.backend-gateway.result }}' — nothing to merge."
+          exit 1
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -621,9 +653,20 @@ jobs:
           context: src/backend
           file: src/backend/services/identity-resolution/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          # PR amd64 legs feed the e2e rig — see backend-analytics.
+          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
+          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           cache-from: type=gha,scope=identity-resolution-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=identity-resolution-{0},ignore-error=true', matrix.arch) || '' }}
+      - name: Upload image for the e2e rig
+        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-prebuilt-insight-identity-resolution
+          path: /tmp/e2e-prebuilt.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
@@ -643,10 +686,15 @@ jobs:
     needs: [changes, backend-identity-resolution]
     if: |
       always()
-      && needs.backend-identity-resolution.result == 'success'
+      && needs.backend-identity-resolution.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Require the platform builds to have passed
+        if: needs.backend-identity-resolution.result != 'success'
+        run: |
+          echo "::error::backend-identity-resolution finished '${{ needs.backend-identity-resolution.result }}' — nothing to merge."
+          exit 1
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -808,10 +856,15 @@ jobs:
     needs: [changes, toolbox]
     if: |
       always()
-      && needs.toolbox.result == 'success'
+      && needs.toolbox.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Require the platform builds to have passed
+        if: needs.toolbox.result != 'success'
+        run: |
+          echo "::error::toolbox finished '${{ needs.toolbox.result }}' — nothing to merge."
+          exit 1
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -926,10 +979,15 @@ jobs:
     needs: [changes, ui-tests]
     if: |
       always()
-      && needs.ui-tests.result == 'success'
+      && needs.ui-tests.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Require the platform builds to have passed
+        if: needs.ui-tests.result != 'success'
+        run: |
+          echo "::error::ui-tests finished '${{ needs.ui-tests.result }}' — nothing to merge."
+          exit 1
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -1015,11 +1073,23 @@ jobs:
           context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
           file: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }},push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          # insight-jira-enrich is the one connector image the e2e rig bakes
+          # into its runner — its PR amd64 leg feeds it (see backend-analytics).
+          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && matrix.entry.name == 'insight-jira-enrich' && format('{0}:e2e-prebuilt', matrix.entry.name) || '' }}
+          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && matrix.entry.name == 'insight-jira-enrich' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push={2}', env.IMAGE_PREFIX, matrix.entry.name, needs.changes.outputs.should_push == 'true') }}
           # Scope cache per (image name, arch) so unrelated connectors and
           # cross-arch builds don't evict each other.
           cache-from: type=gha,scope=${{ matrix.entry.name }}-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope={0}-{1},ignore-error=true', matrix.entry.name, matrix.arch) || '' }}
+      - name: Upload image for the e2e rig
+        if: github.event_name == 'pull_request' && matrix.arch == 'amd64' && matrix.entry.name == 'insight-jira-enrich'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-prebuilt-insight-jira-enrich
+          path: /tmp/e2e-prebuilt.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
@@ -1043,7 +1113,7 @@ jobs:
     if: |
       always()
       && needs.discover-images.outputs.any == 'true'
-      && needs.build-image.result == 'success'
+      && needs.build-image.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     strategy:
@@ -1051,6 +1121,11 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
     steps:
+      - name: Require the platform builds to have passed
+        if: needs.build-image.result != 'success'
+        run: |
+          echo "::error::build-image finished '${{ needs.build-image.result }}' — nothing to merge."
+          exit 1
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

@@ -382,3 +382,43 @@ def get_dev_user_email() -> str:
             "       It anchors the development team lead in the demo roster."
         )
     return val
+
+
+# fakeidp's users.yaml pins its first user's `sub` to "fakeidp|dev" (stable
+# regardless of FAKEIDP_DEV_USER_EMAIL overriding the email) — that's the only
+# fakeidp identity a fresh dev/demo/CI stack ever logs in as.
+_FAKEIDP_DEV_LEAD_EXTERNAL_ID = "fakeidp|dev"
+
+
+def get_login_id_pairs(roster: list[Person]) -> list[tuple[str, str]]:
+    """Resolve the `(person_uuid, external_id)` pairs to seed as
+    `value_type='id'` login-bootstrap observations, for the ACTIVE login IdP.
+
+    dev-compose.sh's `--auth` flag (`AUTH_MODE`, forwarded into this
+    container's environment) selects which IdP fixture applies, and the two
+    are NOT symmetric in how many personas can actually log in:
+    - keycloak: gen-realm.py sets EVERY realm user's Keycloak `id` to that
+      person's OWN roster UUID (`"id": person.uuid`), and Keycloak issues
+      `sub` equal to the user's internal id verbatim — so every seeded
+      persona's external id IS their own roster uuid, and the whole roster
+      can log in (matching the realm, which seeds all of them).
+    - fakeidp (default): its users.yaml only pins a handful of FIXED test
+      identities unrelated to the demo roster (dev/alice/bob/carol — see
+      services/fakeidp/users.yaml), of which only the first ("fakeidp|dev")
+      corresponds to a roster member (the dev lead, anchored via
+      DEV_USER_EMAIL). Only that one persona can log in.
+    Getting this wrong means the login-bootstrap 403s: the seeded
+    `value_type='id'` row would carry a value the id_token never presents.
+    """
+    mode = os.environ.get("AUTH_MODE", "fakeidp").strip().lower()
+    if mode == "keycloak":
+        return [(p.uuid, p.uuid) for p in roster]
+    return [(DEV_LEAD_UUID, _FAKEIDP_DEV_LEAD_EXTERNAL_ID)]
+
+
+def get_idp_source_type() -> str:
+    """Resolve the login IdP's identity-resolution source_type, honouring
+    IDP_SOURCE_TYPE — MUST match the authenticator's `idp.source_type`, or the
+    dev-lead's seeded value_type='id' row won't be the one the login-bootstrap
+    lookup finds."""
+    return os.environ.get("IDP_SOURCE_TYPE", "fakeidp").strip() or "fakeidp"

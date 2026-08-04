@@ -66,13 +66,16 @@ pub async fn resolve_person_ids_by_email(
     person_ids_from_rows(rows)
 }
 
-/// Tenant-AGNOSTIC email → `person_id` resolution for the login bootstrap (the
-/// authenticator's service-only `GET /internal/persons/by-email/{email}` call):
-/// at login the caller's tenant is not yet known, so the tenant filter is
-/// dropped and any matching tenant's latest observation wins. Returns the single
-/// winning `person_id`, or `None` when the email is unknown. Ported verbatim from
-/// `Sql.cs::ResolvePersonIdByEmailAnyTenant` (window `ROW_NUMBER()` → raw SQL,
-/// see `infra::db` module docs + constructorfabric/gears-rust#4239).
+/// Tenant-AGNOSTIC email → `person_id` resolution for the authenticator's
+/// admin `__override` (view-as) service-only lookup
+/// (`GET /internal/persons/by-email-override`) ONLY — the login bootstrap
+/// resolves by external id (see `resolve_person_id_by_source_any_tenant`
+/// below), NEVER by email. At override time neither the target's tenant is
+/// yet known, so the tenant filter is dropped and any matching tenant's
+/// latest observation wins. Returns the single winning `person_id`, or
+/// `None` when the email is unknown. Ported
+/// verbatim from `Sql.cs::ResolvePersonIdByEmailAnyTenant` (window `ROW_NUMBER()`
+/// → raw SQL, see `infra::db` module docs + constructorfabric/gears-rust#4239).
 ///
 /// # Errors
 ///
@@ -104,6 +107,76 @@ pub async fn resolve_person_id_by_email_any_tenant(
 
     let stmt =
         Statement::from_sql_and_values(DbBackend::MySql, SQL, [email.trim().to_owned().into()]);
+
+    match db.query_one(stmt).await? {
+        Some(row) => {
+            let bytes: Vec<u8> = row.try_get("", "person_id")?;
+            Ok(Some(Uuid::from_slice(&bytes)?))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Tenant-AGNOSTIC `(source_type, external_id)` → `person_id` resolution for the
+/// login bootstrap ONLY (the authenticator's service-only
+/// `GET /internal/persons/by-external-id?source_type=...&external_id=...`
+/// call — a SEPARATE route from the email-override lookup above): at login
+/// the caller's tenant is not yet known, so unlike
+/// `resolve_person_ids_by_source_id` this does not scope by a per-tenant
+/// `insight_source_id` (connector instance) — only the source **type** (e.g.
+/// `ms-entra`) and the source-native external id are known ahead of tenant
+/// resolution. Returns the single winning `person_id`, or `None` when the pair
+/// is unknown. Same latest-observation-wins semantics as
+/// `resolve_person_id_by_email_any_tenant`.
+///
+/// SECURITY INVARIANT this relies on (same one email-based any-tenant lookup
+/// already relied on): `(source_type, external_id)` must be unique across
+/// every tenant sharing this database, or the wrong tenant's person could
+/// win. This holds today because `idp.source_type`/`issuer_url` are ONE
+/// value per authenticator deployment — every login for every tenant behind
+/// it goes through the SAME real external IdP, so `external_id` is only as
+/// unique as that one IdP's own id space (Entra `oid` / Keycloak's internal
+/// user id are effectively globally unique within their own directory).
+/// Revisit this comment when multi-IdP config lands (constructorfabric/insight#1960
+/// follow-ups) — that's the point where two DIFFERENT real `IdPs` could
+/// plausibly share a `source_type` label and this invariant needs an
+/// explicit uniqueness check, not just "it happens to hold today".
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn resolve_person_id_by_source_any_tenant(
+    db: &DatabaseConnection,
+    source_type: &str,
+    external_id: &str,
+) -> anyhow::Result<Option<Uuid>> {
+    const SQL: &str = r"
+        WITH ranked AS (
+            SELECT
+                person_id,
+                id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, value_type, value_id
+                    ORDER BY created_at DESC, id DESC
+                ) AS rn,
+                created_at
+            FROM persons
+            WHERE value_type = 'id'
+              AND insight_source_type = ?
+              AND value_id = ?
+        )
+        SELECT person_id
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+    ";
+
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [source_type.to_owned().into(), external_id.to_owned().into()],
+    );
 
     match db.query_one(stmt).await? {
         Some(row) => {

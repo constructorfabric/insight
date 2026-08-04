@@ -99,6 +99,8 @@ UMBRELLA_BASE = [
     "authenticator.oidc.clientSecret=s",
     "--set",
     "authenticator.oidc.redirectUri=https://x/cb",
+    "--set",
+    "authenticator.oidc.sourceType=ms-entra",
 ]
 
 

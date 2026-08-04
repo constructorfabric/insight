@@ -55,14 +55,21 @@ pub fn register_routes(
 /// + its OpenAPI spec + auth/error metadata).
 #[allow(clippy::too_many_lines)] // one flat block per route — readability over splitting
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
-    // Internal, SERVICE-ONLY S2S lookup for the login bootstrap. Registered as a
-    // raw route so it stays out of the generated OpenAPI (matching the .NET
-    // `.ExcludeFromDescription()`); auth is still enforced by the host gateway
-    // and `SecurityContext` is injected by the host authn pipeline, same as
-    // every other route. The handler itself gates on `subject_type == "service"`.
+    // Internal, SERVICE-ONLY S2S resolvers — TWO SEPARATE routes so the
+    // login-bootstrap (external id) and the authenticator's admin `__override`
+    // view-as feature (email) can never be confused for one another via a
+    // shared dispatch parameter. Registered as raw routes so they stay out of
+    // the generated OpenAPI (matching the .NET `.ExcludeFromDescription()`);
+    // auth is still enforced by the host gateway and `SecurityContext` is
+    // injected by the host authn pipeline, same as every other route. Each
+    // handler itself gates on `subject_type == "service"`.
     let router = router.route(
-        "/internal/persons/by-email/{email}",
-        axum::routing::get(handlers::internal_person_by_email),
+        "/internal/persons/by-external-id",
+        axum::routing::get(handlers::internal_person_by_external_id),
+    );
+    let router = router.route(
+        "/internal/persons/by-email-override",
+        axum::routing::get(handlers::internal_person_by_email_override),
     );
 
     let router = OperationBuilder::post("/v1/profiles")

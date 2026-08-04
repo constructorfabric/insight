@@ -191,7 +191,7 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.04.08.43-e74c321" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.04.14.06-d174090" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -369,6 +369,13 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
+    # The identity-resolution source_type this IdP is seeded under (e.g.
+    # "ms-entra") — required; the login-bootstrap person lookup is scoped to
+    # it. No default: an empty value fails config validation at boot.
+    sourceType: ""
+    # id_token claim carrying the IdP's stable external user id for
+    # sourceType (e.g. Entra's "oid"). Defaults to "sub".
+    externalIdClaim: "sub"
   # Honor `/auth/login?__override=<email>` (view-as, #1941): the session is
   # minted for that person instead of the authenticated one. Dev/demo
   # environments ONLY — MUST stay false anywhere real users log in.
@@ -441,14 +448,17 @@ analytics:
 # The persons-store API. Reads from MariaDB `persons` written by the seed
 # pipeline (src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py)
 # fed off ClickHouse `identity.identity_inputs`. NOT an OIDC provider.
-# Off by default — enable only after at least one connector sync has
-# populated `identity_inputs` and the seed has written `persons` rows.
 # Consumers reach it at `http://<release>-identity-resolution:8082`.
+# `deploy: true` is mandatory: the authenticator's login-bootstrap resolve
+# (GET /internal/persons/by-external-id / by-email-override) lives here
+# (constructorfabric/insight#1960), and the authenticator is always installed
+# (its "no deploy flag" app-service contract); `insight.validate` fails the
+# render otherwise.
 # SCHEMA OWNER: identity-resolution's migrate initContainer applies the
 # migrations + first-admin bootstrap against `databaseName` — see ADR-0006
 # (service-owned migrations).
 identityResolution:
-  deploy: false
+  deploy: true
   replicaCount: 1
   image:
     repository: ghcr.io/constructorfabric/insight-identity-resolution

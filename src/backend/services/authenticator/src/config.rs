@@ -37,6 +37,20 @@ pub struct IdpConfig {
     /// array is tolerated: first entry wins). fakeidp/Keycloak emit
     /// `tenant_id`; Entra emits `tid`.
     pub tenant_claim: String,
+    /// The `insight_source_type` this IdP is known to identity-resolution as
+    /// (e.g. `ms-entra`) — the connector whose `identity_inputs` seed the
+    /// matching `persons` rows. Login resolution calls
+    /// `GET /internal/persons/by-external-id?source_type=<this>&external_id=<external_id>`;
+    /// required (the login-bootstrap has no other way to know which source
+    /// the caller authenticated against).
+    pub source_type: String,
+    /// id_token claim carrying the IdP's stable external user id for
+    /// `source_type` — the join key `identity_inputs` seeded it under (e.g.
+    /// Entra's `oid`; the generic OIDC `sub` is NOT the same thing for
+    /// directory-backed IdPs, see the `ms-entra` connector schema). Defaults
+    /// to `sub` (fine for IdPs, like fakeidp, where `sub` IS the stable
+    /// directory id).
+    pub external_id_claim: String,
     /// Fallback tenant when the id_token carries no tenant claim at all (e.g.
     /// Okta). Empty = no fallback: the gateway JWT gets an empty `tenant_id`
     /// and downstream services fail closed. Interim until the Identity
@@ -71,6 +85,8 @@ impl Default for IdpConfig {
             client_id: String::new(),
             client_secret: String::new(),
             tenant_claim: "tenant_id".to_owned(),
+            source_type: String::new(),
+            external_id_claim: "sub".to_owned(),
             default_tenant_id: String::new(),
             extra_ca_cert_path: String::new(),
             refresh_enabled: true,
@@ -416,6 +432,8 @@ impl AuthenticatorConfig {
             ("identity_url", &self.identity_url),
             ("idp.issuer_url", &self.idp.issuer_url),
             ("idp.client_id", &self.idp.client_id),
+            ("idp.source_type", &self.idp.source_type),
+            ("idp.external_id_claim", &self.idp.external_id_claim),
         ] {
             anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
         }
@@ -505,6 +523,10 @@ mod tests {
             idp: IdpConfig {
                 issuer_url: "https://idp.example".to_owned(),
                 client_id: "client".to_owned(),
+                // Required since the login bootstrap resolves by external id:
+                // `IdpConfig::default()` leaves it empty, so a helper that
+                // omitted it would build a config `validate()` refuses.
+                source_type: "ms-entra".to_owned(),
                 ..IdpConfig::default()
             },
             ..AuthenticatorConfig::default()

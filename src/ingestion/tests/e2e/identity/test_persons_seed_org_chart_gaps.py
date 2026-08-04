@@ -116,7 +116,7 @@ def _person_id_by_email(identity_svc, email: str) -> str:
     with identity_svc.client(
         sub=str(seed.SEED_ADMIN), tenant=str(seed.SEED_TENANT), sub_type="service", roles="service"
     ) as svc:
-        r = svc.get(f"/internal/persons/by-email/{email}")
+        r = svc.get("/internal/persons/by-email-override", params={"email": email})
         assert r.status_code == 200, f"status={r.status_code} body={r.text}"
         return r.json()["insight_source_id"]
 

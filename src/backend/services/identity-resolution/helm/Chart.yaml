@@ -4,5 +4,5 @@ description: Insight Identity Resolution — Rust port of the .NET identity serv
 version: 0.1.0
 # appVersion is managed by the release pipeline (build-images.yml): it is
 # bumped to the freshly built image tag on merges that change this service.
-appVersion: "2026.08.04.08.43-e74c321"
+appVersion: "2026.08.04.13.33-12a959f"
 type: application

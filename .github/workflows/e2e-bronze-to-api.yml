@@ -15,9 +15,11 @@ name: E2E — Bronze to API
 # here is what only this rig can do — bronze → dbt → ClickHouse → analytics
 # response, over fixtures it seeds itself.
 #
-# Topology: a shared upstream `build` job compiles the runner image ONCE (the
-# expensive step — baking in analytics + each connector's enrich binary via
-# build-only services) and hands it to `e2e-metrics` as a saved image
+# Topology: a shared upstream `build` job assembles the runner image ONCE —
+# on PRs from the component images build-images.yml already built (or the
+# published :latest for path-skipped components), elsewhere by compiling
+# analytics + each connector's enrich binary via build-only services — and
+# hands it to `e2e-metrics` as a saved image
 # artifact, which also makes `build` the SOLE writer of the GHA BuildKit
 # cache scopes wired in compose/docker-compose.cache.yml (two concurrent
 # writers to the same scope key just thrash each other's cache). The lane
@@ -54,6 +56,8 @@ env:
 
 permissions:
   contents: read
+  # e2e-suite reads this SHA's "Build & Push Container Images" run conclusion.
+  actions: read
 
 jobs:
   # `e2e-suite` emits the "Run E2E suite" status check the `main` ruleset
@@ -84,7 +88,11 @@ jobs:
 
       # docker-container buildx driver — required for the gha cache export that
       # compose/docker-compose.cache.yml wires onto the build-only services.
+      # From-source path only: the PR path below needs the DEFAULT driver, which
+      # is the only one that resolves `docker-image://` contexts from the local
+      # daemon store (compose/docker-compose.prebuilt.yml).
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: github.event_name != 'pull_request'
 
       # Expose ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL to run steps. The
       # type=gha cache backend needs them; GitHub only hands them to JS
@@ -92,6 +100,72 @@ jobs:
       # them and buildx SILENTLY drops the cache_from/cache_to config —
       # every run was a full Rust recompile.
       - uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3
+        if: github.event_name != 'pull_request'
+
+      # ─── PR path: consume the images build-images.yml already built ─────
+      # A PR run of that workflow compiles the exact same source this rig
+      # would (same Dockerfiles, same contexts) and uploads the amd64 legs as
+      # e2e-prebuilt-* artifacts; components it path-skipped are unchanged in
+      # the merge ref, so the published :latest IS their build. Either way the
+      # rig compiles no Rust here. Components whose artifact the run inventory
+      # promises must download — no silent registry fallback, that would bake
+      # a stale binary into a green run.
+      #
+      # merge_group / dispatch SHAs have no build-images run, so those events
+      # keep the from-source path below.
+      - name: Fetch pre-built component images
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          run_json=""
+          for attempt in $(seq 1 40); do
+            run_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${HEAD_SHA}&per_page=100" \
+              --jq '[.workflow_runs[] | select(.name == "Build & Push Container Images")] | sort_by(.run_started_at) | last // empty')
+            if [ -z "$run_json" ]; then
+              echo "No image-build run for ${HEAD_SHA} — every component comes from the registry."
+              break
+            fi
+            conclusion=$(jq -r '.conclusion // ""' <<<"$run_json")
+            if [ "$conclusion" = "success" ]; then
+              break
+            fi
+            if [ -n "$conclusion" ]; then
+              echo "::error::Image-build run concluded '${conclusion}' — its artifacts can't be trusted; see $(jq -r '.html_url' <<<"$run_json")"
+              exit 1
+            fi
+            echo "Image-build run still in progress (attempt ${attempt}/40); retrying in 30s…"
+            sleep 30
+          done
+          if [ -n "$run_json" ] && [ "$(jq -r '.conclusion // ""' <<<"$run_json")" != "success" ]; then
+            echo "::error::Image-build run did not finish within the polling window."
+            exit 1
+          fi
+
+          expected=""
+          if [ -n "$run_json" ]; then
+            run_id=$(jq -r '.id' <<<"$run_json")
+            expected=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" \
+              --jq '[.artifacts[].name | select(startswith("e2e-prebuilt-"))] | join(" ")')
+            if [ -n "$expected" ]; then
+              gh run download "$run_id" -R "$GITHUB_REPOSITORY" -p 'e2e-prebuilt-*' -D /tmp/e2e-prebuilt
+            fi
+          fi
+
+          for name in insight-analytics insight-identity-resolution insight-jira-enrich; do
+            case " ${expected} " in
+              *" e2e-prebuilt-${name} "*)
+                docker load < "/tmp/e2e-prebuilt/e2e-prebuilt-${name}/e2e-prebuilt.tar"
+                echo "${name}: PR-built artifact"
+                ;;
+              *)
+                docker pull -q "ghcr.io/constructorfabric/${name}:latest"
+                docker tag "ghcr.io/constructorfabric/${name}:latest" "${name}:e2e-prebuilt"
+                echo "${name}: registry :latest (unchanged by this PR)"
+                ;;
+            esac
+          done
 
       # ─── Build the runner image ─────────────────────────────────────────
       # The runner bakes in analytics + each connector's enrich binary, each
@@ -99,14 +173,16 @@ jobs:
       # `additional_contexts` (see compose/docker-compose.runner.yml). Nothing is
       # compiled inside the runner at test time.
       #
-      # E2E_COMPOSE_OVERLAYS layers compose/docker-compose.cache.yml on top, which
-      # points each Rust build (and the runner's pip layer) at the GitHub Actions
-      # BuildKit cache. On a warm cache with an unchanged Cargo.lock/pyproject.toml
-      # the dependency-compile layers restore instead of recompiling.
+      # E2E_COMPOSE_OVERLAYS picks the source of those binaries: PRs point the
+      # contexts at the pre-built images fetched above (docker-compose.prebuilt.yml
+      # — pip layer uncached, but no Rust compiles at all); merge_group /
+      # dispatch compile from source with the GHA BuildKit cache
+      # (docker-compose.cache*.yml) — on a warm cache with an unchanged
+      # Cargo.lock the dependency-compile layers restore instead of recompiling.
       - name: Build runner image
         run: ./e2e.sh build
         env:
-          E2E_COMPOSE_OVERLAYS: ${{ github.event_name == 'merge_group' && 'compose/docker-compose.cache-ro.yml' || 'compose/docker-compose.cache.yml' }}
+          E2E_COMPOSE_OVERLAYS: ${{ github.event_name == 'pull_request' && 'compose/docker-compose.prebuilt.yml' || (github.event_name == 'merge_group' && 'compose/docker-compose.cache-ro.yml' || 'compose/docker-compose.cache.yml') }}
 
       # ─── Hand the built image to both lanes ─────────────────────────────
       # Only insight-e2e-runner:latest travels: analytics and jira-enrich
@@ -291,12 +367,19 @@ jobs:
     # It no longer folds in an endpoint-coverage gate: after the api/identity
     # retirement this workflow has none — those contracts and their gate live in
     # `e2e-stand.yml`, under its own umbrella ("Stand E2E").
+    #
+    # It DOES fold in the image-build gate: this required check also goes red
+    # when this SHA's "Build & Push Container Images" run failed, so a PR with
+    # a broken service image can't be merged even though that workflow's own
+    # checks aren't in the ruleset.
     needs:
       - build
       - e2e-metrics
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 5 min sufficed for the needs-check alone; the image-build gate below may
+    # poll a straggling build-images run for up to 10 more.
+    timeout-minutes: 15
     steps:
       - name: Require the build and the data-path lane to have succeeded
         run: |
@@ -307,3 +390,40 @@ jobs:
             exit 1
           fi
           echo "E2E suite passed: build + the metrics lane succeeded."
+
+      # build-images.yml is a separate workflow, so `needs:` can't reach it;
+      # ask the API for this SHA's run instead. Absent (path-skipped, or a
+      # merge_group SHA — that workflow has no merge_group trigger) passes;
+      # anything but success fails. The image builds finish long before this
+      # job starts, so the poll loop only covers stragglers.
+      - name: Require image builds on this SHA to be green or absent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          for attempt in $(seq 1 20); do
+            run_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${HEAD_SHA}&per_page=100" \
+              --jq '[.workflow_runs[] | select(.name == "Build & Push Container Images")] | sort_by(.run_started_at) | last // empty')
+            if [ -z "$run_json" ]; then
+              echo "No image-build run for ${HEAD_SHA} — builds were path-skipped."
+              exit 0
+            fi
+            conclusion=$(jq -r '.conclusion // ""' <<<"$run_json")
+            run_url=$(jq -r '.html_url' <<<"$run_json")
+            case "$conclusion" in
+              success)
+                echo "Image builds succeeded: ${run_url}"
+                exit 0
+                ;;
+              "")
+                echo "Image-build run still in progress (attempt ${attempt}/20); retrying in 30s…"
+                sleep 30
+                ;;
+              *)
+                echo "::error::Image builds concluded '${conclusion}' on this commit — see ${run_url}"
+                exit 1
+                ;;
+            esac
+          done
+          echo "::error::Image-build run did not finish within the polling window."
+          exit 1

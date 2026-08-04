@@ -72,6 +72,7 @@ impl Gear for AuthenticatorGear {
             keystore.clone(),
             cfg.gateway_issuer.clone(),
             cfg.jwt_audience.clone(),
+            cfg.idp.source_type.clone(),
         ));
 
         // Parse the service-token registry (DD-AUTH-05). Fails closed at boot

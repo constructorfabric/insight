@@ -488,6 +488,10 @@ cmd_up() {
     fakeidp|keycloak) ;;
     *) echo "ERROR: AUTH_MODE must be fakeidp|keycloak (got: $AUTH_MODE)" >&2; return 1 ;;
   esac
+  # The seed-sample container reads AUTH_MODE too (deploy/seed/profiles.py's
+  # get_login_id_pairs) to pick which roster personas get a login-id fixture —
+  # export so the child `docker compose` process's env-var interpolation sees it.
+  export AUTH_MODE
 
   # Browser OIDC: default the fakeidp issuer to the host IP (unless pinned).
   # keycloak mode sets its own host-IP issuer in the AUTH_MODE=keycloak block.
@@ -675,6 +679,13 @@ YML
     export AUTHENTICATOR_OIDC_ISSUER="${kc_base}/realms/insight"
     export OIDC_CLIENT_ID="insight-authenticator"
     export OIDC_CLIENT_SECRET="insight-authenticator-dev-secret"
+    # The login-bootstrap resolve is scoped to idp.source_type; keycloak's
+    # sub differs in KIND from fakeidp's (gen-realm.py sets each realm user's
+    # id to their OWN roster uuid, so sub IS that uuid — not the fixed
+    # "fakeidp|dev" string fakeidp issues), so it must be seeded/looked-up
+    # under its own source_type, not the fakeidp default (see
+    # deploy/seed/profiles.py::get_login_id_pairs).
+    export AUTHENTICATOR_IDP_SOURCE_TYPE="keycloak"
     echo "keycloak issuer → ${kc_base}/realms/insight (host IP; browser + authenticator reachable)"
 
     # AUTH_DISABLED is a separate, blunter bypass; if it's on, real login is
