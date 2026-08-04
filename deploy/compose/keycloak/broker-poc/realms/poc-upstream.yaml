@@ -1,0 +1,35 @@
+# Throwaway UPSTREAM OIDC provider for the ADR-0003 broker PoC (#2194).
+#
+# Stands in for "a customer IdP": a realm with one login-capable user and one
+# confidential client (`insight-broker`) that the broker realm's identity
+# provider uses for the code exchange. Applied by keycloak-config-cli
+# (see ../poc-up.sh); env-var placeholders are substituted at apply time.
+realm: poc-upstream
+enabled: true
+sslRequired: none
+users:
+  # Must match a seeded person in Identity: the (unchanged) authenticator
+  # refuses logins that resolve to no person. poc-up.sh passes DEV_USER_EMAIL.
+  - username: $(env:POC_UPSTREAM_USER_EMAIL)
+    email: $(env:POC_UPSTREAM_USER_EMAIL)
+    firstName: Upstream
+    lastName: Persona
+    enabled: true
+    emailVerified: true
+    credentials:
+      - type: password
+        value: $(env:POC_UPSTREAM_USER_PASSWORD)
+        temporary: false
+clients:
+  # The broker's registration at this upstream. Its redirect is the broker
+  # realm's brokering endpoint — the only place codes may return to.
+  - clientId: insight-broker
+    protocol: openid-connect
+    publicClient: false
+    secret: $(env:POC_BROKER_CLIENT_SECRET)
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    redirectUris:
+      - $(env:POC_KC_PUBLIC_BASE)/realms/insight-broker/broker/poc-upstream/endpoint
+    webOrigins: []

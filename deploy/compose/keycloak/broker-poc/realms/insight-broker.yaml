@@ -1,0 +1,108 @@
+# Throwaway BROKER realm for the ADR-0003 PoC (#2194).
+#
+# This is the shape ADR-0003 decides on, reduced to one upstream:
+#   - one brokered OIDC identity provider (`poc-upstream`),
+#   - a hardcoded-attribute-idp-mapper stamping the single `tenant_id`
+#     user attribute at first broker login,
+#   - the `insight-authenticator` confidential client whose protocol mapper
+#     emits that attribute as the `tenant_id` token claim,
+#   - a browser flow that auto-redirects to the sole IdP (the "single-IdP
+#     realm auto-redirects" behaviour the ADR promises).
+#
+# Applied by keycloak-config-cli (see ../poc-up.sh); env-var placeholders are
+# substituted at apply time — no secret material lives in this file.
+realm: insight-broker
+enabled: true
+sslRequired: none
+browserFlow: poc-broker-browser
+
+identityProviders:
+  - alias: poc-upstream
+    displayName: PoC upstream OIDC
+    providerId: oidc
+    enabled: true
+    # The upstream asserts the email; trust it so first broker login does not
+    # stop at a verify-email step.
+    trustEmail: true
+    firstBrokerLoginFlowAlias: first broker login
+    config:
+      issuer: $(env:POC_KC_PUBLIC_BASE)/realms/poc-upstream
+      authorizationUrl: $(env:POC_KC_PUBLIC_BASE)/realms/poc-upstream/protocol/openid-connect/auth
+      tokenUrl: $(env:POC_KC_PUBLIC_BASE)/realms/poc-upstream/protocol/openid-connect/token
+      jwksUrl: $(env:POC_KC_PUBLIC_BASE)/realms/poc-upstream/protocol/openid-connect/certs
+      logoutUrl: $(env:POC_KC_PUBLIC_BASE)/realms/poc-upstream/protocol/openid-connect/logout
+      useJwksUrl: "true"
+      validateSignature: "true"
+      clientId: insight-broker
+      clientSecret: $(env:POC_BROKER_CLIENT_SECRET)
+      clientAuthMethod: client_secret_post
+      defaultScope: openid profile email
+      syncMode: FORCE
+      backchannelSupported: "true"
+
+identityProviderMappers:
+  # ADR-0003: a fixed per-registration tenant — every identity arriving via
+  # this provider belongs to exactly one Insight tenant. The mapper writes the
+  # user attribute; the client protocol mapper below turns it into the claim.
+  - name: tenant-id
+    identityProviderAlias: poc-upstream
+    identityProviderMapper: hardcoded-attribute-idp-mapper
+    config:
+      syncMode: INHERIT
+      attribute: tenant_id
+      attribute.value: $(env:POC_TENANT_ID)
+
+clients:
+  # Same shape as the compose realm generator's insight-authenticator client
+  # (deploy/compose/keycloak/gen-realm.py): confidential, code flow only, and
+  # a user-attribute protocol mapper emitting the single-string `tenant_id`.
+  - clientId: insight-authenticator
+    protocol: openid-connect
+    publicClient: false
+    secret: $(env:POC_AUTHENTICATOR_CLIENT_SECRET)
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    redirectUris:
+      - http://localhost:3000/auth/callback
+      - http://localhost:8080/auth/callback
+    webOrigins: []
+    protocolMappers:
+      - name: tenant_id
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-attribute-mapper
+        consentRequired: false
+        config:
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+          user.attribute: tenant_id
+          claim.name: tenant_id
+          jsonType.label: String
+
+authenticationFlows:
+  # Browser flow with no local login form: an existing SSO cookie wins,
+  # otherwise the identity-provider redirector sends the user straight to the
+  # realm's default (and only) IdP.
+  - alias: poc-broker-browser
+    description: Auto-redirect to the sole brokered IdP
+    providerId: basic-flow
+    topLevel: true
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: auth-cookie
+        requirement: ALTERNATIVE
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: identity-provider-redirector
+        authenticatorConfig: poc-default-idp
+        requirement: ALTERNATIVE
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+
+authenticatorConfig:
+  - alias: poc-default-idp
+    config:
+      defaultProvider: poc-upstream
