@@ -7,6 +7,9 @@ from source_bitbucket_cloud.streams.base import repo_scope, schema, unique_key
 from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
 
+PR_COMMIT_FIELDS = "values.hash,values.author.user.uuid,values.author.user.account_id,next"
+
+
 class PRCommitsStream(PullRequestStateStream):
     name = "pull_request_commits"
 
@@ -17,7 +20,9 @@ class PRCommitsStream(PullRequestStateStream):
         generation = self.generation(repo.uuid, pr_id, "commits")
         entity_keys: set[str] = set()
         path = self._client.repo_path(repo, f"pullrequests/{pr_id}/commits")
-        present, commits = self._client.paginate_optional(path, params={"pagelen": "100"})
+        present, commits = self._client.paginate_optional(
+            path, params={"pagelen": "100", "fields": PR_COMMIT_FIELDS}
+        )
         for commit_order, commit in enumerate(commits):
             sha = str(commit.get("hash") or "")
             if not sha:

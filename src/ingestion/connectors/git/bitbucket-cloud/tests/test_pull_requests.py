@@ -1,5 +1,5 @@
 from airbyte_cdk.models import SyncMode
-from source_bitbucket_cloud.streams.base import repo_state_key, repository_bucket
+from source_bitbucket_cloud.streams.base import MAX_TEXT_BYTES, repo_state_key, repository_bucket
 
 
 def pr(pr_id=42, updated_on="2026-06-30T01:00:00+00:00", **extra):
@@ -97,4 +97,4 @@ def test_all_pullrequests_queries_use_accepted_pagelen(pull_requests_stream, cli
 
 def test_description_is_bounded(pull_requests_stream, repo):
     record = pull_requests_stream._record(repo, pr(description="x" * 20_000))
-    assert len(record["description"].encode()) <= 16_384
+    assert len(record["description"].encode()) <= MAX_TEXT_BYTES

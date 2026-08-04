@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import random
+import threading
 import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -14,12 +16,47 @@ import requests
 from source_bitbucket_cloud.auth import auth_headers
 
 
+# Statuses that mean "this token will never read this resource": no retry helps,
+# so the repository is skipped instead of failing the sync. 404 is here too — a
+# repository listed at the start of a sync can be deleted mid-run.
+DENIED_STATUSES = frozenset({403, 404})
+
+# Bitbucket answers 400 for a pull request whose source and destination share
+# no ancestry: the diff is undefined rather than empty, and no retry or later
+# sync can make it computable.
+UNCOMPUTABLE_DIFF = frozenset({"No common ancestor"})
+
+
 class BitbucketApiError(RuntimeError):
     def __init__(self, status_code: int, url: str, body: str) -> None:
         super().__init__(f"Bitbucket API returned {status_code} for {url}: {body[:500]}")
         self.status_code = status_code
         self.url = url
         self.body = body
+
+    @property
+    def _payload(self) -> Mapping[str, Any]:
+        try:
+            payload = json.loads(self.body)
+        except (TypeError, ValueError):
+            return {}
+        return payload if isinstance(payload, Mapping) else {}
+
+    @property
+    def error_message(self) -> str:
+        error = self._payload.get("error")
+        if not isinstance(error, Mapping):
+            return ""
+        return str(error.get("message") or "")
+
+    @property
+    def missing_shas(self) -> frozenset[str]:
+        error = self._payload.get("error")
+        data = error.get("data") if isinstance(error, Mapping) else None
+        shas = data.get("shas") if isinstance(data, Mapping) else None
+        if not isinstance(shas, list):
+            return frozenset()
+        return frozenset(str(sha) for sha in shas if sha)
 
 
 @dataclass(frozen=True)
@@ -33,13 +70,14 @@ class RepositoryRef:
     raw: Mapping[str, Any]
 
 
-@dataclass(frozen=True)
+# Held for every branch of every repository for the length of a sync, so it
+# carries the four fields the streams read and not the API object.
+@dataclass(frozen=True, slots=True)
 class BranchRef:
     name: str
     head_sha: str
     target_date: str | None
     is_default: bool
-    raw: Mapping[str, Any]
 
 
 class RepositoryCatalog:
@@ -50,6 +88,10 @@ class RepositoryCatalog:
         self._repositories: list[RepositoryRef] | None = None
         self._branches: dict[str, list[BranchRef]] = {}
         self._inaccessible: set[str] = set()
+        # Repositories are read concurrently, so the memoised fills are guarded;
+        # the selection caches below are keyed per repository and only ever
+        # written by the worker that owns that repository.
+        self._lock = threading.Lock()
         # Shared per-sync selection caches (see streams/pr_base.py). Keyed by
         # (repository, watermark) and holding SLIM projections only — a handful
         # of scalar fields per entity, never the raw API objects. The raw list
@@ -67,35 +109,66 @@ class RepositoryCatalog:
         permissions. The catalog is shared by every stream, so the first stream
         to discover it saves the others from rediscovering it repo by repo.
         """
-        self._inaccessible.add(repo.uuid)
+        with self._lock:
+            self._inaccessible.add(repo.uuid)
 
     def is_inaccessible(self, repo: RepositoryRef) -> bool:
-        return repo.uuid in self._inaccessible
+        with self._lock:
+            return repo.uuid in self._inaccessible
 
     @property
     def inaccessible_count(self) -> int:
-        return len(self._inaccessible)
+        with self._lock:
+            return len(self._inaccessible)
+
+    @property
+    def branch_cache_size(self) -> tuple[int, int]:
+        with self._lock:
+            return len(self._branches), sum(len(branches) for branches in self._branches.values())
 
     def repositories(self) -> list[RepositoryRef]:
-        if self._repositories is None:
-            self._repositories = self._client.repositories(self._workspaces, self._skip_forks)
-        return self._repositories
+        with self._lock:
+            if self._repositories is not None:
+                return self._repositories
+        fetched = self._client.repositories(self._workspaces, self._skip_forks)
+        with self._lock:
+            if self._repositories is None:
+                self._repositories = fetched
+            return self._repositories
 
     def branches(self, repo: RepositoryRef) -> list[BranchRef]:
-        if repo.uuid not in self._branches:
-            self._branches[repo.uuid] = self._client.branches(repo)
-        return self._branches[repo.uuid]
+        with self._lock:
+            cached = self._branches.get(repo.uuid)
+        if cached is not None:
+            return cached
+        fetched = self._client.branches(repo)
+        with self._lock:
+            return self._branches.setdefault(repo.uuid, fetched)
 
 
 class BitbucketClient:
     url_base = "https://api.bitbucket.org/2.0/"
 
     def __init__(self, token: str, username: str = "", base_url: str | None = None) -> None:
-        self._session = requests.Session()
-        self._session.headers.update(auth_headers(token, username))
-        self._session.headers.update({"Accept": "application/json"})
+        self._headers = {**auth_headers(token, username), "Accept": "application/json"}
+        self._local = threading.local()
         configured_url = base_url or os.environ.get("BITBUCKET_API_BASE_URL") or self.url_base
         self._base_url = configured_url.rstrip("/") + "/"
+
+    @property
+    def _session(self) -> requests.Session:
+        # requests.Session is not thread-safe; repositories are read in
+        # parallel, so each worker gets its own connection pool.
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = requests.Session()
+            session.headers.update(self._headers)
+            self._local.session = session
+        return session
+
+    @_session.setter
+    def _session(self, session: requests.Session) -> None:
+        self._local.session = session
 
     def request(
         self,
@@ -170,10 +243,50 @@ class BitbucketClient:
                 raise ValueError(f"Unexpected Bitbucket response from {response.url}")
             first = False
 
+    def _optional_request(
+        self,
+        path_or_url: str,
+        *,
+        params: Mapping[str, Any] | Sequence[tuple[str, Any]] | None = None,
+        tolerate_messages: Collection[str] = (),
+    ) -> requests.Response | None:
+        try:
+            return self.request("GET", path_or_url, params=params, allow_statuses={403, 404})
+        except BitbucketApiError as error:
+            if error.status_code == 400 and error.error_message in tolerate_messages:
+                return None
+            raise
+
+    def _next_page(self, next_value: Any) -> requests.Response | None:
+        """Fetch a continuation page, refusing to end a collection quietly.
+
+        Tolerating a refusal here would hand the caller part of a collection to
+        publish as a complete snapshot, which deletes whatever the unread pages
+        held. It is not a denial either — the collection was readable a moment
+        ago — so it must not mark the whole repository inaccessible.
+        """
+        if not next_value:
+            return None
+        try:
+            return self.request("GET", str(next_value))
+        except BitbucketApiError as error:
+            if error.status_code not in DENIED_STATUSES:
+                # 401 in particular has to reach the sync untouched: it aborts
+                # the whole read with the cause instead of quarantining every
+                # remaining repository one at a time.
+                raise
+            raise RuntimeError(
+                f"Bitbucket refused a continuation page after the collection had started: {next_value}"
+            ) from error
+
     def paginate_optional(
-        self, path: str, *, params: Mapping[str, Any] | Sequence[tuple[str, Any]] | None = None
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | Sequence[tuple[str, Any]] | None = None,
+        tolerate_messages: Collection[str] = (),
     ) -> tuple[bool, Iterable[Mapping[str, Any]]]:
-        response = self.request("GET", path, params=params, allow_statuses={403, 404})
+        response = self._optional_request(path, params=params, tolerate_messages=tolerate_messages)
         if response is None:
             return False, ()
 
@@ -196,11 +309,7 @@ class BitbucketClient:
                     raise RuntimeError(f"Bitbucket pagination loop detected for {next_value}")
                 if next_value:
                     seen.add(str(next_value))
-                current = (
-                    self.request("GET", str(next_value), allow_statuses={403, 404})
-                    if next_value
-                    else None
-                )
+                current = self._next_page(next_value)
 
         return True, records()
 
@@ -254,7 +363,6 @@ class BitbucketClient:
                         head_sha=head,
                         target_date=target.get("date"),
                         is_default=name == repo.mainbranch_name,
-                        raw=raw,
                     )
                 )
         return branches
@@ -266,6 +374,30 @@ class BitbucketClient:
     # set (the full exclude list rides along with every chunk), and bronze
     # dedups any overlap by unique_key.
     COMMITS_INCLUDE_CHUNK = 100
+
+    # Everything the commit streams read. The default payload additionally
+    # carries the message rendered to HTML, a summary rendering of it again,
+    # and a links map per commit — several times this projection, multiplied by
+    # the highest-volume endpoint in the connector. A field misspelled here is
+    # silently dropped by the API and surfaces as a NULL column, so the list is
+    # pinned by a test against the commits schema.
+    COMMIT_FIELDS = ",".join(
+        [
+            "values.hash",
+            "values.date",
+            "values.message",
+            "values.author.raw",
+            "values.author.user.display_name",
+            "values.author.user.uuid",
+            "values.author.user.account_id",
+            "values.committer.raw",
+            "values.committer.user.display_name",
+            "values.committer.user.uuid",
+            "values.committer.user.account_id",
+            "values.parents.hash",
+            "next",
+        ]
+    )
 
     def commits_between(
         self, repo: RepositoryRef, current_heads: Sequence[str], previous_heads: Sequence[str]
@@ -282,7 +414,7 @@ class BitbucketClient:
             yield from self.paginate(
                 self.repo_path(repo, "commits"),
                 method="POST",
-                params={"pagelen": "100"},
+                params={"pagelen": "100", "fields": self.COMMIT_FIELDS},
                 data=form,
             )
 

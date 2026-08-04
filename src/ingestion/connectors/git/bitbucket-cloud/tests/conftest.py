@@ -31,8 +31,8 @@ def repository(slug: str = "repo", uuid: str = "{r-1}", **raw: Any) -> Repositor
 
 
 def branch(name: str = "main", sha: str = "a1", **raw: Any) -> BranchRef:
-    data = {"name": name, "target": {"hash": sha}, **raw}
-    return BranchRef(name, sha, "2026-06-01T00:00:00+00:00", name == "main", data)
+    target_date = str((raw.get("target") or {}).get("date") or "2026-06-01T00:00:00+00:00")
+    return BranchRef(name, sha, target_date, name == "main")
 
 
 class FakeCatalog:
@@ -59,6 +59,10 @@ class FakeCatalog:
 
     def branches(self, repo: RepositoryRef) -> list[BranchRef]:
         return self._client.branches(repo) if self._client else []
+
+    @property
+    def branch_cache_size(self) -> tuple[int, int]:
+        return 0, 0
 
 
 class _FakeResponse:

@@ -49,33 +49,46 @@ def test_check_connection_reports_transport_errors(client_type):
     assert reason == "Bitbucket API request failed: offline"
 
 
+TRANSFORMED_STREAMS = [
+    "repositories",
+    "branches",
+    "pull_requests",
+    "pull_request_commits",
+    "pull_request_comments",
+    "pull_request_activity",
+    "pull_request_diffstat",
+    "commits",
+    "file_changes",
+    "commit_branch_reachability",
+]
+# Their first read of a repository pages whatever history it holds; everything
+# before them is bounded by a watermark.
+UNBOUNDED_STREAMS = ["commits", "file_changes", "commit_branch_reachability"]
+
+
 def test_streams_are_independent_and_share_client_and_catalog():
     streams = SourceBitbucketCloud().streams(CONFIG)
-    assert [stream.name for stream in streams] == [
-        "repositories",
-        "branches",
-        "pull_requests",
-        "pull_request_diffstat",
-        "pull_request_activity",
-        "pull_request_tasks",
-        "pull_request_comments",
-        "pull_request_commits",
-        "pipelines",
-        "pipeline_steps",
-        "pipeline_step_test_reports",
-        "deployments",
-        "environments",
-        "tags",
-        "issues",
-        "issue_comments",
-        "issue_changes",
-        "commits",
-        "commit_branch_reachability",
-        "file_changes",
-    ]
+    assert [stream.name for stream in streams] == TRANSFORMED_STREAMS
     assert len({id(stream._client) for stream in streams}) == 1
     assert len({id(stream._catalog) for stream in streams}) == 1
     assert not any(hasattr(stream, "parent") for stream in streams)
+
+
+def test_streams_the_transform_layer_reads_come_first():
+    """A sync that runs out of time must still have produced what dbt builds
+    on; the trailing streams have no model reading them."""
+    names = [stream.name for stream in SourceBitbucketCloud().streams(CONFIG)]
+
+    assert names[: len(TRANSFORMED_STREAMS)] == TRANSFORMED_STREAMS
+
+
+def test_watermark_bounded_streams_run_before_history_sized_ones():
+    """A stream that can page a whole history must not be able to starve the
+    streams that cannot."""
+    names = [stream.name for stream in SourceBitbucketCloud().streams(CONFIG)]
+    bounded = [name for name in TRANSFORMED_STREAMS if name not in UNBOUNDED_STREAMS]
+
+    assert max(names.index(name) for name in bounded) < min(names.index(name) for name in UNBOUNDED_STREAMS)
 
 
 def test_tenant_identity_and_spec():

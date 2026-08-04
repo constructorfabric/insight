@@ -4,7 +4,7 @@ from email.utils import formatdate
 
 import pytest
 
-from source_bitbucket_cloud.client import BitbucketApiError, BitbucketClient
+from source_bitbucket_cloud.client import BitbucketApiError, BitbucketClient, BranchRef
 
 BASE = "https://api.bitbucket.org/2.0/"
 
@@ -114,7 +114,9 @@ class TestPaginate:
         assert present is False
         assert list(records) == []
 
-    def test_optional_stops_gracefully_on_later_404(self):
+    def test_optional_refuses_to_truncate_a_started_collection(self):
+        """Ending the collection here would publish part of a snapshot as the
+        whole of it, deleting whatever the unread pages held."""
         client = make_client(
             [
                 Response(body={"values": [{"n": 1}], "next": BASE + "x?page=2"}),
@@ -123,7 +125,22 @@ class TestPaginate:
         )
         present, records = client.paginate_optional("repositories/ws/pipelines")
         assert present is True
-        assert [row["n"] for row in records] == [1]
+        with pytest.raises(RuntimeError, match="continuation page"):
+            list(records)
+
+    def test_a_refused_continuation_is_not_a_denial(self):
+        """A denial marks the repository inaccessible for every later stream;
+        one bad page must not."""
+        client = make_client(
+            [
+                Response(body={"values": [{"n": 1}], "next": BASE + "x?page=2"}),
+                Response(403),
+            ]
+        )
+        _, records = client.paginate_optional("repositories/ws/pipelines")
+        with pytest.raises(RuntimeError) as raised:
+            list(records)
+        assert not isinstance(raised.value, BitbucketApiError)
 
 
 class TestFieldMapping:
@@ -175,3 +192,29 @@ class TestFieldMapping:
         assert branches[0].is_default is True
         assert branches[0].head_sha == "a1"
         assert branches[1].is_default is False
+
+
+class TestBranchRefStaysSlim:
+    """The catalog holds every branch of every repository for a whole sync."""
+
+    def test_only_the_fields_the_streams_read_are_kept(self):
+        ref = BranchRef(name="main", head_sha="a1", target_date=None, is_default=True)
+
+        assert BranchRef.__slots__ == ("name", "head_sha", "target_date", "is_default")
+        assert not hasattr(ref, "__dict__"), "a per-instance dict would dwarf the four fields"
+
+
+def test_a_credential_failure_on_a_later_page_is_not_wrapped():
+    """401 has to reach the sync as itself: it aborts the whole read with the
+    cause instead of quarantining every remaining repository one at a time."""
+    client = make_client(
+        [
+            Response(body={"values": [{"n": 1}], "next": BASE + "x?page=2"}),
+            Response(401),
+        ]
+    )
+    _, records = client.paginate_optional("repositories/ws/pipelines")
+
+    with pytest.raises(BitbucketApiError) as raised:
+        list(records)
+    assert raised.value.status_code == 401

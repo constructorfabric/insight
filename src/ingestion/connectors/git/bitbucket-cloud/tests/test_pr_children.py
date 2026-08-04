@@ -1,5 +1,7 @@
 from source_bitbucket_cloud.streams.metric_events import IssuesStream, PipelinesStream
 from source_bitbucket_cloud.streams.pr_activity import PRActivityStream
+from source_bitbucket_cloud.streams.pr_comments import PR_COMMENT_FIELDS
+from source_bitbucket_cloud.streams.pr_commits import PR_COMMIT_FIELDS
 from source_bitbucket_cloud.streams.pr_diffstat import PRDiffstatStream
 
 
@@ -140,3 +142,39 @@ def test_empty_pipeline_and_issue_results_keep_provider_watermark(stream_args, c
     issue_state = {"updated_on": "2026-06-02T00:00:00+00:00"}
     assert pipelines.pipeline_candidates(repo, pipeline_state)[2]["created_on"] == pipeline_state["created_on"]
     assert issues.selected_issues(repo, issue_state)[2] == issue_state
+
+
+class TestChildProjectionsCoverWhatTheStreamsRead:
+    """The API silently drops a misspelled fields entry, so a wrong projection
+    surfaces as NULL columns, not an error."""
+
+    def test_pr_commit_fields(self):
+        projected = set(PR_COMMIT_FIELDS.split(","))
+
+        assert "next" in projected, "without it pagination stops after one page"
+        assert projected == {
+            "values.hash",
+            "values.author.user.uuid",
+            "values.author.user.account_id",
+            "next",
+        }
+
+    def test_pr_comment_fields(self):
+        projected = set(PR_COMMENT_FIELDS.split(","))
+
+        assert "next" in projected, "without it pagination stops after one page"
+        assert projected == {
+            "values.id",
+            "values.content.raw",
+            "values.created_on",
+            "values.updated_on",
+            "values.user.display_name",
+            "values.user.uuid",
+            "values.user.account_id",
+            "values.inline.path",
+            "values.inline.from",
+            "values.inline.to",
+            "values.parent.id",
+            "values.deleted",
+            "next",
+        }
