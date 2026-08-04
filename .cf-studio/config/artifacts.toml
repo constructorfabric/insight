@@ -5,7 +5,7 @@ name = "InsightSpec"
 slug = "insightspec"
 kit = "sdlc"
 codebase = ["docs"]
-children = ["identity-svc", "ir", "person", "orgchart", "presentation", "metric-cat", "dataflow"]
+children = ["identity-svc", "ir", "person", "orgchart", "presentation", "metric-cat", "dataflow", "semantic-layer"]
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -813,6 +813,24 @@ name = "Presentation Layer Design"
 kind = "PRD"
 path = "docs/domain/presentation-layer/specs/PRD.md"
 name = "Presentation Layer PRD"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Semantic Layer"
+slug = "semantic-layer"
+kit = "sdlc"
+codebase = ["docs/domain/semantic-layer", "src/backend/services/analytics"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/semantic-layer/specs/DESIGN.md"
+name = "Semantic Layer Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/semantic-layer/specs/PRD.md"
+name = "Semantic Layer PRD"
 traceability = "DOCS-ONLY"
 
 [[systems]]
