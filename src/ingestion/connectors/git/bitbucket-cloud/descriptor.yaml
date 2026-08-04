@@ -1,5 +1,5 @@
 name: bitbucket-cloud
-version: "1.11.0"
+version: "1.12.0"
 type: cdk
 # A slot of its own: replication pods sharing a slot with other connector
 # syncs can be starved of workers, which surfaces as startup and activity
@@ -12,7 +12,7 @@ images:
     name: source-bitbucket-cloud-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-bitbucket-cloud-insight:2026.07.31.12.44-afd0cbb.release-2026.07.1"
+    image: "ghcr.io/constructorfabric/source-bitbucket-cloud-insight:2026.08.04.06.22-cbc62bd.release-2026.07.2"
 dbt_select: "tag:bitbucket-cloud+"
 connection:
   namespace: "bronze_bitbucket_cloud"
