@@ -1112,6 +1112,12 @@ jobs:
     needs:
       - changes
       - discover-images
+      - backend-analytics
+      - backend-authenticator
+      - backend-gateway
+      - backend-identity-resolution
+      - toolbox
+      - build-image
       - merge-analytics
       - merge-authenticator
       - merge-gateway
@@ -1121,23 +1127,25 @@ jobs:
     # All siblings must finish first — bump-descriptors auto-commits to main
     # and that push retriggers the workflow, so we must NOT pin descriptors
     # while a backend service or toolbox is still building or has just failed
-    # tests. The `success || skipped` shape mirrors publish-chart: any of
-    # the merge-* jobs may legitimately be `skipped` when its underlying
-    # build job was skipped (paths-filter didn't flag it), but they must
-    # never be `failure` or `cancelled`. Each merge-* job's manifest-push
-    # is what tags the canonical <build_tag> images, so descriptor refs
-    # only safely point at those tags once the merge completes.
+    # tests. A merge-* job may be `skipped` for two indistinguishable
+    # reasons: its build job was skipped (paths-filter didn't flag it —
+    # fine) or its build job FAILED (must block: the <build_tag> image was
+    # never pushed, and pinning it broke every stand until the next good
+    # release). So `skipped` is accepted only when the underlying build job
+    # itself was skipped. Each merge-* job's manifest-push is what tags the
+    # canonical <build_tag> images, so descriptor refs only safely point at
+    # those tags once the merge completes.
     if: |
       always()
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-'))
       && needs.discover-images.outputs.any == 'true'
-      && (needs.merge-image.result == 'success' || needs.merge-image.result == 'skipped')
-      && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
-      && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
-      && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
-      && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
-      && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
+      && (needs.merge-image.result == 'success' || needs.build-image.result == 'skipped')
+      && (needs.merge-analytics.result == 'success' || needs.backend-analytics.result == 'skipped')
+      && (needs.merge-authenticator.result == 'success' || needs.backend-authenticator.result == 'skipped')
+      && (needs.merge-gateway.result       == 'success' || needs.backend-gateway.result       == 'skipped')
+      && (needs.merge-identity-resolution.result == 'success' || needs.backend-identity-resolution.result == 'skipped')
+      && (needs.merge-toolbox.result       == 'success' || needs.toolbox.result       == 'skipped')
     runs-on: ubuntu-latest
     outputs:
       # `committed` is set to 'true' when this job actually pushed a
@@ -1298,6 +1306,12 @@ jobs:
     needs:
       - changes
       - discover-images
+      - backend-analytics
+      - backend-authenticator
+      - backend-gateway
+      - backend-identity-resolution
+      - toolbox
+      - build-image
       - merge-analytics
       - merge-authenticator
       - merge-gateway
@@ -1305,16 +1319,21 @@ jobs:
       - merge-toolbox
       - merge-image
       - bump-descriptors
+    # `skipped` on a merge-* job is accepted only when its underlying build
+    # job was itself skipped (paths-filter didn't flag the component). A
+    # merge skipped because the build FAILED must block the chart bump:
+    # publishing would pin an appVersion whose image was never pushed, and
+    # every stand pulls `manifest unknown` until the next good release.
     if: |
       always()
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-'))
-      && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
-      && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
-      && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
-      && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
-      && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
-      && (needs.merge-image.result         == 'success' || needs.merge-image.result         == 'skipped')
+      && (needs.merge-analytics.result == 'success' || needs.backend-analytics.result == 'skipped')
+      && (needs.merge-authenticator.result == 'success' || needs.backend-authenticator.result == 'skipped')
+      && (needs.merge-gateway.result       == 'success' || needs.backend-gateway.result       == 'skipped')
+      && (needs.merge-identity-resolution.result == 'success' || needs.backend-identity-resolution.result == 'skipped')
+      && (needs.merge-toolbox.result       == 'success' || needs.toolbox.result       == 'skipped')
+      && (needs.merge-image.result         == 'success' || needs.build-image.result   == 'skipped')
       && (needs.bump-descriptors.result    == 'success' || needs.bump-descriptors.result    == 'skipped')
       && needs.bump-descriptors.outputs.committed != 'true'
       && (
